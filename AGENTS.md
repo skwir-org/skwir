@@ -105,10 +105,15 @@ current source before assuming a planned crate, command, or API exists.
   the user does meanwhile waits behind it, which the bar says. The bar
   counts the plan's items, the bytes of the one under way moving it between
   two counts; a plan of one item counts its bytes (`toast::bar`). Plans run
-  on a thread of their own, never a worker. Quitting cancels them and waits,
-  out of sight, for them to take back their partial work
+  on a thread of their own, never a worker. Quit asks first while one runs,
+  from its key or the window's close button (`Shell::quit`), then cancels
+  them and waits, out of sight, for them to take back their partial work
   (`Executor::wind_down`): a copy cut short leaves nothing in its
-  destination. `Shell::set_status` is a toast;
+  destination. What a crash or a kill leaves, a later run removes: a copy's
+  staging folder holds a lock its copy keeps while it runs, and folders
+  whose lock nobody holds are swept, by a copy into their destination and
+  at start for the folders an earlier run was copying into (`op::staging`,
+  only where this machine alone writes). `Shell::set_status` is a toast;
   `set_status_about` adds a link to the setting that fixes the problem.
   Footers hold state, never messages (`status.rs`): each pane's footer
   its counts and selection size, and with nothing selected what its files

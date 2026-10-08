@@ -203,6 +203,34 @@ pub fn bar(items: usize, t: &Transfer) -> (f32, String) {
     (fraction.clamp(0., 1.), words)
 }
 
+/// What Quit asks while a plan runs: which (`running`: its title, and
+/// whether it is paused, when it has begun), and what quitting does to it
+/// and to the `waiting` ones behind it. No figures: the bar under the
+/// question goes on with them.
+pub fn quit_question(running: Option<(&str, bool)>, waiting: usize) -> String {
+    let (what, stop) = match running {
+        Some((title, paused)) => {
+            let state = if paused { "paused" } else { "still running" };
+            let what = format!("{} is {state}.", capitalized(title));
+            let stop = "Quit and stop it? What it finished stays; what it was in the middle \
+                        of is taken back.";
+            (what, stop)
+        }
+        None => (
+            "A change is about to begin.".to_owned(),
+            "Quit before it does?",
+        ),
+    };
+    let after = match waiting {
+        0 => String::new(),
+        n => format!(
+            " The {} waiting after it will not run.",
+            format::count(n, "action")
+        ),
+    };
+    format!("{what} {stop}{after}")
+}
+
 impl Shell {
     /// Show `toast`, replacing the current one, for a time that fits its
     /// weight: errors and anything with a button stay longer.
@@ -520,9 +548,28 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 
 #[cfg(test)]
 mod tests {
-    use super::{bar, describe, failure};
+    use super::{bar, describe, failure, quit_question};
     use bibli_core::op::{Change, RunKind, Transfer};
     use std::path::PathBuf;
+
+    #[test]
+    fn quitting_while_a_plan_runs_says_what_stops_and_what_stays() {
+        assert_eq!(
+            quit_question(Some(("copy to /media/stick", true)), 2),
+            "Copy to /media/stick is paused. Quit and stop it? What it finished stays; \
+             what it was in the middle of is taken back. The 2 actions waiting after it \
+             will not run."
+        );
+        assert_eq!(
+            quit_question(Some(("move to Trash", false)), 0),
+            "Move to Trash is still running. Quit and stop it? What it finished stays; \
+             what it was in the middle of is taken back."
+        );
+        assert_eq!(
+            quit_question(None, 0),
+            "A change is about to begin. Quit before it does?"
+        );
+    }
 
     #[test]
     fn a_bar_counts_items_and_moves_with_the_bytes_of_the_one_under_way() {

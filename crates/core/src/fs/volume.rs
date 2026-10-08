@@ -122,6 +122,38 @@ fn mounted_from(path: &Path) -> Option<PathBuf> {
     source_of(&path, &mountinfo)
 }
 
+/// Whether only this machine writes the filesystem holding `path`: it is
+/// mounted from one of its block devices (a disk, a stick, an `ntfs-3g`
+/// drive), not shared over a network, so a lock taken on a file there is
+/// seen by everything that could write to it. Reads mountinfo: on a
+/// worker.
+#[cfg(target_os = "linux")]
+pub fn only_here(path: &Path) -> bool {
+    let (Ok(path), Ok(mountinfo)) = (
+        std::fs::canonicalize(path),
+        std::fs::read_to_string("/proc/self/mountinfo"),
+    ) else {
+        return false;
+    };
+    only_here_in(&path, &mountinfo)
+}
+
+/// [`only_here`] where only Linux is read yet: never known.
+#[cfg(not(target_os = "linux"))]
+pub fn only_here(_: &Path) -> bool {
+    false
+}
+
+/// [`only_here`] for `path` in `mountinfo`. The filesystems of a cluster
+/// are mounted from a disk several machines share.
+#[cfg(target_os = "linux")]
+fn only_here_in(path: &Path, mountinfo: &str) -> bool {
+    mount_of(path, mountinfo).is_some_and(|mount| {
+        Path::new(&mount.source).starts_with("/dev/")
+            && !matches!(mount.fstype.as_str(), "gfs2" | "ocfs2")
+    })
+}
+
 /// One line of `/proc/self/mountinfo`: a mount.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mounted {
@@ -157,10 +189,10 @@ pub fn mountinfo(text: &str) -> Vec<Mounted> {
         .collect()
 }
 
-/// In `mountinfo`, the source of the mount that holds `path`: the last of
-/// the deepest, as the kernel stacks them.
+/// In `mountinfo`, the mount that holds `path`: the last of the deepest,
+/// as the kernel stacks them.
 #[cfg(target_os = "linux")]
-fn source_of(path: &Path, mountinfo: &str) -> Option<PathBuf> {
+fn mount_of(path: &Path, mountinfo: &str) -> Option<Mounted> {
     let mut best: Option<Mounted> = None;
     for mount in self::mountinfo(mountinfo) {
         if path.starts_with(&mount.point)
@@ -171,7 +203,13 @@ fn source_of(path: &Path, mountinfo: &str) -> Option<PathBuf> {
             best = Some(mount);
         }
     }
-    let source = PathBuf::from(best?.source);
+    best
+}
+
+/// In `mountinfo`, the device mounted where `path` is.
+#[cfg(target_os = "linux")]
+fn source_of(path: &Path, mountinfo: &str) -> Option<PathBuf> {
+    let source = PathBuf::from(mount_of(path, mountinfo)?.source);
     source.starts_with("/dev/").then_some(source)
 }
 
@@ -333,6 +371,27 @@ mod tests {
             Some(PathBuf::from("/dev/mapper/root")),
             "a name that only begins like the mount's is not in it"
         );
+    }
+
+    #[test]
+    fn only_a_filesystem_mounted_from_a_device_here_is_written_only_here() {
+        let mountinfo = "\
+22 1 0:30 /@ / rw - btrfs /dev/mapper/root rw
+40 22 8:49 / /run/media/example/STICK rw - vfat /dev/sdd1 rw
+41 22 0:53 / /run/media/example/net rw - fuse.sshfs host:/share rw
+42 22 0:54 / /mnt/nas rw - nfs4 nas.example:/photos rw
+43 22 8:65 / /mnt/old rw - fuseblk /dev/sde1 rw
+44 22 253:3 / /mnt/cluster rw - gfs2 /dev/mapper/shared rw
+45 22 0:40 / /tmp rw - tmpfs tmpfs rw
+";
+        let here = |p: &str| only_here_in(Path::new(p), mountinfo);
+        assert!(here("/home/example"));
+        assert!(here("/run/media/example/STICK/DCIM"));
+        assert!(here("/mnt/old/a"), "ntfs-3g, on a disk of this machine");
+        assert!(!here("/run/media/example/net/a"));
+        assert!(!here("/mnt/nas/2026"));
+        assert!(!here("/mnt/cluster/a"), "a disk machines share");
+        assert!(!here("/tmp/a"), "no device to tell");
     }
 
     #[test]

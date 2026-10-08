@@ -210,6 +210,8 @@ pub struct Executor {
     running: Mutex<Vec<Active>>,
     observers: Contributions<ChangeObserver>,
     companions: Mutex<Arc<crate::companions::Companions>>,
+    /// Where the folders copies are under way in are noted.
+    under_way: Mutex<Option<super::staging::UnderWay>>,
     /// Plans someone waits for (`watch`): answered when their run
     /// finishes, or when they are dismissed.
     watched: Mutex<std::collections::HashMap<PlanId, Sender<Verdict>>>,
@@ -260,6 +262,7 @@ impl Executor {
             running: Mutex::new(Vec::new()),
             observers: Contributions::default(),
             companions: Mutex::new(Arc::default()),
+            under_way: Mutex::new(None),
             watched: Mutex::new(std::collections::HashMap::new()),
         })
     }
@@ -281,6 +284,12 @@ impl Executor {
     /// (ADR-028).
     pub fn set_companions(&self, companions: Arc<crate::companions::Companions>) {
         *self.companions.lock() = companions;
+    }
+
+    /// Note the folders copies are under way in there, for the next run to
+    /// sweep should this one end mid-copy (`staging::UnderWay`).
+    pub fn set_under_way(&self, under_way: super::staging::UnderWay) {
+        *self.under_way.lock() = Some(under_way);
     }
 
     /// Wake the UI after each event.
@@ -478,7 +487,7 @@ impl Executor {
     /// Returns false if there is nothing to undo and nothing that could
     /// add to the journal is queued or running.
     pub fn undo(self: &Arc<Self>, cancel: CancelToken) -> bool {
-        let available = self.lane_active() || self.can_undo();
+        let available = self.is_busy() || self.can_undo();
         if available {
             self.submit(Work::Replay(Direction::Undo), cancel);
         }
@@ -492,7 +501,7 @@ impl Executor {
 
     /// Redo the most recently undone plan once everything queued before has run.
     pub fn redo(self: &Arc<Self>, cancel: CancelToken) -> bool {
-        let available = self.lane_active() || self.can_redo();
+        let available = self.is_busy() || self.can_redo();
         if available {
             self.submit(Work::Replay(Direction::Redo), cancel);
         }
@@ -532,7 +541,8 @@ impl Executor {
             .collect()
     }
 
-    fn lane_active(&self) -> bool {
+    /// Whether a plan, an undo or a redo runs or waits its turn.
+    pub fn is_busy(&self) -> bool {
         let lane = self.lane.lock();
         lane.busy || !lane.queue.is_empty()
     }
@@ -756,7 +766,8 @@ impl Executor {
         });
         let _running = Running(self, plan.id);
         let ctx = StepContext::new(cancel.clone(), pause, Arc::clone(&meter))
-            .with_companions(Arc::clone(&self.companions.lock()));
+            .with_companions(Arc::clone(&self.companions.lock()))
+            .with_under_way(self.under_way.lock().clone());
         self.emit(ExecEvent::Started {
             plan: plan.id,
             title: plan.title.clone(),

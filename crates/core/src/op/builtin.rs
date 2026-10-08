@@ -639,12 +639,8 @@ fn copy_staged(
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     ctx.add_total(tree_size(src, ctx)?);
-    let mut staging = tempfile::Builder::new();
-    staging.prefix(".bibli-copy-");
-    if let Some(private) = sys::owner_only() {
-        staging.permissions(private);
-    }
-    let staging = staging.tempdir_in(dest_dir)?;
+    ctx.staging_in(dest_dir);
+    let staging = super::staging::Staging::new(dest_dir)?;
     let staged = staging.path().join("entry");
     // What the copy put beside the staged entry (the companion that holds
     // its attributes, on a volume that refuses them) follows it out.
@@ -661,12 +657,11 @@ fn copy_staged(
             rename_along(&beside)
         });
     if let Err(error) = result {
-        // Completed subdirectories may already have read-only permissions.
-        // Only relax permissions inside our private, newly-created staging tree.
-        if let Err(cleanup) = remove_staged_copy(staging.path()) {
+        let left = staging.path().to_path_buf();
+        if let Err(cleanup) = staging.remove() {
             return Err(error.context(format!(
                 "a part of the copy is left in “{}” ({})",
-                staging.path().display(),
+                left.display(),
                 super::io_words(&cleanup)
             )));
         }
@@ -687,19 +682,6 @@ fn tree_size(path: &Path, ctx: &StepContext) -> anyhow::Result<u64> {
         total += tree_size(&e?.path(), ctx)?;
     }
     Ok(total)
-}
-
-fn remove_staged_copy(path: &Path) -> std::io::Result<()> {
-    let metadata = std::fs::symlink_metadata(path)?;
-    if metadata.is_dir() {
-        std::fs::set_permissions(path, sys::opened_to_owner(&metadata.permissions()))?;
-        for entry in std::fs::read_dir(path)? {
-            remove_staged_copy(&entry?.path())?;
-        }
-        std::fs::remove_dir(path)
-    } else {
-        std::fs::remove_file(path)
-    }
 }
 
 /// Bytes per `copy_file_range` call: large enough to stay in the kernel's

@@ -3,7 +3,7 @@
 //! the plan's steps share instead of repeating.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -138,6 +138,10 @@ pub struct StepContext {
     /// later step finds them, as it does when the plan is applied step by
     /// step.
     foreseen: RefCell<HashSet<PathBuf>>,
+    /// Where the folders copies are under way in are noted, and those this
+    /// plan stages in, each swept once and noted while the plan runs.
+    under_way: Option<super::staging::UnderWay>,
+    staged_in: RefCell<HashMap<PathBuf, Option<super::staging::Mark>>>,
 }
 
 impl StepContext {
@@ -149,7 +153,31 @@ impl StepContext {
             trash: RefCell::new(None),
             companions: Arc::default(),
             foreseen: RefCell::default(),
+            under_way: None,
+            staged_in: RefCell::default(),
         }
+    }
+
+    /// The same context, noting in `under_way` the folders its copies are
+    /// made in, for a later run to sweep should this one end mid-copy.
+    #[must_use]
+    pub(super) fn with_under_way(mut self, under_way: Option<super::staging::UnderWay>) -> Self {
+        self.under_way = under_way;
+        self
+    }
+
+    /// Before a copy stages in `dest_dir`: the first time this plan does,
+    /// note the folder as under way and remove what copies cut short left
+    /// there (`staging::sweep`).
+    pub(super) fn staging_in(&self, dest_dir: &Path) {
+        if self.staged_in.borrow().contains_key(dest_dir) {
+            return;
+        }
+        let mark = self.under_way.as_ref().and_then(|u| u.mark(dest_dir));
+        super::staging::sweep(dest_dir);
+        self.staged_in
+            .borrow_mut()
+            .insert(dest_dir.to_path_buf(), mark);
     }
 
     /// The same context, carrying files beside a file by `companions`.

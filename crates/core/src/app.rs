@@ -226,6 +226,17 @@ impl App {
                 });
             app.notes.keep_snapshots(app.cache.namespace("notes"));
             app.executor.set_companions(Arc::clone(&app.companions));
+            // What a run that ended mid-copy left is swept as this one
+            // starts, out of its way.
+            let under_way =
+                op::staging::UnderWay::new(app.cache.namespace("staging").folder("under-way"));
+            app.executor.set_under_way(under_way.clone());
+            app.scheduler.spawn(
+                Priority::Background,
+                "staging.sweep",
+                app.lifetime.child(),
+                move || under_way.sweep_left(),
+            );
         }
         builtin::register(&app);
         crate::notes::commands::register(&app);

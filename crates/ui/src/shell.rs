@@ -24,7 +24,7 @@ use crate::list::{ListState, Step};
 use crate::menu::MenuState;
 use crate::palette::PaletteState;
 use crate::preview::PreviewState;
-use crate::prompts::{ConfirmState, PromptKind, PromptState};
+use crate::prompts::{ConfirmState, Confirmed, PromptKind, PromptState};
 use crate::renamebulk::BulkState;
 use crate::theme::Theme;
 use crate::thumbs::ThumbCache;
@@ -401,6 +401,15 @@ impl Shell {
                 }
             });
         }));
+
+        // The window's close button quits as Quit does: asking first
+        // while a plan runs.
+        let shell = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            shell
+                .update(cx, |shell, cx| !shell.ask_before_closing(window, cx))
+                .unwrap_or(true)
+        });
 
         // Wake-up, not polling: the core signals, the shell applies what it
         // sent, GPUI re-renders. Applying is done here, not left to the draw
@@ -1408,7 +1417,7 @@ impl Shell {
             let noun = if n == 1 { "item" } else { "items" };
             self.open_confirm(
                 format!("Delete {n} {noun} permanently? This cannot be undone."),
-                plan,
+                Confirmed::Apply(plan),
                 window,
                 cx,
             );
@@ -1416,6 +1425,37 @@ impl Shell {
         }
         self.app.apply_whole(plan);
         cx.notify();
+    }
+
+    /// Quit: close the window, which ends bibli once the plans running
+    /// have stopped (`lib.rs`). While one runs, ask first, saying what
+    /// stops; asked already, Quit again answers yes.
+    pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .confirm
+            .as_ref()
+            .is_some_and(|c| matches!(c.then, Confirmed::Quit))
+        {
+            self.confirm_accept(window, cx);
+        } else if !self.ask_before_closing(window, cx) {
+            window.remove_window();
+        }
+    }
+
+    /// While a plan runs, ask whether to quit and stop it, and say so:
+    /// the window's close button closes it only when this says no.
+    pub fn ask_before_closing(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.app.executor.is_busy() {
+            return false;
+        }
+        let running = self.toasts.running.first().map(|running| {
+            let paused = self.app.executor.is_paused(running.plan);
+            (running.title.as_str(), paused)
+        });
+        let waiting = self.app.executor.queued();
+        let question = crate::toast::quit_question(running, waiting);
+        self.open_confirm(question, Confirmed::Quit, window, cx);
+        true
     }
 
     /// Dispatch and hand back a `Value` (for plugin queries the UI renders).
@@ -1872,9 +1912,7 @@ impl Shell {
             "cursor_toggle" => self.toggle_cursor(window, cx),
             "peek" => self.toggle_peek(window, cx),
             "peek_close" => self.close_peek(window, cx),
-            // Closing the last window quits, once the plans running have
-            // stopped (`lib.rs`).
-            "quit" => window.remove_window(),
+            "quit" => self.quit(window, cx),
             // Declared (`commands.rs`) but carried out nowhere: a mistake
             // the test of the declarations catches.
             other => self.set_status(format!("ui.{other} is not carried out here"), true, cx),

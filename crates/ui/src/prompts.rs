@@ -1,6 +1,6 @@
 //! Single-line prompts (`ui.ask`: rename, new folder, a plugin's
 //! question; finding a name; a passphrase) and the confirmation of what
-//! Undo cannot take back.
+//! Undo cannot take back, or of quitting while a plan runs.
 
 use bibli_core::Plan;
 use bibli_core::command::Invocation;
@@ -54,16 +54,24 @@ pub struct PromptState {
     _sub: Subscription,
 }
 
-/// A question before something that cannot be undone. It holds the plan
-/// itself, built when the question was asked: what the user read about is
-/// what happens, whatever the selection or the active pane is by then.
+/// A question before something that cannot be undone.
 pub struct ConfirmState {
     pub message: String,
-    pub plan: Plan,
+    pub then: Confirmed,
     pub focus: FocusHandle,
     cancel: FocusHandle,
     accept: FocusHandle,
     back: FocusReturn,
+}
+
+/// What answering yes does.
+pub enum Confirmed {
+    /// Apply a plan Undo cannot take back. The plan itself, built when
+    /// the question was asked: what the user read about is what happens,
+    /// whatever the selection or the active pane is by then.
+    Apply(Plan),
+    /// Quit, stopping the plans that run (`Shell::quit`).
+    Quit,
 }
 
 impl Shell {
@@ -267,7 +275,7 @@ impl Shell {
     pub fn open_confirm(
         &mut self,
         message: String,
-        plan: Plan,
+        then: Confirmed,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -276,7 +284,7 @@ impl Shell {
         window.focus(&focus);
         self.confirm = Some(ConfirmState {
             message,
-            plan,
+            then,
             focus,
             cancel: cx.focus_handle(),
             accept: cx.focus_handle(),
@@ -288,8 +296,11 @@ impl Shell {
     pub fn confirm_accept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(c) = self.confirm.take() {
             c.back.restore(window, &self.ui().focus);
-            // Asked and answered: applied as it is.
-            self.app.apply_whole(c.plan);
+            match c.then {
+                // Asked and answered: applied as it is.
+                Confirmed::Apply(plan) => self.app.apply_whole(plan),
+                Confirmed::Quit => window.remove_window(),
+            }
             cx.notify();
         }
     }
@@ -343,6 +354,10 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
 pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let c = shell.confirm.as_ref()?;
     let theme = cx.global::<Theme>().clone();
+    let (yes, icon) = match c.then {
+        Confirmed::Apply(_) => ("Delete (Enter)", Some("trash")),
+        Confirmed::Quit => ("Quit (Enter)", None),
+    };
     let panel = modal::panel(560., &theme)
         .p_3()
         .gap_2()
@@ -370,8 +385,8 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
                 .child(
                     controls::button(
                         "confirm-yes",
-                        "Delete (Enter)",
-                        Some("trash"),
+                        yes,
+                        icon,
                         ButtonStyle::Danger,
                         &c.accept,
                         &theme,

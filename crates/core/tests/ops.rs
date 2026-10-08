@@ -490,6 +490,66 @@ fn winding_down_stops_a_paused_copy_and_leaves_no_staging_folder() {
     assert!(!stick.join("late").exists());
 }
 
+/// A staging folder a copy left when its process ended mid-way: its lock
+/// free, part of the copy in it.
+#[cfg(target_os = "linux")]
+fn left_by_a_copy(dest: &Path, name: &str) -> PathBuf {
+    let left = dest.join(name);
+    std::fs::create_dir_all(left.join("entry")).unwrap();
+    std::fs::write(left.join("entry/photo 1.jpg"), b"part").unwrap();
+    std::fs::write(left.join("lock"), b"").unwrap();
+    left
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_copy_and_a_new_run_sweep_what_copies_cut_short_left() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    let stick = root.join("stick");
+    std::fs::create_dir(&stick).unwrap();
+    let left = left_by_a_copy(&stick, ".bibli-copy-AbC123");
+    // Another bibli still copying there: its lock held.
+    let running = stick.join(".bibli-copy-XyZ789");
+    std::fs::create_dir(&running).unwrap();
+    let held = std::fs::File::create(running.join("lock")).unwrap();
+    held.try_lock().unwrap();
+
+    let app = app(root);
+    let src = file(&root.join("it's a draft.txt"), "draft");
+    let copy = Copy {
+        entry: src,
+        dest_dir: stick.clone(),
+        new_name: None,
+        preserve_attributes: true,
+    };
+    apply(&app, &Plan::with_steps("copy", vec![Box::new(copy)]));
+    assert!(stick.join("it's a draft.txt").is_file());
+    assert!(!left.exists(), "a copy into the folder sweeps it");
+    assert!(running.is_dir(), "a copy that runs keeps its folder");
+    drop(held);
+    drop(app);
+
+    // A run that ended mid-copy noted the folder in the cache: the next
+    // one sweeps it as it starts.
+    let config = bibli_core::app::AppConfig::ephemeral(root);
+    let notes = bibli_core::cache::Cache::open(config.cache_root.clone())
+        .namespace("staging")
+        .folder("under-way");
+    std::fs::create_dir_all(&notes).unwrap();
+    std::fs::write(
+        notes.join("copy-ended"),
+        stick.as_os_str().as_encoded_bytes(),
+    )
+    .unwrap();
+    let left = left_by_a_copy(&stick, ".bibli-copy-DeF456");
+    let next = bibli_core::app::App::new(config).unwrap();
+    assert!(next.scheduler.wait_idle(std::time::Duration::from_secs(10)));
+    assert!(!left.exists() && !running.exists(), "both copies are over");
+    assert!(!notes.join("copy-ended").exists());
+    assert!(stick.join("it's a draft.txt").is_file());
+}
+
 /// Three folders to create, the first step pausing its own plan.
 fn pausing_plan(app: &std::sync::Arc<App>, root: &Path) -> (Plan, Vec<PathBuf>) {
     let id = std::sync::Arc::new(std::sync::OnceLock::new());

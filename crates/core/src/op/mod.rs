@@ -12,6 +12,7 @@ mod entry_ref;
 mod executor;
 mod order;
 pub mod records;
+pub mod staging;
 mod sys;
 
 use std::ffi::OsStr;
