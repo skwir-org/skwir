@@ -816,11 +816,13 @@ pub fn render(
             .on_click(cx.listener({
                 let busy = busy.is_some();
                 let item = item.clone();
-                move |this, _, window, cx| {
+                let clicks = place.clicks.clone();
+                move |this, ev: &gpui::ClickEvent, window, cx| {
                     this.sidebar_keys.cursor = Some(item.clone());
                     // A second click while it unlocks would ask again.
                     if !busy {
-                        this.run(&open.name, open.args.clone(), window, cx);
+                        let run = clicked(&clicks, &open, ev.modifiers(), this.pane);
+                        this.run(&run.name, run.args, window, cx);
                     }
                 }
             }))
@@ -933,6 +935,32 @@ pub fn render(
         // outside the scrolled column, whose height it would add to.
         .children(shell.host_area_marker(MenuHost::Sidebar))
         .into_any_element()
+}
+
+/// What a click on a place runs: with a modifier, what the place says
+/// (`Place::clicks`: a tag's pill narrows with Shift and shows its files
+/// here with Alt, All Tags with Alt the tags of the folder shown), given
+/// the pane; else opening it.
+fn clicked(
+    clicks: &[bibli_core::registry::Click],
+    open: &Invocation,
+    modifiers: gpui::Modifiers,
+    pane: bibli_core::workspace::PaneId,
+) -> Invocation {
+    let held = if modifiers.shift {
+        "shift"
+    } else if modifiers.alt {
+        "alt"
+    } else {
+        ""
+    };
+    clicks
+        .iter()
+        .find(|click| click.modifier == held)
+        .map_or_else(
+            || open.clone(),
+            |click| click.command.clone().with("pane", pane),
+        )
 }
 
 /// A group dragged by its header to another position among the groups.
@@ -1143,21 +1171,7 @@ fn pill(
             let item = Item::of(place);
             move |this, ev: &gpui::ClickEvent, window, cx| {
                 this.sidebar_keys.cursor = Some(item.clone());
-                // With a modifier, what the place says it runs (a tag's
-                // pill: Shift narrows, Alt shows its files here).
-                let m = ev.modifiers();
-                let held = if m.shift {
-                    "shift"
-                } else if m.alt {
-                    "alt"
-                } else {
-                    ""
-                };
-                let run = clicks
-                    .iter()
-                    .find(|click| click.modifier == held)
-                    .map(|click| click.command.clone().with("pane", this.pane));
-                let run = run.unwrap_or_else(|| open.clone());
+                let run = clicked(&clicks, &open, ev.modifiers(), this.pane);
                 this.run(&run.name, run.args, window, cx);
             }
         }))

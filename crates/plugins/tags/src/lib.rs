@@ -996,6 +996,14 @@ impl Plugin for TagsPlugin {
             |a, app| browse::pill(app, &a),
         )
         .shows();
+        app.commands.register::<browse::BrowseArgs, _>(
+            ID,
+            "tags.browse",
+            "Tags of a folder",
+            "Show every tag of the files under a folder (`in`, an absolute path) as places to browse, each a folder of its files: the folder the pane shows when omitted, or the one a tag location or a search there is of",
+            |a, app| browse::browse(app, &a),
+        )
+        .shows();
         app.commands.register::<browse::PaneOnly, _>(
             ID,
             "tags.keep",
@@ -1140,9 +1148,30 @@ impl Plugin for TagsPlugin {
                 when: Some("pane selection !place".into()),
             },
         );
+        app.registry.keymap.add(
+            ID,
+            KeyBinding {
+                // From a folder, a tag of it or a search there: its tags.
+                keys: "alt-g".into(),
+                command: Invocation::new("tags.browse"),
+                when: Some("pane".into()),
+            },
+        );
         app.registry.menus.add(
             ID,
             menu_item("Tags…", Invocation::new("ui.tags_prompt"), 150, "tag"),
+        );
+        // The folder's own menu, beside Search here and the Usage view.
+        app.registry.menus.add(
+            ID,
+            MenuItem::new(
+                "context",
+                "Browse tags here",
+                "tag",
+                425,
+                Invocation::new("tags.browse"),
+            )
+            .when("empty folder"),
         );
         // Rarely set from a menu: grouped, the menu expands them in place.
         for stars in (0..=5u8).rev() {

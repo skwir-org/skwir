@@ -355,6 +355,18 @@ pub trait LocationProvider: Send + Sync {
         Vec::new()
     }
 
+    /// The places of this scheme that are of `folder` (its tags,
+    /// `tags:/?in=folder`), whose trail goes on from it (`Trail::base`):
+    /// listed in the folder's menu of what it holds before its folders
+    /// (`App::places_in`). `along` is where the trail shown goes on from
+    /// `folder`: when it is one of these places as that trail has it
+    /// (narrowed), give it as it is, so the menu marks it and choosing it
+    /// keeps what narrows it. Answered from the locations alone, without
+    /// I/O.
+    fn places_of(&self, _folder: &Path, _along: Option<&Location>) -> Vec<Crumb> {
+        Vec::new()
+    }
+
     /// What gestures mean in `location`, when its entries are not its own
     /// files (ADR-032). Answered from the text alone, like `title`.
     fn verbs(&self, _location: &Location) -> Verbs {

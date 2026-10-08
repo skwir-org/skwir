@@ -144,6 +144,15 @@ impl Address {
         Location::new(SCHEME, self.text())
     }
 
+    /// Every tag of `folder`: the top of its tags (`tags:/?in=folder`,
+    /// `tags:/` for the home folder).
+    pub fn of_folder(folder: &Path) -> Address {
+        Address {
+            scope: scope_of(folder.to_path_buf()),
+            ..Address::default()
+        }
+    }
+
     /// The tag `tag` (the top when `None`) of the same folder, narrowed the
     /// same way: where a step along the trail goes.
     pub fn at(&self, tag: Option<String>) -> Address {
@@ -1148,6 +1157,19 @@ impl LocationProvider for Provider {
     fn verbs(&self, location: &Location) -> Verbs {
         Address::parse(&location.rest).verbs()
     }
+
+    /// A folder's tags, first in its menu of what it holds, as its trail
+    /// goes on into them (`Photos › Tags`): narrowed as the trail shown
+    /// has them, when it goes on into them.
+    fn places_of(&self, folder: &Path, along: Option<&Location>) -> Vec<Crumb> {
+        let plain = Address::of_folder(folder);
+        let tags = along
+            .filter(|along| &*along.scheme == SCHEME)
+            .map(|along| Address::parse(&along.rest))
+            .filter(|shown| shown.tag.is_none() && shown.scope == plain.scope)
+            .unwrap_or(plain);
+        vec![Crumb::new("Tags", tags.location())]
+    }
 }
 
 #[cfg(test)]
@@ -1403,6 +1425,22 @@ mod tests {
         );
         let top = contents(&at(None), &files, &drafts).places;
         assert_eq!(top, [("Places".into(), 1), ("Elsewhere".into(), 0)]);
+    }
+
+    #[test]
+    fn a_folder_s_tags_are_a_place_of_it() {
+        let home = std::env::home_dir().unwrap();
+        assert_eq!(
+            Address::of_folder(&home).location(),
+            Location::new(SCHEME, "/"),
+            "the home folder's are every tag, as All Tags opens them"
+        );
+        let photos = home.join("Photos");
+        let of = Address::of_folder(&photos);
+        assert_eq!(Address::parse(&of.text()), of);
+        assert_eq!(of.scope.as_deref(), Some(photos.as_path()));
+        assert_eq!(of.tag, None);
+        assert_eq!(of.trail().base.as_deref(), Some(photos.as_path()));
     }
 
     #[test]

@@ -1,7 +1,9 @@
 //! The pane row's menus of places: the history behind Back or ahead of
 //! Forward (their right-click, `ui.history_menu`), the places inside a
 //! place of the trail (the chevron after it, `ui.subfolder_menu`): a
-//! folder's folders, a tag's tags (`LocationProvider::places`), and the
+//! folder's folders after the places of it (its tags,
+//! `LocationProvider::places_of`), a tag's tags
+//! (`LocationProvider::places`), and the
 //! folders a trail leaves out above its first place (the chevron before
 //! it, `ui.parents_menu`), which there is no Up button to reach, and
 //! what a narrow pane wrapped out of sight above the first place it
@@ -17,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use bibli_core::os_path::PathArg;
 use bibli_core::workspace::PaneId;
-use gpui::{AnyElement, Context, SharedString, Window, prelude::*};
+use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*};
 
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -57,6 +59,9 @@ struct NavRow {
     enabled: bool,
     /// How far in the row stands: the folders above a trail are a tree.
     depth: usize,
+    /// A line above it: a folder's folders after the places of it (its
+    /// tags).
+    rule: bool,
 }
 
 /// The open menu of places.
@@ -132,6 +137,7 @@ impl Shell {
                 current: false,
                 enabled: true,
                 depth: 0,
+                rule: false,
             })
             .collect();
         self.nav_menu = Some(NavMenu {
@@ -176,9 +182,10 @@ impl Shell {
         let shown = self.app.pane_location(pane);
         let app = self.app.clone();
         let reading = of.clone();
+        let along = current.clone();
         self.off_thread(
             "inside",
-            move || app.places_in(&reading, hidden),
+            move || app.places_in(&reading, along.as_ref(), hidden),
             move |shell, read, window, cx| {
                 if shell.nav_asked != asked || shell.app.pane_location(pane) != shown {
                     return;
@@ -274,6 +281,7 @@ impl Shell {
                 current: segment.location.same_place(of),
                 enabled: true,
                 depth: rows.len(),
+                rule: false,
             });
         }
         rows
@@ -298,6 +306,7 @@ fn inside_rows(
     current: Option<&bibli_core::Location>,
 ) -> Vec<NavRow> {
     let total = inside.len();
+    let first_folder = inside.iter().position(|p| p.location.is_path());
     let navigate = |l: &bibli_core::Location| serde_json::json!({ "location": l.arg() });
     let mut rows: Vec<NavRow> = inside
         .into_iter()
@@ -314,8 +323,16 @@ fn inside_rows(
             current: current.is_some_and(|c| c.same_place(&place.location)),
             enabled: true,
             depth: 0,
+            rule: false,
         })
         .collect();
+    // The folders apart from the places of the folder before them.
+    if let Some(row) = first_folder
+        .filter(|&i| i > 0)
+        .and_then(|i| rows.get_mut(i))
+    {
+        row.rule = true;
+    }
     let note = |label: String, enabled: bool, icon: &'static str| NavRow {
         tip: label.clone().into(),
         label: label.into(),
@@ -325,6 +342,7 @@ fn inside_rows(
         current: false,
         enabled,
         depth: 0,
+        rule: false,
     };
     if total == 0 {
         rows.push(note("Nothing inside".to_owned(), false, ""));
@@ -379,6 +397,7 @@ fn parent_rows(top: &Path, mark: bool) -> Vec<NavRow> {
             current: mark && folder == top,
             enabled: true,
             depth,
+            rule: false,
         })
         .collect()
 }
@@ -397,6 +416,9 @@ pub fn panel(shell: &Shell, pane: PaneId, cx: &mut Context<Shell>) -> Option<Any
         .min_w(gpui::px(200.))
         .max_w(gpui::px(360.));
     for (i, row) in menu.rows.iter().enumerate() {
+        if row.rule {
+            panel = panel.child(div().my_1().h(gpui::px(1.)).bg(theme.border));
+        }
         panel = panel.child(
             Button::new(
                 SharedString::from(format!("nav-{i}")),

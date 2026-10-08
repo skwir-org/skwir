@@ -140,7 +140,9 @@ go faster, and always checks the files themselves.
   category can hold one tag at a time (Status: Draft, Done).
 - **Tags are places.** `tags:/` lists every tag in your home folder, each
   a folder of the files it holds; drop files on a tag to tag them, and
-  pin the tags you use in the sidebar.
+  pin the tags you use in the sidebar. `Alt+G` shows the tags of the
+  folder you are in (also first in the menu of the trail's last chevron,
+  and All Tags with `Alt`).
 - **Copies keep them.** A copy keeps the tags, the rating, the comment
   and where a download came from, onto a drive that keeps no attributes
   too (Settings › General). A move keeps them always.

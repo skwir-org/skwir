@@ -360,6 +360,70 @@ fn a_pill_alt_clicked_shows_its_tag_in_the_folder_shown() {
 }
 
 #[test]
+fn a_folder_s_tags_are_one_step_from_it() {
+    let s = setup();
+    // The menu of what the folder holds (its trail's chevron): its tags
+    // first, then its folders.
+    let folder = Location::from_path(&s.root);
+    let inside = s.app.places_in(&folder, None, false).unwrap();
+    let labels: Vec<&str> = inside.iter().map(|c| c.label.as_str()).collect();
+    assert_eq!(labels, ["Tags", "trips"]);
+    assert_eq!(inside[0].location, tag_location(&s.root, None));
+    // Shown narrowed, the trail goes on into its tags narrowed: the menu
+    // has them so (marked, and kept when chosen).
+    let narrowed = Address {
+        tag: Some("Places/France".into()),
+        scope: Some(s.root.clone()),
+        with: vec!["family".into()],
+        ..Address::default()
+    }
+    .location();
+    let trail = s.app.trail(&narrowed).unwrap();
+    assert_eq!(trail.base.as_deref(), Some(s.root.as_path()));
+    let along = &trail.crumbs[0].location;
+    let inside = s.app.places_in(&folder, Some(along), false).unwrap();
+    assert_eq!(&inside[0].location, along);
+    assert_ne!(inside[0].location, tag_location(&s.root, None));
+    // Going on into a folder, or another folder's tags: as they are.
+    let subfolder = Location::from_path(s.root.join("trips"));
+    let its_tags = tag_location(&s.root.join("trips"), None);
+    for along in [&subfolder, &its_tags] {
+        let inside = s.app.places_in(&folder, Some(along), false).unwrap();
+        assert_eq!(inside[0].location, tag_location(&s.root, None));
+    }
+    // Browse tags here: the folder shown.
+    go(&s, &Location::from_path(&s.root));
+    s.app.dispatch(&Invocation::new("tags.browse")).unwrap();
+    assert_eq!(shows(&s), tag_location(&s.root, None));
+    assert!(s.app.pump_until_complete(s.pane, Duration::from_secs(10)));
+    assert_eq!(
+        listed(&s).0,
+        set(&[("Places", 4), ("family", 2), ("work", 1)])
+    );
+    // All Tags with Alt, in a tag of the folder: the top of its tags.
+    go(&s, &tag_location(&s.root, Some("Places/France")));
+    s.app.dispatch(&Invocation::new("tags.browse")).unwrap();
+    assert_eq!(shows(&s), tag_location(&s.root, None));
+    // A folder named, by an absolute path only.
+    let trips = s.root.join("trips");
+    s.app
+        .dispatch(&Invocation::with_args(
+            "tags.browse",
+            &serde_json::json!({ "in": &trips }),
+        ))
+        .unwrap();
+    assert_eq!(shows(&s), tag_location(&trips, None));
+    assert!(
+        s.app
+            .dispatch(&Invocation::with_args(
+                "tags.browse",
+                &serde_json::json!({ "in": "trips" }),
+            ))
+            .is_err()
+    );
+}
+
+#[test]
 fn a_file_of_a_tag_is_shown_in_its_folder() {
     let s = setup();
     go(&s, &tag_location(&s.root, Some("Places/France/Lyon")));

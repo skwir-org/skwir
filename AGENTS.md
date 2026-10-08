@@ -150,7 +150,10 @@ current source before assuming a planned crate, command, or API exists.
   (`ui.history_menu`, `back`/`forward` with `steps`); each chevron of the
   trail lists the folders inside the segment before it, and one after the
   last those inside the folder shown (`ui.subfolder_menu`, read on a
-  worker, `nav_menu.rs`); one before the first, when the trail starts at
+  worker, `nav_menu.rs`), after the places of that folder its providers
+  give (`LocationProvider::places_of`: its tags, a line between, as
+  the trail shown has them when it goes on into them, narrowed); one
+  before the first, when the trail starts at
   a folder of the sidebar (Home, a drive: anything but `/`), lists the
   folders above it from the root down, by their own names as every
   chevron's menu does (`ui.parents_menu`). In a narrow pane, the first
@@ -388,7 +391,9 @@ current source before assuming a planned crate, command, or API exists.
   is `OpenLocation::holds`.
 - **Tags are places** (ADR-032). The tags plugin provides `tags:`
   locations (`location.rs`): `tags:/Places/France` is the tag
-  `Places/France` of the home folder (`in` names another folder), its
+  `Places/France` of the home folder (`in` names another folder: a
+  folder's tags are one step from it, first in its chevron's menu, its
+  menu's Browse tags here, Alt+G and All Tags with Alt, `tags.browse`), its
   tags listed as places, each counting the files within it, and its own
   files those tagged with it exactly, or everything within it with
   `deep` (the View menu's Include Sub-Tags, a `Trail::toggles`). What

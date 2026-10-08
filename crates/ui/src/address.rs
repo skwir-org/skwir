@@ -1234,11 +1234,8 @@ fn breadcrumbs(
                 "location": serde_json::json!(of.location.arg()),
                 "current": current.map(|crumb| crumb.location.arg()),
             }),
-            if of.location.is_path() {
-                format!("Folders in {}", of.label).into()
-            } else {
-                format!("In {}", of.label).into()
-            },
+            // A folder's menu lists the places of it too (its tags).
+            format!("In {}", of.label).into(),
             above,
             cx,
         )

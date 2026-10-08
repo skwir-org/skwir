@@ -306,13 +306,21 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
             ..Place::new(GROUP, r.tag.clone(), "", Location::parse(&r.location))
         }
     });
-    // Last, every tag: the home folder's tags, browsed as folders.
-    let all = Some(Place::new(
-        GROUP,
-        "All Tags",
-        "tag",
-        crate::location::Address::default().location(),
-    ));
+    // Last, every tag: the home folder's tags, browsed as folders; with
+    // Alt, those of the folder shown (`tags.browse`), as a tag's pill
+    // shows its files there.
+    let all = Some(Place {
+        clicks: vec![Click {
+            modifier: "alt".into(),
+            command: Invocation::new("tags.browse"),
+        }],
+        ..Place::new(
+            GROUP,
+            "All Tags",
+            "tag",
+            crate::location::Address::default().location(),
+        )
+    });
     let places = places.chain(all);
     if app.registry.places.replace_owner(crate::ID, places) {
         app.wake();

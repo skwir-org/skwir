@@ -480,29 +480,43 @@ impl App {
     }
 
     /// What is inside `location`, for the trail's menus: a folder's
-    /// folders (hidden ones with `hidden`), else the places its provider
-    /// says. One answer for both, so the menus list them one way. Reads:
-    /// on a worker.
+    /// folders (hidden ones with `hidden`), after the places the
+    /// providers keep of it (`LocationProvider::places_of`: its tags,
+    /// narrowed as the trail shown has them when it goes on into them,
+    /// `along`), else the places its provider says. One answer for both,
+    /// so the menus list them one way. Reads: on a worker.
     ///
     /// # Errors
     /// When a folder cannot be read.
     pub fn places_in(
         &self,
         location: &Location,
+        along: Option<&Location>,
         hidden: bool,
     ) -> std::io::Result<Vec<crate::location::Crumb>> {
         if let Some(dir) = location.path() {
-            return Ok(crate::fs::subfolders(&dir, hidden)?
-                .into_iter()
-                .map(|dir| {
-                    let name = dir
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned();
-                    crate::location::Crumb::new(name, Location::from_path(dir))
-                })
-                .collect());
+            let folders = crate::fs::subfolders(&dir, hidden)?;
+            // Asked with the lock let go, in the order of their schemes.
+            let mut providers: Vec<(Arc<str>, Arc<dyn LocationProvider>)> = self
+                .providers
+                .read()
+                .iter()
+                .map(|(scheme, (_, p))| (Arc::clone(scheme), Arc::clone(p)))
+                .collect();
+            providers.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut places: Vec<crate::location::Crumb> = providers
+                .iter()
+                .flat_map(|(_, provider)| provider.places_of(&dir, along))
+                .collect();
+            places.extend(folders.into_iter().map(|dir| {
+                let name = dir
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                crate::location::Crumb::new(name, Location::from_path(dir))
+            }));
+            return Ok(places);
         }
         Ok(self
             .provider(&location.scheme)

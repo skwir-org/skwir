@@ -93,9 +93,14 @@ paths are (`tags:/Places/France`):
   by bar offers them, counted.
 - **It is of a folder**: `tags:/` is the home folder's, and any folder's
   tags are one step from it (`in`), drawn after its own trail
-  (`Photos › Tags › Places`). The tags index (ADR-026) answers: at once
-  where a count covered the folder, then checked as the Tags view
-  checked; a first visit counts, under the loading banner.
+  (`Photos › Tags › Places`). That step is where the trail says it is:
+  first in the menu of what the folder holds (its chevron, a place of
+  it, `LocationProvider::places_of`: narrowed as the trail shown has
+  it), and in its own menu (Browse tags here, Alt+G); All Tags with Alt
+  shows the tags of the folder shown, as a tag's pill with Alt shows its
+  files there. The tags index (ADR-026) answers: at once where a count
+  covered the folder, then checked as the Tags view checked; a first
+  visit counts, under the loading banner.
 - **A tag folder holds references**: files dropped or pasted on it are
   given the tag; dragged from one tag to another they move (the first
   tag replaced), and Ctrl keeps both; cut from a tag and pasted in a real

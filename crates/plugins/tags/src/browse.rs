@@ -99,6 +99,17 @@ pub struct PillArgs {
     pub how: String,
 }
 
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
+pub struct BrowseArgs {
+    /// The folder whose tags are shown, an absolute path; when omitted,
+    /// the one the pane shows, or the one what it shows is of (a tag
+    /// location's, a search's).
+    #[serde(default, rename = "in")]
+    pub folder: Option<PathArg>,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ExportArgs {
     /// The tag location exported.
@@ -505,6 +516,26 @@ pub fn pill(app: &App, a: &PillArgs) -> anyhow::Result<Outcome> {
             ..Address::default()
         },
     };
+    app.navigate(pane, &address.location())?;
+    Ok(Outcome::Done)
+}
+
+/// `tags.browse`: every tag of a folder (`tags:/?in=…`) in the pane: the
+/// folder named, else the one it shows, or the one what it shows is of
+/// (its trail's base: a tag location's, a search's), else the home
+/// folder. The folder's own menu (Browse tags here), and All Tags clicked
+/// with Alt.
+pub fn browse(app: &App, a: &BrowseArgs) -> anyhow::Result<Outcome> {
+    let pane = app.pane_or_active(a.pane);
+    let folder = match &a.folder {
+        Some(folder) => Some(bibli_core::os_path::absolute(folder)?.to_owned()),
+        None => app.pane_location(pane).and_then(|shown| {
+            shown
+                .path()
+                .or_else(|| app.trail(&shown).and_then(|trail| trail.base))
+        }),
+    };
+    let address = folder.map_or_else(Address::default, |folder| Address::of_folder(&folder));
     app.navigate(pane, &address.location())?;
     Ok(Outcome::Done)
 }
