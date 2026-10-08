@@ -1,0 +1,13 @@
+diff --git a/crates/gpui/Cargo.toml b/crates/gpui/Cargo.toml
+index edb1ce8..1730ea4 100644
+--- a/crates/gpui/Cargo.toml
++++ b/crates/gpui/Cargo.toml
+@@ -384,7 +384,7 @@ features = ["union"]
+ version = "2.0"
+ 
+ [dependencies.stacksafe]
+-version = "0.1"
++version = "1"
+ 
+ [dependencies.strum]
+ version = "0.27.2"

@@ -35,8 +35,9 @@ roxmltree.workspace = true
 # SVG pictures in documents, and fixed-layout pages drawn as SVG with the
 # book's fonts; the version and features gpui already links.
 resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
-# Font metrics for laying out a fixed page's text; the version fontdb uses.
-ttf-parser = "0.25"
+# Font metrics for laying out a fixed page's text: skrifa (fontations,
+# maintained), the version gpui's glyph rasterizer (swash) already brings.
+skrifa = "0.44"
 # Compressed drawings (`.svgz`), inflated within a bound; the version and
 # backend already in the tree.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }

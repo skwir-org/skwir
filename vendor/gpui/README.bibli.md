@@ -224,6 +224,16 @@ With 0012 to 0014, bibli's first frame went from a median of 134.6 ms to
 alternated back to back on a quiet machine); 0013 and 0014 are the ones on
 that path.
 
+- `0015-stacksafe-1.patch`: gpui asked for `stacksafe` 0.1, whose
+  attribute macro is built on `proc-macro-error2`, code a future Rust
+  refuses (cargo's future-incompatibility warning on every build).
+  `stacksafe` 1.0 is the same crate with its macro on `syn` alone: the
+  same `StackSafe` and `#[stacksafe]`, expanded to the same
+  `stacker::maybe_grow` with the same sizes, and the same check in debug
+  builds that a `StackSafe` is reached only inside such a function; gpui's
+  code is unchanged. In Zed the dependency is declared in the workspace
+  `Cargo.toml`; this diff is against the manifest as `0009` left it.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

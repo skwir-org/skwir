@@ -12,15 +12,11 @@ targets = [
 
 [advisories]
 version = 2
+# A crate no longer maintained counts where bibli's own crates name it:
+# one that comes only with a dependency (ttf-parser, with the text of gpui
+# and resvg) is that dependency's to replace.
 unmaintained = "workspace"
 yanked = "deny"
-ignore = [
-    # ttf-parser is unmaintained, not known vulnerable. gpui's text stack
-    # (cosmic-text, fontdb, rustybuzz) uses it; bibli's own uses (the font
-    # preview, fonts embedded in a book) are to move to skrifa, which the
-    # advisory names (docs/PLAN.md, Release 0.1).
-    { id = "RUSTSEC-2026-0192", reason = "unmaintained, used by gpui's text stack; ours to move to skrifa" },
-]
 
 [licenses]
 version = 2

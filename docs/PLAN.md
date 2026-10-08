@@ -2440,10 +2440,16 @@ Steps, each with what was found and what is left:
    a thumbnail), with no job of the scheduler panicking. Each ran
    20,000 cases once, but those that write a file a case (MP4,
    packages, tile archives: 64 to 128) and the preview test (4,000);
-   the tests keep 256 (the preview test 128). Nothing panicked: the readers check before they
-   cut. Not covered: what runs in a helper of its own (PDF, media,
-   archives, 3D models, Mermaid), where a crash ends the helper, not
-   bibli.
+   the tests keep 256 (the preview test 128). Nothing panicked: the
+   readers check before they cut. The font preview's (2026-10-08, with
+   its move to `skrifa`, below) found a panic in `read-fonts`, skrifa's
+   parser, still there in its latest release (0.45): a simple glyph
+   declaring no points but holding bytes after its instructions is read
+   past its flags. The specimen catches it per glyph and leaves that
+   glyph out, as the MuPDF worker does its binding's fault with links
+   (a test builds that glyph); to report upstream. Not covered: what
+   runs in a helper of its own (PDF, media, archives, 3D models,
+   Mermaid), where a crash ends the helper, not bibli.
 4. **Files under failure.** A plan interrupted (bibli killed between
    steps), a full disk, a read-only folder, a permission refused, a
    name too long, a drive pulled during a copy: what is on disk after,
@@ -2532,10 +2538,10 @@ Steps, each with what was found and what is left:
    alone, and every `unsafe_code` one states its safety (one test's did
    not); twenty-two dependencies their crates never named, found by
    cargo-machete and checked in each crate's code, are gone; every
-   crate says `publish = false`. Left: `proc-macro-error2` comes with
-   gpui's `stacksafe` 0.1 (1.0 drops it, a vendored patch or gpui's
-   next update); no file was split, none of the next changes needing
-   it.
+   crate says `publish = false`. `proc-macro-error2` came with gpui's
+   `stacksafe` 0.1; gpui asks for 1.0 since 2026-10-08 (vendored patch
+   0015), the same crate with its macro on `syn` alone, and it is gone.
+   Left: no file was split, none of the next changes needing it.
 8. **Licences.** The dependencies' licences (listed 2026-10-07) are
    permissive, MPL-2.0 for ten crates, and the AGPL for MuPDF's worker
    alone (ADR-014). The packages carry bibli's licence and PDFium's
@@ -2561,7 +2567,15 @@ Steps, each with what was found and what is left:
    unmaintained, replaced in the tests by rustls' own PEM reading.
    `ttf-parser` is unmaintained, used by gpui's text stack and by the
    font preview and books' fonts: ignored with its reason, ours to move
-   to `skrifa`. The toolbar's icons were made for bibli
+   to `skrifa`. Moved 2026-10-08: the font preview reads a font with
+   `skrifa` and draws its specimen with `zeno` (both already in the
+   tree with gpui's glyph rasterizer, `swash`; `fontdue` is gone, which
+   read fonts with `ttf-parser` too), and a book's fixed pages take their
+   fonts' metrics from `skrifa`; `ttf-parser` now comes only with the
+   text of gpui and of resvg (`fontdb`, `rustybuzz`), which still read
+   a book's fonts and system fonts through it, and its advisory no
+   longer concerns a crate of bibli's: the ignore is gone. The
+   toolbar's icons were made for bibli
    (`crates/ui/assets/toolbar/README.md`). Left for the macOS and
    Windows packages: their notices.
 9. **Documents**: the README (Linux, the packages, what works), a user

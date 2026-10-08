@@ -1102,9 +1102,13 @@ impl Metrics {
         let units = self.units;
         let advance = db
             .with_face_data(face, |data, index| {
-                let face = ttf_parser::Face::parse(data, index).ok()?;
-                let glyph = face.glyph_index(c)?;
-                Some(f32::from(face.glyph_hor_advance(glyph)?) / units)
+                use skrifa::MetadataProvider;
+                let font = skrifa::FontRef::from_index(data, index).ok()?;
+                let glyph = font.charmap().map(c)?;
+                let unscaled = skrifa::instance::Size::unscaled();
+                let metrics =
+                    font.glyph_metrics(unscaled, skrifa::instance::LocationRef::default());
+                Some(metrics.advance_width(glyph)? / units)
             })
             .flatten()
             .unwrap_or(0.5);
@@ -1242,13 +1246,18 @@ impl Fonts {
                 .map_or_else(String::new, |(family, _)| family.clone());
             let (units, ascent, descent, gap) = db
                 .with_face_data(face, |data, index| {
-                    let face = ttf_parser::Face::parse(data, index).ok()?;
-                    let units = f32::from(face.units_per_em()).max(1.);
+                    use skrifa::MetadataProvider;
+                    let font = skrifa::FontRef::from_index(data, index).ok()?;
+                    let metrics = font.metrics(
+                        skrifa::instance::Size::unscaled(),
+                        skrifa::instance::LocationRef::default(),
+                    );
+                    let units = f32::from(metrics.units_per_em).max(1.);
                     Some((
                         units,
-                        f32::from(face.ascender()) / units,
-                        -f32::from(face.descender()) / units,
-                        f32::from(face.line_gap()) / units,
+                        metrics.ascent / units,
+                        -metrics.descent / units,
+                        metrics.leading / units,
                     ))
                 })
                 .flatten()

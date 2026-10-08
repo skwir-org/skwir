@@ -73,7 +73,7 @@ impl PreviewProvider for Provider {
         let bytes =
             inspection::read_bounded(&req.entry.resolve()?, limits::BINARY_INPUT, "Font", cancel)?;
         let (font, packed) = unpacked(bytes)?;
-        specimen(font, packed, view, cancel).map(Some)
+        specimen(&font, packed, view, cancel).map(Some)
     }
 }
 /// A web font unpacked into the font it carries, and what it was packed
@@ -117,59 +117,63 @@ fn unpacked(bytes: Vec<u8>) -> anyhow::Result<(Vec<u8>, Option<&'static str>)> {
     }
 }
 fn specimen(
-    bytes: Vec<u8>,
+    bytes: &[u8],
     packed: Option<&str>,
     view: &InspectRequest,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
-    let face = ttf_parser::Face::parse(&bytes, 0)?;
-    check_metrics(&face)?;
-    // A name has one record per platform and language, and only the Unicode
-    // ones decode: take the first that does, not the first with the id.
+    use skrifa::MetadataProvider;
+    use skrifa::raw::TableProvider;
+    use skrifa::string::StringId;
+    let font = skrifa::FontRef::from_index(bytes, 0)
+        .map_err(|_| anyhow::anyhow!("This font cannot be read"))?;
+    check_metrics(&font)?;
+    // A name has one record per platform and language: the English one,
+    // else the first that decodes.
     let named = |id| {
-        face.names()
-            .into_iter()
-            .filter(|n| n.name_id == id)
-            .find_map(|n| n.to_string())
+        font.localized_strings(id)
+            .english_or_first()
+            .map(|name| name.to_string())
+            .filter(|name| !name.trim().is_empty())
     };
-    let name = named(ttf_parser::name_id::FULL_NAME).unwrap_or_else(|| "Font specimen".into());
-    let glyphs = face.number_of_glyphs();
+    let name = named(StringId::FULL_NAME).unwrap_or_else(|| "Font specimen".into());
+    let glyphs = font.maxp().map_or(0, |maxp| maxp.num_glyphs());
     // What the name table says, for the panel's Details, then what the
     // tables hold.
-    let tables = face.tables();
-    let outlines = if tables.glyf.is_some() {
+    let has = |tag: &[u8; 4]| font.table_data(skrifa::Tag::new(tag)).is_some();
+    let outlines = if has(b"glyf") {
         Some("TrueType")
-    } else if tables.cff.is_some() || tables.cff2.is_some() {
+    } else if has(b"CFF ") || has(b"CFF2") {
         Some("PostScript (CFF)")
-    } else if tables.sbix.is_some()
-        || tables.cbdt.is_some()
-        || tables.ebdt.is_some()
-        || tables.bdat.is_some()
-    {
+    } else if has(b"sbix") || has(b"CBDT") || has(b"EBDT") || has(b"bdat") {
         Some("Bitmaps only")
     } else {
         None
     };
     let mut details = inspection::details([
-        ("Family", named(ttf_parser::name_id::FAMILY)),
-        ("Style", named(ttf_parser::name_id::SUBFAMILY)),
-        ("Version", named(ttf_parser::name_id::VERSION)),
-        ("Designer", named(ttf_parser::name_id::DESIGNER)),
-        ("License", named(ttf_parser::name_id::LICENSE)),
+        ("Family", named(StringId::FAMILY_NAME)),
+        ("Style", named(StringId::SUBFAMILY_NAME)),
+        ("Version", named(StringId::VERSION_STRING)),
+        ("Designer", named(StringId::DESIGNER)),
+        ("License", named(StringId::LICENSE_DESCRIPTION)),
         ("Glyphs", inspection::count(usize::from(glyphs))),
         ("Outlines", outlines.map(str::to_owned)),
-        ("Variable", face.is_variable().then(|| "Yes".to_owned())),
+        (
+            "Variable",
+            (!font.axes().is_empty()).then(|| "Yes".to_owned()),
+        ),
         ("Packed as", packed.map(str::to_owned)),
     ]);
-    let font = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())
-        .map_err(anyhow::Error::msg)?;
-    let mut chars: Vec<_> = font
-        .chars()
-        .keys()
-        .copied()
+    // The characters the font maps to a glyph of its own.
+    let mut chars: Vec<char> = font
+        .charmap()
+        .mappings()
+        .filter(|(_, glyph)| *glyph != skrifa::GlyphId::NOTDEF)
+        .filter_map(|(code, _)| char::from_u32(code))
         .filter(|c| !c.is_control())
         .collect();
     chars.sort_unstable();
+    chars.dedup();
     details.extend(inspection::detail("Characters", chars.len().to_string()));
     let sheet = limits::SHEET_GLYPHS;
     let offset = view.offset.min(chars.len().saturating_sub(1) as u64) as usize;
@@ -219,20 +223,29 @@ fn specimen(
 /// Reject fonts whose declared scale or bounds cannot produce sane glyphs
 /// before any layout happens. Per-glyph outlines are still checked when drawn,
 /// because the head table's bounds are declared, not computed.
-fn check_metrics(face: &ttf_parser::Face<'_>) -> anyhow::Result<()> {
-    let upem = face.units_per_em();
-    // The OpenType range; fontdue scales every outline by `px / units_per_em`.
+fn check_metrics(font: &skrifa::FontRef<'_>) -> anyhow::Result<()> {
+    use skrifa::raw::TableProvider;
+    let head = font
+        .head()
+        .map_err(|_| anyhow::anyhow!("This font has no readable header"))?;
+    let upem = head.units_per_em();
+    // The OpenType range; outlines are scaled by `px / units_per_em`.
     anyhow::ensure!(
         (16..=16384).contains(&upem),
         "Font declares {upem} units per em (expected 16–16384)"
     );
-    let bounds = face.global_bounding_box();
+    let (x_min, y_min, x_max, y_max) = (
+        i32::from(head.x_min()),
+        i32::from(head.y_min()),
+        i32::from(head.x_max()),
+        i32::from(head.y_max()),
+    );
     let limit = f32::from(upem) * BOUNDS_EMS;
     anyhow::ensure!(
-        f32::from(bounds.width()) <= limit
-            && f32::from(bounds.height()) <= limit
-            && bounds.x_min <= bounds.x_max
-            && bounds.y_min <= bounds.y_max,
+        (x_max - x_min) as f32 <= limit
+            && (y_max - y_min) as f32 <= limit
+            && x_min <= x_max
+            && y_min <= y_max,
         "Font declares outline bounds beyond {BOUNDS_EMS} ems"
     );
     Ok(())
@@ -243,54 +256,153 @@ fn glyph_fits(width: usize, height: usize) -> bool {
         .checked_mul(height)
         .is_some_and(|px| px <= GLYPH_PIXELS)
 }
-/// Draw `text` at `y`; returns how many glyphs were skipped for being too large.
+/// A glyph's outline as `zeno` draws it: the font's units scaled by the
+/// outline itself, moved to where the glyph stands, `y` turned down.
+struct Pen {
+    commands: Vec<zeno::Command>,
+    origin: (f32, f32),
+}
+impl Pen {
+    fn at(&self, x: f32, y: f32) -> zeno::Vector {
+        zeno::Vector::new(self.origin.0 + x, self.origin.1 - y)
+    }
+    /// The box every point lies in, control points included: it holds the
+    /// glyph, whatever its curves. None for an empty outline or one with a
+    /// point that is no number.
+    fn bounds(&self) -> Option<(f32, f32, f32, f32)> {
+        use zeno::Command as C;
+        let mut points = self.commands.iter().flat_map(|c| match *c {
+            C::MoveTo(p) | C::LineTo(p) => vec![p],
+            C::QuadTo(a, p) => vec![a, p],
+            C::CurveTo(a, b, p) => vec![a, b, p],
+            C::Close => Vec::new(),
+        });
+        let finite = |p: zeno::Vector| p.x.is_finite() && p.y.is_finite();
+        let first = points.next().filter(|p| finite(*p))?;
+        points.try_fold((first.x, first.y, first.x, first.y), |(l, t, r, b), p| {
+            finite(p).then(|| (l.min(p.x), t.min(p.y), r.max(p.x), b.max(p.y)))
+        })
+    }
+}
+impl skrifa::outline::OutlinePen for Pen {
+    fn move_to(&mut self, x: f32, y: f32) {
+        let p = self.at(x, y);
+        self.commands.push(zeno::Command::MoveTo(p));
+    }
+    fn line_to(&mut self, x: f32, y: f32) {
+        let p = self.at(x, y);
+        self.commands.push(zeno::Command::LineTo(p));
+    }
+    fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
+        let (c, p) = (self.at(cx0, cy0), self.at(x, y));
+        self.commands.push(zeno::Command::QuadTo(c, p));
+    }
+    fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
+        let (a, b, p) = (self.at(cx0, cy0), self.at(cx1, cy1), self.at(x, y));
+        self.commands.push(zeno::Command::CurveTo(a, b, p));
+    }
+    fn close(&mut self) {
+        self.commands.push(zeno::Command::Close);
+    }
+}
+/// Draw `text` at `y`, its lines broken between words to fit the canvas;
+/// returns how many glyphs were skipped for being too large, and where the
+/// text ends.
 fn draw(
-    font: &fontdue::Font,
+    font: &skrifa::FontRef<'_>,
     text: &str,
     size: f32,
     y: f32,
     pixels: &mut [u8],
     cancel: &CancelToken,
 ) -> anyhow::Result<(usize, f32)> {
-    use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
-    let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
-    layout.reset(&LayoutSettings {
-        x: 16.,
-        y,
-        max_width: Some(WIDTH as f32 - 32.),
-        ..LayoutSettings::default()
-    });
-    layout.append(&[font], &TextStyle::new(text, size, 0));
+    use skrifa::MetadataProvider;
+    use skrifa::instance::{LocationRef, Size};
+    let (scale, location) = (Size::new(size), LocationRef::default());
+    let charmap = font.charmap();
+    let outlines = font.outline_glyphs();
+    let glyph_metrics = font.glyph_metrics(scale, location);
+    let metrics = font.metrics(scale, location);
+    let line = (metrics.ascent - metrics.descent + metrics.leading).max(size);
+    let advance = |c: char| {
+        let glyph = charmap.map(c).unwrap_or(skrifa::GlyphId::NOTDEF);
+        (
+            glyph,
+            glyph_metrics
+                .advance_width(glyph)
+                .unwrap_or(size * 0.5)
+                .max(0.),
+        )
+    };
+    let (left, right) = (16., WIDTH as f32 - 16.);
+    let (mut x, mut baseline) = (left, y + metrics.ascent);
     let mut skipped = 0;
     let mut budget = PASS_PIXELS;
-    for glyph in layout.glyphs() {
-        inspection::check(cancel)?;
-        // Layout metrics come from the same outline bounds rasterization uses;
-        // checking them first keeps fontdue from allocating width × height floats.
-        let metrics = font.metrics_indexed(glyph.key.glyph_index, glyph.key.px);
-        let area = metrics.width.saturating_mul(metrics.height);
-        if !glyph_fits(metrics.width, metrics.height) || area > budget {
-            skipped += 1;
-            continue;
+    for word in text.split_inclusive(' ') {
+        let width: f32 = word.trim_end().chars().map(|c| advance(c).1).sum();
+        if x > left && x + width > right {
+            x = left;
+            baseline += line;
         }
-        budget -= area;
-        let (metrics, bitmap) = font.rasterize_config(glyph.key);
-        for row in 0..metrics.height {
-            for col in 0..metrics.width {
-                let x = glyph.x as i32 + i32::try_from(col)?;
-                let y = glyph.y as i32 + i32::try_from(row)?;
-                if let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y))
-                    && x < WIDTH
-                    && y < HEIGHT
-                {
-                    let start = (y * WIDTH + x) * 4;
-                    let gray = 255 - bitmap[row * metrics.width + col];
-                    pixels[start..start + 3].fill(gray);
+        for c in word.chars() {
+            inspection::check(cancel)?;
+            let (glyph, step) = advance(c);
+            if x > left && x + step > right {
+                x = left;
+                baseline += line;
+            }
+            let mut pen = Pen {
+                commands: Vec::new(),
+                origin: (x, baseline),
+            };
+            x += step;
+            let Some(outline) = outlines.get(glyph) else {
+                continue;
+            };
+            let settings = skrifa::outline::DrawSettings::unhinted(scale, location);
+            // read-fonts (0.41 to 0.45 at least) indexes past a simple
+            // glyph's flags when it declares no points but holds bytes after
+            // its instructions: that glyph is left out, as one it refuses.
+            let drawn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                outline.draw(settings, &mut pen)
+            }));
+            if !matches!(drawn, Ok(Ok(_))) {
+                continue;
+            }
+            let Some((l, t, r, b)) = pen.bounds() else {
+                skipped += usize::from(!pen.commands.is_empty());
+                continue;
+            };
+            // Measured before anything is allocated: a malformed outline
+            // asks for no more pixels than the canvas holds.
+            let (w, h) = ((r - l).ceil() as usize + 1, (b - t).ceil() as usize + 1);
+            let area = w.saturating_mul(h);
+            if !glyph_fits(w, h) || area > budget {
+                skipped += 1;
+                continue;
+            }
+            budget -= area;
+            let (mask, placement) = zeno::Mask::new(&pen.commands).render();
+            let width = placement.width as usize;
+            for (row, coverage) in mask.chunks(width.max(1)).enumerate() {
+                for (col, alpha) in coverage.iter().enumerate() {
+                    let px = placement.left + i32::try_from(col)?;
+                    let py = placement.top + i32::try_from(row)?;
+                    if let (Ok(px), Ok(py)) = (usize::try_from(px), usize::try_from(py))
+                        && px < WIDTH
+                        && py < HEIGHT
+                    {
+                        let start = (py * WIDTH + px) * 4;
+                        let gray = 255 - alpha;
+                        for channel in &mut pixels[start..start + 3] {
+                            *channel = (*channel).min(gray);
+                        }
+                    }
                 }
             }
         }
     }
-    Ok((skipped, y + layout.height()))
+    Ok((skipped, baseline - metrics.descent))
 }
 
 #[cfg(test)]
@@ -438,7 +550,7 @@ mod tests {
     fn render(font: Vec<u8>, query: Option<&str>) -> anyhow::Result<Inspection> {
         let (font, packed) = unpacked(font)?;
         specimen(
-            font,
+            &font,
             packed,
             &InspectRequest {
                 query: query.map(str::to_owned),
@@ -488,11 +600,42 @@ mod tests {
     }
 
     #[test]
+    fn a_glyph_the_font_reader_trips_on_is_left_out() {
+        // `A` declared with no contours: its end point becomes an
+        // instruction length, and what follows reads as flags for points
+        // it does not have.
+        let mut font = synthetic_ttf(1000, 400, 400);
+        let entry = font.windows(4).position(|tag| tag == b"glyf").unwrap();
+        let at = u32::from_be_bytes(font[entry + 8..entry + 12].try_into().unwrap()) as usize;
+        font[at..at + 2].copy_from_slice(&0u16.to_be_bytes());
+        let data = render(font, Some("AAA")).unwrap();
+        let image = data.image.unwrap();
+        assert!(image.rgba.chunks(4).all(|px| px[0] == 255));
+    }
+
+    proptest::proptest! {
+        /// The synthetic font with bytes changed, put in or cut off, and
+        /// bytes at random: a specimen or the reason there is none, never a
+        /// panic.
+        #[test]
+        fn any_font_is_drawn_or_refused(
+            input in proptest::prop_oneof![
+                bibli_core::testing::mutated(synthetic_ttf(1000, 400, 400)),
+                bibli_core::testing::bytes(512),
+            ],
+        ) {
+            let _ = render(input.clone(), None);
+            let _ = render(input, Some("AAA A"));
+        }
+    }
+
+    #[test]
     fn malformed_metrics_are_rejected_before_layout() {
         let error = render(synthetic_ttf(16, 16383, 16383), None).unwrap_err();
         assert!(error.to_string().contains("outline bounds"), "{error}");
-        // ttf-parser already rejects the head table for 8 units per em.
-        assert!(render(synthetic_ttf(8, 4, 4), None).is_err());
+        // 8 units per em is outside OpenType's range.
+        let error = render(synthetic_ttf(8, 4, 4), None).unwrap_err();
+        assert!(error.to_string().contains("units per em"), "{error}");
         assert!(render(b"not a font".to_vec(), None).is_err());
     }
 
@@ -502,6 +645,27 @@ mod tests {
         assert!(!glyph_fits(WIDTH + 1, HEIGHT));
         assert!(!glyph_fits(usize::MAX, 2));
         assert!(glyph_fits(0, 0));
+    }
+
+    #[test]
+    fn an_outline_with_a_point_that_is_no_number_has_no_bounds() {
+        let pen = |points: &[(f32, f32)]| Pen {
+            commands: points
+                .iter()
+                .map(|&(x, y)| zeno::Command::LineTo(zeno::Vector::new(x, y)))
+                .collect(),
+            origin: (0., 0.),
+        };
+        assert_eq!(
+            pen(&[(1., 2.), (3., -4.)]).bounds(),
+            Some((1., -4., 3., 2.))
+        );
+        assert_eq!(pen(&[]).bounds(), None);
+        // `min` and `max` would pass over a NaN and leave a finite box.
+        for bad in [f32::NAN, f32::INFINITY] {
+            assert_eq!(pen(&[(bad, 0.), (1., 1.)]).bounds(), None);
+            assert_eq!(pen(&[(0., 0.), (1., bad)]).bounds(), None);
+        }
     }
 
     /// `font` packed as WOFF, each table compressed; a table can instead
