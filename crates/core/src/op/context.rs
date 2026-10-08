@@ -148,7 +148,24 @@ pub struct StepContext {
     /// volume, so the drive's queue runs on from one item to the next, and
     /// [`Self::write_out`] writes each out.
     paces: RefCell<Vec<(Option<u64>, Rc<super::pace::Pace>)>>,
+    /// What waits until a write-out has put on the drive what this plan
+    /// wrote through (a move's removal of what it copied), done at the
+    /// next one ([`Self::after_write_out`]).
+    waiting: RefCell<Vec<Box<dyn FnOnce() -> anyhow::Result<()>>>>,
+    /// When the last write-out ended (or, before one, when the first
+    /// thing began to wait for it), and how long it took.
+    written_out: std::cell::Cell<(Option<Instant>, Duration)>,
+    /// What failed of a write-out on the way, or of what waited for it:
+    /// told at the plan's end, never by the step it fell on.
+    failed: RefCell<Option<anyhow::Error>>,
 }
+
+/// A plan's write-outs before its end are at least this far apart, and
+/// apart by ten times the last one's length: on a hard drive one takes a
+/// third of a second however little changed, so they stay a tenth of the
+/// plan's time at most.
+const WRITE_OUTS_APART: Duration = Duration::from_secs(1);
+const WRITE_OUT_SHARE: u32 = 10;
 
 impl StepContext {
     pub(super) fn new(cancel: CancelToken, pause: Arc<Pause>, meter: Arc<Meter>) -> Self {
@@ -162,6 +179,9 @@ impl StepContext {
             under_way: None,
             staged_in: RefCell::default(),
             paces: RefCell::default(),
+            waiting: RefCell::default(),
+            written_out: std::cell::Cell::new((None, Duration::ZERO)),
+            failed: RefCell::default(),
         }
     }
 
@@ -185,18 +205,67 @@ impl StepContext {
 
     /// Wait until the drives this plan's copies were written through to
     /// have every byte, then write their volumes out (`syncfs`), names and
-    /// folders included. At the plan's end, and before a move removes what
-    /// it copied: on a journaled or copy-on-write filesystem it commits the
-    /// whole volume, which a hard drive takes a third of a second to do
+    /// folders included, and do what waited for it
+    /// ([`Self::after_write_out`]). At the plan's end, and on the way when
+    /// moves wait: on a journaled or copy-on-write filesystem it commits
+    /// the whole volume, which a hard drive takes a third of a second to do
     /// however little changed.
     ///
     /// # Errors
-    /// When a drive could not write it all.
+    /// When a drive could not write it all (then what waited for it is not
+    /// done: a move's original stays), or what waited failed, now or at a
+    /// write-out on the way: the first failure.
     pub(super) fn write_out(&self) -> anyhow::Result<()> {
-        for (_, pace) in self.paces.borrow().iter() {
-            pace.write_out()?;
+        let now = self.write_out_now();
+        match self.failed.take() {
+            Some(earlier) => Err(earlier),
+            None => now,
         }
-        Ok(())
+    }
+
+    fn write_out_now(&self) -> anyhow::Result<()> {
+        let began = Instant::now();
+        for (_, pace) in self.paces.borrow().iter() {
+            if let Err(e) = pace.write_out() {
+                return Err(if self.waiting.borrow().is_empty() {
+                    e
+                } else {
+                    e.context("what was moved stays where it was")
+                });
+            }
+        }
+        let ended = Instant::now();
+        self.written_out.set((Some(ended), ended - began));
+        // Each is done, whatever the others say: the first failure is told.
+        let mut failed = None;
+        for then in self.waiting.take() {
+            if let Err(e) = then() {
+                failed.get_or_insert(e);
+            }
+        }
+        failed.map_or(Ok(()), Err)
+    }
+
+    /// Do `then` once what this plan wrote through is on the drive, names
+    /// and all: at the next write-out ([`Self::write_out`]), which comes
+    /// once write-outs stay a small share of the plan's time
+    /// (`WRITE_OUT_SHARE`), and at its end. Many moves share one. What
+    /// fails of it is told at the plan's end: the step that asks has done
+    /// what it said (a copy whose original stays is still a copy, and its
+    /// undo still takes it back), and the plan goes on.
+    pub(super) fn after_write_out(&self, then: impl FnOnce() -> anyhow::Result<()> + 'static) {
+        self.waiting.borrow_mut().push(Box::new(then));
+        let (since, took) = self.written_out.get();
+        let since = since.unwrap_or_else(|| {
+            let now = Instant::now();
+            self.written_out.set((Some(now), took));
+            now
+        });
+        if since.elapsed() >= WRITE_OUTS_APART.max(took * WRITE_OUT_SHARE)
+            && let Err(e) = self.write_out_now()
+        {
+            self.failed.borrow_mut().get_or_insert(e);
+        }
     }
 
     /// The same context, noting in `under_way` the folders its copies are
@@ -311,5 +380,59 @@ impl StepContext {
     /// makes.
     pub(super) fn is_folder(&self, path: &Path) -> bool {
         path.is_dir() || self.foreseen.borrow().contains(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    #[test]
+    fn what_waits_for_a_write_out_is_done_at_it_all_of_it() {
+        let ctx = StepContext::detached();
+        let done = Rc::new(Cell::new(0));
+        for fails in [false, true, false] {
+            let done = Rc::clone(&done);
+            ctx.after_write_out(move || {
+                done.set(done.get() + 1);
+                if fails {
+                    anyhow::bail!("its original could not all be removed");
+                }
+                Ok(())
+            });
+        }
+        assert_eq!(done.get(), 0, "a write-out is not due yet");
+        let failed = ctx.write_out().unwrap_err();
+        assert!(failed.to_string().contains("could not all be removed"));
+        assert_eq!(done.get(), 3, "one failing leaves none of the others");
+        ctx.write_out().unwrap();
+        assert_eq!(done.get(), 3, "each done once");
+    }
+
+    #[test]
+    fn a_write_out_comes_once_write_outs_stay_a_small_share() {
+        let ctx = StepContext::detached();
+        let done = Rc::new(Cell::new(false));
+        // The last one took a second: the next is ten seconds after it.
+        let ended = Instant::now().checked_sub(Duration::from_secs(5)).unwrap();
+        ctx.written_out.set((Some(ended), Duration::from_secs(1)));
+        let waited = Rc::clone(&done);
+        ctx.after_write_out(move || {
+            waited.set(true);
+            Ok(())
+        });
+        assert!(!done.get());
+        ctx.written_out.set((
+            ended.checked_sub(Duration::from_secs(6)),
+            Duration::from_secs(1),
+        ));
+        // What fails on the way is told at the end, not by the step.
+        ctx.after_write_out(|| anyhow::bail!("“a.jpg” changed after it was copied"));
+        assert!(done.get(), "due: everything waiting is done");
+        let told = ctx.write_out().unwrap_err();
+        assert!(told.to_string().contains("changed after it was copied"));
+        ctx.write_out().unwrap();
     }
 }

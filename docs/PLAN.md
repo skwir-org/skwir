@@ -247,8 +247,9 @@ removable, free space) and the user's own folders (run under Wine);
 macOS its root and the volumes under `/Volumes` the Finder shows
 (`getmntinfo`, compiled only) and its user folders. Not done: eject
 and mount off Linux, Finder's favorites and Quick Access, hearing a
-drive plugged in on Windows. Windows needs no write-through of bibli's
-(it writes removable drives through itself by default); a Mac's does.
+drive plugged in on Windows. Windows writes removable drives through
+itself by default (quick removal); bibli's own write-through there and
+on a Mac flushes once per plan, never per file (PORTING.md, section 3).
 
 Phase 5, steps G and H (2026-10-05), in part. A running instance's
 cache folders were swept off Linux, where `/proc/<pid>` is not:
@@ -2147,7 +2148,9 @@ what it touched.
   `RENAME_EXCL`/`RENAME_SWAP`; Windows `MoveFileExW` without replace,
   no swap: refused with words), copy (macOS `clonefile`/`fcopyfile`,
   Windows `CopyFileExW`; ReFS block clone later), write-through
-  (`F_FULLFSYNC`, `FlushFileBuffers`), attributes (macOS keeps every
+  (unbuffered `CopyFileExW` or `fsync` per window, `FlushFileBuffers` or
+  `F_FULLFSYNC` once per plan: a flush per file costs what a commit does
+  on Linux), attributes (macOS keeps every
   attribute a copy should, not only `user.*`; Windows has none),
   permissions (mode on Unix, read-only on Windows), special files.
   The property tests run on each system's code where Wine can.

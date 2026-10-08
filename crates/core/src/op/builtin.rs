@@ -406,26 +406,107 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
         }
         Err(e) if is_cross_device(&e) => {
             let dest_dir = target.parent().unwrap_or(Path::new("/"));
-            copy_entry(src, target, dest_dir, true, along, ctx)?;
-            // The original goes once its copy is on the drive, names and
-            // all, if written through.
-            ctx.write_out()?;
-            // Part of the source may be gone: say that the copy is whole,
-            // so that nothing looks lost.
-            remove_recursive(src).with_context(|| {
-                format!(
-                    "“{}” was copied whole to “{}”, but its original could not all be removed",
-                    display_name(src),
-                    dest_dir.display()
-                )
-            })?;
-            for a in along {
-                let _ = remove_recursive(&a.from);
+            // The original and its companions, each with what it is as it
+            // is copied.
+            let originals: Vec<(PathBuf, Option<blake3::Hash>)> = std::iter::once(src)
+                .chain(along.iter().map(|a| a.from.as_path()))
+                .map(|p| (p.to_path_buf(), state_of(p)))
+                .collect();
+            let through = copy_entry(src, target, dest_dir, true, along, ctx)?;
+            let dest_dir = dest_dir.to_path_buf();
+            let remove = move || {
+                // Edited while it was copied, or since: the copy may not
+                // hold it, so nothing of it goes. Gone is nothing to remove.
+                let changed = originals.iter().find(|(path, before)| {
+                    std::fs::symlink_metadata(path).is_ok() && state_of(path) != *before
+                });
+                if let Some((changed, _)) = changed {
+                    anyhow::bail!(
+                        "“{}” changed after it was copied to “{}”: its original stays where it was",
+                        display_name(changed),
+                        dest_dir.display()
+                    );
+                }
+                let ((src, _), companions) = originals.split_first().expect("the original first");
+                // Part of the source may be gone: say that the copy is
+                // whole, so that nothing looks lost.
+                remove_original(src).with_context(|| {
+                    format!(
+                        "“{}” was copied whole to “{}”, but its original could not all be removed",
+                        display_name(src),
+                        dest_dir.display()
+                    )
+                })?;
+                for (companion, _) in companions {
+                    let _ = remove_original(companion);
+                }
+                Ok(())
+            };
+            if through {
+                // Its original goes once the copy is on the drive, names
+                // and all: with the others the plan moves there, at their
+                // next write-out.
+                ctx.after_write_out(remove);
+            } else {
+                remove()?;
             }
         }
         Err(e) => return Err(e),
     }
     Ok(())
+}
+
+/// What the tree at `path` is, links not followed: each entry's name,
+/// kind, size, change and modification times, folded into one digest, so
+/// a move can tell whether anything of what it copied changed before it
+/// removes it. Compared with itself, never with the clock: a card's files
+/// can be dated by a camera's. `None` where something of it cannot be
+/// read, or it is gone.
+fn state_of(path: &Path) -> Option<blake3::Hash> {
+    fn time(t: Option<std::time::SystemTime>) -> [u8; 17] {
+        let (after, d) = match t.map(|t| t.duration_since(std::time::UNIX_EPOCH)) {
+            None => (2, std::time::Duration::ZERO),
+            Some(Ok(d)) => (1, d),
+            Some(Err(e)) => (0, e.duration()),
+        };
+        let mut bytes = [after; 17];
+        bytes[1..].copy_from_slice(&d.as_nanos().to_le_bytes());
+        bytes
+    }
+    fn fold(path: &Path, digest: &mut blake3::Hasher) -> Option<()> {
+        let meta = std::fs::symlink_metadata(path).ok()?;
+        let kind = u8::from(meta.is_dir()) | u8::from(meta.is_symlink()) << 1;
+        digest.update(&[kind]);
+        digest.update(&meta.len().to_le_bytes());
+        digest.update(&time(crate::fs::stat::changed(path, &meta)));
+        digest.update(&time(meta.modified().ok()));
+        if meta.is_dir() {
+            let mut names = std::fs::read_dir(path)
+                .ok()?
+                .map(|e| e.map(|e| e.file_name()))
+                .collect::<Result<Vec<_>, _>>()
+                .ok()?;
+            names.sort();
+            for name in names {
+                digest.update(name.as_encoded_bytes());
+                digest.update(&[0]);
+                fold(&path.join(name), digest)?;
+            }
+        }
+        Some(())
+    }
+    let mut digest = blake3::Hasher::new();
+    fold(path, &mut digest)?;
+    Some(digest.finalize())
+}
+
+/// Remove what a move copied: gone already is removed (a folder moved
+/// whole after a file of it, its removal waiting for a write-out).
+fn remove_original(path: &Path) -> anyhow::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        _ => remove_recursive(path),
+    }
 }
 
 fn is_cross_device(e: &anyhow::Error) -> bool {
@@ -607,11 +688,11 @@ fn same_tree(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::Result<bool>
 
 /// Copy `src` to `target`, and its companions (`along`) beside it. On a
 /// drive the user can unplug (`fs::volume::is_removable`) the copy is
-/// written through (`pace::Pace`): progress and Cancel follow the drive
-/// however slow it is, and the plan ends once the drive has everything,
-/// names included (`StepContext::write_out`). Written only when unmounted,
-/// it could be unplugged, or reset itself (a device taking its firmware),
-/// before the writes end, and lose them.
+/// written through (`pace::Pace`), and this says so: progress and Cancel
+/// follow the drive however slow it is, and the plan ends once the drive
+/// has everything, names included (`StepContext::write_out`). Written only
+/// when unmounted, it could be unplugged, or reset itself (a device taking
+/// its firmware), before the writes end, and lose them.
 fn copy_entry(
     src: &Path,
     target: &Path,
@@ -619,14 +700,16 @@ fn copy_entry(
     preserve_attributes: bool,
     along: &[Along],
     ctx: &StepContext,
-) -> anyhow::Result<()> {
-    let pace = if crate::fs::volume::is_removable(dest_dir) {
+) -> anyhow::Result<bool> {
+    let through = crate::fs::volume::is_removable(dest_dir);
+    let pace = if through {
         ctx.pace_through(dest_dir)?
     } else {
         std::rc::Rc::new(Pace::at_once())
     };
     copy_staged(src, target, dest_dir, preserve_attributes, &pace, ctx)?;
-    copy_along(along, &pace, ctx)
+    copy_along(along, &pace, ctx)?;
+    Ok(through)
 }
 
 /// Copy `src` to `target` through a private staging directory inside
@@ -2729,6 +2812,32 @@ mod tests {
                 assert_eq!(file, vec![i as u8; 1000 + i], "{how}");
             }
         }
+    }
+
+    #[test]
+    fn a_trees_state_changes_with_anything_of_it_and_only_then() {
+        let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::tempdir_in(base).unwrap();
+        let album = dir.path().join("album");
+        std::fs::create_dir_all(album.join("2026")).unwrap();
+        std::fs::write(album.join("2026/photo.jpg"), b"one").unwrap();
+        // Dated by a camera whose clock runs a year ahead.
+        let ahead = std::time::SystemTime::now() + std::time::Duration::from_hours(365 * 24);
+        let card = std::fs::File::create(album.join("card.jpg")).unwrap();
+        card.set_modified(ahead).unwrap();
+        drop(card);
+        let state = state_of(&album).expect("readable");
+        assert_eq!(state_of(&album), Some(state), "nothing changed");
+
+        // Past the clock tick change times are read from.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::fs::write(album.join("2026/photo.jpg"), b"two").unwrap();
+        let edited = state_of(&album).unwrap();
+        assert_ne!(edited, state, "deep in it");
+        std::fs::write(album.join("2026/new.jpg"), b"").unwrap();
+        assert_ne!(state_of(&album), Some(edited), "a file more");
+        assert_eq!(state_of(&dir.path().join("gone")), None);
     }
 
     #[test]

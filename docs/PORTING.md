@@ -104,9 +104,10 @@ macOS by `mkfifo` (compiled only). Left:
   compiled, never run.
 - Write-through (`Pace`, `sys::write_range`, `Dir::sync_volume`):
   Linux hands the drive each window of bytes and waits for it a window
-  later (`sync_file_range`), and writes the volume out once per plan
-  and before a move removes its source (`syncfs`); **(n)** elsewhere, never reached since nothing is
-  removable there (section 6). A call that commits the volume or
+  later (`sync_file_range`), and writes the volume out once per plan,
+  and on the way where moves wait to remove their originals (`syncfs`);
+  **(n)** elsewhere, never reached since nothing is removable there
+  (section 6). A call that commits the volume or
   flushes the drive's own cache costs about the same however little it
   writes: on Linux, `syncfs` every few MiB held a copy onto a USB hard
   drive to 7 MiB/s where the drive takes 80. So neither system's flush

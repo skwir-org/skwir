@@ -11,12 +11,13 @@
 //! one item to the next.
 //!
 //! Folders, names and the volume's own records are written out once, at
-//! the plan's end and before a move removes what it copied
-//! (`StepContext::write_out`): that commits the whole volume (`syncfs`),
-//! which on a journaled or copy-on-write filesystem on a hard drive costs
-//! about a third of a second however little was written. Paid every few
-//! MiB, as it once was, it held a copy onto a USB hard drive (btrfs) to 7
-//! MiB/s; handed by ranges, the same copy runs at the drive's 80.
+//! the plan's end, and on the way where moves wait to remove what they
+//! copied (`StepContext::write_out`, `after_write_out`): that commits the
+//! whole volume (`syncfs`), which on a journaled or copy-on-write
+//! filesystem on a hard drive costs about a third of a second however
+//! little was written. Paid every few MiB, as it once was, it held a copy
+//! onto a USB hard drive (btrfs) to 7 MiB/s; handed by ranges, the same
+//! copy runs at the drive's 80.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
