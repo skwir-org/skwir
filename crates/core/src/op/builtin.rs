@@ -2247,6 +2247,7 @@ impl super::Effect for Mkdir {
         Change::Create {
             path: self.path.clone(),
             directory: true,
+            words: None,
         }
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
@@ -2339,6 +2340,7 @@ impl super::Effect for NewFile {
         Change::Create {
             path: self.path.clone(),
             directory: false,
+            words: None,
         }
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {

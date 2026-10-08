@@ -37,6 +37,7 @@ pub use executor::{
     Verdict,
 };
 pub use order::{RenameOrderError, RenameRequest, order_renames};
+pub use staging::Staging;
 
 /// Every step checked as applying the plan would meet it: in order, in one
 /// context, a folder an earlier step makes counted there by the steps after
@@ -228,6 +229,10 @@ pub enum Change {
         #[schemars(with = "crate::os_path::PathArg")]
         path: PathBuf,
         directory: bool,
+        /// What the step does, in the user's words, when making it is not
+        /// all it says (an archive extracted as this folder).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        words: Option<Words>,
     },
     Remove {
         #[serde(with = "crate::os_path")]
@@ -270,19 +275,25 @@ impl fmt::Display for Change {
             Change::Trash { path } => write!(f, "trash {}", path.display()),
             Change::Restore { path } => write!(f, "restore {}", path.display()),
             Change::Delete { path } => write!(f, "delete {}", path.display()),
+            // A step that says what it does says it best.
+            Change::Create {
+                words: Some(words), ..
+            }
+            | Change::Metadata {
+                words: Some(words), ..
+            } => f.write_str(&words.will),
             Change::Create {
                 path,
                 directory: true,
+                ..
             } => write!(f, "mkdir {}", path.display()),
             Change::Create {
                 path,
                 directory: false,
+                ..
             } => write!(f, "create {}", path.display()),
             // An empty folder, or a file made empty and left so.
             Change::Remove { path } => write!(f, "remove {}", path.display()),
-            Change::Metadata {
-                words: Some(words), ..
-            } => f.write_str(&words.will),
             Change::Metadata { path, field, .. } => {
                 write!(f, "set {field} on {}", path.display())
             }

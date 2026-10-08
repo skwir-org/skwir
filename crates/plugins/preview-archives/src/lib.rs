@@ -1,4 +1,5 @@
-//! Archive directory tree backed by the optional libarchive process.
+//! Archive directory tree backed by the optional libarchive process, and
+//! archives extracted (`extract`, ADR-048).
 use bibli_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Row},
@@ -11,6 +12,10 @@ use bibli_platform::{
     mime,
 };
 use std::{collections::BTreeMap, sync::Arc};
+
+mod extract;
+pub use extract::Extract;
+
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
@@ -20,7 +25,7 @@ impl Plugin for PreviewPlugin {
         "Preview: archives"
     }
     fn description(&self) -> &'static str {
-        "List the contents of ZIP, tar, 7z and other archives and preview their members without extracting"
+        "List the contents of ZIP, tar, 7z and other archives, preview their members without extracting, and extract them (Extract Here, in an archive's menu and a drop's)"
     }
     fn category(&self) -> bibli_core::plugin::Category {
         bibli_core::plugin::Category::Previews
@@ -28,16 +33,22 @@ impl Plugin for PreviewPlugin {
     fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
         vec![
             archive::WORKER
-                .requirement("Listing and reading archive members")
+                .requirement("Listing, reading and extracting archives")
                 .required(),
         ]
     }
     fn capabilities(&self) -> bibli_core::permissions::Capabilities {
         use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+        // It writes what it extracts.
+        bibli_core::permissions::Capabilities::of(&[
+            Capability::Read,
+            Capability::Write,
+            Capability::Programs,
+        ])
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
+        extract::register(app, self.id());
     }
 }
 /// Disc images, which the database does not call archives.

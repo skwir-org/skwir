@@ -10,10 +10,16 @@ rust-version.workspace = true
 bibli-core.workspace = true
 bibli-platform.workspace = true
 anyhow.workspace = true
-
+serde.workspace = true
+schemars.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+dirs.workspace = true
+serde_json.workspace = true
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 [lints]
 workspace = true

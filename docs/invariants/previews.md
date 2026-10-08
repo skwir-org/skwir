@@ -180,9 +180,14 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   `settings.apply`), after the text size as Fit width is after a
   document's zoom, and the first to go to More. The column is for text
   only.
-- Only `bibli-archive-worker` links libarchive. Member names are labels/keys,
-  never extraction paths. Read only selected regular members, bound the actual
-  decompressed bytes and keep temporary cleanup off the UI thread.
+- Only `bibli-archive-worker` links libarchive. For a preview, member names
+  are labels/keys, never paths: read only selected regular members, bound the
+  actual decompressed bytes and keep temporary cleanup off the UI thread.
+  Names reach the filesystem in one place, an archive extracted
+  (`--extract`, ADR-048): by libarchive's disk writer and its guards (no
+  `..`, no absolute path, never through a link it made, no owner or set-id
+  bits), in the sandbox writing only where it extracts, into a staging
+  folder put in place whole.
 
 ## The preview frame
 

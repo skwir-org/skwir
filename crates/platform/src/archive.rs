@@ -1,8 +1,11 @@
-//! Small native helper for archive metadata and bounded member reads.
+//! Small native helper for archive metadata, bounded member reads, and
+//! whole archives extracted (ADR-048).
 use crate::inspection::{self, limits};
 use crate::sandbox::{self, Otherwise};
+use anyhow::Context;
 use bibli_core::CancelToken;
 use serde::Deserialize;
+use std::io::{Read, Write};
 use std::path::Path;
 #[derive(Clone, Debug, Deserialize)]
 pub struct Member {
@@ -131,6 +134,121 @@ pub fn read(path: &Path, member: &Member, cancel: &CancelToken) -> anyhow::Resul
     write_member(path, member, &output, cancel)?;
     inspection::read_bounded(&output, limits::BINARY_INPUT, "Member preview", cancel)
 }
+/// Units of work the helper may run ahead of what it last reported while
+/// extracting: each an entry, or a MiB of one. A paused extraction stops
+/// within that many; the helper reports every few of them.
+const AHEAD: u64 = 32;
+
+/// What the helper reports as it extracts: the archive's bytes read so
+/// far, and the units of work it took.
+#[derive(Deserialize)]
+struct Report {
+    read: u64,
+    units: u64,
+}
+
+/// Extract every member of the archive at `path` into `into`, an empty
+/// folder, under the paths the archive gives them, with libarchive's own
+/// guards (ADR-048): nothing written outside `into` (no `..`, no absolute
+/// path, never through a link the archive made), no owner, no set-id
+/// bits, modification times kept; pipes, devices and sockets left out.
+/// The helper runs in the sandbox where the system has one, writing only
+/// in `into`. `read` is told the archive's bytes read as they grow, for a
+/// bar against the file's size; while `held` says so the helper is given
+/// no more work and stops within `AHEAD` units of it (a paused plan).
+/// Cancel stops it at once; what it wrote is the caller's to remove.
+///
+/// # Errors
+/// Why the helper could not extract it all (an encrypted member, a name
+/// that would leave `into`, a damaged archive), or that it was cancelled.
+pub fn extract_all(
+    path: &Path,
+    into: &Path,
+    cancel: &CancelToken,
+    mut read: impl FnMut(u64),
+    held: impl Fn() -> bool,
+) -> anyhow::Result<()> {
+    let mut run = sandbox::untrusted(&worker()?, path, into, Otherwise::Run)?;
+    run.command
+        .arg(&run.input)
+        .args(stem(path))
+        .arg("--extract");
+    // Its work, one ticket a unit, through a pipe never filled: at most
+    // `AHEAD` tickets wait in it, far under a pipe's buffer.
+    let (tickets_in, mut tickets) = std::io::pipe()?;
+    // Its reports go to a file it appends to, read here through a handle
+    // of our own as it grows: no pipe that could fill and stop it.
+    let reports = tempfile::NamedTempFile::new()?;
+    let mut reading = std::fs::File::open(reports.path())?;
+    let errors = tempfile::tempfile()?;
+    run.command
+        .stdin(std::process::Stdio::from(tickets_in))
+        .stdout(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(reports.path())?,
+        )
+        .stderr(errors.try_clone()?);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        run.command.process_group(0);
+    }
+    anyhow::ensure!(!cancel.is_cancelled(), "the extraction was cancelled");
+    let mut child = crate::process::ChildGuard::new(
+        run.command
+            .spawn()
+            .context("the archive helper could not start")?,
+    );
+    // The command holds the pipe's other end; the helper has its own.
+    drop(run);
+    let (mut sent, mut used) = (0u64, 0u64);
+    let mut lines = String::new();
+    let mut take_reports = |lines: &mut String, used: &mut u64| -> anyhow::Result<()> {
+        let mut bytes = Vec::new();
+        reading.read_to_end(&mut bytes)?;
+        lines.push_str(&String::from_utf8_lossy(&bytes));
+        while let Some(end) = lines.find('\n') {
+            if let Ok(report) = serde_json::from_str::<Report>(&lines[..end]) {
+                read(report.read);
+                *used = report.units;
+            }
+            lines.drain(..=end);
+        }
+        Ok(())
+    };
+    loop {
+        anyhow::ensure!(!cancel.is_cancelled(), "the extraction was cancelled");
+        take_reports(&mut lines, &mut used)?;
+        if !held() && sent < used + AHEAD {
+            let more = usize::try_from(used + AHEAD - sent)?;
+            // A helper that ended has no use for them: its status says why.
+            if tickets.write_all(&vec![1u8; more]).is_ok() {
+                sent += more as u64;
+            }
+        }
+        if child.exited()? {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let status = child.finish()?;
+    take_reports(&mut lines, &mut used)?;
+    if !status.success() {
+        let mut said = String::new();
+        let mut errors = errors;
+        std::io::Seek::rewind(&mut errors)?;
+        errors.take(4096).read_to_string(&mut said)?;
+        let said = said.trim();
+        anyhow::bail!(if said.is_empty() {
+            format!("the archive helper failed ({status})")
+        } else {
+            said.to_owned()
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -372,7 +372,8 @@ impl Keeper {
 /// `has:image` when one at least is. The part after the colon is a kind
 /// (`image`, `video`, `audio`, `document`, `archive`, `text`, … as the
 /// desktop groups types, the query's `kind:`), a MIME type matched with
-/// its parents (`text/plain` holds for source code; `image/*`), or an
+/// its parents and by any of its names (`text/plain` holds for source
+/// code; `image/*`; a type's alias as well as its name), or an
 /// extension (`.gpx`). A file whose name says nothing is of no kind: it
 /// fails `kind:` and does not count for `has:`. These two are for menus:
 /// a key binding's `when` is the pane's key context, which has no types.
@@ -384,9 +385,16 @@ impl Keeper {
 /// the UI draws a separator between groups. Convention for `context`:
 /// 0xx open/navigate, 1xx edit (rename, cut, copy, paste), 2xx create,
 /// 3xx destructive (trash, delete), 4xx misc (refresh).
+///
+/// `drop` is the menu a drop in a folder asks with (`core.drop_asks`):
+/// after Move, Copy and Link Here (0xx) and before Cancel (9xx), so its
+/// items are ordered 100 to 899. Its `when` reads what was dropped, not
+/// the selection (the tokens about files and their types), and its
+/// command runs with `entries`, what was dropped, and `dest`, the folder
+/// it was dropped in: Extract Here, given an archive.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MenuItem {
-    /// `context`, `main`, or a plugin-defined menu id.
+    /// `context`, `main`, `drop`, or a plugin-defined menu id.
     pub menu: String,
     pub title: String,
     pub command: Invocation,

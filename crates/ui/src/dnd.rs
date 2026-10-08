@@ -4,10 +4,12 @@
 //! What a drop in a folder does is what the keys held say (`held`): Shift
 //! moves, Ctrl copies, Ctrl+Shift links. With none held it asks
 //! (`core.drop_asks`, on by default: `Shell::ask_drop`), the row of what
-//! it would do unasked ready for Enter; or, not asking, does that
-//! (`drop_op`): our own files move within a filesystem and are copied to
-//! another, so a drop onto a USB stick leaves the folder it came from as
-//! it was, and paths from another application are copied.
+//! it would do unasked ready for Enter, with what plugins offer for what
+//! was dropped (the registry's `drop` menu: Extract Here); or, not
+//! asking, does that (`drop_op`): our own files move within a filesystem
+//! and are copied to another, so a drop onto a USB stick leaves the
+//! folder it came from as it was, and paths from another application are
+//! copied.
 
 use std::path::{Path, PathBuf};
 
@@ -69,6 +71,56 @@ impl DropOp {
             DropOp::Copy => "copy",
             DropOp::Link => "link",
         }
+    }
+}
+
+/// What was dropped, as a drop's menu asks about it: the entries, and
+/// what each is as its name says (the name that says its type, and the
+/// type it has whatever its name: a folder), for the `drop` items' `when`.
+#[derive(Clone, Debug, Default)]
+pub struct Dropped {
+    pub entries: Vec<EntryRef>,
+    pub types: Vec<(std::ffi::OsString, Option<&'static str>)>,
+}
+
+impl Dropped {
+    /// Paths from another application: who they are and whether each is a
+    /// folder (a link, as what it leads to), read from the disk, on a
+    /// worker. Those gone are left out.
+    fn of_paths(paths: &[PathBuf]) -> Self {
+        let mut dropped = Dropped::default();
+        for path in paths {
+            let Some(entry) = EntryRef::from_path(path) else {
+                continue;
+            };
+            let folder = std::fs::metadata(path).is_ok_and(|m| m.is_dir());
+            dropped.types.push((
+                path.file_name().unwrap_or_default().to_owned(),
+                folder.then_some("inode/directory"),
+            ));
+            dropped.entries.push(entry);
+        }
+        dropped
+    }
+
+    /// What `when` reads of it: how many, whether all are folders or
+    /// files, and their types. Nothing of where it is: a drop's menu is
+    /// about what was dropped.
+    fn when(&self) -> (crate::menu::SelectionCtx, crate::menu::SelectionTypes) {
+        let folder =
+            |(_, inode): &(std::ffi::OsString, Option<&str>)| *inode == Some("inode/directory");
+        let ctx = crate::menu::SelectionCtx {
+            count: self.entries.len(),
+            all_dirs: self.types.iter().all(folder),
+            all_files: !self.types.iter().any(folder),
+            ..crate::menu::SelectionCtx::default()
+        };
+        let types = crate::menu::SelectionTypes::of(
+            self.types
+                .iter()
+                .map(|(name, inode)| (name.as_os_str(), *inode)),
+        );
+        (ctx, types)
     }
 }
 
@@ -263,19 +315,14 @@ impl Shell {
             let position = window.mouse_position();
             self.off_thread(
                 "drop-entries",
-                move || {
-                    paths
-                        .iter()
-                        .filter_map(EntryRef::from_path)
-                        .collect::<Vec<_>>()
-                },
-                move |shell, entries, window, cx| {
-                    if entries.is_empty() {
+                move || Dropped::of_paths(&paths),
+                move |shell, dropped, window, cx| {
+                    if dropped.entries.is_empty() {
                         shell.set_status("The dropped items no longer exist", true, cx);
                         return;
                     }
                     // Unasked, another application's files are copied.
-                    shell.ask_drop(position, &entries, &dest, DropOp::Copy, window, cx);
+                    shell.ask_drop(position, &dropped, &dest, DropOp::Copy, window, cx);
                 },
                 window,
                 cx,
@@ -368,7 +415,7 @@ impl Shell {
         }
         // Asked about what was dropped, named now: the selection may
         // change before the answer.
-        let asked = ask.then(|| (self.app.selected_refs(from), window.mouse_position()));
+        let asked = ask.then(|| (self.dropped_from(from), window.mouse_position()));
         let devices: std::collections::HashSet<u64> = {
             let ws = self.app.workspace.read();
             ws.pane(from)
@@ -384,8 +431,8 @@ impl Shell {
                 let same = dev.map(|dev| devices.len() == 1 && devices.contains(&dev));
                 let how = drop_op(modifiers, same);
                 match asked {
-                    Some((entries, position)) => {
-                        shell.ask_drop(position, &entries, &dest_dir, how, window, cx);
+                    Some((dropped, position)) => {
+                        shell.ask_drop(position, &dropped, &dest_dir, how, window, cx);
                     }
                     None => shell.run(how.command(), args, window, cx),
                 }
@@ -404,25 +451,70 @@ impl Shell {
             .unwrap_or(true)
     }
 
-    /// Ask what `entries` dropped in `dest` do: a menu at `position` of
-    /// Move, Copy and Link Here, each beside the keys that do it unasked
-    /// (Dolphin's, which teach them), then Cancel. The row of what the
-    /// drop would do unasked (`usual`) is highlighted, so Enter does what
-    /// it always did. Each row is the command itself with the entries
-    /// named, so what runs is what was dropped.
+    /// What a drag from `from` drops: its selection, and what each entry
+    /// is, read now.
+    fn dropped_from(&self, from: PaneId) -> Dropped {
+        let types = {
+            let ws = self.app.workspace.read();
+            ws.pane(from)
+                .map(|p| {
+                    p.selection
+                        .iter()
+                        .filter(|id| !id.is_place())
+                        .filter_map(|id| p.entry(id))
+                        .map(|e| (e.type_name().to_owned(), e.inode_type()))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Dropped {
+            entries: self.app.selected_refs(from),
+            types,
+        }
+    }
+
+    /// Ask what `dropped` in `dest` does: a menu at `position` of Move,
+    /// Copy and Link Here, each beside the keys that do it unasked
+    /// (Dolphin's, which teach them), what plugins offer for what was
+    /// dropped (the registry's `drop` items whose `when` holds for it),
+    /// then Cancel. The row of what the drop would do unasked (`usual`)
+    /// is highlighted, so Enter does what it always did. Each row is a
+    /// command with the entries and the folder named (`entries`, `dest`),
+    /// so what runs is what was dropped.
     pub fn ask_drop(
         &mut self,
         position: Point<Pixels>,
-        entries: &[EntryRef],
+        dropped: &Dropped,
         dest: &Path,
         usual: DropOp,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let entries = &dropped.entries;
         if entries.is_empty() {
             return;
         }
         let args = serde_json::json!({ "entries": entries, "dest": PathArg::from(dest) });
+        let (ctx, types) = dropped.when();
+        let mut offered: Vec<MenuItem> = self
+            .app
+            .registry
+            .menus
+            .all()
+            .into_iter()
+            .filter(|item| {
+                item.menu == "drop" && crate::menu::when_holds(item.when.as_deref(), ctx, &types)
+            })
+            .map(|item| MenuItem {
+                command: item
+                    .command
+                    .clone()
+                    .with("entries", entries)
+                    .with("dest", PathArg::from(dest)),
+                ..item
+            })
+            .collect();
+        offered.sort_by_key(|item| item.order);
         let mut items: Vec<MenuItem> = DropOp::ALL
             .iter()
             .zip(0..)
@@ -436,11 +528,12 @@ impl Shell {
                 )
             })
             .collect();
+        items.extend(offered);
         items.push(MenuItem::new(
             "drop",
             "Cancel",
             "close",
-            100,
+            900,
             Invocation::new("ui.menu_close"),
         ));
         let mut menu = crate::menu::MenuState::open(position, items, window, cx);
@@ -777,6 +870,38 @@ mod tests {
             let keys = gpui::Keystroke::parse(&format!("{}-a", how.keys())).unwrap();
             assert_eq!(held(keys.modifiers), Some(how), "{how:?}");
         }
+    }
+
+    /// A drop's items ask what was dropped, by name, a folder by what it
+    /// is: an archive offers Extract Here, a text or a folder named like
+    /// an archive does not.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_drops_menu_reads_what_was_dropped() {
+        let dropped = |types: &[(&str, bool)]| Dropped {
+            entries: Vec::new(),
+            types: types
+                .iter()
+                .map(|(name, folder)| ((*name).into(), folder.then_some("inode/directory")))
+                .collect(),
+        };
+        let holds = |dropped: &Dropped, when: &str| {
+            let (ctx, types) = dropped.when();
+            crate::menu::when_holds(Some(when), ctx, &types)
+        };
+        let archives = "kind:archive|kind:application/x-cd-image";
+        assert!(holds(&dropped(&[("it's photos.zip", false)]), archives));
+        assert!(holds(
+            &dropped(&[("a.tar.gz", false), ("b.7z", false)]),
+            archives
+        ));
+        assert!(holds(&dropped(&[("disc.iso", false)]), archives));
+        assert!(!holds(&dropped(&[("notes.txt", false)]), archives));
+        assert!(!holds(
+            &dropped(&[("a.zip", false), ("notes.txt", false)]),
+            archives
+        ));
+        assert!(!holds(&dropped(&[("not an archive.zip", true)]), archives));
     }
 
     /// A scratch tree under the user's cache, never `/tmp` (see AGENTS.md).

@@ -206,12 +206,16 @@ impl EntryType {
             return !self.dir && self.extension.eq_ignore_ascii_case(extension);
         }
         if let Some((top, sub)) = what.split_once('/') {
+            if sub == "*" {
+                return self.lineage.iter().any(|m| m.top_level() == top);
+            }
+            // By any of its names, whichever the database calls canonical
+            // (a disc image is `application/x-cd-image` in one, an alias
+            // of `application/vnd.efi.iso` in another).
+            let named = mime::unalias(&Mime(what.to_ascii_lowercase()));
             return self.lineage.iter().any(|m| {
-                if sub == "*" {
-                    m.top_level() == top
-                } else {
-                    m.as_str() == what
-                }
+                m.as_str().eq_ignore_ascii_case(what)
+                    || m.as_str().eq_ignore_ascii_case(named.as_str())
             });
         }
         match Kind::from_name(what) {
@@ -1077,6 +1081,11 @@ mod tests {
         assert!(holds("kind:folder", &[("src", true)]));
         assert!(!holds("has:image", &[("x.png", true)]));
         assert!(!holds("has:.png", &[("x.png", true)]));
+        // A type by any of its names: a disc image's old one, whichever
+        // the database calls canonical.
+        let disc = [("disc.iso", false)];
+        assert!(holds("kind:application/x-cd-image", &disc));
+        assert!(holds("kind:application/x-iso9660-image", &disc));
         // A name that says nothing is of no kind.
         let unknown = [("a.jpg", false), ("blob.zzq9", false)];
         assert!(!holds("kind:image", &unknown));

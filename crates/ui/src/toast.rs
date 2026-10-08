@@ -127,8 +127,12 @@ pub fn describe(title: &str, run: RunKind, first: Option<&Change>, applied: usiz
             folder_of(to)
         ),
         Some(Change::Create {
+            words: Some(words), ..
+        }) if one => capitalized(&words.did),
+        Some(Change::Create {
             path,
             directory: true,
+            ..
         }) if one => format!("Created folder {}", quoted(path)),
         Some(Change::Create { path, .. }) if one => format!("Created {}", quoted(path)),
         // A step that says what it did says it best.
@@ -165,9 +169,14 @@ pub fn failure(title: &str, failed: Option<&Change>, error: &str) -> String {
         Some(Change::Rename { from, to }) => {
             format!("Couldn't rename {} to {}", quoted(from), quoted(to))
         }
+        // What it said it would do, it could not.
+        Some(Change::Create {
+            words: Some(words), ..
+        }) => format!("Couldn't {}", words.will),
         Some(Change::Create {
             path,
             directory: true,
+            ..
         }) => format!("Couldn't create folder {}", quoted(path)),
         Some(Change::Create { path, .. }) => format!("Couldn't create {}", quoted(path)),
         _ => return format!("{}: {error}", capitalized(title)),

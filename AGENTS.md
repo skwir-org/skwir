@@ -113,7 +113,9 @@ current source before assuming a planned crate, command, or API exists.
   staging folder holds a lock its copy keeps while it runs, and folders
   whose lock nobody holds are swept, by a copy into their destination and
   at start for the folders an earlier run was copying into (`op::staging`,
-  only where this machine alone writes). `Shell::set_status` is a toast;
+  only where this machine alone writes). Any step that makes something in
+  a destination stages the same way (`StepContext::stage`, then
+  `Staging::place`: an archive extracted). `Shell::set_status` is a toast;
   `set_status_about` adds a link to the setting that fixes the problem.
   Footers hold state, never messages (`status.rs`): each pane's footer
   its counts and selection size, and with nothing selected what its files
@@ -234,10 +236,14 @@ current source before assuming a planned crate, command, or API exists.
   copied to another, another application's are copied). Each row is the
   core command (`move`, `copy`, `link`) with what was dropped named in
   `entries`, so the answer acts on what was dropped, not on the
-  selection by then. A drop on a place keeps its location's meaning
-  (`Verbs::drop`: the trash trashes), a drag carrying places is not
-  asked about (a place gives a folder a plan reviewed already), and
-  Shift+F5 and Shift+F6 say what they do.
+  selection by then. What a plugin offers for what was dropped is the
+  registry's `drop` menu (`MenuItem`: ordered 100 to 899, its `when`
+  read of what was dropped, its command given `entries` and `dest`), so
+  the archive plugin's Extract Here needs no branch in the shell. A drop
+  on a place keeps its location's meaning (`Verbs::drop`: the trash
+  trashes), a drag carrying places is not asked about (a place gives a
+  folder a plan reviewed already), and Shift+F5 and Shift+F6 say what
+  they do.
 - **Details lead somewhere.** A provider's fact can carry a command
   (`Detail::with_action`, drawn as a link after the value, run through
   `Shell::run`): a position shows the file on the map. The row itself

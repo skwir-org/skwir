@@ -3,7 +3,9 @@
 //!
 //! A copy, and a move across drives, is made in a folder of its own in its
 //! destination (`.bibli-copy-…`) and renamed into place once whole
-//! (`builtin::copy_staged`), so a partial copy never looks finished.
+//! (`builtin::copy_staged`), so a partial copy never looks finished. Any
+//! step that makes something in a destination does the same through
+//! `StepContext::stage` (a plugin's: an archive extracted).
 //! Stopped or failed, it removes that folder; a process that ends mid-copy
 //! (a crash, a kill, a logout) cannot. So the folder holds a `lock` its
 //! copy keeps locked while it runs, and a later bibli removes the folders
@@ -27,8 +29,10 @@ const PREFIX: &str = ".bibli-copy-";
 const LOCK: &str = "lock";
 
 /// A staging folder in a destination, removed when dropped, its lock held
-/// until then.
-pub(super) struct Staging {
+/// until then: what a step makes there is made in it and put in place
+/// whole ([`Staging::place`]). It holds its lock, named `lock`: make what
+/// is made in a folder of its own inside it.
+pub struct Staging {
     /// Released before the folder goes: Windows removes no folder holding
     /// a file still open.
     lock: Option<File>,
@@ -49,12 +53,25 @@ impl Staging {
         })
     }
 
-    pub(super) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         self.dir.path()
     }
 
+    /// Put `made`, made in this folder, at `target`, never over what is
+    /// there.
+    ///
+    /// # Errors
+    /// When `target` is taken, or the rename fails.
+    pub fn place(&self, made: &Path, target: &Path) -> io::Result<()> {
+        debug_assert!(made.starts_with(self.path()), "made in the staging folder");
+        sys::rename_noreplace(made, target)
+    }
+
     /// Remove the folder now, whatever its copy left in it.
-    pub(super) fn remove(self) -> io::Result<()> {
+    ///
+    /// # Errors
+    /// When something in it cannot be removed.
+    pub fn remove(self) -> io::Result<()> {
         let Self { lock, dir } = self;
         drop(lock);
         remove_tree(&dir.keep())

@@ -1007,7 +1007,14 @@ dependencies = [
  "anyhow",
  "bibli-core",
  "bibli-platform",
+ "dirs 7.0.0",
+ "flate2",
+ "schemars",
+ "serde",
+ "serde_json",
  "tempfile",
+ "tracing",
+ "zip",
 ]
 
 [[package]]

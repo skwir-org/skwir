@@ -179,7 +179,7 @@ impl ChildGuard {
     /// Whether the child has exited, without reaping it. Until it is reaped
     /// its pid cannot be reused, so the group kill in `finish` and `Drop`
     /// reaches only its own descendants, never a stranger's group.
-    fn exited(&mut self) -> io::Result<bool> {
+    pub(crate) fn exited(&mut self) -> io::Result<bool> {
         #[cfg(unix)]
         {
             use rustix::process::{WaitId, WaitIdOptions, waitid};
@@ -217,7 +217,7 @@ impl ChildGuard {
     }
 
     /// Stop the group and reap the child, which has exited.
-    fn finish(mut self) -> io::Result<ExitStatus> {
+    pub(crate) fn finish(mut self) -> io::Result<ExitStatus> {
         self.stop_group();
         self.child.wait()
     }

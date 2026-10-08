@@ -290,6 +290,25 @@ impl StepContext {
             .insert(dest_dir.to_path_buf(), mark);
     }
 
+    /// A staging folder in `dest_dir` for a step to make something in and
+    /// put in place whole (`Staging::place`), so what it leaves cut short
+    /// never looks finished: removed when dropped, and swept by a later
+    /// run should this one end mid-way, as a copy's is.
+    ///
+    /// # Errors
+    /// When the folder cannot be made in `dest_dir`.
+    pub fn stage(&self, dest_dir: &Path) -> std::io::Result<super::staging::Staging> {
+        self.staging_in(dest_dir);
+        super::staging::Staging::new(dest_dir)
+    }
+
+    /// Whether the plan is paused: a step whose work goes on elsewhere (a
+    /// helper program) holds it meanwhile, and waits in
+    /// [`Self::check_cancelled`].
+    pub fn is_paused(&self) -> bool {
+        self.pause.is_paused()
+    }
+
     /// The same context, carrying files beside a file by `companions`.
     #[must_use]
     pub fn with_companions(mut self, companions: Arc<crate::companions::Companions>) -> Self {
@@ -370,6 +389,7 @@ impl StepContext {
         if let super::Change::Create {
             path,
             directory: true,
+            ..
         } = change
         {
             self.foreseen.borrow_mut().insert(path.clone());
@@ -378,7 +398,7 @@ impl StepContext {
 
     /// Whether `path` is a folder, or one an earlier step of this dry run
     /// makes.
-    pub(super) fn is_folder(&self, path: &Path) -> bool {
+    pub fn is_folder(&self, path: &Path) -> bool {
         path.is_dir() || self.foreseen.borrow().contains(path)
     }
 }
