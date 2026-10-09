@@ -67,6 +67,9 @@ pub const VIEW: &str = "map";
 pub struct GeoPlugin {
     revision: Arc<std::sync::atomic::AtomicU64>,
     scanner: parking_lot::Mutex<Option<Arc<view::Scanner>>>,
+    /// What its work outlives no further than: cancelled when it is
+    /// turned off, so a geotag under way proposes nothing after.
+    lifetime: parking_lot::Mutex<bibli_core::CancelToken>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -138,7 +141,9 @@ impl Plugin for GeoPlugin {
         app.previews.register(ID, Arc::new(Provider));
         app.thumbnails.register(ID, Arc::new(thumb::Lines));
         app.fields.register(ID, Arc::new(position::Positions));
-        geotag::register(app);
+        let lifetime = app.lifetime().child();
+        *self.lifetime.lock() = lifetime.clone();
+        geotag::register(app, lifetime);
         let mut spec = ViewSpec::named(VIEW, "Map", "map", Arc::clone(&self.revision)).lens();
         // After Usage, the other lens.
         spec.order = 110;
@@ -267,6 +272,7 @@ impl Plugin for GeoPlugin {
             .shows();
     }
     fn on_disable(&self, _app: &App) {
+        self.lifetime.lock().cancel();
         if let Some(scanner) = self.scanner.lock().take() {
             scanner.stop();
         }
@@ -498,7 +504,7 @@ fn read(
             let document: serde_json::Value = serde_json::from_slice(&bytes)
                 .map_err(|error| anyhow::anyhow!("Not valid GeoJSON: {error}"))?;
             inspection::check(cancel)?;
-            geojson::read(&document, into);
+            geojson::read(&document, into, cancel)?;
             None
         }
     };

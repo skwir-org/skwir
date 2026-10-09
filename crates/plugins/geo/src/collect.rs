@@ -12,6 +12,10 @@ use bibli_core::geo::{
 /// other point is let go and the stride doubles, so what is kept stays
 /// spread over the whole of it.
 pub const MAX_POINTS: usize = 200_000;
+/// Segments kept for the map, across all lines: each keeps its ends
+/// however it is thinned, so past a quarter of `MAX_POINTS` of them (a
+/// map of road segments, a line each) thinning frees nothing.
+pub const MAX_SEGMENTS: usize = MAX_POINTS / 4;
 pub const MAX_WAYPOINTS: usize = 10_000;
 pub const MAX_AREAS: usize = 2_000;
 /// Points of all areas' rings together.
@@ -83,6 +87,11 @@ pub struct Collector {
     bounds: BoundsBuilder,
     stride: usize,
     stored: usize,
+    /// Segments kept (`MAX_SEGMENTS`).
+    segments: usize,
+    /// Nothing more is kept for the map: segments past `MAX_SEGMENTS`, or
+    /// thinning no longer making room. The facts still count every point.
+    full: bool,
     area_points: usize,
     segment: Segment,
     /// Whether the current line has a segment open.
@@ -112,6 +121,9 @@ impl Collector {
     /// Start a line; the points that follow belong to it.
     pub fn line(&mut self, name: String, kind: LineKind, datum: Datum) -> usize {
         self.end_segment();
+        if self.full && !self.doc.lines.is_empty() {
+            return self.doc.lines.len() - 1;
+        }
         self.doc.lines.push(Line {
             name,
             kind,
@@ -127,8 +139,14 @@ impl Collector {
         if self.doc.lines.is_empty() {
             self.line(String::new(), LineKind::Track, Datum::Sea);
         }
-        if let Some(line) = self.doc.lines.last_mut() {
+        if self.segments >= MAX_SEGMENTS {
+            self.full = true;
+        }
+        if !self.full
+            && let Some(line) = self.doc.lines.last_mut()
+        {
             line.segments.push(Vec::new());
+            self.segments += 1;
         }
         self.open = true;
     }
@@ -200,6 +218,9 @@ impl Collector {
     }
 
     fn store(&mut self, point: Point) {
+        if self.full {
+            return;
+        }
         if let Some(segment) = self
             .doc
             .lines
@@ -229,7 +250,12 @@ impl Collector {
             stored += segment.len();
         }
         self.stored = stored;
-        self.stride *= 2;
+        self.stride = self.stride.saturating_mul(2);
+        // Ends kept are most of what is stored: thinning again would free
+        // nothing, and each point would walk every segment again.
+        if self.stored > MAX_POINTS * 3 / 4 {
+            self.full = true;
+        }
     }
 
     /// Close the segment being read: its last point is kept even when the
@@ -370,6 +396,32 @@ mod tests {
             altitude,
             time: seconds.map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s)),
         }
+    }
+
+    /// A map of short lines (road segments, a line each) is kept within
+    /// bounds and read in linear time: each segment keeps its ends, so
+    /// thinning alone could never make room, and each point walked every
+    /// segment again.
+    #[test]
+    fn many_short_lines_stay_bounded() {
+        let mut c = Collector::new();
+        let lines = MAX_SEGMENTS * 3;
+        for i in 0..lines {
+            c.line(String::new(), LineKind::Route, Datum::Sea);
+            let at = (i % 1000) as f64 * 0.0001;
+            c.point(point(45. + at, 6., None, None));
+            c.point(point(45. + at, 6.001, None, None));
+            c.point(point(45. + at, 6.002, None, None));
+        }
+        let (doc, c) = c.finish();
+        let kept: usize = doc
+            .lines
+            .iter()
+            .flat_map(|l| &l.segments)
+            .map(Vec::len)
+            .sum();
+        assert!(kept <= MAX_POINTS, "{kept}");
+        assert_eq!(c.routes.points, lines * 3, "every point still counted");
     }
 
     #[test]

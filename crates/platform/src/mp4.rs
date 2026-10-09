@@ -118,7 +118,8 @@ impl<R: Read + Seek> Walk<R> {
                 }
                 size => (size, 8),
             };
-            if size < head || at + size > end {
+            // A 64-bit size the file chose: its end may not even be a number.
+            if size < head || at.checked_add(size).is_none_or(|box_end| box_end > end) {
                 return Ok(());
             }
             let body = (at + head, at + size);

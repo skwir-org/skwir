@@ -28,6 +28,9 @@ pub enum Tag<'a> {
 /// short, and its track up to there is still worth showing.
 pub struct Damaged(pub String);
 
+/// Elements open at once at most: GPX, KML and their like nest a handful.
+const DEPTH: usize = 256;
+
 fn local(name: &str) -> String {
     name.rsplit(':').next().unwrap_or(name).to_owned()
 }
@@ -86,6 +89,11 @@ pub fn walk<R: BufRead>(
                         name: &name,
                         text: "",
                     })?;
+                } else if names.len() >= DEPTH {
+                    // Elements in elements past any real file: the names
+                    // held, and each reader's own path, would grow with
+                    // the file.
+                    return Ok(Some(Damaged(format!("elements nest deeper than {DEPTH}"))));
                 } else {
                     names.push(name);
                 }

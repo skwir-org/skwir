@@ -58,21 +58,32 @@ fn name(properties: Option<&Value>) -> String {
         .to_owned()
 }
 
-pub fn read(document: &Value, into: &mut Collector) {
+/// The places `document` holds, into `into`; stopped between features once
+/// `cancel` fires (a file of road segments holds hundreds of thousands).
+pub fn read(
+    document: &Value,
+    into: &mut Collector,
+    cancel: &bibli_core::CancelToken,
+) -> anyhow::Result<()> {
     match document.get("type").and_then(Value::as_str) {
         Some("FeatureCollection") => {
-            for feature in document
+            for (n, feature) in document
                 .get("features")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
+                .enumerate()
             {
+                if n.is_multiple_of(256) {
+                    bibli_platform::inspection::check(cancel)?;
+                }
                 read_feature(feature, into);
             }
         }
         Some("Feature") => read_feature(document, into),
         _ => geometry(document, "", None, into, 0),
     }
+    Ok(())
 }
 
 fn read_feature(feature: &Value, into: &mut Collector) {
@@ -208,7 +219,7 @@ mod tests {
         )
         .unwrap();
         let mut c = Collector::new();
-        read(&document, &mut c);
+        read(&document, &mut c, &bibli_core::CancelToken::new()).unwrap();
         let (doc, c) = c.finish();
         assert_eq!(doc.waypoints[0].name, "Spring");
         assert_eq!(doc.lines[0].kind, LineKind::Route);
@@ -225,7 +236,7 @@ mod tests {
         let document: Value =
             serde_json::from_str(r#"{"type":"Point","coordinates":[-170.5,-10.25]}"#).unwrap();
         let mut c = Collector::new();
-        read(&document, &mut c);
+        read(&document, &mut c, &bibli_core::CancelToken::new()).unwrap();
         let (doc, _) = c.finish();
         assert_eq!(doc.waypoints[0].at, LatLon::new(-10.25, -170.5).unwrap());
     }

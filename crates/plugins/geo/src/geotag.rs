@@ -48,14 +48,14 @@ const PROGRAM: &str = "exiftool";
 const MISSING: &str = "Install ExifTool to write pictures' locations";
 
 /// The operation kind, the commands and their menu items (owner `geo`).
-pub(crate) fn register(app: &App) {
+pub(crate) fn register(app: &App, lifetime: bibli_core::CancelToken) {
     app.ops.register::<SetPosition>(ID);
     app.commands.register::<GeotagArgs, _>(
         ID,
         "geo.geotag",
         "Geotag pictures from a track",
         "Place the selected pictures along the one selected track (GPX, FIT, any track read): each picture taken while it was recorded gets its position at that moment; proposed for review. Works on a worker: the result arrives as a proposal or a notification",
-        |args, app| geotag(app, args),
+        move |args, app| geotag(app, args, &lifetime),
     )
         .plans();
     app.commands.register::<RemoveArgs, _>(
@@ -1057,7 +1057,11 @@ fn typed(
     }
 }
 
-fn geotag(app: &App, args: GeotagArgs) -> anyhow::Result<Outcome> {
+fn geotag(
+    app: &App,
+    args: GeotagArgs,
+    lifetime: &bibli_core::CancelToken,
+) -> anyhow::Result<Outcome> {
     let typed = typed(app, args.pane, args.entries)?;
     // By name only here (a link's target's): which one is a track is read
     // on the worker.
@@ -1071,7 +1075,8 @@ fn geotag(app: &App, args: GeotagArgs) -> anyhow::Result<Outcome> {
     let refs: Vec<EntryRef> = typed.into_iter().map(|(r, _)| r).collect();
     let offset_seconds = args.offset_seconds;
     let weak = app.weak();
-    let cancel = app.lifetime().child();
+    // Ends with the plugin: turned off, it proposes nothing after.
+    let cancel = lifetime.child();
     let job = cancel.clone();
     app.scheduler
         .spawn(Priority::Normal, "geo.geotag", cancel, move || {
@@ -2020,7 +2025,7 @@ mod tests {
     }
 
     #[test]
-    fn a_location_too_long_for_a_pipe_is_restored_from_a_private_file() {
+    fn a_location_longer_than_a_pipe_holds_is_restored_whole() {
         let Some(program) = tool() else { return };
         let dir = scratch();
         let path = picture(dir.path(), "many places.jpg");
@@ -2036,8 +2041,8 @@ mod tests {
         let cancel = CancelToken::new();
         let before = read_tags(&program, &path, &cancel).unwrap();
         assert!(
-            serde_json::to_vec(&before).unwrap().len() > bibli_platform::process::MAX_INPUT,
-            "the fixture must not fit a pipe"
+            serde_json::to_vec(&before).unwrap().len() > 4096,
+            "the fixture must not fit a pipe's buffer"
         );
 
         let ctx = StepContext::detached();
@@ -2222,7 +2227,7 @@ mod tests {
 
     fn app(dir: &Path) -> std::sync::Arc<App> {
         let app = App::new(AppConfig::ephemeral(dir.join(".state"))).unwrap();
-        register(&app);
+        register(&app, bibli_core::CancelToken::new());
         app
     }
 

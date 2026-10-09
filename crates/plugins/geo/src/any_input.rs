@@ -73,7 +73,11 @@ proptest! {
     #[test]
     fn a_geojson_document(text in mutated_text(GEOJSON)) {
         if let Ok(document) = serde_json::from_str(&text) {
-            crate::geojson::read(&document, &mut Collector::new());
+            let _ = crate::geojson::read(
+                &document,
+                &mut Collector::new(),
+                &bibli_core::CancelToken::new(),
+            );
         }
     }
 

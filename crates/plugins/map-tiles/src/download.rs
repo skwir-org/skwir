@@ -135,6 +135,11 @@ struct Queue {
     jobs: Mutex<VecDeque<Job>>,
     ready: tokio::sync::Notify,
     started: Mutex<bool>,
+    /// The tiles being downloaded, by where they are kept, with the
+    /// requests for them that came meanwhile: a tile asked again while it
+    /// downloads (its view left and came back) is answered by that one
+    /// download, never fetched twice.
+    flying: Mutex<HashMap<String, Vec<(CancelToken, TileDone)>>>,
 }
 
 impl Queue {
@@ -355,6 +360,14 @@ async fn serve(shared: &Arc<Shared>, job: Job) {
         done,
         ..
     } = job;
+    {
+        let mut flying = shared.queue.flying.lock();
+        if let Some(waiting) = flying.get_mut(&place) {
+            waiting.push((cancel, done));
+            return;
+        }
+        flying.insert(place.clone(), Vec::new());
+    }
     // The keyring may ask to be unlocked: not on the runtime's thread.
     let (server_for_key, keys) = (Arc::clone(&server), Arc::clone(&shared.keys));
     let key = tokio::task::spawn_blocking(move || key_of(&server_for_key, &keys))
@@ -399,6 +412,20 @@ async fn serve(shared: &Arc<Shared>, job: Job) {
             }
             image
         });
+        let waiting = shared
+            .queue
+            .flying
+            .lock()
+            .remove(&place)
+            .unwrap_or_default();
+        for (cancel, done) in waiting {
+            if !cancel.is_cancelled() {
+                done(match &answer {
+                    Ok(image) => Ok(image.clone()),
+                    Err(error) => Err(anyhow::anyhow!("{error:#}")),
+                });
+            }
+        }
         if !cancel.is_cancelled() {
             done(answer);
         }

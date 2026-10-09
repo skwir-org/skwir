@@ -37,6 +37,9 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 /// Workers one scan is spread over.
+/// What the positions kept in the cache may take: each is a small file, a
+/// record per version of a file, so the disk holds a block of each.
+const CACHE_BYTES: u64 = 8 << 20;
 const WORKERS: usize = 4;
 /// New points are published at most this often while a scan runs.
 const PUBLISH: Duration = Duration::from_millis(200);
@@ -575,12 +578,21 @@ impl Scanner {
                 };
                 if !cancel.is_cancelled()
                     && let Ok(bytes) = serde_json::to_vec(&found)
-                    && let Err(error) = self.cache.put(key.as_bytes(), &bytes)
                 {
-                    tracing::debug!(%error, "geo: keeping a position");
+                    match self.cache.put(key.as_bytes(), &bytes) {
+                        // Bounded: a record per version of every file
+                        // ever looked at, else.
+                        Ok(()) => self.cache.trim_soon(bytes.len() as u64, CACHE_BYTES),
+                        Err(error) => tracing::debug!(%error, "geo: keeping a position"),
+                    }
                 }
                 found
             });
+        // A read cut short says nothing of the file: remembered, a track
+        // cancelled mid-parse would have no position for the session.
+        if cancel.is_cancelled() {
+            return None;
+        }
         let mut remembered = self.remembered.lock();
         if remembered.len() >= REMEMBERED {
             remembered.clear();
