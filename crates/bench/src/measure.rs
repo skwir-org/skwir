@@ -583,10 +583,15 @@ pub fn tags_index(profile: Profile, runs: usize) -> (Stat, Stat, Stat) {
 /// Refresh asks it (`force`), until the status says it ended. The first
 /// scan, which places the watches, is not timed.
 pub fn usage_scan(root: &Path, profile: Profile, runs: usize) -> Stat {
-    use bibli_core::command::{Invocation, Outcome};
     if profile == Profile::Images10k {
         return Stat::NONE;
     }
+    Stat::of(usage_scans(root, profile, runs))
+}
+
+/// Each of `runs` scans of [`usage_scan`].
+pub fn usage_scans(root: &Path, profile: Profile, runs: usize) -> Vec<Duration> {
+    use bibli_core::command::{Invocation, Outcome};
     let dir = bibli_core::os_path::canonical(root.join(profile.name())).expect("tree");
     let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(
         std::env::temp_dir().join("bibli-bench-usage"),
@@ -627,7 +632,7 @@ pub fn usage_scan(root: &Path, profile: Profile, runs: usize) -> Stat {
         }
     };
     scan();
-    Stat::of((0..runs).map(|_| scan()).collect())
+    (0..runs).map(|_| scan()).collect()
 }
 
 /// Whether the generator could tag `dir` (see `generate::tag`).

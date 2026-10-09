@@ -4,7 +4,10 @@
 //! Statuses live only as long as their request: navigation, pane close and
 //! `usage.release` drop them.
 
+mod marks;
 mod worker;
+
+pub use marks::{Kinds, Reclaim};
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -40,12 +43,35 @@ pub struct Node {
     pub alloc: u64,
     pub files: u64,
     pub dirs: u64,
+    /// The newest change in it, itself included (a folder changes as
+    /// its entries come and go), in seconds since 1970; 0 when unknown.
+    #[serde(default)]
+    pub modified: i64,
+    /// A file's kind, as its name says (`marks::Types`).
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub kind: Option<bibli_platform::mime::Kind>,
+    /// A folder's allocated bytes by the kinds of the files in it.
+    #[serde(default)]
+    #[schemars(with = "std::collections::BTreeMap<String, u64>")]
+    pub kinds: Kinds,
+    /// Whether the room it takes can be had back as a whole: a cache, a trash.
+    #[serde(default)]
+    pub reclaim: Option<Reclaim>,
+    /// Allocated bytes in it that caches and trashes hold.
+    #[serde(default)]
+    pub reclaimable: u64,
     pub children: Vec<Node>,
     pub other_alloc: u64,
     pub other_size: u64,
     pub other_count: u64,
     #[serde(default)]
     pub other_incomplete: u64,
+    /// The files under the other items, and their newest change.
+    #[serde(default)]
+    pub other_files: u64,
+    #[serde(default)]
+    pub other_modified: i64,
     /// A file's number of links (`st_nlink`): one with several is counted
     /// once where they meet. 0 for a folder.
     #[serde(skip)]
@@ -69,6 +95,7 @@ pub(crate) struct Linked {
     pub(crate) nlink: u64,
     pub(crate) size: u64,
     pub(crate) alloc: u64,
+    pub(crate) kind: Option<bibli_platform::mime::Kind>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

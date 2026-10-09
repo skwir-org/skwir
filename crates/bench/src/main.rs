@@ -50,6 +50,13 @@ enum Cmd {
         /// The query, as typed in the address field (`tag:bench`).
         expr: String,
     },
+    /// Time the Usage view's scan of a generated tree, forced as Refresh
+    /// asks it, printing each run's time.
+    Usage {
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(1..))]
+        runs: u16,
+        profile: Profile,
+    },
     /// Measure and compare against a budgets file; exit 1 on any regression.
     Check {
         #[arg(long, default_value = "crates/bench/budgets.toml")]
@@ -117,6 +124,16 @@ fn main() -> Result<()> {
                         "found": s.found,
                     })
                 );
+            }
+        }
+        Cmd::Usage { runs, profile } => {
+            generate::generate(&cli.root, profile)?;
+            for (run, took) in measure::usage_scans(&cli.root, profile, usize::from(runs))
+                .into_iter()
+                .enumerate()
+            {
+                let us = u64::try_from(took.as_micros()).unwrap_or(u64::MAX);
+                println!("{}", serde_json::json!({ "run": run + 1, "us": us }));
             }
         }
         Cmd::Check { budgets, runs } => {

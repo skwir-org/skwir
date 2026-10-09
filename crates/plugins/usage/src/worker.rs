@@ -25,6 +25,7 @@ use crossbeam_channel::{Receiver, Sender};
 use notify::{ErrorKind, EventKind, RecursiveMode, Watcher, event::ModifyKind};
 use parking_lot::Mutex;
 
+use super::marks::{self, Places, Types};
 use super::{Linked, Links, Message, Node, Request, Shared, SnapshotKind, Status};
 
 const MAX_CHILDREN: usize = 64;
@@ -77,6 +78,7 @@ fn cost(n: &Node) -> usize {
         + n.path.as_os_str().len() * 3
         + n.name.len()
         + n.links.0.len() * 2 * std::mem::size_of::<(EntryId, Linked)>()
+        + n.kinds.heap()
         + n.children.iter().map(cost).sum::<usize>()
 }
 impl Cache {
@@ -267,6 +269,10 @@ mod meta {
     pub fn links(m: &Metadata) -> u64 {
         m.nlink()
     }
+    /// When its content last changed, in seconds since 1970.
+    pub fn modified(m: &Metadata) -> i64 {
+        m.mtime()
+    }
 }
 
 #[cfg(not(unix))]
@@ -284,6 +290,12 @@ mod meta {
     }
     pub fn links(_: &Metadata) -> u64 {
         1
+    }
+    pub fn modified(m: &Metadata) -> i64 {
+        m.modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
     }
 }
 
@@ -391,6 +403,9 @@ struct Scanner<'a> {
     shared: &'a Shared,
     /// Without a monitor the caller decides whether results may be reused.
     caching: bool,
+    /// The kinds of the extensions met so far, kept by the worker.
+    types: Types,
+    places: Places,
     dev: u64,
     dirs: u64,
     entries: u64,
@@ -477,6 +492,7 @@ fn add_contents(total: &mut Node, child: &Node) {
         if Arc::make_mut(&mut total.links).found(id, linked) {
             total.size -= linked.size;
             total.alloc -= linked.alloc;
+            total.kinds.take(linked.kind, linked.alloc);
         }
     };
     if child.is_dir {
@@ -491,6 +507,7 @@ fn add_contents(total: &mut Node, child: &Node) {
             nlink: child.nlink,
             size: child.size,
             alloc: child.alloc,
+            kind: child.kind,
         };
         forget(total, id, linked);
     }
@@ -501,6 +518,20 @@ fn add_totals(total: &mut Node, child: &Node) {
     total.alloc += child.alloc;
     total.files += child.files;
     total.dirs += child.dirs;
+    total.modified = total.modified.max(child.modified);
+    total.reclaimable += child.reclaimable;
+    if child.is_dir {
+        total.kinds.merge(&child.kinds);
+    } else {
+        total.kinds.add(child.kind, child.alloc);
+    }
+}
+
+/// A folder that is a cache or a trash holds nothing else.
+fn reclaim_whole(node: &mut Node) {
+    if node.reclaim.is_some() {
+        node.reclaimable = node.alloc;
+    }
 }
 
 fn replace_pending(tree: &mut Node, mut child: Node) {
@@ -527,16 +558,22 @@ fn entry_id(metadata: &std::fs::Metadata) -> EntryId {
 }
 
 /// One stat per entry. Returns whether the entry is a directory to descend into.
-fn entry_node(entry: &std::fs::DirEntry, dev: u64) -> std::io::Result<(Node, bool)> {
+fn entry_node(
+    entry: &std::fs::DirEntry,
+    dev: u64,
+    types: &mut Types,
+) -> std::io::Result<(Node, bool)> {
     let path = entry.path();
     let metadata = std::fs::symlink_metadata(&path)?;
     let is_dir = metadata.is_dir();
     let descend = is_dir && descend(&path, &metadata, dev);
+    let name = entry.file_name();
     Ok((
         Node {
             id: Some(entry_id(&metadata)),
             path,
-            name: entry.file_name().to_string_lossy().into_owned(),
+            kind: if is_dir { None } else { types.of(&name) },
+            name: name.to_string_lossy().into_owned(),
             is_dir,
             incomplete: descend,
             size: if is_dir { 0 } else { metadata.len() },
@@ -547,6 +584,7 @@ fn entry_node(entry: &std::fs::DirEntry, dev: u64) -> std::io::Result<(Node, boo
             },
             files: u64::from(!is_dir),
             nlink: if is_dir { 0 } else { meta::links(&metadata) },
+            modified: meta::modified(&metadata),
             ..Node::default()
         },
         descend,
@@ -563,6 +601,8 @@ impl<'a> Scanner<'a> {
             path,
             shared,
             caching: true,
+            types: Types::default(),
+            places: Places::default(),
             dev: 0,
             dirs: 0,
             entries: 0,
@@ -658,6 +698,7 @@ impl<'a> Scanner<'a> {
         self.ensure()?;
         let mut node = self.preview.take().expect("root preview").tree;
         trim(&mut node);
+        reclaim_whole(&mut node);
         node.incomplete = self.errors > 0
             || node.other_incomplete > 0
             || node.children.iter().any(|child| child.incomplete);
@@ -670,7 +711,7 @@ impl<'a> Scanner<'a> {
     /// One pass over the root: files and unknown folders are visible before
     /// any subtree is descended. Only the names of subdirectories on the
     /// root's device are retained for the descent.
-    fn list_root(&mut self) -> anyhow::Result<Vec<(OsString, EntryId)>> {
+    fn list_root(&mut self) -> anyhow::Result<Vec<(OsString, EntryId, i64)>> {
         if !cfg!(unix) {
             return Err(bibli_core::system::not_yet("Disk usage").into());
         }
@@ -695,6 +736,8 @@ impl<'a> Scanner<'a> {
                     .to_string_lossy()
                     .into_owned(),
                 is_dir: true,
+                modified: meta::modified(&metadata),
+                reclaim: self.places.of(path),
                 ..Node::default()
             },
             branch: None,
@@ -711,12 +754,22 @@ impl<'a> Scanner<'a> {
                 self.errors += 1;
                 continue;
             };
-            match entry_node(&entry, self.dev) {
+            match entry_node(&entry, self.dev, &mut self.types) {
                 Ok((child, descend)) => {
                     if descend {
-                        subdirectories.push((entry.file_name(), child.id.expect("stat-ed")));
+                        subdirectories.push((
+                            entry.file_name(),
+                            child.id.expect("stat-ed"),
+                            child.modified,
+                        ));
                     }
+                    let tags = !child.is_dir
+                        && child.name == marks::CACHEDIR_TAG
+                        && marks::tags_a_cache(&child.path);
                     let tree = &mut self.preview.as_mut().expect("root preview").tree;
+                    if tags {
+                        tree.reclaim.get_or_insert(marks::Reclaim::Cache);
+                    }
                     add_contents(tree, &child);
                     tree.dirs += u64::from(child.is_dir);
                     tree.children.push(child);
@@ -736,18 +789,22 @@ impl<'a> Scanner<'a> {
         Ok(subdirectories)
     }
 
-    fn scan_children(&mut self, subdirectories: Vec<(OsString, EntryId)>) -> anyhow::Result<()> {
-        for (name, id) in subdirectories {
+    fn scan_children(
+        &mut self,
+        subdirectories: Vec<(OsString, EntryId, i64)>,
+    ) -> anyhow::Result<()> {
+        for (name, id, modified) in subdirectories {
             self.ensure()?;
             let pending = Node {
                 path: self.path.join(&name),
                 name: name.to_string_lossy().into_owned(),
                 is_dir: true,
                 incomplete: true,
+                modified,
                 ..Node::default()
             };
             self.preview.as_mut().expect("root preview").branch = Some(pending.clone());
-            let child = match self.directory(&pending.path, 1, id) {
+            let child = match self.directory(&pending.path, 1, id, modified) {
                 Ok(child) => child,
                 Err(_) if self.interrupted() => anyhow::bail!("Scan interrupted"),
                 Err(_) => {
@@ -764,8 +821,15 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
-    /// `id` comes from the parent's stat: each entry is stat-ed once.
-    fn directory(&mut self, path: &Path, depth: usize, id: EntryId) -> anyhow::Result<Node> {
+    /// `id` and `modified` come from the parent's stat: each entry is
+    /// stat-ed once.
+    fn directory(
+        &mut self,
+        path: &Path,
+        depth: usize,
+        id: EntryId,
+        modified: i64,
+    ) -> anyhow::Result<Node> {
         let covered = self.watch(path)?;
         if let Some(node) = self.cache.get(path) {
             if let Some(branch) = self.preview.as_mut().and_then(|p| p.branch.as_mut()) {
@@ -792,6 +856,8 @@ impl<'a> Scanner<'a> {
             ),
             path: path.to_path_buf(),
             is_dir: true,
+            modified,
+            reclaim: self.places.of(path),
             ..Node::default()
         };
         self.checkpoint(Instant::now())?;
@@ -814,8 +880,13 @@ impl<'a> Scanner<'a> {
                 continue;
             };
             let child_id = entry_id(&metadata);
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let modified = meta::modified(&metadata);
+            let file_name = entry.file_name();
+            let name = file_name.to_string_lossy().into_owned();
             let mut child = if !metadata.is_dir() {
+                if file_name == marks::CACHEDIR_TAG && marks::tags_a_cache(&path) {
+                    node.reclaim.get_or_insert(marks::Reclaim::Cache);
+                }
                 Node {
                     path,
                     name,
@@ -823,6 +894,8 @@ impl<'a> Scanner<'a> {
                     alloc: meta::allocated(&metadata),
                     files: 1,
                     nlink: meta::links(&metadata),
+                    modified,
+                    kind: self.types.of(&file_name),
                     ..Node::default()
                 }
             } else if !descend(&path, &metadata, self.dev) {
@@ -831,12 +904,13 @@ impl<'a> Scanner<'a> {
                     path,
                     name,
                     is_dir: true,
+                    modified,
                     ..Node::default()
                 }
             } else {
                 // Interior symlinks stay leaves, so a link back to an ancestor
                 // never creates a cycle.
-                match self.directory(&path, depth + 1, child_id) {
+                match self.directory(&path, depth + 1, child_id, modified) {
                     Ok(node) => node,
                     Err(_) if self.interrupted() => anyhow::bail!("Scan interrupted"),
                     Err(_) => {
@@ -846,6 +920,7 @@ impl<'a> Scanner<'a> {
                             name,
                             is_dir: true,
                             incomplete: true,
+                            modified,
                             ..Node::default()
                         }
                     }
@@ -874,6 +949,7 @@ impl<'a> Scanner<'a> {
         }
         self.ensure()?;
         trim(&mut node);
+        reclaim_whole(&mut node);
         node.incomplete = self.errors != initial_errors;
         if !node.incomplete && covered && self.unmonitored == initial_unmonitored && self.caching {
             self.cache.insert(node.clone());
@@ -885,13 +961,20 @@ fn trim(node: &mut Node) {
     node.children
         .sort_by(|a, b| b.alloc.cmp(&a.alloc).then_with(|| a.name.cmp(&b.name)));
     if node.children.len() > MAX_CHILDREN {
-        for child in node.children.drain(MAX_CHILDREN..) {
-            node.other_alloc += child.alloc;
-            node.other_size += child.size;
-            node.other_count += 1;
-            node.other_incomplete += u64::from(child.incomplete);
+        for child in node.children.split_off(MAX_CHILDREN) {
+            fold(node, &child);
         }
     }
+}
+
+/// `child` joins `node`'s other items.
+fn fold(node: &mut Node, child: &Node) {
+    node.other_alloc += child.alloc;
+    node.other_size += child.size;
+    node.other_count += 1;
+    node.other_incomplete += u64::from(child.incomplete);
+    node.other_files += child.files;
+    node.other_modified = node.other_modified.max(child.modified);
 }
 
 /// What the folders of a status's `tree` hold, read from the breakdowns
@@ -923,6 +1006,8 @@ fn nest(tree: &mut Node, cache: &Cache) {
             folder.other_size = breakdown.other_size;
             folder.other_count = breakdown.other_count;
             folder.other_incomplete = breakdown.other_incomplete;
+            folder.other_files = breakdown.other_files;
+            folder.other_modified = breakdown.other_modified;
             for entry in &breakdown.children {
                 if budget > 0 && entry.alloc.saturating_mul(ENTRY_SHARE) >= total {
                     budget -= 1;
@@ -932,10 +1017,7 @@ fn nest(tree: &mut Node, cache: &Cache) {
                         ..entry.clone()
                     });
                 } else {
-                    folder.other_alloc += entry.alloc;
-                    folder.other_size += entry.size;
-                    folder.other_count += 1;
-                    folder.other_incomplete += u64::from(entry.incomplete);
+                    fold(folder, entry);
                 }
             }
             if budget == 0 {
@@ -1042,6 +1124,10 @@ struct Worker {
     deferred: Vec<Message>,
     events: Arc<Mutex<Changes>>,
     backoff: Backoff,
+    /// The kinds of the extensions the scans met.
+    types: Types,
+    /// Read again as each request comes: a volume mounted since has a trash.
+    places: Places,
 }
 impl Worker {
     fn new(
@@ -1061,6 +1147,8 @@ impl Worker {
             deferred: Vec::new(),
             events,
             backoff: Backoff::default(),
+            types: Types::default(),
+            places: Places::default(),
         }
     }
 
@@ -1108,6 +1196,7 @@ impl Worker {
             return;
         }
         self.remove_active(request.pane);
+        self.places = Places::read();
         let mut state = Active {
             target: Target::resolve(&request.path),
             request,
@@ -1317,6 +1406,8 @@ impl Worker {
             inbox,
             deferred,
             shared,
+            types,
+            places,
             ..
         } = self;
         let monitor = if coverage == Coverage::None {
@@ -1333,9 +1424,12 @@ impl Worker {
             inbox: inbox.as_ref().map(|rx| Inbox { rx, deferred }),
             caching: coverage != Coverage::None,
             last_progress: started,
+            types: std::mem::take(types),
+            places: places.clone(),
             ..Scanner::new(cache, request, &target.path, shared)
         };
         let mut tree = scanner.root();
+        *types = std::mem::take(&mut scanner.types);
         let scanned_dirs = scanner.dirs;
         let errors = scanner.errors;
         let unmonitored = scanner.unmonitored;
@@ -2094,6 +2188,110 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_says_its_kinds_its_newest_change_and_the_room_it_gives_back() {
+        use bibli_platform::mime::Kind;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        for dir in ["film/clips", "build/out", "not a cache", "Trash"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        let write = |path: &str, bytes: &[u8]| std::fs::write(root.join(path), bytes).unwrap();
+        write("film/clips/a.mkv", &[1; 3000]);
+        write("film/poster.jpg", &[2; 2000]);
+        write("film/README", b"notes");
+        write(
+            "build/CACHEDIR.TAG",
+            b"Signature: 8a477f597d28d172789f06886806bc55\n",
+        );
+        write("build/out/lib.o", &[3; 5000]);
+        write("not a cache/CACHEDIR.TAG", b"Signature: none");
+        write("Trash/old.iso", &[4; 4000]);
+        // After what they hold, which changes a folder.
+        for (path, secs) in [
+            ("film/clips/a.mkv", 3000),
+            ("film/clips", 3500),
+            ("film/poster.jpg", 1000),
+            ("film/README", 2000),
+            ("film", 400),
+        ] {
+            std::fs::File::open(root.join(path))
+                .unwrap()
+                .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(secs))
+                .unwrap();
+        }
+        let alloc = |path: &str| meta::allocated(&std::fs::metadata(root.join(path)).unwrap());
+
+        let request = request(0, root.clone());
+        let shared = shared();
+        let mut cache = Cache::default();
+        let tree = Scanner {
+            places: Places::new(Vec::new(), vec![root.join("Trash")]),
+            ..scanner(&mut cache, &request, &shared)
+        }
+        .root()
+        .unwrap();
+        let film = child(&tree, "film");
+        assert_eq!(film.modified, 3500, "its newest change, a folder's own too");
+        assert_eq!(
+            film.kinds.iter().collect::<Vec<_>>(),
+            [
+                (Some(Kind::Image), alloc("film/poster.jpg")),
+                (Some(Kind::Video), alloc("film/clips/a.mkv")),
+                (None, alloc("film/README")),
+            ]
+        );
+        let kept = cache.peek(&root.join("film")).unwrap();
+        assert_eq!(child(kept, "poster.jpg").kind, Some(Kind::Image));
+        assert_eq!(
+            tree.kinds.iter().map(|(_, bytes)| bytes).sum::<u64>(),
+            tree.alloc,
+            "every file of some kind"
+        );
+
+        let build = child(&tree, "build");
+        assert_eq!(build.reclaim, Some(marks::Reclaim::Cache));
+        assert_eq!(build.reclaimable, build.alloc);
+        let fake = child(&tree, "not a cache");
+        assert_eq!((fake.reclaim, fake.reclaimable), (None, 0));
+        let trash = child(&tree, "Trash");
+        assert_eq!(trash.reclaim, Some(marks::Reclaim::Trash));
+        assert_eq!(tree.reclaimable, build.alloc + trash.alloc);
+        assert!(tree.reclaim.is_none());
+
+        // Kept, a breakdown says the same: the folder shown is a cache.
+        let build = self::request(0, root.join("build"));
+        let kept = scanner(&mut cache, &build, &shared).root().unwrap();
+        assert_eq!(kept.reclaim, Some(marks::Reclaim::Cache));
+        let mut cold = Cache::default();
+        let counted = scanner(&mut cold, &build, &shared).root().unwrap();
+        assert_eq!(counted.reclaim, Some(marks::Reclaim::Cache));
+        assert_eq!(
+            counted.reclaimable,
+            alloc("build/out/lib.o") + alloc("build/CACHEDIR.TAG")
+        );
+    }
+
+    #[test]
+    fn the_other_items_say_their_files_and_newest_change() {
+        let mut node = breakdown(
+            "/r",
+            (0..MAX_CHILDREN + 2)
+                .map(|i| Node {
+                    files: 3,
+                    modified: 1000 - i64::try_from(i).unwrap(),
+                    ..row(&format!("/r/{i:03}"), 1000 - i as u64, true)
+                })
+                .collect(),
+        );
+        trim(&mut node);
+        // The two lightest, the older of which changed last.
+        assert_eq!(
+            (node.other_count, node.other_files, node.other_modified),
+            (2, 6, 1000 - i64::try_from(MAX_CHILDREN).unwrap())
+        );
+    }
+
+    #[test]
     fn progressive_branch_counts_nested_and_cached_contents_once() {
         let tmp = tempfile::tempdir().unwrap();
         let child = tmp.path().join("child");
@@ -2122,7 +2320,7 @@ mod tests {
                 },
                 branch: Some(pending),
             });
-            let result = scan.directory(&child, 1, id).unwrap();
+            let result = scan.directory(&child, 1, id, 0).unwrap();
             let partial = scan.preview.as_ref().unwrap().snapshot();
             assert_eq!((partial.size, partial.files, partial.dirs), (7, 2, 2));
             assert!(partial.children[0].incomplete && partial.children[0].id.is_some());
@@ -2255,7 +2453,7 @@ mod tests {
             ..Scanner::new(&mut cache, &request, &request.path, &shared)
         };
         scanner
-            .directory(&request.path, 0, EntryId { dev: 0, ino: 0 })
+            .directory(&request.path, 0, EntryId { dev: 0, ino: 0 }, 0)
             .unwrap();
         scanner.progress(started + PROGRESS_INTERVAL / 2);
         assert!(!shared.statuses.lock()[&request.pane].updating);

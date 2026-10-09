@@ -1352,6 +1352,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "bibli-core",
+ "bibli-platform",
  "crossbeam-channel",
  "notify",
  "parking_lot",

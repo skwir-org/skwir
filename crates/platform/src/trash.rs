@@ -51,6 +51,28 @@ pub fn volume_trashes(top: &Path, uid: u32) -> Vec<PathBuf> {
     found
 }
 
+/// Whether `folder` is named as the user's trash on a volume is:
+/// `.Trash-<uid>`, or `<uid>` in a `.Trash`. Reads nothing: a walk asks
+/// it of each folder, where asking the volumes for theirs (`trashes`)
+/// costs a read of each one's device.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn named_as_trash(folder: &Path) -> bool {
+    let uid = || rustix::process::getuid().as_raw().to_string();
+    match folder.file_name().and_then(std::ffi::OsStr::to_str) {
+        Some(name) if name.starts_with(".Trash-") => name[".Trash-".len()..] == uid(),
+        Some(name) if name.bytes().all(|b| b.is_ascii_digit()) => {
+            folder.parent().and_then(Path::file_name) == Some(".Trash".as_ref()) && name == uid()
+        }
+        _ => false,
+    }
+}
+
+/// No volume keeps a freedesktop trash of the user's here.
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+pub fn named_as_trash(_: &Path) -> bool {
+    false
+}
+
 #[cfg(unix)]
 fn is_sticky(permissions: &std::fs::Permissions) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -205,6 +227,26 @@ mod tests {
 
     use super::{list, parse_info, volume_trashes};
     use crate::calendar::Calendar;
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn a_volume_trash_is_known_by_its_name() {
+        use super::named_as_trash;
+        let uid = rustix::process::getuid().as_raw();
+        assert!(named_as_trash(
+            &Path::new("/media/stick").join(format!(".Trash-{uid}"))
+        ));
+        assert!(named_as_trash(
+            &Path::new("/media/stick/.Trash").join(uid.to_string())
+        ));
+        assert!(!named_as_trash(
+            &Path::new("/media/stick").join(format!(".Trash-{}", uid + 1))
+        ));
+        assert!(!named_as_trash(
+            &Path::new("/media/stick/photos").join(uid.to_string())
+        ));
+        assert!(!named_as_trash(Path::new("/media/stick/.Trash-")));
+    }
 
     // The freedesktop trash.
     #[cfg(unix)]
