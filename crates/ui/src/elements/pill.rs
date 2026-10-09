@@ -22,6 +22,12 @@ pub fn pill(
     remove: Option<(Invocation, SharedString)>,
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
+    let theme = cx.global::<Theme>().clone();
+    let ink = if button.tinted() {
+        theme.text_muted
+    } else {
+        theme.selection_text
+    };
     let body = button
         .render(shell, cx)
         .h(px(22.))
@@ -29,17 +35,19 @@ pub fn pill(
         .rounded_full()
         .mr(px(2.));
     match remove {
-        Some((remove, tip)) => body.pr(px(2.)).child(clear(shell, remove, tip, cx)),
+        Some((remove, tip)) => body.pr(px(2.)).child(clear(shell, remove, tip, ink, cx)),
         None => body,
     }
 }
 
 /// The × that takes a pill away: `remove` run on the pane being drawn, as
-/// the pointer's shortcut for what the keyboard does otherwise.
+/// the pointer's shortcut for what the keyboard does otherwise, in `ink`,
+/// the pill's text color.
 pub fn clear(
     shell: &Shell,
     remove: Invocation,
     tip: SharedString,
+    ink: gpui::Hsla,
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
     let theme = cx.global::<Theme>().clone();
@@ -65,5 +73,5 @@ pub fn clear(
             let remove = remove.clone().with("pane", pane);
             this.run(&remove.name, remove.args, window, cx);
         }))
-        .child(crate::controls::glyph("close", theme.selection_text, 10.))
+        .child(crate::controls::glyph("close", ink, 10.))
 }

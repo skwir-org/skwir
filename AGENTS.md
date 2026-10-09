@@ -391,7 +391,8 @@ current source before assuming a planned crate, command, or API exists.
   save that nothing there that is no folder reads as one: the first of
   the location's own places carries its `icon`, a place standing for a
   tag (`Crumb::tag`) is that tag's chip, and a narrowing by a tag
-  (`Pill::tag`) wears its dot; and
+  (`Pill::tag`, a `TagRef`) is a pill in its color, hollow for the
+  files without it (`toolbar::Tint`), as a search's tag chips are; and
   whose chevrons list `LocationProvider::places` on a worker (after the
   last place only when it holds places, `Trail::holds_places`: a tag,
   the trash and its folders, not the shelf), and which Up walks back (`App::parent`: a search goes
@@ -844,7 +845,8 @@ current source before assuming a planned crate, command, or API exists.
   Ctrl+L) edits its text, where it looks staying a pill. A choice navigates, so Back undoes it.
   The tags a search requires are a set, each a chip of its own read as a
   path (`Places › France`, a category going back up to it; "+" between
-  tags), and none is a NOT (`not_tag`). Over a search with a tag, a bar
+  tags) in the tag's color, and none is a NOT (`not_tag`), its chip
+  hollow. Over a search with a tag, a bar
   offers where it can narrow to (`narrow.rs`): the tags within each of
   its tags, the other tags its files have, their kinds and years, each
   with how many files, counted from the results when the listing changes;

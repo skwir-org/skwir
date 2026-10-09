@@ -41,6 +41,35 @@ pub fn clean_tag(typed: &str) -> String {
         .join("/")
 }
 
+/// A tag a crumb or a pill stands for, by its full name (`Places/France`):
+/// the files that have it, or those that `lacks` it (“not family”).
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct TagRef {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lacks: bool,
+}
+
+impl TagRef {
+    /// The files that have `name`.
+    pub fn of(name: impl Into<String>) -> Self {
+        TagRef {
+            name: name.into(),
+            lacks: false,
+        }
+    }
+
+    /// The files without `name`.
+    pub fn lacking(name: impl Into<String>) -> Self {
+        TagRef {
+            name: name.into(),
+            lacks: true,
+        }
+    }
+}
+
 /// The tag's own name, without its categories: `Paris`.
 pub fn tag_leaf(tag: &str) -> &str {
     tag.rsplit_once(TAG_SEPARATOR).map_or(tag, |(_, leaf)| leaf)

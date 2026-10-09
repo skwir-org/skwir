@@ -21,7 +21,7 @@
 //! the language's own (`kind:image`, `modified:this-week`, `size>1G`).
 
 use bibli_core::command::Invocation;
-use bibli_core::metadata::{TAG_SEPARATOR, clean_tag, same_tag, tag_leaf, tag_within};
+use bibli_core::metadata::{TAG_SEPARATOR, TagRef, clean_tag, same_tag, tag_leaf, tag_within};
 use bibli_platform::mime::Kind;
 use serde::Serialize;
 
@@ -521,8 +521,8 @@ pub struct Part {
     pub label: String,
     pub facet: &'static str,
     pub value: Option<String>,
-    /// The tag it narrows by, whose dot its pill wears.
-    pub tag: Option<String>,
+    /// The tag it narrows by, whose color its pill wears.
+    pub tag: Option<TagRef>,
 }
 
 /// What a narrowing reads as (`kind:image modified:2024` is “Images” and
@@ -562,13 +562,13 @@ pub fn parts(expr: &str) -> Result<(Vec<Part>, Vec<String>), String> {
     }
     for tag in &p.tags {
         parts.push(Part {
-            tag: Some(tag.clone()),
+            tag: Some(TagRef::of(tag)),
             ..part(format!("with {}", tag_leaf(tag)), "drop_tag", Some(tag))
         });
     }
     for tag in &p.not_tags {
         parts.push(Part {
-            tag: Some(tag.clone()),
+            tag: Some(TagRef::lacking(tag)),
             ..part(format!("not {}", tag_leaf(tag)), "not_tag", Some(tag))
         });
     }
@@ -808,21 +808,21 @@ mod tests {
         d.chips.iter().find(|c| c.id == id).unwrap()
     }
 
-    /// A folder narrowed by a tag reads as a pill of that tag, whose dot
-    /// it wears; the others are no tag's.
+    /// A folder narrowed by a tag reads as a pill of that tag, in its
+    /// color, hollow for the files without it; the others are no tag's.
     #[test]
     fn a_narrowing_by_a_tag_names_its_tag() {
         let (parts, _) = parts("kind:image tag:Places/France NOT tag:draft").unwrap();
-        let read: Vec<(&str, Option<&str>)> = parts
+        let read: Vec<(&str, Option<TagRef>)> = parts
             .iter()
-            .map(|p| (p.label.as_str(), p.tag.as_deref()))
+            .map(|p| (p.label.as_str(), p.tag.clone()))
             .collect();
         assert_eq!(
             read,
             [
                 ("Images", None),
-                ("with France", Some("Places/France")),
-                ("not draft", Some("draft")),
+                ("with France", Some(TagRef::of("Places/France"))),
+                ("not draft", Some(TagRef::lacking("draft"))),
             ]
         );
     }

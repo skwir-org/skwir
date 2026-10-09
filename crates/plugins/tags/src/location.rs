@@ -28,7 +28,9 @@ use bibli_core::location::{
     Crumb, EmptyState, EventSink, ListingEvent, Location, LocationProvider, Narrowing, OpenContext,
     OpenLocation, Toggle, Trail, Verb, Verbs, escape, unescape,
 };
-use bibli_core::metadata::{clean_tag, same_tag, tag_leaf, tag_parent, tag_under, tag_within};
+use bibli_core::metadata::{
+    TagRef, clean_tag, same_tag, tag_leaf, tag_parent, tag_under, tag_within,
+};
 use bibli_core::os_path::PathArg;
 use bibli_core::scheduler::Priority;
 use bibli_platform::mime::Kind;
@@ -187,7 +189,8 @@ impl Address {
                 }
                 prefix.push_str(part);
                 crumbs.push(
-                    Crumb::new(part, self.at(Some(prefix.clone())).location()).of_tag(&prefix),
+                    Crumb::new(part, self.at(Some(prefix.clone())).location())
+                        .of_tag(TagRef::of(&prefix)),
                 );
             }
         }
@@ -196,14 +199,17 @@ impl Address {
             let mut without = self.clone();
             without.with.remove(i);
             filters.push(
-                Crumb::new(format!("with {}", tag_leaf(tag)), without.location()).of_tag(tag),
+                Crumb::new(format!("with {}", tag_leaf(tag)), without.location())
+                    .of_tag(TagRef::of(tag)),
             );
         }
         for (i, tag) in self.without.iter().enumerate() {
             let mut without = self.clone();
             without.without.remove(i);
-            filters
-                .push(Crumb::new(format!("not {}", tag_leaf(tag)), without.location()).of_tag(tag));
+            filters.push(
+                Crumb::new(format!("not {}", tag_leaf(tag)), without.location())
+                    .of_tag(TagRef::lacking(tag)),
+            );
         }
         for (i, kind) in self.kinds.iter().enumerate() {
             let mut without = self.clone();
@@ -1452,10 +1458,14 @@ mod tests {
         let trail = address.trail();
         let labels: Vec<&str> = trail.crumbs.iter().map(|c| c.label.as_str()).collect();
         assert_eq!(labels, ["Tags", "Places", "France"]);
-        let tags: Vec<Option<&str>> = trail.crumbs.iter().map(|c| c.tag.as_deref()).collect();
+        let tags: Vec<Option<TagRef>> = trail.crumbs.iter().map(|c| c.tag.clone()).collect();
         assert_eq!(
             tags,
-            [None, Some("Places"), Some("Places/France")],
+            [
+                None,
+                Some(TagRef::of("Places")),
+                Some(TagRef::of("Places/France"))
+            ],
             "each tag's crumb stands for it, by its full name; Tags for none"
         );
         assert_eq!(
@@ -1468,8 +1478,8 @@ mod tests {
         );
         let pills: Vec<&str> = trail.filters.iter().map(|c| c.label.as_str()).collect();
         assert_eq!(pills, ["with family", "with sub-tags"]);
-        let tags: Vec<Option<&str>> = trail.filters.iter().map(|c| c.tag.as_deref()).collect();
-        assert_eq!(tags, [Some("family"), None]);
+        let tags: Vec<Option<TagRef>> = trail.filters.iter().map(|c| c.tag.clone()).collect();
+        assert_eq!(tags, [Some(TagRef::of("family")), None]);
         assert_eq!(
             Address::parse(&trail.filters[0].location.rest).with,
             Vec::<String>::new()

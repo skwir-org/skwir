@@ -17,6 +17,7 @@
 //! beside the pills).
 
 use bibli_core::command::{Invocation, Outcome};
+use bibli_core::metadata::TagRef;
 use bibli_core::workspace::PaneId;
 use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*, px};
 use serde::Deserialize;
@@ -286,6 +287,22 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
             );
         }
         after_tag = is_tag;
+        // A tag every match has, or none has, wears the tag's colors, as
+        // the pill of a folder narrowed by it does: hollow for none.
+        let tint = chip
+            .value
+            .clone()
+            .and_then(|tag| match chip.id.as_str() {
+                "tag" => Some(TagRef::of(tag)),
+                "not_tag" => Some(TagRef::lacking(tag)),
+                _ => None,
+            })
+            .and_then(|tag| toolbar::Tint::of(&tag, &shell.tag_colors));
+        let ink = if tint.is_some() {
+            theme.text_muted
+        } else {
+            theme.selection_text
+        };
         let tip = if chip.title.is_empty() {
             "Part of the search no chip holds".to_owned()
         } else {
@@ -307,6 +324,7 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
         }
         let pill = button
             .active(!chip.is_scope())
+            .tint(tint)
             .anchor_if(anchor, open == Some(Target::Chip(i)))
             .render(shell, cx)
             .h(px(22.))
@@ -316,7 +334,7 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
         // A tag's categories go back up to them; the tag itself opens the
         // pill's choices, as the rest of it does.
         let pill = if is_tag {
-            tag_segments(pill, i, &chip.segments, pane, shell, &theme, cx)
+            tag_segments(pill, i, &chip.segments, ink.opacity(0.7), pane, shell, cx)
         } else {
             pill
         };
@@ -328,6 +346,7 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
                 shell,
                 clear,
                 format!("Remove {}", chip.label()).into(),
+                ink,
                 cx,
             )),
             None => pill,
@@ -367,17 +386,17 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
     Some(line.child(rest).into_any_element())
 }
 
-/// A tag's pill's segments: each category a link up to it, `›` between.
+/// A tag's pill's segments: each category a link up to it, `›` between,
+/// in `muted`.
 fn tag_segments(
     mut pill: gpui::Stateful<gpui::Div>,
     chip: usize,
     segments: &[Segment],
+    muted: gpui::Hsla,
     pane: PaneId,
     shell: &Shell,
-    theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
-    let muted = theme.selection_text.opacity(0.7);
     for (j, segment) in segments.iter().enumerate() {
         if j > 0 {
             pill = pill.child(div().flex_none().text_color(muted).child("›"));

@@ -146,9 +146,27 @@ pub struct Button {
     pub active: bool,
     pub enabled: bool,
     shape: Shape,
-    /// A tag's color (an index into `Theme::tags`, eight of them): its
-    /// dot stands before the label, where an icon would.
-    dot: Option<u8>,
+    tint: Option<Tint>,
+}
+
+/// A tag's colors on a button (a narrowing by that tag), in place of
+/// `active`'s: filled with the tag's color, as its chips are, or
+/// `hollow`, its outline only, for the files without it.
+#[derive(Clone, Copy)]
+pub struct Tint {
+    /// An index into `Theme::tags`, eight of them.
+    color: u8,
+    hollow: bool,
+}
+
+impl Tint {
+    /// `tag`'s, in the color the user's choices give it.
+    pub fn of(tag: &bibli_core::metadata::TagRef, colors: &crate::tags::TagColors) -> Option<Self> {
+        Some(Tint {
+            color: u8::try_from(colors.of(&tag.name)).ok()?,
+            hollow: tag.lacks,
+        })
+    }
 }
 
 /// How a button stands among its neighbours.
@@ -179,7 +197,7 @@ impl Button {
             anchor: None,
             active: false,
             enabled: true,
-            dot: None,
+            tint: None,
             shape: Shape::Tool,
         }
     }
@@ -203,11 +221,16 @@ impl Button {
         self.shape = Shape::Dropdown;
         self
     }
-    /// The button is about a tag of color `color`: its dot before the
-    /// label (a narrowing by that tag).
-    pub fn dot(mut self, color: Option<usize>) -> Self {
-        self.dot = color.and_then(|color| u8::try_from(color).ok());
+    /// The button is about a tag: drawn in its colors (`Tint`).
+    pub fn tint(mut self, tint: Option<Tint>) -> Self {
+        self.tint = tint;
         self
+    }
+
+    /// Whether it is drawn in a tag's colors, which what lies on it
+    /// follows (a pill's ×).
+    pub fn tinted(&self) -> bool {
+        self.tint.is_some()
     }
 
     pub fn active(mut self, active: bool) -> Self {
@@ -248,6 +271,16 @@ impl Button {
             .map(crate::elements::clip::text)
             .map_or((None, None), |(label, clip)| (Some(label), Some(clip)));
         let id = self.id.clone();
+        // A tag's colors: the fill and the edge, then under the pointer.
+        let tint = self.tint.map(|tint| {
+            let color = usize::from(tint.color);
+            let (tone, fill) = (theme.tag(color), theme.tag_fill(color));
+            if tint.hollow {
+                (gpui::transparent_black(), tone, fill, tone)
+            } else {
+                (fill, gpui::transparent_black(), fill, tone)
+            }
+        });
         let revealed = cx
             .try_global::<RevealRow>()
             .is_some_and(|reveal| reveal.row.as_ref() == Some(&id));
@@ -285,9 +318,15 @@ impl Button {
             .when(self.active, |d| {
                 d.bg(theme.selection_bg).text_color(theme.selection_text)
             })
+            .when_some(tint, |d, (fill, edge, _, _)| {
+                d.bg(fill).border_color(edge).text_color(theme.text)
+            })
             .when(enabled, |d| {
                 d.cursor_pointer()
-                    .hover(|s| s.bg(theme.hover).text_color(theme.text))
+                    .hover(|s| match tint {
+                        Some((_, _, fill, edge)) => s.bg(fill).border_color(edge),
+                        None => s.bg(theme.hover).text_color(theme.text),
+                    })
                     .focus(|s| s.border_color(theme.accent))
             })
             .when(!enabled, |d| d.opacity(0.35))
@@ -305,7 +344,7 @@ impl Button {
                 d.child(
                     svg()
                         .path(format!("toolbar/{}.svg", self.icon))
-                        .text_color(if self.active {
+                        .text_color(if self.active && tint.is_none() {
                             theme.selection_text
                         } else {
                             theme.text_muted
@@ -314,10 +353,6 @@ impl Button {
                         .flex_none(),
                 )
             })
-            .children(
-                self.dot
-                    .map(|color| crate::tags::dot(usize::from(color), &theme)),
-            )
             // A label too long for a menu keeps both ends, as names do.
             .children(label.map(|label| {
                 div()

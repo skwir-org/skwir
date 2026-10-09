@@ -205,7 +205,9 @@ Recent's, the trash's), and a place that stands for a tag
 (`Crumb::tag`, its full name, as `keys::PLACE_TAG` names a listed
 one's) is that tag's chip, in its color, the one shown filled as the
 sidebar fills its pill. A narrowing by a tag (`Pill::tag`: a tag
-location's `with`, a folder narrowed) wears the tag's dot. Plain text in
-the trail is a folder. The shell colors a tag as it colors a tag's
+location's `with`, a folder narrowed; and a search's tag chip) is a
+pill in the tag's color, as the Narrow by bar offered it, and one by
+the files without a tag (`not`, `metadata::TagRef::lacks`) its outline
+only. Plain text in the trail is a folder. The shell colors a tag as it colors a tag's
 place in a view, from the tag's name, so a color the user changes shows
 at once.

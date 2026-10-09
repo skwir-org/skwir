@@ -467,9 +467,9 @@ impl Narrowed {
 pub struct Pill {
     pub label: String,
     pub remove: crate::command::Invocation,
-    /// The tag it narrows by (“with family”, “not family”), its full
-    /// name: the pill wears that tag's dot.
-    pub tag: Option<String>,
+    /// The tag it narrows by (“with family”, “not family”): the pill
+    /// wears its color, hollow for the files without it.
+    pub tag: Option<crate::metadata::TagRef>,
 }
 
 /// Whether the pane shows `entry`: its name holds the filter, and the

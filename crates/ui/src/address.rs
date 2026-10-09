@@ -838,7 +838,8 @@ fn filter_pill(shell: &Shell, filter: &str, cx: &mut Context<Shell>) -> AnyEleme
 /// reads as a trail ("with family", a tag location's), a pill after the
 /// trail: pressed (or Enter on it) or its ×, it is taken off. Kept while
 /// the trail is walked up and down, so it is drawn like the filter typed
-/// in the field.
+/// in the field; one by a tag in the tag's colors, as the Narrow by bar
+/// offered it, hollow for the files without it.
 fn narrowing_pill(shell: &Shell, i: usize, filter: &Pill, cx: &mut Context<Shell>) -> AnyElement {
     let tip = format!("Not only {}: show the rest too", filter.label);
     let button = Button::new(
@@ -849,8 +850,13 @@ fn narrowing_pill(shell: &Shell, i: usize, filter: &Pill, cx: &mut Context<Shell
     )
     .args(filter.remove.args.clone())
     .label(filter.label.clone())
-    .dot(filter.tag.as_deref().map(|tag| shell.tag_colors.of(tag)))
-    .active(true);
+    .active(true)
+    .tint(
+        filter
+            .tag
+            .as_ref()
+            .and_then(|tag| toolbar::Tint::of(tag, &shell.tag_colors)),
+    );
     crate::elements::pill::pill(shell, button, Some((filter.remove.clone(), tip.into())), cx)
         .into_any_element()
 }
@@ -1317,7 +1323,7 @@ fn breadcrumbs(
             .rounded_sm()
             .cursor_pointer()
             .text_color(ink)
-            .map(|d| match crumb.tag.as_deref() {
+            .map(|d| match crumb.tag.as_ref().map(|tag| tag.name.as_str()) {
                 // A tag is its chip, as on a file's row, the one shown
                 // filled as its pill in the sidebar: never a folder's name,
                 // even when the folders before it are out of sight.
