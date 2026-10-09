@@ -590,7 +590,7 @@ impl Plugin for ShelfPlugin {
                 let ids = if a.ids.is_empty() {
                     let ws = app.workspace.read();
                     let pane = ws
-                        .pane(app.pane_or_active(a.pane))
+                        .pane(a.pane.unwrap_or_else(|| ws.active_id()))
                         .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
                     pane.selection.iter().collect()
                 } else {

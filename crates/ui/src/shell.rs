@@ -189,6 +189,9 @@ pub struct Shell {
     /// Workspace revision the panes above follow.
     pub(crate) tabs_revision: u64,
     pub(crate) shown_tab: Option<bibli_core::workspace::TabId>,
+    /// How many tabs the workspace has, as of `tabs_revision`: read while
+    /// drawing, under a workspace guard the caller may already hold.
+    pub(crate) tab_count: usize,
     /// The splits of tabs not shown: their own arrangement and share.
     pub(crate) tab_splits: HashMap<bibli_core::workspace::TabId, crate::layout::TabSplit>,
     pub(crate) tab_labels: crate::tabs::Labels,
@@ -495,6 +498,7 @@ impl Shell {
             hidden: HashMap::new(),
             tabs_revision: u64::MAX,
             shown_tab: None,
+            tab_count: 1,
             tab_splits: HashMap::new(),
             tab_labels: crate::tabs::Labels::default(),
             presented: None,
@@ -796,9 +800,12 @@ impl Shell {
     }
 
     /// Whether the tab strip shows: two tabs or more, or one asked for
-    /// (`ui.single_tab`).
+    /// (`ui.single_tab`). Read from what `sync_tabs` followed, never the
+    /// workspace: a row asks this under the workspace's read guard, and a
+    /// second read behind a waiting writer would never be granted
+    /// (`parking_lot` locks are fair).
     pub fn strip_shown(&self) -> bool {
-        self.prefs.single_tab || self.app.workspace.read().tabs().len() > 1
+        self.prefs.single_tab || self.tab_count > 1
     }
 
     /// The UI of pane `id`, wherever it is: drawn, held, or dormant.

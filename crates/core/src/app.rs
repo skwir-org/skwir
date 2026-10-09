@@ -1152,7 +1152,9 @@ impl App {
     }
 
     /// `pane`, or the active pane when `None`: what a command's optional
-    /// `pane` argument means.
+    /// `pane` argument means. It reads the workspace: under a guard of it
+    /// already, ask the guard's `active_id` instead (a second read waits
+    /// behind any writer queued between the two, forever).
     pub fn pane_or_active(&self, pane: Option<PaneId>) -> PaneId {
         pane.unwrap_or_else(|| self.workspace.read().active_id())
     }

@@ -697,7 +697,7 @@ struct Listed {
 /// The entries `ids` of `pane`, or its selection, where they are.
 fn chosen(app: &App, pane: Option<PaneId>, ids: Vec<EntryId>) -> Vec<EntryRef> {
     let ws = app.workspace.read();
-    let Some(p) = ws.pane(app.pane_or_active(pane)) else {
+    let Some(p) = ws.pane(pane.unwrap_or_else(|| ws.active_id())) else {
         return Vec::new();
     };
     let ids = if ids.is_empty() {

@@ -88,6 +88,7 @@ impl Shell {
                 self.pane = ws.active_id();
                 return;
             }
+            self.tab_count = ws.tabs().len();
             let tab = ws.active_tab();
             (
                 ws.revision(),
