@@ -155,6 +155,7 @@ fn dropped_plan(
     dest: &Path,
     how: DropOp,
     settings: &Settings,
+    companions: &std::sync::Arc<bibli_core::companions::Companions>,
 ) -> Result<Plan, &'static str> {
     let steps: Vec<Box<dyn op::Operation>> = paths
         .iter()
@@ -174,7 +175,7 @@ fn dropped_plan(
     }
     let n = steps.len();
     let plan = Plan::with_steps(format!("{} {n} dropped items", how.command()), steps);
-    if plan.is_applicable() {
+    if plan.is_applicable(companions) {
         Ok(plan)
     } else {
         Err("dropped items conflict with existing ones")
@@ -340,7 +341,7 @@ impl Shell {
             self.app.lifetime().child(),
             // As a whole, as a drop from a pane is: a conflict applies
             // nothing and says why, never some of the files.
-            move || match dropped_plan(&paths, &dest, how, &app.settings) {
+            move || match dropped_plan(&paths, &dest, how, &app.settings, &app.companions) {
                 Ok(plan) => {
                     tracing::debug!(?pane, steps = plan.steps.len(), "apply dropped paths");
                     app.apply_whole(plan);
@@ -929,23 +930,43 @@ mod tests {
         let settings = Settings::in_memory();
 
         let copy = DropOp::Copy;
-        let plan = dropped_plan(std::slice::from_ref(&file), &dest, copy, &settings).expect("plan");
+        let plan = dropped_plan(
+            std::slice::from_ref(&file),
+            &dest,
+            copy,
+            &settings,
+            &std::sync::Arc::default(),
+        )
+        .expect("plan");
         assert_eq!(plan.steps.len(), 1);
         assert!(plan.title.starts_with("copy"));
-        let plan = dropped_plan(std::slice::from_ref(&file), &dest, DropOp::Move, &settings)
-            .expect("plan");
+        let plan = dropped_plan(
+            std::slice::from_ref(&file),
+            &dest,
+            DropOp::Move,
+            &settings,
+            &std::sync::Arc::default(),
+        )
+        .expect("plan");
         assert!(plan.title.starts_with("move"));
 
         // A vanished source contributes no step; nothing is left to apply.
         assert_eq!(
-            dropped_plan(&[base.join("missing")], &dest, copy, &settings).err(),
+            dropped_plan(
+                &[base.join("missing")],
+                &dest,
+                copy,
+                &settings,
+                &std::sync::Arc::default()
+            )
+            .err(),
             Some("dropped items no longer exist")
         );
 
         // A different file under the same name conflicts instead of applying.
         std::fs::write(dest.join("it's a file.txt"), b"other contents").unwrap();
         assert_eq!(
-            dropped_plan(&[file], &dest, copy, &settings).err(),
+            dropped_plan(&[file], &dest, copy, &settings, &std::sync::Arc::default()).err(),
             Some("dropped items conflict with existing ones")
         );
         let _ = std::fs::remove_dir_all(&base);

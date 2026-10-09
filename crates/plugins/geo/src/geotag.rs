@@ -2176,7 +2176,7 @@ mod tests {
         assert_eq!(during.planned.unwrap().before, Location::None);
         // The review's dry run: every step pending, read from what
         // planning read.
-        let diff = plan.diff();
+        let diff = plan.diff(&std::sync::Arc::default());
         assert!(
             diff.steps
                 .iter()
@@ -2316,7 +2316,7 @@ mod tests {
             Some("1 RAW picture left out: their sidecars are not written yet")
         );
         // Each step says what it will do and what it did.
-        let first = plan.diff().steps[0].0.clone();
+        let first = plan.diff(&std::sync::Arc::default()).steps[0].0.clone();
         let bibli_core::op::Change::Metadata {
             words: Some(words), ..
         } = first

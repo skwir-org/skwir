@@ -46,7 +46,7 @@ fn file_commands_act_on_entries_named_by_path() {
             "dest": sub,
         }),
     );
-    assert_eq!(moved.diff().steps.len(), 2);
+    assert_eq!(moved.diff(&std::sync::Arc::default()).steps.len(), 2);
     apply(&app, &moved);
     assert!(sub.join("it's here.txt").is_file());
     assert!(sub.join("café.md").is_file());
@@ -63,7 +63,7 @@ fn file_commands_act_on_entries_named_by_path() {
     // As the window names what it shows: identity and path.
     let shown = EntryRef::from_path(dir.join("draft.txt")).unwrap();
     let trashed = plan(&app, "trash", json!({ "entries": [shown] }));
-    assert_eq!(trashed.diff().steps.len(), 1);
+    assert_eq!(trashed.diff(&std::sync::Arc::default()).steps.len(), 1);
     if !under_wine("trashing through the shell") {
         apply(&app, &trashed);
         assert!(!dir.join("draft.txt").exists());
@@ -293,7 +293,7 @@ fn a_link_is_made_to_what_is_named_and_its_undo_takes_only_the_link() {
         "link",
         json!({ "entries": [shown, folder], "dest": into }),
     );
-    assert_eq!(link.diff().steps.len(), 2);
+    assert_eq!(link.diff(&std::sync::Arc::default()).steps.len(), 2);
     apply(&app, &link);
     assert_eq!(std::fs::read_link(&file_link).unwrap(), file);
     assert_eq!(std::fs::read_link(&folder_link).unwrap(), folder);
@@ -327,7 +327,7 @@ fn a_link_is_made_to_what_is_named_and_its_undo_takes_only_the_link() {
     std::fs::write(other.join("l’été « draft ».txt"), "different").unwrap();
     let taken = plan(&app, "link", json!({ "entries": [file], "dest": other }));
     assert!(matches!(
-        taken.diff().steps[0].1,
+        taken.diff(&std::sync::Arc::default()).steps[0].1,
         StepStatus::Conflict { .. }
     ));
     assert_eq!(

@@ -616,10 +616,13 @@ impl Executor {
             let result = match job.work {
                 Work::Execute { plan, whole } => {
                     let whole = whole && !job.cancel.is_cancelled();
-                    Some(match whole.then(|| first_conflict(&plan)).flatten() {
-                        Some(reason) => self.refuse(&plan, reason),
-                        None => self.run_execute(&plan, &job.cancel),
-                    })
+                    let companions = Arc::clone(&self.companions.lock());
+                    Some(
+                        match whole.then(|| first_conflict(&plan, &companions)).flatten() {
+                            Some(reason) => self.refuse(&plan, reason),
+                            None => self.run_execute(&plan, &job.cancel),
+                        },
+                    )
                 }
                 Work::Replay(direction) => self.replay(direction, &job.cancel),
             };
@@ -878,8 +881,8 @@ impl Executor {
 
 /// The reason the first conflicting step gives, after a dry run of every
 /// step with one shared context.
-fn first_conflict(plan: &Plan) -> Option<String> {
-    super::dry_run(&plan.steps).find_map(|(_, status)| match status {
+fn first_conflict(plan: &Plan, companions: &Arc<crate::companions::Companions>) -> Option<String> {
+    super::dry_run(&plan.steps, companions).find_map(|(_, status)| match status {
         StepStatus::Conflict { reason } => Some(reason),
         _ => None,
     })

@@ -707,8 +707,15 @@ fn copy_entry(
     } else {
         std::rc::Rc::new(Pace::at_once())
     };
-    copy_staged(src, target, dest_dir, preserve_attributes, &pace, ctx)?;
-    copy_along(along, &pace, ctx)?;
+    copy_staged(
+        src,
+        target,
+        dest_dir,
+        preserve_attributes,
+        along,
+        &pace,
+        ctx,
+    )?;
     Ok(through)
 }
 
@@ -716,11 +723,17 @@ fn copy_entry(
 /// `dest_dir`, publishing with a no-replace rename only after content and
 /// attributes are complete. A failed attribute write must not leave a partial destination
 /// that `check()` would call already done. Shared by Copy and cross-device Move.
+///
+/// Its companions (`along`; the ones not holding attributes, which are
+/// converted with the file's) are staged with it and placed after it: one
+/// that cannot be copied or placed takes the copy back out, so a copy is
+/// never left without what goes with it, and without an Undo.
 fn copy_staged(
     src: &Path,
     target: &Path,
     dest_dir: &Path,
     preserve_attributes: bool,
+    along_src: &[Along],
     pace: &Pace,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
@@ -732,7 +745,16 @@ fn copy_staged(
     // its attributes, on a volume that refuses them) follows it out.
     let result = copy_recursive_with_attributes(src, &staged, preserve_attributes, pace, ctx)
         .and_then(|()| {
-            let beside = along(ctx, &staged, target);
+            let mut beside = along(ctx, &staged, target);
+            for (n, a) in along_src.iter().filter(|a| !a.attributes).enumerate() {
+                let at = staging.path().join(format!("along-{n}"));
+                copy_recursive_with_attributes(&a.from, &at, true, pace, ctx)?;
+                beside.push(Along {
+                    from: at,
+                    to: a.to.clone(),
+                    attributes: false,
+                });
+            }
             sys::rename_noreplace(&staged, target).with_context(|| {
                 format!(
                     "“{}” could not be placed in “{}”",
@@ -740,7 +762,11 @@ fn copy_staged(
                     display_name(dest_dir)
                 )
             })?;
-            rename_along(&beside)
+            // The companions placed, or the copy taken back to be removed
+            // with the staging folder.
+            rename_along(&beside).inspect_err(|_| {
+                let _ = sys::rename_noreplace(target, &staged);
+            })
         });
     if let Err(error) = result {
         let left = staging.path().to_path_buf();
@@ -911,18 +937,6 @@ fn copy_recursive_with_attributes(
             "a device"
         };
         anyhow::bail!("“{}” is {what}, which cannot be copied", display_name(src));
-    }
-    Ok(())
-}
-
-/// Copy companions (the ones not holding attributes: those are converted
-/// with the file's) beside the copy.
-fn copy_along(along: &[Along], pace: &Pace, ctx: &StepContext) -> anyhow::Result<()> {
-    for a in along.iter().filter(|a| !a.attributes) {
-        if let Some(dir) = a.to.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        copy_recursive_with_attributes(&a.from, &a.to, true, pace, ctx)?;
     }
     Ok(())
 }

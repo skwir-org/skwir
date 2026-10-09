@@ -522,7 +522,7 @@ fn planned(app: &App, plan: Plan, mode: PlanMode, cancelled: &dyn Fn() -> bool) 
     let verdict = match mode {
         PlanMode::Print => {
             return Answer {
-                value: serde_json::to_value(plan.diff()).unwrap_or(Value::Null),
+                value: serde_json::to_value(plan.diff(&app.companions)).unwrap_or(Value::Null),
                 failed: false,
             };
         }

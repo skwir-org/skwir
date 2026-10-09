@@ -875,7 +875,10 @@ mod tests {
             panic!()
         };
         assert_eq!(copy.len(), 2, "copy keeps every item");
-        assert!(!copy.is_applicable(), "copying onto itself conflicts");
+        assert!(
+            !copy.is_applicable(&std::sync::Arc::default()),
+            "copying onto itself conflicts"
+        );
 
         assert_eq!(app.tallies.get(TALLY), Some(2));
         let Outcome::Plan(trash) = app.dispatch(&Invocation::new("shelf.trash")).unwrap() else {

@@ -128,7 +128,7 @@ fn list_select_rename_trash_undo_through_commands_only() {
         dir.join("notes.txt").exists(),
         "rename must not mutate before apply"
     );
-    let diff = rename_plan.diff();
+    let diff = rename_plan.diff(&std::sync::Arc::default());
     assert_eq!(diff.steps.len(), 1);
     assert_eq!(diff.steps[0].1, StepStatus::Pending { reversible: true });
 

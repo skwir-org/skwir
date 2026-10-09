@@ -86,10 +86,11 @@ impl Shell {
         for plan in plans {
             let id = plan.id;
             let dry = plan.clone();
+            let companions = std::sync::Arc::clone(&self.app.companions);
             self.reviews.push_back(Review::Plan { plan, diff: None });
             self.off_thread(
                 "review-diff",
-                move || dry.diff(),
+                move || dry.diff(&companions),
                 move |this, done, _, cx| {
                     let waiting = this.reviews.iter_mut().find_map(|r| match r {
                         Review::Plan { plan, diff } if plan.id == id => Some(diff),

@@ -272,6 +272,34 @@ fn steps_share_an_entry(plan: &bibli_core::op::PlanData) -> bool {
     ids.len() != n
 }
 
+/// A sidecar's place taken is a conflict in the review, as its file's is:
+/// a dry run knows the rules the plan is applied with, so the plan does
+/// not stop halfway.
+#[test]
+fn a_companion_s_place_taken_is_a_conflict_before_anything_applies() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    std::fs::create_dir(root.join("d")).unwrap();
+    std::fs::write(root.join("it's a.txt"), b"a").unwrap();
+    std::fs::write(root.join("._it's a.txt"), b"tags").unwrap();
+    std::fs::write(root.join("d/._it's a.txt"), b"other").unwrap();
+    let app = app(root);
+    app.companions
+        .register("test", std::sync::Arc::new(Aside { holds: false }));
+    let mut plan = Plan::new("t");
+    plan.push(Move {
+        entry: EntryRef::from_path(root.join("it's a.txt")).unwrap(),
+        dest_dir: root.join("d"),
+    });
+    let diff = plan.diff(&app.companions);
+    assert!(
+        matches!(diff.steps[0].1, StepStatus::Conflict { .. }),
+        "{:?}",
+        diff.steps[0].1
+    );
+    assert!(!plan.is_applicable(&app.companions));
+}
+
 #[test]
 fn plan_round_trips_through_json_and_diff_reports_conflicts() {
     let tmp = Scratch::new();
@@ -290,13 +318,13 @@ fn plan_round_trips_through_json_and_diff_reports_conflicts() {
     let json = serde_json::to_string(&plan.to_data()).unwrap();
     let back = Plan::from_data(&serde_json::from_str(&json).unwrap(), &app.ops).unwrap();
     assert_eq!(back.to_data(), plan.to_data());
-    let diff = back.diff();
+    let diff = back.diff(&std::sync::Arc::default());
     assert!(
         matches!(diff.steps[0].1, StepStatus::Conflict { .. }),
         "rename onto existing must conflict"
     );
     assert_eq!(diff.steps[1].1, StepStatus::Pending { reversible: true });
-    assert!(!back.is_applicable());
+    assert!(!back.is_applicable(&std::sync::Arc::default()));
 }
 
 #[test]
@@ -776,6 +804,36 @@ fn copying_onto_an_unrelated_folder_of_the_same_name_conflicts() {
     assert_eq!((again.applied, again.skipped), (0, 1));
 }
 
+/// A copy whose companion cannot be placed leaves nothing: the copy is
+/// taken back out with the staging folder, so it is never left without
+/// what goes with it, nor called done by a retry.
+#[test]
+fn a_copy_whose_companion_cannot_go_with_it_leaves_nothing() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    std::fs::create_dir(root.join("dest")).unwrap();
+    std::fs::write(root.join("it's a.txt"), b"a").unwrap();
+    std::fs::write(root.join("._it's a.txt"), b"tags").unwrap();
+    let copy = Copy {
+        entry: EntryRef::from_path(root.join("it's a.txt")).unwrap(),
+        dest_dir: root.join("dest"),
+        new_name: None,
+        preserve_attributes: true,
+    };
+    let companions = std::sync::Arc::new(bibli_core::companions::Companions::default());
+    companions.register("test", std::sync::Arc::new(Aside { holds: false }));
+    let ctx = StepContext::detached().with_companions(companions);
+    assert_eq!(copy.check(&ctx), StepStatus::Pending { reversible: true });
+    // Its place taken after the check, as by another application.
+    std::fs::write(root.join("dest/._it's a.txt"), b"other").unwrap();
+    assert!(copy.apply(&ctx).is_err());
+    let left: Vec<_> = std::fs::read_dir(root.join("dest"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, [std::ffi::OsString::from("._it's a.txt")]);
+}
+
 // Pipes are made with mknodat, Linux's alone here (ADR-035).
 #[cfg(target_os = "linux")]
 #[test]
@@ -1083,7 +1141,7 @@ fn a_new_file_never_replaces_what_is_there() {
         })],
     );
     assert!(matches!(
-        plan.diff().steps[0].1,
+        plan.diff(&std::sync::Arc::default()).steps[0].1,
         StepStatus::Conflict { .. }
     ));
     assert_eq!(
@@ -1346,7 +1404,7 @@ fn a_plan_that_makes_a_folder_and_fills_it_is_no_conflict() {
             }),
         ],
     );
-    let diff = plan.diff();
+    let diff = plan.diff(&std::sync::Arc::default());
     assert!(
         diff.steps
             .iter()
@@ -1354,7 +1412,7 @@ fn a_plan_that_makes_a_folder_and_fills_it_is_no_conflict() {
         "{:?}",
         diff.steps
     );
-    assert!(plan.is_applicable());
+    assert!(plan.is_applicable(&std::sync::Arc::default()));
     apply(&app, &plan);
     assert!(made.join("inner").is_dir() && made.join("a").is_file());
 }

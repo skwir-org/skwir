@@ -2226,7 +2226,9 @@ mod builtin {
             "Dry-run a plan and return what each step would do",
             |a, app| {
                 let plan = Plan::from_data(&a.plan, &app.ops)?;
-                Ok(Outcome::Value(serde_json::to_value(plan.diff())?))
+                Ok(Outcome::Value(serde_json::to_value(
+                    plan.diff(&app.companions),
+                )?))
             },
         )
         .reads();

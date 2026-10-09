@@ -41,11 +41,15 @@ pub use staging::Staging;
 
 /// Every step checked as applying the plan would meet it: in order, in one
 /// context, a folder an earlier step makes counted there by the steps after
-/// it (a plan that makes a folder and copies into it is no conflict).
-pub(crate) fn dry_run(
-    steps: &[Box<dyn Operation>],
-) -> impl Iterator<Item = (Change, StepStatus)> + '_ {
-    let ctx = StepContext::detached();
+/// it (a plan that makes a folder and copies into it is no conflict), with
+/// the rules of files beside a file the executor applies it with: a
+/// sidecar's place taken is a conflict as its file's is, found here
+/// rather than halfway through the plan.
+pub(crate) fn dry_run<'a>(
+    steps: &'a [Box<dyn Operation>],
+    companions: &Arc<crate::companions::Companions>,
+) -> impl Iterator<Item = (Change, StepStatus)> + 'a {
+    let ctx = StepContext::detached().with_companions(Arc::clone(companions));
     steps.iter().map(move |step| {
         let change = step.describe();
         let status = step.check(&ctx);
@@ -586,18 +590,20 @@ impl Plan {
         self.steps.len()
     }
 
-    /// Dry run every step.
-    pub fn diff(&self) -> PlanDiff {
+    /// Dry run every step, with the companion rules it will be applied
+    /// with (`App::companions`).
+    pub fn diff(&self, companions: &Arc<crate::companions::Companions>) -> PlanDiff {
         PlanDiff {
             title: self.title.clone(),
             note: self.note.clone(),
-            steps: dry_run(&self.steps).collect(),
+            steps: dry_run(&self.steps, companions).collect(),
         }
     }
 
     /// Whether every step is pending or already done (no conflicts).
-    pub fn is_applicable(&self) -> bool {
-        dry_run(&self.steps).all(|(_, status)| !matches!(status, StepStatus::Conflict { .. }))
+    pub fn is_applicable(&self, companions: &Arc<crate::companions::Companions>) -> bool {
+        dry_run(&self.steps, companions)
+            .all(|(_, status)| !matches!(status, StepStatus::Conflict { .. }))
     }
 
     pub fn to_data(&self) -> PlanData {

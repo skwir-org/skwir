@@ -281,7 +281,7 @@ fn nothing_is_written_outside_and_a_name_taken_is_kept() {
     std::fs::write(dest.join("taken/mine.txt"), "mine").unwrap();
     let plan = extract(&app, &taken, &dest);
     assert!(matches!(
-        plan.diff().steps[0].1,
+        plan.diff(&std::sync::Arc::default()).steps[0].1,
         StepStatus::Conflict { .. }
     ));
     assert!(!dest.join("taken/new.txt").exists());
