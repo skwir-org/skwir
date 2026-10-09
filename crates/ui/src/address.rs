@@ -540,6 +540,7 @@ fn corner(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
 /// `AdaptiveRow` while nothing else gives up room for it.
 pub fn panel_toggles(shell: &Shell, labeled: bool, cx: &mut Context<Shell>) -> [AnyElement; 2] {
     let (split_icon, split_tip) = shell.layout.split_button();
+    let split_tip = shell.split_close_tip().unwrap_or(split_tip);
     let split = Button::new("split-toggle", split_icon, split_tip, "ui.split");
     let preview = Button::new(
         "preview-toggle",

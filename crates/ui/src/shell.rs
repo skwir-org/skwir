@@ -143,6 +143,8 @@ pub struct Preferences {
     pub single_tab: bool,
     /// `ui.printed_pages`: a book's position counts its printed pages.
     pub printed_pages: bool,
+    /// `core.close_split`: which pane closing the split takes away.
+    pub close_split: crate::layout::CloseSplit,
     /// How audio and video play.
     pub player: crate::player::PlayerPrefs,
 }
@@ -155,6 +157,7 @@ impl Default for Preferences {
             narrow_folders: false,
             single_tab: false,
             printed_pages: false,
+            close_split: crate::layout::CloseSplit::Other,
             player: crate::player::PlayerPrefs::default(),
         }
     }
@@ -1026,12 +1029,15 @@ impl Shell {
     /// Split the tab shown, or close its split, arranged as `layout` says.
     /// The workspace changes; `sync_tabs` makes and releases the panes' UI.
     pub(crate) fn toggle_split(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The popup open closes, as a click on Split closes it: F3 or a
+        // script would otherwise leave a pane's menu after its pane.
+        self.close_popup(window);
         if self.is_split() {
             // An arrangement made for this split ends with it.
             self.layout.split = None;
-            // Close the other pane; keep the active one.
-            if let Some(other) = self.other_pane() {
-                self.app.workspace.write().close_pane(other);
+            // The pane the preferences name; the one left becomes active.
+            if let Some(pane) = self.split_closes() {
+                self.app.workspace.write().close_pane(pane);
             }
             self.sync_tabs(window, cx);
             window.focus(&self.ui().focus);
@@ -2077,6 +2083,12 @@ impl Shell {
                 .settings
                 .get::<bool>(crate::settings::SINGLE_TAB_KEY)
                 .unwrap_or(false);
+            self.prefs.close_split = crate::layout::CloseSplit::read(
+                self.app
+                    .settings
+                    .get::<String>(bibli_core::settings::CLOSE_SPLIT)
+                    .as_deref(),
+            );
             let icon_theme = self
                 .app
                 .settings

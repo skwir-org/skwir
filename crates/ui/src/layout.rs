@@ -12,7 +12,12 @@
 //! A split made "the other way" (Shift+F3) overrides the panes' choice for
 //! that split only; closing it forgets the override, so Automatic stays the
 //! preference. Everything here is part of the window's shape (`session.rs`).
+//!
+//! Closing a split closes the pane the user chose (`CloseSplit`): the
+//! other one, the active one, or the right one. The Split toggle's
+//! tooltip then names it by where it is (`Shell::split_close_tip`).
 
+use bibli_core::workspace::PaneId;
 use gpui::{Context, Window};
 
 use crate::shell::Shell;
@@ -44,6 +49,42 @@ pub enum Panes {
     Row,
     /// One above the other.
     Column,
+}
+
+/// Which pane closing the split takes away (`core.close_split`, General).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CloseSplit {
+    /// The other one: the active pane stays.
+    #[default]
+    Other,
+    /// The active one: the other pane stays.
+    Active,
+    /// The right one, the lower one stacked, whichever is active.
+    Right,
+}
+
+impl CloseSplit {
+    /// The setting's value; anything else is the default.
+    pub fn read(value: Option<&str>) -> Self {
+        match value {
+            Some("active") => Self::Active,
+            Some("right") => Self::Right,
+            _ => Self::Other,
+        }
+    }
+
+    /// The pane of a split to close: `panes` in the window's order (the
+    /// left or upper one first), `active` the one with the keyboard.
+    pub fn pane(self, panes: &[PaneId], active: PaneId) -> Option<PaneId> {
+        if panes.len() < 2 {
+            return None;
+        }
+        match self {
+            Self::Other => panes.iter().copied().find(|p| *p != active),
+            Self::Active => Some(active),
+            Self::Right => panes.last().copied(),
+        }
+    }
 }
 
 /// Where a member's preview goes beside the container's rows it was opened
@@ -181,7 +222,8 @@ impl Layout {
         self.tall
     }
 
-    /// The Split toggle's icon and tooltip: the split it makes, or shows.
+    /// The Split toggle's icon and tooltip: the split it makes, or shows
+    /// (while split, the tooltip is `Shell::split_close_tip`).
     pub fn split_button(&self) -> (&'static str, &'static str) {
         if self.stacked() {
             ("split-rows", "Split panes one above the other")
@@ -201,6 +243,25 @@ impl Layout {
 }
 
 impl Shell {
+    /// The pane closing the split takes away, as the preferences say.
+    pub fn split_closes(&self) -> Option<PaneId> {
+        let panes: Vec<PaneId> = self.panes.iter().map(|p| p.id).collect();
+        self.prefs.close_split.pane(&panes, self.pane)
+    }
+
+    /// The Split toggle's tooltip while split: the pane it closes, by
+    /// where it is.
+    pub fn split_close_tip(&self) -> Option<&'static str> {
+        let closes = self.split_closes()?;
+        let first = self.panes.first().is_some_and(|p| p.id == closes);
+        Some(match (self.layout.stacked(), first) {
+            (false, true) => "Close the left pane",
+            (false, false) => "Close the right pane",
+            (true, true) => "Close the upper pane",
+            (true, false) => "Close the lower pane",
+        })
+    }
+
     /// `ui.split { axis? }`. Without an axis, split or close the split as
     /// the preferences say. With one (`row`, `column`, `other`), split that
     /// way; already split that way, close it; split the other way, turn it.
@@ -298,6 +359,22 @@ mod tests {
         assert!(!layout.stacked());
         assert_eq!(layout.split_for("auto"), None);
         assert_eq!(layout.split_for("row"), Some(Panes::Row));
+    }
+
+    #[test]
+    fn closing_a_split_closes_the_pane_chosen() {
+        let (left, right) = (PaneId(1), PaneId(2));
+        let panes = [left, right];
+        assert_eq!(CloseSplit::Other.pane(&panes, left), Some(right));
+        assert_eq!(CloseSplit::Other.pane(&panes, right), Some(left));
+        assert_eq!(CloseSplit::Active.pane(&panes, left), Some(left));
+        assert_eq!(CloseSplit::Active.pane(&panes, right), Some(right));
+        assert_eq!(CloseSplit::Right.pane(&panes, left), Some(right));
+        assert_eq!(CloseSplit::Right.pane(&panes, right), Some(right));
+        assert_eq!(CloseSplit::Active.pane(&[left], left), None, "not split");
+        assert_eq!(CloseSplit::read(Some("active")), CloseSplit::Active);
+        assert_eq!(CloseSplit::read(Some("right")), CloseSplit::Right);
+        assert_eq!(CloseSplit::read(None), CloseSplit::Other);
     }
 
     #[test]

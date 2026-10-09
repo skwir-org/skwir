@@ -210,7 +210,10 @@ current source before assuming a planned crate, command, or API exists.
   whose default, Automatic, follows the window's shape, decided in
   `Shell::render` from the window's size like the sidebar. The toggles'
   icons show the arrangement they open; Shift+F3 splits the other way for
-  that split only. New folder has no button: it is the folder's own menu
+  that split only. Closing a split closes the pane General's
+  `core.close_split` names (the other one, the active one, or the right
+  one, the lower stacked: `layout::CloseSplit`), which Split's tooltip
+  says by where it is. New folder has no button: it is the folder's own menu
   and Ctrl+Shift+N. The trail and the list's detail columns use the same
   layout-only technique, a wrapping flex line one row tall, so the segments
   nearest the current folder stay when a pane is narrow. Clicking beside

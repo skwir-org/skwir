@@ -13,6 +13,8 @@ use std::io::Write;
 pub const PRESERVE_ATTRIBUTES_ON_COPY: &str = "core.preserve_attributes_on_copy";
 /// Whether files dropped without a key held ask what to do.
 pub const DROP_ASKS: &str = "core.drop_asks";
+/// Which pane closing the split takes away: `other`, `active` or `right`.
+pub const CLOSE_SPLIT: &str = "core.close_split";
 /// `last` or `folder`.
 pub const STARTUP: &str = "core.startup";
 pub const STARTUP_FOLDER: &str = "core.startup_folder";
@@ -557,6 +559,16 @@ pub(crate) fn register(app: &crate::App) {
     );
     app.companions
         .set_shown(app.settings.get(crate::companions::SHOW).unwrap_or(false));
+    app.settings.declare(
+        SettingSpec::choice(
+            CLOSE_SPLIT,
+            "Pane that closes",
+            "Which pane goes when you close the split with Split or F3. Other keeps the pane you are in. Active closes it and keeps the other. Right always closes the right pane, or the lower one when the panes are stacked.",
+            "other",
+            &[("other", "Other"), ("active", "Active"), ("right", "Right")],
+        )
+        .section("Split"),
+    );
     app.settings.declare(
         SettingSpec::choice(
             STARTUP,
