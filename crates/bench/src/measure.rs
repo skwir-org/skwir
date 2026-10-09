@@ -75,6 +75,9 @@ pub struct Report {
     /// Then one file's size changed, as while a download grows, and the
     /// order read again.
     pub listing_sort_update: Stat,
+    /// Every name of the folder typed by name (`mime::by_name`), as rows,
+    /// the Narrow by bar and `kind:` searches type them: the whole of it.
+    pub mime_by_name: Stat,
 }
 
 /// Budgets file: `[profile] metric_us = max`.
@@ -703,6 +706,27 @@ pub fn listing_sort(profile: Profile, runs: usize) -> (Stat, Stat) {
     (Stat::of(hydrate), Stat::of(update))
 }
 
+/// [`Report::mime_by_name`]: the names of `dir`, typed one by one, the
+/// database loaded before.
+fn mime_by_name(dir: &Path, profile: Profile, runs: usize) -> Stat {
+    if profile == Profile::Deep1m {
+        return Stat::NONE;
+    }
+    let names: Vec<std::ffi::OsString> = std::fs::read_dir(dir)
+        .expect("tree")
+        .map(|e| e.expect("entry").file_name())
+        .collect();
+    std::hint::black_box(bibli_platform::mime::by_name(std::ffi::OsStr::new(
+        "warm.txt",
+    )));
+    timed(runs, || {
+        names
+            .iter()
+            .filter(|name| bibli_platform::mime::by_name(name).is_some())
+            .count()
+    })
+}
+
 /// Whether the generator could tag `dir` (see `generate::tag`).
 fn tagged(dir: &Path) -> bool {
     dir.join(".bibli-bench-tagged").exists()
@@ -742,6 +766,7 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         _ => tags_fill(&tags, &single, runs),
     };
     let (listing_sort_hydrate, listing_sort_update) = listing_sort(profile, runs);
+    let mime_by_name = mime_by_name(&single, profile, runs);
     Report {
         files: profile.file_count(),
         runs,
@@ -766,6 +791,7 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         usage_scan: usage_scan(root, profile, runs),
         listing_sort_hydrate,
         listing_sort_update,
+        mime_by_name,
     }
 }
 
@@ -775,7 +801,7 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         eprintln!("bench: {}: no budgets, skipped", profile.name());
         return true;
     };
-    let measured: [(&str, &Stat); 20] = [
+    let measured: [(&str, &Stat); 21] = [
         ("first_batch_us", &report.first_batch),
         ("list_getdents_us", &report.list_getdents),
         ("list_std_us", &report.list_std),
@@ -796,6 +822,7 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         ("usage_scan_us", &report.usage_scan),
         ("listing_sort_hydrate_us", &report.listing_sort_hydrate),
         ("listing_sort_update_us", &report.listing_sort_update),
+        ("mime_by_name_us", &report.mime_by_name),
     ];
     let mut ok = true;
     for (key, stat) in measured {

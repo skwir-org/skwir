@@ -112,10 +112,10 @@ where
         std::collections::HashMap::new();
     names
         .map(|name| {
-            let name = name.to_str()?;
-            let question = match suffix(name) {
+            let name = name.to_string_lossy();
+            let question = match suffix(&name) {
                 Some(suffix) if !exact => format!("file{suffix}"),
-                _ => name.to_owned(),
+                _ => name.into_owned(),
             };
             if let Some(answer) = asked.get(&question) {
                 return answer.clone();
@@ -543,9 +543,11 @@ mod database {
     fn db() -> Option<&'static xdg_mime::SharedMimeInfo> {
         static DB: OnceLock<Option<xdg_mime::SharedMimeInfo>> = OnceLock::new();
         DB.get_or_init(|| {
+            // From the directories every other reading of the database
+            // uses (`xdg::data_search`), each once.
             #[cfg(target_os = "linux")]
             {
-                Some(xdg_mime::SharedMimeInfo::new())
+                Some(xdg_mime::SharedMimeInfo::new_for_directories(data_dirs()))
             }
             #[cfg(not(target_os = "linux"))]
             {
@@ -566,11 +568,13 @@ mod database {
     /// The types the name's best globs give, all of equal weight. The
     /// database answers application/octet-stream for a name that matches
     /// no glob: its "no idea", never a type the name said.
+    /// A name that is not UTF-8 is matched as text with its odd bytes
+    /// replaced: the patterns that type it (`*.jpg`) are ASCII.
     pub fn candidates(name: &OsStr) -> Vec<Mime> {
-        let (Some(db), Some(name)) = (db(), name.to_str()) else {
+        let Some(db) = db() else {
             return Vec::new();
         };
-        db.get_mime_types_from_file_name(name)
+        db.get_mime_types_from_file_name(&name.to_string_lossy())
             .iter()
             .filter(|m| **m != mime::APPLICATION_OCTET_STREAM)
             .map(to_mime)
@@ -722,10 +726,19 @@ mod database {
 
     /// Where the database lives: on Linux `$XDG_DATA_HOME`, then
     /// `$XDG_DATA_DIRS`; elsewhere the one found (`super::found_database`).
+    /// The directories the database is read from, the most important
+    /// first, each once by where it leads: a NixOS session names the same
+    /// profile through several links.
     fn data_dirs() -> Vec<PathBuf> {
         #[cfg(target_os = "linux")]
         {
+            let mut seen = HashSet::new();
             crate::xdg::data_search()
+                .into_iter()
+                .filter(|dir| {
+                    seen.insert(std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone()))
+                })
+                .collect()
         }
         #[cfg(not(target_os = "linux"))]
         {

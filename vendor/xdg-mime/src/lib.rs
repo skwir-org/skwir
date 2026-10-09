@@ -563,6 +563,28 @@ impl SharedMimeInfo {
         db
     }
 
+    /// Loads the MIME information under each of `directories`, the most
+    /// important first, as the caller found them: a program that reads the
+    /// XDG variables one way reads the database from the same directories.
+    pub fn new_for_directories<P: AsRef<Path>>(
+        directories: impl IntoIterator<Item = P>,
+    ) -> SharedMimeInfo {
+        let mut db = SharedMimeInfo::create();
+        for directory in directories {
+            db.load_directory(directory);
+        }
+        db
+    }
+
+    /// [`Self::get_mime_types_from_file_name`] trying every glob: what the
+    /// glob index must answer the same as.
+    #[doc(hidden)]
+    pub fn get_mime_types_from_file_name_linear(&self, file_name: &str) -> Vec<Mime> {
+        self.globs
+            .lookup_linear(file_name)
+            .unwrap_or_else(|| vec![mime::APPLICATION_OCTET_STREAM.clone()])
+    }
+
     /// Loads all the MIME information under `directory`, and creates a new
     /// [`SharedMimeInfo`] instance for it.
     ///
@@ -785,6 +807,13 @@ impl SharedMimeInfo {
     /// # }
     /// ```
     pub fn mime_type_subclass(&self, mime_type: &Mime, base: &Mime) -> bool {
+        self.subclass_of(mime_type, base, &mut Vec::new())
+    }
+
+    /// [`Self::mime_type_subclass`], with the types already asked on the
+    /// way down: a cycle in the user's own database (any application may
+    /// add a package there) ends instead of overflowing the stack.
+    fn subclass_of(&self, mime_type: &Mime, base: &Mime, seen: &mut Vec<Mime>) -> bool {
         let unaliased_mime = self
             .unalias_mime_type(mime_type)
             .unwrap_or_else(|| mime_type.clone());
@@ -820,10 +849,14 @@ impl SharedMimeInfo {
             return true;
         }
 
+        if seen.contains(&unaliased_mime) {
+            return false;
+        }
+        seen.push(unaliased_mime.clone());
         if let Some(parents) = self.parents.lookup(&unaliased_mime) {
             if parents
                 .iter()
-                .any(|p| self.mime_type_subclass(p, &unaliased_base))
+                .any(|p| self.subclass_of(p, &unaliased_base, seen))
             {
                 return true;
             }

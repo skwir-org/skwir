@@ -1,0 +1,301 @@
+--- a/src/alias.rs
++++ b/src/alias.rs
+@@ -45,31 +45,29 @@ impl Alias {
+     }
+ }
+ 
++/// Every alias, by its name: a type is unaliased each time it is compared
++/// (`mime_type_subclass` asks for both sides at every level), and there
++/// are some 700 of them. The first directory to name an alias decides it,
++/// as the first found in the list sorted stably did.
+ pub struct AliasesList {
+-    aliases: Vec<Alias>,
++    aliases: std::collections::HashMap<Mime, Mime>,
+ }
+ 
+ impl AliasesList {
+     pub fn new() -> AliasesList {
+         AliasesList {
+-            aliases: Vec::new(),
++            aliases: std::collections::HashMap::new(),
+         }
+     }
+ 
+     pub fn add_aliases(&mut self, aliases: Vec<Alias>) {
+-        self.aliases.extend(aliases);
+-        self.sort();
+-    }
+-
+-    pub fn sort(&mut self) {
+-        self.aliases.sort_by(|a, b| a.alias.cmp(&b.alias))
++        for alias in aliases {
++            self.aliases.entry(alias.alias).or_insert(alias.mime_type);
++        }
+     }
+ 
+     pub fn unalias_mime_type(&self, mime_type: &Mime) -> Option<Mime> {
+-        self.aliases
+-            .iter()
+-            .find(|a| a.alias == *mime_type)
+-            .map(|a| a.mime_type.clone())
++        self.aliases.get(mime_type).cloned()
+     }
+ 
+     pub fn clear(&mut self) {
+--- a/src/glob.rs
++++ b/src/glob.rs
+@@ -265,72 +265,156 @@ pub fn read_globs_from_dir<P: AsRef<Path>>(dir: P) -> Vec<Glob> {
+     }
+ }
+ 
++/// The globs, indexed so that a name is matched against the few that can
++/// match it rather than every one: a literal by the whole name (ignoring
++/// case, as `Glob::matches` compares it), a simple glob (`*.ext`) by its
++/// suffix, looked up for each suffix of the name and of its lowercase
++/// form; only the full globs (a few dozen) are tried one by one. The
++/// answer is the one trying every glob gives (`lookup_linear`).
+ pub struct GlobMap {
+     globs: HashSet<Glob>,
++    /// The globs, in the order they were added, indexed below by position.
++    list: Vec<Glob>,
++    literal: std::collections::HashMap<UniCase<String>, Vec<usize>>,
++    /// Simple globs that ignore case: matched by the name's suffixes and
++    /// its lowercase form's.
++    simple: std::collections::HashMap<String, Vec<usize>>,
++    /// Simple globs that do not: matched by the name's suffixes alone.
++    simple_cs: std::collections::HashMap<String, Vec<usize>>,
++    full: Vec<usize>,
+ }
+ 
+ impl GlobMap {
+     pub fn new() -> GlobMap {
+         GlobMap {
+             globs: HashSet::new(),
++            list: Vec::new(),
++            literal: std::collections::HashMap::new(),
++            simple: std::collections::HashMap::new(),
++            simple_cs: std::collections::HashMap::new(),
++            full: Vec::new(),
+         }
+     }
+ 
+     pub fn add_glob(&mut self, glob: Glob) {
+-        self.globs.insert(glob);
++        if !self.globs.insert(glob.clone()) {
++            return;
++        }
++        let at = self.list.len();
++        match &glob.glob {
++            GlobType::Literal(name) => self
++                .literal
++                .entry(UniCase::new(name.clone()))
++                .or_default()
++                .push(at),
++            GlobType::Simple(suffix) if glob.case_sensitive => {
++                self.simple_cs.entry(suffix.clone()).or_default().push(at)
++            }
++            GlobType::Simple(suffix) => self.simple.entry(suffix.clone()).or_default().push(at),
++            GlobType::Full(_) => self.full.push(at),
++        }
++        self.list.push(glob);
+     }
+ 
+     pub fn add_globs(&mut self, globs: &[Glob]) {
+-        self.globs.extend(globs.iter().cloned());
++        for glob in globs {
++            self.add_glob(glob.clone());
++        }
+     }
+ 
+     pub fn lookup_mime_type_for_file_name(&self, file_name: &str) -> Option<Vec<Mime>> {
+         // Lowercased once, for every glob that ignores case.
+         let lowercase = file_name.to_lowercase();
+-        let mut matching_globs: Vec<&Glob> = self
+-            .globs
+-            .iter()
+-            .filter(|glob| glob.matches(file_name, &lowercase))
+-            .collect();
+-
+-        // Sort in descending order by weight
+-        matching_globs.sort_by(|a, b| b.weight.cmp(&a.weight));
+-
+-        let biggest_weight = matching_globs.first()?.weight;
+-
+-        // "Keep only globs with the biggest weight."
+-        // -- shared-mime-info, "Recommended checking order"
+-        let matching_globs = matching_globs
+-            .iter()
+-            .filter(|glob| glob.weight == biggest_weight);
+-
+-        // Needs to be after filtering for biggest weight
+-        // in case it changes which glob is the longest.
+-        let biggest_glob_length = matching_globs
+-            .clone()
+-            .map(|glob| glob.glob.len())
+-            .max()?;
+-
+-        // "If the patterns are different, keep only the globs
+-        // with the longest pattern, as previously discussed."
+-        // -- shared-mime-info, "Recommended checking order"
+-        let res = matching_globs
+-            .filter(|glob| glob.glob.len() == biggest_glob_length)
+-            .map(|glob| glob.mime_type.clone())
+-            .collect();
+-
+-        Some(res)
++        let mut found: Vec<usize> = Vec::new();
++        if let Some(at) = self.literal.get(&UniCase::new(file_name.to_owned())) {
++            found.extend(at);
++        }
++        for suffix in suffixes(file_name) {
++            for map in [&self.simple, &self.simple_cs] {
++                if let Some(at) = map.get(suffix) {
++                    found.extend(at);
++                }
++            }
++        }
++        if lowercase != file_name {
++            for suffix in suffixes(&lowercase) {
++                if let Some(at) = self.simple.get(suffix) {
++                    found.extend(at);
++                }
++            }
++        }
++        found.extend(
++            self.full
++                .iter()
++                .filter(|&&at| self.list[at].matches(file_name, &lowercase)),
++        );
++        found.sort_unstable();
++        found.dedup();
++        choose(found.iter().map(|&at| &self.list[at]).collect())
++    }
++
++    /// [`Self::lookup_mime_type_for_file_name`] by trying every glob: what
++    /// the index must answer the same as (bibli's tests compare them).
++    #[doc(hidden)]
++    pub fn lookup_linear(&self, file_name: &str) -> Option<Vec<Mime>> {
++        let lowercase = file_name.to_lowercase();
++        choose(
++            self.list
++                .iter()
++                .filter(|glob| glob.matches(file_name, &lowercase))
++                .collect(),
++        )
+     }
+ 
+     pub fn clear(&mut self) {
+-        self.globs.clear();
++        *self = GlobMap::new();
+     }
+ }
+ 
++/// Every suffix of `name`, from the whole of it to the empty one.
++fn suffixes(name: &str) -> impl Iterator<Item = &str> {
++    name.char_indices()
++        .map(|(at, _)| at)
++        .chain(std::iter::once(name.len()))
++        .map(move |at| &name[at..])
++}
++
++/// Of the globs that match a name, the types of the heaviest, and of
++/// those the longest, in the order the globs were added.
++fn choose(mut matching_globs: Vec<&Glob>) -> Option<Vec<Mime>> {
++    // Sort in descending order by weight
++    matching_globs.sort_by(|a, b| b.weight.cmp(&a.weight));
++
++    let biggest_weight = matching_globs.first()?.weight;
++
++    // "Keep only globs with the biggest weight."
++    // -- shared-mime-info, "Recommended checking order"
++    let matching_globs = matching_globs
++        .iter()
++        .filter(|glob| glob.weight == biggest_weight);
++
++    // Needs to be after filtering for biggest weight
++    // in case it changes which glob is the longest.
++    let biggest_glob_length = matching_globs
++        .clone()
++        .map(|glob| glob.glob.len())
++        .max()?;
++
++    // "If the patterns are different, keep only the globs
++    // with the longest pattern, as previously discussed."
++    // -- shared-mime-info, "Recommended checking order"
++    let res = matching_globs
++        .filter(|glob| glob.glob.len() == biggest_glob_length)
++        .map(|glob| glob.mime_type.clone())
++        .collect();
++
++    Some(res)
++}
++
+ impl fmt::Debug for GlobMap {
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+         let mut lines = String::new();
+-        for glob in &self.globs {
++        for glob in &self.list {
+             lines.push_str(&format!("{:?}", glob));
+             lines.push('\n');
+         }
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -563,6 +563,28 @@ impl SharedMimeInfo {
+         db
+     }
+ 
++    /// Loads the MIME information under each of `directories`, the most
++    /// important first, as the caller found them: a program that reads the
++    /// XDG variables one way reads the database from the same directories.
++    pub fn new_for_directories<P: AsRef<Path>>(
++        directories: impl IntoIterator<Item = P>,
++    ) -> SharedMimeInfo {
++        let mut db = SharedMimeInfo::create();
++        for directory in directories {
++            db.load_directory(directory);
++        }
++        db
++    }
++
++    /// [`Self::get_mime_types_from_file_name`] trying every glob: what the
++    /// glob index must answer the same as.
++    #[doc(hidden)]
++    pub fn get_mime_types_from_file_name_linear(&self, file_name: &str) -> Vec<Mime> {
++        self.globs
++            .lookup_linear(file_name)
++            .unwrap_or_else(|| vec![mime::APPLICATION_OCTET_STREAM.clone()])
++    }
++
+     /// Loads all the MIME information under `directory`, and creates a new
+     /// [`SharedMimeInfo`] instance for it.
+     ///
+@@ -785,6 +807,13 @@ impl SharedMimeInfo {
+     /// # }
+     /// ```
+     pub fn mime_type_subclass(&self, mime_type: &Mime, base: &Mime) -> bool {
++        self.subclass_of(mime_type, base, &mut Vec::new())
++    }
++
++    /// [`Self::mime_type_subclass`], with the types already asked on the
++    /// way down: a cycle in the user's own database (any application may
++    /// add a package there) ends instead of overflowing the stack.
++    fn subclass_of(&self, mime_type: &Mime, base: &Mime, seen: &mut Vec<Mime>) -> bool {
+         let unaliased_mime = self
+             .unalias_mime_type(mime_type)
+             .unwrap_or_else(|| mime_type.clone());
+@@ -820,10 +849,14 @@ impl SharedMimeInfo {
+             return true;
+         }
+ 
++        if seen.contains(&unaliased_mime) {
++            return false;
++        }
++        seen.push(unaliased_mime.clone());
+         if let Some(parents) = self.parents.lookup(&unaliased_mime) {
+             if parents
+                 .iter()
+-                .any(|p| self.mime_type_subclass(p, &unaliased_base))
++                .any(|p| self.subclass_of(p, &unaliased_base, seen))
+             {
+                 return true;
+             }

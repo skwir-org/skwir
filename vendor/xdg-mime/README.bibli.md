@@ -24,3 +24,15 @@ layout, so it applies there with `git apply -p1`.
   pattern was written to a `String` to measure it: 1,411 allocations to
   type `notes.txt` against the desktop's database, 6 now
   (`crates/platform/tests/mime_allocations.rs`).
+- `0003-indexed-lookups.patch`: a name is matched against the patterns
+  that can match it, not all of them. Literal patterns are found by the
+  whole name, `*.ext` ones by each suffix of the name and of its
+  lowercase form, and only the few full globs are tried one by one; the
+  answer is the one trying every pattern gives (`lookup_linear`, which
+  `crates/platform/tests/mime_index.rs` compares over the whole
+  database): 22 µs a name to 1.2 (`mime_by_name_us`). Aliases are a map,
+  the first directory to name one deciding it as before. A subclass
+  cycle in a database ends instead of overflowing the stack. And
+  `new_for_directories` reads the database from the directories its
+  caller found: bibli reads the XDG variables in one place
+  (`bibli_core::xdg`).

@@ -45,31 +45,29 @@ impl Alias {
     }
 }
 
+/// Every alias, by its name: a type is unaliased each time it is compared
+/// (`mime_type_subclass` asks for both sides at every level), and there
+/// are some 700 of them. The first directory to name an alias decides it,
+/// as the first found in the list sorted stably did.
 pub struct AliasesList {
-    aliases: Vec<Alias>,
+    aliases: std::collections::HashMap<Mime, Mime>,
 }
 
 impl AliasesList {
     pub fn new() -> AliasesList {
         AliasesList {
-            aliases: Vec::new(),
+            aliases: std::collections::HashMap::new(),
         }
     }
 
     pub fn add_aliases(&mut self, aliases: Vec<Alias>) {
-        self.aliases.extend(aliases);
-        self.sort();
-    }
-
-    pub fn sort(&mut self) {
-        self.aliases.sort_by(|a, b| a.alias.cmp(&b.alias))
+        for alias in aliases {
+            self.aliases.entry(alias.alias).or_insert(alias.mime_type);
+        }
     }
 
     pub fn unalias_mime_type(&self, mime_type: &Mime) -> Option<Mime> {
-        self.aliases
-            .iter()
-            .find(|a| a.alias == *mime_type)
-            .map(|a| a.mime_type.clone())
+        self.aliases.get(mime_type).cloned()
     }
 
     pub fn clear(&mut self) {

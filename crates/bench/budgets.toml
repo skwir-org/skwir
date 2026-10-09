@@ -22,6 +22,9 @@ usage_scan_us = 450_000
 # then one size changed (1 ms; a full sort is ~30 ms). In memory.
 listing_sort_hydrate_us = 1_500_000
 listing_sort_update_us = 4_000
+# Every name typed by name (`mime::by_name`): 0.12 s for 100,000 names
+# (2.25 s before the glob index of vendored xdg-mime, patch 0003).
+mime_by_name_us = 400_000
 
 [deep1m]
 first_batch_us = 500
@@ -61,6 +64,8 @@ walk_parallel_us = 10_000
 stream_open_us = 500
 stream_first_batch_us = 2_500
 stream_complete_us = 12_000
+# Every name typed by name: 25 ms for 10,000 (265 ms before the index).
+mime_by_name_us = 80_000
 # Thumbnail pipeline over 200 images on 8 workers, wall-clock per image.
 thumbs_cold_per_image_us = 250
 thumbs_warm_per_image_us = 100
