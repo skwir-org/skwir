@@ -144,7 +144,7 @@ impl Pace {
     /// Written through to `drive`, by its volume's write-outs (as where a
     /// program writes it) or by ranges, a window as small as can be, so a
     /// test's few MiB make several.
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(super) fn testing(drive: Dir, by_volume: bool) -> Self {
         let handed = if by_volume {
             Handed::Volume(Volume::default())

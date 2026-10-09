@@ -361,7 +361,7 @@ impl StepContext {
     }
 
     /// The bytes reported done.
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(super) fn done(&self) -> u64 {
         self.meter.done.load(Ordering::Relaxed)
     }

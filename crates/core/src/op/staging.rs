@@ -208,7 +208,8 @@ impl UnderWay {
     }
 }
 
-#[cfg(test)]
+// The sweep's tests need Linux's devices and locks.
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
@@ -235,7 +236,6 @@ mod tests {
         left
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn a_sweep_removes_what_a_copy_cut_short_left_and_nothing_else() {
         let tmp = scratch();
@@ -260,7 +260,6 @@ mod tests {
         assert!(!path.exists());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn a_run_sweeps_the_folders_an_earlier_one_was_copying_into() {
         let tmp = scratch();
