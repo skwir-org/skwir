@@ -27,10 +27,11 @@ use crate::{
     view::{Nav, PaneView, Weighs, Zooms},
 };
 
-/// Levels drawn: the folder's own entries, and inside them as many more
-/// as the plugin sends (its `NESTED_LEVELS`).
-const MAX_LEVELS: usize = 4;
-const DEFAULT_LEVELS: usize = 3;
+/// Levels drawn (`Shell::levels`): the folder's own entries, and inside
+/// them as many more as the plugin sends (its `NESTED_LEVELS`).
+pub const LEVELS: [u32; 4] = [1, 2, 3, 4];
+pub const MAX_LEVELS: u32 = LEVELS[LEVELS.len() - 1];
+pub const DEFAULT_LEVELS: u32 = 3;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Node {
@@ -390,23 +391,12 @@ impl Build<'_> {
     }
 }
 
+#[derive(Default)]
 pub struct UsageView {
-    /// Levels the map draws (its zoom), 1 to `MAX_LEVELS`.
-    levels: usize,
     /// Where the folder's own entries were drawn, by key, and the entry of
     /// each key: what the arrows move among.
     laid: Laidout,
     entries: Vec<Option<EntryId>>,
-}
-
-impl Default for UsageView {
-    fn default() -> Self {
-        UsageView {
-            levels: DEFAULT_LEVELS,
-            laid: Laidout::default(),
-            entries: Vec::new(),
-        }
-    }
 }
 
 impl PaneView for UsageView {
@@ -447,13 +437,6 @@ impl PaneView for UsageView {
     }
     fn zooms(&self) -> Zooms {
         Zooms::Levels
-    }
-    fn zoom(&mut self, dir: &str) {
-        self.levels = match dir {
-            "in" => (self.levels + 1).min(MAX_LEVELS),
-            "out" => self.levels.saturating_sub(1).max(1),
-            _ => DEFAULT_LEVELS,
-        };
     }
     /// Its folders measured: the footer weighs them too, once counted.
     fn weighs(&self, shell: &Shell) -> Option<Weighs> {
@@ -545,7 +528,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
         let mut build = Build {
             theme: &theme,
             show_hidden,
-            levels: view.levels,
+            levels: shell.levels as usize,
             scanning: status.is_some_and(|s| s.scanning),
             root,
             tree: &node.path,

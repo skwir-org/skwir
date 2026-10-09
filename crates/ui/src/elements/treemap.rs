@@ -13,8 +13,8 @@ use std::rc::Rc;
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId, Font,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, ShapedLine, SharedString, Style, TextRun,
-    Window, pattern_slash, point, px, quad, relative, size,
+    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, Pixels, ShapedLine, SharedString,
+    Style, TextRun, Window, pattern_slash, point, px, quad, relative, size,
 };
 
 use crate::treemap::{Rect, squarify};
@@ -138,6 +138,10 @@ const OPEN_MIN_W: f64 = 32.0;
 const OPEN_MIN_H: f64 = 24.0;
 /// Room kept for a name before a size is said beside it in a band.
 const NAME_MIN_W: f32 = 24.0;
+/// The ring around a chosen block: over the gap around it (each block's
+/// edge is a line of the gap's color, so two blocks are two lines apart),
+/// then a line of the gap's color inside, clear of its labels (`INSET`).
+const RING: f32 = 2.0;
 
 /// Shapes labels, cut in the middle to the width they get: the end of a
 /// name tells files apart.
@@ -314,12 +318,14 @@ impl Element for Treemap {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        // Squarify against the real bounds: nothing here was guessed in render.
+        // Squarify against the real bounds: nothing here was guessed in
+        // render. A line inside them, so a block at the edge has the gap
+        // a ring is drawn over.
         let area = Rect::new(
-            f64::from(f32::from(bounds.origin.x)),
-            f64::from(f32::from(bounds.origin.y)),
-            f64::from(f32::from(bounds.size.width)),
-            f64::from(f32::from(bounds.size.height)),
+            f64::from(f32::from(bounds.origin.x)) + 1.,
+            f64::from(f32::from(bounds.origin.y)) + 1.,
+            f64::from(f32::from(bounds.size.width)) - 2.,
+            f64::from(f32::from(bounds.size.height)) - 2.,
         );
         let font = window.text_style().font();
         let mut blocks = Vec::new();
@@ -428,29 +434,30 @@ impl Element for Treemap {
                 ));
             }
             for b in prepaint.blocks.iter().filter(|b| b.selected) {
-                let s = b.block.bounds.size;
-                let ring = Bounds::new(
-                    b.block.bounds.origin + point(px(1.), px(1.)),
-                    size(
-                        (s.width - px(2.)).max(px(0.)),
-                        (s.height - px(2.)).max(px(0.)),
-                    ),
-                );
-                // Lined inside with the gap's color, so it reads on any fill.
+                let (o, s) = (b.block.bounds.origin, b.block.bounds.size);
+                let one = px(1.);
+                let ring = Bounds::new(o - point(one, one), s + size(one * 2., one * 2.));
                 window.paint_quad(quad(
                     ring,
                     Corners::default(),
                     gpui::transparent_black(),
-                    Edges::all(px(3.)),
-                    style.gap,
+                    Edges::all(px(RING)),
+                    style.selected,
                     BorderStyle::Solid,
                 ));
+                let inside = Bounds::new(
+                    o + point(one, one),
+                    size(
+                        (s.width - one * 2.).max(px(0.)),
+                        (s.height - one * 2.).max(px(0.)),
+                    ),
+                );
                 window.paint_quad(quad(
-                    ring,
+                    inside,
                     Corners::default(),
                     gpui::transparent_black(),
-                    Edges::all(px(2.)),
-                    style.selected,
+                    Edges::all(one),
+                    style.gap,
                     BorderStyle::Solid,
                 ));
             }
@@ -477,6 +484,16 @@ impl Element for Treemap {
                 };
                 if key != current {
                     on_hover(key, window, cx);
+                }
+            },
+        );
+        // The pointer gone from the window is on no block: GPUI keeps
+        // the position it left at.
+        let on_hover = Rc::clone(&self.on_hover);
+        window.on_mouse_event(
+            move |_: &MouseExitEvent, phase: DispatchPhase, window, cx| {
+                if phase.bubble() && current.is_some() {
+                    on_hover(None, window, cx);
                 }
             },
         );

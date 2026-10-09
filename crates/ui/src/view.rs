@@ -45,8 +45,9 @@ pub enum Zooms {
     Rows,
     /// Its own way (`PaneView::zoom`): the map's scale.
     Own,
-    /// How many levels of folders it draws inside each other, its own
-    /// way as `Own` (Usage): the View menu says more or fewer levels.
+    /// How many levels of folders it draws inside each other (Usage),
+    /// the window's as the tiles' size is: the View menu says more or
+    /// fewer levels.
     Levels,
     /// Nothing: a board, a lens.
     Nothing,
@@ -117,7 +118,7 @@ pub trait PaneView {
         Zooms::Nothing
     }
     /// The zoom keys (`ui.zoom`, `in`, `out` or `reset`) for a view that
-    /// zooms its own way (`Zooms::Own`: the map; `Zooms::Levels`: Usage).
+    /// zooms its own way (`Zooms::Own`: the map).
     fn zoom(&mut self, _dir: &str) {}
     /// Locations the pane should keep open beside `shown`, listed and
     /// current, because this view shows them too (the columns view's

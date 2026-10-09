@@ -203,6 +203,8 @@ pub struct Shell {
     pub zoom: u32,
     /// Icon size of the list's and the columns' rows; their height follows.
     pub row_zoom: u32,
+    /// Levels of folders the Usage map draws inside each other.
+    pub levels: u32,
     /// The sidebar put away with F9. A narrow window hides it too.
     pub sidebar_hidden: bool,
     /// How wide the sidebar was dragged (`Shell::sidebar_drawn_width`).
@@ -497,6 +499,7 @@ impl Shell {
             },
             zoom: DEFAULT_ZOOM,
             row_zoom: crate::views::list::DEFAULT_ROW_ZOOM,
+            levels: crate::usage::DEFAULT_LEVELS,
             sidebar_hidden: false,
             sidebar_width: sidebar::DEFAULT_WIDTH,
             split_share: SPLIT_SHARE,
@@ -608,6 +611,9 @@ impl Shell {
         }
         if session.row_zoom > 0 {
             self.row_zoom = session.row_zoom;
+        }
+        if session.levels > 0 {
+            self.levels = session.levels.min(crate::usage::MAX_LEVELS);
         }
         self.sidebar_hidden = session.sidebar_hidden;
         self.sidebar_sections = session.sidebar_sections;
@@ -1300,13 +1306,17 @@ impl Shell {
                 _ => default,
             }
         }
+        use crate::usage::DEFAULT_LEVELS;
         use crate::views::list::{DEFAULT_ROW_ZOOM, ROW_ZOOMS};
         match self.view_zooms() {
             view::Zooms::Tiles => self.zoom = step(&ZOOMS, self.zoom, DEFAULT_ZOOM, dir),
             view::Zooms::Rows => {
                 self.row_zoom = step(&ROW_ZOOMS, self.row_zoom, DEFAULT_ROW_ZOOM, dir);
             }
-            view::Zooms::Own | view::Zooms::Levels => {
+            view::Zooms::Levels => {
+                self.levels = step(&crate::usage::LEVELS, self.levels, DEFAULT_LEVELS, dir);
+            }
+            view::Zooms::Own => {
                 self.with_view(|v, _| v.zoom(dir));
                 cx.notify();
                 return false;

@@ -26,6 +26,8 @@ pub struct Session {
     pub zoom: u32,
     /// Icon size of the list and columns views' rows.
     pub row_zoom: u32,
+    /// Levels of folders the Usage map draws; 0 until changed.
+    pub levels: u32,
     /// The sidebar put away with F9 (it also gives way to a narrow window).
     pub sidebar_hidden: bool,
     /// How its groups were arranged: their order, those put away or folded.
@@ -97,6 +99,7 @@ impl Shell {
             view: self.ui().view_id.to_owned(),
             zoom: self.zoom,
             row_zoom: self.row_zoom,
+            levels: self.levels,
             sidebar_hidden: self.sidebar_hidden,
             sidebar_sections: self.sidebar_sections.clone(),
             sidebar_width: self.sidebar_width,

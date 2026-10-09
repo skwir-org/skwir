@@ -139,7 +139,8 @@ draw smaller ones, and a status is copied and parsed whole each time it
 changes. A folder whose breakdown is not cached (being counted,
 unreadable, evicted, or scanned without monitoring, which caches
 nothing) is sent closed, and drawn as a block. The view chooses how
-many levels it draws (its zoom, one to four, three by default), and the
+many levels it draws (its zoom, one to four, three by default, the
+window's and remembered with its shape as the tiles' size is), and the
 treemap element whether a folder's block has room to be drawn open,
 from its bounds in prepaint. Only the shown folder's own entries are the
 pane's: a block inside one selects it and opens its menu, so the ring
