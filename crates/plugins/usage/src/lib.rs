@@ -483,6 +483,27 @@ mod tests {
         assert!(scan(&app, a, &root, true).scanned_dirs >= 7);
     }
     #[test]
+    fn the_breakdown_carries_what_its_folders_hold() {
+        let (_tmp, app, _, root) = setup();
+        let inner = root.join("big/inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        // Not zeros: a filesystem may compress those away.
+        let bytes: Vec<u8> = (0..256 * 1024u32).map(|i| (i * 7919 % 251) as u8).collect();
+        std::fs::write(inner.join("data"), &bytes).unwrap();
+        std::fs::write(root.join("big/note"), &bytes[..64 * 1024]).unwrap();
+        let pane = app.workspace.read().active_id();
+        let s = scan(&app, pane, &root, false);
+        let tree = s.tree.unwrap();
+        let big = tree.children.iter().find(|c| c.name == "big").unwrap();
+        let names: Vec<&str> = big.children.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["inner", "note"]);
+        let inner = &big.children[0];
+        assert_eq!(inner.children.len(), 1);
+        assert_eq!(inner.children[0].name, "data");
+        assert_eq!(inner.children[0].size, 256 * 1024);
+    }
+
+    #[test]
     fn recursive_changes_refresh_ancestors_without_rescanning_unchanged_siblings() {
         let (_tmp, app, _, root) = setup();
         std::fs::create_dir_all(root.join("left/deep")).unwrap();

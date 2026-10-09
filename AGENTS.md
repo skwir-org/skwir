@@ -120,7 +120,8 @@ current source before assuming a planned crate, command, or API exists.
   Footers hold state, never messages (`status.rs`): each pane's footer
   its counts and selection size, and with nothing selected what its files
   weigh (`weight.rs`: summed by a worker, the listing knowing only the
-  sizes of the rows drawn); the window's state (Undo, what waits for
+  sizes of the rows drawn; a view that measures folders says what they
+  weigh instead, `PaneView::weighs`: Usage); the window's state (Undo, what waits for
   a paste, the counts plugins publish (`tally::Tally`: the shelf's),
   proposals, the player's strip) ends the last pane's
   footer, at the window's bottom right either way a split runs. The side

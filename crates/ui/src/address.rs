@@ -308,12 +308,25 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     }
     // Only where the view sizes something (`PaneView::zooms`).
     let mut size = Vec::new();
-    if shell.view_zooms() != crate::view::Zooms::Nothing {
-        for (dir, icon, label, tip) in [
-            ("in", "plus", "Larger", "Larger (or Ctrl and the wheel)"),
-            ("out", "minus", "Smaller", "Smaller (or Ctrl and the wheel)"),
-            ("reset", "fit", "Default size", "Default size"),
-        ] {
+    let zooms = shell.view_zooms();
+    let words = if zooms == crate::view::Zooms::Levels {
+        [
+            ("More levels", "More levels (or Ctrl and the wheel)"),
+            ("Fewer levels", "Fewer levels (or Ctrl and the wheel)"),
+            ("Default levels", "Default levels"),
+        ]
+    } else {
+        [
+            ("Larger", "Larger (or Ctrl and the wheel)"),
+            ("Smaller", "Smaller (or Ctrl and the wheel)"),
+            ("Default size", "Default size"),
+        ]
+    };
+    if zooms != crate::view::Zooms::Nothing {
+        for ((dir, icon), (label, tip)) in [("in", "plus"), ("out", "minus"), ("reset", "fit")]
+            .into_iter()
+            .zip(words)
+        {
             size.push(menu_item(
                 Button::new(format!("zoom-{dir}"), icon, tip, "ui.zoom")
                     .args(serde_json::json!({"dir": dir})),

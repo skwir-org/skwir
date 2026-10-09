@@ -45,8 +45,21 @@ pub enum Zooms {
     Rows,
     /// Its own way (`PaneView::zoom`): the map's scale.
     Own,
+    /// How many levels of folders it draws inside each other, its own
+    /// way as `Own` (Usage): the View menu says more or fewer levels.
+    Levels,
     /// Nothing: a board, a lens.
     Nothing,
+}
+
+/// What a view that measures folders knows its entries weigh, for the
+/// footer (`PaneView::weighs`); `None` while it does not know yet.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Weighs {
+    /// Everything the pane shows.
+    pub shown: Option<u64>,
+    /// What is selected.
+    pub selected: Option<u64>,
 }
 
 /// A way to render the active pane's listing.
@@ -104,7 +117,7 @@ pub trait PaneView {
         Zooms::Nothing
     }
     /// The zoom keys (`ui.zoom`, `in`, `out` or `reset`) for a view that
-    /// zooms its own way (`Zooms::Own`: the map).
+    /// zooms its own way (`Zooms::Own`: the map; `Zooms::Levels`: Usage).
     fn zoom(&mut self, _dir: &str) {}
     /// Locations the pane should keep open beside `shown`, listed and
     /// current, because this view shows them too (the columns view's
@@ -117,6 +130,13 @@ pub trait PaneView {
         _trail: Option<&bibli_core::location::Trail>,
     ) -> Vec<Location> {
         Vec::new()
+    }
+    /// What the entries shown and those selected weigh, folders included,
+    /// for a view that measures folders (Usage): the footer says this
+    /// instead of its files' own sizes (`weight.rs`), which count a folder
+    /// as nothing.
+    fn weighs(&self, _shell: &Shell) -> Option<Weighs> {
+        None
     }
     /// Whether the view draws folders opened in place (`Pane::expanded`,
     /// the core `expand` command): the tree does. The pane closes them

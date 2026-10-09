@@ -1306,7 +1306,7 @@ impl Shell {
             view::Zooms::Rows => {
                 self.row_zoom = step(&ROW_ZOOMS, self.row_zoom, DEFAULT_ROW_ZOOM, dir);
             }
-            view::Zooms::Own => {
+            view::Zooms::Own | view::Zooms::Levels => {
                 self.with_view(|v, _| v.zoom(dir));
                 cx.notify();
                 return false;
@@ -1316,6 +1316,13 @@ impl Shell {
         self.remember_session();
         cx.notify();
         true
+    }
+
+    /// What the active pane's view knows its entries weigh, folders
+    /// included (`PaneView::weighs`: Usage).
+    pub fn view_weighs(&self) -> Option<view::Weighs> {
+        let ui = self.ui();
+        ui.views.get(ui.view_id).and_then(|v| v.weighs(self))
     }
 
     /// What the active pane's view zooms.

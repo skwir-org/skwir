@@ -28,6 +28,19 @@ use parking_lot::Mutex;
 use super::{Linked, Links, Message, Node, Request, Shared, SnapshotKind, Status};
 
 const MAX_CHILDREN: usize = 64;
+/// Levels of folders sent inside the shown folder's own entries, at most:
+/// the map draws as many of them as its zoom asks and its blocks have
+/// room for (`nest`).
+const NESTED_LEVELS: usize = 3;
+/// What a folder must weigh, as a share of the shown folder, for what it
+/// holds to be sent, and what an entry inside it must weigh to be sent on
+/// its own rather than in its folder's other items: the map would draw
+/// smaller ones as specks.
+const OPEN_SHARE: u64 = 256;
+const ENTRY_SHARE: u64 = 1024;
+/// Entries sent inside folders, in all: a status is copied and read whole
+/// each time it changes.
+const MAX_NESTED: usize = 1024;
 const MAX_CACHE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_DIRECTORIES: usize = 4096;
 const MAX_WATCH_ROOTS: usize = 4;
@@ -90,6 +103,11 @@ impl Cache {
         *stamp = key;
         self.order.insert(key, path.to_path_buf());
         Some(node.clone())
+    }
+    /// A breakdown kept, read to be shown: showing it does not make it
+    /// younger, only counting with it does.
+    fn peek(&self, path: &Path) -> Option<&Node> {
+        self.dirs.get(path).map(|(node, _)| node)
     }
     fn insert(&mut self, node: Node) {
         if let Some((old, stamp)) = self.dirs.remove(&node.path) {
@@ -616,7 +634,9 @@ impl<'a> Scanner<'a> {
         if s.snapshot == SnapshotKind::Progressive
             && let Some(preview) = &self.preview
         {
-            let tree = preview.snapshot();
+            let mut tree = preview.snapshot();
+            // The folders counted already show what they hold.
+            nest(&mut tree, self.cache);
             s.size = tree.size;
             s.alloc = tree.alloc;
             s.files = tree.files;
@@ -871,6 +891,68 @@ fn trim(node: &mut Node) {
             node.other_count += 1;
             node.other_incomplete += u64::from(child.incomplete);
         }
+    }
+}
+
+/// What the folders of a status's `tree` hold, read from the breakdowns
+/// kept, so the map draws folders inside folders: down to
+/// `NESTED_LEVELS` below the tree's own entries, the heaviest folders
+/// first while `MAX_NESTED` allows. A folder is opened only when it weighs
+/// `1/OPEN_SHARE` of the tree, and only its entries weighing
+/// `1/ENTRY_SHARE` of the tree are sent; the rest join its other items.
+/// A folder without a breakdown kept (being counted, unreadable, evicted,
+/// or scanned without monitoring, which keeps none) is sent closed.
+fn nest(tree: &mut Node, cache: &Cache) {
+    let total = tree.alloc;
+    if total == 0 {
+        return;
+    }
+    let mut budget = MAX_NESTED;
+    for level in 1..=NESTED_LEVELS {
+        let mut folders = Vec::new();
+        at_depth(tree, level, &mut folders);
+        folders.retain(|n| {
+            n.is_dir && n.children.is_empty() && n.alloc.saturating_mul(OPEN_SHARE) >= total
+        });
+        folders.sort_by_key(|n| Reverse(n.alloc));
+        for folder in folders {
+            let Some(breakdown) = cache.peek(&folder.path) else {
+                continue;
+            };
+            folder.other_alloc = breakdown.other_alloc;
+            folder.other_size = breakdown.other_size;
+            folder.other_count = breakdown.other_count;
+            folder.other_incomplete = breakdown.other_incomplete;
+            for entry in &breakdown.children {
+                if budget > 0 && entry.alloc.saturating_mul(ENTRY_SHARE) >= total {
+                    budget -= 1;
+                    folder.children.push(Node {
+                        children: Vec::new(),
+                        links: Arc::default(),
+                        ..entry.clone()
+                    });
+                } else {
+                    folder.other_alloc += entry.alloc;
+                    folder.other_size += entry.size;
+                    folder.other_count += 1;
+                    folder.other_incomplete += u64::from(entry.incomplete);
+                }
+            }
+            if budget == 0 {
+                return;
+            }
+        }
+    }
+}
+
+/// The nodes `depth` levels below `node`.
+fn at_depth<'a>(node: &'a mut Node, depth: usize, out: &mut Vec<&'a mut Node>) {
+    if depth == 0 {
+        out.push(node);
+        return;
+    }
+    for child in &mut node.children {
+        at_depth(child, depth - 1, out);
     }
 }
 
@@ -1253,7 +1335,7 @@ impl Worker {
             last_progress: started,
             ..Scanner::new(cache, request, &target.path, shared)
         };
-        let tree = scanner.root();
+        let mut tree = scanner.root();
         let scanned_dirs = scanner.dirs;
         let errors = scanner.errors;
         let unmonitored = scanner.unmonitored;
@@ -1272,6 +1354,9 @@ impl Worker {
         };
         if coverage == Coverage::None {
             self.cache.invalidate(&target.path, true);
+        }
+        if let Ok(node) = &mut tree {
+            nest(node, &self.cache);
         }
         let mut statuses = self.shared.statuses.lock();
         if !request.cancel.is_cancelled()
@@ -1474,6 +1559,117 @@ mod tests {
         assert_eq!(left, ["/a/b-c", "/a/bb", "/x"]);
         assert_eq!(cache.order.len(), 3);
         assert!(cache.bytes < bytes);
+    }
+
+    fn row(path: &str, alloc: u64, is_dir: bool) -> Node {
+        Node {
+            path: PathBuf::from(path),
+            name: path.rsplit('/').next().unwrap().to_owned(),
+            is_dir,
+            size: alloc,
+            alloc,
+            ..Node::default()
+        }
+    }
+
+    fn breakdown(path: &str, children: Vec<Node>) -> Node {
+        Node {
+            alloc: children.iter().map(|c| c.alloc).sum(),
+            children,
+            ..row(path, 0, true)
+        }
+    }
+
+    fn child<'a>(node: &'a Node, name: &str) -> &'a Node {
+        node.children
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("{name} in {}", node.path.display()))
+    }
+
+    #[test]
+    fn nest_opens_heavy_folders_from_the_cache_and_folds_specks() {
+        const MIB: u64 = 1 << 20;
+        let mut cache = Cache::default();
+        cache.insert(Node {
+            other_alloc: 100,
+            other_size: 100,
+            other_count: 3,
+            ..breakdown(
+                "/r/big",
+                vec![
+                    row("/r/big/inner", 900_000, true),
+                    row("/r/big/speck", 500, false),
+                ],
+            )
+        });
+        cache.insert(breakdown(
+            "/r/big/inner",
+            vec![row("/r/big/inner/data", 900_000, false)],
+        ));
+        // Too light to be opened, though its breakdown is kept.
+        cache.insert(breakdown("/r/small", vec![row("/r/small/x", 2000, false)]));
+        let mut tree = Node {
+            alloc: MIB,
+            children: vec![
+                row("/r/big", 1_000_000, true),
+                row("/r/small", 2000, true),
+                row("/r/file", 46_576, false),
+                // Its breakdown is not kept: it stays closed.
+                row("/r/unknown", 40_000, true),
+            ],
+            ..row("/r", 0, true)
+        };
+        nest(&mut tree, &cache);
+        let big = child(&tree, "big");
+        assert_eq!(big.children.len(), 1);
+        assert_eq!(
+            (big.other_count, big.other_alloc, big.other_size),
+            (4, 600, 600)
+        );
+        let inner = child(big, "inner");
+        assert_eq!(child(inner, "data").alloc, 900_000);
+        assert!(child(&tree, "small").children.is_empty());
+        assert!(child(&tree, "unknown").children.is_empty());
+    }
+
+    #[test]
+    fn nest_stops_at_its_levels_and_its_budget() {
+        let mut cache = Cache::default();
+        for (path, inside) in [
+            ("/r/a", "/r/a/b"),
+            ("/r/a/b", "/r/a/b/c"),
+            ("/r/a/b/c", "/r/a/b/c/d"),
+            ("/r/a/b/c/d", "/r/a/b/c/d/e"),
+        ] {
+            cache.insert(breakdown(path, vec![row(inside, 1000, true)]));
+        }
+        let mut tree = Node {
+            alloc: 1000,
+            children: vec![row("/r/a", 1000, true)],
+            ..row("/r", 0, true)
+        };
+        nest(&mut tree, &cache);
+        let d = child(child(child(child(&tree, "a"), "b"), "c"), "d");
+        assert!(
+            d.children.is_empty(),
+            "{NESTED_LEVELS} levels inside the entries"
+        );
+
+        let mut cache = Cache::default();
+        let many = (0..MAX_NESTED + 10)
+            .map(|i| row(&format!("/r/a/{i:05}"), 1000, false))
+            .collect();
+        cache.insert(breakdown("/r/a", many));
+        let mut tree = Node {
+            alloc: 1000,
+            children: vec![row("/r/a", 1000, true)],
+            ..row("/r", 0, true)
+        };
+        nest(&mut tree, &cache);
+        let a = child(&tree, "a");
+        assert_eq!(a.children.len(), MAX_NESTED);
+        assert_eq!(a.other_count, 10);
     }
     use super::*;
     use notify::event::{CreateKind, MetadataKind, RemoveKind, RenameMode};

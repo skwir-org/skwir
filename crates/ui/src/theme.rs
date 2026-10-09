@@ -13,7 +13,10 @@
 //!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
 //!   `drop_target` under a drag, `on_fill` for text on a saturated fill,
 //!   `handle` for an edge being dragged, `band` and `band_edge` for the
-//!   rubber band.
+//!   rubber band, `block_hover` and `block_selected` for a block of the
+//!   Usage map pointed at and chosen, over any fill, and `block_rest` for
+//!   a block that stands for several entries (the smaller ones, the
+//!   hidden ones).
 //!   `map_*` draw a map: its graticule, a track, and a route with the
 //!   places and areas of a file; land, water and borders are the offline
 //!   background's.
@@ -79,6 +82,13 @@ pub struct Theme {
     pub placeholder: Hsla,
     /// Bars of a chart; the one under the pointer is `accent`.
     pub chart: Hsla,
+    /// Laid over the Usage map's block under the pointer.
+    pub block_hover: Hsla,
+    /// The ring around a chosen block of the Usage map.
+    pub block_selected: Hsla,
+    /// A block of the Usage map that stands for several entries, under
+    /// text in `text`.
+    pub block_rest: Hsla,
     /// A map's graticule, on `bg`.
     pub map_grid: Hsla,
     /// A recorded track on a map, and a planned route, places and areas:
@@ -135,6 +145,9 @@ impl Theme {
             rating: rgb(0xe0a100).into(),
             placeholder: Hsla::from(rgb(0xd8d8d8)).opacity(0.6),
             chart: Hsla::from(rgb(0x2f6feb)).opacity(0.6),
+            block_hover: gpui::white().opacity(0.2),
+            block_selected: rgb(0x1f1f1f).into(),
+            block_rest: rgb(0xdcdcdc).into(),
             map_grid: rgb(0xe6e6e6).into(),
             map_track: rgb(0x2f6feb).into(),
             map_route: rgb(0x9333ea).into(),
@@ -181,6 +194,9 @@ impl Theme {
             rating: rgb(0xf2c14b).into(),
             placeholder: Hsla::from(rgb(0x3a3a3a)).opacity(0.6),
             chart: Hsla::from(rgb(0x6ea8fe)).opacity(0.6),
+            block_hover: gpui::white().opacity(0.16),
+            block_selected: gpui::white(),
+            block_rest: rgb(0x383838).into(),
             map_grid: rgb(0x2c2c2c).into(),
             map_track: rgb(0x6ea8fe).into(),
             map_route: rgb(0xc084fc).into(),
@@ -196,13 +212,15 @@ impl Theme {
     }
 
     /// The fill of block `index` of a chart of folder contents (the Usage
-    /// map): folders in shades of the accent, files grey, a selected block
-    /// lighter. Neighbours differ in hue so their edges read.
-    pub fn block(&self, index: usize, folder: bool, selected: bool) -> Hsla {
-        let mut color = if folder { self.accent } else { self.text_muted };
+    /// map), `depth` folders inside the one shown: folders in shades of
+    /// the accent, files a greyer shade of the same, lighter the deeper
+    /// they lie. Neighbours differ in hue so their edges read; what is
+    /// inside a block keeps its hue (`index` is the outer block's).
+    pub fn block(&self, index: usize, folder: bool, depth: usize) -> Hsla {
+        let mut color = self.accent;
         color.h = (color.h + (index % 7) as f32 * 0.04) % 1.;
-        color.s = if folder { 0.55 } else { 0.1 };
-        color.l = if selected { 0.65 } else { 0.42 };
+        color.s = if folder { 0.55 } else { 0.18 };
+        color.l = 0.40 + depth.min(3) as f32 * 0.035;
         color.a = 1.;
         color
     }

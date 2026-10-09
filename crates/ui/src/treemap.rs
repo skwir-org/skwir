@@ -109,9 +109,49 @@ pub fn squarify(weights: &[f64], bounds: Rect) -> Vec<Rect> {
     out
 }
 
+/// A way an arrow key moves among blocks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Toward {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// The block an arrow reaches from `rects[from]`: of those lying past its
+/// edge that way, one beside it (sharing some of its span across the way)
+/// before one only diagonal from it, then the nearest, then the one whose
+/// middle is closest to its middle; the first of equals.
+pub fn neighbour(rects: &[Rect], from: usize, toward: Toward) -> Option<usize> {
+    const EPS: f64 = 0.5;
+    let f = rects.get(from)?;
+    let score = |c: &Rect| {
+        let (gap, lo, hi, c_lo, c_hi) = match toward {
+            Toward::Right => (c.x - (f.x + f.w), f.y, f.y + f.h, c.y, c.y + c.h),
+            Toward::Left => (f.x - (c.x + c.w), f.y, f.y + f.h, c.y, c.y + c.h),
+            Toward::Down => (c.y - (f.y + f.h), f.x, f.x + f.w, c.x, c.x + c.w),
+            Toward::Up => (f.y - (c.y + c.h), f.x, f.x + f.w, c.x, c.x + c.w),
+        };
+        let beside = hi.min(c_hi) - lo.max(c_lo) > EPS;
+        let middles = ((lo + hi) - (c_lo + c_hi)).abs() / 2.0;
+        (gap >= -EPS).then_some((!beside, gap.max(0.0).round(), middles))
+    };
+    rects
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != from)
+        .filter_map(|(i, c)| score(c).map(|s| (i, s)))
+        .min_by(|(_, a), (_, b)| {
+            a.0.cmp(&b.0)
+                .then(a.1.total_cmp(&b.1))
+                .then(a.2.total_cmp(&b.2))
+        })
+        .map(|(i, _)| i)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Rect, squarify};
+    use super::{Rect, Toward, neighbour, squarify};
 
     #[test]
     fn areas_are_proportional_and_inside_bounds() {
@@ -157,5 +197,29 @@ mod tests {
         let r = squarify(&[0.0, 5.0], Rect::new(0.0, 0.0, 10.0, 10.0));
         assert_eq!(r[0], Rect::default());
         assert!((r[1].area() - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn arrows_reach_the_block_beside_before_a_diagonal_one() {
+        // A tall block on the left, two stacked on the right.
+        let rects = [
+            Rect::new(0.0, 0.0, 60.0, 100.0),
+            Rect::new(60.0, 0.0, 40.0, 50.0),
+            Rect::new(60.0, 50.0, 40.0, 50.0),
+        ];
+        assert_eq!(neighbour(&rects, 0, Toward::Right), Some(1));
+        assert_eq!(neighbour(&rects, 1, Toward::Down), Some(2));
+        assert_eq!(neighbour(&rects, 2, Toward::Up), Some(1));
+        assert_eq!(neighbour(&rects, 2, Toward::Left), Some(0));
+        assert_eq!(neighbour(&rects, 1, Toward::Right), None);
+        assert_eq!(neighbour(&rects, 0, Toward::Up), None);
+        // Nothing beside it that way: the diagonal one.
+        let rects = [
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            Rect::new(20.0, 20.0, 10.0, 10.0),
+        ];
+        assert_eq!(neighbour(&rects, 0, Toward::Right), Some(1));
+        assert_eq!(neighbour(&rects, 1, Toward::Up), Some(0));
+        assert_eq!(neighbour(&rects, 9, Toward::Up), None);
     }
 }

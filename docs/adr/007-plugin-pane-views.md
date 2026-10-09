@@ -127,3 +127,26 @@ depends only on its own subtree and a cached folder composes into any
 parent. Progress snapshots subtract what the branch shares with the tree
 without merging, and stay lower bounds. Reflinked or deduplicated
 extents are still counted for each file: stat cannot see them.
+
+Amended 2026-10-09: the chart draws folders inside folders. A status
+carries, inside the shown folder's own entries, what their folders hold,
+down to three more levels, read from the breakdowns already cached
+(`worker::nest`): no folder is read for it. Only a folder weighing
+1/256 of the shown one is opened, only entries weighing 1/1024 of it are
+sent on their own (the rest join their folder's other items), and at
+most 1024 entries in all, the heaviest folders first: the map could not
+draw smaller ones, and a status is copied and parsed whole each time it
+changes. A folder whose breakdown is not cached (being counted,
+unreadable, evicted, or scanned without monitoring, which caches
+nothing) is sent closed, and drawn as a block. The view chooses how
+many levels it draws (its zoom, one to four, three by default), and the
+treemap element whether a folder's block has room to be drawn open,
+from its bounds in prepaint. Only the shown folder's own entries are the
+pane's: a block inside one selects it and opens its menu, so the ring
+around the selected entry says what the menu acts on, and a double click
+(or the middle button, in a tab) shows the block itself (`ui.reveal`).
+Each level draws its whole folder: hidden entries, while hidden files
+are not shown, and the other items each take one block, so no block is
+drawn larger than its share. The arrows move to the block beside on the
+map (`treemap::neighbour`, from the rectangles the last prepaint laid
+out); the footer weighs folders as the map does (`PaneView::weighs`).

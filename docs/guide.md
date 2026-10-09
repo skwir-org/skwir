@@ -61,7 +61,10 @@ or `Ctrl+wheel`).
 - **Tree** opens folders in place; **Board** shows the folders of the
   one shown as columns of cards you can drag between.
 - **Usage** (`Ctrl+4`) draws what takes the room in a folder, counted as
-  you look; `Ctrl+R` counts again.
+  you look, and inside each folder what it holds: the zoom draws more
+  or fewer levels. A click selects the folder's own entry; a double
+  click on a block inside one goes there. The arrows move to the block
+  beside; `Ctrl+R` counts again.
 - **Map** (`Ctrl+5`) places pictures, tracks and plans where they were
   taken or go. Its background is drawn from data bibli carries; a
   background that downloads tiles is used only once you choose one.

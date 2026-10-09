@@ -79,7 +79,7 @@ pub fn specs() -> Vec<ViewSpec> {
 /// Add a renderer here; registration, toolbar and palette are owned by the plugin.
 pub fn named_renderer(id: &str) -> Option<Box<dyn crate::view::PaneView>> {
     match id {
-        crate::view::USAGE => Some(Box::new(crate::usage::UsageView)),
+        crate::view::USAGE => Some(Box::<crate::usage::UsageView>::default()),
         crate::map_view::ID => Some(Box::new(crate::map_view::MapView::default())),
         _ => None,
     }

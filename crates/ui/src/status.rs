@@ -121,9 +121,10 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
     };
     // Nothing selected: what the files shown weigh, as a selection's size
     // is counted (folders not measured), once a worker has summed them
-    // (`weight.rs`).
+    // (`weight.rs`); a view that measures folders says what they weigh.
+    let weighs = shell.view_weighs();
     let listed = (selection.count == 0)
-        .then(|| shell.listed_bytes())
+        .then(|| weighs.map_or_else(|| shell.listed_bytes(), |w| w.shown))
         .flatten();
     let items = match listed {
         Some(bytes) => format!("{items} · {}", format::size(bytes)),
@@ -149,8 +150,9 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         .child(items);
     if selection.count > 0 {
         let mut text = format!("{} selected", format::thousands(selection.count));
-        if selection.bytes > 0 {
-            text = format!("{text} · {}", format::size(selection.bytes));
+        let bytes = weighs.map_or(selection.bytes, |w| w.selected.unwrap_or(0));
+        if bytes > 0 {
+            text = format!("{text} · {}", format::size(bytes));
         }
         bar = bar.child(div().text_color(theme.text).child(text));
     }
