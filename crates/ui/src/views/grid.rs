@@ -176,7 +176,6 @@ fn cell(
     ix: usize,
     id: EntryId,
     lines: u8,
-    window: &mut Window,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let zoom = shell.zoom;
@@ -202,7 +201,7 @@ fn cell(
     let thumb = if look.is_dir {
         ThumbView::Unavailable
     } else {
-        shell.thumb(id, size, window, cx)
+        shell.thumb(id, size)
     };
     let icon_px = GridView::icon(zoom).0;
     let picture: AnyElement = match thumb {
@@ -241,16 +240,9 @@ fn cell(
     };
     // A place with pictures (a tag's) shows a few of them.
     let picture = match &look.place {
-        Some((_, Some(color))) if !pictures.is_empty() => mosaic(
-            shell,
-            pictures,
-            zoom as f32,
-            size,
-            *color,
-            theme,
-            window,
-            cx,
-        ),
+        Some((_, Some(color))) if !pictures.is_empty() => {
+            mosaic(shell, pictures, zoom as f32, size, *color, theme)
+        }
         _ => picture,
     };
     let el = crate::views::entry::highlight(
@@ -356,8 +348,6 @@ fn mosaic(
     quality: ThumbSize,
     color: usize,
     theme: &Theme,
-    window: &mut Window,
-    cx: &mut Context<Shell>,
 ) -> AnyElement {
     const GAP: f32 = 2.;
     const FRAME: f32 = 3.;
@@ -374,7 +364,7 @@ fn mosaic(
                 .overflow_hidden()
                 .rounded_sm()
                 .bg(theme.placeholder);
-            match shell.thumb_of(entry, mtime, quality, window, cx) {
+            match shell.thumb_of(entry, mtime, quality) {
                 ThumbView::Ready(ri) => frame
                     .child(img(ri).size_full().object_fit(gpui::ObjectFit::Cover))
                     .into_any_element(),
@@ -431,7 +421,7 @@ impl PaneView for GridView {
         let zoom = shell.zoom;
         let pane = shell.pane;
         let render = cx.processor(
-            move |this: &mut Shell, (range, cols): (Range<usize>, usize), window, cx| {
+            move |this: &mut Shell, (range, cols): (Range<usize>, usize), _, cx| {
                 this.with_pane(pane, |this| {
                     let theme = cx.global::<Theme>().clone();
                     let list = &mut this.ui_mut().list;
@@ -446,7 +436,7 @@ impl PaneView for GridView {
                         .into_iter()
                         .map(|(ix, id)| {
                             let lines = lines.get(ix).copied().unwrap_or(1);
-                            cell(this, &theme, ix, id, lines, window, cx)
+                            cell(this, &theme, ix, id, lines, cx)
                         })
                         .collect::<Vec<_>>();
                     let app = std::sync::Arc::clone(&this.app);

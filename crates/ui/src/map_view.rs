@@ -518,17 +518,15 @@ impl PaneView for MapView {
                     });
                 });
             }),
-            thumb: Rc::new(move |id, window, cx| {
-                weak.update(cx, |shell, cx| {
-                    shell.with_pane(pane, |shell| {
-                        match shell.thumb(id, ThumbSize::Normal, window, cx) {
-                            ThumbView::Ready(image) => Some(image),
-                            ThumbView::Pending => {
-                                shell.request_hydrate([id]);
-                                None
-                            }
-                            ThumbView::Unavailable => None,
+            thumb: Rc::new(move |id, _, cx| {
+                weak.update(cx, |shell, _| {
+                    shell.with_pane(pane, |shell| match shell.thumb(id, ThumbSize::Normal) {
+                        ThumbView::Ready(image) => Some(image),
+                        ThumbView::Pending => {
+                            shell.request_hydrate([id]);
+                            None
                         }
+                        ThumbView::Unavailable => None,
                     })
                 })
                 .ok()

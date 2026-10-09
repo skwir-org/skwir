@@ -10,7 +10,7 @@ use bibli_core::entry::keys;
 use bibli_core::lru::ByteLru;
 use bibli_core::scheduler::Priority;
 use bibli_core::thumbs::{Image, ThumbRequest, ThumbSize, ThumbState};
-use gpui::{Context, RenderImage, Window};
+use gpui::RenderImage;
 use smallvec::SmallVec;
 
 use crate::shell::Shell;
@@ -28,29 +28,57 @@ pub enum ThumbView {
 /// (it ages out of the cache).
 type Key = (EntryId, ThumbSize, Option<SystemTime>);
 
-/// Converted pictures, bounded by bytes. Evicted images are handed back so
-/// their atlas textures can be released.
-pub struct ThumbCache(ByteLru<Key, Arc<RenderImage>>);
+/// Converted pictures, bounded by bytes: the memory the thumbnails setting
+/// gives (`Thumbnails::budget`). What this frame and the one before drew is
+/// never evicted, the budget held again once it no longer is: evicted
+/// while the frame draws it, an image left the atlas and came back at the
+/// next frame. What is evicted is given back to the atlas when the next
+/// frame begins (`begin_frame`), in render, never while a map or a view
+/// lays out.
+pub struct ThumbCache {
+    lru: ByteLru<Key, Arc<RenderImage>>,
+    retired: Vec<Arc<RenderImage>>,
+    /// The recency clock when this frame and the one before began.
+    frame: u64,
+    before: u64,
+}
 
 impl Default for ThumbCache {
     fn default() -> Self {
-        ThumbCache(ByteLru::new(48 << 20))
+        ThumbCache {
+            lru: ByteLru::new(64 << 20),
+            retired: Vec::new(),
+            frame: 0,
+            before: 0,
+        }
     }
 }
 
 impl ThumbCache {
     fn get(&mut self, k: &Key) -> Option<Arc<RenderImage>> {
-        self.0.get(k).cloned()
+        self.lru.get(k).cloned()
     }
 
-    /// Insert a converted image; returns the images to release: those
-    /// evicted to stay in budget, and the one it replaced.
-    fn insert(&mut self, k: Key, img: Arc<RenderImage>, bytes: usize) -> Vec<Arc<RenderImage>> {
-        self.0.insert(k, img, bytes)
+    /// Insert a converted image; what it evicts, and the one it replaced,
+    /// go back to the atlas when the next frame begins.
+    fn insert(&mut self, k: Key, img: Arc<RenderImage>, bytes: usize) {
+        let evicted = self.lru.insert_keeping(k, img, bytes, self.before.max(1));
+        self.retired.extend(evicted);
+    }
+
+    /// A frame begins: the images to give back to the atlas, and from now
+    /// on what this frame draws is kept too. `budget` is the setting's.
+    pub fn begin_frame(&mut self, budget: usize) -> Vec<Arc<RenderImage>> {
+        if self.lru.budget() != budget {
+            self.retired.extend(self.lru.set_budget(budget));
+        }
+        self.before = self.frame;
+        self.frame = self.lru.now() + 1;
+        std::mem::take(&mut self.retired)
     }
 
     pub fn bytes(&self) -> usize {
-        self.0.bytes()
+        self.lru.bytes()
     }
 }
 
@@ -74,13 +102,7 @@ impl Shell {
     /// The thumbnail for `id`, requesting it at visible priority if needed.
     /// Entries without metadata get a hydrate request first (mtime is needed
     /// for cache freshness) and report `Pending`.
-    pub fn thumb(
-        &mut self,
-        id: EntryId,
-        size: ThumbSize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> ThumbView {
+    pub fn thumb(&mut self, id: EntryId, size: ThumbSize) -> ThumbView {
         let (key, req) = {
             let ws = self.app.workspace.read();
             let Some(pane) = ws.pane(self.pane) else {
@@ -120,7 +142,7 @@ impl Shell {
             };
             (key, req)
         };
-        self.thumb_asked(key, req, window, cx)
+        self.thumb_asked(key, req)
     }
 
     /// The thumbnail of a file no listing holds (a picture on a place's
@@ -131,8 +153,6 @@ impl Shell {
         entry: bibli_core::op::EntryRef,
         mtime: Option<SystemTime>,
         size: ThumbSize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
     ) -> ThumbView {
         let key = (entry.id, size, mtime);
         if let Some(img) = self.thumbs.get(&key) {
@@ -149,25 +169,17 @@ impl Shell {
             mtime,
             size,
         };
-        self.thumb_asked(key, req, window, cx)
+        self.thumb_asked(key, req)
     }
 
     /// `req` asked of the thumbnails, kept under `key` once ready.
-    fn thumb_asked(
-        &mut self,
-        key: Key,
-        req: ThumbRequest,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> ThumbView {
+    fn thumb_asked(&mut self, key: Key, req: ThumbRequest) -> ThumbView {
         match self.app.thumbnails.get(req, Priority::Visible) {
             ThumbState::Ready(img) => {
                 let Some(ri) = to_render_image(&img) else {
                     return ThumbView::Unavailable;
                 };
-                for old in self.thumbs.insert(key, Arc::clone(&ri), img.bytes()) {
-                    cx.drop_image(old, Some(window));
-                }
+                self.thumbs.insert(key, Arc::clone(&ri), img.bytes());
                 ThumbView::Ready(ri)
             }
             ThumbState::Pending => ThumbView::Pending,
@@ -205,26 +217,55 @@ mod tests {
 
     #[test]
     fn an_edited_file_is_a_new_picture_and_the_cache_stays_in_budget() {
-        let mut c = ThumbCache(ByteLru::new(3 * 64));
+        let mut c = ThumbCache::default();
+        assert!(c.begin_frame(3 * 64).is_empty());
         let id = EntryId { dev: 1, ino: 7 };
         let then = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
         let now = then + std::time::Duration::from_secs(5);
-        assert!(
-            c.insert((id, ThumbSize::Normal, Some(then)), img(4), 64)
-                .is_empty()
-        );
+        c.insert((id, ThumbSize::Normal, Some(then)), img(4), 64);
         assert!(c.get(&(id, ThumbSize::Normal, Some(then))).is_some());
         assert!(
             c.get(&(id, ThumbSize::Normal, Some(now))).is_none(),
             "edited since: not the old picture"
         );
+        // Each in a frame of its own: once two frames old, a picture can go.
+        let mut retired = 0;
         for n in 0..10 {
+            retired += c.begin_frame(3 * 64).len();
             let k = (EntryId { dev: 1, ino: n }, ThumbSize::Normal, None);
             c.insert(k, img(4), 64);
             for _ in 0..100 {
                 c.get(&k);
             }
         }
+        retired += c.begin_frame(3 * 64).len();
         assert_eq!(c.bytes(), 192);
+        assert_eq!(retired, 8, "what was evicted goes back to the atlas");
+    }
+
+    /// What a frame draws is never evicted while it does, the budget held
+    /// again once it no longer is.
+    #[test]
+    fn what_a_frame_draws_stays_over_the_budget() {
+        let mut c = ThumbCache::default();
+        c.begin_frame(2 * 64);
+        c.begin_frame(2 * 64);
+        for n in 0..5 {
+            c.insert(
+                (EntryId { dev: 1, ino: n }, ThumbSize::Normal, None),
+                img(4),
+                64,
+            );
+        }
+        assert_eq!(c.bytes(), 5 * 64, "all drawn this frame: kept");
+        c.begin_frame(2 * 64);
+        assert_eq!(c.bytes(), 5 * 64, "and the next");
+        c.begin_frame(2 * 64);
+        c.insert(
+            (EntryId { dev: 1, ino: 9 }, ThumbSize::Normal, None),
+            img(4),
+            64,
+        );
+        assert_eq!(c.bytes(), 2 * 64, "drawn two frames ago: gone");
     }
 }

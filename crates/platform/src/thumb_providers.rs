@@ -28,10 +28,6 @@ fn mime_of(req: &ThumbRequest) -> Option<Arc<str>> {
 /// What a picture another program drew may weigh.
 const DRAWN_BYTES: u64 = 64 << 20;
 
-fn is_regular_file(p: &Path) -> bool {
-    std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file())
-}
-
 /// Refuse what is not a file, following links: a FIFO named `x.pdf` would
 /// hold a renderer until its timeout.
 pub fn ensure_file(p: &Path) -> anyhow::Result<()> {
@@ -116,8 +112,32 @@ impl ThumbnailProvider for FreedesktopCache {
         Stage::Cache
     }
 
+    /// Asked on the window's thread for every picture drawn: nothing is
+    /// read here, the file is looked at on the worker that asks the cache.
     fn accepts(&self, req: &ThumbRequest) -> bool {
-        self.cache.is_some() && req.entry.path.is_absolute() && is_regular_file(&req.entry.path)
+        self.cache.is_some() && req.entry.path.is_absolute()
+    }
+
+    fn failed_before(&self, req: &ThumbRequest) -> bool {
+        self.cache
+            .as_ref()
+            .is_some_and(|cache| cache.failed(&req.entry.path, tools_stamp()))
+    }
+
+    fn store_failure(&self, req: &ThumbRequest) {
+        let Some(cache) = self.cache.as_ref().filter(|_| self.write_back) else {
+            return;
+        };
+        let mtime = req.mtime.or_else(|| {
+            std::fs::symlink_metadata(&req.entry.path)
+                .ok()?
+                .modified()
+                .ok()
+        });
+        let Some(mtime) = mtime else { return };
+        if let Err(e) = cache.store_failed(&req.entry.path, mtime, tools_stamp()) {
+            tracing::debug!(path = %req.entry.path.display(), "thumbnail failure not kept: {e:#}");
+        }
     }
 
     fn thumbnail(
@@ -151,6 +171,47 @@ impl ThumbnailProvider for FreedesktopCache {
             tracing::debug!(path = %req.entry.path.display(), "thumbnail cache write failed: {e:#}");
         }
     }
+}
+
+/// What could draw thumbnails here, stamped: bibli's version, the
+/// desktop's thumbnailers (each by its name and when it was changed), and
+/// the programs bibli asks itself. A failure remembered with another
+/// stamp is tried again: a tool installed since may draw the file. Read
+/// once a process.
+pub fn tools_stamp() -> &'static str {
+    static STAMP: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    STAMP.get_or_init(|| {
+        let mut parts = vec![env!("CARGO_PKG_VERSION").to_owned()];
+        for dir in crate::xdg::data_search() {
+            let Ok(read) = std::fs::read_dir(dir.join("thumbnailers")) else {
+                continue;
+            };
+            for entry in read.flatten() {
+                let changed = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_secs());
+                parts.push(format!("{}:{changed}", entry.file_name().to_string_lossy()));
+            }
+        }
+        for program in [
+            "magick",
+            "convert",
+            "ffmpeg",
+            "ffmpegthumbnailer",
+            "pdftoppm",
+            "soffice",
+            "libreoffice",
+        ] {
+            if bibli_core::os_path::find_program(program).is_some() {
+                parts.push(program.to_owned());
+            }
+        }
+        parts.sort();
+        format!("{:x}", md5::compute(parts.join("\n")))
+    })
 }
 
 // ------------------------------------------------------------- image decoder
@@ -210,7 +271,7 @@ impl ThumbnailProvider for ImageDecoder {
             u64::from(w) * u64::from(h) <= MAX_PIXELS,
             "{w}x{h} is too large to thumbnail"
         );
-        let img = crate::picture::decode(open()?)?;
+        let img = crate::picture::decode_fitted(open()?, req.size.pixels())?;
         if cancel.is_cancelled() {
             return Ok(None);
         }

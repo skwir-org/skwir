@@ -2034,7 +2034,6 @@ impl Shell {
         self.backlog = report.backlog;
         self.sync_views();
         self.sync_keymap(cx);
-        self.app.thumbnails.tick();
         self.drain_executor(cx);
         for n in self.app.take_notifications() {
             let error = matches!(n.level, NotifyLevel::Error | NotifyLevel::Warning);
@@ -2464,6 +2463,13 @@ impl Render for Shell {
             let mut tiles = self.map_tiles.borrow_mut();
             tiles.end_frame();
             tiles.begin_frame();
+        }
+        // Thumbnails count frames drawn, not wakes: a request not asked for
+        // a few frames is let go, and a wake that draws nothing (a worker
+        // done) would let go of what the next frame still wants.
+        self.app.thumbnails.tick();
+        for image in self.thumbs.begin_frame(self.app.thumbnails.budget()) {
+            cx.drop_image(image, Some(window));
         }
         // While the tab shown gets ready, the whole window draws the tab left
         // as it was: its panes, toolbars, status and preview.

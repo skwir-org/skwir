@@ -190,13 +190,13 @@ fn column(
     let list = uniform_list(
         ("board-column", k),
         ids.len(),
-        cx.processor(move |this: &mut Shell, range: Range<usize>, window, cx| {
+        cx.processor(move |this: &mut Shell, range: Range<usize>, _, cx| {
             this.with_pane(pane, |this| {
                 let theme = cx.global::<Theme>().clone();
                 let cards = cards(this, &ids[range]);
                 cards
                     .into_iter()
-                    .map(|card| card_element(this, &card, &theme, window, cx))
+                    .map(|card| card_element(this, &card, &theme, cx))
                     .collect::<Vec<_>>()
             })
         }),
@@ -288,14 +288,13 @@ fn card_element(
     shell: &mut Shell,
     card: &Card,
     theme: &Theme,
-    window: &mut Window,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let look = &card.look;
     let thumb = if look.is_dir {
         ThumbView::Unavailable
     } else {
-        shell.thumb(look.id, ThumbSize::Normal, window, cx)
+        shell.thumb(look.id, ThumbSize::Normal)
     };
     let picture: AnyElement = match thumb {
         ThumbView::Ready(ri) => crate::icons::marked(

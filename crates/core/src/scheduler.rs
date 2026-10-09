@@ -92,6 +92,8 @@ pub struct Scheduler {
     inner: Arc<Inner>,
     /// Held by handles only, never by workers: its drop is the shutdown.
     _owner: Arc<Owner>,
+    /// How many workers it has.
+    workers: usize,
 }
 
 struct Owner(Arc<Inner>);
@@ -138,7 +140,14 @@ impl Scheduler {
         Scheduler {
             _owner: Arc::new(Owner(Arc::clone(&inner))),
             inner,
+            workers,
         }
+    }
+
+    /// How many workers it runs jobs on: what work that may hold one long
+    /// (a thumbnailer) keeps some of free.
+    pub fn workers(&self) -> usize {
+        self.workers
     }
 
     /// Submit a job. It is skipped (never run) if `cancel` fires before it starts.

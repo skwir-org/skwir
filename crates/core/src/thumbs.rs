@@ -101,6 +101,14 @@ pub trait ThumbnailProvider: Send + Sync {
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>>;
     /// Persist a thumbnail another provider produced (cache writers).
     fn store(&self, _req: &ThumbRequest, _image: &Image) {}
+    /// Whether it remembers that no provider could make a thumbnail of
+    /// `req`'s file as it is now, with the tools there are now (a cache's
+    /// failures, the desktop's `fail/` folder): none is tried again.
+    fn failed_before(&self, _req: &ThumbRequest) -> bool {
+        false
+    }
+    /// Remember that no provider could make one of `req`'s file as it is.
+    fn store_failure(&self, _req: &ThumbRequest) {}
 }
 
 /// What the UI gets back synchronously.
@@ -141,6 +149,12 @@ struct State {
     seq: u64,
     decoded: u64,
     skipped: u64,
+    /// Workers taking requests now (`RUNNING_AT_MOST`).
+    running: usize,
+    /// The memory the thumbnails shown may take, as set: what the UI
+    /// keeps of what it draws. This keeps a quarter of it, what was made
+    /// and not taken yet.
+    budget: usize,
 }
 
 /// Frames a request may go unasked before it is dropped or cancelled.
@@ -168,7 +182,7 @@ impl Thumbnails {
         Arc::new(Thumbnails {
             providers: RwLock::new(Vec::new()),
             state: Mutex::new(State {
-                lru: ByteLru::new(64 << 20),
+                lru: ByteLru::new(16 << 20),
                 unavailable: HashSet::new(),
                 queue: Vec::new(),
                 in_flight: HashMap::new(),
@@ -177,6 +191,8 @@ impl Thumbnails {
                 seq: 0,
                 decoded: 0,
                 skipped: 0,
+                running: 0,
+                budget: 64 << 20,
             }),
             scheduler,
             waker: Mutex::new(None),
@@ -188,10 +204,22 @@ impl Thumbnails {
         *self.waker.lock() = waker;
     }
 
-    /// Bytes of decoded images to keep. Default 64 MiB.
+    /// Bytes of decoded images the thumbnails shown may take, as the user
+    /// set it (64 MiB by default). Whoever draws them keeps them
+    /// (`budget`); this keeps a quarter of it, of those made and not taken
+    /// yet, so the same pixels are not held twice in full.
     pub fn set_budget(&self, bytes: usize) {
-        let evicted = self.state.lock().lru.set_budget(bytes);
+        let evicted = {
+            let mut s = self.state.lock();
+            s.budget = bytes;
+            s.lru.set_budget(bytes / 4)
+        };
         drop(evicted);
+    }
+
+    /// The memory thumbnails drawn may take, as set (`set_budget`).
+    pub fn budget(&self) -> usize {
+        self.state.lock().budget
     }
 
     pub fn register(&self, owner: &str, provider: Arc<dyn ThumbnailProvider>) {
@@ -313,17 +341,34 @@ impl Thumbnails {
         (s.decoded, s.skipped, s.lru.bytes())
     }
 
+    /// One more worker taking requests, unless as many run as may: a
+    /// thumbnailer can hold one for seconds (a video, a document), and a
+    /// grid of them must leave some to list folders and read previews.
     fn spawn_worker(self: &Arc<Self>, priority: Priority) {
+        {
+            let mut s = self.state.lock();
+            if s.running >= self.running_at_most() {
+                return;
+            }
+            s.running += 1;
+        }
         let this = Arc::clone(self);
         self.scheduler
             .spawn(priority, "thumb", self.lifetime.child(), move || {
-                this.work_one();
+                // Every request queued meanwhile, one after the other.
+                while this.work_one() {}
             });
     }
 
+    /// Workers taking requests at most: all but one, at least one.
+    fn running_at_most(&self) -> usize {
+        self.scheduler.workers().saturating_sub(1).max(1)
+    }
+
     /// Take the best live request (visible first, most recent first) and run
-    /// the providers on it.
-    fn work_one(self: &Arc<Self>) {
+    /// the providers on it. False once nothing is queued: the worker stops
+    /// taking requests.
+    fn work_one(self: &Arc<Self>) -> bool {
         let (key, req, cancel, generation) = {
             let mut s = self.state.lock();
             loop {
@@ -334,7 +379,8 @@ impl Thumbnails {
                     .min_by_key(|(_, q)| (q.priority, std::cmp::Reverse(q.seq)))
                     .map(|(i, _)| i);
                 let Some(i) = best else {
-                    return;
+                    s.running = s.running.saturating_sub(1);
+                    return false;
                 };
                 let q = s.queue.swap_remove(i);
                 let cancel = s.in_flight.get(&q.key).map(|(_, c)| c.clone());
@@ -359,13 +405,20 @@ impl Thumbnails {
             .map(|(_, _, p)| Arc::clone(p))
             .collect();
         let mut produced: Option<(usize, Image)> = None;
+        // Remembered as one nothing could draw, as it is and with the tools
+        // there are: no provider is run again for it.
+        let failed_before = providers.iter().any(|p| p.failed_before(&req));
+        // Whether anything that makes thumbnails tried: a file only a cache
+        // takes (a text file) failed nothing worth remembering.
+        let mut tried = false;
         for (i, p) in providers.iter().enumerate() {
-            if cancel.is_cancelled() {
+            if cancel.is_cancelled() || failed_before {
                 break;
             }
             if !p.accepts(&req) {
                 continue;
             }
+            tried |= p.stage() != Stage::Cache;
             match p.thumbnail(&req, &cancel) {
                 Ok(Some(img)) => {
                     produced = Some((i, img));
@@ -405,12 +458,19 @@ impl Thumbnails {
                 None if s.providers != generation => Vec::new(),
                 None => {
                     s.unavailable.insert(key);
+                    if tried {
+                        drop(s);
+                        for p in &providers {
+                            p.store_failure(&req);
+                        }
+                    }
                     Vec::new()
                 }
             }
         };
         drop(evicted);
         self.wake();
+        true
     }
 
     fn wake(&self) {
@@ -432,6 +492,8 @@ mod tests {
         calls: AtomicUsize,
         produce: AtomicBool,
         stored: AtomicUsize,
+        /// Failures it was told to remember (a cache only).
+        failures: AtomicUsize,
         /// Called while it runs, before it answers.
         during: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     }
@@ -444,6 +506,7 @@ mod tests {
                 calls: AtomicUsize::new(0),
                 produce: AtomicBool::new(produce),
                 stored: AtomicUsize::new(0),
+                failures: AtomicUsize::new(0),
                 during: Mutex::new(None),
             })
         }
@@ -473,6 +536,15 @@ mod tests {
         }
         fn store(&self, _: &ThumbRequest, _: &Image) {
             self.stored.fetch_add(1, Ordering::Relaxed);
+        }
+        // A cache remembers failures, as the desktop's does.
+        fn failed_before(&self, _: &ThumbRequest) -> bool {
+            self.stage == Stage::Cache && self.failures.load(Ordering::Relaxed) > 0
+        }
+        fn store_failure(&self, _: &ThumbRequest) {
+            if self.stage == Stage::Cache {
+                self.failures.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 
@@ -524,6 +596,30 @@ mod tests {
     }
 
     #[test]
+    fn a_failure_is_remembered_once_a_thumbnailer_tried() {
+        let t = Thumbnails::new(Scheduler::new(2));
+        let cache = Fake::new("cache", Stage::Cache, false);
+        t.register("core", cache.clone());
+        assert!(matches!(wait_ready(&t, &req(1)), ThumbState::Unavailable));
+        assert_eq!(
+            cache.failures.load(Ordering::Relaxed),
+            0,
+            "only the cache took it: nothing failed to draw it"
+        );
+        let maker = Fake::new("maker", Stage::Generate, false);
+        t.register("core", maker.clone());
+        assert!(matches!(wait_ready(&t, &req(1)), ThumbState::Unavailable));
+        assert_eq!(maker.calls.load(Ordering::Relaxed), 1);
+        assert_eq!(cache.failures.load(Ordering::Relaxed), 1);
+        // Asked again with the failure remembered (a later launch): no
+        // provider runs, nothing is written again.
+        t.providers_changed();
+        assert!(matches!(wait_ready(&t, &req(1)), ThumbState::Unavailable));
+        assert_eq!(maker.calls.load(Ordering::Relaxed), 1);
+        assert_eq!(cache.failures.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
     fn unavailable_is_remembered_and_lru_respects_its_budget() {
         let t = Thumbnails::new(Scheduler::new(2));
         let none = Fake::new("none", Stage::Generate, false);
@@ -536,7 +632,7 @@ mod tests {
         assert_eq!(none.calls.load(Ordering::Relaxed), 1);
 
         let t = Thumbnails::new(Scheduler::new(2));
-        t.set_budget(40); // two 16-byte images fit, three do not
+        t.set_budget(160); // a quarter kept here: two 16-byte images fit, three do not
         t.register("core", Fake::new("d", Stage::Generate, true));
         for i in 1..=3 {
             wait_ready(&t, &req(i));

@@ -36,6 +36,24 @@ pub fn decode<R: BufRead + Seek>(reader: ImageReader<R>) -> ImageResult<DynamicI
     Ok(image)
 }
 
+/// The picture decoded, shrunk to at most `side` on its longer side, then
+/// turned: what a thumbnail needs. Turned before shrinking, a portrait
+/// photo of 24 megapixels held a second full copy of itself, 72 MB more
+/// for each worker, and the turn cost the full picture's time.
+pub fn decode_fitted<R: BufRead + Seek>(
+    reader: ImageReader<R>,
+    side: u32,
+) -> ImageResult<DynamicImage> {
+    let mut decoder = reader.into_decoder()?;
+    let orientation = orientation(&mut decoder);
+    let mut image = encoded(DynamicImage::from_decoder(decoder)?);
+    if image.width().max(image.height()) > side {
+        image = image.thumbnail(side, side);
+    }
+    image.apply_orientation(orientation);
+    Ok(image)
+}
+
 /// Linear light encoded as sRGB, what a screen expects: an `OpenEXR`
 /// picture's floats, clipped at white. Alpha is not light, and stays
 /// linear. Any other picture is already encoded.

@@ -55,6 +55,9 @@ impl ThumbSize {
     }
 }
 
+/// The text chunk of a failure bibli wrote that stamps the tools it had.
+const TOOLS_CHUNK: &str = "X-Bibli-Tools";
+
 /// The spec's cache key for an absolute path: the MD5 of its URI, escaped
 /// as `GLib` escapes it (`crate::uri::file_uri`).
 pub fn key(path: &Path) -> String {
@@ -128,6 +131,44 @@ impl ThumbCache {
         })
     }
 
+    /// Whether bibli made no thumbnail of `path` as it is now (its
+    /// modification time), with the tools there are now (`tools`, a stamp
+    /// of them): remembered in the specification's `fail/bibli` folder,
+    /// so a file nothing can draw is not tried again at every launch, and
+    /// is once a tool that might draw it is installed.
+    pub fn failed(&self, path: &Path, tools: &str) -> bool {
+        let candidate = self.fail_dir().join(format!("{}.png", key(path)));
+        let Some(mtime) = std::fs::symlink_metadata(path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        else {
+            return false;
+        };
+        png_text_chunk(&candidate, "Thumb::MTime")
+            .is_some_and(|m| m.trim().parse::<u64>().ok() == Some(mtime.as_secs()))
+            && png_text_chunk(&candidate, TOOLS_CHUNK).as_deref() == Some(tools)
+    }
+
+    /// Remember that no thumbnail could be made of `path` as of `mtime`,
+    /// with the tools `tools` says: a pixel, as the specification has the
+    /// failures written.
+    ///
+    /// # Errors
+    /// When it cannot be written.
+    pub fn store_failed(&self, path: &Path, mtime: SystemTime, tools: &str) -> anyhow::Result<()> {
+        let pixel = Image {
+            width: 1,
+            height: 1,
+            rgba: vec![0; 4].into(),
+        };
+        Self::write(&self.fail_dir(), path, &pixel, mtime, Some(tools)).map(drop)
+    }
+
+    fn fail_dir(&self) -> PathBuf {
+        self.root.join("fail").join("bibli")
+    }
+
     /// Write `image` into the cache for `path` per the spec: PNG with
     /// `Thumb::URI`, `Thumb::MTime`, `Thumb::Size` and `Software` text chunks,
     /// written to a private temp file in the size directory and renamed into
@@ -139,11 +180,6 @@ impl ThumbCache {
         image: &Image,
         mtime: SystemTime,
     ) -> anyhow::Result<PathBuf> {
-        use anyhow::Context;
-        let meta =
-            std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
-        anyhow::ensure!(meta.is_file(), "{} is not a regular file", path.display());
-        anyhow::ensure!(path.is_absolute(), "{} is not absolute", path.display());
         anyhow::ensure!(
             image.width.max(image.height) <= size.pixels(),
             "image {}x{} exceeds the {} size",
@@ -151,7 +187,23 @@ impl ThumbCache {
             image.height,
             size.dir_name()
         );
-        let dir = self.root.join(size.dir_name());
+        Self::write(&self.root.join(size.dir_name()), path, image, mtime, None)
+    }
+
+    /// `image` written for `path` into `dir`, as `store` says.
+    fn write(
+        dir: &Path,
+        path: &Path,
+        image: &Image,
+        mtime: SystemTime,
+        tools: Option<&str>,
+    ) -> anyhow::Result<PathBuf> {
+        use anyhow::Context;
+        let meta =
+            std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
+        anyhow::ensure!(meta.is_file(), "{} is not a regular file", path.display());
+        anyhow::ensure!(path.is_absolute(), "{} is not absolute", path.display());
+        let dir = dir.to_path_buf();
         std::fs::create_dir_all(&dir)?;
         set_mode(&dir, 0o700);
         let key = key(path);
@@ -171,6 +223,9 @@ impl ThumbCache {
             enc.add_text_chunk("Thumb::MTime".into(), secs.to_string())?;
             enc.add_text_chunk("Thumb::Size".into(), meta.len().to_string())?;
             enc.add_text_chunk("Software".into(), "bibli".into())?;
+            if let Some(tools) = tools {
+                enc.add_text_chunk(TOOLS_CHUNK.into(), tools.into())?;
+            }
             let mut writer = enc.write_header()?;
             writer.write_image_data(&image.rgba)?;
             writer.finish()?;
@@ -299,6 +354,41 @@ mod tests {
             .set_modified(mtime + std::time::Duration::from_secs(5))
             .unwrap();
         assert!(thumbs.lookup(&src, ThumbSize::Normal).is_none());
+    }
+
+    #[test]
+    fn a_failure_is_remembered_for_the_file_as_it_is_and_the_tools_there_are() {
+        let cache = tempfile::tempdir().unwrap();
+        let thumbs = ThumbCache::at(cache.path().join("thumbnails"));
+        let src_dir = tempfile::tempdir().unwrap();
+        let src = src_dir.path().join("broken.jpg");
+        std::fs::write(&src, b"nothing draws this").unwrap();
+        let mtime = std::fs::metadata(&src).unwrap().modified().unwrap();
+        assert!(!thumbs.failed(&src, "tools-a"));
+        thumbs.store_failed(&src, mtime, "tools-a").unwrap();
+        assert!(
+            cache
+                .path()
+                .join("thumbnails/fail/bibli")
+                .join(format!("{}.png", key(&src)))
+                .is_file()
+        );
+        assert!(thumbs.failed(&src, "tools-a"));
+        assert!(
+            !thumbs.failed(&src, "tools-b"),
+            "a tool installed since may draw it"
+        );
+        assert!(
+            thumbs.lookup(&src, ThumbSize::Normal).is_none(),
+            "a failure is no thumbnail"
+        );
+        std::fs::File::options()
+            .write(true)
+            .open(&src)
+            .unwrap()
+            .set_modified(mtime + std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(!thumbs.failed(&src, "tools-a"), "edited since: tried again");
     }
 
     #[test]

@@ -15,6 +15,8 @@ pub struct ByteLru<K, V> {
     bytes: usize,
     budget: usize,
     tick: u64,
+    /// What was used at or after this is not evicted (`insert_keeping`).
+    floor: u64,
 }
 
 impl<K: Hash + Eq + Clone, V> ByteLru<K, V> {
@@ -25,6 +27,7 @@ impl<K: Hash + Eq + Clone, V> ByteLru<K, V> {
             bytes: 0,
             budget,
             tick: 0,
+            floor: 0,
         }
     }
 
@@ -42,6 +45,21 @@ impl<K: Hash + Eq + Clone, V> ByteLru<K, V> {
     /// Whether `k` is cached, without making it more recent.
     pub fn contains(&self, k: &K) -> bool {
         self.map.contains_key(k)
+    }
+
+    /// The recency clock: what was used at or after a value of it is newer.
+    pub fn now(&self) -> u64 {
+        self.tick
+    }
+
+    /// `insert`, never evicting what was used at or after `kept_since`
+    /// (`now` when a frame began): what is drawn stays, the budget held
+    /// again once it no longer is.
+    pub fn insert_keeping(&mut self, k: K, v: V, bytes: usize, kept_since: u64) -> Vec<V> {
+        self.floor = kept_since;
+        let out = self.insert(k, v, bytes);
+        self.floor = 0;
+        out
     }
 
     /// Insert `v`, weighing `bytes`. Returns what was evicted to stay within
@@ -93,6 +111,15 @@ impl<K: Hash + Eq + Clone, V> ByteLru<K, V> {
     fn evict(&mut self) -> Vec<V> {
         let mut evicted = Vec::new();
         while self.bytes > self.budget {
+            // The rest is newer still: kept, over the budget for now.
+            if self.floor > 0
+                && self
+                    .order
+                    .front()
+                    .is_some_and(|(_, stamp)| *stamp >= self.floor)
+            {
+                break;
+            }
             let Some((k, stamp)) = self.order.pop_front() else {
                 break;
             };
