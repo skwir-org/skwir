@@ -555,6 +555,30 @@ impl App {
         location: &Location,
         then: impl FnOnce(&mut crate::workspace::Pane),
     ) -> anyhow::Result<()> {
+        self.open_in(pane, location, false, then)
+    }
+
+    /// Open again what a dormant pane showed (its tab shown again): as
+    /// `show`, but what the pane kept while it slept stays, the folders
+    /// opened in place (opened again) and its filter and narrowing.
+    pub(crate) fn wake_pane(
+        &self,
+        pane: PaneId,
+        location: &Location,
+        then: impl FnOnce(&mut crate::workspace::Pane),
+    ) -> anyhow::Result<()> {
+        self.open_in(pane, location, true, then)?;
+        self.open_expanded(pane);
+        Ok(())
+    }
+
+    fn open_in(
+        &self,
+        pane: PaneId,
+        location: &Location,
+        waking: bool,
+        then: impl FnOnce(&mut crate::workspace::Pane),
+    ) -> anyhow::Result<()> {
         let kept = self
             .workspace
             .write()
@@ -572,7 +596,11 @@ impl App {
         let p = ws
             .pane_mut(pane)
             .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        p.replace_open(open, listing);
+        if waking {
+            p.reopen(open, listing);
+        } else {
+            p.replace_open(open, listing);
+        }
         then(p);
         drop(ws);
         self.wake();

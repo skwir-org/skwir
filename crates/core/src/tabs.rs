@@ -246,7 +246,7 @@ impl App {
             }
             (p.history[p.history_pos].clone(), p.take_restore_selection())
         };
-        let shown = self.show(pane, &location, {
+        let shown = self.wake_pane(pane, &location, {
             let restore = restore.clone();
             move |p| p.set_restore(restore)
         });

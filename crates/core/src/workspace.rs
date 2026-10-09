@@ -553,6 +553,24 @@ impl Pane {
         }
     }
 
+    /// Open the location a dormant pane shows again (`suspend`): what it
+    /// kept while it slept stays (the folders opened in place, which the
+    /// caller opens again, the filter, the narrowing), the selection comes
+    /// back through `set_restore`.
+    pub(crate) fn reopen(&mut self, open: Arc<dyn OpenLocation>, listing: Listing) {
+        self.location_lifetime.cancel();
+        self.location_lifetime = CancelToken::new();
+        self.listing = listing;
+        self.open = Some(open);
+        self.left = None;
+        self.selection = Selection::default();
+        self.reveal = None;
+        self.restore = None;
+        if !self.expanded.is_empty() {
+            self.expanded_changed();
+        }
+    }
+
     /// What the pane's names must hold to be shown, if anything.
     pub fn filter(&self) -> Option<&str> {
         self.filter.as_deref()

@@ -109,6 +109,43 @@ fn a_tab_not_shown_lets_go_of_its_listing_and_gets_its_selection_back() {
     assert!(is_dormant(&app, second));
 }
 
+/// What a pane keeps while its tab sleeps comes back with it: the folders
+/// opened in place, listed again, and the name filter.
+#[test]
+fn a_tab_shown_again_keeps_its_opened_folders_and_its_filter() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    let first = active(&app);
+    select(&app, &["it's a folder"]);
+    run(&app, "expand", serde_json::json!({}));
+    run(&app, "filter", serde_json::json!({ "text": "i" }));
+    run(&app, "tab.new", serde_json::json!({}));
+    assert!(is_dormant(&app, first));
+
+    run(&app, "tab.select", serde_json::json!({ "index": 0 }));
+    let inside = |app: &App| {
+        let ws = app.workspace.read();
+        let p = ws.pane(first).expect("pane");
+        p.order()
+            .iter()
+            .filter_map(|id| p.entry(*id))
+            .any(|e| e.name_str() == "inside.txt")
+    };
+    let deadline = std::time::Instant::now() + WAIT;
+    while !inside(&app) && std::time::Instant::now() < deadline {
+        app.workspace.write().pump();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let ws = app.workspace.read();
+    let p = ws.pane(first).expect("pane");
+    assert_eq!(p.expanded().len(), 1, "the folder stays open in place");
+    assert_eq!(p.filter(), Some("i"));
+    drop(ws);
+    assert!(inside(&app), "and lists again");
+}
+
 #[test]
 fn the_selection_comes_back_once_and_then_is_the_user_s() {
     let dir = home_tempdir();
