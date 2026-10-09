@@ -65,6 +65,9 @@ pub struct Report {
     pub tags_index_tally: Stat,
     /// Then one file retagged and the index written, as after an edit.
     pub tags_index_change: Stat,
+    /// The Usage view's scan of the whole tree, forced (Refresh: nothing
+    /// kept is reused), until it ends.
+    pub usage_scan: Stat,
 }
 
 /// Budgets file: `[profile] metric_us = max`.
@@ -576,6 +579,57 @@ pub fn tags_index(profile: Profile, runs: usize) -> (Stat, Stat, Stat) {
     (Stat::of(learn), Stat::of(tally), Stat::of(change))
 }
 
+/// The Usage view's scan of the whole tree through `usage.scan`, as
+/// Refresh asks it (`force`), until the status says it ended. The first
+/// scan, which places the watches, is not timed.
+pub fn usage_scan(root: &Path, profile: Profile, runs: usize) -> Stat {
+    use bibli_core::command::{Invocation, Outcome};
+    if profile == Profile::Images10k {
+        return Stat::NONE;
+    }
+    let dir = bibli_core::os_path::canonical(root.join(profile.name())).expect("tree");
+    let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(
+        std::env::temp_dir().join("bibli-bench-usage"),
+    ))
+    .expect("app");
+    app.plugins.add(
+        std::sync::Arc::new(bibli_plugin_usage::UsagePlugin::default()),
+        &app,
+    );
+    let pane = app.workspace.read().active_id();
+    let scan = || {
+        let t = Instant::now();
+        app.dispatch(&Invocation::with_args(
+            "usage.scan",
+            &serde_json::json!({
+                "pane": pane,
+                "path": bibli_core::os_path::PathArg::from(dir.as_path()),
+                "force": true,
+            }),
+        ))
+        .expect("usage.scan");
+        loop {
+            let Ok(Outcome::Value(status)) = app.dispatch(&Invocation::with_args(
+                "usage.status",
+                &serde_json::json!({ "pane": pane }),
+            )) else {
+                panic!("usage.status answers a value");
+            };
+            if status["scanning"] == false {
+                // The generator's markers are files too.
+                assert!(
+                    status["files"].as_u64() >= Some(profile.file_count()),
+                    "every file counted"
+                );
+                return t.elapsed();
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    scan();
+    Stat::of((0..runs).map(|_| scan()).collect())
+}
+
 /// Whether the generator could tag `dir` (see `generate::tag`).
 fn tagged(dir: &Path) -> bool {
     dir.join(".bibli-bench-tagged").exists()
@@ -635,6 +689,7 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         tags_index_learn: Stat::NONE,
         tags_index_tally: Stat::NONE,
         tags_index_change: Stat::NONE,
+        usage_scan: usage_scan(root, profile, runs),
     }
 }
 
@@ -644,7 +699,7 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         eprintln!("bench: {}: no budgets, skipped", profile.name());
         return true;
     };
-    let measured: [(&str, &Stat); 17] = [
+    let measured: [(&str, &Stat); 18] = [
         ("first_batch_us", &report.first_batch),
         ("list_getdents_us", &report.list_getdents),
         ("list_std_us", &report.list_std),
@@ -662,6 +717,7 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         ("tags_index_learn_us", &report.tags_index_learn),
         ("tags_index_tally_us", &report.tags_index_tally),
         ("tags_index_change_us", &report.tags_index_change),
+        ("usage_scan_us", &report.usage_scan),
     ];
     let mut ok = true;
     for (key, stat) in measured {

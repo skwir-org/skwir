@@ -15,6 +15,8 @@ stream_first_batch_us = 3_000
 stream_complete_us = 100_000
 # The tags plugin's provider over 100,000 files without attributes.
 tags_fill_us = 550_000
+# The Usage view's scan of the folder, forced (Refresh; 147 ms, warm).
+usage_scan_us = 450_000
 
 [deep1m]
 first_batch_us = 500
@@ -40,6 +42,9 @@ tags_check_us = 4_000_000
 tags_index_learn_us = 2_000_000
 tags_index_tally_us = 1_500
 tags_index_change_us = 3_000
+# The Usage view's scan of the whole tree, forced (Refresh): a stat per
+# entry and a watch per folder (1.83 s per million, warm).
+usage_scan_us = 5_500_000
 
 [images10k]
 first_batch_us = 1_500

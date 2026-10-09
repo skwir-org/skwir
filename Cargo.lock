@@ -622,6 +622,7 @@ dependencies = [
  "bibli-plugin-query",
  "bibli-plugin-tags",
  "bibli-plugin-tagspaces",
+ "bibli-plugin-usage",
  "bibli-plugin-xmp",
  "clap",
  "image",

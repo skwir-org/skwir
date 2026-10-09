@@ -25,6 +25,7 @@ bibli-plugin-tags.workspace = true
 bibli-plugin-xmp.workspace = true
 bibli-plugin-tagspaces.workspace = true
 bibli-plugin-name-tags.workspace = true
+bibli-plugin-usage.workspace = true
 tempfile.workspace = true
 anyhow.workspace = true
 clap.workspace = true
