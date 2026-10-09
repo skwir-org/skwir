@@ -370,6 +370,95 @@ impl Change {
     }
 }
 
+/// Changes indexed by the paths they move or take away, so a holder of
+/// many paths (a search's results, the clipboard, the shelf) follows each
+/// through the changes that reach it or a folder above it, in order,
+/// never through all of them: following every path through every change
+/// was a plan's size times the holder's, tens of seconds for a move of
+/// 20 000 files a search showed.
+pub struct Follow<'a> {
+    changes: &'a [Change],
+    /// For each path a change moves, takes away or changes the metadata
+    /// of, the changes that do, in order.
+    by_path: std::collections::HashMap<&'a Path, Vec<usize>>,
+}
+
+/// What became of a path through changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Through {
+    /// Where it is now; `None` once it, or a folder above it, was trashed
+    /// or deleted.
+    pub at: Option<PathBuf>,
+    /// It, or a folder above it, was renamed, moved or swapped (perhaps
+    /// back where it was).
+    pub moved: bool,
+    /// Its metadata was changed where it was then.
+    pub changed: bool,
+}
+
+impl<'a> Follow<'a> {
+    pub fn new(changes: &'a [Change]) -> Self {
+        let mut by_path: std::collections::HashMap<&'a Path, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (i, change) in changes.iter().enumerate() {
+            let (first, second): (Option<&Path>, Option<&Path>) = match change {
+                Change::Rename { from, .. } | Change::Move { from, .. } => (Some(from), None),
+                Change::Swap { a, b } => (Some(a), Some(b)),
+                Change::Trash { path } | Change::Delete { path } | Change::Remove { path } => {
+                    (Some(path), None)
+                }
+                Change::Metadata { path, .. } => (Some(path), None),
+                Change::Copy { .. }
+                | Change::Link { .. }
+                | Change::Restore { .. }
+                | Change::Create { .. } => (None, None),
+            };
+            for path in first.into_iter().chain(second) {
+                by_path.entry(path).or_default().push(i);
+            }
+        }
+        Follow { changes, by_path }
+    }
+
+    /// `path` through the changes, in the order they were applied.
+    pub fn through(&self, path: &Path) -> Through {
+        let mut through = Through {
+            at: Some(path.to_path_buf()),
+            moved: false,
+            changed: false,
+        };
+        let mut next = 0;
+        while let Some(at) = through.at.as_deref() {
+            // The first change not taken yet that names this path or a
+            // folder above it.
+            let Some(i) = at
+                .ancestors()
+                .filter_map(|above| {
+                    let indexes = self.by_path.get(above)?;
+                    indexes.get(indexes.partition_point(|&i| i < next)).copied()
+                })
+                .min()
+            else {
+                break;
+            };
+            let change = &self.changes[i];
+            match change.follow(at) {
+                Followed::Same => {
+                    through.changed |=
+                        matches!(change, Change::Metadata { path, .. } if path == at);
+                }
+                Followed::Moved(to) => {
+                    through.at = Some(to);
+                    through.moved = true;
+                }
+                Followed::Gone => through.at = None,
+            }
+            next = i + 1;
+        }
+        through
+    }
+}
+
 /// Result of a dry run of one step.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "status")]
@@ -656,7 +745,7 @@ impl Plan {
 
 #[cfg(test)]
 mod tests {
-    use super::{Change, Followed, io_words, said};
+    use super::{Change, Follow, Followed, Through, io_words, said};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -706,6 +795,90 @@ mod tests {
             to: p("/b"),
         };
         assert_eq!(copy.follow(Path::new("/a")), Followed::Same);
+    }
+
+    /// Following each path through only the changes that reach it says
+    /// what following it through every change, in order, does.
+    #[test]
+    fn many_paths_follow_the_changes_that_reach_them_in_order() {
+        let p = |s: &str| PathBuf::from(s);
+        let changes = vec![
+            Change::Move {
+                from: p("/a/d"),
+                to: p("/b/d"),
+            },
+            // The folder moved, then a file in it renamed where it is now.
+            Change::Rename {
+                from: p("/b/d/x"),
+                to: p("/b/d/y"),
+            },
+            // A file arriving where another left: the first is not it.
+            Change::Move {
+                from: p("/c/z"),
+                to: p("/a/d"),
+            },
+            Change::Metadata {
+                path: p("/b/d/y"),
+                field: "tags".into(),
+                words: None,
+            },
+            Change::Swap {
+                a: p("/e"),
+                b: p("/f"),
+            },
+            Change::Trash { path: p("/f/gone") },
+            Change::Move {
+                from: p("/b/d"),
+                to: p("/a/d2"),
+            },
+            Change::Copy {
+                from: p("/q"),
+                to: p("/r"),
+            },
+        ];
+        let naive = |path: &Path| {
+            let mut through = Through {
+                at: Some(path.to_path_buf()),
+                moved: false,
+                changed: false,
+            };
+            for change in &changes {
+                let Some(at) = through.at.clone() else { break };
+                match change.follow(&at) {
+                    Followed::Same => {
+                        through.changed |=
+                            matches!(change, Change::Metadata { path, .. } if *path == at);
+                    }
+                    Followed::Moved(to) => {
+                        through.at = Some(to);
+                        through.moved = true;
+                    }
+                    Followed::Gone => through.at = None,
+                }
+            }
+            through
+        };
+        let follow = Follow::new(&changes);
+        for path in [
+            "/a/d", "/a/d/x", "/a/d/w", "/c/z", "/c/zz", "/e/gone", "/e/kept", "/f", "/q", "/",
+            "/b/d/y",
+        ] {
+            assert_eq!(
+                follow.through(Path::new(path)),
+                naive(Path::new(path)),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            follow.through(Path::new("/a/d/x")),
+            Through {
+                at: Some(p("/a/d2/y")),
+                moved: true,
+                changed: true,
+            }
+        );
+        assert_eq!(follow.through(Path::new("/c/z")).at, Some(p("/a/d")));
+        assert_eq!(follow.through(Path::new("/e/gone")).at, None);
     }
 
     #[test]

@@ -218,26 +218,93 @@ impl Batcher<'_> {
 }
 
 /// Matches that wait for the metadata providers (tag terms), grouped by
-/// folder so each provider gets a batch, not a call per file. One per walker
-/// thread; what is left is decided when the thread ends (on drop).
+/// folder so each provider gets a batch, not a call per file. Shared by
+/// the walk's threads, which take a folder's files from one another: a
+/// group of each thread waited for the walk to end, holding every
+/// candidate of the tree, and showed its matches only then. A folder's
+/// group is decided once full, or once it waited `Batcher::MAX_AGE`
+/// (looked at as the walk goes, `settle`), and what is left when the walk
+/// ends (`finish`).
 struct Deferred<'a> {
     shared: &'a Shared,
     query: &'a Query,
     batcher: &'a Batcher<'a>,
-    by_dir: HashMap<PathBuf, Vec<Entry>>,
-    /// The walking thread's stats, through the folder it is in.
-    statter: Statter,
+    groups: Mutex<Groups>,
+}
+
+#[derive(Default)]
+struct Groups {
+    by_dir: HashMap<PathBuf, (Vec<Entry>, Instant)>,
+    /// When the groups were last looked at for age.
+    swept: Option<Instant>,
 }
 
 impl Deferred<'_> {
     const BATCH: usize = 64;
 
-    fn add(&mut self, dir: &Path, entry: Entry) {
-        let group = self.by_dir.entry(dir.to_path_buf()).or_default();
-        group.push(entry);
-        if group.len() >= Self::BATCH {
-            let entries = std::mem::take(group);
+    fn new<'a>(shared: &'a Shared, query: &'a Query, batcher: &'a Batcher<'a>) -> Deferred<'a> {
+        Deferred {
+            shared,
+            query,
+            batcher,
+            groups: Mutex::new(Groups::default()),
+        }
+    }
+
+    fn add(&self, dir: &Path, entry: Entry) {
+        let full = {
+            let mut groups = self.groups.lock();
+            let (group, _) = groups
+                .by_dir
+                .entry(dir.to_path_buf())
+                .or_insert_with(|| (Vec::new(), Instant::now()));
+            group.push(entry);
+            (group.len() >= Self::BATCH)
+                .then(|| groups.by_dir.remove(dir))
+                .flatten()
+        };
+        if let Some((entries, _)) = full {
             self.decide(dir, entries);
+        }
+        self.settle();
+    }
+
+    /// Decide the groups that waited long enough, at most twice in their
+    /// age: the walk shows its matches as it goes.
+    fn settle(&self) {
+        let old = {
+            let mut groups = self.groups.lock();
+            let now = Instant::now();
+            if groups
+                .swept
+                .is_some_and(|swept| now.duration_since(swept) < Batcher::MAX_AGE / 2)
+            {
+                return;
+            }
+            groups.swept = Some(now);
+            let old: Vec<PathBuf> = groups
+                .by_dir
+                .iter()
+                .filter(|(_, (_, since))| now.duration_since(*since) >= Batcher::MAX_AGE)
+                .map(|(dir, _)| dir.clone())
+                .collect();
+            old.into_iter()
+                .filter_map(|dir| {
+                    let (entries, _) = groups.by_dir.remove(&dir)?;
+                    Some((dir, entries))
+                })
+                .collect::<Vec<_>>()
+        };
+        for (dir, entries) in old {
+            self.decide(&dir, entries);
+        }
+    }
+
+    /// Decide every group: the walk ended.
+    fn finish(&self) {
+        let all = std::mem::take(&mut self.groups.lock().by_dir);
+        for (dir, (entries, _)) in all {
+            self.decide(&dir, entries);
         }
     }
 
@@ -251,14 +318,6 @@ impl Deferred<'_> {
             if full_match(self.query, &entry, &path, self.batcher.late()) {
                 self.batcher.push(entry, path);
             }
-        }
-    }
-}
-
-impl Drop for Deferred<'_> {
-    fn drop(&mut self) {
-        for (dir, entries) in std::mem::take(&mut self.by_dir) {
-            self.decide(&dir, entries);
         }
     }
 }
@@ -411,19 +470,44 @@ fn first(
 fn consider(
     q: &Query,
     path: &Path,
-    name: &OsStr,
-    kind: EntryKind,
+    (name, kind): (&OsStr, EntryKind),
     batcher: &Batcher<'_>,
-    deferred: &mut Deferred<'_>,
+    deferred: &Deferred<'_>,
+    statter: &mut Statter,
 ) {
-    match first(q, path, name, kind, batcher.late(), &mut deferred.statter) {
-        First::No => {}
+    match first(q, path, name, kind, batcher.late(), statter) {
+        First::No => {
+            if q.needs_metadata() {
+                deferred.settle();
+            }
+        }
         First::Yes(entry) => batcher.push(entry, path.to_path_buf()),
         First::NeedsMetadata(entry) => {
             if let Some(dir) = path.parent() {
                 deferred.add(dir, entry);
             }
         }
+    }
+}
+
+/// Which folders under a search's root the walk reaches (never through a
+/// link), each looked at once while changes are checked.
+struct Reached {
+    real_root: PathBuf,
+    folders: HashMap<PathBuf, bool>,
+}
+
+impl Reached {
+    /// Whether `dir`, which is `relative` under the root, is the folder
+    /// the walk would find there.
+    fn reaches(&mut self, dir: &Path, relative: &Path) -> bool {
+        if let Some(&known) = self.folders.get(dir) {
+            return known;
+        }
+        let real = self.real_root.join(relative);
+        let reached = bibli_core::os_path::canonical(dir).is_ok_and(|c| c == real);
+        self.folders.insert(dir.to_path_buf(), reached);
+        reached
     }
 }
 
@@ -477,23 +561,16 @@ impl Shared {
             pending: Mutex::new((Vec::new(), Instant::now())),
             batch_size: self.ctx.batch_size.max(1),
         };
-        let deferred = || Deferred {
-            shared: self,
-            query: q,
-            batcher: &batcher,
-            by_dir: HashMap::new(),
-            statter: Statter::default(),
-        };
+        let deferred = Deferred::new(self, q, &batcher);
         // What an index says may match, considered first; the walk skips it.
         let hinted = {
-            let mut deferred = deferred();
-            let hinted = self.hinted(q, cancel, &batcher, &mut deferred);
-            drop(deferred);
+            let hinted = self.hinted(q, cancel, &batcher, &deferred);
+            deferred.finish();
             batcher.flush();
             hinted
         };
         if let Some(paths) = crate::plocate::try_locate(q, cancel) {
-            let mut deferred = deferred();
+            let mut statter = Statter::default();
             for p in paths {
                 if cancel.is_cancelled() {
                     return;
@@ -503,7 +580,7 @@ impl Shared {
                 }
                 let Some(name) = p.file_name() else { continue };
                 let kind = kind_of(std::fs::symlink_metadata(&p).ok().map(|m| m.file_type()));
-                consider(q, &p, name, kind, &batcher, &mut deferred);
+                consider(q, &p, (name, kind), &batcher, &deferred, &mut statter);
             }
         } else {
             let mut builder = ignore::WalkBuilder::new(&q.root);
@@ -516,10 +593,10 @@ impl Shared {
                 .parents(false)
                 .follow_links(false)
                 .max_depth(q.depth);
-            let hinted = &hinted;
+            let (hinted, deferred) = (&hinted, &deferred);
             builder.build_parallel().run(|| {
-                // Dropped when this walker thread ends, which decides the rest.
-                let mut deferred = deferred();
+                // The walking thread's stats, through the folder it is in.
+                let mut statter = Statter::default();
                 let batcher = &batcher;
                 Box::new(move |result| {
                     if cancel.is_cancelled() {
@@ -539,11 +616,12 @@ impl Shared {
                         return ignore::WalkState::Continue;
                     }
                     let kind = kind_of(dent.file_type());
-                    consider(q, path, name, kind, batcher, &mut deferred);
+                    consider(q, path, (name, kind), batcher, deferred, &mut statter);
                     ignore::WalkState::Continue
                 })
             });
         }
+        deferred.finish();
         batcher.finish();
     }
 
@@ -555,7 +633,7 @@ impl Shared {
         q: &Query,
         cancel: &CancelToken,
         batcher: &Batcher<'_>,
-        deferred: &mut Deferred<'_>,
+        deferred: &Deferred<'_>,
     ) -> HashSet<PathBuf> {
         let mut hinted = HashSet::new();
         let Some(tag) = q.required_tag() else {
@@ -573,6 +651,7 @@ impl Shared {
             return hinted;
         };
         let started = Instant::now();
+        let mut statter = Statter::default();
         for real in paths {
             if cancel.is_cancelled() {
                 break;
@@ -595,7 +674,7 @@ impl Shared {
             }
             let path = q.root.join(relative);
             let kind = kind_of(std::fs::symlink_metadata(&path).ok().map(|m| m.file_type()));
-            consider(q, &path, name, kind, batcher, deferred);
+            consider(q, &path, (name, kind), batcher, deferred, &mut statter);
             hinted.insert(path);
         }
         tracing::debug!(
@@ -617,32 +696,24 @@ impl Shared {
         let mut removed: Vec<EntryId> = Vec::new();
         // Paths to read again, with the result each was, if one.
         let mut again: Vec<(PathBuf, Option<EntryId>)> = Vec::new();
-        {
-            let paths = self.paths.lock();
-            for (id, path) in paths.iter() {
-                let mut at = path.clone();
-                let mut gone = false;
-                let mut touched = false;
-                for change in changes {
-                    match change.follow(&at) {
-                        bibli_core::op::Followed::Same => {
-                            touched |=
-                                matches!(change, Change::Metadata { path, .. } if *path == at);
-                        }
-                        bibli_core::op::Followed::Moved(to) => {
-                            at = to;
-                            touched = true;
-                        }
-                        bibli_core::op::Followed::Gone => gone = true,
-                    }
-                }
-                if gone {
-                    removed.push(*id);
-                } else if touched {
-                    again.push((at, Some(*id)));
-                }
+        // Followed outside the lock, which `path_of` waits for under the
+        // workspace's.
+        let results: Vec<(EntryId, PathBuf)> = self
+            .paths
+            .lock()
+            .iter()
+            .map(|(id, path)| (*id, path.clone()))
+            .collect();
+        let follow = bibli_core::op::Follow::new(changes);
+        for (id, path) in results {
+            let through = follow.through(&path);
+            match through.at {
+                None => removed.push(id),
+                Some(at) if through.moved || through.changed => again.push((at, Some(id))),
+                Some(_) => {}
             }
         }
+        let mut seen: HashSet<PathBuf> = again.iter().map(|(p, _)| p.clone()).collect();
         for change in changes {
             let arrived = match change {
                 Change::Metadata { path, .. }
@@ -656,7 +727,7 @@ impl Shared {
                 Change::Trash { .. } | Change::Delete { .. } | Change::Remove { .. } => Vec::new(),
             };
             for path in arrived {
-                if !again.iter().any(|(p, _)| *p == path) {
+                if seen.insert(path.clone()) {
                     again.push((path, None));
                 }
             }
@@ -667,11 +738,18 @@ impl Shared {
             fields: &self.ctx.fields,
             cancel,
         };
+        let Ok(real_root) = bibli_core::os_path::canonical(&q.root) else {
+            return;
+        };
+        let mut reached = Reached {
+            real_root,
+            folders: HashMap::new(),
+        };
         for (path, was) in again {
             if cancel.is_cancelled() {
                 return;
             }
-            let matched = self.matches_now(&q, &path, late, &mut statter);
+            let matched = self.matches_now(&q, &path, late, &mut statter, &mut reached);
             match (matched, was) {
                 (Some(entry), Some(id)) if entry.id != id => {
                     removed.push(id);
@@ -706,6 +784,7 @@ impl Shared {
         path: &Path,
         late: Late<'_>,
         statter: &mut Statter,
+        reached: &mut Reached,
     ) -> Option<Entry> {
         let relative = path.strip_prefix(&q.root).ok()?;
         if relative.as_os_str().is_empty() || !crate::plocate::visible(relative, q.hidden, q.depth)
@@ -713,10 +792,7 @@ impl Shared {
             return None;
         }
         let dir = path.parent()?;
-        let real = bibli_core::os_path::canonical(&q.root)
-            .ok()?
-            .join(relative.parent()?);
-        if bibli_core::os_path::canonical(dir).ok()? != real {
+        if !reached.reaches(dir, relative.parent()?) {
             return None;
         }
         let name = path.file_name()?;

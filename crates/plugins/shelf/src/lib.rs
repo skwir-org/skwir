@@ -16,7 +16,7 @@ use bibli_core::location::{
     EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
     Tool, ToolPane, Verb, Verbs,
 };
-use bibli_core::op::{Change, Copy, EntryRef, Followed, Move, Operation, Plan, Trash};
+use bibli_core::op::{Change, Copy, EntryRef, Move, Operation, Plan, Trash};
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem, Place};
 use bibli_core::scheduler::Priority;
@@ -177,19 +177,13 @@ fn follow(state: &Arc<Mutex<State>>, changes: &[Change], app: &App) {
     let mut gone = Vec::new();
     let mut renamed = Vec::new();
     let mut moved = Vec::new();
+    let follow = bibli_core::op::Follow::new(changes);
     for item in &mut s.items {
-        let mut path = item.path.clone();
-        for change in changes {
-            match change.follow(&path) {
-                Followed::Same => {}
-                Followed::Moved(to) => path = to,
-                Followed::Gone => {
-                    gone.push(item.id);
-                    break;
-                }
-            }
-        }
-        if path != item.path && !gone.contains(&item.id) {
+        let Some(path) = follow.through(&item.path).at else {
+            gone.push(item.id);
+            continue;
+        };
+        if path != item.path {
             if let Some(name) = path.file_name().filter(|n| *n != item.name) {
                 item.name = name.to_owned();
                 renamed.push(item.entry());

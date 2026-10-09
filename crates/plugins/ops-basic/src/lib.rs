@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use bibli_core::app::{App, PaneArg, TargetsArgs};
 use bibli_core::command::{Invocation, Outcome};
-use bibli_core::op::{Change, Copy, EntryRef, Followed, Move, Operation, Plan};
+use bibli_core::op::{Change, Copy, EntryRef, Move, Operation, Plan};
 use bibli_core::plugin::Plugin;
 use bibli_core::registry::{KeyBinding, MenuItem};
 use bibli_core::workspace::PaneId;
@@ -111,21 +111,18 @@ fn follow(clipboard: &Mutex<Clipboard>, changes: &[Change], app: &App) {
     }
     let before = c.entries.len();
     let cut = c.cut;
+    let follow = bibli_core::op::Follow::new(changes);
     c.entries.retain_mut(|entry| {
-        let mut kept = true;
-        for change in changes {
-            match change.follow(&entry.path) {
-                Followed::Same => {}
-                // A cut entry that moved went where it was going.
-                Followed::Moved(_) if cut => kept = false,
-                Followed::Moved(to) => entry.path = to,
-                Followed::Gone => kept = false,
-            }
-            if !kept {
-                break;
+        let through = follow.through(&entry.path);
+        match through.at {
+            None => false,
+            // A cut entry that moved went where it was going.
+            Some(_) if cut && through.moved => false,
+            Some(at) => {
+                entry.path = at;
+                true
             }
         }
-        kept
     });
     if c.entries.len() != before {
         if c.entries.is_empty() {
