@@ -366,9 +366,10 @@ fn card_element(
                     )
                 }),
         );
-    let el = match card.ix {
-        Some(ix) => crate::views::entry::behave(el, look, ix, shell, cx),
-        None => el,
+    let el = if card.ix.is_some() {
+        crate::views::entry::behave(el, look, shell, cx)
+    } else {
+        el
     };
     // A gutter around each card, the card as wide as its column.
     div()

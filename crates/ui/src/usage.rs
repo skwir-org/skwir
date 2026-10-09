@@ -1078,8 +1078,8 @@ fn click(
             reveal(shell, event.button == MouseButton::Middle, window, cx);
         }
         Part::Entry(_) => {
-            if let Some(ix) = block.entry.and_then(|id| shell.ui().list.index_of(id)) {
-                shell.on_entry_mouse_down(pane, ix, event, window, cx);
+            if let Some(id) = block.entry {
+                shell.on_entry_mouse_down(pane, id, event, window, cx);
             }
         }
         Part::Hidden(_) if double => {

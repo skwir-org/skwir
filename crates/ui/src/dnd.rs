@@ -13,6 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
+use bibli_core::EntryId;
 use bibli_core::command::Invocation;
 use bibli_core::op::{self, EntryRef};
 use bibli_core::os_path::PathArg;
@@ -752,7 +753,7 @@ impl Shell {
 pub fn takes_gifts<E: InteractiveElement>(
     el: E,
     pane: PaneId,
-    ix: usize,
+    id: EntryId,
     cx: &mut Context<Shell>,
 ) -> E {
     let theme = cx.global::<Theme>().clone();
@@ -768,7 +769,7 @@ pub fn takes_gifts<E: InteractiveElement>(
         cx.listener(move |this, drag: &crate::sidebar::PlaceDrag, window, cx| {
             if let Some(gives) = &drag.gives {
                 cx.stop_propagation();
-                this.with_pane(pane, |this| this.give(gives, ix, window, cx));
+                this.with_pane(pane, |this| this.give(gives, id, window, cx));
             }
         }),
     )
@@ -803,22 +804,23 @@ pub fn takes_gift_for<E: InteractiveElement>(
 }
 
 impl Shell {
-    /// Run `gives` (a place's `drop`) for the entry at `ix` in the
-    /// current pane, or for its selection when the entry is in it.
+    /// Run `gives` (a place's `drop`) for entry `id` of the current pane,
+    /// or for its selection when the entry is in it.
     fn give(
         &mut self,
         gives: &bibli_core::command::Invocation,
-        ix: usize,
+        id: EntryId,
         window: &mut Window,
         cx: &mut Context<Shell>,
     ) {
-        let Some(&id) = self.ui().list.sorted.get(ix) else {
-            return;
-        };
         let pane = self.pane;
         let target = {
             let ws = self.app.workspace.read();
             let Some(p) = ws.pane(pane) else { return };
+            // Gone since it was drawn: nothing to give to.
+            if p.entry(id).is_none() {
+                return;
+            }
             if p.selection.contains(id) {
                 None
             } else {

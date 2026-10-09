@@ -95,12 +95,12 @@ pub fn highlight(el: Stateful<Div>, look: &Look, theme: &Theme) -> Stateful<Div>
         .when(!look.selected, |d| d.hover(|s| s.bg(theme.hover)))
 }
 
-/// What every entry answers, given to `el`, the entry at `ix` of the
-/// pane being drawn.
+/// What every entry answers, given to `el`, an entry of the pane being
+/// drawn. Its handlers name it by `look.id`, never by where it was drawn:
+/// the order can change between a frame and the press on it.
 pub fn behave(
     el: Stateful<Div>,
     look: &Look,
-    ix: usize,
     shell: &Shell,
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
@@ -108,9 +108,9 @@ pub fn behave(
     let el = el
         .when(look.cut, |d| d.opacity(crate::views::list::CUT_OPACITY))
         .children(shell.menu_marker(pane, look.cursor));
-    let mut el = crate::list::entry_mouse(el, pane, ix, cx);
+    let mut el = crate::list::entry_mouse(el, pane, look.id, cx);
     el = dnd::draggable(el, pane, cx);
-    el = dnd::takes_gifts(el, pane, ix, cx);
+    el = dnd::takes_gifts(el, pane, look.id, cx);
     // Where it leads takes what is dropped on it, a folder of the trash
     // as the trash does: its path is not the user's to drop into.
     if let Some((place, _)) = &look.place {

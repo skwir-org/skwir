@@ -594,7 +594,7 @@ pub fn row(
             line = line.child(detail(shell, r, column.detail, cell, theme));
         }
     }
-    crate::views::entry::behave(el.child(line), look, ix, shell, cx)
+    crate::views::entry::behave(el.child(line), look, shell, cx)
 }
 
 /// The name and the detail columns of a row, or of the header. A wrapping

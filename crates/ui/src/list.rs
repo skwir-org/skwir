@@ -588,13 +588,13 @@ impl Shell {
         }
     }
 
-    /// Mouse down on row/cell `ix` of `pane` (which becomes active). The
+    /// Mouse down on entry `id` of `pane` (which becomes active). The
     /// middle button opens a folder in a tab behind the one shown and
     /// leaves the selection alone.
     pub fn on_entry_mouse_down(
         &mut self,
         pane: PaneId,
-        ix: usize,
+        id: EntryId,
         ev: &MouseDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -602,9 +602,10 @@ impl Shell {
         self.activate_pane(pane, cx);
         window.focus(&self.ui().focus);
         self.press_collapse = None;
-        let Some(&id) = self.ui().list.sorted.get(ix) else {
+        // Gone since it was drawn: the press is on nothing.
+        if self.ui().list.index_of(id).is_none() {
             return;
-        };
+        }
         if ev.button == MouseButton::Middle {
             self.open_in_tab(id, window, cx);
             return;
@@ -685,15 +686,14 @@ impl Shell {
     pub fn on_entry_mouse_up(
         &mut self,
         pane: PaneId,
-        ix: usize,
+        released: EntryId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some((pressed, id)) = self.press_collapse.take() else {
             return;
         };
-        let here = self.with_pane(pane, |shell| shell.ui().list.sorted.get(ix).copied());
-        if pressed == pane && here == Some(id) {
+        if pressed == pane && released == id {
             self.with_pane(pane, |shell| {
                 shell.select_ids(vec![id], "replace", window, cx);
             });
@@ -964,20 +964,21 @@ impl Shell {
     }
 }
 
-/// The pointer on a row or cell `ix` of `pane`: press to select (right
-/// button: and open the menu), release to collapse a multi-selection. One
-/// definition for every view, so they cannot drift apart.
+/// The pointer on entry `id`'s row or cell of `pane`: press to select
+/// (right button: and open the menu), release to collapse a
+/// multi-selection. One definition for every view, so they cannot drift
+/// apart.
 pub fn entry_mouse<E: InteractiveElement>(
     el: E,
     pane: PaneId,
-    ix: usize,
+    id: EntryId,
     cx: &mut Context<Shell>,
 ) -> E {
     let press = move |this: &mut Shell,
                       ev: &MouseDownEvent,
                       window: &mut Window,
                       cx: &mut Context<Shell>| {
-        this.on_entry_mouse_down(pane, ix, ev, window, cx);
+        this.on_entry_mouse_down(pane, id, ev, window, cx);
     };
     el.on_mouse_down(MouseButton::Left, cx.listener(press))
         .on_mouse_down(MouseButton::Right, cx.listener(press))
@@ -985,7 +986,7 @@ pub fn entry_mouse<E: InteractiveElement>(
         .on_mouse_up(
             MouseButton::Left,
             cx.listener(move |this, _: &gpui::MouseUpEvent, window, cx| {
-                this.on_entry_mouse_up(pane, ix, window, cx);
+                this.on_entry_mouse_up(pane, id, window, cx);
             }),
         )
 }

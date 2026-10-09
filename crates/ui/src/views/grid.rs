@@ -301,7 +301,7 @@ fn cell(
         look.name.clone(),
         shell.font.clone(),
     ));
-    crate::views::entry::behave(el, &look, ix, shell, cx).into_any_element()
+    crate::views::entry::behave(el, &look, shell, cx).into_any_element()
 }
 
 /// A thumbnail's size on its tile: its own, shrunk until its longer side
