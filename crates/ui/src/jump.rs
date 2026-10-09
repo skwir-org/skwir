@@ -33,6 +33,10 @@ pub struct JumpState {
     /// The query its candidates answer: until the one asked is answered,
     /// an empty list says nothing, rather than "No candidates".
     answered: Option<String>,
+    /// Enter was pressed before the query typed was answered: it goes
+    /// where the answer's first candidate leads once it comes, never where
+    /// an older query's did.
+    submitted: bool,
     back: FocusReturn,
     _sub: Subscription,
 }
@@ -57,6 +61,7 @@ impl Shell {
             picker: Picker::default(),
             asked: None,
             answered: None,
+            submitted: false,
             back,
             _sub: sub,
         });
@@ -79,6 +84,12 @@ impl Shell {
     }
 
     fn jump_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(j) = &mut self.jump
+            && j.answered != j.asked
+        {
+            j.submitted = true;
+            return;
+        }
         let target = self.jump.as_ref().and_then(|j| {
             j.candidates
                 .get(j.picker.highlighted)
@@ -106,7 +117,7 @@ impl Shell {
         self.off_thread(
             "jump-candidates",
             move || app.dispatch(&Invocation::with_args("jump.candidates", &args)),
-            move |this, result, _, cx| {
+            move |this, result, window, cx| {
                 let Some(j) = this
                     .jump
                     .as_mut()
@@ -127,6 +138,9 @@ impl Shell {
                 }
                 if let Some(j) = &mut this.jump {
                     j.picker = Picker::default();
+                }
+                if this.jump.as_ref().is_some_and(|j| j.submitted) {
+                    return this.jump_submit(window, cx);
                 }
                 cx.notify();
             },

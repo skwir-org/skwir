@@ -73,7 +73,23 @@ fn place(base: &Path, location: &str, uri: bool) -> Place {
     } else {
         location.replace('\\', "/")
     };
+    // A share on another machine (`\\server\share\a.mp3`) is somewhere
+    // else, as its `file:` URL is: on Windows, looking at it opens a
+    // connection there, the user's credentials offered. One on the server
+    // the playlist itself is on is beside it.
+    if let Some(server) = server_of(&location)
+        && server_of(&base.to_string_lossy().replace('\\', "/"))
+            .is_none_or(|here| !here.eq_ignore_ascii_case(server))
+    {
+        return Place::Remote;
+    }
     Place::Local(base.join(location))
+}
+
+/// The machine a network path names (`//server/share/…`), if it is one.
+fn server_of(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("//")?;
+    rest.split('/').next().filter(|server| !server.is_empty())
 }
 
 /// The playlist's tracks, the first `limits::BLOCKS` of them, whether there
@@ -279,8 +295,15 @@ mod tests {
         assert_eq!(place(base, "mms://example.invalid/x"), Place::Remote);
         // A drive letter is not a scheme worth fetching, and there is no `//`.
         assert!(matches!(place(base, "C:\\Music\\e.mp3"), Place::Local(_)));
-        // A share on another machine is not a path on this one.
+        // A share on another machine is not a path on this one, however
+        // it is written; on the playlist's own server, it is beside it.
         assert_eq!(place(base, "file://server/share/a.mp3"), Place::Remote);
+        assert_eq!(place(base, "\\\\server\\share\\a.mp3"), Place::Remote);
+        assert_eq!(place(base, "//server/share/a.mp3"), Place::Remote);
+        assert!(matches!(
+            place(Path::new("//Server/music"), "\\\\server\\share\\a.mp3"),
+            Place::Local(_)
+        ));
         assert_eq!(
             place(base, "file://localhost/abs/f.ogg"),
             Place::Local("/abs/f.ogg".into())

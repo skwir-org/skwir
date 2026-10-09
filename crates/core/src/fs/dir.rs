@@ -83,12 +83,17 @@ mod unix {
         }
 
         /// The names the folder holds now, `.` and `..` left out, read as
-        /// the iterator is walked.
+        /// the iterator is walked. An entry whose kind the folder does not
+        /// say (`DT_UNKNOWN`: XFS without `ftype`, some network and FUSE
+        /// filesystems) is stat-ed for it, without following a link: else
+        /// a folder there would show, sort and open as a file until its
+        /// row was drawn.
         ///
         /// # Errors
         /// When the folder cannot be read; each name read may fail too.
         pub fn read(&self) -> io::Result<impl Iterator<Item = io::Result<Listed>> + use<>> {
             let mut dir = rustix::fs::Dir::read_from(&self.0)?;
+            let fd = self.0.try_clone()?;
             Ok(std::iter::from_fn(move || {
                 loop {
                     let ent = match dir.next()? {
@@ -99,10 +104,17 @@ mod unix {
                     if name == c"." || name == c".." {
                         continue;
                     }
+                    let mut kind = kind_of(ent.file_type());
+                    if kind == EntryKind::Unknown
+                        && let Ok(st) =
+                            rustix::fs::statat(&fd, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)
+                    {
+                        kind = kind_of(FileType::from_raw_mode(st.st_mode));
+                    }
                     return Some(Ok(Listed {
                         name: std::os::unix::ffi::OsStringExt::from_vec(name.to_bytes().to_vec()),
                         ino: ent.ino(),
-                        kind: kind_of(ent.file_type()),
+                        kind,
                         hidden: false,
                     }));
                 }

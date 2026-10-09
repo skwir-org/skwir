@@ -808,13 +808,28 @@ fn escape(text: &str) -> String {
 /// The file a document names, only if it resolves (symlinks included)
 /// inside the document's directory.
 fn local_path(base: &std::path::Path, href: &str) -> Option<std::path::PathBuf> {
-    if href.contains(':') || href.starts_with('/') {
+    if href.contains(':') || href.starts_with(['/', '\\']) {
         return None;
     }
     let href = href.split(['#', '?']).next()?;
     let href = percent_encoding::percent_decode_str(href)
         .decode_utf8()
         .ok()?;
+    // Decoded, it may name a root or another machine (`%5C%5Cserver`):
+    // joined, it would replace the folder, and canonicalizing it would
+    // reach the machine before anything checked it was beside the
+    // document.
+    let named = std::path::Path::new(href.as_ref());
+    if href.starts_with(['/', '\\'])
+        || named.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            )
+        })
+    {
+        return None;
+    }
     let base = bibli_core::os_path::canonical(base).ok()?;
     let path = bibli_core::os_path::canonical(base.join(href.as_ref())).ok()?;
     path.starts_with(&base).then_some(path)
@@ -1359,5 +1374,9 @@ mod tests {
         assert!(!load("file:///etc/hostname"));
         assert!(!load("https://example.invalid/x.png"));
         assert!(!load("missing.png"));
+        // Another machine, however it is written: never reached.
+        assert!(local_path(&docs, "\\\\server\\share\\x.png").is_none());
+        assert!(local_path(&docs, "%5C%5Cserver%5Cshare%5Cx.png").is_none());
+        assert!(local_path(&docs, "%2Fetc%2Fhostname").is_none());
     }
 }
