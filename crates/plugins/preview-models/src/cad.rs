@@ -44,10 +44,11 @@ fn release(version: &str) -> Option<&'static str> {
 /// A bitmap stored without its file header, as the `image` crate reads one
 /// inside an icon.
 pub(crate) fn bitmap(dib: &[u8], side: u32) -> Option<bibli_core::thumbs::Image> {
-    let decoder =
+    let mut decoder =
         image::codecs::bmp::BmpDecoder::new_without_file_header(std::io::Cursor::new(dib)).ok()?;
-    let (width, height) = image::ImageDecoder::dimensions(&decoder);
-    if width > limits::IMAGE_SIDE || height > limits::IMAGE_SIDE {
+    // A run-length bitmap of a few kilobytes can say any size.
+    image::ImageDecoder::set_limits(&mut decoder, inspection::image_limits()).ok()?;
+    if image::ImageDecoder::total_bytes(&decoder) > limits::IMAGE_ALLOC {
         return None;
     }
     let image = image::DynamicImage::from_decoder(decoder).ok()?;

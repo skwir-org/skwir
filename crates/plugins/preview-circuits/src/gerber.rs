@@ -29,6 +29,11 @@ const OTHER: [u8; 3] = [194, 194, 194];
 
 /// What is drawn at most: objects, and a macro's primitives.
 const OBJECTS: usize = 2_000_000;
+/// The picture's text at most. A block flashed or a step and repeat copies
+/// what it holds each time, and blocks flash blocks: a few hundred bytes
+/// could otherwise ask for gigabytes, and a real panel of a large layer
+/// for hundreds of megabytes, each copied again to be drawn.
+const OUT_BYTES: usize = 32 << 20;
 const REPEATS: u32 = 10_000;
 
 type Point = (f64, f64);
@@ -199,21 +204,31 @@ impl Aperture {
 fn evaluate(expression: &str, variables: &HashMap<u32, f64>) -> Option<f64> {
     let tokens: Vec<char> = expression.chars().filter(|c| !c.is_whitespace()).collect();
     let mut at = 0;
-    let value = sum(&tokens, &mut at, variables)?;
+    let value = sum(&tokens, &mut at, variables, 0)?;
     (at == tokens.len()).then_some(value)
 }
 
-fn sum(tokens: &[char], at: &mut usize, variables: &HashMap<u32, f64>) -> Option<f64> {
-    let mut value = product(tokens, at, variables)?;
+/// Brackets and signs in a macro's expression, one inside the other: past
+/// it, the expression is not one (thirty thousand `-` would overflow the
+/// stack of the thumbnail's worker, which aborts the whole process).
+const EXPRESSION_DEPTH: usize = 64;
+
+fn sum(
+    tokens: &[char],
+    at: &mut usize,
+    variables: &HashMap<u32, f64>,
+    depth: usize,
+) -> Option<f64> {
+    let mut value = product(tokens, at, variables, depth)?;
     while let Some(&op) = tokens.get(*at) {
         match op {
             '+' => {
                 *at += 1;
-                value += product(tokens, at, variables)?;
+                value += product(tokens, at, variables, depth)?;
             }
             '-' => {
                 *at += 1;
-                value -= product(tokens, at, variables)?;
+                value -= product(tokens, at, variables, depth)?;
             }
             _ => break,
         }
@@ -221,17 +236,22 @@ fn sum(tokens: &[char], at: &mut usize, variables: &HashMap<u32, f64>) -> Option
     Some(value)
 }
 
-fn product(tokens: &[char], at: &mut usize, variables: &HashMap<u32, f64>) -> Option<f64> {
-    let mut value = unary(tokens, at, variables)?;
+fn product(
+    tokens: &[char],
+    at: &mut usize,
+    variables: &HashMap<u32, f64>,
+    depth: usize,
+) -> Option<f64> {
+    let mut value = unary(tokens, at, variables, depth)?;
     while let Some(&op) = tokens.get(*at) {
         match op {
             'x' | 'X' => {
                 *at += 1;
-                value *= unary(tokens, at, variables)?;
+                value *= unary(tokens, at, variables, depth)?;
             }
             '/' => {
                 *at += 1;
-                value /= unary(tokens, at, variables)?;
+                value /= unary(tokens, at, variables, depth)?;
             }
             _ => break,
         }
@@ -239,19 +259,27 @@ fn product(tokens: &[char], at: &mut usize, variables: &HashMap<u32, f64>) -> Op
     Some(value)
 }
 
-fn unary(tokens: &[char], at: &mut usize, variables: &HashMap<u32, f64>) -> Option<f64> {
+fn unary(
+    tokens: &[char],
+    at: &mut usize,
+    variables: &HashMap<u32, f64>,
+    depth: usize,
+) -> Option<f64> {
+    if depth >= EXPRESSION_DEPTH {
+        return None;
+    }
     match tokens.get(*at)? {
         '-' => {
             *at += 1;
-            Some(-unary(tokens, at, variables)?)
+            Some(-unary(tokens, at, variables, depth + 1)?)
         }
         '+' => {
             *at += 1;
-            unary(tokens, at, variables)
+            unary(tokens, at, variables, depth + 1)
         }
         '(' => {
             *at += 1;
-            let value = sum(tokens, at, variables)?;
+            let value = sum(tokens, at, variables, depth + 1)?;
             (tokens.get(*at) == Some(&')')).then(|| *at += 1)?;
             Some(value)
         }
@@ -417,7 +445,7 @@ impl Image {
 
     fn room(&mut self) -> bool {
         self.objects += 1;
-        if self.objects > OBJECTS {
+        if self.objects > OBJECTS || self.out.len() > OUT_BYTES {
             self.left_out = true;
         }
         !self.left_out
@@ -518,6 +546,10 @@ impl Image {
                 return;
             }
             Aperture::Block(content, _) => {
+                if self.out.len() + content.len() > OUT_BYTES {
+                    self.left_out = true;
+                    return;
+                }
                 self.out.push_str("<g transform=\"translate(");
                 svg::pair(&mut self.out, (at.0, -at.1));
                 self.out.push_str(")\">");
@@ -712,8 +744,13 @@ impl Repeat {
     fn close(self, image: &mut Image) {
         let content = image.out.split_off(self.start);
         let drawn = std::mem::replace(&mut image.bounds, self.outer);
-        for row in 0..self.rows {
+        'grid: for row in 0..self.rows {
             for column in 0..self.columns {
+                // As many copies as the picture has room for.
+                if image.out.len() + content.len() > OUT_BYTES {
+                    image.left_out = true;
+                    break 'grid;
+                }
                 let offset = (
                     f64::from(column) * self.step.0,
                     -f64::from(row) * self.step.1,

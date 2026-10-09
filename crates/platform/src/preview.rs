@@ -34,12 +34,17 @@ fn acquire<'a, T>(gate: &'a Mutex<T>, cancel: &CancelToken) -> anyhow::Result<Mu
     }
 }
 
+/// What a renderer wrote, read as a file and no more than `MAX_ARTIFACT`:
+/// a program working on an untrusted file may leave a pipe there, or a
+/// link to an endless device.
 fn read_artifact(path: &Path) -> anyhow::Result<Vec<u8>> {
-    anyhow::ensure!(
-        path.metadata()?.len() <= MAX_ARTIFACT,
-        "preview output is too large"
-    );
-    Ok(std::fs::read(path)?)
+    crate::file::read_regular(path, MAX_ARTIFACT).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::InvalidData {
+            anyhow::anyhow!("preview output is too large")
+        } else {
+            error.into()
+        }
+    })
 }
 
 pub(crate) fn decode_preview(bytes: &[u8], max_side: u32) -> anyhow::Result<Image> {

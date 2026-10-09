@@ -25,6 +25,9 @@ fn mime_of(req: &ThumbRequest) -> Option<Arc<str>> {
     crate::mime::by_name(req.entry.path.file_name()?).map(|m| m.0.into())
 }
 
+/// What a picture another program drew may weigh.
+const DRAWN_BYTES: u64 = 64 << 20;
+
 fn is_regular_file(p: &Path) -> bool {
     std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file())
 }
@@ -41,10 +44,15 @@ pub fn ensure_file(p: &Path) -> anyhow::Result<()> {
 }
 
 /// The picture another program drew into `output`, at most `pixels` on
-/// its longer side: its size checked before it is decoded.
+/// its longer side: its size checked before it is decoded. Read as a file
+/// and no more than a picture holds: what an untrusted program leaves
+/// there may be a pipe, which would hold the worker, or a link to an
+/// endless device.
 pub(crate) fn drawn(output: &Path, pixels: u32) -> anyhow::Result<Image> {
-    let open =
-        || -> anyhow::Result<_> { Ok(image::ImageReader::open(output)?.with_guessed_format()?) };
+    let bytes = crate::file::read_regular(output, DRAWN_BYTES)?;
+    let open = || -> anyhow::Result<_> {
+        Ok(image::ImageReader::new(std::io::Cursor::new(&bytes)).with_guessed_format()?)
+    };
     let (w, h) = open()?.into_dimensions()?;
     anyhow::ensure!(
         u64::from(w) * u64::from(h) <= MAX_PIXELS,

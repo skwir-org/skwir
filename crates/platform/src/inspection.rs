@@ -51,6 +51,11 @@ pub mod limits {
     pub const NESTING: usize = 64;
     /// Element depth of HTML read in reading mode.
     pub const HTML_DEPTH: usize = 128;
+    /// Element depth a walk of a document's XML follows (Word's,
+    /// `OpenDocument`'s), wrappers included: what a file nests deeper is
+    /// left out, rather than the walk's stack overflowing, which aborts
+    /// the whole process. The parser itself does not recurse.
+    pub const XML_DEPTH: usize = 128;
     /// Style rules kept for one page, the built-in ones included; its
     /// stylesheets together are bounded by `TEXT_INPUT`.
     pub const STYLE_RULES: usize = 4000;
@@ -360,6 +365,18 @@ fn lines(
     })
 }
 
+/// What a picture embedded in a file may ask the decoder for: its sides
+/// and its pixels' bytes (`limits::IMAGE_SIDE`, `IMAGE_ALLOC`), checked
+/// before anything is allocated. Every decoder of such a picture is given
+/// them, a bitmap read from a header of its own too.
+pub fn image_limits() -> image::Limits {
+    let mut image_limits = image::Limits::default();
+    image_limits.max_image_width = Some(limits::IMAGE_SIDE);
+    image_limits.max_image_height = Some(limits::IMAGE_SIDE);
+    image_limits.max_alloc = Some(limits::IMAGE_ALLOC);
+    image_limits
+}
+
 /// A page's text. UTF-8 cut through its last character is still UTF-8;
 /// otherwise `decode` decides, except that UTF-16 is recognised only by the
 /// mark at the start of the file: a page elsewhere cannot tell.
@@ -403,11 +420,7 @@ pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
         return svg(bytes, side);
     }
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
-    let mut image_limits = image::Limits::default();
-    image_limits.max_image_width = Some(limits::IMAGE_SIDE);
-    image_limits.max_image_height = Some(limits::IMAGE_SIDE);
-    image_limits.max_alloc = Some(limits::IMAGE_ALLOC);
-    reader.limits(image_limits);
+    reader.limits(image_limits());
     let mut img = crate::picture::decode(reader)?;
     let own = (img.width(), img.height());
     // Only shrink: `thumbnail` would otherwise scale a tiny icon up to the
@@ -614,14 +627,19 @@ impl Numbering {
     }
 }
 
-/// a, b, … z, aa, bb, … as word processors and browsers letter a list.
+/// a, b, … z, aa, bb, … as word processors and browsers letter a list;
+/// past `LETTERS_MAX` letters a number, as `roman` past 3999: a list's
+/// start comes from the file, and `zzz…` four billion long is no marker.
 fn letters(n: u32) -> String {
-    if n == 0 {
-        return "0".into();
+    if n == 0 || (n - 1) / 26 >= LETTERS_MAX {
+        return n.to_string();
     }
     let letter = char::from(b'a' + u8::try_from((n - 1) % 26).unwrap_or(0));
     std::iter::repeat_n(letter, ((n - 1) / 26 + 1) as usize).collect()
 }
+
+/// The most letters a lettered list's marker repeats: `hhhhhhhh.`.
+const LETTERS_MAX: u32 = 8;
 
 fn roman(mut n: u32) -> String {
     if n == 0 || n >= 4000 {
@@ -1108,6 +1126,10 @@ mod tests {
         assert_eq!(Numbering::of_html("i").number(14), "xiv");
         assert_eq!(Numbering::UpperRoman.number(1999), "MCMXCIX");
         assert_eq!(Numbering::None.number(4), "");
+        // A start the file chose, far past any list: a number, not
+        // hundreds of megabytes of letters.
+        assert_eq!(Numbering::LowerLetter.number(208), "zzzzzzzz");
+        assert_eq!(Numbering::UpperLetter.number(u32::MAX), "4294967295");
     }
 
     #[test]

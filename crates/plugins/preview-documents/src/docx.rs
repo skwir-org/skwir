@@ -455,7 +455,7 @@ impl Lists {
                 }
             }
         }
-        counts[level] = Some(counts[level].map_or(definition.start, |n| n + 1));
+        counts[level] = Some(counts[level].map_or(definition.start, |n| n.saturating_add(1)));
         for deeper in &mut counts[level + 1..] {
             *deeper = None;
         }
@@ -591,11 +591,26 @@ struct Walk<'p> {
     note_label: Option<String>,
     visited: usize,
     depth: usize,
+    /// How deep the walk is in the XML: see `nested`.
+    nest: usize,
 }
 
 type Boxes<'a, 'i> = Vec<Node<'a, 'i>>;
 
 impl Walk<'_> {
+    /// Walk one element deeper: past `limits::XML_DEPTH`, what the file
+    /// nests is left out (`sdt` in `sdt`…, ten thousand of them in a
+    /// small part would overflow the stack).
+    fn nested(&mut self, walk: impl FnOnce(&mut Self) -> anyhow::Result<()>) -> anyhow::Result<()> {
+        if self.nest >= limits::XML_DEPTH {
+            return Ok(());
+        }
+        self.nest += 1;
+        let done = walk(self);
+        self.nest -= 1;
+        done
+    }
+
     fn check(&mut self) -> anyhow::Result<()> {
         self.visited += 1;
         if self.visited.is_multiple_of(256) {
@@ -607,6 +622,10 @@ impl Walk<'_> {
     /// Paragraphs, tables and what wraps them, in a body, a cell, a note
     /// or a text box. `top`: the body's own, where a part may be cut.
     fn blocks(&mut self, node: Node<'_, '_>, part: &Part, top: bool) -> anyhow::Result<()> {
+        self.nested(|walk| walk.blocks_in(node, part, top))
+    }
+
+    fn blocks_in(&mut self, node: Node<'_, '_>, part: &Part, top: bool) -> anyhow::Result<()> {
         for n in node.children().filter(Node::is_element) {
             self.check()?;
             if is(n, &W, "p") {
@@ -703,6 +722,17 @@ impl Walk<'_> {
     }
 
     fn inline<'a, 'i>(
+        &mut self,
+        node: Node<'a, 'i>,
+        part: &Part,
+        base: Props,
+        link: Option<&str>,
+        boxes: &mut Boxes<'a, 'i>,
+    ) -> anyhow::Result<()> {
+        self.nested(|walk| walk.inline_in(node, part, base, link, boxes))
+    }
+
+    fn inline_in<'a, 'i>(
         &mut self,
         node: Node<'a, 'i>,
         part: &Part,
@@ -957,6 +987,10 @@ impl Walk<'_> {
     /// A cell's paragraphs, each a line of it; a table inside is read a
     /// row to a line.
     fn cell(&mut self, cell: Node<'_, '_>, part: &Part) -> anyhow::Result<()> {
+        self.nested(|walk| walk.cell_in(cell, part))
+    }
+
+    fn cell_in(&mut self, cell: Node<'_, '_>, part: &Part) -> anyhow::Result<()> {
         for n in cell.children().filter(Node::is_element) {
             self.check()?;
             if is(n, &W, "p") {
@@ -994,18 +1028,30 @@ fn cells<'a, 'i>(row: Node<'a, 'i>) -> Vec<Node<'a, 'i>> {
 
 fn wrapped<'a, 'i>(node: Node<'a, 'i>, local: &str) -> Vec<Node<'a, 'i>> {
     let mut found = Vec::new();
+    wrapped_in(node, local, 0, &mut found);
+    found
+}
+
+fn wrapped_in<'a, 'i>(
+    node: Node<'a, 'i>,
+    local: &str,
+    depth: usize,
+    found: &mut Vec<Node<'a, 'i>>,
+) {
+    if depth >= limits::XML_DEPTH {
+        return;
+    }
     for n in node.children().filter(Node::is_element) {
         if is(n, &W, local) {
             found.push(n);
         } else if is(n, &W, "sdt") {
             if let Some(content) = child(n, &W, "sdtContent") {
-                found.extend(wrapped(content, local));
+                wrapped_in(content, local, depth + 1, found);
             }
         } else if is(n, &W, "customXml") {
-            found.extend(wrapped(n, local));
+            wrapped_in(n, local, depth + 1, found);
         }
     }
-    found
 }
 
 pub(crate) fn read(path: &Path, wanted: u64, cancel: &CancelToken) -> anyhow::Result<Read> {
@@ -1052,6 +1098,7 @@ pub(crate) fn read(path: &Path, wanted: u64, cancel: &CancelToken) -> anyhow::Re
         note_label: None,
         visited: 0,
         depth: 0,
+        nest: 0,
     };
     walk.blocks(body, &part, true)?;
     let (referenced, parts) = walk.builder.body_end();

@@ -325,6 +325,8 @@ struct Walk<'p> {
     endnotes: u32,
     visited: usize,
     depth: usize,
+    /// How deep the walk is in the XML: see `nested`.
+    nest: usize,
 }
 
 type Boxes<'a, 'i> = Vec<Node<'a, 'i>>;
@@ -333,6 +335,19 @@ type Boxes<'a, 'i> = Vec<Node<'a, 'i>>;
 type Notes<'a, 'i> = HashMap<String, (String, Node<'a, 'i>)>;
 
 impl Walk<'_> {
+    /// Walk one element deeper: past `limits::XML_DEPTH`, what the file
+    /// nests is left out (spans in spans, sections in sections: ten
+    /// thousand of them in a small part would overflow the stack).
+    fn nested(&mut self, walk: impl FnOnce(&mut Self) -> anyhow::Result<()>) -> anyhow::Result<()> {
+        if self.nest >= limits::XML_DEPTH {
+            return Ok(());
+        }
+        self.nest += 1;
+        let done = walk(self);
+        self.nest -= 1;
+        done
+    }
+
     fn check(&mut self) -> anyhow::Result<()> {
         self.visited += 1;
         if self.visited.is_multiple_of(256) {
@@ -342,6 +357,15 @@ impl Walk<'_> {
     }
 
     fn blocks<'a, 'i>(
+        &mut self,
+        node: Node<'a, 'i>,
+        top: bool,
+        notes: &mut Notes<'a, 'i>,
+    ) -> anyhow::Result<()> {
+        self.nested(|walk| walk.blocks_in(node, top, notes))
+    }
+
+    fn blocks_in<'a, 'i>(
         &mut self,
         node: Node<'a, 'i>,
         top: bool,
@@ -596,6 +620,18 @@ impl Walk<'_> {
         notes: &mut Notes<'a, 'i>,
         space: &mut bool,
     ) -> anyhow::Result<()> {
+        self.nested(|walk| walk.inline_in(node, props, link, boxes, notes, space))
+    }
+
+    fn inline_in<'a, 'i>(
+        &mut self,
+        node: Node<'a, 'i>,
+        props: Props,
+        link: Option<&str>,
+        boxes: &mut Boxes<'a, 'i>,
+        notes: &mut Notes<'a, 'i>,
+        space: &mut bool,
+    ) -> anyhow::Result<()> {
         for n in node.children() {
             self.check()?;
             if n.is_text() {
@@ -785,6 +821,14 @@ impl Walk<'_> {
         cell: Node<'a, 'i>,
         notes: &mut Notes<'a, 'i>,
     ) -> anyhow::Result<()> {
+        self.nested(|walk| walk.cell_in(cell, notes))
+    }
+
+    fn cell_in<'a, 'i>(
+        &mut self,
+        cell: Node<'a, 'i>,
+        notes: &mut Notes<'a, 'i>,
+    ) -> anyhow::Result<()> {
         for n in cell.children().filter(Node::is_element) {
             self.check()?;
             if is(n, TABLE, "table") && self.depth < limits::NESTING {
@@ -851,16 +895,28 @@ fn marker(
 /// A table's rows, through their groups, and whether each is a header.
 fn rows<'a, 'i>(table: Node<'a, 'i>, header: bool) -> Vec<(Node<'a, 'i>, bool)> {
     let mut found = Vec::new();
+    rows_in(table, header, 0, &mut found);
+    found
+}
+
+fn rows_in<'a, 'i>(
+    table: Node<'a, 'i>,
+    header: bool,
+    depth: usize,
+    found: &mut Vec<(Node<'a, 'i>, bool)>,
+) {
+    if depth >= limits::XML_DEPTH {
+        return;
+    }
     for n in table.children().filter(Node::is_element) {
         if is(n, TABLE, "table-row") {
             found.push((n, header));
         } else if is(n, TABLE, "table-header-rows") {
-            found.extend(rows(n, true));
+            rows_in(n, true, depth + 1, found);
         } else if is(n, TABLE, "table-rows") || is(n, TABLE, "table-row-group") {
-            found.extend(rows(n, header));
+            rows_in(n, header, depth + 1, found);
         }
     }
-    found
 }
 
 pub(crate) fn read(path: &Path, wanted: u64, cancel: &CancelToken) -> anyhow::Result<Read> {
@@ -905,6 +961,7 @@ pub(crate) fn read(path: &Path, wanted: u64, cancel: &CancelToken) -> anyhow::Re
         endnotes: 0,
         visited: 0,
         depth: 0,
+        nest: 0,
     };
     walk.blocks(body, true, &mut notes)?;
     let (referenced, parts) = walk.builder.body_end();

@@ -129,6 +129,32 @@ fn sniff(prefix: &[u8]) -> Encoding {
     }
 }
 
+/// The bytes read since the last record ended, refused past
+/// `TEXT_INPUT`: an unclosed quote, or a file without a line end, makes
+/// the rest of the file one field, which the CSV reader would hold whole
+/// (and decode into a second copy) before a cell is cut.
+struct RecordBound<R> {
+    inner: R,
+    since: std::rc::Rc<std::cell::Cell<u64>>,
+}
+
+impl<R: Read> Read for RecordBound<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.since.get() > inspection::limits::TEXT_INPUT as u64 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "a row is longer than {}",
+                    inspection::limits::describe(inspection::limits::TEXT_INPUT)
+                ),
+            ));
+        }
+        let n = self.inner.read(buf)?;
+        self.since.set(self.since.get() + n as u64);
+        Ok(n)
+    }
+}
+
 /// One page of `TABLE_ROWS` records from record `offset`, streamed from the
 /// file: a table is as long as its file, and only the page is kept. Rows
 /// before the page are parsed and dropped, so numbering stays exact.
@@ -150,18 +176,24 @@ fn table(path: &std::path::Path, offset: u64, cancel: &CancelToken) -> anyhow::R
         Encoding::Windows1252 => Encoding::Windows1252,
         _ => Encoding::Utf8,
     };
+    let since = std::rc::Rc::new(std::cell::Cell::new(0));
+    let input = RecordBound {
+        inner: input,
+        since: std::rc::Rc::clone(&since),
+    };
+    // Tab-separated values have no quoting: a cell that starts with `"`
+    // is that text, not the start of a field running to the file's end.
+    let tsv = inspection::extension(path) == "tsv";
     let mut reader = csv::ReaderBuilder::new()
-        .delimiter(if inspection::extension(path) == "tsv" {
-            b'\t'
-        } else {
-            b','
-        })
+        .delimiter(if tsv { b'\t' } else { b',' })
+        .quoting(!tsv)
         .flexible(true)
         .has_headers(false)
         .from_reader(input);
     let mut bounds = Bounds::default();
     let mut record = csv::ByteRecord::new();
     let columns = if reader.read_byte_record(&mut record)? {
+        since.set(0);
         bounds.row(&record, cells_in)
     } else {
         Vec::new()
@@ -170,6 +202,7 @@ fn table(path: &std::path::Path, offset: u64, cancel: &CancelToken) -> anyhow::R
     let mut index = 0u64;
     let mut more = false;
     while reader.read_byte_record(&mut record)? {
+        since.set(0);
         if index.is_multiple_of(1024) {
             inspection::check(cancel)?;
         }
@@ -358,6 +391,21 @@ mod tests {
         assert_eq!(last.title, format!("Table · rows {}–{rows}", last_page + 1));
         let empty = read("empty.csv", b"", 0);
         assert!(empty.columns.is_empty() && empty.rows.is_empty() && empty.details.is_empty());
+    }
+
+    /// A quote never closed, past the bound for a row: refused, never the
+    /// rest of the file held as one field. A tab-separated cell starting
+    /// with a quote is that text.
+    #[test]
+    fn a_row_is_bounded_and_tab_separated_values_have_no_quotes() {
+        let mut text = String::from("a,\"b\n");
+        text.push_str(&"x\n".repeat(inspection::limits::TEXT_INPUT / 2 + 1024));
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("unclosed.csv");
+        std::fs::write(&path, &text).unwrap();
+        assert!(table(&path, 0, &CancelToken::new()).is_err());
+        let data = read("quoted.tsv", b"name\tnote\n\"it\ta\n", 0);
+        assert_eq!(data.rows[0].cells, ["\"it", "a"]);
     }
 
     #[test]

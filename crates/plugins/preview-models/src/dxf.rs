@@ -21,6 +21,14 @@ const BACKGROUND: [u8; 3] = [33, 40, 48];
 const POINTS: usize = 2_000_000;
 const TEXTS: usize = 20_000;
 const INSERTS: usize = 200_000;
+/// What is kept as it is read, before blocks are expanded: points, and a
+/// text's bytes as a sixteenth of a point. Every curve is kept as its
+/// points, 97 a circle, so a drawing of holes would otherwise hold
+/// gigabytes to draw the 20 000 that fit in `POINTS`.
+const KEPT: usize = POINTS;
+/// A text's bytes at most, cut at a character: each insert of its block
+/// shares it (`Text::content`).
+const TEXT_BYTES: usize = 4096;
 /// How deep blocks may nest.
 const DEPTH: usize = 16;
 /// A full circle's segments.
@@ -51,7 +59,7 @@ struct Text {
     height: f64,
     /// Degrees, counter-clockwise.
     angle: f64,
-    content: String,
+    content: std::sync::Arc<str>,
     /// −1 left, 0 centre, 1 right.
     horizontal: i8,
     /// Where the anchor is on the text: 0 its baseline, 1 its middle, 2
@@ -81,6 +89,27 @@ struct Item {
     shape: Shape,
     color: Color,
     layer: String,
+}
+
+/// A text as kept: at most `TEXT_BYTES`, cut at a character.
+fn kept_text(text: &str) -> std::sync::Arc<str> {
+    let mut end = text.len().min(TEXT_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].into()
+}
+
+impl Shape {
+    /// What keeping it costs against `KEPT`.
+    fn cost(&self) -> usize {
+        match self {
+            Shape::Polyline(points, _) => points.len(),
+            Shape::Fill(rings, _) => rings.iter().map(Vec::len).sum(),
+            Shape::Text(text) => 1 + text.content.len() / 16,
+            Shape::Insert { .. } => 1,
+        }
+    }
 }
 
 /// A 2D affine map: `[a b c; d e f]`.
@@ -556,7 +585,7 @@ fn entity(kind: &str, pairs: &Pairs<'_>, polyline: Option<&[(Point, f64)]>) -> V
                         at: flip(first),
                         height,
                         angle: mirror_angle((b.1 - first.1).atan2(b.0 - first.0).to_degrees()),
-                        content,
+                        content: kept_text(&content),
                         horizontal: -1,
                         vertical: 0,
                         pitch: height * 5. / 3.,
@@ -586,7 +615,7 @@ fn entity(kind: &str, pairs: &Pairs<'_>, polyline: Option<&[(Point, f64)]>) -> V
                 at: flip(at),
                 height,
                 angle: mirror_angle(number(pairs, 50).unwrap_or(0.)),
-                content,
+                content: kept_text(&content),
                 horizontal,
                 vertical,
                 pitch: height * 5. / 3.,
@@ -609,7 +638,8 @@ fn entity(kind: &str, pairs: &Pairs<'_>, polyline: Option<&[(Point, f64)]>) -> V
                 Some((x, y)) if x != 0. || y != 0. => y.atan2(x).to_degrees(),
                 _ => number(pairs, 50).unwrap_or(0.).to_degrees(),
             };
-            let attachment = number(pairs, 71).unwrap_or(1.) as i32;
+            // One of nine places; the file says any number.
+            let attachment = (number(pairs, 71).unwrap_or(1.) as i32).clamp(1, 9);
             let horizontal = match (attachment - 1) % 3 {
                 0 => -1,
                 1 => 0,
@@ -625,7 +655,7 @@ fn entity(kind: &str, pairs: &Pairs<'_>, polyline: Option<&[(Point, f64)]>) -> V
                 at: flip(point(pairs, 10).unwrap_or_default()),
                 height,
                 angle: mirror_angle(angle),
-                content,
+                content: kept_text(&content),
                 horizontal,
                 vertical,
                 pitch: height * 5. / 3. * spacing,
@@ -1118,6 +1148,9 @@ struct Reader<'a> {
     polyline: Option<(Vec<(i32, &'a str)>, Vec<(Point, f64)>)>,
     entities: usize,
     units: Option<&'static str>,
+    /// What is kept so far (`KEPT`), and whether some was left out.
+    kept: usize,
+    left_out: bool,
 }
 
 impl<'a> Reader<'a> {
@@ -1192,6 +1225,12 @@ impl<'a> Reader<'a> {
         if shapes.is_empty() {
             return;
         }
+        let cost: usize = shapes.iter().map(Shape::cost).sum();
+        if self.kept + cost > KEPT {
+            self.left_out = true;
+            return;
+        }
+        self.kept += cost;
         let layer = value(&pairs, 8).unwrap_or("0").to_owned();
         let color = color(&pairs);
         let target = if let Some((_, _, items)) = &mut self.block {
@@ -1262,6 +1301,7 @@ pub fn draw(text: &str, cancel: &CancelToken) -> anyhow::Result<Drawing> {
     };
     let mut scene = Scene {
         empty: true,
+        left_out: reader.left_out,
         ..Scene::default()
     };
     library.draw(&mut scene, &reader.model, &Affine::IDENTITY, None, 0)?;

@@ -176,7 +176,7 @@ fn largest(lines: &[&str]) -> Option<Stored> {
             (None, [tag, "begin", size, ..]) if is_picture(tag) => {
                 let Some(area) = size
                     .split_once(['x', '*'])
-                    .and_then(|(w, h)| Some(w.parse::<u64>().ok()? * h.parse::<u64>().ok()?))
+                    .and_then(|(w, h)| w.parse::<u64>().ok()?.checked_mul(h.parse::<u64>().ok()?))
                 else {
                     continue;
                 };

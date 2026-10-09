@@ -431,12 +431,11 @@ impl Manager {
                     "invalid document page size"
                 );
                 let bytes = u64::from(width) * u64::from(height) * 4;
-                let path = self.launch.scratch.join(PIXELS_FILE);
-                anyhow::ensure!(
-                    path.metadata()?.len() == bytes,
-                    "invalid document bitmap length"
-                );
-                let rgba = std::fs::read(path)?;
+                // Read as a file, no more than the page: the worker reads
+                // an untrusted document, and what it leaves could be a pipe.
+                let rgba =
+                    crate::file::read_regular(&self.launch.scratch.join(PIXELS_FILE), bytes)?;
+                anyhow::ensure!(rgba.len() as u64 == bytes, "invalid document bitmap length");
                 Ok(Response::Page(DocumentPage {
                     width,
                     height,

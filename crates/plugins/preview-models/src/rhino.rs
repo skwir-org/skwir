@@ -141,10 +141,20 @@ fn preview(body: &[u8], wide: bool, side: u32) -> Option<bibli_core::thumbs::Ima
     let (width, height) = (int(4), int(8));
     let bits = u16::from_le_bytes([header[14], header[15]]);
     let (w, h) = (width.unsigned_abs(), height.unsigned_abs());
-    if w == 0 || h == 0 || w > limits::IMAGE_SIDE || h > limits::IMAGE_SIDE {
+    // A bitmap's own depths only: `bits` is the file's, and the buffer it
+    // sizes is allocated before a byte of it is read.
+    if w == 0
+        || h == 0
+        || w > limits::IMAGE_SIDE
+        || h > limits::IMAGE_SIDE
+        || ![1, 4, 8, 16, 24, 32].contains(&bits)
+    {
         return None;
     }
     let stride = (u64::from(w) * u64::from(bits)).div_ceil(32) * 4;
+    if stride * u64::from(h) > limits::IMAGE_ALLOC {
+        return None;
+    }
     let pixels = usize::try_from(stride * u64::from(h)).ok()?;
     let colors = match int(32) {
         0 if bits <= 8 => 1usize << bits,
