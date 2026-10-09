@@ -841,7 +841,7 @@ fn filter_pill(shell: &Shell, filter: &str, cx: &mut Context<Shell>) -> AnyEleme
 /// in the field; one by a tag in the tag's colors, as the Narrow by bar
 /// offered it, hollow for the files without it.
 fn narrowing_pill(shell: &Shell, i: usize, filter: &Pill, cx: &mut Context<Shell>) -> AnyElement {
-    let tip = format!("Not only {}: show the rest too", filter.label);
+    let tip = taking_off(filter);
     let button = Button::new(
         gpui::SharedString::from(format!("narrowing-{i}")),
         "",
@@ -859,6 +859,18 @@ fn narrowing_pill(shell: &Shell, i: usize, filter: &Pill, cx: &mut Context<Shell
     );
     crate::elements::pill::pill(shell, button, Some((filter.remove.clone(), tip.into())), cx)
         .into_any_element()
+}
+
+/// What taking a narrowing off does, for its pill's tooltip: the files
+/// without a tag (“not draft”) let those with it back in.
+fn taking_off(filter: &Pill) -> String {
+    match &filter.tag {
+        Some(tag) if tag.lacks => format!(
+            "Show the files tagged “{}” too",
+            bibli_core::metadata::tag_leaf(&tag.name)
+        ),
+        _ => format!("Not only {}: show the rest too", filter.label),
+    }
 }
 
 /// Back or Forward: its right button lists the history that way.
@@ -1418,12 +1430,38 @@ fn breadcrumbs(
 
 #[cfg(test)]
 mod tests {
-    use super::{ViewSpec, crumbs, tool_pane, toolbar_views};
+    use super::{ViewSpec, crumbs, taking_off, tool_pane, toolbar_views};
     use crate::sidebar::Root;
     use bibli_core::location::{Location, ToolPane};
     use bibli_core::workspace::PaneId;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+
+    /// A narrowing's tooltip says what taking it off shows: a tag left
+    /// out lets the files tagged so back in, without saying "not" twice.
+    #[test]
+    fn taking_a_narrowing_off_says_what_comes_back() {
+        use bibli_core::command::Invocation;
+        use bibli_core::metadata::TagRef;
+        use bibli_core::workspace::Pill;
+        let pill = |label: &str, tag| Pill {
+            label: label.into(),
+            remove: Invocation::new("query.narrow"),
+            tag,
+        };
+        assert_eq!(
+            taking_off(&pill("not draft", Some(TagRef::lacking("Status/draft")))),
+            "Show the files tagged “draft” too"
+        );
+        assert_eq!(
+            taking_off(&pill("with family", Some(TagRef::of("family")))),
+            "Not only with family: show the rest too"
+        );
+        assert_eq!(
+            taking_off(&pill("Images", None)),
+            "Not only Images: show the rest too"
+        );
+    }
 
     /// The shelf's Move and Copy go to the other pane's folder: not
     /// without a split, nor when the other pane shows the shelf too; the
