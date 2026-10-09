@@ -519,6 +519,10 @@ impl OpenLocation for PathLocation {
         &self.rx
     }
 
+    /// A job per batch: a request for a whole folder (a sort by size asks
+    /// for every entry) is stat-ed by several workers at once, and its
+    /// answers arrive a batch at a time, each an event the UI applies
+    /// within a frame, not one holding them all.
     fn hydrate(&self, ids: &[EntryId], priority: Priority) {
         if ids.is_empty() {
             return;
@@ -526,12 +530,14 @@ impl OpenLocation for PathLocation {
         let Some(s) = self.shared.lock().clone() else {
             return;
         };
-        let ids = ids.to_vec();
-        self.ctx
-            .scheduler
-            .spawn(priority, "fs.stat", self.ctx.cancel.child(), move || {
-                s.hydrate(&ids);
-            });
+        for chunk in ids.chunks(self.ctx.batch_size.max(1)) {
+            let (s, ids) = (Arc::clone(&s), chunk.to_vec());
+            self.ctx
+                .scheduler
+                .spawn(priority, "fs.stat", self.ctx.cancel.child(), move || {
+                    s.hydrate(&ids);
+                });
+        }
     }
 
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {

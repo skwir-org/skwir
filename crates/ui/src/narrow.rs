@@ -212,7 +212,7 @@ impl Shell {
                     .unwrap_or_default()
             };
             complete &= unknown.is_empty();
-            self.request_hydrate(unknown);
+            self.request_hydrate_off_screen(unknown);
         }
         // While it streams, at most every `EVERY`; the end counts at once.
         let narrow = &self.ui().narrow;

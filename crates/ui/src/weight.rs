@@ -6,10 +6,15 @@
 //! draws, and a sum of those is a wrong number that grows as it scrolls.
 //! So a worker reads the folder's files once its listing is complete, those
 //! the pane shows (hidden files only when it shows them, the name filter
-//! applied), again when the folder or what the pane shows of it changes.
-//! A request supersedes the one before; both end with the location
-//! (`Pane::location_lifetime`). The footer keeps the last answer for the
-//! same folder until the next, so it does not blink.
+//! applied), again when the names or what the pane shows of them change,
+//! never for a batch of metadata: a scroll hydrates rows, and starting
+//! over for each batch, a big folder's weight was never said. A request
+//! supersedes the one before; both end with the location
+//! (`Pane::location_lifetime`). Where the pane asks for every file's
+//! metadata anyway (a narrowing, a sort by size or date), what it shows is
+//! added up from the listing once each file has it, and again when a size
+//! changes: nothing is read twice. The footer keeps the last answer for
+//! the same folder until the next, so it does not blink.
 
 use std::path::{Path, PathBuf};
 
@@ -18,10 +23,19 @@ use gpui::{Context, Window};
 
 use crate::shell::Shell;
 
-/// What a sum was asked for: the listing and its version, and what the
-/// pane shows of it (hidden files, the filter's version). A listing is one
-/// location's: navigating makes another.
-type Key = (u64, u64, bool, u64);
+/// What a sum was asked for: the listing, its names, its sizes when added
+/// up from it (`from_listing`), and what the pane shows of it (hidden
+/// files, the filter's version). A listing is one location's: navigating
+/// makes another.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Key {
+    listing: u64,
+    names: u64,
+    sizes: u64,
+    hidden: bool,
+    filter: u64,
+    from_listing: bool,
+}
 
 /// A pane's weight: the last sum, the folder it is of, and what it was, or
 /// is being, asked for.
@@ -46,39 +60,51 @@ impl Shell {
             if !p.listing.is_complete() {
                 return;
             }
-            (
-                p.listing.id(),
-                p.listing.version(),
-                p.sort.show_hidden,
-                p.filter_version(),
-            )
+            // A folder sorted by size or date (another location is not
+            // weighed), or any narrowed.
+            let folder = p.location().is_some_and(|l| l.path().is_some());
+            let from_listing = p.narrowed().is_some() || folder && p.sort.key.needs_metadata();
+            Key {
+                listing: p.listing.id(),
+                names: p.listing.names_version(),
+                sizes: if from_listing {
+                    p.listing.size_version()
+                } else {
+                    0
+                },
+                hidden: p.sort.show_hidden,
+                filter: p.filter_version(),
+                from_listing,
+            }
         };
         if self.ui().weight.key == Some(key) {
             return;
         }
-        let asked = {
+        let (asked, listed) = {
             let ws = self.app.workspace.read();
-            ws.pane(pane).and_then(|p| {
-                let dir = p.location()?.path()?;
-                Some((dir, p.filter().map(str::to_owned), p.location_lifetime()))
-            })
-        };
-        // A narrowing decides from each file's metadata, its size among it:
-        // what it shows is added up here once every file has it.
-        let narrowed = {
-            let ws = self.app.workspace.read();
-            ws.pane(pane)
-                .filter(|p| p.narrowed().is_some())
-                .map(narrowed_bytes)
+            let Some(p) = ws.pane(pane) else { return };
+            (
+                p.location()
+                    .and_then(bibli_core::Location::path)
+                    .map(|dir| (dir, p.filter().map(str::to_owned), p.location_lifetime())),
+                key.from_listing.then(|| listed_bytes(p)),
+            )
         };
         let weight = &mut self.ui_mut().weight;
         if let Some(cancel) = weight.cancel.take() {
             cancel.cancel();
         }
         weight.key = Some(key);
-        if let Some(bytes) = narrowed {
-            weight.dir = asked.map(|(dir, _, _)| dir);
-            weight.bytes = bytes;
+        if let Some(bytes) = listed {
+            let dir = asked.map(|(dir, _, _)| dir);
+            if weight.dir != dir {
+                weight.dir = dir;
+                weight.bytes = None;
+            }
+            // Until every file has its size, the last answer stays.
+            if bytes.is_some() {
+                weight.bytes = bytes;
+            }
             return;
         }
         let Some((dir, filter, lifetime)) = asked else {
@@ -94,7 +120,7 @@ impl Shell {
         }
         let cancel = lifetime.child();
         weight.cancel = Some(cancel.clone());
-        let hidden = key.2;
+        let hidden = key.hidden;
         let (tx, rx) = flume::bounded(1);
         let token = cancel.clone();
         self.app.scheduler.spawn(
@@ -130,8 +156,8 @@ impl Shell {
     }
 }
 
-/// What the files a narrowed pane shows weigh, once each has its metadata.
-fn narrowed_bytes(p: &bibli_core::workspace::Pane) -> Option<u64> {
+/// What the files the pane shows weigh, once each has its metadata.
+fn listed_bytes(p: &bibli_core::workspace::Pane) -> Option<u64> {
     if !p.files_unknown().is_empty() {
         return None;
     }

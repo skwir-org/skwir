@@ -3,7 +3,7 @@
 //! container (focus, key context, external drops).
 
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use bibli_core::command::Invocation;
@@ -134,13 +134,19 @@ pub struct ListState {
     /// the folder already shown, starts bare and needs asking again.
     /// Each by the listing that holds it (`Pane::listing_of`): an entry
     /// that moves to another (between two folders opened in place) is
-    /// asked for again there.
-    pub pending_hydrate: HashSet<(u64, EntryId)>,
+    /// asked for again there. With whether it was asked for on screen: one
+    /// asked for off screen (a sort by size reads them all) and drawn
+    /// since is asked for again, first.
+    pub pending_hydrate: HashMap<(u64, EntryId), bool>,
     /// The listing (`Listing::id`) everything here describes.
     listing: Option<u64>,
     /// The listing's `removed_version` when `pending_hydrate` last let go
     /// of the entries taken out.
     removed: u64,
+    /// What `sync_sort_hydration` last asked the metadata of the whole
+    /// pane for: the listing, its names, the folders opened, the sort and
+    /// the filter.
+    sort_hydrated: Option<(u64, u64, u64, SortSpec, u64)>,
     pub visible_rows: usize,
     /// How many entries the view laid out: what a tab shown again shows
     /// first.
@@ -157,9 +163,10 @@ impl Default for ListState {
         ListState {
             sorted: std::sync::Arc::from([]),
             sorted_at: None,
-            pending_hydrate: HashSet::new(),
+            pending_hydrate: HashMap::new(),
             listing: None,
             removed: 0,
+            sort_hydrated: None,
             visible_rows: 20,
             visible_items: 0,
             typed: None,
@@ -187,7 +194,7 @@ impl ListState {
         if self.removed != listing.removed_version() {
             self.removed = listing.removed_version();
             self.pending_hydrate
-                .retain(|(listing, id)| pane.listing_of(*id) == Some(*listing));
+                .retain(|(listing, id), _| pane.listing_of(*id) == Some(*listing));
         }
         let at = (
             listing.version(),
@@ -211,6 +218,7 @@ impl ListState {
         self.sorted = std::sync::Arc::from([]);
         self.sorted_at = None;
         self.pending_hydrate.clear();
+        self.sort_hydrated = None;
         self.selection.set(None);
     }
 
@@ -357,6 +365,16 @@ impl Shell {
     /// Ask the core for metadata on `ids`, once each until the pane shows
     /// another location.
     pub fn request_hydrate(&mut self, ids: impl IntoIterator<Item = EntryId>) {
+        self.ask_hydrate(ids, true);
+    }
+
+    /// Ask for the metadata of entries not drawn (`Pane::unknown`), after
+    /// those that are.
+    pub fn request_hydrate_off_screen(&mut self, ids: impl IntoIterator<Item = EntryId>) {
+        self.ask_hydrate(ids, false);
+    }
+
+    fn ask_hydrate(&mut self, ids: impl IntoIterator<Item = EntryId>, on_screen: bool) {
         let pane = self.pane;
         // Only what lacks its metadata, of whichever listing of the pane
         // holds it (shown, or opened in place): callers pass what they draw.
@@ -371,20 +389,61 @@ impl Shell {
         let need: Vec<EntryId> = {
             let pending = &mut self.ui_mut().list.pending_hydrate;
             held.into_iter()
-                .filter(|key| pending.insert(*key))
+                .filter(|key| match pending.get_mut(key) {
+                    Some(asked) if *asked || !on_screen => false,
+                    Some(asked) => {
+                        *asked = true;
+                        true
+                    }
+                    None => {
+                        pending.insert(*key, on_screen);
+                        true
+                    }
+                })
                 .map(|(_, id)| id)
                 .collect()
         };
         if need.is_empty() {
             return;
         }
-        tracing::debug!(n = need.len(), "hydrate request");
+        tracing::debug!(n = need.len(), on_screen, "hydrate request");
         if let Err(e) = self.app.dispatch(&Invocation::with_args(
             "hydrate",
-            &serde_json::json!({ "ids": need, "pane": pane }),
+            &serde_json::json!({ "ids": need, "pane": pane, "off_screen": !on_screen }),
         )) {
             tracing::warn!("hydrate: {e:#}");
         }
+    }
+
+    /// Under a sort by size, date or rating, ask for the metadata of every
+    /// entry the pane shows: until it comes, an entry sorts after the rest
+    /// (`SortKey::needs_metadata`). Asked again only when the entries or
+    /// the sort change, never per frame.
+    pub(crate) fn sync_sort_hydration(&mut self) {
+        let pane = self.pane;
+        let app = std::sync::Arc::clone(&self.app);
+        let (key, unknown) = {
+            let ws = app.workspace.read();
+            let Some(p) = ws.pane(pane) else { return };
+            // Once listed: while a folder streams in, its names change
+            // with every batch, and each look costs a pass over them.
+            if !p.sort.key.needs_metadata() || !p.listing.is_complete() {
+                return;
+            }
+            let key = (
+                p.listing.id(),
+                p.listing.names_version(),
+                p.tree_version(),
+                p.sort,
+                p.filter_version(),
+            );
+            if self.ui().list.sort_hydrated == Some(key) {
+                return;
+            }
+            (key, p.unknown())
+        };
+        self.ui_mut().list.sort_hydrated = Some(key);
+        self.request_hydrate_off_screen(unknown);
     }
 
     fn pane_key_context(&self) -> KeyContext {

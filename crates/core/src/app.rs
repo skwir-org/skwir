@@ -1465,6 +1465,10 @@ pub struct HydrateArgs {
     pub ids: Vec<EntryId>,
     #[serde(default)]
     pub pane: Option<PaneId>,
+    /// Entries not on screen (a sort by size reads every entry's): asked
+    /// after what is drawn.
+    #[serde(default)]
+    pub off_screen: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1953,8 +1957,13 @@ mod builtin {
                     .pane(pane)
                     .map(|p| p.by_location(&a.ids))
                     .unwrap_or_default();
+                let priority = if a.off_screen {
+                    Priority::Normal
+                } else {
+                    Priority::Visible
+                };
                 for (open, ids) in groups {
-                    open.hydrate(&ids, Priority::Visible);
+                    open.hydrate(&ids, priority);
                 }
                 Ok(Outcome::Done)
             },

@@ -1174,6 +1174,21 @@ impl Pane {
             .collect()
     }
 
+    /// The entries the pane shows whose metadata has not come yet,
+    /// folders too (places count their files from the start): what a
+    /// sort by size, date or rating places after the rest until it comes
+    /// (`SortKey::needs_metadata`), so whoever sorts so asks for them.
+    pub fn unknown(&self) -> Vec<EntryId> {
+        self.order()
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.entry(*id)
+                    .is_some_and(|e| !e.is_place() && !e.metadata.is_hydrated())
+            })
+            .collect()
+    }
+
     /// `order` before the filter.
     fn unfiltered_order(&self) -> Arc<[EntryId]> {
         let top = self.listing.sorted(self.sort);

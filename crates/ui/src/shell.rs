@@ -2325,6 +2325,7 @@ impl Shell {
             }
         };
         let message = crate::loading::message(self, id);
+        self.sync_sort_hydration();
         self.sync_narrow();
         let narrow = crate::narrow::render(self, cx);
         let file_area = self.pane_container(body, cx);

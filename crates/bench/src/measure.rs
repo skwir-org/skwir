@@ -68,6 +68,13 @@ pub struct Report {
     /// The Usage view's scan of the whole tree, forced (Refresh: nothing
     /// kept is reused), until it ends.
     pub usage_scan: Stat,
+    /// A listing of 100 000 entries, complete and sorted by size, hydrated
+    /// in batches as a pane sorted so asks for, the order read after each
+    /// batch as a frame does: the whole of it.
+    pub listing_sort_hydrate: Stat,
+    /// Then one file's size changed, as while a download grows, and the
+    /// order read again.
+    pub listing_sort_update: Stat,
 }
 
 /// Budgets file: `[profile] metric_us = max`.
@@ -635,6 +642,67 @@ pub fn usage_scans(root: &Path, profile: Profile, runs: usize) -> Vec<Duration> 
     (0..runs).map(|_| scan()).collect()
 }
 
+/// The listing's own work at the scale of a big folder, in memory: see
+/// `Report::listing_sort_hydrate` and `listing_sort_update`.
+pub fn listing_sort(profile: Profile, runs: usize) -> (Stat, Stat) {
+    use bibli_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
+    use bibli_core::location::{Listing, ListingEvent, SortKey, SortSpec};
+    if profile != Profile::Flat100k {
+        return (Stat::NONE, Stat::NONE);
+    }
+    let n: u64 = 100_000;
+    let bare = |ino: u64| {
+        Entry::new(
+            EntryId { dev: 1, ino },
+            format!("IMG_{:06}.jpg", ino.wrapping_mul(7_919) % n),
+            EntryKind::File,
+        )
+    };
+    let stated = |ino: u64, size: u64| {
+        let mut e = bare(ino);
+        e.metadata
+            .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
+        e
+    };
+    let spec = SortSpec {
+        key: SortKey::Size,
+        ..SortSpec::default()
+    };
+    let (mut hydrate, mut update) = (Vec::new(), Vec::new());
+    for _ in 0..runs {
+        let mut listing = Listing::default();
+        for batch in (0..n).collect::<Vec<u64>>().chunks(1_024) {
+            listing.apply(ListingEvent::Added(
+                batch.iter().map(|&i| bare(i)).collect(),
+            ));
+        }
+        listing.apply(ListingEvent::Complete);
+        std::hint::black_box(listing.sorted(spec));
+        let batches: Vec<Vec<Entry>> = (0..n)
+            .collect::<Vec<u64>>()
+            .chunks(1_024)
+            .map(|batch| {
+                batch
+                    .iter()
+                    .map(|&i| stated(i, i.wrapping_mul(2_654_435_761) % 1_000_000))
+                    .collect()
+            })
+            .collect();
+        let grown = stated(n / 2, 2_000_000);
+        let t = Instant::now();
+        for batch in batches {
+            listing.apply(ListingEvent::Updated(batch));
+            std::hint::black_box(listing.sorted(spec));
+        }
+        hydrate.push(t.elapsed());
+        let t = Instant::now();
+        listing.apply(ListingEvent::Updated(vec![grown]));
+        std::hint::black_box(listing.sorted(spec));
+        update.push(t.elapsed());
+    }
+    (Stat::of(hydrate), Stat::of(update))
+}
+
 /// Whether the generator could tag `dir` (see `generate::tag`).
 fn tagged(dir: &Path) -> bool {
     dir.join(".bibli-bench-tagged").exists()
@@ -673,6 +741,7 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         Profile::Deep1m => Stat::NONE,
         _ => tags_fill(&tags, &single, runs),
     };
+    let (listing_sort_hydrate, listing_sort_update) = listing_sort(profile, runs);
     Report {
         files: profile.file_count(),
         runs,
@@ -695,6 +764,8 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         tags_index_tally: Stat::NONE,
         tags_index_change: Stat::NONE,
         usage_scan: usage_scan(root, profile, runs),
+        listing_sort_hydrate,
+        listing_sort_update,
     }
 }
 
@@ -704,7 +775,7 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         eprintln!("bench: {}: no budgets, skipped", profile.name());
         return true;
     };
-    let measured: [(&str, &Stat); 18] = [
+    let measured: [(&str, &Stat); 20] = [
         ("first_batch_us", &report.first_batch),
         ("list_getdents_us", &report.list_getdents),
         ("list_std_us", &report.list_std),
@@ -723,6 +794,8 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         ("tags_index_tally_us", &report.tags_index_tally),
         ("tags_index_change_us", &report.tags_index_change),
         ("usage_scan_us", &report.usage_scan),
+        ("listing_sort_hydrate_us", &report.listing_sort_hydrate),
+        ("listing_sort_update_us", &report.listing_sort_update),
     ];
     let mut ok = true;
     for (key, stat) in measured {

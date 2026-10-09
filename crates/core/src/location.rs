@@ -593,6 +593,9 @@ pub struct Narrowing {
 pub enum SortKey {
     #[default]
     Name,
+    /// An entry not stat-ed yet sorts after those that are, in either
+    /// direction, as for every key below: a pane sorted by one asks for
+    /// every entry's metadata (`Pane::unknown`).
     Size,
     Modified,
     /// The user's rating (`keys::RATING`); unrated sorts as none.
@@ -600,6 +603,14 @@ pub enum SortKey {
     /// When a file of the trash was put there (`keys::TRASHED`); a file
     /// that does not say sorts as the oldest.
     Deleted,
+}
+
+impl SortKey {
+    /// Whether the order depends on what a stat finds, which a listing
+    /// learns only when its entries are hydrated.
+    pub fn needs_metadata(self) -> bool {
+        matches!(self, SortKey::Size | SortKey::Modified | SortKey::Rating)
+    }
 }
 
 /// A pane's sort and filter settings; the sorted order is cached in the listing.
@@ -623,8 +634,8 @@ impl Default for SortSpec {
 
 #[derive(Debug)]
 struct SortCache {
-    /// The versions the order depends on: see [`Listing::sorted`].
-    stamp: (u64, u64),
+    /// The version the order depends on whole: see [`Listing::sorted`].
+    stamp: u64,
     spec: SortSpec,
     ids: Arc<[EntryId]>,
     /// Whether companions were shown when `ids` was made.
@@ -632,10 +643,27 @@ struct SortCache {
     /// How many entries the listing held when `ids` was made: the ones
     /// after, in insertion order, are arrivals it has not placed yet.
     seen: usize,
-    /// `ids`' sort keys in brief, side by side, kept while the listing
-    /// streams in so that arrivals find their place without looking every
-    /// entry up (`Listing::place_arrivals`); empty once it is complete.
+    /// `ids`' sort keys in brief, side by side, so that arrivals and
+    /// entries that moved find their place without looking every entry
+    /// up (`Listing::place`).
     ranks: Vec<Rank>,
+    /// Entries placed whose key under `spec` changed since (a size, a
+    /// date, a rating): taken out and placed again.
+    moved: Vec<EntryId>,
+    /// Entries placed that the listing let go of since.
+    gone: IdSet,
+}
+
+impl SortCache {
+    /// Whether a change of `delta` moves an entry in this order.
+    fn moves(&self, delta: &Delta) -> bool {
+        match self.spec.key {
+            SortKey::Name => false,
+            SortKey::Size => delta.size,
+            SortKey::Modified | SortKey::Deleted => delta.modified,
+            SortKey::Rating => delta.rating,
+        }
+    }
 }
 
 /// An entry's sort key in brief: what `Listing::compare` compares, with
@@ -646,6 +674,7 @@ struct SortCache {
 #[derive(Clone, Copy, Debug)]
 struct Rank {
     file: bool,
+    unknown: bool,
     num: u64,
     prefix: u128,
     id: EntryId,
@@ -654,13 +683,14 @@ struct Rank {
 impl Rank {
     fn of(key: SortKeyOf<'_>) -> Self {
         let mut prefix = [0u8; 16];
-        let n = key.2.len().min(16);
-        prefix[..n].copy_from_slice(&key.2[..n]);
+        let n = key.3.len().min(16);
+        prefix[..n].copy_from_slice(&key.3[..n]);
         Rank {
             file: key.0,
-            num: key.1,
+            unknown: key.1,
+            num: key.2,
             prefix: u128::from_be_bytes(prefix),
-            id: key.3,
+            id: key.4,
         }
     }
 }
@@ -725,21 +755,48 @@ impl Delta {
         }
     }
 
-    /// Entries that went: whatever was placed after them moves.
-    fn removal() -> Self {
+    /// Entries that went: nothing left moves (the order takes them out,
+    /// `SortCache::gone`), unless one decided whether another is shown.
+    fn removal(companions: bool) -> Self {
         Delta {
             any: true,
             name: true,
-            order: true,
-            size: true,
-            modified: true,
-            rating: true,
+            order: companions,
+            ..Delta::default()
         }
     }
 }
 
+/// How many entries `Listing::place` puts in their places one by one;
+/// more are merged with the order in one pass.
+const FEW_PLACED: usize = 8;
+
+/// A set of entries asked about once per entry of a big order
+/// (`Listing::place`): hashed by a multiply, an id being two numbers the
+/// system gave, not a key anyone chooses.
+type IdSet = std::collections::HashSet<EntryId, std::hash::BuildHasherDefault<IdHasher>>;
+
+#[derive(Default)]
+struct IdHasher(u64);
+
+impl std::hash::Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+
+    fn write_u64(&mut self, n: u64) {
+        self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+}
+
 /// What an entry sorts by: see `Listing::sort_key`.
-type SortKeyOf<'a> = (bool, u64, &'a [u8], EntryId);
+type SortKeyOf<'a> = (bool, bool, u64, &'a [u8], EntryId);
 
 /// Every version of every listing is read from this one clock, so a value
 /// names one state of one listing. A pane that reopens its folder gets a
@@ -864,6 +921,26 @@ impl Listing {
             }
             ListingEvent::Removed(ids) => {
                 let before = self.entries.len();
+                // A companion gone, or the file one belonged to: whether
+                // the other is shown changed, so the order is made again.
+                let companions = !self.owners.is_empty()
+                    && ids.iter().any(|id| {
+                        self.entries.get(id).is_some_and(|slot| {
+                            slot.beside.is_some() || self.owners.contains(&slot.entry.name)
+                        })
+                    });
+                if let Some(c) = self.sort_cache.get_mut().as_mut() {
+                    // What the order placed leaves it; what it had not
+                    // placed yet leaves the arrivals still to place.
+                    for id in &ids {
+                        if let Some(at) = self.entries.get_index_of(id)
+                            && at < c.seen
+                            && c.gone.insert(*id)
+                        {
+                            c.seen -= 1;
+                        }
+                    }
+                }
                 if ids.len() > 16 {
                     // One pass instead of an O(n) shift per id.
                     let gone: std::collections::HashSet<EntryId> = ids.into_iter().collect();
@@ -874,7 +951,7 @@ impl Listing {
                     }
                 }
                 if self.entries.len() != before {
-                    delta = Delta::removal();
+                    delta = Delta::removal(companions);
                     self.removed_version = stamp();
                 }
             }
@@ -922,6 +999,11 @@ impl Listing {
                 let d = Delta::between(old, &e);
                 if !d.any {
                     return;
+                }
+                if let Some(c) = self.sort_cache.get_mut().as_mut()
+                    && c.moves(&d)
+                {
+                    c.moved.push(e.id);
                 }
                 if d.name {
                     let replaced = Slot::new(e, self.companions.as_deref());
@@ -985,6 +1067,12 @@ impl Listing {
         self.modified_version
     }
 
+    /// Changes to sizes (and to the files a place counts) so far,
+    /// hydration's first ones included.
+    pub fn size_version(&self) -> u64 {
+        self.size_version
+    }
+
     /// Changes to the location itself (its folder's attributes, its tags)
     /// so far: what describes the folder shown reads it again when it moves.
     pub fn itself_version(&self) -> u64 {
@@ -998,32 +1086,23 @@ impl Listing {
     }
 
     /// The ids in `spec` order, directories first. Cached until something
-    /// the order depends on changes: a metadata batch re-sorts only a sort
-    /// by size or date, so calling this every frame is cheap. Entries that
-    /// arrived since are placed in the cached order rather than sorting
+    /// the order depends on changes: a metadata batch moves only what it
+    /// changed under a sort by size, date or rating, so calling this every
+    /// frame is cheap. Entries that arrived, moved or went since are put
+    /// in their places in the cached order (`place`) rather than sorting
     /// again: a folder of 366 000 entries streams in hundreds of batches,
-    /// and sorting it whole after each one cost a tenth of a second a time.
+    /// and hydrated in as many more under a sort by size, and sorting it
+    /// whole after each one cost a tenth of a second a time.
     /// Until the listing is complete, the order may leave out the latest
     /// arrivals (see the placement rule below); once it is, it holds every
     /// shown entry.
     pub fn sorted(&self, spec: SortSpec) -> Arc<[EntryId]> {
-        let stamp = (
-            self.order_version,
-            match spec.key {
-                SortKey::Name => 0,
-                SortKey::Size => self.size_version,
-                SortKey::Modified | SortKey::Deleted => self.modified_version,
-                SortKey::Rating => self.rating_version,
-            },
-        );
         let companions_shown = self.companions_shown();
         let mut cache = self.sort_cache.lock();
         if let Some(c) = cache.as_mut()
-            && c.stamp == stamp
+            && c.stamp == self.order_version
             && c.spec == spec
             && c.companions_shown == companions_shown
-            && (c.seen == self.entries.len()
-                || (c.seen < self.entries.len() && !c.ranks.is_empty()))
         {
             // While the listing streams in, arrivals are placed once they
             // are a quarter of what is placed: each placement copies the
@@ -1031,43 +1110,40 @@ impl Listing {
             // copied it hundreds of times. Growing by quarters, the copies
             // add up to a few times the final order; the order shown lags by
             // at most that much, and is whole once the listing completes.
-            let arrivals = self.entries.len() - c.seen;
-            if arrivals > 0 && (self.complete || arrivals * 4 >= c.ranks.len()) {
-                self.place_arrivals(c, spec);
-            }
-            if self.complete {
-                c.ranks = Vec::new();
+            // What went is never left in it.
+            let waiting = self.entries.len() - c.seen + c.moved.len();
+            if !c.gone.is_empty() || waiting > 0 && (self.complete || waiting * 4 >= c.ranks.len())
+            {
+                self.place(c, spec);
             }
             return Arc::clone(&c.ids);
         }
         let keyed = self.keyed(spec);
-        let ids: Arc<[EntryId]> = keyed.iter().map(|key| key.3).collect();
-        // Arrivals after completion are the watcher's, one at a time: a
-        // full sort for those, and no ranks kept once nothing streams in.
-        let ranks = if self.complete {
-            Vec::new()
-        } else {
-            keyed.into_iter().map(Rank::of).collect()
-        };
+        let ids: Arc<[EntryId]> = keyed.iter().map(|key| key.4).collect();
         *cache = Some(SortCache {
-            stamp,
+            stamp: self.order_version,
             spec,
             companions_shown,
             ids: Arc::clone(&ids),
             seen: self.entries.len(),
-            ranks,
+            ranks: keyed.into_iter().map(Rank::of).collect(),
+            moved: Vec::new(),
+            gone: IdSet::default(),
         });
         ids
     }
 
     /// What an entry is sorted by under `spec`: files after directories,
-    /// then the size or date (0 for a name sort, or when unknown), then the
-    /// name's collation key, then the id, so that no two entries tie: the
-    /// order is one order, whether made whole or by placing arrivals, and
-    /// equal names do not trade places from one sort to the next.
+    /// then whether its key is still unknown (not stat-ed yet: after the
+    /// rest, whichever the direction), then the size or date (0 for a
+    /// name sort, or when the entry has none), then the name's collation
+    /// key, then the id, so that no two entries tie: the order is one
+    /// order, whether made whole or by placing arrivals, and equal names do
+    /// not trade places from one sort to the next.
     fn sort_key(spec: SortSpec, slot: &Slot) -> SortKeyOf<'_> {
         use crate::entry::{Value, keys};
         let e = &slot.entry;
+        let unknown = spec.key.needs_metadata() && !e.metadata.is_hydrated();
         let num = match spec.key {
             SortKey::Name => 0,
             // A place by how many files it holds.
@@ -1096,16 +1172,17 @@ impl Listing {
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
         };
-        (!e.is_dir(), num, &*slot.key, e.id)
+        (!e.is_dir(), unknown, num, &*slot.key, e.id)
     }
 
     fn compare(spec: SortSpec, a: SortKeyOf<'_>, b: SortKeyOf<'_>) -> std::cmp::Ordering {
         a.0.cmp(&b.0)
+            .then_with(|| a.1.cmp(&b.1))
             .then_with(|| {
-                let o = a.1.cmp(&b.1).then_with(|| a.2.cmp(b.2));
+                let o = a.2.cmp(&b.2).then_with(|| a.3.cmp(b.3));
                 if spec.ascending { o } else { o.reverse() }
             })
-            .then_with(|| a.3.cmp(&b.3))
+            .then_with(|| a.4.cmp(&b.4))
     }
 
     /// Whether `slot` is shown under `spec`: a hidden file only with hidden
@@ -1155,7 +1232,7 @@ impl Listing {
 
     #[cfg(test)]
     fn compute_sorted(&self, spec: SortSpec) -> Arc<[EntryId]> {
-        self.keyed(spec).iter().map(|key| key.3).collect()
+        self.keyed(spec).iter().map(|key| key.4).collect()
     }
 
     /// Where `placed` (a rank of the cached order) stands against `key`,
@@ -1170,35 +1247,72 @@ impl Listing {
         placed
             .file
             .cmp(&rank.file)
+            .then_with(|| placed.unknown.cmp(&rank.unknown))
             .then_with(|| {
                 let o = (placed.num, placed.prefix)
                     .cmp(&(rank.num, rank.prefix))
                     .then_with(|| {
                         let slot = self.entries.get(&placed.id).expect("a ranked id is listed");
-                        (*slot.key).cmp(key.2)
+                        (*slot.key).cmp(key.3)
                     });
                 if spec.ascending { o } else { o.reverse() }
             })
             .then_with(|| placed.id.cmp(&rank.id))
     }
 
-    /// The cached order with the entries after its first `seen` put in their
-    /// places: the arrivals are sorted among themselves, then merged with
-    /// the ranks in one pass, which the copy of the order costs anyway. Removals and moves never come here; they change
-    /// `order_version`, and the order is made again.
-    fn place_arrivals(&self, cache: &mut SortCache, spec: SortSpec) {
+    /// The cached order with what changed put in its place: the entries
+    /// that went taken out, those that moved taken out and placed again
+    /// with the arrivals (the entries after its first `seen`), which are
+    /// sorted among themselves and merged with the ranks in one pass, which
+    /// the copy of the order costs anyway. A new name or kind never comes
+    /// here; it changes `order_version`, and the order is made again.
+    fn place(&self, cache: &mut SortCache, spec: SortSpec) {
         let listed = self.listed();
         let companions = self.companions_shown();
-        let mut arrivals: Vec<SortKeyOf<'_>> = self.entries.as_slice()[cache.seen..]
-            .values()
-            .filter(|slot| Self::shown(spec, slot, listed.as_ref(), companions))
-            .map(|slot| Self::sort_key(spec, slot))
-            .collect();
-        arrivals.sort_unstable_by(|a, b| Self::compare(spec, *a, *b));
+        let shown = |slot: &&Slot| Self::shown(spec, slot, listed.as_ref(), companions);
+        let mut out = std::mem::take(&mut cache.gone);
+        let mut again: Vec<SortKeyOf<'_>> = Vec::new();
+        for id in std::mem::take(&mut cache.moved) {
+            // One not placed yet is an arrival, placed below.
+            if let Some((at, _, slot)) = self.entries.get_full(&id)
+                && at < cache.seen
+                && out.insert(id)
+                && shown(&slot)
+            {
+                again.push(Self::sort_key(spec, slot));
+            }
+        }
+        again.extend(
+            self.entries.as_slice()[cache.seen..]
+                .values()
+                .filter(shown)
+                .map(|slot| Self::sort_key(spec, slot)),
+        );
+        again.sort_unstable_by(|a, b| Self::compare(spec, *a, *b));
+        // A few (a file growing, one arriving): each found and put in its
+        // place where the order is, a search apiece instead of a merge
+        // that compares every rank.
+        if out.len() + again.len() <= FEW_PLACED {
+            let ranks = &mut cache.ranks;
+            ranks.retain(|r| !out.contains(&r.id));
+            for key in again {
+                let rank = Rank::of(key);
+                let at = ranks.partition_point(|p| {
+                    self.compare_rank(spec, p, key, &rank) != std::cmp::Ordering::Greater
+                });
+                ranks.insert(at, rank);
+            }
+            cache.ids = ranks.iter().map(|r| r.id).collect();
+            cache.seen = self.entries.len();
+            return;
+        }
         let placed = &cache.ranks;
-        let mut ranks = Vec::with_capacity(placed.len() + arrivals.len());
-        let mut old = placed.iter().peekable();
-        for key in arrivals {
+        let mut ranks = Vec::with_capacity(placed.len() + again.len());
+        let mut old = placed
+            .iter()
+            .filter(|r| out.is_empty() || !out.contains(&r.id))
+            .peekable();
+        for key in again {
             let rank = Rank::of(key);
             while let Some(p) = old
                 .next_if(|p| self.compare_rank(spec, p, key, &rank) != std::cmp::Ordering::Greater)
@@ -1442,11 +1556,22 @@ mod tests {
             Arc::ptr_eq(&names, &listing.sorted(by_name)),
             "not sorted again"
         );
+        // What is not stat-ed yet comes after what is, by name.
         let sizes: Vec<u64> = listing.sorted(by_size).iter().map(|id| id.ino).collect();
-        assert_eq!(sizes, [3, 2, 1, 4]);
+        assert_eq!(sizes, [4, 3, 2, 1]);
         listing.apply(ListingEvent::Updated(vec![stat(file(2, "f2"), 9)]));
         let sizes: Vec<u64> = listing.sorted(by_size).iter().map(|id| id.ino).collect();
-        assert_eq!(sizes, [3, 1, 4, 2]);
+        assert_eq!(sizes, [4, 2, 3, 1]);
+        let largest_first = SortSpec {
+            ascending: false,
+            ..by_size
+        };
+        let sizes: Vec<u64> = listing
+            .sorted(largest_first)
+            .iter()
+            .map(|id| id.ino)
+            .collect();
+        assert_eq!(sizes, [2, 4, 1, 3], "and still after it the other way");
     }
 
     #[test]
@@ -1583,6 +1708,90 @@ mod tests {
                     *listing.compute_sorted(spec),
                     "{spec:?}"
                 );
+            }
+        }
+    }
+
+    /// A listing hydrated in batches once complete, as a sort by size asks
+    /// for every entry's metadata, keeps the order a full sort gives: what
+    /// a batch stat-ed moves from among the unknown to its place, what
+    /// went leaves, whichever the direction.
+    #[test]
+    fn hydration_and_removals_are_placed_where_a_full_sort_puts_them() {
+        use crate::entry::{Provenance, Value, keys};
+        let bare = |ino: u64| {
+            let kind = if ino.is_multiple_of(7) {
+                EntryKind::Directory
+            } else {
+                EntryKind::File
+            };
+            Entry::new(EntryId { dev: 1, ino }, format!("n{}", ino % 13), kind)
+        };
+        let stated = |ino: u64| {
+            let mut e = bare(ino);
+            e.metadata.set(
+                keys::SIZE,
+                Value::UInt(ino.wrapping_mul(2_654_435_761) % 9),
+                Provenance::Filesystem,
+            );
+            e.metadata.set(
+                keys::MODIFIED,
+                Value::Time(std::time::UNIX_EPOCH + std::time::Duration::from_secs(ino % 5)),
+                Provenance::Filesystem,
+            );
+            e
+        };
+        for key in [SortKey::Size, SortKey::Modified, SortKey::Name] {
+            for ascending in [true, false] {
+                let spec = SortSpec {
+                    key,
+                    ascending,
+                    show_hidden: false,
+                };
+                let mut listing = Listing::default();
+                listing.apply(ListingEvent::Added((0..200).map(bare).collect()));
+                listing.apply(ListingEvent::Complete);
+                assert_eq!(*listing.sorted(spec), *listing.compute_sorted(spec));
+                for (n, batch) in (0..200).collect::<Vec<u64>>().chunks(23).enumerate() {
+                    listing.apply(ListingEvent::Updated(
+                        batch.iter().map(|i| stated(*i)).collect(),
+                    ));
+                    if n % 3 == 1 {
+                        listing.apply(ListingEvent::Removed(vec![
+                            EntryId {
+                                dev: 1,
+                                ino: batch[0],
+                            },
+                            EntryId {
+                                dev: 1,
+                                ino: 199 - batch[1],
+                            },
+                        ]));
+                    }
+                    if n == 4 {
+                        listing.apply(ListingEvent::Added(vec![stated(500), bare(501)]));
+                    }
+                    assert_eq!(
+                        *listing.sorted(spec),
+                        *listing.compute_sorted(spec),
+                        "{spec:?} after batch {n}"
+                    );
+                }
+                // One at a time, as a watcher's changes come: put in place
+                // by a search each.
+                for ino in [10, 11, 600, 12] {
+                    if ino == 600 {
+                        listing.apply(ListingEvent::Added(vec![stated(ino)]));
+                    } else {
+                        let mut e = stated(ino);
+                        e.metadata
+                            .set(keys::SIZE, Value::UInt(ino % 4), Provenance::Filesystem);
+                        listing.apply(ListingEvent::Updated(vec![e]));
+                    }
+                    assert_eq!(*listing.sorted(spec), *listing.compute_sorted(spec));
+                }
+                listing.apply(ListingEvent::Removed(vec![EntryId { dev: 1, ino: 11 }]));
+                assert_eq!(*listing.sorted(spec), *listing.compute_sorted(spec));
             }
         }
     }

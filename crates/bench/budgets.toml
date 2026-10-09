@@ -17,6 +17,11 @@ stream_complete_us = 100_000
 tags_fill_us = 550_000
 # The Usage view's scan of the folder, forced (Refresh; 147 ms, warm).
 usage_scan_us = 450_000
+# A listing of 100,000 entries sorted by size, hydrated in 98 batches with
+# the order read after each (0.46 s; a full sort after each took ~3 s),
+# then one size changed (1 ms; a full sort is ~30 ms). In memory.
+listing_sort_hydrate_us = 1_500_000
+listing_sort_update_us = 4_000
 
 [deep1m]
 first_batch_us = 500
