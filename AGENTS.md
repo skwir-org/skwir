@@ -627,7 +627,10 @@ current source before assuming a planned crate, command, or API exists.
   bottom of its box, so the name is always right under it, and up to three
   lines of name. An icon fills its box like a square thumbnail
   (`GridView::icon`): drawn smaller, it floats above its name with a blank
-  on top. Tiles sit in slots (`elements/uniform_grid.rs::math::Slots`):
+  on top. A thumbnail is given its size, its own fitted to the box
+  (`grid::fitted`), never `max_w` and `max_h` alone: GPUI's image keeps
+  its aspect ratio over `max_h`, and a portrait stood over the name
+  above it. Tiles sit in slots (`elements/uniform_grid.rs::math::Slots`):
   a slot is a tile plus the least gutter, spare width widens the gutters up
   to a cap in prepaint, and the rest becomes the margins. Columns are uniform,
   rows are not: a row is as tall as its longest name needs, so rows of short

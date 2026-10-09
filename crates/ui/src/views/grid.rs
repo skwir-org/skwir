@@ -212,12 +212,19 @@ fn cell(
             .overflow_hidden()
             .child(img(ri).size_full().object_fit(gpui::ObjectFit::Cover))
             .into_any_element(),
-        ThumbView::Ready(ri) => img(ri)
-            .max_w(px(zoom as f32))
-            .max_h(px(zoom as f32))
-            .object_fit(gpui::ObjectFit::Contain)
-            .rounded_sm()
-            .into_any_element(),
+        ThumbView::Ready(ri) => {
+            let own = ri.size(0);
+            let (width, height) = fitted(
+                (own.width.0.max(1) as f32, own.height.0.max(1) as f32),
+                zoom as f32,
+            );
+            img(ri)
+                .w(px(width))
+                .h(px(height))
+                .object_fit(gpui::ObjectFit::Contain)
+                .rounded_sm()
+                .into_any_element()
+        }
         ThumbView::Pending => div()
             .size(px(zoom as f32 * 0.6))
             .rounded_md()
@@ -295,6 +302,16 @@ fn cell(
         shell.font.clone(),
     ));
     crate::views::entry::behave(el, &look, ix, shell, cx).into_any_element()
+}
+
+/// A thumbnail's size on its tile: its own, shrunk until its longer side
+/// is the box's, never enlarged. Given whole, not left to the image's
+/// `max_w` and `max_h`: an image keeps its own aspect ratio over its
+/// `max_h`, so a portrait taller than its box was clamped in width only
+/// and stood over the name above it, out of its own highlight.
+fn fitted((width, height): (f32, f32), side: f32) -> (f32, f32) {
+    let scale = (side / width).min(side / height).min(1.);
+    (width * scale, height * scale)
 }
 
 /// The pictures a place's tile shows (`keys::PLACE_PICTURES`): each one's
@@ -517,5 +534,23 @@ impl PaneView for GridView {
 
     fn reset(&mut self) {
         self.scroll.scroll_to_item_strict(0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fitted;
+
+    #[test]
+    fn a_thumbnail_fits_its_box_whatever_its_shape() {
+        // A normal thumbnail (128 px) at the 96 px step: a portrait is as
+        // tall as the box, never taller, a landscape as wide.
+        assert_eq!(fitted((85., 128.), 96.), (63.75, 96.));
+        assert_eq!(fitted((128., 85.), 96.), (96., 63.75));
+        // A large one (256 px) at the 192 px step, a strip at 64 px.
+        assert_eq!(fitted((192., 256.), 192.), (144., 192.));
+        assert_eq!(fitted((43., 128.), 64.), (21.5, 64.));
+        // A picture smaller than the box stays its size.
+        assert_eq!(fitted((40., 60.), 128.), (40., 60.));
     }
 }
