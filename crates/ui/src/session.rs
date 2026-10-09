@@ -28,6 +28,8 @@ pub struct Session {
     pub row_zoom: u32,
     /// Levels of folders the Usage map draws; 0 until changed.
     pub levels: u32,
+    /// What the Usage map's blocks say.
+    pub usage_mode: crate::usage::Mode,
     /// The sidebar put away with F9 (it also gives way to a narrow window).
     pub sidebar_hidden: bool,
     /// How its groups were arranged: their order, those put away or folded.
@@ -100,6 +102,7 @@ impl Shell {
             zoom: self.zoom,
             row_zoom: self.row_zoom,
             levels: self.levels,
+            usage_mode: self.usage_mode,
             sidebar_hidden: self.sidebar_hidden,
             sidebar_sections: self.sidebar_sections.clone(),
             sidebar_width: self.sidebar_width,

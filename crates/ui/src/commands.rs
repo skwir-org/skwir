@@ -60,6 +60,12 @@ mod args {
         dir: Option<String>,
     }
 
+    /// What the Usage map's blocks say.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct UsageMode {
+        mode: crate::usage::Mode,
+    }
+
     /// A text to start from.
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Text {
@@ -370,7 +376,7 @@ mod args {
 use args::{
     Amount, Ask, Bucket, Close, Continue, CopyText, Cursor, Delta, Dir, Find, Folders, History,
     Key, Layout, ListMoveArgs, Object, On, Page, PageLink, Pages, Pan, Pick, Player, Pointer,
-    Popup, Scrub, Settings, Sort, Split, Submit, TagsPrompt, Text, Unlock, Url, View,
+    Popup, Scrub, Settings, Sort, Split, Submit, TagsPrompt, Text, Unlock, Url, UsageMode, View,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -394,6 +400,7 @@ const SHOWS: &[&str] = &[
     "ui.peek",
     "ui.peek_close",
     "ui.usage_refresh",
+    "ui.usage_mode",
     "ui.rename_prompt",
     "ui.mkdir_prompt",
     "ui.new_file_prompt",
@@ -637,6 +644,12 @@ pub fn declare_all(app: &App) {
         "ui.usage_refresh",
         "Measure again",
         "Measure what the Usage view shows again",
+    );
+    declare::<UsageMode>(
+        app,
+        "ui.usage_mode",
+        "Usage map shows",
+        "Size the Usage map's blocks by the room or the files they hold, or color them by when they changed or the kinds of their files",
     );
     // Asking and naming.
     none(

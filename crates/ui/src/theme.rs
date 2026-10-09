@@ -14,9 +14,11 @@
 //!   `drop_target` under a drag, `on_fill` for text on a saturated fill,
 //!   `handle` for an edge being dragged, `band` and `band_edge` for the
 //!   rubber band, `block_hover` and `block_selected` for a block of the
-//!   Usage map pointed at and chosen, over any fill, and `block_rest` for
+//!   Usage map pointed at and chosen, over any fill, `block_rest` for
 //!   a block that stands for several entries (the smaller ones, the
-//!   hidden ones).
+//!   hidden ones), and `block_reclaim` for the line around a block whose
+//!   room can be had back (a cache, a trash); its fills are `block`,
+//!   `block_age` and `block_kind`.
 //!   `map_*` draw a map: its graticule, a track, and a route with the
 //!   places and areas of a file; land, water and borders are the offline
 //!   background's.
@@ -32,6 +34,7 @@
 //! - spacing: multiples of 4 px; rows are 26 px, controls 28 px, bars 42 px
 //!   (a pane's row, the sidebar's header, the tab strip: their edges meet).
 
+use bibli_platform::mime::Kind;
 use gpui::{Global, Hsla, WindowAppearance, rgb};
 
 /// The color tokens every module renders with.
@@ -86,6 +89,9 @@ pub struct Theme {
     pub block_hover: Hsla,
     /// The ring around a chosen block of the Usage map.
     pub block_selected: Hsla,
+    /// The dashed line inside a block of the Usage map whose room can be
+    /// had back, on any fill.
+    pub block_reclaim: Hsla,
     /// A block of the Usage map that stands for several entries, under
     /// text in `text`.
     pub block_rest: Hsla,
@@ -111,6 +117,9 @@ fn palette(hex: [u32; 16]) -> [Hsla; 16] {
 }
 
 impl Global for Theme {}
+
+/// The steps of `Theme::block_age`.
+pub const AGES: usize = 5;
 
 impl Theme {
     pub fn light() -> Self {
@@ -147,6 +156,7 @@ impl Theme {
             chart: Hsla::from(rgb(0x2f6feb)).opacity(0.6),
             block_hover: gpui::white().opacity(0.2),
             block_selected: rgb(0x1f1f1f).into(),
+            block_reclaim: gpui::white().opacity(0.85),
             block_rest: rgb(0xdcdcdc).into(),
             map_grid: rgb(0xe6e6e6).into(),
             map_track: rgb(0x2f6feb).into(),
@@ -196,6 +206,7 @@ impl Theme {
             chart: Hsla::from(rgb(0x6ea8fe)).opacity(0.6),
             block_hover: gpui::white().opacity(0.16),
             block_selected: gpui::white(),
+            block_reclaim: gpui::white().opacity(0.75),
             block_rest: rgb(0x383838).into(),
             map_grid: rgb(0x2c2c2c).into(),
             map_track: rgb(0x6ea8fe).into(),
@@ -223,6 +234,49 @@ impl Theme {
         color.l = 0.40 + depth.min(3) as f32 * 0.035;
         color.a = 1.;
         color
+    }
+
+    /// The fill of a block of the Usage map changed `age` steps ago
+    /// (`AGES`: within a day, a week, a month, a year, longer): warm and
+    /// bright when new, a grey slate when old, lighter the deeper it lies.
+    pub fn block_age(&self, age: usize, depth: usize) -> Hsla {
+        const RAMP: [(f32, f32); AGES] = [
+            (0.07, 0.80),
+            (0.10, 0.62),
+            (0.14, 0.45),
+            (0.55, 0.22),
+            (0.60, 0.06),
+        ];
+        let (h, s) = RAMP[age.min(AGES - 1)];
+        gpui::hsla(h, s, 0.40 + depth.min(3) as f32 * 0.035, 1.)
+    }
+
+    /// The fill of a block of the Usage map whose files are mostly of
+    /// `kind` (`None`: of no kind the names say), `share` of its bytes:
+    /// a file wears its kind whole, a folder of mixed files greyer.
+    pub fn block_kind(&self, kind: Option<Kind>, share: f32, depth: usize) -> Hsla {
+        // Each hue, and how much darker it is drawn: green, cyan and
+        // amber look lighter than blue at one lightness, and white text
+        // must read on all of them.
+        let (hue, darker) = match kind {
+            Some(Kind::Image) => (0.39, 0.10),
+            Some(Kind::Video) => (0.92, 0.),
+            Some(Kind::Audio) => (0.07, 0.04),
+            Some(Kind::Document) => (0.60, 0.),
+            Some(Kind::Spreadsheet) => (0.45, 0.08),
+            Some(Kind::Presentation) => (0.12, 0.08),
+            Some(Kind::Text) => (0.74, 0.),
+            Some(Kind::Archive) => (0.03, 0.),
+            Some(Kind::Font) => (0.83, 0.),
+            Some(Kind::Program) => (0.53, 0.08),
+            Some(Kind::Folder) | None => (0., 0.),
+        };
+        let s = if kind.is_none_or(|k| k == Kind::Folder) {
+            0.
+        } else {
+            0.12 + 0.48 * share.clamp(0., 1.)
+        };
+        gpui::hsla(hue, s, 0.40 - darker + depth.min(3) as f32 * 0.035, 1.)
     }
 
     /// The fill of a chip of a tag wearing color `index` (see `tags`),

@@ -662,7 +662,8 @@ current source before assuming a planned crate, command, or API exists.
 - **What the window remembers.** The shape of the last window (view, split
   and its arrangement and share, sidebar width, preview with its place, width
   and height, where a file of an archive goes beside its archive's view and
-  their shares, timeline, zoom, the list's column widths) is application
+  their shares, timeline, zoom, the Usage map's levels and mode, the list's
+  column widths) is application
   data, not preference:
   `session.rs` keeps it under one key, restores it at startup and writes it
   only when it changes, never per frame. A new pane opens in the view the

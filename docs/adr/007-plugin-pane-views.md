@@ -151,3 +151,29 @@ are not shown, and the other items each take one block, so no block is
 drawn larger than its share. The arrows move to the block beside on the
 map (`treemap::neighbour`, from the rectangles the last prepaint laid
 out); the footer weighs folders as the map does (`PaneView::weighs`).
+
+Amended again 2026-10-09: the map has modes (`usage::Mode`, the
+window's, remembered with its shape, `ui.usage_mode`): blocks sized by
+the room they take (the default) or by the files they hold, or sized
+by room and colored by their newest change or by the kind of files
+that fill them, each with a legend. The scan counts all of it as it
+sizes them, and every breakdown kept keeps it: a file's kind, by its
+extension as the desktop's database types it, asked once per extension
+(the database takes about 13 µs a name, the walk 2 µs a file; a name
+without one is of no kind), and a folder's bytes by kind; each entry's
+newest change (a folder's is its newest file's, its own only when it
+holds none: a folder filled today with old files is old); the other
+items' files and newest change. Measured against the scan before them,
+alternating builds: about 110 ns of CPU a file, some 5% of a scan, the
+wall time lost in the machine's noise. A folder of many small files is
+kept and opened for its files as for its bytes (`trim` keeps the 16
+holding the most among those past the 64 heaviest; `nest` opens a
+folder holding 1/256 of the files), so the map sized by files draws
+it. Room that can be had back as a whole is marked in every mode, a
+dashed line inside the block: a cache (a folder holding a signed
+`CACHEDIR.TAG`, the user's cache folder) or a trash (the home trash, a
+volume's known by its name, `trash::named_as_trash`: asking the volumes
+for their trashes reads each one's device). Each folder says how much
+of it such folders hold, and the header sums it for the folder shown.
+While something is selected, the line under the map says what Delete
+does to its room: the Trash keeps it on the disk until it is emptied.

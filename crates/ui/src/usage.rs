@@ -8,21 +8,29 @@
 //! level draws its whole folder: the entries too small to draw and, while
 //! hidden files are not shown, the hidden ones each take a block of their
 //! own, so no block looks larger than it is.
+//!
+//! What a block's size and color say is the map's mode (`Mode`, the
+//! window's): the room it takes in its folder's hue, the files it holds,
+//! when it last changed, or the kind of files that fill it. A block whose
+//! room can be had back as a whole (a cache, a trash) is lined, in every
+//! mode.
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bibli_core::{EntryId, command::Invocation, os_path::PathArg};
+use bibli_platform::mime::Kind;
 use gpui::{AnyElement, Context, MouseButton, Window, div, prelude::*, px};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::elements::treemap::{Laidout, TreemapItem, TreemapStyle, treemap};
 use crate::treemap::{Toward, neighbour};
 use crate::{
     format,
     shell::Shell,
-    theme::Theme,
+    theme::{AGES, Theme},
     toolbar::{self, Button},
     view::{Nav, PaneView, Weighs, Zooms},
 };
@@ -33,6 +41,66 @@ pub const LEVELS: [u32; 4] = [1, 2, 3, 4];
 pub const MAX_LEVELS: u32 = LEVELS[LEVELS.len() - 1];
 pub const DEFAULT_LEVELS: u32 = 3;
 
+/// What the map draws of each block (`Shell::usage_mode`): the window's,
+/// remembered with its shape.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// As large as the room it takes, in its folder's hue.
+    #[default]
+    Size,
+    /// As large as the files it holds.
+    Files,
+    /// As large as the room it takes, warmer the newer its last change.
+    Age,
+    /// As large as the room it takes, in the color of the kind of files
+    /// that take most of it.
+    Types,
+}
+
+impl Mode {
+    pub const ALL: [Mode; 4] = [Mode::Size, Mode::Files, Mode::Age, Mode::Types];
+
+    /// Its word in `ui.usage_mode`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Mode::Size => "size",
+            Mode::Files => "files",
+            Mode::Age => "age",
+            Mode::Types => "types",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Mode::Size => "Size",
+            Mode::Files => "Files",
+            Mode::Age => "Age",
+            Mode::Types => "Types",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Mode::Size => "Blocks as large as the room they take",
+            Mode::Files => "Blocks as large as the files they hold",
+            Mode::Age => "Blocks colored by when they last changed",
+            Mode::Types => "Blocks colored by the kind of files that fill them",
+        }
+    }
+}
+
+/// Room that can be had back as a whole.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Reclaim {
+    /// Its program makes it again when it needs it.
+    Cache,
+    /// Freed when the Trash is emptied.
+    Trash,
+}
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Node {
     pub id: Option<EntryId>,
@@ -42,12 +110,56 @@ pub struct Node {
     pub incomplete: bool,
     pub size: u64,
     pub alloc: u64,
+    #[serde(default)]
+    pub files: u64,
+    /// Its newest change, in seconds since 1970; 0 when unknown.
+    #[serde(default)]
+    pub modified: i64,
+    /// A file's kind.
+    #[serde(default)]
+    pub kind: Option<Kind>,
+    /// A folder's bytes by the kinds' names (`other`: of no kind).
+    #[serde(default)]
+    pub kinds: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub reclaim: Option<Reclaim>,
+    /// Its bytes that caches and trashes hold.
+    #[serde(default)]
+    pub reclaimable: u64,
     pub children: Vec<Node>,
     pub other_alloc: u64,
     #[serde(default)]
     pub other_size: u64,
     pub other_count: u64,
     pub other_incomplete: u64,
+    #[serde(default)]
+    pub other_files: u64,
+    #[serde(default)]
+    pub other_modified: i64,
+}
+
+impl Node {
+    /// What its block weighs in `mode`.
+    fn measure(&self, mode: Mode) -> u64 {
+        match mode {
+            Mode::Files => self.files,
+            Mode::Size | Mode::Age | Mode::Types => self.alloc,
+        }
+    }
+
+    /// Its bytes by kind, the heaviest first: a file's are all its kind's.
+    fn kinds(&self) -> Vec<(Option<Kind>, u64)> {
+        if !self.is_dir {
+            return vec![(self.kind, self.alloc)];
+        }
+        let mut kinds: Vec<_> = self
+            .kinds
+            .iter()
+            .map(|(name, bytes)| (Kind::from_name(name), *bytes))
+            .collect();
+        kinds.sort_by_key(|(_, bytes)| std::cmp::Reverse(*bytes));
+        kinds
+    }
 }
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Status {
@@ -218,12 +330,96 @@ fn share(part: u64, whole: u64) -> String {
     }
 }
 
+/// How long ago `modified` was, as `Theme::block_age` steps: within a
+/// day, a week, a month, a year, or longer (or unknown).
+fn age(modified: i64, now: i64) -> usize {
+    const DAY: i64 = 86_400;
+    if modified <= 0 {
+        return AGES - 1;
+    }
+    let elapsed = now - modified;
+    [DAY, 7 * DAY, 31 * DAY, 365 * DAY]
+        .iter()
+        .position(|limit| elapsed < *limit)
+        .unwrap_or(AGES - 1)
+}
+
+/// What the legend calls each step of `age`.
+const AGE_NAMES: [&str; AGES] = ["a day", "a week", "a month", "a year", "longer"];
+
+/// A kind as the legend and the hints say it.
+fn kind_title(kind: Option<Kind>) -> &'static str {
+    kind.map_or("Other files", Kind::title)
+}
+
+/// `Videos 62% · Images 30%`: the kinds that take a tenth of `node` or
+/// more, the heaviest first; `Videos` alone when one takes it all.
+fn kinds_said(node: &Node) -> String {
+    let kinds = node.kinds();
+    let total: u64 = kinds.iter().map(|(_, bytes)| bytes).sum();
+    match kinds.as_slice() {
+        [] => String::new(),
+        [(kind, _)] => kind_title(*kind).to_owned(),
+        _ => kinds
+            .iter()
+            .filter(|(_, bytes)| bytes * 10 >= total)
+            .map(|(kind, bytes)| format!("{} {}", kind_title(*kind), share(*bytes, total)))
+            .collect::<Vec<_>>()
+            .join(" · "),
+    }
+}
+
+/// What a block whose room can be had back says of it, or of what lies
+/// in it (`within`: a cache or a trash it lies in).
+fn reclaim_said(node: &Node, within: Option<Reclaim>) -> Option<String> {
+    match node.reclaim.or(within) {
+        Some(Reclaim::Cache) if node.reclaim.is_some() => {
+            Some("a cache, which its program makes again when needed".into())
+        }
+        Some(Reclaim::Cache) => {
+            Some("in a cache, which its program makes again when needed".into())
+        }
+        Some(Reclaim::Trash) => Some("in the Trash: emptying it frees this".into()),
+        None if node.reclaimable > 0 => Some(format!(
+            "{} of it in caches and the Trash",
+            format::size(node.reclaimable.min(node.alloc))
+        )),
+        None => None,
+    }
+}
+
+/// The entries of a folder drawn together: the hidden ones.
+#[derive(Default)]
+struct Gathered {
+    size: u64,
+    alloc: u64,
+    files: u64,
+    modified: i64,
+    count: usize,
+    incomplete: bool,
+}
+
+impl Gathered {
+    fn add(&mut self, node: &Node) {
+        self.size += node.size;
+        self.alloc += node.alloc;
+        self.files += if node.is_dir { node.files } else { 1 };
+        self.modified = self.modified.max(node.modified);
+        self.count += 1;
+        self.incomplete |= node.incomplete;
+    }
+}
+
 /// The blocks of a breakdown, and what each stands for.
 struct Build<'a> {
     theme: &'a Theme,
     show_hidden: bool,
     levels: usize,
     scanning: bool,
+    mode: Mode,
+    /// Now, in seconds since 1970, and as the user's calendar says it.
+    now: i64,
+    zoned: &'a jiff::Zoned,
     /// The folder as the pane names it, and as the plugin does (it counts
     /// by canonical path): a block's path is read from one into the other.
     root: &'a Path,
@@ -237,6 +433,8 @@ struct Outer {
     entry: Option<EntryId>,
     hue: usize,
     trail: String,
+    /// The cache or the trash it lies in.
+    within: Option<Reclaim>,
 }
 
 impl Build<'_> {
@@ -245,22 +443,116 @@ impl Build<'_> {
             .map_or_else(|_| path.to_path_buf(), |inside| self.root.join(inside))
     }
 
+    /// `12 Mar 2024`: when `modified` was.
+    fn when(&self, modified: i64) -> Option<String> {
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(modified.try_into().ok()?);
+        (modified > 0).then(|| format::friendly_time(t, self.zoned))
+    }
+
+    /// The fill of a block: its outer entry's hue, its last change, or
+    /// the kind of what fills it.
+    fn color(&self, node: &Node, hue: usize, depth: usize) -> gpui::Hsla {
+        match self.mode {
+            Mode::Size | Mode::Files => self.theme.block(hue, node.is_dir, depth),
+            Mode::Age => self.theme.block_age(age(node.modified, self.now), depth),
+            Mode::Types => {
+                let kinds = node.kinds();
+                let total: u64 = kinds.iter().map(|(_, bytes)| bytes).sum();
+                let (kind, bytes) = kinds.first().copied().unwrap_or((None, 0));
+                let share = if total == 0 {
+                    0.
+                } else {
+                    bytes as f32 / total as f32
+                };
+                self.theme.block_kind(kind, share, depth)
+            }
+        }
+    }
+
+    /// What a block says under its name.
+    fn detail(&self, node: &Node) -> String {
+        let measure = node.measure(self.mode);
+        match (node.incomplete, measure) {
+            (true, 0) if self.scanning => return "counting…".into(),
+            (true, 0) => return "incomplete".into(),
+            _ => {}
+        }
+        let said = match self.mode {
+            Mode::Size | Mode::Types => format::size(measure),
+            Mode::Files => format::count(usize::try_from(measure).unwrap_or(usize::MAX), "file"),
+            Mode::Age => self
+                .when(node.modified)
+                .unwrap_or_else(|| format::size(measure)),
+        };
+        let said = if node.incomplete {
+            format!("≥ {said}")
+        } else {
+            said
+        };
+        match node.reclaim {
+            Some(Reclaim::Cache) => format!("{said} · cache"),
+            Some(Reclaim::Trash) => format!("{said} · trash"),
+            None => said,
+        }
+    }
+
+    /// What the line under the map says of `node`, in `parent`.
+    fn hint(&self, node: &Node, trail: &str, parent: &Node, outer: Option<&Outer>) -> String {
+        let counted = |said: String| {
+            if node.incomplete {
+                format!("counted so far: {said}")
+            } else {
+                said
+            }
+        };
+        let mut parts = vec![trail.to_owned()];
+        match self.mode {
+            Mode::Files => {
+                parts.push(counted(format::count(
+                    usize::try_from(node.files).unwrap_or(usize::MAX),
+                    "file",
+                )));
+                parts.push(format!(
+                    "{} of the files in {}",
+                    share(node.files, parent.files),
+                    parent.name
+                ));
+            }
+            Mode::Size | Mode::Age | Mode::Types => {
+                parts.push(counted(sizes(node.size, node.alloc)));
+                parts.push(format!(
+                    "{} of {}",
+                    share(node.alloc, parent.alloc),
+                    parent.name
+                ));
+            }
+        }
+        match self.mode {
+            Mode::Age => parts.extend(self.when(node.modified).map(|w| format!("changed {w}"))),
+            Mode::Types => parts.push(kinds_said(node)),
+            Mode::Size | Mode::Files => {}
+        }
+        parts.extend(reclaim_said(node, outer.and_then(|o| o.within)));
+        if outer.is_some() {
+            parts.push("double-click to go there".into());
+        }
+        parts.retain(|part| !part.is_empty());
+        parts.join(" · ")
+    }
+
     /// The blocks of what `node` holds, `depth` folders inside the one shown.
     fn level(&mut self, node: &Node, depth: usize, outer: Option<&Outer>) -> Vec<TreemapItem> {
         // Each block is drawn at least this large, so each can be pointed at.
-        let floor = (node.alloc as f64 / 200.).max(1.);
+        let floor = (node.measure(self.mode) as f64 / 200.).max(1.);
         let within = |what: String| match outer {
             Some(outer) => format!("{what} in {}", outer.trail),
             None => what,
         };
         let mut items = Vec::new();
-        let mut hidden = (0, 0, 0usize, false);
+        let mut hidden = Gathered::default();
         for (index, child) in node.children.iter().enumerate() {
             if !self.show_hidden && child.name.starts_with('.') {
-                hidden.0 += child.size;
-                hidden.1 += child.alloc;
-                hidden.2 += 1;
-                hidden.3 |= child.incomplete;
+                hidden.add(child);
                 continue;
             }
             let (entry, hue, trail) = match outer {
@@ -276,54 +568,40 @@ impl Build<'_> {
                     child.name.clone(),
                 ),
             };
-            let counted = if child.incomplete {
-                format!("counted so far: {}", sizes(child.size, child.alloc))
-            } else {
-                sizes(child.size, child.alloc)
-            };
-            let mut hint = format!(
-                "{trail} · {counted} · {} of {}",
-                share(child.alloc, node.alloc),
-                node.name
-            );
-            if depth > 0 {
-                hint.push_str(" · double-click to go there");
-            }
             let key = self.blocks.len();
             self.blocks.push(Block {
                 part: Part::Entry(child.path.clone()),
                 depth,
                 entry,
                 path: self.shown(&child.path),
-                hint,
+                hint: self.hint(child, &trail, node, outer),
             });
             let children = if child.is_dir && depth + 1 < self.levels {
-                let outer = Outer { entry, hue, trail };
+                let outer = Outer {
+                    entry,
+                    hue,
+                    trail,
+                    within: child.reclaim.or(outer.and_then(|o| o.within)),
+                };
                 self.level(child, depth + 1, Some(&outer))
             } else {
                 Vec::new()
             };
-            let detail = match (child.incomplete, child.alloc) {
-                (false, alloc) => format::size(alloc),
-                (true, 0) if self.scanning => "counting…".into(),
-                (true, 0) => "incomplete".into(),
-                (true, alloc) => format!("≥ {}", format::size(alloc)),
-            };
             items.push(TreemapItem {
                 key,
-                weight: (child.alloc as f64).max(floor),
+                weight: (child.measure(self.mode) as f64).max(floor),
                 label: child.name.clone().into(),
-                detail: detail.into(),
-                color: self.theme.block(hue, child.is_dir, depth),
+                detail: self.detail(child).into(),
+                color: self.color(child, hue, depth),
                 text: self.theme.on_fill,
                 hatched: child.incomplete,
+                dashed: child.reclaim.is_some(),
                 selected: depth == 0 && entry.is_some_and(|id| (self.selected)(id)),
                 children,
             });
         }
-        let (size, alloc, count, incomplete) = hidden;
-        if count > 0 {
-            let what = format::count(count, "hidden item");
+        if hidden.count > 0 {
+            let what = format::count(hidden.count, "hidden item");
             let key = self.blocks.len();
             self.blocks.push(Block {
                 part: Part::Hidden(node.path.clone()),
@@ -333,10 +611,14 @@ impl Build<'_> {
                 hint: format!(
                     "{} · {} · double-click to show hidden files",
                     within(what.clone()),
-                    sizes(size, alloc)
+                    self.rest_said(hidden.size, hidden.alloc, hidden.files)
                 ),
             });
-            items.push(self.rest(key, what, alloc, floor, incomplete));
+            let measure = match self.mode {
+                Mode::Files => hidden.files,
+                Mode::Size | Mode::Age | Mode::Types => hidden.alloc,
+            };
+            items.push(self.rest(key, what, measure, floor, hidden.incomplete));
         }
         if node.other_count > 0 {
             let count = usize::try_from(node.other_count).unwrap_or(usize::MAX);
@@ -349,7 +631,7 @@ impl Build<'_> {
                 hint: format!(
                     "{} · {} · {}",
                     within(format::count(count, "smaller item")),
-                    sizes(node.other_size, node.other_alloc),
+                    self.rest_said(node.other_size, node.other_alloc, node.other_files),
                     if depth == 0 {
                         "double-click to see all items in List"
                     } else {
@@ -357,10 +639,14 @@ impl Build<'_> {
                     }
                 ),
             });
+            let measure = match self.mode {
+                Mode::Files => node.other_files,
+                Mode::Size | Mode::Age | Mode::Types => node.other_alloc,
+            };
             items.push(self.rest(
                 key,
                 format::count(count, "other item"),
-                node.other_alloc,
+                measure,
                 floor,
                 node.other_incomplete > 0,
             ));
@@ -368,23 +654,38 @@ impl Build<'_> {
         items
     }
 
+    /// What several entries drawn together hold, as the mode counts.
+    fn rest_said(&self, size: u64, alloc: u64, files: u64) -> String {
+        match self.mode {
+            Mode::Files => format::count(usize::try_from(files).unwrap_or(usize::MAX), "file"),
+            Mode::Size | Mode::Age | Mode::Types => sizes(size, alloc),
+        }
+    }
+
     /// A block standing for several entries.
     fn rest(
         &self,
         key: usize,
         what: String,
-        alloc: u64,
+        measure: u64,
         floor: f64,
         incomplete: bool,
     ) -> TreemapItem {
         TreemapItem {
             key,
-            weight: (alloc as f64).max(floor),
+            weight: (measure as f64).max(floor),
             label: what.into(),
-            detail: format::size(alloc).into(),
+            detail: match self.mode {
+                Mode::Files => {
+                    format::count(usize::try_from(measure).unwrap_or(usize::MAX), "file")
+                }
+                Mode::Size | Mode::Age | Mode::Types => format::size(measure),
+            }
+            .into(),
             color: self.theme.block_rest,
             text: self.theme.text,
             hatched: incomplete,
+            dashed: false,
             selected: false,
             children: Vec::new(),
         }
@@ -488,8 +789,9 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                 if s.tree.is_none() && s.scanning {
                     return "Calculating sizes…".into();
                 }
+                let reclaimable = s.tree.as_ref().map_or(0, |n| n.reclaimable.min(n.alloc));
                 format!(
-                    "{}{} · {} · {}{}",
+                    "{}{} · {} · {}{}{}",
                     if s.tree.as_ref().is_some_and(|n| n.incomplete) {
                         "Counted so far: "
                     } else {
@@ -498,12 +800,32 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                     sizes(s.size, s.alloc),
                     format::count(usize::try_from(s.files).unwrap_or(usize::MAX), "file"),
                     format::count(usize::try_from(s.dirs).unwrap_or(usize::MAX), "folder"),
+                    if reclaimable > 0 {
+                        format!(" · {} in caches and the Trash", format::size(reclaimable))
+                    } else {
+                        String::new()
+                    },
                     if s.updating { " · updating…" } else { "" }
                 )
             },
         ),
         font.clone(),
     ));
+    let mode = shell.usage_mode;
+    for each in Mode::ALL {
+        header = header.child(
+            Button::new(
+                format!("usage-mode-{}-{}", each.name(), pane.0),
+                "",
+                each.title(),
+                "ui.usage_mode",
+            )
+            .args(serde_json::json!({ "mode": each.name() }))
+            .label(each.label())
+            .active(each == mode)
+            .render(shell, cx),
+        );
+    }
     header = header.child(
         Button::new(
             format!("usage-refresh-{}", pane.0),
@@ -522,6 +844,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
     {
         // Read before the lock below: a second read waits behind a writer.
         let show_hidden = shell.sort_spec().show_hidden;
+        let zoned = jiff::Zoned::now();
         let ws = shell.app.workspace.read();
         let p = ws.pane(pane);
         let selected = |id| p.is_some_and(|p| p.selection.contains(id));
@@ -530,6 +853,9 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
             show_hidden,
             levels: shell.levels as usize,
             scanning: status.is_some_and(|s| s.scanning),
+            mode,
+            now: zoned.timestamp().as_second(),
+            zoned: &zoned,
             root,
             tree: &node.path,
             selected: &selected,
@@ -549,6 +875,10 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
         .hover
         .as_ref()
         .and_then(|part| blocks.iter().position(|b| b.part == *part));
+    let deleting = deleting_frees(shell);
+    let legend = legend(shell, &theme, mode);
+    let state = &shell.ui().usage;
+    let status = state.status.as_ref();
     let hint = hover.and_then(|key| blocks.get(key)).map_or_else(
         || {
             status.and_then(|s| s.error.clone()).unwrap_or_else(|| {
@@ -556,6 +886,8 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                     "Striped blocks are still being counted · proportions will change as sizes arrive".into()
                 } else if status.is_some_and(|s| s.updating) {
                     format!("Scanning… {} folders read", status.map_or(0, |s| s.scanned_dirs))
+                } else if let Some(note) = deleting {
+                    note
                 } else {
                     "Click to select · double-click to open · Ctrl and the wheel for more or fewer levels".into()
                 }
@@ -572,6 +904,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
         gap: theme.bg,
         hover: theme.block_hover,
         selected: theme.block_selected,
+        dashed: theme.block_reclaim,
     };
     let map = treemap(
         ("usage-map", pane.0 as usize),
@@ -616,6 +949,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                 .child(map)
                 .child(crate::views::zoom_wheel(cx)),
         )
+        .children(legend)
         .child(crate::elements::clip::clipped(
             div()
                 .id("usage-hint")
@@ -628,6 +962,90 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
             font,
         ))
         .into_any_element()
+}
+
+/// What Delete does to the room the selection takes, while there is one:
+/// the Trash keeps it on the disk until it is emptied.
+fn deleting_frees(shell: &Shell) -> Option<String> {
+    let selected = shell
+        .app
+        .workspace
+        .read()
+        .pane(shell.pane)
+        .is_some_and(|p| !p.selection.is_empty());
+    if !selected {
+        return None;
+    }
+    let args = serde_json::json!({});
+    let trash = shell.keys_here("trash", &args).map_or_else(
+        || "Moving to the Trash".to_owned(),
+        |keys| format!("{keys} moves to the Trash, which"),
+    );
+    let delete = shell
+        .keys_here("delete", &args)
+        .map(|keys| format!(" · {keys} deletes for good"));
+    Some(format!(
+        "{trash} frees no room until it is emptied{}",
+        delete.unwrap_or_default()
+    ))
+}
+
+/// What the colors say, a row above the line under the map, where the
+/// mode colors by something of its own: when blocks changed, or the
+/// kinds that fill the folder, the heaviest first. One line tall: what
+/// does not fit wraps out of sight, the smallest kinds first (layout
+/// alone).
+fn legend(shell: &Shell, theme: &Theme, mode: Mode) -> Option<gpui::Div> {
+    let entries: Vec<(gpui::Hsla, String)> = match mode {
+        Mode::Age => (0..AGES)
+            .map(|step| (theme.block_age(step, 0), AGE_NAMES[step].to_owned()))
+            .collect(),
+        Mode::Types => {
+            let tree = shell.ui().usage.status.as_ref()?.tree.as_ref()?;
+            tree.kinds()
+                .into_iter()
+                .map(|(kind, bytes)| {
+                    (
+                        theme.block_kind(kind, 1., 0),
+                        format!("{} {}", kind_title(kind), format::size(bytes)),
+                    )
+                })
+                .collect()
+        }
+        Mode::Size | Mode::Files => return None,
+    };
+    let item = |color: gpui::Hsla, label: String| {
+        div()
+            .flex_none()
+            .h(px(24.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .child(div().size(px(10.)).rounded_sm().bg(color))
+            .child(label)
+    };
+    let lead = (mode == Mode::Age).then(|| {
+        div()
+            .flex_none()
+            .h(px(24.))
+            .flex()
+            .items_center()
+            .child("Changed within")
+    });
+    Some(
+        div()
+            .w_full()
+            .h(px(24.))
+            .px_2()
+            .overflow_hidden()
+            .flex()
+            .flex_wrap()
+            .gap_x(px(12.))
+            .text_xs()
+            .text_color(theme.text_muted)
+            .children(lead)
+            .children(entries.into_iter().map(|(color, label)| item(color, label))),
+    )
 }
 
 /// A press on a block. One of the folder's own entries is pressed as a
@@ -693,12 +1111,27 @@ mod tests {
     }
 
     fn build(tree: &Node, show_hidden: bool, levels: usize) -> (Vec<TreemapItem>, Vec<Block>) {
+        build_in(tree, show_hidden, levels, Mode::Size)
+    }
+
+    /// A thousand days after 1970 began.
+    const NOW: i64 = 1000 * 86_400;
+
+    fn build_in(
+        tree: &Node,
+        show_hidden: bool,
+        levels: usize,
+        mode: Mode,
+    ) -> (Vec<TreemapItem>, Vec<Block>) {
         let theme = Theme::light();
         let mut build = Build {
             theme: &theme,
             show_hidden,
             levels,
             scanning: false,
+            mode,
+            now: NOW,
+            zoned: &jiff::Zoned::now(),
             root: Path::new("/shown"),
             tree: &tree.path,
             selected: &|_| false,
@@ -775,5 +1208,116 @@ mod tests {
         assert_eq!(share(1, 1000), "<1%");
         assert_eq!(share(0, 1000), "0%");
         assert_eq!(share(500, 1000), "50%");
+    }
+
+    #[test]
+    fn files_size_the_blocks_by_what_they_hold() {
+        let tree = Node {
+            files: 1003,
+            other_count: 2,
+            other_alloc: 10,
+            other_files: 2,
+            ..node(
+                "/r",
+                1000,
+                true,
+                vec![
+                    Node {
+                        files: 1000,
+                        ..node("/r/node_modules", 10, true, vec![])
+                    },
+                    Node {
+                        files: 1,
+                        ..node("/r/film.mkv", 980, false, vec![])
+                    },
+                ],
+            )
+        };
+        let (items, blocks) = build_in(&tree, true, 1, Mode::Files);
+        assert_eq!(
+            labels(&items),
+            ["node_modules", "film.mkv", "2 other items"]
+        );
+        assert!((items[0].weight - 1000.).abs() < 1e-9);
+        // At least a two-hundredth of the folder, to be pointed at.
+        assert!((items[1].weight - 1003. / 200.).abs() < 1e-9);
+        assert_eq!(items[0].detail.as_ref(), "1,000 files");
+        assert_eq!(items[2].detail.as_ref(), "2 files");
+        assert_eq!(
+            blocks[0].hint,
+            "node_modules · 1,000 files · 100% of the files in r"
+        );
+    }
+
+    #[test]
+    fn age_and_kinds_color_the_blocks_and_their_legend_says_how() {
+        const DAY: i64 = 86_400;
+        assert_eq!(age(NOW - 3600, NOW), 0);
+        assert_eq!(age(NOW - 3 * DAY, NOW), 1);
+        assert_eq!(age(NOW - 40 * DAY, NOW), 3);
+        assert_eq!(age(NOW - 400 * DAY, NOW), AGES - 1);
+        assert_eq!(age(0, NOW), AGES - 1, "unknown is drawn as old");
+        assert_eq!(age(NOW + 60, NOW), 0, "a clock ahead is new");
+
+        let film = Node {
+            kinds: [
+                ("video".to_owned(), 620),
+                ("image".to_owned(), 300),
+                ("other".to_owned(), 80),
+            ]
+            .into(),
+            modified: NOW - 3600,
+            ..node("/r/film", 1000, true, vec![])
+        };
+        assert_eq!(kinds_said(&film), "Videos 62% · Images 30%");
+        let tree = node("/r", 1000, true, vec![film]);
+        let theme = Theme::light();
+        let (items, blocks) = build_in(&tree, true, 1, Mode::Types);
+        assert_eq!(items[0].color, theme.block_kind(Some(Kind::Video), 0.62, 0));
+        assert!(blocks[0].hint.ends_with("Videos 62% · Images 30%"));
+        let (items, blocks) = build_in(&tree, true, 1, Mode::Age);
+        assert_eq!(items[0].color, theme.block_age(0, 0));
+        assert!(blocks[0].hint.contains(" · changed "), "{}", blocks[0].hint);
+    }
+
+    #[test]
+    fn room_to_have_back_is_lined_and_said() {
+        let tree = Node {
+            reclaimable: 300,
+            ..node(
+                "/r",
+                1000,
+                true,
+                vec![
+                    Node {
+                        reclaim: Some(Reclaim::Cache),
+                        reclaimable: 300,
+                        ..node("/r/target", 300, true, vec![])
+                    },
+                    Node {
+                        reclaimable: 0,
+                        ..node("/r/src", 700, true, vec![])
+                    },
+                ],
+            )
+        };
+        let (items, blocks) = build(&tree, true, 1);
+        assert!(items[0].dashed && !items[1].dashed);
+        assert_eq!(items[0].detail.as_ref(), "300 B · cache");
+        assert!(
+            blocks[0]
+                .hint
+                .ends_with("a cache, which its program makes again when needed"),
+            "{}",
+            blocks[0].hint
+        );
+        assert_eq!(
+            reclaim_said(&tree, None).as_deref(),
+            Some("300 B of it in caches and the Trash")
+        );
+        assert_eq!(
+            reclaim_said(&tree.children[1], Some(Reclaim::Trash)).as_deref(),
+            Some("in the Trash: emptying it frees this")
+        );
     }
 }

@@ -81,6 +81,22 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         "Toggle the Narrow by bar over folders",
     ),
     ("ui.full_width", "{}", "Toggle full-width reading"),
+    (
+        "ui.usage_mode",
+        r#"{"mode":"size"}"#,
+        "Usage: blocks by size",
+    ),
+    (
+        "ui.usage_mode",
+        r#"{"mode":"files"}"#,
+        "Usage: blocks by files",
+    ),
+    ("ui.usage_mode", r#"{"mode":"age"}"#, "Usage: color by age"),
+    (
+        "ui.usage_mode",
+        r#"{"mode":"types"}"#,
+        "Usage: color by kind",
+    ),
     ("ui.zoom", r#"{"dir":"in"}"#, "Zoom in"),
     ("ui.zoom", r#"{"dir":"out"}"#, "Zoom out"),
     ("ui.zoom", r#"{"dir":"reset"}"#, "Zoom reset"),

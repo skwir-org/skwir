@@ -490,7 +490,7 @@ mod tests {
         let deep = root.join("one/two/three/four/five/six");
         std::fs::create_dir_all(&deep).unwrap();
         std::fs::write(deep.join("file"), b"hello").unwrap();
-        for i in 0..70 {
+        for i in 0..90 {
             std::fs::write(root.join(format!("empty-{i}")), []).unwrap();
         }
         let a = app.workspace.read().active_id();
@@ -498,7 +498,7 @@ mod tests {
         let first = scan(&app, a, &root, false);
         assert_eq!(first.size, 5);
         assert_eq!(first.tree.as_ref().unwrap().children.len(), 64);
-        assert_eq!(first.tree.as_ref().unwrap().other_count, 7);
+        assert_eq!(first.tree.as_ref().unwrap().other_count, 27);
         assert!(first.scanned_dirs >= 7);
         let child = scan(&app, a, &deep, false);
         assert_eq!(child.size, 5);

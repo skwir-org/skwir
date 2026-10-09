@@ -34,6 +34,8 @@ pub struct TreemapItem {
     pub text: Hsla,
     /// Striped: its size is a lower bound, still being counted.
     pub hatched: bool,
+    /// A dashed line inside its edge: its room can be had back.
+    pub dashed: bool,
     /// Ringed: chosen.
     pub selected: bool,
     pub children: Vec<TreemapItem>,
@@ -48,6 +50,8 @@ pub struct TreemapStyle {
     pub hover: Hsla,
     /// The ring around a chosen block.
     pub selected: Hsla,
+    /// The dashed line inside a block whose room can be had back.
+    pub dashed: Hsla,
 }
 
 type HoverFn = Rc<dyn Fn(Option<usize>, &mut Window, &mut App)>;
@@ -112,6 +116,7 @@ struct Laid {
     block: Block,
     color: Hsla,
     hatched: bool,
+    dashed: bool,
     selected: bool,
     /// Its name, and what it weighs: beside the name in a band, or under it.
     name: Option<ShapedLine>,
@@ -257,6 +262,7 @@ fn layout_level(
             },
             color: item.color,
             hatched: item.hatched,
+            dashed: item.dashed,
             selected: item.selected,
             name,
             detail,
@@ -390,6 +396,25 @@ impl Element for Treemap {
                         Edges::all(px(1.)),
                         style.gap,
                         BorderStyle::Solid,
+                    ));
+                }
+                if b.dashed {
+                    // Just inside the edge, clear of the labels (`INSET`)
+                    // and of what lies inside (`PAD`).
+                    let one = px(1.);
+                    window.paint_quad(quad(
+                        Bounds::new(
+                            bounds.origin + point(one, one),
+                            size(
+                                (bounds.size.width - one * 2.).max(px(0.)),
+                                (bounds.size.height - one * 2.).max(px(0.)),
+                            ),
+                        ),
+                        Corners::default(),
+                        gpui::transparent_black(),
+                        Edges::all(px(1.)),
+                        style.dashed,
+                        BorderStyle::Dashed,
                     ));
                 }
                 // Labels stay inside their block, and a band's inside its band.

@@ -205,6 +205,9 @@ pub struct Shell {
     pub row_zoom: u32,
     /// Levels of folders the Usage map draws inside each other.
     pub levels: u32,
+    /// What the Usage map's blocks say: the room, the files, their age
+    /// or their kinds.
+    pub usage_mode: crate::usage::Mode,
     /// The sidebar put away with F9. A narrow window hides it too.
     pub sidebar_hidden: bool,
     /// How wide the sidebar was dragged (`Shell::sidebar_drawn_width`).
@@ -500,6 +503,7 @@ impl Shell {
             zoom: DEFAULT_ZOOM,
             row_zoom: crate::views::list::DEFAULT_ROW_ZOOM,
             levels: crate::usage::DEFAULT_LEVELS,
+            usage_mode: crate::usage::Mode::default(),
             sidebar_hidden: false,
             sidebar_width: sidebar::DEFAULT_WIDTH,
             split_share: SPLIT_SHARE,
@@ -615,6 +619,7 @@ impl Shell {
         if session.levels > 0 {
             self.levels = session.levels.min(crate::usage::MAX_LEVELS);
         }
+        self.usage_mode = session.usage_mode;
         self.sidebar_hidden = session.sidebar_hidden;
         self.sidebar_sections = session.sidebar_sections;
         if session.sidebar_width > 0. {
@@ -1728,6 +1733,16 @@ impl Shell {
             "review_apply" => self.review_apply(cx),
             "review_cancel" => self.review_cancel(cx),
             "usage_refresh" => self.refresh_usage(cx),
+            "usage_mode" => {
+                if let Some(mode) = args
+                    .get("mode")
+                    .and_then(|m| serde_json::from_value(m.clone()).ok())
+                {
+                    self.usage_mode = mode;
+                    self.remember_session();
+                    cx.notify();
+                }
+            }
             "timeline" => self.toggle_timeline(cx),
             "terminal" => self.toggle_terminal(window, cx),
             "terminal_copy" => self.terminal_copy(cx),

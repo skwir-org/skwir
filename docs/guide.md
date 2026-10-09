@@ -64,7 +64,12 @@ or `Ctrl+wheel`).
   you look, and inside each folder what it holds: the zoom draws more
   or fewer levels. A click selects the folder's own entry; a double
   click on a block inside one goes there. The arrows move to the block
-  beside; `Ctrl+R` counts again.
+  beside; `Ctrl+R` counts again. Its buttons size the blocks by the
+  room they take or the files they hold, or color them by when they
+  last changed or the kinds of files that fill them. A dashed line
+  marks a cache or a trash: room you can have back without losing what
+  you keep. Moving files to the Trash frees nothing until it is
+  emptied.
 - **Map** (`Ctrl+5`) places pictures, tracks and plans where they were
   taken or go. Its background is drawn from data bibli carries; a
   background that downloads tiles is used only once you choose one.

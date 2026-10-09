@@ -29,6 +29,7 @@ use super::marks::{self, Places, Types};
 use super::{Linked, Links, Message, Node, Request, Shared, SnapshotKind, Status};
 
 const MAX_CHILDREN: usize = 64;
+const MAX_CROWDED: usize = 16;
 /// Levels of folders sent inside the shown folder's own entries, at most:
 /// the map draws as many of them as its zoom asks and its blocks have
 /// room for (`nest`).
@@ -415,6 +416,8 @@ struct Scanner<'a> {
     yielded: bool,
     last_progress: Instant,
     preview: Option<Progress>,
+    /// When the root itself last changed.
+    root_modified: i64,
 }
 
 /// Only the visible level and the branch being counted are retained. Partial
@@ -518,12 +521,24 @@ fn add_totals(total: &mut Node, child: &Node) {
     total.alloc += child.alloc;
     total.files += child.files;
     total.dirs += child.dirs;
-    total.modified = total.modified.max(child.modified);
+    // A folder is as new as its newest file: one emptied, or that holds
+    // only folders, has its own time (`own_time`), which says nothing of
+    // what its parent holds.
+    if !child.is_dir || child.files > 0 {
+        total.modified = total.modified.max(child.modified);
+    }
     total.reclaimable += child.reclaimable;
     if child.is_dir {
         total.kinds.merge(&child.kinds);
     } else {
         total.kinds.add(child.kind, child.alloc);
+    }
+}
+
+/// A folder without files is as new as itself: its entries came or went.
+fn own_time(node: &mut Node, own: i64) {
+    if node.files == 0 {
+        node.modified = own;
     }
 }
 
@@ -611,6 +626,7 @@ impl<'a> Scanner<'a> {
             yielded: false,
             last_progress: Instant::now(),
             preview: None,
+            root_modified: 0,
         }
     }
 
@@ -699,6 +715,7 @@ impl<'a> Scanner<'a> {
         let mut node = self.preview.take().expect("root preview").tree;
         trim(&mut node);
         reclaim_whole(&mut node);
+        own_time(&mut node, self.root_modified);
         node.incomplete = self.errors > 0
             || node.other_incomplete > 0
             || node.children.iter().any(|child| child.incomplete);
@@ -736,12 +753,12 @@ impl<'a> Scanner<'a> {
                     .to_string_lossy()
                     .into_owned(),
                 is_dir: true,
-                modified: meta::modified(&metadata),
                 reclaim: self.places.of(path),
                 ..Node::default()
             },
             branch: None,
         });
+        self.root_modified = meta::modified(&metadata);
         let mut subdirectories = Vec::new();
         let entries = entries(path, &self.request.cancel)?;
         if !covered {
@@ -856,7 +873,6 @@ impl<'a> Scanner<'a> {
             ),
             path: path.to_path_buf(),
             is_dir: true,
-            modified,
             reclaim: self.places.of(path),
             ..Node::default()
         };
@@ -950,6 +966,7 @@ impl<'a> Scanner<'a> {
         self.ensure()?;
         trim(&mut node);
         reclaim_whole(&mut node);
+        own_time(&mut node, modified);
         node.incomplete = self.errors != initial_errors;
         if !node.incomplete && covered && self.unmonitored == initial_unmonitored && self.caching {
             self.cache.insert(node.clone());
@@ -957,13 +974,27 @@ impl<'a> Scanner<'a> {
         Ok(node)
     }
 }
+/// Keep the `MAX_CHILDREN` heaviest entries, and among the rest up to
+/// `MAX_CROWDED` folders holding the most files, each at least a
+/// `MAX_CHILDREN`th of the folder's (a map sized by files draws them
+/// large); the others join the folder's other items.
 fn trim(node: &mut Node) {
-    node.children
-        .sort_by(|a, b| b.alloc.cmp(&a.alloc).then_with(|| a.name.cmp(&b.name)));
-    if node.children.len() > MAX_CHILDREN {
-        for child in node.children.split_off(MAX_CHILDREN) {
+    let order = |a: &Node, b: &Node| b.alloc.cmp(&a.alloc).then_with(|| a.name.cmp(&b.name));
+    node.children.sort_by(order);
+    if node.children.len() > MAX_CHILDREN + MAX_CROWDED {
+        let mut rest = node.children.split_off(MAX_CHILDREN);
+        rest.sort_by_key(|c| Reverse(if c.is_dir { c.files } else { 0 }));
+        let least = node.files.max(1);
+        let crowded = rest
+            .iter()
+            .take(MAX_CROWDED)
+            .take_while(|c| c.is_dir && c.files.saturating_mul(MAX_CHILDREN as u64) >= least)
+            .count();
+        for child in rest.split_off(crowded) {
             fold(node, &child);
         }
+        node.children.append(&mut rest);
+        node.children.sort_by(order);
     }
 }
 
@@ -983,20 +1014,26 @@ fn fold(node: &mut Node, child: &Node) {
 /// first while `MAX_NESTED` allows. A folder is opened only when it weighs
 /// `1/OPEN_SHARE` of the tree, and only its entries weighing
 /// `1/ENTRY_SHARE` of the tree are sent; the rest join its other items.
+/// A folder weighs by its bytes, or by its files as a map sized by files
+/// draws it.
 /// A folder without a breakdown kept (being counted, unreadable, evicted,
 /// or scanned without monitoring, which keeps none) is sent closed.
 fn nest(tree: &mut Node, cache: &Cache) {
-    let total = tree.alloc;
-    if total == 0 {
+    let (total, files) = (tree.alloc, tree.files);
+    if total == 0 && files == 0 {
         return;
     }
+    // A folder of many small files weighs by them, as a map sized by
+    // files draws it.
+    let weighs = |n: &Node, share: u64| {
+        n.alloc.saturating_mul(share) >= total.max(1)
+            || (n.is_dir && n.files.saturating_mul(share) >= files.max(1))
+    };
     let mut budget = MAX_NESTED;
     for level in 1..=NESTED_LEVELS {
         let mut folders = Vec::new();
         at_depth(tree, level, &mut folders);
-        folders.retain(|n| {
-            n.is_dir && n.children.is_empty() && n.alloc.saturating_mul(OPEN_SHARE) >= total
-        });
+        folders.retain(|n| n.is_dir && n.children.is_empty() && weighs(n, OPEN_SHARE));
         folders.sort_by_key(|n| Reverse(n.alloc));
         for folder in folders {
             let Some(breakdown) = cache.peek(&folder.path) else {
@@ -1009,7 +1046,7 @@ fn nest(tree: &mut Node, cache: &Cache) {
             folder.other_files = breakdown.other_files;
             folder.other_modified = breakdown.other_modified;
             for entry in &breakdown.children {
-                if budget > 0 && entry.alloc.saturating_mul(ENTRY_SHARE) >= total {
+                if budget > 0 && weighs(entry, ENTRY_SHARE) {
                     budget -= 1;
                     folder.children.push(Node {
                         children: Vec::new(),
@@ -1728,6 +1765,35 @@ mod tests {
     }
 
     #[test]
+    fn nest_opens_light_folders_of_many_files() {
+        let mut cache = Cache::default();
+        cache.insert(breakdown(
+            "/r/web",
+            (0..30)
+                .map(|i| Node {
+                    files: 100,
+                    ..row(&format!("/r/web/pkg{i:02}"), 10, true)
+                })
+                .collect(),
+        ));
+        let mut tree = Node {
+            alloc: 1_000_000,
+            files: 3001,
+            children: vec![
+                Node {
+                    files: 3000,
+                    ..row("/r/web", 300, true)
+                },
+                row("/r/film.mkv", 999_700, false),
+            ],
+            ..row("/r", 0, true)
+        };
+        nest(&mut tree, &cache);
+        // Specks by their bytes, each a thirtieth of the files.
+        assert_eq!(child(&tree, "web").children.len(), 30);
+    }
+
+    #[test]
     fn nest_stops_at_its_levels_and_its_budget() {
         let mut cache = Cache::default();
         for (path, inside) in [
@@ -2192,7 +2258,7 @@ mod tests {
         use bibli_platform::mime::Kind;
         let tmp = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(tmp.path()).unwrap();
-        for dir in ["film/clips", "build/out", "not a cache", "Trash"] {
+        for dir in ["film/clips", "build/out", "not a cache", "Trash", "empty"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
         }
         let write = |path: &str, bytes: &[u8]| std::fs::write(root.join(path), bytes).unwrap();
@@ -2213,6 +2279,8 @@ mod tests {
             ("film/poster.jpg", 1000),
             ("film/README", 2000),
             ("film", 400),
+            // Later than anything the test writes.
+            ("empty", 4_000_000_000),
         ] {
             std::fs::File::open(root.join(path))
                 .unwrap()
@@ -2231,7 +2299,16 @@ mod tests {
         .root()
         .unwrap();
         let film = child(&tree, "film");
-        assert_eq!(film.modified, 3500, "its newest change, a folder's own too");
+        assert_eq!(film.modified, 3000, "as new as its newest file");
+        let empty = child(&tree, "empty");
+        assert_eq!(
+            empty.modified, 4_000_000_000,
+            "without files, as new as itself"
+        );
+        assert!(
+            tree.modified < empty.modified,
+            "which says nothing of its parent"
+        );
         assert_eq!(
             film.kinds.iter().collect::<Vec<_>>(),
             [
@@ -2275,7 +2352,7 @@ mod tests {
     fn the_other_items_say_their_files_and_newest_change() {
         let mut node = breakdown(
             "/r",
-            (0..MAX_CHILDREN + 2)
+            (0..MAX_CHILDREN + MAX_CROWDED + 2)
                 .map(|i| Node {
                     files: 3,
                     modified: 1000 - i64::try_from(i).unwrap(),
@@ -2287,8 +2364,27 @@ mod tests {
         // The two lightest, the older of which changed last.
         assert_eq!(
             (node.other_count, node.other_files, node.other_modified),
-            (2, 6, 1000 - i64::try_from(MAX_CHILDREN).unwrap())
+            (
+                2,
+                6,
+                1000 - i64::try_from(MAX_CHILDREN + MAX_CROWDED).unwrap()
+            )
         );
+
+        // Light folders of many files stay, for the map sized by files.
+        let mut node = breakdown(
+            "/r",
+            (0..MAX_CHILDREN)
+                .map(|i| row(&format!("/r/heavy {i:03}"), 1000, false))
+                .chain((0..MAX_CROWDED + 4).map(|i| Node {
+                    files: 10 + i as u64,
+                    ..row(&format!("/r/crowded {i:03}"), 1, true)
+                }))
+                .collect(),
+        );
+        trim(&mut node);
+        assert_eq!(node.children.len(), MAX_CHILDREN + MAX_CROWDED);
+        assert_eq!((node.other_count, node.other_files), (4, 10 + 11 + 12 + 13));
     }
 
     #[test]
