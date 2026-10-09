@@ -353,12 +353,6 @@ fn opened<'a>(
     })
 }
 
-/// Whether entry `id` is one the pane shows: the shown listing's, or an
-/// opened folder's.
-fn holds(listing: &Listing, kept: &[Kept], expanded: &[Opened], id: EntryId) -> bool {
-    listing.get(id).is_some() || opened(kept, expanded).any(|(_, k)| k.listing.get(id).is_some())
-}
-
 /// The order last computed for a pane with folders opened in place, and
 /// what it was computed from: the orders of the listings it interleaves
 /// (compared by identity, as `Listing::sorted` keeps one until it changes)
@@ -606,17 +600,15 @@ impl Pane {
 
     fn filter_changed(&mut self) {
         self.filter_version += 1;
-        if !self.is_filtered() {
-            return;
-        }
-        let (listing, kept, expanded) = (&self.listing, &self.kept, &self.expanded);
-        let (filter, narrowed) = (self.filter.as_deref(), self.narrowed.as_ref());
-        self.selection.retain(|id| {
-            listing
-                .get(id)
-                .or_else(|| opened(kept, expanded).find_map(|(_, k)| k.listing.get(id)))
-                .is_some_and(|e| shown(filter, narrowed, e))
-        });
+        self.retain_shown();
+    }
+
+    /// Show hidden files, or no longer: those selected leave the
+    /// selection as they leave the view, so nothing acts on a file the
+    /// user cannot see.
+    pub(crate) fn set_show_hidden(&mut self, show: bool) {
+        self.sort.show_hidden = show;
+        self.retain_shown();
     }
 
     /// Let go of what the pane shows while its tab is not shown (ADR-018):
@@ -753,6 +745,7 @@ impl Pane {
         for kept in &mut self.kept {
             kept.listing.companions_changed();
         }
+        self.retain_shown();
     }
 
     pub(crate) fn add_kept(&mut self, open: Arc<dyn OpenLocation>, listing: Listing) {
@@ -854,11 +847,30 @@ impl Pane {
         n + opened
     }
 
-    /// Drop from the selection what the pane no longer shows.
+    /// Drop from the selection what the pane no longer shows: an entry
+    /// gone, a hidden file while hidden files are not shown (one renamed
+    /// to a dot name too), a companion hidden beside its file, what the
+    /// filter or the narrowing leaves out. A file a narrowing cannot tell
+    /// yet (its metadata still coming) stays: it waits, it is not left out.
     fn retain_shown(&mut self) {
         let (listing, kept, expanded) = (&self.listing, &self.kept, &self.expanded);
-        self.selection
-            .retain(|id| holds(listing, kept, expanded, id));
+        let (filter, narrowed, sort) = (self.filter.as_deref(), self.narrowed.as_ref(), self.sort);
+        let top = listing.shows(sort);
+        let opened: Vec<_> = opened(kept, expanded)
+            .map(|(_, k)| (&k.listing, k.listing.shows(sort)))
+            .collect();
+        self.selection.retain(|id| {
+            let found = std::iter::once((listing, &top))
+                .chain(opened.iter().map(|(l, shows)| (*l, shows)))
+                .find_map(|(l, shows)| l.get(id).map(|e| (e, shows(id))));
+            match found {
+                Some((e, true)) => {
+                    filter.is_none_or(|f| name_holds(&e.name, f))
+                        && narrowed.is_none_or(|n| !e.metadata.is_hydrated() || n.shows(e))
+                }
+                _ => false,
+            }
+        });
     }
 
     fn expanded_changed(&mut self) {
@@ -1587,6 +1599,34 @@ mod tests {
         sel.remove(id(1));
         sel.remove(id(3));
         assert_eq!((sel.anchor, sel.cursor), (Some(id(2)), Some(id(2))));
+    }
+
+    /// What the pane stops showing leaves the selection: a dot file once
+    /// hidden files are hidden, one renamed to a dot name, one the filter
+    /// leaves out. Delete must never act on a file the user cannot see.
+    #[test]
+    fn what_is_no_longer_shown_leaves_the_selection() {
+        use crate::entry::EntryKind;
+        use crate::location::ListingEvent;
+        let file = |ino, name: &str| Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File);
+        let mut p = Pane::new(PaneId(1));
+        p.listing.apply(ListingEvent::Added(vec![
+            file(1, ".profile"),
+            file(2, "it's here.txt"),
+            file(3, "Été.md"),
+        ]));
+        p.set_show_hidden(true);
+        p.selection
+            .set([1, 2, 3].map(|ino| EntryId { dev: 1, ino }));
+        p.set_show_hidden(false);
+        assert_eq!(items(&p.selection), [2, 3]);
+        p.listing
+            .apply(ListingEvent::Updated(vec![file(3, ".Été.md")]));
+        p.retain_shown();
+        assert_eq!(items(&p.selection), [2]);
+        p.selection.set([2].map(|ino| EntryId { dev: 1, ino }));
+        p.set_filter(Some("ÉTÉ"));
+        assert!(p.selection.is_empty());
     }
 
     fn items(sel: &Selection) -> Vec<u64> {

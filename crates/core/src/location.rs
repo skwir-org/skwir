@@ -1206,6 +1206,24 @@ impl Listing {
         spec.show_hidden || !slot.entry.is_hidden()
     }
 
+    /// Whether an entry is listed and shown under `spec`: not a hidden file
+    /// while hidden files are not shown, nor a companion hidden beside its
+    /// file. The names a companion asks after are gathered once, and only
+    /// when one is asked about.
+    pub fn shows(&self, spec: SortSpec) -> impl Fn(EntryId) -> bool + '_ {
+        let companions = self.companions_shown();
+        let listed = std::cell::OnceCell::new();
+        move |id| {
+            self.entries.get(&id).is_some_and(|slot| {
+                let listed = slot
+                    .beside
+                    .as_ref()
+                    .and_then(|_| listed.get_or_init(|| self.listed()).as_ref());
+                Self::shown(spec, slot, listed, companions)
+            })
+        }
+    }
+
     /// The names listed, when companions may hide: their files among them.
     fn listed(&self) -> Option<std::collections::HashSet<&OsStr>> {
         (!self.owners.is_empty()).then(|| {

@@ -1756,7 +1756,7 @@ mod builtin {
                     p.sort.ascending = asc;
                 }
                 if let Some(h) = a.show_hidden {
-                    p.sort.show_hidden = h;
+                    p.set_show_hidden(h);
                 }
                 Ok(Outcome::Done)
             },
@@ -1787,7 +1787,7 @@ mod builtin {
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 if let Some(p) = app.workspace.write().pane_mut(pane) {
-                    p.sort.show_hidden = !p.sort.show_hidden;
+                    p.set_show_hidden(!p.sort.show_hidden);
                 }
                 Ok(Outcome::Done)
             },
