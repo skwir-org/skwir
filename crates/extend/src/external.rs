@@ -83,6 +83,7 @@ impl External {
                 granted: capabilities,
                 compiled: Mutex::new(None),
                 live: Mutex::new(None),
+                watch: Mutex::new(Watch::default()),
             }),
             manifest,
             folder,
@@ -129,6 +130,11 @@ impl Plugin for External {
     }
     fn register(&self, app: &App) {
         *self.runner.compiled.lock() = Some(app.cache.namespace(self.id).folder("module"));
+        *self.runner.watch.lock() = Watch {
+            app: Some(app.weak()),
+            off: false,
+            broken: 0,
+        };
         crate::providers::register(app, self);
         crate::commands::register(app, self);
     }
@@ -166,6 +172,23 @@ pub(crate) struct Runner {
     /// cache, known once the plugin is registered.
     compiled: Mutex<Option<PathBuf>>,
     live: Mutex<Option<Arc<dyn Transport>>>,
+    watch: Mutex<Watch>,
+}
+
+/// How many times in a row its program broke (`process::Broken`: no
+/// answer in time, stopped, the protocol broken) past which the plugin is
+/// turned off, and the user told: each time it is ended and started again
+/// at the next call.
+const BROKEN_AT_MOST: u32 = 3;
+
+/// What `Runner` keeps of the plugin being on.
+#[derive(Default)]
+struct Watch {
+    app: Option<std::sync::Weak<App>>,
+    /// Turned off (`stop`): a call still under way starts nothing.
+    off: bool,
+    /// Its program's breaks in a row (`BROKEN_AT_MOST`).
+    broken: u32,
 }
 
 impl Runner {
@@ -180,6 +203,7 @@ impl Runner {
             granted: [Capability::Read].into_iter().collect(),
             compiled: Mutex::new(None),
             live: Mutex::new(Some(transport)),
+            watch: Mutex::new(Watch::default()),
         }
     }
 
@@ -192,10 +216,14 @@ impl Runner {
         }
     }
 
-    /// Ask the plugin `method`; it reads through `call`.
+    /// Ask the plugin `method`; it reads through `call`. Its program
+    /// breaking `BROKEN_AT_MOST` times in a row turns the plugin off.
     pub fn call(&self, method: &str, params: Value, call: &Call) -> anyhow::Result<Value> {
         let transport = {
             let mut live = self.live.lock();
+            if self.watch.lock().off {
+                anyhow::bail!("the plugin is off");
+            }
             if let Some(transport) = &*live {
                 Arc::clone(transport)
             } else {
@@ -204,7 +232,48 @@ impl Runner {
                 started
             }
         };
-        transport.call(method, params, call)
+        let answer = transport.call(method, params, call);
+        let broken = answer
+            .as_ref()
+            .is_err_and(anyhow::Error::is::<crate::process::Broken>);
+        let turn_off = {
+            let mut watch = self.watch.lock();
+            watch.broken = if broken { watch.broken + 1 } else { 0 };
+            (watch.broken >= BROKEN_AT_MOST && !watch.off)
+                .then(|| {
+                    watch.off = true;
+                    watch.app.as_ref().and_then(std::sync::Weak::upgrade)
+                })
+                .flatten()
+        };
+        if let Some(app) = turn_off {
+            self.turned_off(&app);
+        }
+        answer
+    }
+
+    /// Turn the plugin off, its program having broken again and again,
+    /// and say so with the way to its page.
+    fn turned_off(&self, app: &App) {
+        tracing::warn!(plugin = self.id, "turned off: its program kept breaking");
+        if let Err(error) = app.dispatch(&bibli_core::command::Invocation::with_args(
+            "plugins.set_enabled",
+            &serde_json::json!({ "id": self.id, "enabled": false }),
+        )) {
+            tracing::warn!("{error:#}");
+        }
+        app.notify_with_action(
+            bibli_core::app::NotifyLevel::Warning,
+            format!(
+                "{} was turned off: it stopped answering {BROKEN_AT_MOST} times in a row",
+                self.title
+            ),
+            "Plugins",
+            bibli_core::command::Invocation::with_args(
+                "ui.settings",
+                &serde_json::json!({ "page": "plugins" }),
+            ),
+        );
     }
 
     fn start(&self) -> anyhow::Result<Arc<dyn Transport>> {
@@ -243,8 +312,10 @@ impl Runner {
         })
     }
 
-    /// Let go of what runs it.
+    /// Let go of what runs it: a call still under way gives up, and none
+    /// starts it again until the plugin is turned on (`register`).
     pub fn stop(&self) {
+        self.watch.lock().off = true;
         if let Some(transport) = self.live.lock().take() {
             transport.stop();
         }

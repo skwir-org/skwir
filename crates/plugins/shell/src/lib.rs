@@ -12,6 +12,8 @@ use bibli_core::registry::{KeyBinding, MenuItem};
 use bibli_core::settings::SettingSpec;
 use bibli_core::workspace::PaneId;
 
+use std::fmt::Write as _;
+
 const ID: &str = "shell";
 const PROGRAM_KEY: &str = "shell.program";
 
@@ -28,13 +30,35 @@ pub fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Space-separated quoted paths.
+/// Space-separated quoted paths. One that is not UTF-8 is written with
+/// its bytes as they are (`$'caf\xe9'`, which bash, zsh and ksh read):
+/// written lossily, it named another file.
 pub fn quote_paths(paths: &[PathBuf]) -> String {
     paths
         .iter()
-        .map(|p| quote(&p.to_string_lossy()))
+        .map(|p| match p.to_str() {
+            Some(text) => quote(text),
+            None => quote_bytes(p.as_os_str().as_encoded_bytes()),
+        })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// `bytes` in ANSI-C quotes: printable ASCII as it is, the rest `\xNN`.
+fn quote_bytes(bytes: &[u8]) -> String {
+    let mut out = String::from("$'");
+    for &b in bytes {
+        match b {
+            b'\'' => out.push_str("\\'"),
+            b'\\' => out.push_str("\\\\"),
+            b' '..=b'~' => out.push(char::from(b)),
+            _ => {
+                let _ = write!(out, "\\x{b:02x}");
+            }
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// How a shell takes a command and its arguments.
@@ -275,6 +299,13 @@ mod tests {
             quote_paths(&["/x/a".into(), "/x/b c".into()]),
             "/x/a '/x/b c'"
         );
+        // A name that is not UTF-8, byte for byte: bash reads it back so.
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let raw = std::path::PathBuf::from(std::ffi::OsStr::from_bytes(b"/x/it's caf\xe9"));
+            assert_eq!(quote_paths(&[raw]), r"$'/x/it\'s caf\xe9'");
+        }
         assert_eq!(
             run_argv("/bin/sh", "ls -l", &["/x".into()]),
             [

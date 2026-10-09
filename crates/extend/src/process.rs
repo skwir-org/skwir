@@ -2,12 +2,15 @@
 //! when first asked (`sandbox::plugin`), the protocol on its pipes, one
 //! call at a time, its `read`s answered from the call's files; ended once
 //! idle for [`IDLE`], when it is turned off, and with bibli (`bwrap`'s
-//! `--die-with-parent`). A program that stops is started again at the
-//! next call, not before [`AGAIN`] after one that could not start.
+//! `--die-with-parent`). A program that stops, or that stops answering
+//! (`Broken`), is ended and started again at the next call, not before
+//! [`AGAIN`] after one that could not start; turned off, it is never
+//! started again by a call still under way.
 
-use std::io::{BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Stdio};
+use std::process::{Child, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
@@ -31,6 +34,26 @@ const ANSWER: Duration = Duration::from_secs(30);
 const START: Duration = Duration::from_secs(10);
 /// How long after a program could not start it is not tried again.
 const AGAIN: Duration = Duration::from_secs(10);
+/// Messages from a program not taken yet, at most: a program that writes
+/// between calls waits for the next one, its output never piling up here.
+const WAITING: usize = 1024;
+/// Messages to a program not written yet, at most: one that stops reading
+/// its input has its call fail when the next one finds no room.
+const OUTGOING: usize = 16;
+
+/// A program that failed as a program, not an answer of its: it did not
+/// answer in time, stopped, or broke the protocol. It is ended, and the
+/// plugin turned off when it does so again and again (`Runner::call`).
+#[derive(Debug)]
+pub(crate) struct Broken(pub String);
+
+impl std::fmt::Display for Broken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Broken {}
 
 /// Whether a program may run where nothing can isolate it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,17 +78,37 @@ pub(crate) struct Program {
     kept: Option<PathBuf>,
     running: Arc<Mutex<Option<Running>>>,
     failed: Mutex<Option<Instant>>,
+    /// Turned off (`stop`): a call still under way ends, and none starts
+    /// the program again.
+    stopped: Arc<AtomicBool>,
+    /// How long an answer is waited for: `ANSWER`, shorter in tests.
+    patience: Duration,
 }
 
-/// A program started, its pipes and its working folder.
+/// A program started, its pipes and its working folder. Dropped however
+/// it is, it ends its program and reaps it: never a zombie.
 struct Running {
     child: Child,
-    stdin: Option<ChildStdin>,
+    /// Lines for its input, written by a thread of its own: a program
+    /// that stops reading holds that thread, never a call.
+    stdin: Option<Sender<Vec<u8>>>,
     messages: Receiver<Message>,
     next: u64,
     /// Each call says it was asked here, for the watch that ends it idle.
     used: Sender<()>,
+    /// Its plugin's (`Program::stopped`).
+    stopped: Arc<AtomicBool>,
     _work: Work,
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        drop(self.stdin.take());
+        if !matches!(self.child.try_wait(), Ok(Some(_))) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
 }
 
 /// The folder a program works in.
@@ -105,6 +148,8 @@ impl Program {
             kept,
             running: Arc::default(),
             failed: Mutex::new(None),
+            stopped: Arc::default(),
+            patience: ANSWER,
         }
     }
 
@@ -139,8 +184,24 @@ impl Program {
         let mut child = command.spawn()?;
         let (stdin, stdout, stderr) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take());
-        let (tx, messages) = crossbeam_channel::unbounded();
+        let (tx, messages) = crossbeam_channel::bounded(WAITING);
         let id = self.id;
+        let stdin = match stdin {
+            Some(mut pipe) => {
+                let (lines, waiting) = crossbeam_channel::bounded::<Vec<u8>>(OUTGOING);
+                std::thread::Builder::new()
+                    .name(format!("plugin {id} input"))
+                    .spawn(move || {
+                        for line in waiting {
+                            if pipe.write_all(&line).and_then(|()| pipe.flush()).is_err() {
+                                return;
+                            }
+                        }
+                    })?;
+                Some(lines)
+            }
+            None => None,
+        };
         if let Some(stdout) = stdout {
             std::thread::Builder::new()
                 .name(format!("plugin {id}"))
@@ -159,10 +220,21 @@ impl Program {
             std::thread::Builder::new()
                 .name(format!("plugin {id} errors"))
                 .spawn(move || {
-                    use std::io::BufRead;
-                    for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                        let line: String = line.chars().take(500).collect();
-                        tracing::debug!(plugin = id, "{line}");
+                    // A line at most `LINE` long is held: a longer one is
+                    // logged in pieces.
+                    const LINE: u64 = 4096;
+                    let mut errors = BufReader::new(stderr);
+                    let mut line = Vec::new();
+                    loop {
+                        line.clear();
+                        match (&mut errors).take(LINE).read_until(b'\n', &mut line) {
+                            Ok(0) | Err(_) => return,
+                            Ok(_) => {
+                                let text = String::from_utf8_lossy(&line);
+                                let text: String = text.trim_end().chars().take(500).collect();
+                                tracing::debug!(plugin = id, "{text}");
+                            }
+                        }
                     }
                 })?;
         }
@@ -174,6 +246,7 @@ impl Program {
             messages,
             next: 1,
             used,
+            stopped: Arc::clone(&self.stopped),
             _work: work,
         };
         let capabilities = self
@@ -255,10 +328,11 @@ impl Running {
     fn send(&mut self, message: &Message) -> anyhow::Result<()> {
         let stdin = self
             .stdin
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("the plugin is ending"))?;
-        stdin.write_all(&message.line())?;
-        stdin.flush()?;
+        stdin
+            .send_timeout(message.line(), ANSWER)
+            .map_err(|_| Broken("the plugin does not read what it is asked".into()))?;
         Ok(())
     }
 
@@ -276,6 +350,18 @@ impl Running {
         self.send(&Message::request(id, name, params))?;
         let deadline = Instant::now() + patience;
         loop {
+            // Every turn, not only a quiet one: a program that keeps
+            // writing (its log, its reads) is held to the deadline too.
+            if self.stopped.load(Ordering::Relaxed) {
+                anyhow::bail!("the plugin was turned off");
+            }
+            if call.cancelled() {
+                let _ = self.send(&Message::notification(method::CANCEL, json!({ "id": id })));
+                anyhow::bail!("cancelled");
+            }
+            if Instant::now() > deadline {
+                return Err(Broken("the plugin did not answer in time".into()).into());
+            }
             match self.messages.recv_timeout(Duration::from_millis(100)) {
                 Ok(message) if message.is_response() => {
                     // An answer to a call given up before is no answer.
@@ -284,23 +370,13 @@ impl Running {
                     }
                 }
                 Ok(message) => self.asked(message, call)?,
-                Err(RecvTimeoutError::Timeout) => {
-                    if call.cancelled() || Instant::now() > deadline {
-                        let _ =
-                            self.send(&Message::notification(method::CANCEL, json!({ "id": id })));
-                        anyhow::bail!(if call.cancelled() {
-                            "cancelled"
-                        } else {
-                            "the plugin did not answer in time"
-                        });
-                    }
-                }
+                Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
                     // Its output ended or said no message: whatever it
                     // does now is ended, and the next call starts it.
                     let _ = self.child.kill();
                     let _ = self.child.wait();
-                    anyhow::bail!("the plugin stopped")
+                    return Err(Broken("the plugin stopped".into()).into());
                 }
             }
         }
@@ -362,7 +438,28 @@ impl Running {
 
 impl Transport for Program {
     fn call(&self, name: &str, params: Value, call: &Call) -> anyhow::Result<Value> {
-        let mut held = self.running.lock();
+        // One call at a time: the others wait their turn, and one given up
+        // meanwhile (a thumbnail scrolled away) leaves its worker at once
+        // rather than when the program is free.
+        let mut held = loop {
+            if let Some(held) = self.running.try_lock_for(Duration::from_millis(50)) {
+                break held;
+            }
+            if call.cancelled() {
+                anyhow::bail!("cancelled");
+            }
+            if self.stopped.load(Ordering::Relaxed) {
+                anyhow::bail!("the plugin was turned off");
+            }
+        };
+        // Turned off while this call waited for the program: not started
+        // again behind the user's back.
+        if self.stopped.load(Ordering::Relaxed) {
+            anyhow::bail!("the plugin was turned off");
+        }
+        if call.cancelled() {
+            anyhow::bail!("cancelled");
+        }
         if held.is_none() {
             if self.failed.lock().is_some_and(|at| at.elapsed() < AGAIN) {
                 anyhow::bail!("the plugin could not start a moment ago");
@@ -376,9 +473,11 @@ impl Transport for Program {
             }
         }
         let running = held.as_mut().expect("started");
-        let answer = running.exchange(name, params, call, ANSWER);
-        if matches!(running.child.try_wait(), Ok(Some(_))) {
-            // It stopped: the next call starts it again.
+        let answer = running.exchange(name, params, call, self.patience);
+        let broken = answer.as_ref().is_err_and(anyhow::Error::is::<Broken>);
+        if broken || matches!(running.child.try_wait(), Ok(Some(_))) {
+            // It stopped, or stopped answering: ended, so that the next
+            // call starts it afresh rather than wait on it again.
             if let Some(stopped) = held.take() {
                 stopped.end();
             }
@@ -389,8 +488,66 @@ impl Transport for Program {
     }
 
     fn stop(&self) {
+        // First, so that a call under way gives up within a turn and lets
+        // go of the program for this to end it.
+        self.stopped.store(true, Ordering::Relaxed);
         if let Some(running) = self.running.lock().take() {
             running.end();
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// A program that says it is ready, then answers nothing ever.
+    fn mute(folder: &Path) -> Program {
+        let mut program = Program::new(
+            "mute",
+            PathBuf::from("/bin/sh"),
+            vec![
+                "-c".into(),
+                r#"read l; echo '{"jsonrpc":"2.0","id":1,"result":{"api":1}}'; while read l; do :; done"#
+                    .into(),
+            ],
+            folder.to_owned(),
+            Capabilities::NONE,
+            Isolation::WhereAvailable,
+            None,
+        );
+        program.patience = Duration::from_millis(300);
+        program
+    }
+
+    fn call() -> Call {
+        Call::new(
+            Vec::new(),
+            Capabilities::NONE,
+            bibli_core::CancelToken::new(),
+        )
+    }
+
+    /// A program that stops answering is ended, to be started afresh by
+    /// the next call; turned off, nothing starts it again.
+    #[test]
+    fn a_program_that_stops_answering_is_ended_and_one_turned_off_stays_off() {
+        let folder = tempfile::tempdir().unwrap();
+        let program = mute(folder.path());
+        let error = program.call("field", json!({}), &call()).unwrap_err();
+        assert!(error.is::<Broken>(), "{error:#}");
+        assert!(
+            program.running.lock().is_none(),
+            "ended, not waited on again"
+        );
+        let error = program.call("field", json!({}), &call()).unwrap_err();
+        assert!(
+            error.is::<Broken>(),
+            "started again, and broken again: {error:#}"
+        );
+        program.stop();
+        let error = program.call("field", json!({}), &call()).unwrap_err();
+        assert!(!error.is::<Broken>(), "off: {error:#}");
+        assert!(program.running.lock().is_none(), "not started again");
     }
 }

@@ -87,12 +87,6 @@ fn run(
         Err(error) if is_nothing_selected(&error) => Vec::new(),
         refs => refs?,
     };
-    let privacy = app.privacy();
-    let mut check = privacy.checker();
-    anyhow::ensure!(
-        !refs.iter().any(|r| check.holds(&r.path)) && check.named_in(&args).is_none(),
-        "a private file: a plugin from outside bibli does not see it (Settings, Privacy)"
-    );
     if !bibli_core::scheduler::on_window_thread() {
         return ask(app, runner, name, args, &refs, CancelToken::new());
     }
@@ -141,7 +135,8 @@ fn said(value: &Value) -> String {
     }
 }
 
-/// Ask the plugin, and its answer as the command's outcome.
+/// Ask the plugin, and its answer as the command's outcome. Nothing private
+/// reaches it: the markers are read here, never on the window's thread.
 fn ask(
     app: &App,
     runner: &Runner,
@@ -150,6 +145,12 @@ fn ask(
     refs: &[EntryRef],
     cancel: CancelToken,
 ) -> anyhow::Result<Outcome> {
+    let privacy = app.privacy();
+    let mut check = privacy.checker();
+    anyhow::ensure!(
+        !refs.iter().any(|r| check.holds(&r.path)) && check.named_in(&args).is_none(),
+        "a private file: a plugin from outside bibli does not see it (Settings, Privacy)"
+    );
     let paths: Vec<PathBuf> = refs.iter().map(|r| r.path.clone()).collect();
     let call = Call::new(paths, runner.granted, cancel);
     let entries = (0..refs.len())

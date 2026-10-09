@@ -528,7 +528,10 @@ fn plugin_isolated(
     command.args(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]);
     // After the private /tmp, which would hide a plugin kept there.
     command.arg("--ro-bind").arg(folder).arg(folder);
-    if !program.starts_with(folder) && program.is_absolute() {
+    // A program of the system's is there already: bound again, a link
+    // there (NixOS's `/bin/sh`) is refused as a place to mount on.
+    let system = SYSTEM.iter().any(|system| program.starts_with(system));
+    if !program.starts_with(folder) && program.is_absolute() && !system {
         command.arg("--ro-bind").arg(program).arg(program);
     }
     command

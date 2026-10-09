@@ -139,7 +139,7 @@ impl Pages {
     fn keep(&self, key: &[u8], value: &[u8]) {
         // A page not kept is asked again: never an error.
         if self.kept.put(key, value).is_ok() {
-            let _ = self.kept.trim_to_bytes(BUDGET);
+            self.kept.trim_soon(value.len() as u64, BUDGET);
         }
     }
 

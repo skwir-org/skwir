@@ -296,12 +296,12 @@ impl Reading {
     ) -> anyhow::Result<Inspection> {
         let work = tempfile::tempdir()?;
         let (html, cut) = tool.convert(path, format, work.path(), cancel)?;
-        let mut kept = false;
+        let mut kept = 0u64;
         let keep = |name: &str, bytes: &[u8]| {
             if let Ok(key) = Self::media_key(req, path, tool, name)
                 && self.cache.put(&key, bytes).is_ok()
             {
-                kept = true;
+                kept += bytes.len() as u64;
             }
         };
         let media = pandoc::Media {
@@ -310,8 +310,8 @@ impl Reading {
             cancel,
         };
         let page = rich_preview::html(&html, rich_preview::Markup::Html, cancel, media)?;
-        if kept {
-            let _ = self.cache.trim_to_bytes(CACHE_BYTES);
+        if kept > 0 {
+            self.cache.trim_soon(kept, CACHE_BYTES);
         }
         let words = page
             .blocks
@@ -463,7 +463,7 @@ impl PreviewProvider for Reading {
                         cancel,
                     )?;
                     if self.cache.put(&cache_key, &bytes).is_ok() {
-                        let _ = self.cache.trim_to_bytes(CACHE_BYTES);
+                        self.cache.trim_soon(bytes.len() as u64, CACHE_BYTES);
                     }
                     bytes
                 }

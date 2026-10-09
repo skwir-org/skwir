@@ -143,7 +143,7 @@ fn finish(
     check(cancel)?;
     // Cache failure must not prevent a preview; it is always disposable.
     if cache.put(key, &bytes).is_ok() {
-        let _ = cache.trim_to_bytes(128 * 1024 * 1024);
+        cache.trim_soon(bytes.len() as u64, 128 * 1024 * 1024);
     }
     Ok(Preview { image, info })
 }
@@ -373,7 +373,7 @@ impl DocumentPreviews {
                 "file changed during conversion"
             );
             if self.cache.put(&conversion_key, &bytes).is_ok() {
-                let _ = self.cache.trim_to_bytes(128 * 1024 * 1024);
+                self.cache.trim_soon(bytes.len() as u64, 128 * 1024 * 1024);
                 if let Some(converted) = &self.converted {
                     converted(req.entry.id);
                 }

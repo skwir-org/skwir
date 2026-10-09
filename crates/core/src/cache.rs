@@ -91,6 +91,32 @@ pub struct CacheSlot {
 }
 
 impl CacheSlot {
+    /// After `written` bytes were put: bound this namespace to `budget`
+    /// (`trim_to_bytes`) once an eighth of it was written since it was
+    /// last bound, the first write of the process included (what an
+    /// earlier run left counts). A trim lists and stats every file of the
+    /// namespace: after every write, a search through a document of a
+    /// thousand pages not kept yet listed the folder a thousand times.
+    /// Worker-only, as `trim_to_bytes`.
+    pub fn trim_soon(&self, written: u64, budget: u64) {
+        static WRITTEN: std::sync::LazyLock<
+            parking_lot::Mutex<std::collections::HashMap<PathBuf, u64>>,
+        > = std::sync::LazyLock::new(Default::default);
+        let due = {
+            let mut all = WRITTEN.lock();
+            let since = all.entry(self.dir.clone()).or_insert(u64::MAX / 2);
+            *since = since.saturating_add(written);
+            let due = *since >= budget / 8;
+            if due {
+                *since = 0;
+            }
+            due
+        };
+        if due && let Err(error) = self.trim_to_bytes(budget) {
+            tracing::debug!(%error, "trimming the cache");
+        }
+    }
+
     /// Bound this namespace's disk usage by removing its oldest files.
     /// Worker-only maintenance; never call from render or command dispatch.
     /// Another process may be writing and trimming the same cache: a file
