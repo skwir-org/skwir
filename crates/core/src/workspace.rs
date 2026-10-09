@@ -868,8 +868,8 @@ impl Pane {
     /// Drop from the selection what the pane no longer shows: an entry
     /// gone, a hidden file while hidden files are not shown (one renamed
     /// to a dot name too), a companion hidden beside its file, what the
-    /// filter or the narrowing leaves out. A file a narrowing cannot tell
-    /// yet (its metadata still coming) stays: it waits, it is not left out.
+    /// filter or the narrowing leaves out, a file the narrowing cannot tell
+    /// yet included: it waits hidden, and nothing acts on what is hidden.
     fn retain_shown(&mut self) {
         let (listing, kept, expanded) = (&self.listing, &self.kept, &self.expanded);
         let (filter, narrowed, sort) = (self.filter.as_deref(), self.narrowed.as_ref(), self.sort);
@@ -884,7 +884,7 @@ impl Pane {
             match found {
                 Some((e, true)) => {
                     filter.is_none_or(|f| name_holds(&e.name, f))
-                        && narrowed.is_none_or(|n| !e.metadata.is_hydrated() || n.shows(e))
+                        && narrowed.is_none_or(|n| n.shows(e))
                 }
                 _ => false,
             }
