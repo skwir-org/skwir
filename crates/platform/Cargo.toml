@@ -84,7 +84,6 @@ security-framework = "3"
 libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-freedesktop-icons.workspace = true
 
 # The user's folders as the system names them, off Linux (ADR-035).
 [target.'cfg(not(target_os = "linux"))'.dependencies]

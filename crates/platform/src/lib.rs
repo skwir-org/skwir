@@ -33,6 +33,8 @@ pub mod document;
 pub mod exif;
 pub mod file;
 pub mod filesystem;
+#[cfg(target_os = "linux")]
+mod icon_theme;
 pub mod icons;
 pub mod keyfile;
 mod line_channel;

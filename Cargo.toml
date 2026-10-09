@@ -114,7 +114,6 @@ roxmltree = "0.21"
 humantime = "2"
 open = "5"
 xdg-mime = "0.4"
-freedesktop-icons = "0.4"
 mime = "0.3"
 md5 = "0.8"
 

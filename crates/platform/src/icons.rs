@@ -1,8 +1,9 @@
 //! Icon theme lookup. Cached; never touches the network.
 //!
-//! A lookup that misses the cache reads the icon theme from disk, through up
-//! to four themes, and the first one also lists every installed theme: it
-//! blocks, so it belongs on a worker, never in a render. The UI asks
+//! A lookup that misses the cache reads the icon themes from disk
+//! (`icon_theme`: each theme's index once, and its names through GTK's
+//! cache or listed once): it blocks, so it belongs on a worker, never in a
+//! render. The UI asks
 //! [`try_cached`] while drawing and runs [`lookup`] (or [`for_mime`],
 //! [`folder`], [`unknown`], each a few lookups) on a worker for what it
 //! did not have; a later [`try_cached`] then answers.
@@ -63,6 +64,7 @@ pub fn choose_theme(theme: Option<&str>) {
     if let Ok(mut cache) = cache().lock() {
         cache.clear();
     }
+    imp::forget_themes();
 }
 
 /// The desktop's theme, read once (`imp::detect_theme`).
@@ -378,20 +380,46 @@ mod imp {
         "hicolor".to_owned()
     }
 
+    type Indexed = std::sync::Mutex<Option<std::sync::Arc<crate::icon_theme::Index>>>;
+
+    /// The themes as indexed: read again after a theme is chosen, so one
+    /// installed since is found.
+    static INDEX: Indexed = std::sync::Mutex::new(None);
+
+    fn index() -> std::sync::Arc<crate::icon_theme::Index> {
+        let mut index = INDEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(index) = index.as_ref() {
+            return std::sync::Arc::clone(index);
+        }
+        let pixmaps = crate::xdg::data_search()
+            .into_iter()
+            .map(|data| data.join("pixmaps"))
+            .chain([PathBuf::from("/usr/share/pixmaps")])
+            .collect();
+        let made = std::sync::Arc::new(crate::icon_theme::Index::new(theme_folders(), pixmaps));
+        *index = Some(std::sync::Arc::clone(&made));
+        made
+    }
+
+    pub fn forget_themes() {
+        *INDEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
+    /// `name` from the theme in use, its parents and hicolor, else from
+    /// the themes most desktops have.
     pub fn lookup(name: &str, size: u16) -> Option<PathBuf> {
         let theme = super::theme_name();
-        let mut candidates: Vec<&str> = vec![&theme];
-        for fallback in ["Adwaita", "breeze", "hicolor"] {
+        let mut themes: Vec<&str> = vec![&theme];
+        for fallback in ["Adwaita", "breeze"] {
             if fallback != theme {
-                candidates.push(fallback);
+                themes.push(fallback);
             }
         }
-        candidates.into_iter().find_map(|t| {
-            freedesktop_icons::lookup(name)
-                .with_size(size)
-                .with_theme(t)
-                .find()
-        })
+        index().find(&themes, name, size)
     }
 }
 
@@ -411,6 +439,7 @@ mod imp {
     pub fn lookup(_name: &str, _size: u16) -> Option<PathBuf> {
         None
     }
+    pub fn forget_themes() {}
 }
 
 #[cfg(test)]
