@@ -350,7 +350,9 @@ still to come are in `docs/preview-frame.md`.
   (a trail inside a container) and one line of type, size and date. It
   says what the panel shows (under a container's view kept above a member,
   that container: the member's bar names the member), and clicking it
-  opens Details. It has no close button: the panel is closed by the Preview button
+  opens Details, as the Details button beside it does (an (i), lit while
+  Details is open, as Preview's is while its panel is: what the card
+  does is not seen until it is tried). It has no close button: the panel is closed by the Preview button
   that opened it (the peek overlay alone keeps one).
 - **Details** (`details.rs`) is a section of the frame, not a kind of
   preview: everything known about what the panel shows that the header does

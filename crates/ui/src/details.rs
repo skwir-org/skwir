@@ -567,8 +567,8 @@ pub fn alone(shell: &Shell) -> bool {
 /// (`preview::under_card` puts it there, and nothing else draws it). Opened
 /// on demand under a preview or above a container's kept rows, taking up
 /// to half the panel; always open when `alone`, as tall as what it says,
-/// scrolling only when the panel is too short. The header's card is what
-/// opens it, and holds the name, type, size and date, so the groups here
+/// scrolling only when the panel is too short. The header's card (or its
+/// Details button) is what opens it, and holds the name, type, size and date, so the groups here
 /// repeat none of those.
 pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let preview = &shell.preview;

@@ -3215,10 +3215,11 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
 /// Everything the panel knows at a glance: the entry's icon, its name (a
 /// trail inside a container), and one line of type, size and date. The card
 /// is the one place that says what the panel shows; Details, which opens
-/// right under it when the card is clicked (or Ctrl+I), holds the rest and
-/// repeats none of it. With nothing to preview Details is always open and the card
-/// has no chevron. The peek overlay alone keeps a close button: the panel
-/// is closed by the Preview button that opened it.
+/// right under it when the card or the Details button beside it is clicked
+/// (or Ctrl+I), holds the rest and repeats none of it. With nothing to
+/// preview Details is always open and there is no button. The peek overlay
+/// alone keeps a close button: the panel is closed by the Preview button
+/// that opened it.
 fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let preview = &shell.preview;
     let info = &preview.info;
@@ -3226,7 +3227,10 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let toggles = !alone && !info.name.is_empty();
     let open = alone || preview.details_open;
     // Each fact is one unbreakable segment of a wrapping line: a narrow
-    // panel wraps between the facts, never inside the date.
+    // panel wraps between the facts, never inside the date. One alone on
+    // its line and still too wide is cut, and says itself whole, before
+    // the type the line's tooltip names.
+    let mime = info.mime.clone().map(gpui::SharedString::from);
     let facts = [
         type_label(shell, info),
         info.size.clone(),
@@ -3237,11 +3241,16 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     .collect::<Vec<_>>();
     let last = facts.len().saturating_sub(1);
     let facts = facts.into_iter().enumerate().map(|(index, fact)| {
-        div().whitespace_nowrap().child(if index == last {
-            fact
-        } else {
-            format!("{fact} ·")
-        })
+        crate::elements::clip::clipped_with(
+            div().id(("preview-fact", index)).min_w_0().truncate(),
+            if index == last {
+                fact
+            } else {
+                format!("{fact} ·")
+            },
+            mime.clone(),
+            shell.font.clone(),
+        )
     });
     let card = div()
         .id("preview-info")
@@ -3291,20 +3300,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
                         })
                         .children(facts),
                 ),
-        )
-        .when(toggles, |d| {
-            d.child(
-                gpui::svg()
-                    .path(if open {
-                        "toolbar/chevron.svg"
-                    } else {
-                        "toolbar/chevron-right.svg"
-                    })
-                    .size(px(12.))
-                    .flex_none()
-                    .text_color(theme.text_muted),
-            )
-        });
+        );
     div()
         .px_1()
         .py(px(2.))
@@ -3312,7 +3308,22 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
         .border_color(theme.border)
         .flex()
         .items_center()
+        .gap_1()
         .child(card)
+        // The card opens Details too, but nothing about it says so: the
+        // button does, as Preview's does for its panel, lit while open.
+        .when(toggles, |d| {
+            d.child(
+                crate::toolbar::Button::new(
+                    "preview-details",
+                    "info",
+                    "Details",
+                    "ui.preview_details",
+                )
+                .active(open)
+                .render(shell, cx),
+            )
+        })
         .when(preview.peek, |d| {
             d.child(
                 crate::toolbar::Button::new(
