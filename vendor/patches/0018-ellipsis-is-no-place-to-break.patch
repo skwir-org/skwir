@@ -1,0 +1,38 @@
+diff --git a/crates/gpui/src/text_system/line_wrapper.rs b/crates/gpui/src/text_system/line_wrapper.rs
+index 18b6df5..c1db4e7 100644
+--- a/crates/gpui/src/text_system/line_wrapper.rs
++++ b/crates/gpui/src/text_system/line_wrapper.rs
+@@ -297,7 +297,9 @@ impl LineWrapper {
+         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
+         matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
+         // `⋯` character is special used in Zed, to keep this at the end of the line.
+-        matches!(c, '⋯')
++        // `…` is the ellipsis GPUI truncates with (`Styled::truncate`): it stands for
++        // letters taken out, so it is never a place to break either.
++        matches!(c, '⋯' | '…')
+     }
+ 
+     #[inline(always)]
+@@ -507,6 +509,14 @@ mod tests {
+                 .collect::<Vec<_>>(),
+             &[Boundary::new(3, 0), Boundary::new(8, 0)],
+         );
++        // An ellipsis that overflows the line is no place to break: the word it is in
++        // goes to the next line whole, as a clamped text's truncation placed it.
++        assert_eq!(
++            wrapper
++                .wrap_line(&[LineFragment::text("aa bbbb cc…zip")], px(72.))
++                .collect::<Vec<_>>(),
++            &[Boundary::new(3, 0), Boundary::new(8, 0)],
++        );
+         assert_eq!(
+             wrapper
+                 .wrap_line(&[LineFragment::text("aaa aaaaaaaaaaaaaaaaaa")], px(72.0))
+@@ -850,6 +860,7 @@ mod tests {
+         assert_word("a=1");
+         assert_word("Self::is_word_char");
+         assert_word("more⋯");
++        assert_word("aa…zip");
+ 
+         // Space
+         assert_not_word("foo bar");

@@ -254,6 +254,33 @@ that path.
   it once too). Wayland's client already ends its loop on a lost
   connection: its source returns the error.
 
+- `0017-wrap-after-an-overflowing-space.patch`: `LineWrapper::wrap_line`
+  remembered the character before the next one (`prev_c`) only when that
+  character did not wrap the line. When a space overflowed it, the word
+  after it did not follow a space, so it was no place to break, and the
+  next line broke wherever its width ran out, inside a word. The shaped
+  layout (`LineLayout::compute_wrap_boundaries`) remembers every
+  character and breaks before the word, so the two disagreed after every
+  such space. What asks the wrapper where lines break and lets the layout
+  draw them went wrong: `0005`'s clamped truncation took the last line to
+  start inside a word, kept the rest of that word before the ellipsis,
+  and the layout, starting the line a word earlier, drew it wider than the
+  box, cut at both ends (a grid name of three lines); bibli's grid counts
+  each name's lines with it too. Now the character is remembered before
+  the line is checked. Zed's main branch has the same order: the fix and
+  the `wrap_line` test are for upstream, the clamped test is `0005`'s.
+  `just list-check` runs both.
+
+- `0018-ellipsis-is-no-place-to-break.patch`: `…`, the ellipsis GPUI
+  truncates with, is a word character (`LineWrapper::is_word_char`, which
+  both wrappers ask), as Zed's `⋯` already was. As any character neither
+  a letter nor a space, it was a place to break, and the latest one before
+  the width ran out: when a clamped text's last line, cut in its middle,
+  had its ellipsis where the line above overflowed, the layout broke
+  before it and not where the truncation started the line ("portrait,
+  anothe" over "…ere.jpg"). Nothing is lost on other text: a word after
+  an ellipsis still follows its space.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

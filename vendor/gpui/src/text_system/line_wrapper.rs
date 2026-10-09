@@ -97,6 +97,10 @@ impl LineWrapper {
                 };
 
                 width += item_width;
+                // The candidate is on the line whether or not it wraps it: a word after a
+                // space that overflowed must still see that space, or it is no candidate
+                // and the next line breaks inside it (as the shaped layout never does).
+                prev_c = new_prev_c;
                 if width > wrap_width && ix > last_wrap_ix {
                     if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
                     {
@@ -120,8 +124,6 @@ impl LineWrapper {
 
                     return Some(Boundary::new(last_wrap_ix, indent.unwrap_or(0)));
                 }
-
-                prev_c = new_prev_c;
             }
 
             None
@@ -295,7 +297,9 @@ impl LineWrapper {
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
         matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
-        matches!(c, '⋯')
+        // `…` is the ellipsis GPUI truncates with (`Styled::truncate`): it stands for
+        // letters taken out, so it is never a place to break either.
+        matches!(c, '⋯' | '…')
     }
 
     #[inline(always)]
@@ -497,6 +501,22 @@ mod tests {
                 Boundary::new(18, 0)
             ],
         );
+        // The space after "bbbb" overflows the first line: "ccccc" still follows a space,
+        // so the second line breaks before it, not inside it.
+        assert_eq!(
+            wrapper
+                .wrap_line(&[LineFragment::text("aa bbbb ccccc")], px(72.))
+                .collect::<Vec<_>>(),
+            &[Boundary::new(3, 0), Boundary::new(8, 0)],
+        );
+        // An ellipsis that overflows the line is no place to break: the word it is in
+        // goes to the next line whole, as a clamped text's truncation placed it.
+        assert_eq!(
+            wrapper
+                .wrap_line(&[LineFragment::text("aa bbbb cc…zip")], px(72.))
+                .collect::<Vec<_>>(),
+            &[Boundary::new(3, 0), Boundary::new(8, 0)],
+        );
         assert_eq!(
             wrapper
                 .wrap_line(&[LineFragment::text("aaa aaaaaaaaaaaaaaaaaa")], px(72.0))
@@ -637,6 +657,12 @@ mod tests {
         assert_eq!(elide("aa bbb cccc ddddd.zip", &[21], 2).0, "aa bbb ccc…zip");
         // No whitespace beside the ellipsis.
         assert_eq!(elide("aa bbb cc  ddddd e.zip", &[22], 2).0, "aa bbb cc…zip");
+        // The last line starts where the layout starts it, after a space that overflowed
+        // the line above: elided from inside "ccccc", it was wider than its line.
+        assert_eq!(
+            elide("aa bbbb ccccc dddddddd.zip", &[26], 3).0,
+            "aa bbbb ccc…zip"
+        );
         // It fits: untouched, and so are its runs.
         assert_eq!(elide("aa bbb cccc", &[3, 8], 2), ("aa bbb cccc".into(), vec![3, 8]));
         // The runs lose what was removed; the ellipsis joins the run it began in.
@@ -834,6 +860,7 @@ mod tests {
         assert_word("a=1");
         assert_word("Self::is_word_char");
         assert_word("more⋯");
+        assert_word("aa…zip");
 
         // Space
         assert_not_word("foo bar");
