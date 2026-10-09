@@ -108,6 +108,11 @@ pub struct BrowseArgs {
     pub folder: Option<PathArg>,
     #[serde(default)]
     pub pane: Option<PaneId>,
+    /// With no folder named, from a tag location: back to the folder it is
+    /// of, so that one gesture shows a folder's tags and leaves them (the
+    /// address's Tags button, Alt+G).
+    #[serde(default)]
+    pub toggle: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -524,9 +529,20 @@ pub fn pill(app: &App, a: &PillArgs) -> anyhow::Result<Outcome> {
 /// folder named, else the one it shows, or the one what it shows is of
 /// (its trail's base: a tag location's, a search's), else the home
 /// folder. The folder's own menu (Browse tags here), and All Tags clicked
-/// with Alt.
+/// with Alt. With `toggle`, a tag location goes back to its folder.
 pub fn browse(app: &App, a: &BrowseArgs) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(a.pane);
+    if a.toggle && a.folder.is_none() {
+        let back = app
+            .pane_location(pane)
+            .filter(|shown| &*shown.scheme == crate::location::SCHEME)
+            .and_then(|shown| app.trail(&shown))
+            .and_then(|trail| trail.base);
+        if let Some(folder) = back {
+            app.navigate(pane, &bibli_core::Location::from_path(folder))?;
+            return Ok(Outcome::Done);
+        }
+    }
     let folder = match &a.folder {
         Some(folder) => Some(bibli_core::os_path::absolute(folder)?.to_owned()),
         None => app.pane_location(pane).and_then(|shown| {

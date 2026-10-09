@@ -21,6 +21,8 @@ struct Snapshot {
     places: usize,
     /// What keeps a kind of location in the sidebar (bookmarks, searches).
     keepers: Vec<String>,
+    /// Other ways to see a folder, each a button of its address (its tags).
+    aspects: Vec<String>,
     views: usize,
     panels: usize,
     providers: BTreeSet<&'static str>,
@@ -74,6 +76,13 @@ fn snapshot(app: &App) -> Snapshot {
             .all()
             .into_iter()
             .map(|k| k.scheme)
+            .collect(),
+        aspects: app
+            .registry
+            .aspects
+            .all()
+            .into_iter()
+            .map(|a| a.scheme)
             .collect(),
         views: app.registry.views.all().len(),
         panels: app.registry.panels.all().len(),

@@ -151,8 +151,11 @@ current source before assuming a planned crate, command, or API exists.
   `Shell::more_anchor`, wherever its button is this frame.
   Everything about one pane is in that pane's own row (`render_address`):
   Back, Forward, the address (the breadcrumb trail, or the text being
-  edited) ending with the button that keeps the location in the sidebar,
-  then how the pane shows its folder.
+  edited) ending with the button that keeps the location in the sidebar
+  and, last so that it stays where it was pressed, one for each other way
+  to see the folder (`registry::Aspect`, a plugin's: its tags), lit while
+  the pane shows it, when its command goes back to the folder (the one
+  its key runs too: Alt+G's), then how the pane shows its folder.
   A folder's trail starts at the deepest folder the sidebar shows that
   holds it, under the sidebar's name (`sidebar::roots`, read again only
   when the places or their arrangement change; `address::crumbs`):
@@ -437,7 +440,9 @@ current source before assuming a planned crate, command, or API exists.
   locations (`location.rs`): `tags:/Places/France` is the tag
   `Places/France` of the home folder (`in` names another folder: a
   folder's tags are one step from it, first in its chevron's menu, its
-  menu's Browse tags here, Alt+G and All Tags with Alt, `tags.browse`), its
+  menu's Browse tags here, the Tags button ending its address and Alt+G,
+  which go back from them (`toggle`), and All Tags with Alt,
+  `tags.browse`), its
   tags listed as places, each counting the files within it, and its own
   files those tagged with it exactly, or everything within it with
   `deep` (the View menu's Include Sub-Tags, a `Trail::toggles`). What

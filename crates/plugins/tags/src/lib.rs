@@ -575,6 +575,21 @@ impl Plugin for TagsPlugin {
                 places: Arc::clone(&places),
             }),
         );
+        // A folder's tags, a button at the end of its address: lit while
+        // they are shown, it goes back to the folder, as Alt+G does.
+        app.registry.aspects.add(
+            ID,
+            bibli_core::registry::Aspect {
+                scheme: location::SCHEME.into(),
+                icon: "tag".into(),
+                command: Invocation::with_args(
+                    "tags.browse",
+                    &serde_json::json!({ "toggle": true }),
+                ),
+                open_title: "Tags of this folder".into(),
+                close_title: "Back to the folder".into(),
+            },
+        );
         app.registry.keepers.add(
             ID,
             bibli_core::registry::Keeper {
@@ -1000,7 +1015,7 @@ impl Plugin for TagsPlugin {
             ID,
             "tags.browse",
             "Tags of a folder",
-            "Show every tag of the files under a folder (`in`, an absolute path) as places to browse, each a folder of its files: the folder the pane shows when omitted, or the one a tag location or a search there is of",
+            "Show every tag of the files under a folder (`in`, an absolute path) as places to browse, each a folder of its files: the folder the pane shows when omitted, or the one a tag location or a search there is of; with `toggle` and no folder, a tag location goes back to its folder instead",
             |a, app| browse::browse(app, &a),
         )
         .shows();
@@ -1151,9 +1166,13 @@ impl Plugin for TagsPlugin {
         app.registry.keymap.add(
             ID,
             KeyBinding {
-                // From a folder, a tag of it or a search there: its tags.
+                // From a folder or a search there: its tags; from its tags,
+                // back to it, as the address's Tags button does.
                 keys: "alt-g".into(),
-                command: Invocation::new("tags.browse"),
+                command: Invocation::with_args(
+                    "tags.browse",
+                    &serde_json::json!({ "toggle": true }),
+                ),
                 when: Some("pane".into()),
             },
         );

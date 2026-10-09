@@ -358,6 +358,26 @@ impl Keeper {
     }
 }
 
+/// Another way to see the folder a pane shows, a location of its own (a
+/// folder's tags, ADR-032): a button at the end of the address, beside
+/// the keep button, offered on a folder and on its own locations, lit on
+/// these. It runs `command` either way.
+#[derive(Clone, Debug, Serialize)]
+pub struct Aspect {
+    /// The [`Location::scheme`] of its locations (`tags`).
+    pub scheme: String,
+    /// A bundled symbolic icon, the button's.
+    pub icon: String,
+    /// Run with the pane: on a folder, shows it; on one of its locations,
+    /// goes back to the folder that one is of (`tags.browse` with
+    /// `toggle`), as the key bound to it does.
+    pub command: Invocation,
+    /// "Tags of this folder".
+    pub open_title: String,
+    /// "Back to the folder".
+    pub close_title: String,
+}
+
 /// A menu contribution. `when` is a space-separated list of tokens that must
 /// all hold (`selection`, `single`, `dir`, `file`, `empty` for the menu
 /// opened on the background, and `folder` while the pane shows a folder
@@ -486,6 +506,7 @@ pub struct Registry {
     /// and every plugin's defaults, whatever order plugins were enabled in.
     pub schemes: Contributions<KeyBinding>,
     pub keepers: Contributions<Keeper>,
+    pub aspects: Contributions<Aspect>,
     /// The names the user gave sidebar places (ADR-034), by group and
     /// `Place::key`: the sidebar publishes its arrangement's, so a tab, a
     /// toast and `tab.list` name a place as the sidebar does.
@@ -505,6 +526,7 @@ impl Default for Registry {
             keymap: Contributions::gated(Arc::clone(&gate)),
             schemes: Contributions::gated(Arc::clone(&gate)),
             keepers: Contributions::gated(Arc::clone(&gate)),
+            aspects: Contributions::gated(Arc::clone(&gate)),
             titles: RwLock::default(),
             gate,
         }
@@ -555,6 +577,7 @@ impl Registry {
         self.keymap.remove_owner(owner);
         self.schemes.remove_owner(owner);
         self.keepers.remove_owner(owner);
+        self.aspects.remove_owner(owner);
     }
 }
 

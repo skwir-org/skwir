@@ -1016,8 +1016,8 @@ fn pane_row(
     // Keep what the pane shows in the sidebar, a folder as a bookmark or a
     // search as a saved search, while a plugin keeps such locations:
     // filled when it is kept, and pressing it then takes it back with the
-    // place's own command. It ends the field: it is about what the field
-    // shows.
+    // place's own command. It is at the field's end: it is about what the
+    // field shows.
     if let Some(location) = &row.location {
         let registry = &shell.app.registry;
         // Offered only where its keeper keeps what is shown (`keep`).
@@ -1040,6 +1040,35 @@ fn pane_row(
             (None, None) => None,
         };
         if let Some(button) = button {
+            field = field.child(
+                button
+                    .render(shell, cx)
+                    .h(px(24.))
+                    .min_w(px(24.))
+                    .px(px(4.))
+                    .mr(px(2.)),
+            );
+        }
+    }
+    // Another way to see the folder shown (`Aspect`: its tags), offered on
+    // the folder and lit on its own locations, from which its command goes
+    // back to the folder. Last, at the field's edge, so that it stays where
+    // it was pressed whether or not the keep button is offered.
+    if let Some(location) = &row.location {
+        for (i, aspect) in shell.app.registry.aspects.all().into_iter().enumerate() {
+            let lit = *aspect.scheme == *location.scheme;
+            if !lit && !location.is_path() {
+                continue;
+            }
+            let id = gpui::SharedString::from(format!("aspect-{}-{i}", pane.0));
+            let title = if lit {
+                aspect.close_title
+            } else {
+                aspect.open_title
+            };
+            let button = Button::new(id, aspect.icon, title, aspect.command.name.to_string())
+                .args(aspect.command.args)
+                .active(lit);
             field = field.child(
                 button
                     .render(shell, cx)

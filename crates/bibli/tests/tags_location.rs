@@ -404,6 +404,24 @@ fn a_folder_s_tags_are_one_step_from_it() {
     go(&s, &tag_location(&s.root, Some("Places/France")));
     s.app.dispatch(&Invocation::new("tags.browse")).unwrap();
     assert_eq!(shows(&s), tag_location(&s.root, None));
+    // The address's Tags button and Alt+G, one command: a folder's tags,
+    // and from a tag of it, back to the folder.
+    let aspect = s.app.registry.aspects.find(|a| a.scheme == "tags").unwrap();
+    let key = s.app.registry.keymap.find(|k| k.keys == "alt-g").unwrap();
+    assert_eq!(
+        key.command, aspect.command,
+        "the key does what the button does"
+    );
+    go(&s, &Location::from_path(&s.root));
+    s.app.dispatch(&aspect.command).unwrap();
+    assert_eq!(shows(&s), tag_location(&s.root, None));
+    go(&s, &tag_location(&s.root, Some("Places/France")));
+    s.app.dispatch(&aspect.command).unwrap();
+    assert_eq!(
+        shows(&s),
+        Location::from_path(&s.root),
+        "back to the folder"
+    );
     // A folder named, by an absolute path only.
     let trips = s.root.join("trips");
     s.app
