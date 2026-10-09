@@ -225,18 +225,23 @@ still to come are in `docs/preview-frame.md`.
 - **A changed file is read again in place.** A preview is identified by its
   pane, entry, path and the providers (`PreviewKey`); a new one of those is
   another preview and nothing of the last survives. The file's date, size
-  and the theme are its `Version`: when they change the same request is
-  asked again (`Shell::preview_changed`) and the reader stays where they
-  were: page, zoom, find field, folds, selection and place. A live player
-  keeps playing, and a theme change re-reads only text, the one thing drawn
-  in its colours.
+  and the colors its code is drawn in (`code_preview::CodeTheme`: the
+  theme's look and the code theme chosen for it) are its `Version`: when
+  they change the same request is asked again (`Shell::preview_changed`)
+  and the reader stays where they were: page, zoom, find field, folds,
+  selection and place. A live player keeps playing, and a theme change
+  re-reads only text, the one thing drawn in its colours.
 - **Surfaces.** What is read (text, code, tables, bytes, trees, prose, the
   facts about an entry) is on `theme.bg` in `theme.text`, like the file list
   beside it. `theme.surface` is chrome: the header, the toolbar, and the
   letterbox around a picture, a film or a document page (`preview::on_paper`
   decides). `code_bg` sets a code block, an inline span or a table header
   apart on paper; `zebra` tints alternate rows; hover is `theme.hover`. No
-  preview derives a colour locally or hard-codes one.
+  preview derives a colour locally or hard-codes one. The one other
+  background is a code theme's: one chosen on the Reading page brings the
+  background its colors are meant for, which the code view and a code
+  block are drawn on (`Display::code_bg`); a look lists only the themes
+  of its own lightness, so the tokens drawn over it still read.
 - **One toolbar.** A preview never builds a row: it lists its tools in
   `preview_bar::Bar`, each in a slot, and the bar lays them out. Left to right:
   a member's name under its container's view (`Slot::Title`, see below) ·
@@ -549,3 +554,11 @@ still to come are in `docs/preview-frame.md`.
   strings. Preserve TOML/YAML comments and syntax. Highlight complete documents
   on a worker with parser state retained between lines; rendering only consumes
   prepared runs and visible indices. Copy must retain empty selected lines.
+- Code is colored with bat's grammars and themes (two-face), through the
+  one `code_preview::Highlighter`, for the code view and every document's
+  code blocks. Default is bibli's own colors (base16 Ocean's, on bibli's
+  background, no font styles); a theme chosen (`reading.code_light`,
+  `reading.code_dark`) is one of bat's, or one the user added to bat,
+  read from bat's folder (`bat::themes_dir`, as `bat cache --build`
+  finds them) on a worker at start and when the settings open, and
+  taking the place of bat's of the same name as in bat.

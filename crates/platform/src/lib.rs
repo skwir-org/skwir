@@ -7,6 +7,7 @@
 //! - [`mime`]: type detection by name (no I/O) or by content.
 //! - [`about`]: the system's name for itself, and where bibli's licences are installed.
 //! - [`access`]: what the system adds to a file's mode (access lists, capabilities, a security label).
+//! - [`bat`]: where bat, the pager, keeps the themes its user added.
 //! - [`calendar`]: the user's time zone and first weekday, for dates people read.
 //! - [`icons`]: XDG icon theme lookup with caching.
 //! - [`picture`]: picture files decoded and sized the way their EXIF Orientation turns them.
@@ -25,6 +26,7 @@ pub mod about;
 pub mod access;
 #[cfg(test)]
 mod any_input;
+pub mod bat;
 pub mod calendar;
 pub mod diagram;
 pub mod document;

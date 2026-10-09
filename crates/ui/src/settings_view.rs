@@ -527,9 +527,13 @@ impl SettingsView {
         );
         if open {
             let hover = theme.hover;
+            // A long list (the code themes, the icon themes) scrolls in
+            // the height the popover leaves it under the row.
             let mut panel = div()
                 .id(SharedString::from(format!("choices-{key}")))
                 .min_w(px(150.))
+                .min_h_0()
+                .overflow_y_scroll()
                 .p_1()
                 .flex()
                 .flex_col()

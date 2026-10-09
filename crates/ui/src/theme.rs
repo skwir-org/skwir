@@ -6,7 +6,9 @@
 //! - surfaces: what is read (lists, text, code, tables, bytes, prose) is on
 //!   `bg` in `text`; `surface` is chrome (bars, headers, the sidebar, the
 //!   letterbox around a picture or a page). `code_bg` sets a code block or a
-//!   table header apart on `bg`, `zebra` tints alternate rows. `text_muted`
+//!   table header apart on `bg`, unless the code theme chosen brings its
+//!   own background (`code`, `code_preview::Palette`), `zebra` tints
+//!   alternate rows. `text_muted`
 //!   is for secondary facts (line numbers, captions), never for the data.
 //! - color: the fields of [`Theme`]. State colors are tokens too: `hover` for
 //!   whatever is under the pointer, `selection_*` for what is chosen,
@@ -110,6 +112,9 @@ pub struct Theme {
     /// whose backgrounds are close to ours.
     pub terminal: [Hsla; 16],
     pub is_dark: bool,
+    /// The colors code is drawn in for this look: bibli's own unless the
+    /// Reading page chooses a theme (`code_preview::CodeTheme`).
+    pub code: crate::code_preview::CodeTheme,
 }
 
 fn palette(hex: [u32; 16]) -> [Hsla; 16] {
@@ -169,6 +174,7 @@ impl Theme {
                 0x666666, 0xcd3131, 0x14ce14, 0xb5ba00, 0x0451a5, 0xbc05bc, 0x0598bc, 0xa5a5a5,
             ]),
             is_dark: false,
+            code: crate::code_preview::CodeTheme::own(false),
         }
     }
 
@@ -219,6 +225,7 @@ impl Theme {
                 0x666666, 0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xe5e5e5,
             ]),
             is_dark: true,
+            code: crate::code_preview::CodeTheme::own(true),
         }
     }
 
@@ -299,7 +306,7 @@ impl Theme {
 
     /// The `ui.theme` preference, falling back to the desktop's appearance.
     pub fn resolve(app: &bibli_core::App, appearance: WindowAppearance) -> Self {
-        match app
+        let mut theme = match app
             .settings
             .get::<String>(crate::settings::THEME_KEY)
             .as_deref()
@@ -307,7 +314,9 @@ impl Theme {
             Some("light") => Theme::light(),
             Some("dark") => Theme::dark(),
             _ => Theme::for_appearance(appearance),
-        }
+        };
+        theme.code = crate::code_preview::CodeTheme::chosen(app, theme.is_dark);
+        theme
     }
 
     pub fn for_appearance(appearance: WindowAppearance) -> Self {

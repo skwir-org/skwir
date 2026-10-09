@@ -180,12 +180,14 @@ struct PreviewKey {
 /// What the shown file is as the listing last said, and how it is drawn. A
 /// change reads the same file again and keeps the reader where they were
 /// (`Shell::preview_changed`): a log that grows, a PDF rebuilt, a song
-/// whose tags were saved, the desktop turning dark.
+/// whose tags were saved, the desktop turning dark or another code
+/// theme chosen for its look.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Version {
     modified: Option<SystemTime>,
     size: Option<u64>,
-    dark: bool,
+    /// The colors its code is drawn in.
+    code: crate::code_preview::CodeTheme,
 }
 
 impl Version {
@@ -796,7 +798,7 @@ fn compute(
     path: &Path,
     is_dir: bool,
     mime: Option<&str>,
-    dark: bool,
+    code: &crate::code_preview::CodeTheme,
     offset: u64,
     picture_side: u32,
     cancel: &CancelToken,
@@ -841,7 +843,7 @@ fn compute(
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
         return match bibli_platform::inspection::plain(path, offset, cancel) {
-            Ok(data) => PreviewContent::Inspection(crate::inspector::Display::new(data, dark)),
+            Ok(data) => PreviewContent::Inspection(crate::inspector::Display::new(data, code)),
             Err(error) => PreviewContent::Error(format!("{error:#}")),
         };
     }
@@ -977,7 +979,7 @@ impl Shell {
             while self.preview.rx.try_recv().is_ok() {}
             return;
         }
-        let dark = cx.global::<Theme>().is_dark;
+        let code = cx.global::<Theme>().code.clone();
         // Nothing selected: where the pane is (`here`).
         let cursor = self.cursor_id();
         let current = if let Some(id) = cursor {
@@ -1018,13 +1020,13 @@ impl Shell {
                             .metadata
                             .value(keys::SIZE)
                             .and_then(bibli_core::Value::as_u64),
-                        dark,
+                        code: code.clone(),
                     },
                     e.clone(),
                 ))
             })
         } else {
-            self.here(dark, window, cx)
+            self.here(code, window, cx)
         };
         let Some((seen, key, version, entry)) = current else {
             self.cancel_preview(window, cx);
@@ -1178,7 +1180,7 @@ impl Shell {
     /// shelf), or until the worker answers.
     fn here(
         &mut self,
-        dark: bool,
+        code: crate::code_preview::CodeTheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<(u64, PreviewKey, Version, bibli_core::entry::Entry)> {
@@ -1264,7 +1266,7 @@ impl Shell {
                     .value(keys::MODIFIED)
                     .and_then(bibli_core::Value::as_time),
                 size: None,
-                dark,
+                code,
             },
             entry,
         ))
@@ -1599,8 +1601,11 @@ impl Shell {
         // The pinned track is known by the path the pane shows (a link's);
         // everything else reads what the request names.
         let shown = key.path.clone();
-        let (mut path, modified, dark) =
-            (request.entry.path.clone(), version.modified, version.dark);
+        let (mut path, modified, code) = (
+            request.entry.path.clone(),
+            version.modified,
+            version.code.clone(),
+        );
         // A desktop thumbnail represents the file, not the requested page or
         // timestamp. Only use it before this file has any preview content.
         let show_thumbnail = !is_dir && self.preview.content.is_none();
@@ -1714,7 +1719,7 @@ impl Shell {
                             });
                     match result {
                         Ok(Some(data)) => {
-                            let mut display = crate::inspector::Display::new(data, dark);
+                            let mut display = crate::inspector::Display::new(data, &code);
                             // Its pictures for later are asked for as it was.
                             display.origin = Some((request.clone(), inspection.clone()));
                             return send(PreviewContent::Inspection(display), true, None, None);
@@ -1889,7 +1894,7 @@ impl Shell {
                         &path,
                         is_dir,
                         request.mime.as_deref(),
-                        dark,
+                        &code,
                         inspection.offset,
                         picture_side,
                         &cancel,
@@ -3765,7 +3770,15 @@ mod tests {
         .unwrap();
         let cancel = bibli_core::CancelToken::new();
         for (side, drawn) in [(0, 40), (1024, 1024)] {
-            let content = compute(&path, false, Some("image/svg+xml"), false, 0, side, &cancel);
+            let content = compute(
+                &path,
+                false,
+                Some("image/svg+xml"),
+                &crate::code_preview::CodeTheme::own(false),
+                0,
+                side,
+                &cancel,
+            );
             let PreviewContent::Image {
                 image,
                 width,
@@ -3837,7 +3850,13 @@ mod tests {
             text_size: None,
         };
         let notice = |path: &Path, mime: Option<&str>| match compute(
-            path, false, mime, false, 0, 1024, &cancel,
+            path,
+            false,
+            mime,
+            &crate::code_preview::CodeTheme::own(false),
+            0,
+            1024,
+            &cancel,
         ) {
             PreviewContent::Inspection(display) => Some(display.data.notice.clone()),
             PreviewContent::Generic => None,
@@ -3873,7 +3892,7 @@ mod tests {
         let at = |modified: Option<u64>, size: Option<u64>, dark: bool| Version {
             modified: modified.map(|s| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s)),
             size,
-            dark,
+            code: crate::code_preview::CodeTheme::own(dark),
         };
         assert!(!at(None, None, false).rewritten(&at(Some(5), Some(9), false)));
         assert!(at(Some(5), Some(9), false).rewritten(&at(Some(6), Some(9), false)));

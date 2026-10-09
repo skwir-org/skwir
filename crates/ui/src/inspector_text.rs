@@ -161,7 +161,10 @@ pub fn styled(
                         gpui::rgb((u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)).into()
                     })
                     .or_else(|| link.then_some(style.link));
-                highlight.background_color = r.code.then_some(style.inline_code_bg);
+                // Inline code is set apart from the prose around it; a code
+                // block's box has its own background (its theme's, if any).
+                highlight.background_color =
+                    (r.code && !block.code).then_some(style.inline_code_bg);
                 if r.strikethrough {
                     highlight.strikethrough = Some(StrikethroughStyle {
                         thickness: px(1.),

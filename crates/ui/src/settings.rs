@@ -32,8 +32,9 @@ use crate::keymap::KeyHint;
 /// A preference goes where its subject is: the plugin whose content it
 /// concerns has it on its page (an engine, the player of audio and video);
 /// one the shell applies to several plugins' content is a namespace of the
-/// shell's own, as `reading` is for the reader and reading mode, shared by
-/// documents, books, comics and Markdown. `ui` is only how bibli looks.
+/// shell's own, as `reading` is for the reader and reading mode, and the
+/// colors code is drawn in, shared by documents, books, comics, Markdown
+/// and the code view. `ui` is only how bibli looks.
 pub const CORE_OWNER: &str = "core";
 pub const UI_OWNER: &str = "ui";
 pub const READING_OWNER: &str = "reading";
@@ -65,6 +66,10 @@ pub const READER_CONTINUOUS_KEY: &str = "reading.continuous";
 pub const READING_WIDTH_KEY: &str = "reading.width";
 /// Whether a book's position counts its printed pages (`ui.printed_pages`).
 pub const PRINTED_PAGES_KEY: &str = "reading.printed_pages";
+/// The colors code is drawn in while bibli is light, and while it is
+/// dark (`code_preview::CodeTheme`).
+pub const CODE_LIGHT_KEY: &str = "reading.code_light";
+pub const CODE_DARK_KEY: &str = "reading.code_dark";
 /// The player's preferences. The audio and video plugin (`preview-media`)
 /// declares them, with the rest of what concerns playback; the shell's
 /// player reads them. With the plugin off there is no player, and they are
@@ -117,6 +122,58 @@ pub fn icon_theme_spec(
         ICON_THEME_AUTO,
         &pairs,
     )
+}
+
+/// A look's code theme setting: bibli's own colors, bat's themes of that
+/// look, then those the user added to bat once read (`list_code_themes`),
+/// the one chosen always among them (`code_preview::choices`).
+pub fn code_theme_spec(
+    dark: bool,
+    chosen: &str,
+    user: Option<&[Arc<crate::code_preview::UserTheme>]>,
+) -> SettingSpec {
+    let choices = crate::code_preview::choices(dark, chosen, user);
+    let pairs: Vec<(&str, &str)> = choices
+        .iter()
+        .map(|(value, label)| (value.as_str(), label.as_str()))
+        .collect();
+    let (key, title, look) = if dark {
+        (CODE_DARK_KEY, "Dark theme", "dark")
+    } else {
+        (CODE_LIGHT_KEY, "Light theme", "light")
+    };
+    SettingSpec::choice(
+        key,
+        title,
+        &format!(
+            "The colors of source files and of code in documents while bibli is {look}. Default is bibli's own, on its background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own."
+        ),
+        crate::code_preview::DEFAULT,
+        &pairs,
+    )
+    .section("Code")
+}
+
+/// Read the themes the user added to bat on a worker and declare the code
+/// theme settings again with them: at start, and when the settings open,
+/// where a theme added or edited since is read.
+pub(crate) fn list_code_themes(app: &Arc<App>) {
+    let weak = app.weak();
+    app.scheduler.spawn(
+        bibli_core::scheduler::Priority::Normal,
+        "code-themes",
+        app.lifetime().child(),
+        move || {
+            let user = crate::code_preview::user_themes(true);
+            let Some(app) = weak.upgrade() else { return };
+            for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
+                let chosen = app.settings.get::<String>(key).unwrap_or_default();
+                app.settings
+                    .declare(code_theme_spec(dark, &chosen, Some(&user)));
+            }
+            app.wake();
+        },
+    );
 }
 
 /// List the installed icon themes on a worker and declare the icon theme
@@ -251,6 +308,10 @@ pub fn declare(app: &App) {
         )
         .section("Pages"),
     );
+    for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
+        let chosen = app.settings.get::<String>(key).unwrap_or_default();
+        app.settings.declare(code_theme_spec(dark, &chosen, None));
+    }
     app.settings.declare(SettingSpec::data(
         crate::shortcuts::HINTS_KEY,
         "Commands whose shortcut hint was already shown",
@@ -389,7 +450,7 @@ static BUILTIN: [Builtin; 7] = [
         owner: Some(READING_OWNER),
         title: "Reading",
         icon: "reading",
-        intro: "How documents, books, comics and Markdown read in the preview. Which engine reads each is on its plugin's page.",
+        intro: "How documents, books, comics, Markdown and code read in the preview. Which engine reads each is on its plugin's page.",
         when_used: false,
     },
     Builtin {
@@ -603,6 +664,7 @@ impl SettingsView {
         view.rebuild(window, cx);
         view.probe_requirements();
         list_icon_themes(&view.app);
+        list_code_themes(&view.app);
         window.focus(&view.nav);
         view.open_target(target, window, cx);
         view

@@ -1302,8 +1302,9 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   One about a plugin's content (an engine, the audio and video player) is
   that plugin's, on its page, even when the shell reads it. One the shell
   applies to several plugins' content is a namespace of the shell's own,
-  with a page of its own: `reading.*` (the reader and reading mode) is
-  shared by documents, books, comics and Markdown; `notes.*` (Notes, the
+  with a page of its own: `reading.*` (the reader and reading mode, and
+  the colors code is drawn in) is shared by documents, books, comics,
+  Markdown and the code view; `notes.*` (Notes, the
   core's: each store's Read and Write, declared by
   `App::register_notes_store`) is shared by the stores of several
   plugins. `ui.*` is only how

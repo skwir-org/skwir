@@ -372,6 +372,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Self {
         crate::settings::declare(&app);
+        // The themes the user added to bat, on a worker: then a script or
+        // an agent can choose one before the settings ever open.
+        crate::settings::list_code_themes(&app);
         crate::session::declare(&app);
         // Owner and group names for Details: two small files, but a read can
         // block, so not here.

@@ -32,9 +32,13 @@ pub struct Display {
     pub map: Option<Arc<crate::elements::map::Shapes>>,
     /// Its lines' altitudes over distance, when they have some.
     pub profile: Option<Arc<crate::elements::profile::Profile>>,
+    /// The background its code was colored for, when the theme chosen
+    /// brings one (`code_preview::Palette`): the code view's, and a code
+    /// block's in a document.
+    pub code_bg: Option<[u8; 3]>,
 }
 impl Display {
-    pub fn new(mut data: Inspection, dark: bool) -> Self {
+    pub fn new(mut data: Inspection, code: &crate::code_preview::CodeTheme) -> Self {
         // Display conversion runs on a worker. Resolve themed icons for the
         // files a container holds (an archive's members, a message's
         // attachments) here, never by inspecting member paths or doing I/O
@@ -55,8 +59,15 @@ impl Display {
         } else {
             Vec::new()
         };
-        if data.kind == InspectionKind::Code {
-            crate::code_preview::highlight(&mut data, dark);
+        // Read only where there is code: a theme of the user's is read
+        // from bat's folder the first time.
+        let palette = (data.kind == InspectionKind::Code || data.blocks.iter().any(|b| b.code))
+            .then(|| crate::code_preview::Palette::of(code));
+        if let Some(palette) = palette
+            .as_ref()
+            .filter(|_| data.kind == InspectionKind::Code)
+        {
+            crate::code_preview::highlight(&mut data, palette);
         } else {
             // Text too long for the code view is raw text all the same: its
             // addresses are found before it is cut, so none is cut in two.
@@ -68,11 +79,14 @@ impl Display {
             data.blocks = bibli_core::inspection::split_blocks(data.blocks);
         }
         for block in &mut data.blocks {
+            let Some(palette) = palette.as_ref() else {
+                break;
+            };
             if !block.code || data.kind == InspectionKind::Code {
                 continue;
             }
             let mut highlighter =
-                crate::code_preview::Highlighter::new(block.language.as_deref(), dark);
+                crate::code_preview::Highlighter::new(block.language.as_deref(), palette);
             block.runs = highlighter
                 .text(&block.text)
                 .into_iter()
@@ -140,6 +154,7 @@ impl Display {
             row_icons: Arc::new(row_icons),
             folded: Arc::new(folded),
             origin: None,
+            code_bg: palette.and_then(|palette| palette.background),
         }
     }
     /// The next block or row (blocks first, then rows offset by the block
@@ -2190,6 +2205,10 @@ pub fn content(
         .then(|| crate::note_popover::popover(shell, &list_style, theme, cx))
         .flatten();
     let mut list_style = list_style;
+    // A document's code blocks on the background their theme is for.
+    if let Some(background) = display.code_bg {
+        list_style.code_bg = crate::code_preview::color(background);
+    }
     list_style.armed_link = shell.armed_link();
     list_style.labels = state.labels.as_ref().map(|labels| Rc::new(labels.shown()));
     let measure = list_style.measure;
@@ -2485,6 +2504,11 @@ pub fn content(
         }
         body = body.child(header);
     }
+    // The code view on the background its theme is for, its gutter too.
+    let code_bg = display
+        .code_bg
+        .filter(|_| display.data.kind == InspectionKind::Code)
+        .map(crate::code_preview::color);
     // A document read at full width is hard to follow: in reading mode the
     // column stops at a comfortable measure and sits in the middle of the
     // pane. This is a maximum, not a measurement: a narrow pane keeps all of
@@ -2496,6 +2520,7 @@ pub fn content(
             .min_h_0()
             .flex()
             .justify_center()
+            .when_some(code_bg, gpui::Styled::bg)
             .child(
                 div()
                     .w_full()
@@ -2696,7 +2721,7 @@ mod tests {
                 rows,
                 ..Inspection::default()
             },
-            false,
+            &crate::code_preview::CodeTheme::own(false),
         )
     }
 
@@ -2753,7 +2778,7 @@ mod tests {
                 folds,
                 ..Inspection::default()
             },
-            true,
+            &crate::code_preview::CodeTheme::own(true),
         )
     }
 
@@ -2933,7 +2958,7 @@ mod tests {
                 rows,
                 ..Inspection::default()
             },
-            false,
+            &crate::code_preview::CodeTheme::own(false),
         );
         let mut state = State {
             sort: Some((0, true)),
@@ -2994,7 +3019,7 @@ mod tests {
                 ],
                 ..Inspection::default()
             },
-            false,
+            &crate::code_preview::CodeTheme::own(false),
         );
         let mut state = State {
             request: InspectRequest {
