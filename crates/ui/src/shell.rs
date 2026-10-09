@@ -2179,6 +2179,11 @@ impl Shell {
                 }
             }
             ready &= self.place_pane();
+            // After the place a tab shown again restores: what was typed
+            // is the cursor to show.
+            if resorted {
+                self.seek_typed_again(cx);
+            }
             if location != self.ui().address_shown {
                 self.ui_mut().address_shown.clone_from(&location);
                 let address = self.ui().address.clone();

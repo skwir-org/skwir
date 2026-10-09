@@ -73,6 +73,55 @@ pub fn find_matches(name: &str, pattern: &str) -> bool {
     }
 }
 
+/// How long a pause ends a name being typed.
+const TYPING_PAUSE: Duration = Duration::from_secs(2);
+
+/// A name typed to reach an entry (type-ahead). It belongs to the listing
+/// it was typed in: once the pane shows another (a folder opened with
+/// Enter, Back), the next character begins a new name, as after a pause.
+struct Typed {
+    /// What was typed, lowercase.
+    text: String,
+    /// The listing (`Listing::id`) it was typed in.
+    listing: u64,
+    /// When its last character was typed.
+    at: Instant,
+    /// The selection's revision while the listing may still bring an entry
+    /// the name reaches first (none yet, or one sorted before the one
+    /// selected): each order it brings is looked through again
+    /// (`Shell::seek_typed_again`), unless the selection changed since, as
+    /// a selection made meanwhile wins.
+    waiting: Option<u64>,
+}
+
+impl Typed {
+    fn new(listing: u64, now: Instant) -> Self {
+        Typed {
+            text: String::new(),
+            listing,
+            at: now,
+            waiting: None,
+        }
+    }
+
+    /// Whether a character typed in `listing` at `now` goes on with this
+    /// name.
+    fn goes_on(&self, listing: u64, now: Instant) -> bool {
+        self.listing == listing && now.duration_since(self.at) <= TYPING_PAUSE
+    }
+
+    fn push(&mut self, ch: &str, now: Instant) {
+        self.text.extend(ch.chars().flat_map(char::to_lowercase));
+        self.at = now;
+    }
+
+    /// Whether `name` begins with what was typed, case ignored.
+    fn begins(&self, name: &str) -> bool {
+        let mut name = name.chars().flat_map(char::to_lowercase);
+        self.text.chars().all(|c| name.next() == Some(c))
+    }
+}
+
 pub struct ListState {
     /// Entry ids in display order, from the core's cached sort.
     pub sorted: std::sync::Arc<[EntryId]>,
@@ -96,8 +145,7 @@ pub struct ListState {
     /// How many entries the view laid out: what a tab shown again shows
     /// first.
     pub visible_items: usize,
-    typeahead: String,
-    typeahead_at: Option<Instant>,
+    typed: Option<Typed>,
     /// The selection summary and the (selection revision, listing version)
     /// it was computed for: read several times a frame, recomputed only
     /// when one of them moved.
@@ -114,8 +162,7 @@ impl Default for ListState {
             removed: 0,
             visible_rows: 20,
             visible_items: 0,
-            typeahead: String::new(),
-            typeahead_at: None,
+            typed: None,
             selection: Cell::new(None),
         }
     }
@@ -130,6 +177,10 @@ impl ListState {
         if self.listing != Some(listing.id()) {
             self.reset();
             self.listing = Some(listing.id());
+            // A name typed in the listing before has ended; one typed in
+            // this one before the sync adopted it (a key right after Enter)
+            // goes on.
+            self.typed.take_if(|typed| typed.listing != listing.id());
         }
         // An entry taken out and back (a file untagged, then given its tag
         // again by Undo) comes back bare: it is asked for again.
@@ -669,16 +720,23 @@ impl Shell {
             return;
         }
         let now = Instant::now();
+        // The listing shown now: one a key just opened, even before the
+        // next sync adopts it.
+        let Some(listing) = self
+            .app
+            .workspace
+            .read()
+            .pane(self.pane)
+            .map(|p| p.listing.id())
+        else {
+            return;
+        };
         {
             let l = &mut self.ui_mut().list;
-            if l.typeahead_at
-                .is_none_or(|t| now.duration_since(t) > Duration::from_secs(2))
-            {
-                l.typeahead.clear();
-            }
+            l.typed.take_if(|typed| !typed.goes_on(listing, now));
             // A path begins: `/` or `~` typed first opens the address bar
             // with it, as in GNOME's file chooser and Nautilus.
-            if l.typeahead.is_empty() && matches!(ch, "/" | "~") {
+            if l.typed.is_none() && matches!(ch, "/" | "~") {
                 let (address, text) = (self.ui().address.clone(), ch.to_owned());
                 address.update(cx, |input, cx| {
                     input.set_text(text, cx);
@@ -687,22 +745,90 @@ impl Shell {
                 cx.notify();
                 return;
             }
-            l.typeahead_at = Some(now);
-            l.typeahead.push_str(&ch.to_lowercase());
+            l.typed
+                .get_or_insert_with(|| Typed::new(listing, now))
+                .push(ch, now);
         }
-        let needle = self.ui().list.typeahead.clone();
-        let found = {
-            let ws = self.app.workspace.read();
-            ws.pane(self.pane).and_then(|p| {
-                self.ui().list.sorted.iter().position(|id| {
-                    p.entry(*id)
-                        .is_some_and(|e| e.name_str().to_lowercase().starts_with(&needle))
-                })
-            })
+        let Some((found, whole)) = self.seek_typed() else {
+            return;
         };
         if let Some(ix) = found {
             self.cursor_to(ix as isize, Step::Select, window, cx);
         }
+        self.typed_waits(whole);
+    }
+
+    /// Where the name typed leads: the first entry in the order shown whose
+    /// name begins with it, and whether that order is the whole listing it
+    /// was typed in. A folder just opened is adopted at the next sync, and
+    /// streams: until it is whole, an entry the name reaches first may come.
+    fn seek_typed(&self) -> Option<(Option<usize>, bool)> {
+        let ws = self.app.workspace.read();
+        let pane = ws.pane(self.pane)?;
+        let list = &self.ui().list;
+        let typed = list.typed.as_ref()?;
+        if pane.listing.id() != typed.listing || list.listing != Some(typed.listing) {
+            return Some((None, false));
+        }
+        let found = list
+            .sorted
+            .iter()
+            .position(|id| pane.entry(*id).is_some_and(|e| typed.begins(&e.name_str())));
+        let whole = list.version() == Some(pane.listing.version())
+            && (pane.listing.is_complete() || pane.listing.error().is_some());
+        Some((found, whole))
+    }
+
+    /// Once the name typed has selected what it reaches so far: keep looking
+    /// as the listing brings more, unless it is whole.
+    fn typed_waits(&mut self, whole: bool) {
+        let revision = if whole {
+            None
+        } else {
+            let ws = self.app.workspace.read();
+            ws.pane(self.pane).map(|p| p.selection.revision())
+        };
+        if let Some(typed) = self.ui_mut().list.typed.as_mut() {
+            typed.waiting = revision;
+        }
+    }
+
+    /// Look again for a name typed while its listing was not whole
+    /// (`seek_typed`): it brought more. Called by the sync, once it adopted
+    /// them.
+    pub(crate) fn seek_typed_again(&mut self, cx: &mut Context<Self>) {
+        let Some(waiting) = self.ui().list.typed.as_ref().and_then(|t| t.waiting) else {
+            return;
+        };
+        let (revision, cursor) = {
+            let ws = self.app.workspace.read();
+            ws.pane(self.pane)
+                .map(|p| (p.selection.revision(), p.selection.cursor))
+                .unzip()
+        };
+        // A selection made meanwhile wins.
+        if revision != Some(waiting) {
+            if let Some(typed) = self.ui_mut().list.typed.as_mut() {
+                typed.waiting = None;
+            }
+            return;
+        }
+        let Some((found, whole)) = self.seek_typed() else {
+            return;
+        };
+        if let Some(ix) = found {
+            let id = self.ui().list.sorted[ix];
+            if cursor.flatten() != Some(id)
+                && let Some(pane) = self.app.workspace.write().pane_mut(self.pane)
+            {
+                pane.selection.set([id]);
+            }
+            // Again when it was already selected: entries that arrived
+            // before it moved it down.
+            self.with_view(|view, _| view.scroll_to(ix));
+            cx.notify();
+        }
+        self.typed_waits(whole);
     }
 
     // ------------------------------------------------------------ marquee
@@ -866,7 +992,9 @@ pub fn entry_mouse<E: InteractiveElement>(
 
 #[cfg(test)]
 mod tests {
-    use super::find_matches;
+    use std::time::{Duration, Instant};
+
+    use super::{TYPING_PAUSE, Typed, find_matches};
 
     #[test]
     fn a_find_ignores_case_until_the_pattern_has_a_capital() {
@@ -874,5 +1002,36 @@ mod tests {
         assert!(find_matches("Rapport d'été.pdf", "rapp"));
         assert!(!find_matches("rapport.pdf", "Rapp"));
         assert!(find_matches("Rapport.pdf", "Rapp"));
+    }
+
+    /// Typed in the folder Enter left, a name does not go on in the one it
+    /// opened however quickly the next key follows.
+    #[test]
+    fn a_name_typed_ends_with_its_listing_or_a_pause() {
+        let start = Instant::now();
+        let mut typed = Typed::new(1, start);
+        typed.push("d", start);
+        typed.push("o", start);
+        let soon = start + Duration::from_millis(300);
+        assert!(typed.goes_on(1, soon));
+        assert!(!typed.goes_on(2, soon));
+        assert!(!typed.goes_on(1, start + TYPING_PAUSE + Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn a_name_typed_begins_names_whatever_their_case() {
+        let now = Instant::now();
+        let mut typed = Typed::new(1, now);
+        for ch in ["P", "i", "C"] {
+            typed.push(ch, now);
+        }
+        assert!(typed.begins("pictures"));
+        assert!(typed.begins("PICTURES"));
+        assert!(!typed.begins("pi"));
+        assert!(!typed.begins("papers"));
+        let mut accented = Typed::new(1, now);
+        accented.push("É", now);
+        assert!(accented.begins("été 2026"));
+        assert!(Typed::new(1, now).begins("anything"));
     }
 }
