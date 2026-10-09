@@ -146,6 +146,9 @@ pub struct Button {
     pub active: bool,
     pub enabled: bool,
     shape: Shape,
+    /// A tag's color (an index into `Theme::tags`, eight of them): its
+    /// dot stands before the label, where an icon would.
+    dot: Option<u8>,
 }
 
 /// How a button stands among its neighbours.
@@ -176,6 +179,7 @@ impl Button {
             anchor: None,
             active: false,
             enabled: true,
+            dot: None,
             shape: Shape::Tool,
         }
     }
@@ -199,6 +203,13 @@ impl Button {
         self.shape = Shape::Dropdown;
         self
     }
+    /// The button is about a tag of color `color`: its dot before the
+    /// label (a narrowing by that tag).
+    pub fn dot(mut self, color: Option<usize>) -> Self {
+        self.dot = color.and_then(|color| u8::try_from(color).ok());
+        self
+    }
+
     pub fn active(mut self, active: bool) -> Self {
         self.active = active;
         self
@@ -303,6 +314,10 @@ impl Button {
                         .flex_none(),
                 )
             })
+            .children(
+                self.dot
+                    .map(|color| crate::tags::dot(usize::from(color), &theme)),
+            )
             // A label too long for a menu keeps both ends, as names do.
             .children(label.map(|label| {
                 div()

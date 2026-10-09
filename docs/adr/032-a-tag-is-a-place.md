@@ -2,7 +2,8 @@
 
 Status: accepted, 2026-10-03. Amends ADR-026 (the Tags view) and ADR-027.
 Amended 2026-10-04: every location that is no folder reads as a trail,
-and its provider alone says how it is shown (below).
+and its provider alone says how it is shown (below). Amended
+2026-10-09: what is no folder never reads as one in the trail (below).
 
 ## Context
 
@@ -192,3 +193,19 @@ from its location. The shell kept the text last typed in the pane's
 field, so a search reached by Back or from a saved search quoted another
 search's words, or none.
 
+## Amendment: what is no folder never reads as one (2026-10-09)
+
+The trail drew every place as it drew a folder, a name between
+chevrons, so `Home › Tags › Places` read as a folder Tags in the home
+folder, and in a narrow pane, where the trail keeps its last places,
+`Places › France` could be nothing but folders. Now the first of a
+location's own places carries the glyph that stands for the location
+(`icon`, after the folders it is of: `Home › 🏷 Tags`, the shelf's,
+Recent's, the trash's), and a place that stands for a tag
+(`Crumb::tag`, its full name, as `keys::PLACE_TAG` names a listed
+one's) is that tag's chip, in its color, the one shown filled as the
+sidebar fills its pill. A narrowing by a tag (`Pill::tag`: a tag
+location's `with`, a folder narrowed) wears the tag's dot. Plain text in
+the trail is a folder. The shell colors a tag as it colors a tag's
+place in a view, from the tag's name, so a color the user changes shows
+at once.

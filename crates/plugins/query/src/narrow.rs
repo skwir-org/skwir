@@ -38,6 +38,7 @@ pub fn narrowed(expr: &str, root: PathBuf) -> Result<Option<Narrowed>, String> {
                 "query.narrow",
                 &serde_json::json!({ "facet": part.facet, "value": part.value }),
             ),
+            tag: part.tag,
         })
         .collect();
     Ok(Some(Narrowed {

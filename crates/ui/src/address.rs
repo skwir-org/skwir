@@ -603,12 +603,21 @@ pub fn more_popup(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 /// What the address field shows.
 enum Address {
     /// A folder, or a location that is none (a tag's, the trash:
-    /// `trail.rs`), as a trail of places, then what narrows it, each with
-    /// what its × runs: a folder's narrowing (`query.narrow`), or going
-    /// where the location leads without it. `true` when the last place
-    /// holds places, which a chevron after it lists (`Trail::holds_places`;
-    /// a folder's folders).
-    Trail(Vec<Crumb>, Vec<Pill>, bool),
+    /// `trail.rs`), as a trail of places.
+    Trail {
+        segments: Vec<Crumb>,
+        /// Where the location's own places begin after the folders it is
+        /// of, with the glyph that stands for it (`Shown::icon`): `Home ›
+        /// 🏷 Tags`, so that its first place never reads as a folder.
+        glyph: Option<(usize, &'static str)>,
+        /// What narrows it, each with what its × runs: a folder's
+        /// narrowing (`query.narrow`), or going where the location leads
+        /// without it.
+        filters: Vec<Pill>,
+        /// The last place holds places, which a chevron after it lists
+        /// (`Trail::holds_places`; a folder's folders).
+        holds_places: bool,
+    },
     /// A search, as pills (`search_bar::pills`).
     Pills,
     /// The text: while it is being edited (Ctrl+L, or a click beside the
@@ -670,25 +679,36 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             address: match &shell.ui().place.trail {
                 _ if focused => Address::Text,
                 _ if !shell.ui().chips.chips.is_empty() => Address::Pills,
-                Some(trail) => Address::Trail(
-                    crate::trail::segments(trail, roots),
-                    // What narrows it: its location's own words (a tag's
-                    // `with`), and a folder's narrowing (pane state).
-                    trail
-                        .filters
-                        .iter()
-                        .map(|filter| Pill {
-                            label: filter.label.clone(),
-                            remove: Invocation::navigate(&filter.location),
-                        })
-                        .chain(
-                            pane.and_then(|p| p.narrowed())
-                                .map(|n| n.pills.clone())
-                                .unwrap_or_default(),
-                        )
-                        .collect(),
-                    trail.holds_places,
-                ),
+                Some(trail) => {
+                    let segments = crate::trail::segments(trail, roots);
+                    let own = segments.len() - trail.crumbs.len();
+                    Address::Trail {
+                        glyph: shell
+                            .ui()
+                            .place
+                            .icon
+                            .filter(|_| !trail.crumbs.is_empty())
+                            .map(|icon| (own, icon)),
+                        segments,
+                        // What narrows it: its location's own words (a tag's
+                        // `with`), and a folder's narrowing (pane state).
+                        filters: trail
+                            .filters
+                            .iter()
+                            .map(|filter| Pill {
+                                label: filter.label.clone(),
+                                remove: Invocation::navigate(&filter.location),
+                                tag: filter.tag.clone(),
+                            })
+                            .chain(
+                                pane.and_then(|p| p.narrowed())
+                                    .map(|n| n.pills.clone())
+                                    .unwrap_or_default(),
+                            )
+                            .collect(),
+                        holds_places: trail.holds_places,
+                    }
+                }
                 None => Address::Text,
             },
             edge: if focused {
@@ -829,6 +849,7 @@ fn narrowing_pill(shell: &Shell, i: usize, filter: &Pill, cx: &mut Context<Shell
     )
     .args(filter.remove.args.clone())
     .label(filter.label.clone())
+    .dot(filter.tag.as_deref().map(|tag| shell.tag_colors.of(tag)))
     .active(true);
     crate::elements::pill::pill(shell, button, Some((filter.remove.clone(), tip.into())), cx)
         .into_any_element()
@@ -892,7 +913,12 @@ fn pane_row(
     let address = match &row.address {
         Address::Pills => crate::search_bar::pills(shell, chip_anchor, cx)
             .unwrap_or_else(|| div().into_any_element()),
-        Address::Trail(segments, filters, holds_places) => div()
+        Address::Trail {
+            segments,
+            glyph,
+            filters,
+            holds_places,
+        } => div()
             .flex_1()
             .w(px(0.))
             .min_w_0()
@@ -916,6 +942,7 @@ fn pane_row(
                     .child(breadcrumbs(
                         shell,
                         segments,
+                        *glyph,
                         *holds_places,
                         row.nav.as_ref(),
                         nav_anchor,
@@ -1124,10 +1151,13 @@ pub fn crumbs(path: &std::path::Path, roots: &[crate::sidebar::Root]) -> Vec<(St
 /// is above it instead, the segments wrapped out included: which is first
 /// is the layout's answer (`PaneUi::trail_shown`), read when the chevron
 /// is pointed at or pressed, never here. `open` is the menu of places
-/// open from this row, whose chevron hangs it from `anchor`.
+/// open from this row, whose chevron hangs it from `anchor`. Plain text
+/// is a folder: the segment `glyph` names carries the location's icon,
+/// and one standing for a tag (`Crumb::tag`) is the tag's chip.
 fn breadcrumbs(
     shell: &Shell,
     crumbs: &[Crumb],
+    glyph: Option<(usize, &'static str)>,
     holds: bool,
     open: Option<&crate::nav_menu::NavWhat>,
     anchor: &PopoverAnchor,
@@ -1270,21 +1300,51 @@ fn breadcrumbs(
         let open = serde_json::json!(crumb.location.arg());
         let in_tab = open.clone();
         let (text, clip) = crate::elements::clip::text(crumb.label.clone());
+        let ink = if index == last {
+            theme.text
+        } else {
+            theme.text_muted
+        };
+        let icon = glyph.filter(|(at, _)| *at == index).map(|(_, icon)| icon);
         let segment = div()
             .id(("crumb", index))
             .optional_tooltip(clip.tooltip(None, shell.font.clone()))
-            .h(px(24.))
             .max_w(px(260.))
             .px(px(6.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
             .rounded_sm()
-            .truncate()
             .cursor_pointer()
-            .text_color(if index == last {
-                theme.text
-            } else {
-                theme.text_muted
+            .text_color(ink)
+            .map(|d| match crumb.tag.as_deref() {
+                // A tag is its chip, as on a file's row, the one shown
+                // filled as its pill in the sidebar: never a folder's name,
+                // even when the folders before it are out of sight.
+                Some(tag) => {
+                    let color = shell.tag_colors.of(tag);
+                    let tone = theme.tag(color);
+                    d.h(px(20.))
+                        .line_height(px(20.))
+                        .border_1()
+                        .border_color(gpui::transparent_black())
+                        .bg(if index == last {
+                            theme.tag_shown(color)
+                        } else {
+                            theme.tag_fill(color)
+                        })
+                        .text_color(theme.text)
+                        .hover(move |s| s.border_color(tone))
+                }
+                None => d.h(px(24.)).hover(move |s| s.bg(hover)),
             })
-            .hover(move |s| s.bg(hover))
+            .children(icon.map(|icon| {
+                gpui::svg()
+                    .path(format!("toolbar/{icon}.svg"))
+                    .size(px(14.))
+                    .flex_none()
+                    .text_color(ink)
+            }))
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 this.activate_pane(pane, cx);
@@ -1312,7 +1372,7 @@ fn breadcrumbs(
                     );
                 }),
             )
-            .child(text);
+            .child(div().min_w_0().truncate().child(text));
         let segment = match crumb.location.path() {
             Some(dir) => crate::dnd::droppable_dir(segment, dir, cx),
             None if shell.ui().place.takes_drops(&crumb.location) => {

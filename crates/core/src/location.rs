@@ -379,6 +379,11 @@ pub trait LocationProvider: Send + Sync {
 pub struct Crumb {
     pub label: String,
     pub location: Location,
+    /// The tag it stands for, its full name (`Places/France`), as
+    /// `keys::PLACE_TAG` names a place's: the address draws it as that
+    /// tag's chip, in its color, so it never reads as a folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
 }
 
 impl Crumb {
@@ -386,7 +391,15 @@ impl Crumb {
         Crumb {
             label: label.into(),
             location,
+            tag: None,
         }
+    }
+
+    /// The crumb, standing for `tag`.
+    #[must_use]
+    pub fn of_tag(mut self, tag: impl Into<String>) -> Self {
+        self.tag = Some(tag.into());
+        self
     }
 }
 

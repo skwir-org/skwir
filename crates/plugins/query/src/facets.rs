@@ -521,6 +521,8 @@ pub struct Part {
     pub label: String,
     pub facet: &'static str,
     pub value: Option<String>,
+    /// The tag it narrows by, whose dot its pill wears.
+    pub tag: Option<String>,
 }
 
 /// What a narrowing reads as (`kind:image modified:2024` is “Images” and
@@ -533,6 +535,7 @@ pub fn parts(expr: &str) -> Result<(Vec<Part>, Vec<String>), String> {
         label,
         facet,
         value: value.map(str::to_owned),
+        tag: None,
     };
     let mut parts = Vec::new();
     let mut set = Vec::new();
@@ -558,14 +561,16 @@ pub fn parts(expr: &str) -> Result<(Vec<Part>, Vec<String>), String> {
         parts.push(part(format!("size {size}"), "size", None));
     }
     for tag in &p.tags {
-        parts.push(part(
-            format!("with {}", tag_leaf(tag)),
-            "drop_tag",
-            Some(tag),
-        ));
+        parts.push(Part {
+            tag: Some(tag.clone()),
+            ..part(format!("with {}", tag_leaf(tag)), "drop_tag", Some(tag))
+        });
     }
     for tag in &p.not_tags {
-        parts.push(part(format!("not {}", tag_leaf(tag)), "not_tag", Some(tag)));
+        parts.push(Part {
+            tag: Some(tag.clone()),
+            ..part(format!("not {}", tag_leaf(tag)), "not_tag", Some(tag))
+        });
     }
     for (i, text) in p.advanced.iter().enumerate() {
         parts.push(part(text.clone(), "advanced", Some(&i.to_string())));
@@ -801,6 +806,25 @@ mod tests {
 
     fn chip<'a>(d: &'a Description, id: &str) -> &'a Chip {
         d.chips.iter().find(|c| c.id == id).unwrap()
+    }
+
+    /// A folder narrowed by a tag reads as a pill of that tag, whose dot
+    /// it wears; the others are no tag's.
+    #[test]
+    fn a_narrowing_by_a_tag_names_its_tag() {
+        let (parts, _) = parts("kind:image tag:Places/France NOT tag:draft").unwrap();
+        let read: Vec<(&str, Option<&str>)> = parts
+            .iter()
+            .map(|p| (p.label.as_str(), p.tag.as_deref()))
+            .collect();
+        assert_eq!(
+            read,
+            [
+                ("Images", None),
+                ("with France", Some("Places/France")),
+                ("not draft", Some("draft")),
+            ]
+        );
     }
 
     #[test]

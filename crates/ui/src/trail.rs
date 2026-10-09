@@ -1,6 +1,7 @@
 //! What the location a pane shows says of itself when it is no folder
 //! (ADR-032): its trail of places (`LocationProvider::trail`: a tag
-//! location reads `Home › Tags › Places › France`, then what narrows it;
+//! location reads `Home › Tags › Places › France`, then what narrows it,
+//! drawn with the location's glyph on Tags and each tag as its chip;
 //! the trash, one place), what gestures mean there
 //! (`LocationProvider::verbs`: Delete takes a file out of a tag or the
 //! shelf, a drop gives files the tag, New Folder makes a tag), and what

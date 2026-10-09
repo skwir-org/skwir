@@ -279,16 +279,22 @@ impl Theme {
         gpui::hsla(hue, s, 0.40 - darker + depth.min(3) as f32 * 0.035, 1.)
     }
 
-    /// The fill of a chip of a tag wearing color `index` (see `tags`),
-    /// under text in `text`.
     /// The tag color of palette index `index` (`metadata::TAG_COLORS`).
     pub fn tag(&self, index: usize) -> Hsla {
         self.tags[index % self.tags.len()]
     }
 
+    /// The fill of a chip of a tag wearing color `index` (see `tags`),
+    /// under text in `text`.
     pub fn tag_fill(&self, index: usize) -> Hsla {
         let color = self.tag(index);
         color.opacity(if self.is_dark { 0.3 } else { 0.18 })
+    }
+
+    /// The fill of the chip of the tag a pane shows: its pill in the
+    /// sidebar, the last of the address's trail.
+    pub fn tag_shown(&self, index: usize) -> Hsla {
+        self.tag(index).opacity(0.45)
     }
 
     /// The `ui.theme` preference, falling back to the desktop's appearance.

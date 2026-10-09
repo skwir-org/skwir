@@ -1159,7 +1159,7 @@ fn pill(
             gpui::transparent_black()
         })
         .bg(if is_current {
-            tone.opacity(0.45)
+            theme.tag_shown(color)
         } else if place.suggested {
             gpui::transparent_black()
         } else {

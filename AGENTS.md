@@ -388,6 +388,10 @@ current source before assuming a planned crate, command, or API exists.
   from its text: the folder it is of, its places, what narrows it; one
   that gives none is one place, its name, `App::trail`), which the
   address draws as a folder's (`trail.rs`, read once per location),
+  save that nothing there that is no folder reads as one: the first of
+  the location's own places carries its `icon`, a place standing for a
+  tag (`Crumb::tag`) is that tag's chip, and a narrowing by a tag
+  (`Pill::tag`) wears its dot; and
   whose chevrons list `LocationProvider::places` on a worker (after the
   last place only when it holds places, `Trail::holds_places`: a tag,
   the trash and its folders, not the shelf), and which Up walks back (`App::parent`: a search goes
