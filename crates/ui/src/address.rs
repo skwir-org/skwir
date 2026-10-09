@@ -440,7 +440,7 @@ fn group_title(title: &'static str, theme: &Theme) -> gpui::Div {
 }
 
 /// The More menu: what has no button, the window's layout, New tab, the
-/// palette and Settings.
+/// palette, Settings and About.
 fn more_panel(
     shell: &Shell,
     popup: &toolbar::Popup,
@@ -472,6 +472,10 @@ fn more_panel(
             (
                 Button::new("menu-settings", "settings", "Settings", "ui.settings"),
                 "Settings…",
+            ),
+            (
+                Button::new("menu-about", "info", "About bibli", "ui.about"),
+                "About bibli",
             ),
         ]
         .into_iter()

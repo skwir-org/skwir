@@ -12,7 +12,7 @@ body:
     id: system
     attributes:
       label: System
-      description: The distribution and its version, Wayland or X11, the GPU.
+      description: The distribution and its version, Wayland or X11, the GPU. More › About bibli › Copy details copies them with bibli's version.
     validations:
       required: true
   - type: input

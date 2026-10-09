@@ -21,7 +21,8 @@ keys that work where the keyboard is.
 - **More** (the sidebar's button, or the pane's row when the sidebar is
   hidden) holds what has no button of its own, and Layout: where the
   split and the preview go, or Automatic, which follows the window's
-  shape.
+  shape. About bibli, at its end, says which version runs and on what
+  system, display and graphics, and copies it all for a report.
 - **The footer** of each pane says how many items it lists, what is
   selected and what it weighs. The last pane's footer also shows Undo,
   what waits for a paste, plans waiting for your review, and the player.

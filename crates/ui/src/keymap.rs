@@ -293,6 +293,9 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // A pane filtered by name shows everything again before Escape
     // deselects (`select_none`, the plugins' binding).
     ("escape", "filter", "{}", Some("pane filtered")),
+    // Escape only closes About: bound with arguments of its own, it is not
+    // named beside About in the palette (`keys_for` matches them).
+    ("escape", "ui.about", r#"{"close":true}"#, Some("about")),
     // The address field's dropdown: the keyboard stays in the field.
     (
         "alt-enter",
@@ -737,6 +740,7 @@ const PLACES: &[(&str, &str, &str)] = &[
     ("toolbar_button", "ToolbarButton", "Toolbars"),
     ("toolbar_popup", "ToolbarPopup", "Toolbars"),
     ("shortcuts", "Shortcuts", "Shortcut overview"),
+    ("about", "About", "About bibli"),
     ("settings", "Settings", "Settings"),
     ("settings_nav", "SettingsNav", "Settings"),
     ("setting_control", "SettingControl", "Settings"),

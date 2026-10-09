@@ -5,6 +5,8 @@ version.workspace = true
 publish.workspace = true
 edition.workspace = true
 license.workspace = true
+# The website About links to.
+repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]

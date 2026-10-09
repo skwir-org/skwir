@@ -5,6 +5,7 @@
 //! builds everywhere and Phase 5 fills them in.
 //!
 //! - [`mime`]: type detection by name (no I/O) or by content.
+//! - [`about`]: the system's name for itself, and where bibli's licences are installed.
 //! - [`access`]: what the system adds to a file's mode (access lists, capabilities, a security label).
 //! - [`calendar`]: the user's time zone and first weekday, for dates people read.
 //! - [`icons`]: XDG icon theme lookup with caching.
@@ -20,6 +21,7 @@
 //! - [`links`]: addresses and paths found in plain text, and the files they name.
 //! - [`process`]: bounded tool runs, and children started without waiting on them.
 
+pub mod about;
 pub mod access;
 #[cfg(test)]
 mod any_input;

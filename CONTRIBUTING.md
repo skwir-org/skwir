@@ -6,8 +6,9 @@ those releases](docs/HELP-WANTED.md) need you most.
 
 ## Reporting a problem
 
-Open an issue with your system and its version, what you did, what you
-expected and what happened, and the log if you can (run
+Open an issue with your system and its version (More › About bibli ›
+Copy details copies them), what you did, what you expected and what
+happened, and the log if you can (run
 `RUST_LOG=bibli=debug bibli` from a terminal). **Rename anything personal
 before you share it**: paths, file names and screenshots say a lot about
 you, and a folder called `taxes 2026` can be `folder a` in a report.

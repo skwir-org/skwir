@@ -138,6 +138,13 @@ mod args {
         pointer: bool,
     }
 
+    /// A dialog's toggle: `close` closes it, and never opens it.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct Close {
+        #[serde(default)]
+        close: bool,
+    }
+
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct History {
         /// Ahead of Forward instead of behind Back.
@@ -361,9 +368,9 @@ mod args {
 }
 
 use args::{
-    Amount, Ask, Bucket, Continue, CopyText, Cursor, Delta, Dir, Find, Folders, History, Key,
-    Layout, ListMoveArgs, Object, On, Page, PageLink, Pages, Pan, Pick, Player, Pointer, Popup,
-    Scrub, Settings, Sort, Split, Submit, TagsPrompt, Text, Unlock, Url, View,
+    Amount, Ask, Bucket, Close, Continue, CopyText, Cursor, Delta, Dir, Find, Folders, History,
+    Key, Layout, ListMoveArgs, Object, On, Page, PageLink, Pages, Pan, Pick, Player, Pointer,
+    Popup, Scrub, Settings, Sort, Split, Submit, TagsPrompt, Text, Unlock, Url, View,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -407,6 +414,7 @@ const SHOWS: &[&str] = &[
     "ui.palette",
     "ui.list_move",
     "ui.shortcuts",
+    "ui.about",
     "ui.settings",
     "ui.settings_close",
     "ui.settings_next",
@@ -785,6 +793,12 @@ pub fn declare_all(app: &App) {
         "ui.shortcuts",
         "Shortcuts",
         "List the keys of where the keyboard is",
+    );
+    declare::<Close>(
+        app,
+        "ui.about",
+        "About bibli",
+        "Show bibli's version and licence, and what it runs on",
     );
     declare::<Settings>(
         app,

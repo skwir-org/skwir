@@ -306,6 +306,7 @@ pub struct Shell {
     /// membership here instead of taking the lock each.
     pub pending: Arc<bibli_core::pending::Pending>,
     pub shortcuts: Option<crate::shortcuts::Overview>,
+    pub about: Option<crate::about::About>,
     /// A rubber-band selection in progress.
     pub marquee: Option<crate::elements::marquee::Drag>,
     /// The encrypted volume the passphrase prompt is for.
@@ -554,6 +555,7 @@ impl Shell {
             toasts: crate::toast::ToastState::default(),
             pending: Arc::default(),
             shortcuts: None,
+            about: None,
             marquee: None,
             unlock: None,
             nudges: crate::shortcuts::Nudges::default(),
@@ -1357,6 +1359,10 @@ impl Shell {
             self.toggle_shortcuts(window, cx);
             return;
         }
+        if self.about.is_some() && name != "ui.about" {
+            self.toggle_about(window, cx);
+            return;
+        }
         // Settings may contain private paths; never trace their values.
         if !name.starts_with("ui.settings") && !name.starts_with("settings.") {
             tracing::debug!(name, %args, "run");
@@ -1516,6 +1522,12 @@ impl Shell {
             "search_chip" => self.toggle_search_chip(args, window, cx),
             name if name.starts_with("settings_") => self.settings_command(name, args, window, cx),
             "shortcuts" => self.toggle_shortcuts(window, cx),
+            "about" => {
+                let close = args.get("close").and_then(serde_json::Value::as_bool) == Some(true);
+                if !close || self.about.is_some() {
+                    self.toggle_about(window, cx);
+                }
+            }
             "ask" => self.open_ask(args, window, cx),
             "choose" => self.open_choose(args, window, cx),
             "choose_option" => self.choose_toggle_option(window, cx),
@@ -2430,6 +2442,7 @@ impl Render for Shell {
         let toast = crate::toast::render(self, cx);
         let sequence = crate::sequence::render(self, cx);
         let shortcuts = crate::shortcuts::render(self, cx);
+        let about = crate::about::render(self, cx);
         let overlays = [
             address::more_popup(self, cx),
             menu::render(self, cx),
@@ -2521,6 +2534,7 @@ impl Render for Shell {
                             .children(panel),
                     ),
             )
+            .children(about)
             .children(toast)
             .children(sequence)
             .children(overlays.into_iter().flatten())

@@ -46,6 +46,7 @@ impl Shell {
             || self.menu.is_some()
             || self.settings.is_some()
             || self.shortcuts.is_some()
+            || self.about.is_some()
     }
 }
 
