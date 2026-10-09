@@ -1319,6 +1319,68 @@ fn record_of_listed(item: &trash::TrashItem) -> PathBuf {
     trash_info_of(id).unwrap_or_else(|| id.to_path_buf())
 }
 
+/// The trash as a plan read it (`StepContext::with_trash`), each item
+/// found by its record and by where it was put there from: a step looks
+/// up its item, never the whole listing, and one that takes an item out
+/// takes it out of the listing too, never reading the trash again (a
+/// thousand files moved out of a trash of ten thousand read ten million
+/// records).
+pub(super) struct TrashListing {
+    items: Vec<Option<trash::TrashItem>>,
+    by_record: std::collections::HashMap<PathBuf, usize>,
+    by_original: std::collections::HashMap<PathBuf, Vec<usize>>,
+}
+
+impl TrashListing {
+    pub(super) fn new(items: Vec<trash::TrashItem>) -> Self {
+        let mut by_record = std::collections::HashMap::with_capacity(items.len());
+        let mut by_original: std::collections::HashMap<PathBuf, Vec<usize>> =
+            std::collections::HashMap::with_capacity(items.len());
+        for (n, item) in items.iter().enumerate() {
+            by_record.insert(record_of_listed(item), n);
+            by_original.entry(item.original_path()).or_default().push(n);
+        }
+        TrashListing {
+            items: items.into_iter().map(Some).collect(),
+            by_record,
+            by_original,
+        }
+    }
+
+    /// The item whose record is `info`, still listed.
+    fn record(&self, info: &Path) -> Option<&trash::TrashItem> {
+        self.items.get(*self.by_record.get(info)?)?.as_ref()
+    }
+
+    /// The item listed last put there from `original`: the latest, or the
+    /// latest within `COMPANION_TRASHED_WITHIN` of `near`.
+    fn latest_from(&self, original: &Path, near: Option<i64>) -> Option<usize> {
+        self.by_original
+            .get(original)?
+            .iter()
+            .filter_map(|&n| Some((n, self.items[n].as_ref()?)))
+            .filter(|(_, item)| {
+                near.is_none_or(|when| (item.time_deleted - when).abs() <= COMPANION_TRASHED_WITHIN)
+            })
+            .max_by_key(|(_, item)| item.time_deleted)
+            .map(|(n, _)| n)
+    }
+
+    /// The item at `n`, out of the listing.
+    fn take(&mut self, n: usize) -> Option<trash::TrashItem> {
+        let item = self.items.get_mut(n)?.take()?;
+        self.by_record.remove(&record_of_listed(&item));
+        Some(item)
+    }
+
+    /// The item whose record is `info` is no longer in the trash.
+    pub(super) fn taken(&mut self, info: &Path) {
+        if let Some(n) = self.by_record.remove(info) {
+            self.items[n] = None;
+        }
+    }
+}
+
 /// The item a trash's record speaks of: `records::item_of`.
 fn item_of_info(info: &Path) -> Option<PathBuf> {
     super::records::item_of(info)
@@ -1341,10 +1403,9 @@ fn companion_places(ctx: &StepContext, path: &Path) -> Vec<PathBuf> {
 /// Where the item of the trash whose `.trashinfo` is `info` was put there
 /// from, and when, as the plan's trash listing says.
 fn trashed_from(ctx: &StepContext, info: &Path) -> Option<(PathBuf, i64)> {
-    ctx.with_trash(|items| {
-        items
-            .iter()
-            .find(|i| record_of_listed(i) == info)
+    ctx.with_trash(|listing| {
+        listing
+            .record(info)
             .map(|i| (i.original_path(), i.time_deleted))
     })
     .ok()
@@ -1365,23 +1426,16 @@ fn take_trashed_with(
     if places.is_empty() {
         return Vec::new();
     }
-    ctx.with_trash(|items| {
-        let mut found = Vec::new();
-        for (index, place) in places.iter().enumerate().filter(|(n, _)| wanted(*n)) {
-            let at = items
-                .iter()
-                .enumerate()
-                .filter(|(_, i)| {
-                    i.original_path() == *place
-                        && (i.time_deleted - when).abs() <= COMPANION_TRASHED_WITHIN
-                })
-                .max_by_key(|(_, i)| i.time_deleted)
-                .map(|(n, _)| n);
-            if let Some(n) = at {
-                found.push((index, items.swap_remove(n)));
-            }
-        }
-        found
+    ctx.with_trash(|listing| {
+        places
+            .iter()
+            .enumerate()
+            .filter(|(n, _)| wanted(*n))
+            .filter_map(|(index, place)| {
+                let n = listing.latest_from(place, Some(when))?;
+                Some((index, listing.take(n)?))
+            })
+            .collect()
     })
     .unwrap_or_default()
 }
@@ -1496,18 +1550,13 @@ impl Restore {
     /// Index of the item to restore in the plan's trash listing: the one
     /// named, else (it was restored and trashed again since, under
     /// another name) the most recent from the path.
-    fn find(&self, items: &[trash::TrashItem]) -> Option<usize> {
+    fn find(&self, listing: &TrashListing) -> Option<usize> {
         if let Some(item) = self.item.as_deref()
-            && let Some(n) = items.iter().position(|i| record_of_listed(i) == item)
+            && let Some(&n) = listing.by_record.get(item)
         {
             return Some(n);
         }
-        items
-            .iter()
-            .enumerate()
-            .filter(|(_, i)| i.original_path() == self.path)
-            .max_by_key(|(_, i)| i.time_deleted)
-            .map(|(n, _)| n)
+        listing.latest_from(&self.path, None)
     }
 }
 
@@ -1622,7 +1671,7 @@ impl super::Effect for Restore {
             }
             return StepStatus::AlreadyDone;
         }
-        match ctx.with_trash(|items| self.find(items)) {
+        match ctx.with_trash(|listing| self.find(listing)) {
             Ok(Some(_)) => pending(true),
             Ok(None) => conflict(format!(
                 "“{}” is not in the trash",
@@ -1660,7 +1709,7 @@ impl super::Effect for Restore {
                     take_trashed_with(ctx, &places, when, |n| !exists(&places[n]))
                 })
             };
-            ctx.forget_trash();
+            ctx.trash_taken(info);
             let mut unmerge = merge_restore(&item, info, &self.path)?;
             for (n, found) in with {
                 if let Ok(back) = Untrashed::take(ctx, &record_of_listed(&found), &places[n]) {
@@ -1671,7 +1720,7 @@ impl super::Effect for Restore {
         }
         // Taken out of the listing: once restored it is no longer there.
         let item = ctx
-            .with_trash(|items| self.find(items).map(|n| items.swap_remove(n)))
+            .with_trash(|listing| self.find(listing).and_then(|n| listing.take(n)))
             .context("the trash could not be read")?
             .ok_or_else(|| anyhow::anyhow!("“{}” is not in the trash", display_name(&self.path)))?;
         let when = item.time_deleted;
@@ -2006,8 +2055,8 @@ impl super::Effect for RestorePart {
                 display_name(&self.path)
             )));
         }
-        ctx.forget_trash();
         if item {
+            ctx.trash_taken(&inside.info);
             let _ = std::fs::remove_file(&inside.info);
         }
         let mut returned = Vec::new();

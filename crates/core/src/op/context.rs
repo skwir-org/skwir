@@ -132,7 +132,7 @@ pub struct StepContext {
     meter: Arc<Meter>,
     /// The trash listing, read once per plan: parsing every `.trashinfo`
     /// per restored item made undoing a large trash quadratic.
-    trash: RefCell<Option<Vec<trash::TrashItem>>>,
+    trash: RefCell<Option<super::builtin::TrashListing>>,
     /// The files beside a file that go where it goes (ADR-028).
     companions: Arc<crate::companions::Companions>,
     /// The folders a dry run's earlier steps make (`super::dry_run`): a
@@ -369,18 +369,27 @@ impl StepContext {
     /// Run `f` over the trash listing, reading it on first use in this plan.
     pub(super) fn with_trash<T>(
         &self,
-        f: impl FnOnce(&mut Vec<trash::TrashItem>) -> T,
+        f: impl FnOnce(&mut super::builtin::TrashListing) -> T,
     ) -> Result<T, trash::Error> {
         let mut cached = self.trash.borrow_mut();
         if cached.is_none() {
-            *cached = Some(super::sys::trash_list()?);
+            *cached = Some(super::builtin::TrashListing::new(super::sys::trash_list()?));
         }
         Ok(f(cached.as_mut().expect("just filled")))
     }
 
-    /// The trash changed under the cached listing (an item was trashed).
+    /// The trash changed under the cached listing (an item was trashed, or
+    /// put back): read again when next asked.
     pub(super) fn forget_trash(&self) {
         self.trash.borrow_mut().take();
+    }
+
+    /// The item whose record is `info` left the trash: out of the cached
+    /// listing, which stays.
+    pub(super) fn trash_taken(&self, info: &std::path::Path) {
+        if let Some(listing) = self.trash.borrow_mut().as_mut() {
+            listing.taken(info);
+        }
     }
 
     /// A dry run's step checked as pending will make what `change` says:

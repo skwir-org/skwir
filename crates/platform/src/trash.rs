@@ -135,21 +135,7 @@ pub fn list(trash: &Path, calendar: &Calendar) -> Vec<Trashed> {
     let Ok(infos) = std::fs::read_dir(trash.join("info")) else {
         return list_recycle_bin(trash);
     };
-    // Where a relative `Path` starts: the volume a volume's trash is at the
-    // top of (`<top>/.Trash-<uid>`, `<top>/.Trash/<uid>`).
-    let top = trash
-        .file_name()
-        .and_then(|name| name.to_str())
-        .and_then(|name| {
-            if name.starts_with(".Trash-") {
-                trash.parent()
-            } else {
-                trash
-                    .parent()
-                    .filter(|p| p.file_name() == Some(".Trash".as_ref()))?
-                    .parent()
-            }
-        });
+    let top = top_of(trash);
     let mut found = Vec::new();
     for info in infos.flatten() {
         let info = info.path();
@@ -181,6 +167,43 @@ pub fn list(trash: &Path, calendar: &Calendar) -> Vec<Trashed> {
         });
     }
     found
+}
+
+/// Where a relative `Path` of `trash`'s records starts: the volume a
+/// volume's trash is at the top of (`<top>/.Trash-<uid>`,
+/// `<top>/.Trash/<uid>`); `None` for the home trash.
+fn top_of(trash: &Path) -> Option<&Path> {
+    let name = trash.file_name()?.to_str()?;
+    if name.starts_with(".Trash-") {
+        trash.parent()
+    } else {
+        trash
+            .parent()
+            .filter(|p| p.file_name() == Some(".Trash".as_ref()))?
+            .parent()
+    }
+}
+
+/// What its trash says of the item `file` (in a trash's `files`, or a
+/// Recycle Bin's `$R` item): its record alone read, the trash's others
+/// left unread. `None` for a file that is no item of a trash, or whose
+/// record says nothing of it. Reads the record: call it from a worker.
+pub fn item(file: &Path, calendar: &Calendar) -> Option<Trashed> {
+    use bibli_core::op::records::{self, Deleted};
+    let info = records::record_of(file)?;
+    let bytes = crate::file::read_regular(&info, crate::file::SIDE_FILE_LIMIT).ok()?;
+    let trash = info.parent().and_then(Path::parent);
+    let said = records::read(&info, &bytes, trash.and_then(top_of))?;
+    Some(Trashed {
+        file: file.to_path_buf(),
+        info,
+        original: said.original,
+        deleted: match said.deleted {
+            Some(Deleted::Local(date)) => calendar.local_time(&date),
+            Some(Deleted::At(at)) => Some(at),
+            None => None,
+        },
+    })
 }
 
 /// What a Windows Recycle Bin folder (`$Recycle.Bin\\<SID>`) holds: each

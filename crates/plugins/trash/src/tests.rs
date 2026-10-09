@@ -88,13 +88,14 @@ fn a_file_in_the_trash_is_listed_as_it_was_and_restored_where_it_was() {
     };
     eventually("the trash is read again", || ours(&app).len() == 1);
     assert_eq!(ours(&app), [("notes [draft].txt".to_owned(), file.clone())]);
-    assert_eq!(
+    eventually("the place says the trash holds something", || {
         app.registry
             .places
             .find(|p| p.title == "Trash")
-            .and_then(|p| p.icon),
-        Some("user-trash-full".into())
-    );
+            .and_then(|p| p.icon)
+            .as_deref()
+            == Some("user-trash-full")
+    });
 
     let pane = app.workspace.read().active_id();
     app.navigate(pane, &Location::parse("trash:")).unwrap();
@@ -210,9 +211,16 @@ fn emptying_the_trash_deletes_its_files_and_what_it_said_of_them() {
             "{kept} is empty"
         );
     }
-    eventually("the trash is read again", || listed(&app).is_empty());
+    assert!(listed(&app).is_empty());
+    eventually("the trash is read again", || {
+        app.registry
+            .places
+            .find(|p| p.title == "Trash")
+            .and_then(|p| p.icon)
+            .as_deref()
+            == Some("user-trash")
+    });
     let shown = app.registry.places.find(|p| p.title == "Trash").unwrap();
-    assert_eq!(shown.icon.as_deref(), Some("user-trash"));
     assert!(shown.menu.is_empty(), "nothing to empty");
     assert!(app.dispatch(&Invocation::new("trash.empty")).is_err());
     // Dropped on its place, files go in the trash: what its location
@@ -224,6 +232,71 @@ fn emptying_the_trash_deletes_its_files_and_what_it_said_of_them() {
             .as_deref(),
         Some("trash.put")
     );
+}
+
+/// What the trash holds is known by its files alone (the place's icon,
+/// Empty Trash) until a listing shows it: its items are read whole then,
+/// and let go of once nothing shows them.
+#[test]
+fn the_items_are_read_whole_only_while_a_listing_shows_them() {
+    let tmp = base();
+    let trash = volume_trash(&tmp.path().join("volume"));
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("app"))).unwrap();
+    let plugin = Arc::new(TrashPlugin::with_trashes(vec![trash.clone()]));
+    app.plugins.add(plugin.clone(), &app);
+    let state = Arc::clone(&plugin.trashes.state);
+    eventually("what it holds is read", || {
+        state
+            .lock()
+            .held
+            .as_ref()
+            .is_some_and(|held| held.len() == 2)
+    });
+    assert!(state.lock().items.is_empty(), "no listing: no record read");
+    assert_eq!(
+        app.registry
+            .places
+            .find(|p| p.title == "Trash")
+            .and_then(|p| p.icon),
+        Some("user-trash-full".into())
+    );
+    assert_eq!(plan(&app, "trash.empty", &serde_json::json!({})).len(), 2);
+
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::parse("trash:")).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    assert_eq!(app.workspace.read().pane(pane).unwrap().listing.len(), 2);
+    assert_eq!(state.lock().items.len(), 2);
+    // A file trashed meanwhile is read, the others kept as read.
+    std::fs::write(trash.join("files/c.txt"), "c").unwrap();
+    std::fs::write(
+        trash.join("info/c.txt.trashinfo"),
+        "[Trash Info]\nPath=docs/c.txt\nDeletionDate=2026-10-04T09:31:00\n",
+    )
+    .unwrap();
+    let kept = Arc::clone(&state.lock().items[0]);
+    eventually("the new file is listed", || {
+        app.pump();
+        app.workspace.read().pane(pane).unwrap().listing.len() == 3
+    });
+    assert!(
+        state
+            .lock()
+            .items
+            .iter()
+            .any(|item| Arc::ptr_eq(item, &kept)),
+        "not read again"
+    );
+
+    app.navigate(pane, &Location::from_path(tmp.path()))
+        .unwrap();
+    // The view keeps nothing of the location left.
+    app.keep_locations(pane, &[]);
+    eventually("let go of once nothing shows them", || {
+        app.pump();
+        state.lock().items.is_empty()
+    });
+    assert_eq!(state.lock().held.as_ref().map(Vec::len), Some(3));
 }
 
 /// A trashed folder opens in the trash, `Trash › folder`, where a file is

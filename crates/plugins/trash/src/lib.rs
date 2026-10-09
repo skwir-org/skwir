@@ -8,7 +8,9 @@
 //! on its place in the sidebar, are put there. The trashes are read on a
 //! worker, and again when one changes (a watch on each `info` folder, and
 //! the plans bibli applies), so the listings open and the place's icon
-//! follow.
+//! follow: what they hold by its files alone (`read_held`), and only
+//! while a listing shows them each item's record, those new since (the
+//! name it had, where from, when).
 //!
 //! A trashed folder stays in the trash when opened (`trash:` and its
 //! path, a trail of `Trash › old project › sub`): its files are restored
@@ -63,12 +65,6 @@ struct Item {
     trashed: Trashed,
 }
 
-impl Item {
-    fn entry_ref(&self) -> EntryRef {
-        EntryRef::new(self.entry.id, self.trashed.file.clone())
-    }
-}
-
 /// Where a folder of the trash leads, staying in the trash: `trash:` and
 /// its path there.
 fn folder_location(folder: &Path) -> Location {
@@ -101,29 +97,99 @@ fn mark(entry: &mut Entry, trashed: &Trashed) {
     }
 }
 
-/// What `trashes` hold. I/O: a worker's.
-fn read(trashes: &[PathBuf], calendar: &Calendar) -> Vec<Item> {
+/// Each item `trashes` hold, by its file there and its identity: each
+/// trash's folders listed, no record opened and nothing stat-ed but on
+/// Windows. What the place's icon and Empty Trash need, read again at
+/// every change. I/O: a worker's.
+fn read_held(trashes: &[PathBuf]) -> Vec<EntryRef> {
     let mut seen = HashSet::new();
-    trashes
-        .iter()
-        .flat_map(|trash| bibli_platform::trash::list(trash, calendar))
-        .filter_map(|trashed| {
-            let mut entry = stat_path(&trashed.file)?;
-            mark(&mut entry, &trashed);
-            seen.insert(entry.id).then_some(Item { entry, trashed })
+    let mut held = Vec::new();
+    for trash in trashes {
+        let files = trash.join("files");
+        let Ok(dir) = bibli_core::fs::Dir::open(&files) else {
+            held.extend(read_bin(trash));
+            continue;
+        };
+        let (Ok(dev), Ok(names)) = (dir.device(), dir.read()) else {
+            continue;
+        };
+        // Only what a record speaks of, as the trash's listing shows.
+        let records: HashSet<std::ffi::OsString> = std::fs::read_dir(trash.join("info"))
+            .map(|infos| infos.flatten().map(|info| info.file_name()).collect())
+            .unwrap_or_default();
+        for listed in names.flatten() {
+            let mut record = listed.name.clone();
+            record.push(".trashinfo");
+            let id = EntryId {
+                dev,
+                ino: listed.ino,
+            };
+            if records.contains(&record) && seen.insert(id) {
+                held.push(EntryRef::new(id, files.join(&listed.name)));
+            }
+        }
+    }
+    held
+}
+
+/// A Recycle Bin's items, each beside its record: stat-ed, as Windows
+/// lists no identity.
+fn read_bin(bin: &Path) -> Vec<EntryRef> {
+    std::fs::read_dir(bin)
+        .map(|names| {
+            names
+                .flatten()
+                .filter_map(|record| {
+                    let item = bibli_core::op::records::recycle_item_of(&record.path())?;
+                    EntryRef::from_path(&item)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The items `held`, whole: those of `before` still there kept as read,
+/// the others' records read and their files stat-ed. I/O: a worker's.
+fn read_items(
+    held: &[EntryRef],
+    before: &HashMap<PathBuf, Arc<Item>>,
+    calendar: &Calendar,
+) -> Vec<Arc<Item>> {
+    let mut seen = HashSet::new();
+    held.iter()
+        .filter_map(|r| {
+            let item = if let Some(item) = before.get(&r.path) {
+                Arc::clone(item)
+            } else {
+                let trashed = bibli_platform::trash::item(&r.path, calendar)?;
+                let mut entry = stat_path(&trashed.file)?;
+                mark(&mut entry, &trashed);
+                Arc::new(Item { entry, trashed })
+            };
+            seen.insert(item.entry.id).then_some(item)
         })
         .collect()
 }
 
 #[derive(Default)]
 struct State {
-    /// What the trashes held when last read.
-    items: Vec<Item>,
-    /// Where each of `items` is among them, by its entry's id.
+    /// What the trashes hold, by file and identity (`read_held`): `None`
+    /// until first read.
+    held: Option<Vec<EntryRef>>,
+    /// The items, whole, while a listing of the trash or of one of its
+    /// folders shows them (`holders`): what each was named, where it came
+    /// from and when. Let go of when the last closes: a trash of ten
+    /// thousand files held 10 MB for the whole session.
+    items: Vec<Arc<Item>>,
+    /// Where each of `items` is among them, by its entry's id and by its
+    /// file in the trash.
     by_id: HashMap<EntryId, usize>,
-    /// Whether they were read since the plugin started: a listing opened
-    /// before waits in `waiting`.
+    by_file: HashMap<PathBuf, usize>,
+    /// Whether `items` were read since they were last let go of: a
+    /// listing opened before waits in `waiting`.
     read: bool,
+    /// The listings that hold the items.
+    holders: usize,
     /// Open `trash:` listings.
     sinks: Vec<EventSink>,
     waiting: Vec<EventSink>,
@@ -151,12 +217,44 @@ impl State {
     }
 
     fn item(&self, id: EntryId) -> Option<&Item> {
-        self.by_id.get(&id).and_then(|&n| self.items.get(n))
+        self.by_id
+            .get(&id)
+            .and_then(|&n| self.items.get(n))
+            .map(AsRef::as_ref)
     }
 
     /// The item whose file in the trash is `file`.
     fn item_at(&self, file: &Path) -> Option<&Item> {
-        self.items.iter().find(|i| i.trashed.file == file)
+        self.by_file
+            .get(file)
+            .and_then(|&n| self.items.get(n))
+            .map(AsRef::as_ref)
+    }
+
+    fn set_items(&mut self, items: Vec<Arc<Item>>) {
+        self.items = items;
+        self.by_id = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(n, i)| (i.entry.id, n))
+            .collect();
+        self.by_file = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(n, i)| (i.trashed.file.clone(), n))
+            .collect();
+    }
+
+    /// A listing that showed the items closed: the last lets go of them.
+    fn release(&mut self) {
+        self.holders = self.holders.saturating_sub(1);
+        if self.holders == 0 {
+            self.set_items(Vec::new());
+            self.items.shrink_to_fit();
+            self.read = false;
+        }
     }
 }
 
@@ -177,7 +275,9 @@ impl Trashes {
         }
     }
 
-    /// Read the trashes again, on a worker, and publish what changed.
+    /// Read the trashes again, on a worker, and publish what changed:
+    /// what they hold, and while a listing shows them their items whole,
+    /// reading the records of those new since.
     fn refresh(&self, app: &App) {
         let (generation, lifetime) = {
             let mut s = self.state.lock();
@@ -194,58 +294,76 @@ impl Trashes {
             lifetime.child(),
             move || {
                 let trashes = this.trashes();
-                let items = read(&trashes, &Calendar::system());
+                let held = read_held(&trashes);
+                let before: Option<HashMap<PathBuf, Arc<Item>>> = {
+                    let s = this.state.lock();
+                    (s.holders > 0).then(|| {
+                        s.items
+                            .iter()
+                            .map(|i| (i.trashed.file.clone(), Arc::clone(i)))
+                            .collect()
+                    })
+                };
+                let items = before.map(|before| read_items(&held, &before, &Calendar::system()));
                 if let Some(app) = weak.upgrade() {
-                    this.publish(&app, generation, items, &trashes);
+                    this.publish(&app, generation, held, items, &trashes);
                 }
             },
         );
     }
 
-    /// `items`, read by the reading numbered `generation`, become what the
-    /// trash holds: the listings open are told what changed, the place
-    /// says whether the trash is empty, and the trashes found are watched.
-    /// On the worker that read them (watching is I/O).
-    fn publish(&self, app: &App, generation: u64, items: Vec<Item>, trashes: &[PathBuf]) {
+    /// `held` (and `items`, when a listing showed them as it read), read
+    /// by the reading numbered `generation`, become what the trash holds:
+    /// the listings open are told what changed, the place says whether
+    /// the trash is empty, and the trashes found are watched. On the
+    /// worker that read them (watching is I/O).
+    fn publish(
+        &self,
+        app: &App,
+        generation: u64,
+        held: Vec<EntryRef>,
+        items: Option<Vec<Arc<Item>>>,
+        trashes: &[PathBuf],
+    ) {
         let mut guard = self.state.lock();
         let s = &mut *guard;
         if s.generation != generation || s.lifetime.as_ref().is_none_or(CancelToken::is_cancelled) {
             return;
         }
-        let before: HashMap<EntryId, &Entry> =
-            s.items.iter().map(|i| (i.entry.id, &i.entry)).collect();
-        let now: HashSet<EntryId> = items.iter().map(|i| i.entry.id).collect();
-        let removed: Vec<EntryId> = before
-            .keys()
-            .copied()
-            .filter(|id| !now.contains(id))
-            .collect();
-        let added: Vec<Entry> = items
-            .iter()
-            .filter(|i| before.get(&i.entry.id) != Some(&&i.entry))
-            .map(|i| i.entry.clone())
-            .collect();
-        s.items = items;
-        s.by_id = s
-            .items
-            .iter()
-            .enumerate()
-            .map(|(n, i)| (i.entry.id, n))
-            .collect();
-        if !removed.is_empty() {
-            s.broadcast(&ListingEvent::Removed(removed));
-        }
-        if !added.is_empty() {
-            s.broadcast(&ListingEvent::Added(added));
-        }
-        if !s.read {
-            s.read = true;
-            let entries = s.entries();
-            for sink in std::mem::take(&mut s.waiting) {
-                if (entries.is_empty() || sink.send(ListingEvent::Added(entries.clone())))
-                    && sink.send(ListingEvent::Complete)
-                {
-                    s.sinks.push(sink);
+        let full = !held.is_empty();
+        s.held = Some(held);
+        // A listing opened as this read: read again, whole.
+        let again = items.is_none() && s.holders > 0;
+        if let Some(items) = items.filter(|_| s.holders > 0) {
+            let before: HashMap<EntryId, &Entry> =
+                s.items.iter().map(|i| (i.entry.id, &i.entry)).collect();
+            let now: HashSet<EntryId> = items.iter().map(|i| i.entry.id).collect();
+            let removed: Vec<EntryId> = before
+                .keys()
+                .copied()
+                .filter(|id| !now.contains(id))
+                .collect();
+            let added: Vec<Entry> = items
+                .iter()
+                .filter(|i| before.get(&i.entry.id) != Some(&&i.entry))
+                .map(|i| i.entry.clone())
+                .collect();
+            s.set_items(items);
+            if !removed.is_empty() {
+                s.broadcast(&ListingEvent::Removed(removed));
+            }
+            if !added.is_empty() {
+                s.broadcast(&ListingEvent::Added(added));
+            }
+            if !s.read {
+                s.read = true;
+                let entries = s.entries();
+                for sink in std::mem::take(&mut s.waiting) {
+                    if (entries.is_empty() || sink.send(ListingEvent::Added(entries.clone())))
+                        && sink.send(ListingEvent::Complete)
+                    {
+                        s.sinks.push(sink);
+                    }
                 }
             }
         }
@@ -256,12 +374,14 @@ impl Trashes {
                 }
             }
         }
-        let full = !s.items.is_empty();
         let changed = s.full != Some(full);
         s.full = Some(full);
         drop(guard);
         if changed {
             app.registry.places.replace_owner(ID, [place(full)]);
+        }
+        if again {
+            self.refresh(app);
         }
         app.wake();
     }
@@ -291,9 +411,45 @@ impl Trashes {
     }
 
     /// The trash's items that are `ids`.
-    fn items(&self, ids: &[EntryId]) -> Vec<Item> {
+    fn items(&self, ids: &[EntryId]) -> Vec<Arc<Item>> {
         let s = self.state.lock();
-        ids.iter().filter_map(|id| s.item(*id).cloned()).collect()
+        ids.iter()
+            .filter_map(|id| Some(Arc::clone(s.items.get(*s.by_id.get(id)?)?)))
+            .collect()
+    }
+
+    /// A listing shows the items: they are read, and kept until the last
+    /// such listing closes (`Holder`).
+    fn hold(&self) -> Holder {
+        self.state.lock().holders += 1;
+        Holder {
+            state: Arc::clone(&self.state),
+            released: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+/// A listing's hold on the trash's items, let go of when it closes or
+/// drops.
+struct Holder {
+    state: Arc<Mutex<State>>,
+    released: std::sync::atomic::AtomicBool,
+}
+
+impl Holder {
+    fn release(&self) {
+        if !self
+            .released
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            self.state.lock().release();
+        }
+    }
+}
+
+impl Drop for Holder {
+    fn drop(&mut self) {
+        self.release();
     }
 }
 
@@ -464,6 +620,7 @@ impl LocationProvider for TrashProvider {
             return self.open_folder(location, &folder, ctx);
         }
         let (sink, rx) = ctx.channel();
+        let holder = self.trashes.hold();
         {
             let mut s = self.trashes.state.lock();
             if s.read {
@@ -489,6 +646,7 @@ impl LocationProvider for TrashProvider {
             sink,
             trashes: self.trashes.clone(),
             app: self.app.clone(),
+            holder,
         }))
     }
 }
@@ -514,9 +672,14 @@ impl TrashProvider {
         let folders = app
             .provider(PATH_SCHEME)
             .ok_or_else(|| anyhow::anyhow!("no provider for folders"))?;
+        let holder = self.trashes.hold();
+        if !self.trashes.state.lock().read {
+            self.trashes.refresh(&app);
+        }
         Ok(Arc::new(TrashFolder {
             location: location.clone(),
             inner: folders.open(&Location::from_path(folder), ctx)?,
+            holder,
         }))
     }
 }
@@ -526,6 +689,8 @@ impl TrashProvider {
 struct TrashFolder {
     location: Location,
     inner: Arc<dyn OpenLocation>,
+    /// Its trail names the trashed folder as it was named.
+    holder: Holder,
 }
 
 impl OpenLocation for TrashFolder {
@@ -560,6 +725,7 @@ impl OpenLocation for TrashFolder {
 
     fn close(&self) {
         self.inner.close();
+        self.holder.release();
     }
 }
 
@@ -570,6 +736,7 @@ struct TrashLocation {
     sink: EventSink,
     trashes: Trashes,
     app: Weak<App>,
+    holder: Holder,
 }
 
 impl OpenLocation for TrashLocation {
@@ -653,7 +820,9 @@ impl OpenLocation for TrashLocation {
         }
     }
 
-    fn close(&self) {}
+    fn close(&self) {
+        self.holder.release();
+    }
 }
 
 // ------------------------------------------------------------------ commands
@@ -740,18 +909,9 @@ fn restore_step(
     })
 }
 
-/// What its trash says of the item `file` (in the trash's `files`, or a
-/// Recycle Bin's own item), read from that trash. Reads it whole.
+/// What its trash says of the item `file`, read from its record.
 fn read_item(file: &Path) -> Option<Trashed> {
-    let parent = file.parent()?;
-    let trash = if parent.file_name() == Some("files".as_ref()) {
-        parent.parent()?
-    } else {
-        parent
-    };
-    bibli_platform::trash::list(trash, &Calendar::system())
-        .into_iter()
-        .find(|trashed| trashed.file == file)
+    bibli_platform::trash::item(file, &Calendar::system())
 }
 
 fn register_commands(app: &App, trashes: &Trashes) {
@@ -814,17 +974,15 @@ fn register_commands(app: &App, trashes: &Trashes) {
             "Delete every file in the trash for good (plan, irreversible)",
             move |_, _| {
                 let s = t.state.lock();
-                anyhow::ensure!(
-                    s.read,
-                    "The trash is still being read: try again in a moment"
-                );
-                anyhow::ensure!(!s.items.is_empty(), "The trash is empty");
-                let steps: Vec<Box<dyn Operation>> = s
-                    .items
+                let Some(held) = s.held.as_ref() else {
+                    anyhow::bail!("The trash is still being read: try again in a moment");
+                };
+                anyhow::ensure!(!held.is_empty(), "The trash is empty");
+                let steps: Vec<Box<dyn Operation>> = held
                     .iter()
-                    .map(|item| {
+                    .map(|entry| {
                         Box::new(Delete {
-                            entry: item.entry_ref(),
+                            entry: entry.clone(),
                         }) as Box<dyn Operation>
                     })
                     .collect();
@@ -839,10 +997,24 @@ fn register_commands(app: &App, trashes: &Trashes) {
         "List the trash",
         "Return the files in the trash: each one's name, where it came from, where it is, and when it was put there",
         move |_, _| {
-            let listed: Vec<Listed> = t
-                .state
-                .lock()
-                .items
+            let items: Vec<Arc<Item>> = {
+                let s = t.state.lock();
+                s.read.then(|| s.items.clone())
+            }
+            .map_or_else(
+                || {
+                    // Not shown, so not kept: read for whoever asks, never
+                    // on the window's thread.
+                    anyhow::ensure!(
+                        !bibli_core::scheduler::on_window_thread(),
+                        "Open the trash to see what it holds"
+                    );
+                    let held = read_held(&t.trashes());
+                    Ok(read_items(&held, &HashMap::new(), &Calendar::system()))
+                },
+                Ok,
+            )?;
+            let listed: Vec<Listed> = items
                 .iter()
                 .map(|item| Listed {
                     name: item.entry.name.clone(),
