@@ -52,11 +52,26 @@ pub(crate) fn dry_run<'a>(
     let ctx = StepContext::detached().with_companions(Arc::clone(companions));
     steps.iter().map(move |step| {
         let change = step.describe();
-        let status = step.check(&ctx);
+        let status = guarded(|| Ok(step.check(&ctx)))
+            .unwrap_or_else(|e| StepStatus::Conflict { reason: said(&e) });
         if matches!(status, StepStatus::Pending { .. }) {
             ctx.foresee(&change);
         }
         (change, status)
+    })
+}
+
+/// `step` run so that a panic in it is an error of its own, never an unwind
+/// through the executor.
+pub(crate) fn guarded<T>(step: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(step)).unwrap_or_else(|panic| {
+        let what = panic
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        tracing::error!("a step panicked: {what}");
+        Err(anyhow::anyhow!("it failed unexpectedly"))
     })
 }
 
@@ -389,6 +404,12 @@ pub trait Operation: Send + Sync + fmt::Debug {
     /// ([`Plan::undoable`]).
     fn undoable(&self) -> bool {
         true
+    }
+    /// The bytes it holds beyond its paths, which the undo journal counts
+    /// against its bound (`executor::JOURNAL_BYTES`): the notes a restore
+    /// puts back, a sidecar's text whole.
+    fn held(&self) -> usize {
+        0
     }
 }
 

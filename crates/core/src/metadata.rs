@@ -121,6 +121,27 @@ pub fn exclusive_category<'a>(tag: &str, exclusive: &'a [String]) -> Option<&'a 
         .map(String::as_str)
 }
 
+/// `current` with `add` given and `remove` taken, as spelled where they
+/// were already (tags ignore case); one given in a category holding one
+/// tag at a time (`exclusive`) takes the place of the one there was. What
+/// an edit of several files does to each (`notes::TagChange`).
+pub fn edited_tags(
+    current: &[String],
+    add: &[String],
+    remove: &[String],
+    exclusive: &[String],
+) -> Vec<String> {
+    let mut tags: Vec<String> = current
+        .iter()
+        .filter(|t| !remove.iter().any(|r| same_tag(r, t)))
+        .cloned()
+        .collect();
+    for a in add {
+        tags = with_exclusive(&tags, a, exclusive);
+    }
+    tags
+}
+
 /// `tags` with `added` given, a tag in a category holding one at a time
 /// taking the place of the one there was (`exclusive`).
 pub fn with_exclusive(tags: &[String], added: &str, exclusive: &[String]) -> Vec<String> {

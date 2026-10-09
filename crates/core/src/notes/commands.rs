@@ -1,9 +1,10 @@
 //! The notes' own commands, the core's because the notes are: a rating, a
 //! comment, the stores made to agree. Each is a plan of one `set_notes`
-//! step per file it changes, built from what the file holds now (read
-//! from its stores: a listing's field can be stale), whichever plugins'
-//! stores keep them. Tags have their own commands, the tags plugin's:
-//! a tag is also a place, a color, a pin.
+//! step per file, whichever plugins' stores keep them. Nothing is read to
+//! make it: the command runs where it is dispatched, the window's thread
+//! for a key, and a step checks what its file holds when the plan is
+//! applied (`SetNotes::check`: one that already has it is done), so a
+//! file already rated is skipped there, not read here.
 
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -30,26 +31,20 @@ struct CommentArgs {
     targets: Targets,
 }
 
-/// A plan of one step per target, leaving out those it would not change;
-/// none at all is `NothingSelected`, from `App::targets`.
+/// A plan of one step per target; none at all is `NothingSelected`, from
+/// `App::targets`.
 fn per_entry(
     app: &App,
     targets: Targets,
     title: String,
-    step: impl Fn(EntryRef) -> Option<super::SetNotes>,
+    step: impl Fn(EntryRef) -> super::SetNotes,
 ) -> anyhow::Result<Outcome> {
     let refs = app.targets(targets.pane, targets.entries)?;
     let mut plan = Plan::new(title);
     for r in refs {
-        if let Some(op) = step(r) {
-            plan.push(op);
-        }
+        plan.push(step(r));
     }
     Ok(Outcome::Plan(plan))
-}
-
-fn notes_of(app: &App, path: &std::path::Path) -> super::Notes {
-    app.notes.read_path(path, &app.notes.policy())
 }
 
 pub(crate) fn register(app: &App) {
@@ -66,9 +61,7 @@ pub(crate) fn register(app: &App) {
                 || "remove the rating".to_owned(),
                 |r| format!("rate {}", super::stars(r)),
             );
-            per_entry(app, a.targets, title, |r| {
-                (notes_of(app, &r.path).rating != rating).then(|| app.notes.edit(r).rating(rating))
-            })
+            per_entry(app, a.targets, title, |r| app.notes.edit(r).rating(rating))
         },
     )
     .plans();
@@ -86,8 +79,7 @@ pub(crate) fn register(app: &App) {
                 "remove the comment"
             };
             per_entry(app, a.targets, title.to_owned(), |r| {
-                (notes_of(app, &r.path).comment != comment)
-                    .then(|| app.notes.edit(r).comment(comment.clone()))
+                app.notes.edit(r).comment(comment.clone())
             })
         },
     )
@@ -98,16 +90,10 @@ pub(crate) fn register(app: &App) {
         "Make notes agree",
         "Write the notes of the entries given, or the selection's, as read from every store, to each store that keeps them, so the stores that differ agree again (plan)",
         |a, app| {
+            // What the stores say together is written to each when the
+            // plan is applied, as it is read then (`SetNotes::applied_to`).
             per_entry(app, a, "make the notes agree".to_owned(), |r| {
-                let read = app.notes.read_one(&r.path, &app.notes.policy());
-                (!read.differ.is_empty()).then(|| {
-                    app.notes
-                        .edit(r)
-                        .tags(read.notes.tag_names())
-                        .rating(read.notes.rating)
-                        .comment(read.notes.comment)
-                        .sync()
-                })
+                app.notes.edit(r).sync()
             })
         },
     )

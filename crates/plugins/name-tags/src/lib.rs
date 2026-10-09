@@ -210,6 +210,19 @@ fn store_id(convention: Convention) -> &'static str {
     NameStore(convention).id()
 }
 
+/// A listed entry's tags (`keys::TAGS`), every store's.
+fn listed_tags(e: &bibli_core::Entry) -> Vec<String> {
+    match e.metadata.value(bibli_core::entry::keys::TAGS) {
+        Some(bibli_core::Value::List(items)) => items
+            .iter()
+            .filter_map(bibli_core::Value::as_str)
+            .map(str::to_owned)
+            .collect(),
+        Some(bibli_core::Value::Text(t)) => vec![t.to_string()],
+        _ => Vec::new(),
+    }
+}
+
 /// "Tags into Name": each entry renamed to hold its tags (all stores'),
 /// those the convention can hold.
 fn tag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
@@ -218,14 +231,25 @@ fn tag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
     let mut renames: Vec<RenameRequest> = Vec::new();
     let mut left_out: Vec<String> = Vec::new();
     let policy = app.notes.policy();
-    for r in refs {
+    // What the pane knows of each file's tags, read here only where its
+    // listing has not: the command runs on the thread it is dispatched on.
+    let known: Vec<Option<Vec<String>>> = {
+        let pane = app.pane_or_active(a.pane);
+        let ws = app.workspace.read();
+        refs.iter()
+            .map(|r| {
+                let e = ws.pane(pane)?.entry(r.id)?;
+                e.metadata.is_hydrated().then(|| listed_tags(e))
+            })
+            .collect()
+    };
+    for (r, known) in refs.into_iter().zip(known) {
         let Some(name) = r.path.file_name().and_then(OsStr::to_str) else {
             continue;
         };
-        let notes = app.notes.read_path(&r.path, &policy);
+        let names = known.unwrap_or_else(|| app.notes.read_path(&r.path, &policy).tag_names());
         let (base, _, ext) = a.convention.split(name);
-        let tags: Vec<String> = notes
-            .tag_names()
+        let tags: Vec<String> = names
             .into_iter()
             .filter(|t| {
                 let held = a.convention.holds(t);
@@ -261,7 +285,6 @@ fn untag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
     let refs = app.targets(a.pane, a.entries)?;
     let mut plan = Plan::new("take tags out of names");
     let mut renames: Vec<RenameRequest> = Vec::new();
-    let policy = app.notes.policy();
     let name_store = store_id(a.convention);
     for r in refs {
         let Some(name) = r.path.file_name().and_then(OsStr::to_str) else {
@@ -272,14 +295,14 @@ fn untag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
             continue;
         }
         // The file's tags, the name's with them, kept by the other stores:
-        // an edit that reads them without the name.
-        let mut all = app.notes.read_path(&r.path, &policy).tag_names();
-        for t in &tags {
-            if !all.iter().any(|x| same_tag(x, t)) {
-                all.push(t.clone());
-            }
-        }
-        let mut keep = app.notes.edit(r.clone()).tags(all);
+        // an edit that reads them without the name, when it is applied.
+        let mut keep = app
+            .notes
+            .edit(r.clone())
+            .change_tags(bibli_core::notes::TagChange {
+                add: tags.clone(),
+                ..Default::default()
+            });
         keep.policy.read.retain(|s| s != name_store);
         plan.push(keep);
         renames.push(RenameRequest {

@@ -278,21 +278,26 @@ fn per_entry<T: bibli_core::op::Operation + 'static>(
 /// `tags` with `add` given and `remove` taken, as spelled where they were
 /// already (tags ignore case); one given in a category holding one tag at
 /// a time (`exclusive`) takes the place of the one there was.
+#[cfg(test)]
 fn edited(
     current: &[String],
     add: &[String],
     remove: &[String],
     exclusive: &[String],
 ) -> Vec<String> {
-    let mut tags: Vec<String> = current
-        .iter()
-        .filter(|t| !remove.iter().any(|r| same_tag(r, t)))
-        .cloned()
-        .collect();
-    for a in add {
-        tags = bibli_core::metadata::with_exclusive(&tags, a, exclusive);
+    bibli_core::metadata::edited_tags(current, add, remove, exclusive)
+}
+
+/// Whether a listed entry's notes hold `tag` (`keys::TAGS`).
+fn has_tag(e: &bibli_core::Entry, tag: &str) -> bool {
+    match e.metadata.value(keys::TAGS) {
+        Some(bibli_core::Value::List(items)) => items
+            .iter()
+            .filter_map(bibli_core::Value::as_str)
+            .any(|t| same_tag(t, tag)),
+        Some(bibli_core::Value::Text(t)) => same_tag(t, tag),
+        _ => false,
     }
-    tags
 }
 
 /// "add tag work", "remove tags a, b", "add tag x and remove tag y".
@@ -314,14 +319,19 @@ fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Re
     let remove = parse_tags(&a.remove.join(","));
     let exclusive = fields::exclusive(app);
     vocabulary.used(&add);
+    // What each file holds is read when the plan is applied, where a file
+    // that would not change is skipped: nothing is read here, on the
+    // thread that dispatched it.
+    let change = bibli_core::notes::TagChange {
+        add: add.clone(),
+        remove: remove.clone(),
+        within: Vec::new(),
+        exclusive,
+    };
     per_entry(
         app.targets(a.pane, a.entries)?,
         edit_title(&add, &remove),
-        |r| {
-            let current = notes_of(app, &r.path).tag_names();
-            let tags = edited(&current, &add, &remove, &exclusive);
-            (tags != current).then(|| app.notes.edit(r).tags(tags))
-        },
+        |r| Some(app.notes.edit(r).change_tags(change.clone())),
     )
 }
 
@@ -843,9 +853,9 @@ impl Plugin for TagsPlugin {
                     } else {
                         format!("set tags {}", tags.join(", "))
                     };
+                    // A file that has them already is skipped when applied.
                     per_entry(app.targets(a.pane, a.entries)?, title, |r| {
-                        let current = notes_of(app, &r.path).tag_names();
-                        (current != tags).then(|| app.notes.edit(r).tags(tags.clone()))
+                        Some(app.notes.edit(r).tags(tags.clone()))
                     })
                 },
             )
@@ -912,9 +922,21 @@ impl Plugin for TagsPlugin {
                     anyhow::bail!("which tag?");
                 };
                 let refs = app.targets(a.pane, a.entries)?;
-                let all = refs
-                        .iter()
-                        .all(|r| notes_of(app, &r.path).tag(&tag).is_some());
+                // What the pane knows of each first: a key's toggle reads
+                // a file only where its listing has not.
+                let pane = app.pane_or_active(a.pane);
+                let known: Vec<Option<bool>> = {
+                    let ws = app.workspace.read();
+                    refs.iter()
+                        .map(|r| {
+                            let e = ws.pane(pane)?.entry(r.id)?;
+                            e.metadata.is_hydrated().then(|| has_tag(e, &tag))
+                        })
+                        .collect()
+                };
+                let all = refs.iter().zip(known).all(|(r, known)| {
+                    known.unwrap_or_else(|| notes_of(app, &r.path).tag(&tag).is_some())
+                });
                 let (add, remove) = if all {
                     (Vec::new(), vec![tag])
                 } else {
@@ -1738,11 +1760,9 @@ mod tests {
             Some(b"a,mac".as_slice())
         );
         assert!(read().differ.is_empty());
-        assert!(
-            plan(&app, "notes.agree", &serde_json::json!({}))
-                .steps
-                .is_empty()
-        );
+        let again = plan(&app, "notes.agree", &serde_json::json!({}));
+        let r = app.executor.execute_blocking(&again, app.lifetime());
+        assert_eq!((r.applied, r.skipped), (0, 1), "they agree already");
         app.executor.undo_blocking(app.lifetime()).unwrap();
         assert_eq!(
             bibli_core::fs::xattr::get(&f, xdg::TAGS)
@@ -1977,17 +1997,32 @@ mod tests {
         std::fs::write(&b, b"x").unwrap();
         write_tags(&a, &["Keep".into(), "todo".into()]).unwrap();
         let (app, _) = app_in(tmp.path(), &dir, &["a.txt", "it's b.txt"]);
-        let toggle = || {
+        // The toggle decides by what the pane knows of each file, which
+        // its watcher brings up to date after each edit.
+        let toggle = |then: fn(&std::path::Path) -> bool| {
             let p = plan(&app, "tags.toggle", &serde_json::json!({ "tag": "TODO" }));
             let r = app.executor.execute_blocking(&p, app.lifetime());
             assert!(r.error.is_none());
+            let listed = |app: &App| {
+                let ws = app.workspace.read();
+                let p = ws.pane(ws.active_id()).unwrap();
+                p.listing
+                    .iter()
+                    .find(|e| e.name == "it's b.txt")
+                    .is_some_and(|e| has_tag(e, "todo"))
+            };
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while listed(&app) != then(&b) && std::time::Instant::now() < deadline {
+                app.workspace.write().pump();
+                std::thread::sleep(Duration::from_millis(5));
+            }
         };
         // One has it: both get it, in the spelling each already had.
-        toggle();
+        toggle(|_| true);
         assert_eq!(read_tags(&a), ["Keep", "todo"]);
         assert_eq!(read_tags(&b), ["TODO"]);
         // Both have it: both lose it, and nothing else.
-        toggle();
+        toggle(|_| false);
         assert_eq!(read_tags(&a), ["Keep"]);
         assert!(read_tags(&b).is_empty());
         assert!(
@@ -2060,7 +2095,8 @@ mod tests {
         // Tags ignore case: adding "NEW" changes nothing, removing "NEW"
         // removes it.
         let add = plan(&app, "tags.add", &serde_json::json!({ "tags": ["NEW"] }));
-        assert!(add.steps.is_empty(), "nothing to change");
+        let r = app.executor.execute_blocking(&add, app.lifetime());
+        assert_eq!((r.applied, r.skipped), (0, 1), "nothing to change");
         let remove = plan(&app, "tags.remove", &serde_json::json!({ "tags": ["NEW"] }));
         app.executor.execute_blocking(&remove, app.lifetime());
         assert!(read_tags(&f).is_empty());

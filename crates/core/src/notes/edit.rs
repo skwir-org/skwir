@@ -41,13 +41,53 @@ impl<T: PartialEq> Field<T> {
     }
 }
 
-/// Set some of a file's notes: its tags (the whole list), its rating (0
-/// removes it), its comment (empty removes it); what is left out stays.
+/// Tags given and taken, applied to what a file holds when the step is
+/// applied (`metadata::edited_tags`): an edit of several files changes
+/// what the user changed, never writes one list over each, and needs
+/// nothing read when it is made.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TagChange {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub add: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remove: Vec<String>,
+    /// Categories every tag within which is taken, the category's own
+    /// too (`metadata::tag_within`): a file taken out of `Places` with
+    /// what is under it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub within: Vec<String>,
+    /// The categories holding one tag at a time when the plan was made.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclusive: Vec<String>,
+}
+
+impl TagChange {
+    /// The tags a file holding `current` has once it is made.
+    pub fn applied(&self, current: &[String]) -> Vec<String> {
+        let kept: Vec<String> = current
+            .iter()
+            .filter(|t| {
+                !self
+                    .within
+                    .iter()
+                    .any(|w| crate::metadata::tag_within(t, w))
+            })
+            .cloned()
+            .collect();
+        crate::metadata::edited_tags(&kept, &self.add, &self.remove, &self.exclusive)
+    }
+}
+
+/// Set some of a file's notes: its tags (the whole list, or a change of
+/// them), its rating (0 removes it), its comment (empty removes it); what
+/// is left out stays.
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SetNotes {
     pub entry: EntryRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_tags: Option<TagChange>,
     /// From 1 to 10, half stars; 0 removes the rating.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rating: Option<u64>,
@@ -77,6 +117,7 @@ impl std::fmt::Debug for SetNotes {
         f.debug_struct("SetNotes")
             .field("entry", &self.entry)
             .field("tags", &self.tags)
+            .field("change_tags", &self.change_tags)
             .field("rating", &self.rating)
             .field("comment", &self.comment)
             .finish_non_exhaustive()
@@ -87,6 +128,7 @@ impl PartialEq for SetNotes {
     fn eq(&self, other: &Self) -> bool {
         self.entry == other.entry
             && self.tags == other.tags
+            && self.change_tags == other.change_tags
             && self.rating == other.rating
             && self.comment == other.comment
             && self.sync == other.sync
@@ -99,6 +141,7 @@ impl SetNotes {
         SetNotes {
             entry,
             tags: None,
+            change_tags: None,
             rating: None,
             comment: None,
             sync: false,
@@ -133,6 +176,23 @@ impl SetNotes {
     pub fn tags(mut self, tags: Vec<String>) -> Self {
         self.tags = Some(tags);
         self
+    }
+
+    /// Give `change`'s tags and take its others, from what the file holds
+    /// when the step is applied.
+    #[must_use]
+    pub fn change_tags(mut self, change: TagChange) -> Self {
+        self.change_tags = Some(change);
+        self
+    }
+
+    /// The tags it leaves on a file holding `current`, if it changes them.
+    fn tags_for(&self, current: &[String]) -> Option<Vec<String>> {
+        match (&self.tags, &self.change_tags) {
+            (Some(tags), _) => Some(tags.clone()),
+            (None, Some(change)) => Some(change.applied(current)),
+            (None, None) => None,
+        }
     }
 
     #[must_use]
@@ -172,9 +232,9 @@ impl SetNotes {
 
     /// Whether `notes` already say what this sets.
     fn holds_in(&self, notes: &Notes) -> bool {
-        self.tags
-            .as_ref()
-            .is_none_or(|t| same_set(&notes.tag_names(), t))
+        let current = notes.tag_names();
+        self.tags_for(&current)
+            .is_none_or(|t| same_set(&current, &t))
             && self.rating_to().holds(notes.rating.as_ref())
             && self.comment_to().holds(notes.comment.as_ref())
     }
@@ -182,7 +242,7 @@ impl SetNotes {
     /// `notes` with this edit made: a tag kept keeps its color.
     fn applied_to(&self, notes: &Notes) -> Notes {
         let mut out = notes.clone();
-        if let Some(tags) = &self.tags {
+        if let Some(tags) = &self.tags_for(&notes.tag_names()) {
             out.tags = tags
                 .iter()
                 .map(|name| Tag {
@@ -203,7 +263,7 @@ impl SetNotes {
     fn words(&self) -> (String, String, &'static str) {
         let name = name_of(&self.entry.path);
         if let Some(words) = &self.words {
-            let field = if self.tags.is_some() {
+            let field = if self.tags.is_some() || self.change_tags.is_some() {
                 keys::TAGS
             } else if self.rating.is_some() {
                 keys::RATING
@@ -218,6 +278,22 @@ impl SetNotes {
                 format!("made the notes of “{name}” agree"),
                 keys::TAGS,
             );
+        }
+        if let Some(change) = &self.change_tags {
+            let mut said = Vec::new();
+            if !change.add.is_empty() {
+                said.push(format!("tag “{name}” {}", change.add.join(", ")));
+            }
+            let taken: Vec<&String> = change.remove.iter().chain(&change.within).collect();
+            if !taken.is_empty() {
+                let taken: Vec<&str> = taken.iter().map(|t| t.as_str()).collect();
+                said.push(format!("take {} off “{name}”", taken.join(", ")));
+            }
+            let will = said.join(" and ");
+            let did = will
+                .replacen("tag “", "tagged “", 1)
+                .replacen("take ", "took ", 1);
+            return (will, did, keys::TAGS);
         }
         if let Some(tags) = &self.tags {
             return if tags.is_empty() {
@@ -488,6 +564,14 @@ impl RestoreNotes {
 impl Operation for RestoreNotes {
     fn kind(&self) -> &'static str {
         Self::KIND
+    }
+    fn held(&self) -> usize {
+        self.before
+            .iter()
+            .chain(&self.after)
+            .filter_map(|raw| raw.value.as_ref())
+            .map(Vec::len)
+            .sum()
     }
     fn clone_box(&self) -> Box<dyn Operation> {
         Box::new(self.clone())

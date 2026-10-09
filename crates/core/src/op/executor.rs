@@ -141,6 +141,20 @@ pub struct JournalEntry {
     partial: Vec<Box<dyn Operation>>,
 }
 
+impl JournalEntry {
+    /// What it holds, as the journal's bound counts it: its steps' bytes
+    /// (`Operation::held`), and each step as a few hundred for its paths.
+    fn weight(&self) -> usize {
+        const STEP: usize = 256;
+        self.plan
+            .iter()
+            .flat_map(|plan| &plan.steps)
+            .chain(&self.partial)
+            .map(|step| STEP + step.held())
+            .sum()
+    }
+}
+
 /// Result of applying a plan synchronously.
 #[derive(Debug)]
 pub struct ExecResult {
@@ -158,6 +172,32 @@ pub struct ExecResult {
 struct Journal {
     undo: Vec<JournalEntry>,
     redo: Vec<JournalEntry>,
+}
+
+/// The actions the undo journal keeps at most, the latest always: past it,
+/// the oldest go first.
+pub const JOURNAL_ENTRIES: usize = 200;
+/// What the journal's entries may hold together (`JournalEntry::weight`):
+/// tagging ten thousand photos with XMP sidecars kept every sidecar's text
+/// twice, some 600 MB, for as long as bibli ran.
+pub const JOURNAL_BYTES: usize = 64 << 20;
+
+impl Journal {
+    /// Let go of the oldest entries of each stack past `JOURNAL_ENTRIES`
+    /// or `JOURNAL_BYTES`, keeping the latest whatever it holds.
+    fn bound(&mut self) {
+        for stack in [&mut self.undo, &mut self.redo] {
+            let mut weight: usize = stack.iter().map(JournalEntry::weight).sum();
+            let mut drop = 0;
+            while stack.len() - drop > 1
+                && (stack.len() - drop > JOURNAL_ENTRIES || weight > JOURNAL_BYTES)
+            {
+                weight -= stack[drop].weight();
+                drop += 1;
+            }
+            stack.drain(..drop);
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -659,18 +699,19 @@ impl Executor {
     }
 
     fn run_execute(&self, plan: &Plan, cancel: &CancelToken) -> ExecResult {
-        let (r, inverse) = self.apply_plan(plan, cancel, RunKind::Apply);
-        if r.applied > 0 {
-            let mut j = self.journal.lock();
-            j.undo.push(JournalEntry {
-                title: plan.title.clone(),
-                applied_at: SystemTime::now(),
-                plan: inverse,
-                partial: Vec::new(),
-            });
-            j.redo.clear();
-        }
-        r
+        self.apply_plan(plan, cancel, RunKind::Apply, |r, inverse| {
+            if r.applied > 0 {
+                let mut j = self.journal.lock();
+                j.undo.push(JournalEntry {
+                    title: plan.title.clone(),
+                    applied_at: SystemTime::now(),
+                    plan: inverse,
+                    partial: Vec::new(),
+                });
+                j.redo.clear();
+                j.bound();
+            }
+        })
     }
 
     /// Take back the top entry of one stack and journal what takes that
@@ -722,42 +763,48 @@ impl Executor {
         };
         let mut run = plan.clone();
         run.title = title;
-        let (r, back) = self.apply_plan(&run, cancel, direction.into());
-        // This run's inverses come first: its steps were applied after the
-        // ones an earlier, interrupted attempt already took back.
-        let mut steps = back.map(|p| p.steps).unwrap_or_default();
-        steps.append(&mut entry.partial);
-        let mut j = self.journal.lock();
-        if r.error.is_none() && !r.cancelled {
-            if !steps.is_empty() {
-                let other = JournalEntry {
-                    plan: Some(Plan::with_steps(entry.title.clone(), steps)),
-                    title: entry.title,
-                    applied_at: SystemTime::now(),
-                    partial: Vec::new(),
-                };
+        let r = self.apply_plan(&run, cancel, direction.into(), |r, back| {
+            // This run's inverses come first: its steps were applied after
+            // the ones an earlier, interrupted attempt already took back.
+            let mut steps = back.map(|p| p.steps).unwrap_or_default();
+            steps.append(&mut entry.partial);
+            let mut j = self.journal.lock();
+            if r.error.is_none() && !r.cancelled {
+                if !steps.is_empty() {
+                    let other = JournalEntry {
+                        plan: Some(Plan::with_steps(entry.title.clone(), steps)),
+                        title: entry.title,
+                        applied_at: SystemTime::now(),
+                        partial: Vec::new(),
+                    };
+                    match direction {
+                        Direction::Undo => j.redo.push(other),
+                        Direction::Redo => j.undo.push(other),
+                    }
+                }
+            } else {
+                entry.partial = steps;
                 match direction {
-                    Direction::Undo => j.redo.push(other),
-                    Direction::Redo => j.undo.push(other),
+                    Direction::Undo => j.undo.push(entry),
+                    Direction::Redo => j.redo.push(entry),
                 }
             }
-        } else {
-            entry.partial = steps;
-            match direction {
-                Direction::Undo => j.undo.push(entry),
-                Direction::Redo => j.redo.push(entry),
-            }
-        }
+            j.bound();
+        });
         Some(r)
     }
 
     /// The core loop: check, skip if done, apply, collect inverses in reverse order.
+    /// `record` journals what was applied, and its inverse, before the plan
+    /// says it finished: whoever hears `Finished` (the toast's Undo and
+    /// Redo) finds the journal as the plan left it.
     fn apply_plan(
         &self,
         plan: &Plan,
         cancel: &CancelToken,
         run: RunKind,
-    ) -> (ExecResult, Option<Plan>) {
+        record: impl FnOnce(&ExecResult, Option<Plan>),
+    ) -> ExecResult {
         let total = plan.steps.len();
         let meter = Arc::new(Meter::new(self.waker.lock().clone()));
         let pause = Arc::new(Pause::default());
@@ -791,7 +838,13 @@ impl Executor {
                 break;
             }
             let change = step.describe();
-            let status = step.check(&ctx);
+            // A step that panics fails, as one that errs: the plan ends
+            // and says so, and what was applied before it stays undoable.
+            // Unwound, it would take the plans' thread with it.
+            let status =
+                super::guarded(|| Ok(step.check(&ctx))).unwrap_or_else(|e| StepStatus::Conflict {
+                    reason: super::said(&e),
+                });
             let mut err = None;
             let mut holds = false;
             match &status {
@@ -800,7 +853,7 @@ impl Executor {
                     holds = true;
                 }
                 StepStatus::Conflict { reason } => err = Some(reason.clone()),
-                StepStatus::Pending { .. } => match step.apply(&ctx) {
+                StepStatus::Pending { .. } => match super::guarded(|| step.apply(&ctx)) {
                     Ok(Some(inv)) => {
                         applied += 1;
                         holds = true;
@@ -852,30 +905,29 @@ impl Executor {
         } else {
             Some(Plan::with_steps(format!("undo {}", plan.title), inverses))
         };
+        let result = ExecResult {
+            applied,
+            skipped,
+            error,
+            cancelled,
+            undoable: inverse.is_some(),
+            complete,
+        };
+        record(&result, inverse);
         self.emit(ExecEvent::Finished {
             plan: plan.id,
             applied,
             skipped,
-            error: error.clone(),
+            error: result.error.clone(),
             cancelled,
-            undoable: inverse.is_some(),
+            undoable: result.undoable,
         });
         if !held.is_empty() {
             for observer in self.observers.all() {
                 observer(&held);
             }
         }
-        (
-            ExecResult {
-                applied,
-                skipped,
-                error,
-                cancelled,
-                undoable: inverse.is_some(),
-                complete,
-            },
-            inverse,
-        )
+        result
     }
 }
 
@@ -930,6 +982,93 @@ mod tests {
         fn clone_box(&self) -> Box<dyn Operation> {
             Box::new(self.clone())
         }
+    }
+
+    /// A step that panics when applied.
+    #[derive(Debug, Clone)]
+    struct Panics;
+
+    impl Operation for Panics {
+        fn kind(&self) -> &'static str {
+            "panics"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn describe(&self) -> Change {
+            Change::Trash {
+                path: "/example/panics".into(),
+            }
+        }
+        fn check(&self, _: &StepContext) -> StepStatus {
+            StepStatus::Pending { reversible: false }
+        }
+        fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            panic!("a bug in a step");
+        }
+        fn clone_box(&self) -> Box<dyn Operation> {
+            Box::new(self.clone())
+        }
+    }
+
+    /// The journal keeps the latest actions, never more than its bound,
+    /// and the latest whatever it holds.
+    #[test]
+    fn the_journal_keeps_the_latest_actions_within_its_bound() {
+        let executor = Executor::new(Scheduler::new(1));
+        let applied = Arc::new(AtomicUsize::new(0));
+        for n in 0..JOURNAL_ENTRIES + 5 {
+            let plan = Plan::with_steps(
+                format!("plan {n}"),
+                vec![Box::new(Probe {
+                    applied: Arc::clone(&applied),
+                    conflict: false,
+                }) as Box<dyn Operation>],
+            );
+            executor.execute_blocking(&plan, &CancelToken::new());
+        }
+        let j = executor.journal.lock();
+        assert_eq!(j.undo.len(), JOURNAL_ENTRIES);
+        assert_eq!(j.undo.first().map(|e| e.title.as_str()), Some("plan 5"));
+        let mut big = Journal::default();
+        for n in 0..3 {
+            big.undo.push(JournalEntry {
+                title: n.to_string(),
+                applied_at: SystemTime::now(),
+                plan: Some(Plan::with_steps(
+                    "x",
+                    (0..=JOURNAL_BYTES / 256)
+                        .map(|_| Box::new(Panics) as Box<dyn Operation>)
+                        .collect(),
+                )),
+                partial: Vec::new(),
+            });
+        }
+        big.bound();
+        assert_eq!(big.undo.len(), 1, "the latest stays, however much it holds");
+        assert_eq!(big.undo[0].title, "2");
+    }
+
+    /// A step that panics fails its plan as an error would, after what was
+    /// applied before it, and the executor runs the next plan.
+    #[test]
+    fn a_step_that_panics_fails_its_plan_and_the_executor_goes_on() {
+        let executor = Executor::new(Scheduler::new(1));
+        let applied = Arc::new(AtomicUsize::new(0));
+        let probe = || {
+            Box::new(Probe {
+                applied: Arc::clone(&applied),
+                conflict: false,
+            }) as Box<dyn Operation>
+        };
+        let plan = Plan::with_steps("panics", vec![probe(), Box::new(Panics), probe()]);
+        let r = executor.execute_blocking(&plan, &CancelToken::new());
+        assert_eq!(r.applied, 1);
+        assert_eq!(r.error.as_deref(), Some("it failed unexpectedly"));
+        let next = Plan::with_steps("next", vec![probe()]);
+        let r = executor.execute_blocking(&next, &CancelToken::new());
+        assert_eq!((r.applied, r.error), (1, None));
+        assert_eq!(applied.load(Ordering::SeqCst), 2);
     }
 
     #[test]

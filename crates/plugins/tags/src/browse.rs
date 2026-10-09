@@ -15,7 +15,7 @@ use bibli_core::command::{Invocation, Outcome};
 use bibli_core::entry::keys;
 use bibli_core::location::Location;
 use bibli_core::metadata::{
-    TAG_COLORS, TAG_EXCLUSIVE_SETTING, clean_tag, same_tag, tag_leaf, tag_parent, tag_within,
+    TAG_COLORS, TAG_EXCLUSIVE_SETTING, clean_tag, same_tag, tag_leaf, tag_parent,
 };
 use bibli_core::op::EntryRef;
 use bibli_core::os_path::PathArg;
@@ -171,14 +171,22 @@ pub fn selected_places(app: &App, pane: PaneId) -> Vec<String> {
         .collect()
 }
 
-/// Whether `tag`, as `address` lists it, takes a file there: its own tag,
-/// or one within it when it lists everything within.
-fn holds(address: &Address, tag: &str) -> bool {
-    match &address.tag {
-        Some(t) if address.deep => tag_within(tag, t),
-        Some(t) => same_tag(tag, t),
-        None => true,
-    }
+/// What taking a file out of `address` takes from it: its tag, or every
+/// tag within it where it lists everything within; `None` at the top,
+/// where it takes every tag.
+fn taken(address: &Address) -> Option<bibli_core::notes::TagChange> {
+    let tag = address.tag.clone()?;
+    Some(if address.deep {
+        bibli_core::notes::TagChange {
+            within: vec![tag],
+            ..Default::default()
+        }
+    } else {
+        bibli_core::notes::TagChange {
+            remove: vec![tag],
+            ..Default::default()
+        }
+    })
 }
 
 /// `tags.drop`.
@@ -253,34 +261,32 @@ pub fn drop(
         Some(from) => format!("move from tag {from} to tag {tag}"),
         None => format!("add tag {tag}"),
     };
+    // What each file holds is read when the plan is applied: the tag of
+    // the source taken (and what is under it, where it shows that), this
+    // one given.
+    let change = bibli_core::notes::TagChange {
+        add: vec![tag.clone()],
+        exclusive,
+        ..source.as_ref().and_then(taken).unwrap_or_default()
+    };
     crate::per_entry(files, title, |r| {
-        let current = crate::notes_of(app, &r.path).tag_names();
-        let kept: Vec<String> = current
-            .iter()
-            .filter(|t| !source.as_ref().is_some_and(|s| holds(s, t)))
-            .cloned()
-            .collect();
-        let tags = crate::edited(&kept, std::slice::from_ref(&tag), &[], &exclusive);
         let name = name_of(&r.path);
-        // The tags it was in, by name: what it is moved out of.
-        let from: Vec<&str> = current
-            .iter()
-            .filter(|t| !tags.iter().any(|k| same_tag(k, t)))
-            .map(String::as_str)
-            .collect();
-        let (will, did) = if from.is_empty() {
-            (
-                format!("give “{name}” the tag “{tag}”"),
-                format!("gave “{name}” the tag “{tag}”"),
-            )
-        } else {
-            let from = from.join("”, “");
-            (
+        let (will, did) = match source.as_ref().and_then(|s| s.tag.as_deref()) {
+            Some(from) => (
                 format!("move “{name}” from “{from}” to “{tag}”"),
                 format!("moved “{name}” from “{from}” to “{tag}”"),
-            )
+            ),
+            None => (
+                format!("give “{name}” the tag “{tag}”"),
+                format!("gave “{name}” the tag “{tag}”"),
+            ),
         };
-        (tags != current).then(|| app.notes.edit(r).tags(tags).saying(will, did))
+        Some(
+            app.notes
+                .edit(r)
+                .change_tags(change.clone())
+                .saying(will, did),
+        )
     })
 }
 
@@ -317,13 +323,9 @@ pub fn untag(
         Some(tag) => format!("remove tag {tag}"),
         None => "remove all tags".to_owned(),
     };
+    // Read when the plan is applied, as `drop`'s.
+    let change = taken(&address);
     crate::per_entry(files, title, |r| {
-        let current = crate::notes_of(app, &r.path).tag_names();
-        let tags: Vec<String> = current
-            .iter()
-            .filter(|t| !holds(&address, t))
-            .cloned()
-            .collect();
         let name = name_of(&r.path);
         let (will, did) = match &address.tag {
             Some(tag) => (
@@ -335,7 +337,11 @@ pub fn untag(
                 format!("removed the tags of “{name}”"),
             ),
         };
-        (tags != current).then(|| app.notes.edit(r).tags(tags).saying(will, did))
+        let edit = match &change {
+            Some(change) => app.notes.edit(r).change_tags(change.clone()),
+            None => app.notes.edit(r).tags(Vec::new()),
+        };
+        Some(edit.saying(will, did))
     })
 }
 
@@ -791,14 +797,20 @@ mod tests {
 
     #[test]
     fn a_tag_location_takes_files_out_by_its_own_tag() {
+        let tags: Vec<String> = ["places/france", "Places/France/Paris", "Places"]
+            .map(str::to_owned)
+            .to_vec();
         let france = Address::parse("/Places/France");
-        assert!(holds(&france, "places/france"));
-        assert!(
-            !holds(&france, "Places/France/Paris"),
+        assert_eq!(
+            taken(&france).unwrap().applied(&tags),
+            ["Places/France/Paris", "Places"],
             "Paris stays: a tag of its own"
         );
         let deep = Address::parse("/Places/France?deep");
-        assert!(holds(&deep, "Places/France/Paris"));
-        assert!(!holds(&deep, "Places"));
+        assert_eq!(taken(&deep).unwrap().applied(&tags), ["Places"]);
+        assert!(
+            taken(&Address::parse("/")).is_none(),
+            "every tag, at the top"
+        );
     }
 }
