@@ -217,7 +217,9 @@ impl TextInput {
     /// Byte offset in the text for a byte offset in what is displayed.
     fn text_offset(&self, offset: usize) -> usize {
         if !self.masked {
-            return offset;
+            // The layout is the last paint's: the text may have changed
+            // since.
+            return self.snap(offset);
         }
         self.content
             .char_indices()
@@ -269,10 +271,20 @@ impl TextInput {
         cx.notify();
     }
 
-    /// Select `range` (byte offsets), e.g. the stem of a file name.
+    /// `offset` as an offset in the text: within it, and at the start of
+    /// the character it falls in. Every offset that does not come from the
+    /// input's own edits goes through it: an edit at one that splits a
+    /// character panics.
+    fn snap(&self, offset: usize) -> usize {
+        snapped(&self.content, offset)
+    }
+
+    /// Select `range` (byte offsets), e.g. the stem of a file name. Given
+    /// from outside (`ui.ask`'s `select`, an agent's), each end is snapped
+    /// to a character.
     pub fn select_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
-        let end = range.end.min(self.content.len());
-        let start = range.start.min(end);
+        let end = self.snap(range.end);
+        let start = self.snap(range.start.min(end));
         self.selected_range = start..end;
         self.selection_reversed = false;
         cx.notify();
@@ -978,9 +990,26 @@ impl Focusable for TextInput {
     }
 }
 
+/// `offset` within `text`, at the start of the character it falls in.
+fn snapped(text: &str, offset: usize) -> usize {
+    let mut offset = offset.min(text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{History, scrolled, typed_at, utf16_to_utf8};
+    use super::{History, scrolled, snapped, typed_at, utf16_to_utf8};
+
+    #[test]
+    fn an_offset_given_from_outside_never_splits_a_character() {
+        // `café.txt`: an agent's `select: [0, 4]` ends inside `é`.
+        assert_eq!(snapped("café.txt", 4), 3);
+        assert_eq!(snapped("café.txt", 5), 5);
+        assert_eq!(snapped("café.txt", 99), 9);
+    }
     use gpui::px;
 
     #[test]

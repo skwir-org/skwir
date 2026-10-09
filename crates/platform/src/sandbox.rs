@@ -84,6 +84,7 @@ fn isolates() -> bool {
             let mut run = isolated(
                 Path::new("/usr/bin/true"),
                 Path::new("/etc/hosts"),
+                &[],
                 work.path(),
                 &[],
             )?;
@@ -186,8 +187,24 @@ pub fn untrusted_reading(
     otherwise: Otherwise,
     readable: &[&Path],
 ) -> anyhow::Result<Untrusted> {
+    untrusted_beside(program, input, &[], work, otherwise, readable)
+}
+
+/// `untrusted_reading`, with files the input names beside it (a glTF
+/// model's buffers): each `(path, relative)` readable where the program
+/// reads the input, at `relative` from it, as it is from the input
+/// outside. The caller checks that each `relative` stays below the
+/// input's folder; one that does not exist is left out.
+pub fn untrusted_beside(
+    program: &Path,
+    input: &Path,
+    beside: &[(PathBuf, PathBuf)],
+    work: &Path,
+    otherwise: Otherwise,
+    readable: &[&Path],
+) -> anyhow::Result<Untrusted> {
     if available() {
-        return isolated(program, input, work, readable);
+        return isolated(program, input, beside, work, readable);
     }
     if otherwise == Otherwise::Refuse {
         return Err(needed());
@@ -219,7 +236,7 @@ pub fn command(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untr
     if !available() {
         return Err(needed());
     }
-    isolated(program, input, work, &[])
+    isolated(program, input, &[], work, &[])
 }
 
 /// Bubblewrap: the system's folders read-only, the input at `/input`, the
@@ -230,6 +247,7 @@ pub fn command(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untr
 fn isolated(
     program: &Path,
     input: &Path,
+    beside: &[(PathBuf, PathBuf)],
     work: &Path,
     readable: &[&Path],
 ) -> anyhow::Result<Untrusted> {
@@ -256,10 +274,16 @@ fn isolated(
             command.arg("--ro-bind").arg(path).arg(path);
         }
     }
+    command.arg("--ro-bind").arg(input).arg(&inside);
+    for (path, relative) in beside {
+        if path.exists() {
+            command
+                .arg("--ro-bind")
+                .arg(path)
+                .arg(Path::new("/input").join(relative));
+        }
+    }
     command
-        .arg("--ro-bind")
-        .arg(input)
-        .arg(&inside)
         .arg("--bind")
         .arg(work)
         .arg("/work")
@@ -353,6 +377,7 @@ const PROFILE: &str = r#"(version 1)
 fn isolated(
     program: &Path,
     input: &Path,
+    beside: &[(PathBuf, PathBuf)],
     work: &Path,
     readable: &[&Path],
 ) -> anyhow::Result<Untrusted> {
@@ -371,6 +396,20 @@ fn isolated(
     // A folder run in before keeps the link of that run.
     let _ = std::fs::remove_file(&inside);
     std::os::unix::fs::symlink(&input, &inside)?;
+    // What the input names beside it, linked where it looks, and read.
+    let mut also: Vec<PathBuf> = Vec::new();
+    for (path, relative) in beside {
+        let Ok(path) = std::fs::canonicalize(path) else {
+            continue;
+        };
+        let link = work.join("input").join(relative);
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&path, &link)?;
+        also.push(path);
+    }
     for folder in ["home", "cache", "tmp"] {
         std::fs::create_dir_all(work.join(folder))?;
     }
@@ -379,6 +418,7 @@ fn isolated(
     let readable: Vec<PathBuf> = readable
         .iter()
         .filter_map(|path| std::fs::canonicalize(path).ok())
+        .chain(also)
         .collect();
     let mut profile = PROFILE.to_owned();
     profile.extend(
@@ -420,6 +460,7 @@ fn isolated(
 fn isolated(
     _program: &Path,
     _input: &Path,
+    _beside: &[(PathBuf, PathBuf)],
     _work: &Path,
     _readable: &[&Path],
 ) -> anyhow::Result<Untrusted> {
@@ -664,6 +705,57 @@ mod tests {
         assert!(
             !dir.path().join("escaped").exists(),
             "nothing is written outside its folder"
+        );
+    }
+
+    /// What the input names beside it (a glTF's buffer) is read where the
+    /// program reads the input, at the same path from it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_file_beside_the_input_is_read_beside_it() {
+        if !available() {
+            eprintln!("bubblewrap cannot isolate here");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("model.gltf");
+        std::fs::write(&input, "{}").unwrap();
+        std::fs::create_dir(dir.path().join("data")).unwrap();
+        std::fs::write(dir.path().join("data/it's a box.bin"), "buffer").unwrap();
+        let script = dir.path().join("read");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\ncat \"$(dirname \"$1\")/data/it's a box.bin\" > /work/out\n",
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let work = tempfile::tempdir().unwrap();
+        let beside = [(
+            dir.path().join("data/it's a box.bin"),
+            PathBuf::from("data/it's a box.bin"),
+        )];
+        let mut run = untrusted_beside(
+            &script,
+            &input,
+            &beside,
+            work.path(),
+            Otherwise::Refuse,
+            &[],
+        )
+        .unwrap();
+        run.command.arg(&run.input);
+        crate::process::run(
+            &mut run.command,
+            &bibli_core::CancelToken::new(),
+            std::time::Duration::from_secs(10),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(work.path().join("out")).unwrap(),
+            "buffer"
         );
     }
 }

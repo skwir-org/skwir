@@ -341,6 +341,13 @@ impl Shell {
         old
     }
 
+    /// Let go of a pin whose session ended under it (`sync_media`).
+    pub(crate) fn unpin_dead(&mut self) {
+        if let Some(pinned) = self.set_pin(None) {
+            pinned.lifetime.cancel();
+        }
+    }
+
     /// Whether the panel shows the pinned session itself.
     pub fn preview_is_pinned(&self) -> bool {
         match (&self.player.pinned, &self.preview.media.session) {

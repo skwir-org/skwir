@@ -430,6 +430,9 @@ impl Shell {
     }
 
     pub fn palette_move(&mut self, mv: modal::ListMove, cx: &mut Context<Self>) {
+        // What was typed since the last frame filters first, as `choose`'s
+        // does: a key right after a character acts on the list it made.
+        self.palette_refilter(cx);
         if let Some(p) = &mut self.palette {
             p.picker.go(mv, p.filtered.len());
             cx.notify();
@@ -437,6 +440,7 @@ impl Shell {
     }
 
     fn palette_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette_refilter(cx);
         let Some(p) = &mut self.palette else { return };
         if let Some(args) = &mut p.args {
             // Collecting required arguments one at a time.

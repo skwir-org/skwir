@@ -385,7 +385,12 @@ impl Shell {
         if let Some(error) = update.error {
             // The manager has ended the session. Withdraw the controls and
             // keep the last picture; every later control would only fail.
+            // The pin goes with it when it was this session: the desktop's
+            // controls and the dock would go on with a dead one.
             self.media_exit_fullscreen(window, cx);
+            if self.preview_is_pinned() {
+                self.unpin_dead();
+            }
             self.preview.media.session = None;
             self.preview.media.state.status = bibli_core::media::PlaybackStatus::Paused;
             // The player's key context follows its focus handle; return keys

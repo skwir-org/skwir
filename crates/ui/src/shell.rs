@@ -2456,6 +2456,14 @@ impl Render for Shell {
             );
         }
         self.sync(window, cx);
+        // One frame of map tiles per window frame, whatever maps it draws:
+        // what the last frame's maps asked for is kept, the rest cancelled
+        // (`TileStore::end_frame`), and this frame's maps ask anew.
+        {
+            let mut tiles = self.map_tiles.borrow_mut();
+            tiles.end_frame();
+            tiles.begin_frame();
+        }
         // While the tab shown gets ready, the whole window draws the tab left
         // as it was: its panes, toolbars, status and preview.
         let held = self.presented.take().map(|mut panes| {

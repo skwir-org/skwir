@@ -105,8 +105,11 @@ impl TextSystem {
         self.platform_text_system.add_fonts(fonts)
     }
 
-    /// Get the FontId for the configure font family and style.
-    fn font_id(&self, font: &Font) -> Result<FontId> {
+    /// Get the FontId for the configure font family and style, or an error
+    /// when it cannot be loaded: asked without falling back, so a caller can
+    /// tell whether a family is installed (`resolve_font` panics when
+    /// neither it nor a fallback is).
+    pub fn font_id(&self, font: &Font) -> Result<FontId> {
         fn clone_font_id_result(font_id: &Result<FontId>) -> Result<FontId> {
             match font_id {
                 Ok(font_id) => Ok(*font_id),

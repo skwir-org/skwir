@@ -1317,15 +1317,19 @@ impl crate::shell::Shell {
             self.font.clone(),
             self.key_hints.clone(),
         );
+        // What had the keyboard gets it back when the dialog closes, as a
+        // popup's does: the reader, the address, the pane.
+        let mut back = Some(crate::modal::FocusReturn::capture(window, cx));
         let settings = cx.new(|cx| SettingsView::new(app, font, hints, target, window, cx));
         self.settings_subscription = Some(cx.subscribe_in(
             &settings,
             window,
-            |this, _, event: &SettingsEvent, window, cx| match event {
+            move |this, _, event: &SettingsEvent, window, cx| match event {
                 SettingsEvent::Close => {
                     this.settings = None;
                     this.settings_subscription = None;
-                    window.focus(&this.ui().focus);
+                    let fallback = this.ui().focus.clone();
+                    back.take().unwrap_or_default().restore(window, &fallback);
                     cx.notify();
                 }
             },

@@ -130,17 +130,26 @@ const MONO_CANDIDATES: &[&str] = &["JetBrains Mono", "SF Mono", "Menlo"];
 #[cfg(windows)]
 const MONO_CANDIDATES: &[&str] = &["JetBrains Mono", "Cascadia Mono", "Consolas"];
 
+/// The first of `candidates` the system has, else any family it has.
+/// Each is asked whether it loads (`font_id`), never resolved: resolving a
+/// family that is missing falls back to gpui's own stack and panics when
+/// none of it is installed either (a minimal system with only Liberation
+/// or Inter), before the window opens.
 fn pick_font(cx: &gpui::App, candidates: &[&'static str], label: &str) -> SharedString {
     let ts = cx.text_system();
-    let missing = ts.resolve_font(&font("bibli-no-such-font"));
+    let loads = |family: &str| ts.font_id(&font(family.to_owned())).is_ok();
     for c in candidates {
-        if ts.resolve_font(&font(*c)) != missing {
+        if loads(c) {
             tracing::info!(family = c, label, "font");
             return (*c).into();
         }
     }
-    tracing::warn!("none of {candidates:?} resolved for {label}; using the platform fallback");
-    candidates[1].into()
+    let any = ts
+        .all_font_names()
+        .into_iter()
+        .find(|family| !family.starts_with('.') && loads(family));
+    tracing::warn!(?any, "none of {candidates:?} is installed for {label}");
+    any.map_or_else(|| candidates[0].into(), SharedString::from)
 }
 
 /// Dev-only PNG/JPEG decoder used to exercise the views before the platform

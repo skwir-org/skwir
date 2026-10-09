@@ -295,9 +295,11 @@ impl TileStore {
         }
     }
 
-    /// After a map asked for what it shows: cancel what it no longer
-    /// shows, forget other revisions, and keep the kept tiles in budget,
-    /// the least recently drawn going first.
+    /// After a window frame's maps asked for what they show (the shell
+    /// calls it once a frame, never a map: two maps drawn in one frame
+    /// would each cancel what the other asked for): cancel what none of
+    /// them shows any more, forget other revisions, and keep the kept
+    /// tiles in budget, the least recently drawn going first.
     pub fn end_frame(&mut self) {
         let middle_drawn = self
             .middle

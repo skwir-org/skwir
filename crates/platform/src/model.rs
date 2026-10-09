@@ -73,6 +73,35 @@ pub const WORKER: crate::process::Worker = crate::process::Worker {
     executable: "bibli-model-worker",
 };
 
+/// The files a glTF model at `path` keeps its buffers in, each with its
+/// path from the model's folder: those its JSON names by a plain relative
+/// path below that folder, as the helper reads them (`gltf_mesh::buffer`),
+/// that are files. Read here only to say what the sandbox lets it read.
+fn gltf_buffers(path: &Path) -> Vec<(PathBuf, PathBuf)> {
+    let Ok(text) = crate::file::read_regular(path, limits::TEXT_INPUT as u64) else {
+        return Vec::new();
+    };
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let dir = path.parent().unwrap_or(Path::new("."));
+    json.get("buffers")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|buffer| buffer.get("uri")?.as_str())
+        .filter(|uri| !uri.contains(':'))
+        .map(Path::new)
+        .filter(|relative| {
+            relative
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)))
+        })
+        .filter(|relative| std::fs::metadata(dir.join(relative)).is_ok_and(|m| m.is_file()))
+        .map(|relative| (dir.join(relative), relative.to_owned()))
+        .collect()
+}
+
 /// The mesh at `path` drawn at most `side` pixels on its longer side, and
 /// measured. An error when the helper is missing, or says why it cannot.
 pub fn draw(
@@ -83,8 +112,21 @@ pub fn draw(
 ) -> anyhow::Result<Drawn> {
     let worker = WORKER.require("draw 3D models")?;
     let work = tempfile::tempdir()?;
-    let mut run =
-        crate::sandbox::untrusted(&worker, path, work.path(), crate::sandbox::Otherwise::Run)?;
+    // A glTF's buffers may be files beside it: the helper reads them where
+    // it reads the model.
+    let beside = if format == MeshFormat::Gltf {
+        gltf_buffers(path)
+    } else {
+        Vec::new()
+    };
+    let mut run = crate::sandbox::untrusted_beside(
+        &worker,
+        path,
+        &beside,
+        work.path(),
+        crate::sandbox::Otherwise::Run,
+        &[],
+    )?;
     let finished = crate::process::run_to_exit(
         run.command
             .arg(&run.input)

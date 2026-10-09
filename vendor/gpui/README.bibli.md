@@ -281,6 +281,13 @@ that path.
   anothe" over "…ere.jpg"). Nothing is lost on other text: a word after
   an ellipsis still follows its space.
 
+- `0019-font-id-without-fallback.patch`: `TextSystem::font_id` is
+  public, so a caller can ask whether a family loads without
+  `resolve_font`, which falls back to its own stack and panics when none
+  of that is installed either. bibli picked its font by resolving a
+  family that does not exist and comparing: on a minimal system with
+  only Liberation or Inter, that panicked before the window opened.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

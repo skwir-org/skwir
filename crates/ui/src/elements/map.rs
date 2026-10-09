@@ -1177,7 +1177,6 @@ impl Element for Map {
                 scale,
                 palette: layer.palette,
             };
-            store.begin_frame();
             let background = store.info();
             if let Some(info) = &background {
                 detailed = info.detailed;
@@ -1200,7 +1199,6 @@ impl Element for Map {
                     attributions.push((info.attribution, info.attribution_url));
                 }
             }
-            store.end_frame();
         }
         // The attributions at the foot, right-aligned, the background's
         // lowest.
