@@ -54,7 +54,11 @@ struct Shared {
     listed: std::sync::atomic::AtomicBool,
     tx: EventSink,
     ctx: OpenContext,
-    _watcher: Mutex<Option<watch::WatchHandle>>,
+    watcher: Mutex<Option<watch::WatchHandle>>,
+    /// Changes the watcher told and not applied yet, and whether a worker
+    /// applies them: a worker at a time, changes told meanwhile taken as
+    /// one when it is done with the ones before.
+    changes: Mutex<(Option<watch::Changes>, bool)>,
 }
 
 /// The names of the listed entries, both ways, so a watcher event finds its
@@ -194,49 +198,35 @@ impl PathLocation {
                     if ctx.cancel.is_cancelled() {
                         return Ok(());
                     }
-                    let (watcher, changes) =
-                        match watch::watch(&dir, Duration::from_millis(50), &ctx.cancel) {
-                            Ok((watcher, changes)) => (Some(watcher), Some(changes)),
-                            Err(error) => {
-                                tracing::warn!("watch unavailable: {error}");
-                                (None, None)
-                            }
-                        };
                     let shared = Arc::new(Shared {
-                        dir: RwLock::new(dir),
+                        dir: RwLock::new(dir.clone()),
                         folder,
                         dev,
                         names: Mutex::new(Names::default()),
                         listed: std::sync::atomic::AtomicBool::new(false),
                         tx: tx.clone(),
                         ctx: ctx.clone(),
-                        _watcher: Mutex::new(watcher),
+                        watcher: Mutex::new(None),
+                        changes: Mutex::new((None, false)),
                     });
+                    // Watched before it is listed, so nothing changed
+                    // meanwhile is missed. The watcher holds the listing
+                    // weakly: closing it lets go of both.
+                    let weak = Arc::downgrade(&shared);
+                    match watch::watch(&dir, Duration::from_millis(50), &ctx.cancel, move |c| {
+                        if let Some(s) = weak.upgrade() {
+                            s.changed(c);
+                        }
+                    }) {
+                        Ok(watcher) => *shared.watcher.lock() = Some(watcher),
+                        Err(error) => tracing::warn!("watch unavailable: {error}"),
+                    }
                     {
                         let mut slot = slot.lock();
                         if ctx.cancel.is_cancelled() {
                             return Ok(());
                         }
                         *slot = Some(Arc::clone(&shared));
-                    }
-                    if let Some(changes) = changes {
-                        let s = Arc::clone(&shared);
-                        // Closing the location wakes this thread, which then
-                        // lets go of the watcher: nothing here polls.
-                        let closed = ctx.cancel.subscribe();
-                        std::thread::Builder::new()
-                            .name("bibli-watch-apply".into())
-                            .spawn(move || {
-                                loop {
-                                    crossbeam_channel::select! {
-                                        recv(changes) -> change => match change {
-                                            Ok(change) => s.apply_changes(change),
-                                            Err(_) => break,
-                                        },
-                                        recv(closed.receiver()) -> _ => break,
-                                    }
-                                }
-                            })?;
                     }
                     shared.list(&ctx.cancel, None);
                     Ok(())
@@ -463,6 +453,39 @@ impl Shared {
         self.tx.send(ListingEvent::Error(
             "This folder was deleted or is no longer available.".into(),
         ));
+    }
+
+    /// Changes the watcher told, on its thread: handed to a worker.
+    fn changed(self: &Arc<Self>, c: watch::Changes) {
+        {
+            let mut changes = self.changes.lock();
+            match &mut changes.0 {
+                Some(before) => before.merge(c),
+                None => changes.0 = Some(c),
+            }
+            if std::mem::replace(&mut changes.1, true) {
+                return;
+            }
+        }
+        let s = Arc::clone(self);
+        self.ctx.scheduler.spawn(
+            Priority::Visible,
+            "fs.changes",
+            self.ctx.cancel.clone(),
+            move || {
+                loop {
+                    let c = {
+                        let mut changes = s.changes.lock();
+                        let Some(c) = changes.0.take() else {
+                            changes.1 = false;
+                            return;
+                        };
+                        c
+                    };
+                    s.apply_changes(c);
+                }
+            },
+        );
     }
 
     fn apply_changes(self: &Arc<Self>, c: watch::Changes) {
