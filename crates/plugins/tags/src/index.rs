@@ -719,7 +719,17 @@ impl TagIndex {
 
     /// Learn `read` into `state`, past `limit` no new file: whether that
     /// changed it.
-    fn learn_into(state: &mut State, read: Vec<(PathBuf, Vec<String>)>, limit: u64) -> bool {
+    fn learn_into(state: &mut State, mut read: Vec<(PathBuf, Vec<String>)>, limit: u64) -> bool {
+        // By path's bytes, each folder's files in the order it keeps them
+        // (`Folder::find`): a new one is added at its end, where a
+        // folder's files learned in the order they were listed were each
+        // inserted among the others, a folder of many thousands tagged
+        // files quadratic. Stable: the later of two reads of a file wins.
+        read.sort_by(|a, b| {
+            a.0.as_os_str()
+                .as_encoded_bytes()
+                .cmp(b.0.as_os_str().as_encoded_bytes())
+        });
         let mut changed = false;
         for (path, tags) in read {
             let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {

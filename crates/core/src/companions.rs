@@ -136,6 +136,47 @@ impl FolderNames {
     }
 }
 
+/// Whether a folder, or one above it, holds a marker folder (`.ts`:
+/// `TagSpaces` is used there), each folder asked once a moment: a store
+/// asked for every folder a walk reads asked again for every folder above
+/// it, a `stat` each, the depth of the tree for every folder.
+pub struct MarkedAbove {
+    marker: &'static str,
+    known: parking_lot::Mutex<std::collections::HashMap<PathBuf, (bool, std::time::Instant)>>,
+}
+
+impl MarkedAbove {
+    /// How long an answer is trusted.
+    const FRESH: std::time::Duration = std::time::Duration::from_secs(5);
+    /// Answers kept at most; past it, all are asked again.
+    const KEPT: usize = 4096;
+
+    pub fn new(marker: &'static str) -> Self {
+        MarkedAbove {
+            marker,
+            known: parking_lot::Mutex::default(),
+        }
+    }
+
+    /// Whether `dir` or a folder above it holds the marker. Reads the
+    /// folders not asked of a moment ago: a worker's.
+    pub fn covers(&self, dir: &Path) -> bool {
+        if let Some(&(covered, at)) = self.known.lock().get(dir)
+            && at.elapsed() < Self::FRESH
+        {
+            return covered;
+        }
+        let covered =
+            dir.join(self.marker).is_dir() || dir.parent().is_some_and(|up| self.covers(up));
+        let mut known = self.known.lock();
+        if known.len() >= Self::KEPT {
+            known.clear();
+        }
+        known.insert(dir.to_path_buf(), (covered, std::time::Instant::now()));
+        covered
+    }
+}
+
 /// The registered kinds, in registration order.
 #[derive(Default)]
 pub struct Companions {

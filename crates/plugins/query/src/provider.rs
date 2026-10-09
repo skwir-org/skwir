@@ -142,10 +142,12 @@ impl LocationProvider for QueryProvider {
             query.root.display()
         );
         let open = QueryLocation::open(location.clone(), query, &ctx, &self.lifetime);
-        self.open
-            .0
-            .lock()
-            .push((location.clone(), Arc::downgrade(&open.shared)));
+        let mut searches = self.open.0.lock();
+        // The searches closed since are let go of here too, not only when
+        // a plan runs: each search typed is one.
+        searches.retain(|(_, s)| s.strong_count() > 0);
+        searches.push((location.clone(), Arc::downgrade(&open.shared)));
+        drop(searches);
         Ok(open)
     }
 }
@@ -222,89 +224,110 @@ impl Batcher<'_> {
 /// the walk's threads, which take a folder's files from one another: a
 /// group of each thread waited for the walk to end, holding every
 /// candidate of the tree, and showed its matches only then. A folder's
-/// group is decided once full, or once it waited `Batcher::MAX_AGE`
-/// (looked at as the walk goes, `settle`), and what is left when the walk
-/// ends (`finish`).
+/// group is decided once full, or once it waited `Batcher::MAX_AGE`, by
+/// the thread that next passes by its shard (`Shard::take_old`), and what
+/// is left when the walk ends (`finish`). The groups are in shards by
+/// folder, so the threads seldom wait for one another, and the groups
+/// that waited are decided by every thread, a few at a time.
 struct Deferred<'a> {
     shared: &'a Shared,
     query: &'a Query,
     batcher: &'a Batcher<'a>,
-    groups: Mutex<Groups>,
+    shards: Vec<Mutex<Shard>>,
 }
 
 #[derive(Default)]
-struct Groups {
-    by_dir: HashMap<PathBuf, (Vec<Entry>, Instant)>,
-    /// When the groups were last looked at for age.
-    swept: Option<Instant>,
+struct Shard {
+    groups: HashMap<PathBuf, (Vec<Entry>, Instant)>,
+    /// The groups as they began, oldest first.
+    order: std::collections::VecDeque<(PathBuf, Instant)>,
+}
+
+impl Shard {
+    /// The oldest group that waited long enough, out of the shard.
+    fn take_old(&mut self, now: Instant) -> Option<(PathBuf, Vec<Entry>)> {
+        while let Some((_, since)) = self.order.front() {
+            if now.duration_since(*since) < Batcher::MAX_AGE {
+                return None;
+            }
+            let (dir, since) = self.order.pop_front()?;
+            // Still that group: not decided full and begun again since.
+            if self
+                .groups
+                .get(&dir)
+                .is_some_and(|(_, began)| *began == since)
+            {
+                let (entries, _) = self.groups.remove(&dir)?;
+                return Some((dir, entries));
+            }
+        }
+        None
+    }
 }
 
 impl Deferred<'_> {
     const BATCH: usize = 64;
+    const SHARDS: usize = 16;
 
     fn new<'a>(shared: &'a Shared, query: &'a Query, batcher: &'a Batcher<'a>) -> Deferred<'a> {
         Deferred {
             shared,
             query,
             batcher,
-            groups: Mutex::new(Groups::default()),
+            shards: (0..Self::SHARDS).map(|_| Mutex::default()).collect(),
         }
+    }
+
+    fn shard(&self, dir: &Path) -> &Mutex<Shard> {
+        use std::hash::{BuildHasher, BuildHasherDefault};
+        let hash = BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
+            .hash_one(dir);
+        &self.shards[usize::try_from(hash % Self::SHARDS as u64).unwrap_or(0)]
     }
 
     fn add(&self, dir: &Path, entry: Entry) {
-        let full = {
-            let mut groups = self.groups.lock();
-            let (group, _) = groups
-                .by_dir
-                .entry(dir.to_path_buf())
-                .or_insert_with(|| (Vec::new(), Instant::now()));
-            group.push(entry);
-            (group.len() >= Self::BATCH)
-                .then(|| groups.by_dir.remove(dir))
-                .flatten()
+        let (full, old) = {
+            let mut shard = self.shard(dir).lock();
+            let now = Instant::now();
+            let len = if let Some((group, _)) = shard.groups.get_mut(dir) {
+                group.push(entry);
+                group.len()
+            } else {
+                shard.order.push_back((dir.to_path_buf(), now));
+                shard.groups.insert(dir.to_path_buf(), (vec![entry], now));
+                1
+            };
+            let full = if len >= Self::BATCH {
+                shard.groups.remove(dir).map(|(entries, _)| entries)
+            } else {
+                None
+            };
+            (full, shard.take_old(now))
         };
-        if let Some((entries, _)) = full {
+        if let Some(entries) = full {
             self.decide(dir, entries);
         }
-        self.settle();
+        if let Some((dir, entries)) = old {
+            self.decide(&dir, entries);
+        }
     }
 
-    /// Decide the groups that waited long enough, at most twice in their
-    /// age: the walk shows its matches as it goes.
-    fn settle(&self) {
-        let old = {
-            let mut groups = self.groups.lock();
-            let now = Instant::now();
-            if groups
-                .swept
-                .is_some_and(|swept| now.duration_since(swept) < Batcher::MAX_AGE / 2)
-            {
-                return;
-            }
-            groups.swept = Some(now);
-            let old: Vec<PathBuf> = groups
-                .by_dir
-                .iter()
-                .filter(|(_, (_, since))| now.duration_since(*since) >= Batcher::MAX_AGE)
-                .map(|(dir, _)| dir.clone())
-                .collect();
-            old.into_iter()
-                .filter_map(|dir| {
-                    let (entries, _) = groups.by_dir.remove(&dir)?;
-                    Some((dir, entries))
-                })
-                .collect::<Vec<_>>()
-        };
-        for (dir, entries) in old {
+    /// Decide the oldest group of `dir`'s shard if it waited long enough:
+    /// a file that needs no metadata passing by.
+    fn settle(&self, dir: &Path) {
+        let old = self.shard(dir).lock().take_old(Instant::now());
+        if let Some((dir, entries)) = old {
             self.decide(&dir, entries);
         }
     }
 
     /// Decide every group: the walk ended.
     fn finish(&self) {
-        let all = std::mem::take(&mut self.groups.lock().by_dir);
-        for (dir, (entries, _)) in all {
-            self.decide(&dir, entries);
+        for shard in &self.shards {
+            let all = std::mem::take(&mut *shard.lock()).groups;
+            for (dir, (entries, _)) in all {
+                self.decide(&dir, entries);
+            }
         }
     }
 
@@ -477,8 +500,10 @@ fn consider(
 ) {
     match first(q, path, name, kind, batcher.late(), statter) {
         First::No => {
-            if q.needs_metadata() {
-                deferred.settle();
+            if q.needs_metadata()
+                && let Some(dir) = path.parent()
+            {
+                deferred.settle(dir);
             }
         }
         First::Yes(entry) => batcher.push(entry, path.to_path_buf()),
@@ -652,6 +677,7 @@ impl Shared {
         };
         let started = Instant::now();
         let mut statter = Statter::default();
+        let mut linked: HashMap<PathBuf, bool> = HashMap::new();
         for real in paths {
             if cancel.is_cancelled() {
                 break;
@@ -662,9 +688,13 @@ impl Shared {
             if !crate::plocate::visible(relative, q.hidden, q.depth) {
                 continue;
             }
-            // A folder on the way that is a link: the walk would not go there.
+            // A folder on the way that is a link: the walk would not go
+            // there. Asked once per folder: an index names many files of
+            // one.
             let through_link = real.parent().is_none_or(|parent| {
-                bibli_core::os_path::canonical(parent).ok().as_deref() != Some(parent)
+                *linked.entry(parent.to_path_buf()).or_insert_with(|| {
+                    bibli_core::os_path::canonical(parent).ok().as_deref() != Some(parent)
+                })
             });
             let Some(name) = real.file_name() else {
                 continue;

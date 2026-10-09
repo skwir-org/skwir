@@ -107,24 +107,32 @@ impl Convention {
     }
 }
 
-/// Whether a `TagSpaces` location covers `dir`: a `.ts` folder there or
-/// above it.
-fn tagspaces_used(dir: &Path) -> bool {
-    dir.ancestors().any(|d| d.join(".ts").is_dir())
+/// Tags in names, one convention, as a store.
+pub struct NameStore {
+    convention: Convention,
+    /// Whether a `TagSpaces` location covers a folder: a `.ts` folder
+    /// there or above it.
+    tagspaces: bibli_core::companions::MarkedAbove,
 }
 
-/// Tags in names, one convention, as a store.
-pub struct NameStore(pub Convention);
+impl NameStore {
+    pub fn new(convention: Convention) -> Self {
+        NameStore {
+            convention,
+            tagspaces: bibli_core::companions::MarkedAbove::new(".ts"),
+        }
+    }
+}
 
 impl NotesStore for NameStore {
     fn id(&self) -> &'static str {
-        match self.0 {
+        match self.convention {
             Convention::Tagspaces => "tagspaces-names",
             Convention::Filetags => "filetags",
         }
     }
     fn title(&self) -> &'static str {
-        match self.0 {
+        match self.convention {
             Convention::Tagspaces => "Tags in names, as TagSpaces writes them: name[a b].ext",
             Convention::Filetags => "Tags in names, as filetags writes them: name -- a b.ext",
         }
@@ -135,7 +143,7 @@ impl NotesStore for NameStore {
     fn holds(&self) -> Holds {
         Holds {
             tags: true,
-            limits: match self.0 {
+            limits: match self.convention {
                 Convention::Tagspaces => {
                     "tags without spaces, brackets or categories, no rating, no comment"
                 }
@@ -148,11 +156,11 @@ impl NotesStore for NameStore {
         Write::Off
     }
     fn default_read(&self) -> bool {
-        self.0 == Convention::Tagspaces
+        self.convention == Convention::Tagspaces
     }
     fn applies(&self, dir: &Path) -> bool {
-        match self.0 {
-            Convention::Tagspaces => tagspaces_used(dir),
+        match self.convention {
+            Convention::Tagspaces => self.tagspaces.covers(dir),
             Convention::Filetags => true,
         }
     }
@@ -161,7 +169,7 @@ impl NotesStore for NameStore {
             tags: notes
                 .tags
                 .iter()
-                .filter(|t| self.0.holds(&t.name))
+                .filter(|t| self.convention.holds(&t.name))
                 .map(|t| Tag::named(t.name.clone()))
                 .collect(),
             ..Notes::default()
@@ -176,7 +184,7 @@ impl NotesStore for NameStore {
         files
             .iter()
             .map(|f| {
-                let (_, tags, _) = self.0.split(f.name.to_str()?);
+                let (_, tags, _) = self.convention.split(f.name.to_str()?);
                 (!tags.is_empty()).then(|| Notes {
                     tags: tags.into_iter().map(Tag::named).collect(),
                     ..Notes::default()
@@ -207,7 +215,7 @@ struct NameArgs {
 }
 
 fn store_id(convention: Convention) -> &'static str {
-    NameStore(convention).id()
+    NameStore::new(convention).id()
 }
 
 /// A listed entry's tags (`keys::TAGS`), every store's.
@@ -373,8 +381,8 @@ impl Plugin for NameTagsPlugin {
         bibli_core::permissions::Capabilities::of(&[Capability::Write])
     }
     fn register(&self, app: &App) {
-        app.register_notes_store(ID, Arc::new(NameStore(Convention::Tagspaces)));
-        app.register_notes_store(ID, Arc::new(NameStore(Convention::Filetags)));
+        app.register_notes_store(ID, Arc::new(NameStore::new(Convention::Tagspaces)));
+        app.register_notes_store(ID, Arc::new(NameStore::new(Convention::Filetags)));
         app.commands.register::<NameArgs, _>(
             ID,
             "names.tag",

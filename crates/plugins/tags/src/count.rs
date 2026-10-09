@@ -15,11 +15,14 @@
 //! forgotten. Symbolic links are not followed: a file is counted where it
 //! is.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use parking_lot::{Condvar, Mutex};
 
 use bibli_core::app::App;
 use bibli_core::cancel::CancelToken;
@@ -98,42 +101,142 @@ pub fn run_with(
 ) -> anyhow::Result<Option<(SystemTime, Vec<u64>, Counted)>> {
     let began = SystemTime::now().checked_sub(MARGIN).unwrap_or(UNIX_EPOCH);
     std::fs::read_dir(root)?;
-    let covered = last.map(|(since, _)| since);
     let empty = HashSet::new();
-    let known_dirs = last.map_or(&empty, |(_, dirs)| dirs);
-    // Asked once per device the walk meets.
-    let mut devices: std::collections::HashMap<u64, bool> = std::collections::HashMap::new();
-    let mut trusted = |dev: u64, dir: &Path| {
-        *devices
+    let walk = Walk {
+        app,
+        index,
+        covered: last.map(|(since, _)| since),
+        known_dirs: last.map_or(&empty, |(_, dirs)| dirs),
+        policy: app.notes.policy(),
+        cancel,
+        queue: Mutex::new((vec![root.to_path_buf()], 0)),
+        moved: Condvar::new(),
+        devices: Mutex::new(HashMap::new()),
+        // The tagged files the index knows, by folder: those no longer
+        // there are forgotten; the folders not walked again are what is
+        // gone.
+        known: Mutex::new(index.by_folder(root)),
+        seen_dirs: Mutex::new(Vec::new()),
+        learned: Mutex::new(Vec::new()),
+        folders: AtomicUsize::new(0),
+        read: AtomicUsize::new(0),
+    };
+    // Folders are read side by side, as a search walks: a check of a
+    // million files took 1.3 s one folder after the other.
+    std::thread::scope(|scope| {
+        for _ in 1..walkers() {
+            scope.spawn(|| walk.work());
+        }
+        walk.work();
+    });
+    if cancel.is_cancelled() {
+        return Ok(None);
+    }
+    let mut learned = walk.learned.into_inner();
+    // What the index knew in folders no longer there (or now hidden: those
+    // are not counted anyway, and forgetting them costs a read later).
+    for (dir, paths) in walk.known.into_inner() {
+        if !dir
+            .strip_prefix(root)
+            .is_ok_and(|rest| rest.components().any(|c| hidden(c.as_os_str())))
+            && std::fs::symlink_metadata(&dir).is_err()
+        {
+            learned.extend(paths.into_iter().map(|p| (p, Vec::new())));
+        }
+    }
+    index.learn(learned);
+    let counted = Counted {
+        folders: walk.folders.into_inner(),
+        read: walk.read.into_inner(),
+    };
+    Ok(Some((began, walk.seen_dirs.into_inner(), counted)))
+}
+
+/// Threads a count walks with: as many as a search's walk.
+fn walkers() -> usize {
+    std::thread::available_parallelism()
+        .map_or(1, std::num::NonZero::get)
+        .min(12)
+}
+
+/// A count under way, its folders shared by the threads that read them.
+struct Walk<'a> {
+    app: &'a App,
+    index: &'a Arc<TagIndex>,
+    covered: Option<SystemTime>,
+    known_dirs: &'a HashSet<u64>,
+    policy: bibli_core::notes::Policy,
+    cancel: &'a CancelToken,
+    /// The folders to read, and how many threads are reading one: once
+    /// none is left and none is read, the walk is done.
+    queue: Mutex<(Vec<PathBuf>, usize)>,
+    moved: Condvar,
+    /// Whether each device's change times tell, asked once per device.
+    devices: Mutex<HashMap<u64, bool>>,
+    known: Mutex<HashMap<PathBuf, Vec<PathBuf>>>,
+    seen_dirs: Mutex<Vec<u64>>,
+    learned: Mutex<Vec<(PathBuf, Vec<String>)>>,
+    folders: AtomicUsize,
+    read: AtomicUsize,
+}
+
+impl Walk<'_> {
+    /// Read folders until none is left, or the count is cancelled.
+    fn work(&self) {
+        loop {
+            let dir = {
+                let mut queue = self.queue.lock();
+                loop {
+                    if self.cancel.is_cancelled() {
+                        self.moved.notify_all();
+                        return;
+                    }
+                    if let Some(dir) = queue.0.pop() {
+                        queue.1 += 1;
+                        break dir;
+                    }
+                    if queue.1 == 0 {
+                        self.moved.notify_all();
+                        return;
+                    }
+                    self.moved.wait(&mut queue);
+                }
+            };
+            let inside = self.folder(&dir);
+            let mut queue = self.queue.lock();
+            queue.0.extend(inside);
+            queue.1 -= 1;
+            self.moved.notify_all();
+        }
+    }
+
+    fn trusted(&self, dev: u64, dir: &Path) -> bool {
+        *self
+            .devices
+            .lock()
             .entry(dev)
             .or_insert_with(|| bibli_platform::filesystem::change_times_tell(dir))
-    };
-    // The tagged files the index knows, by folder: those no longer there
-    // are forgotten; the folders not walked again are what is gone.
-    let mut known = index.by_folder(root);
-    let policy = app.notes.policy();
-    let mut seen_dirs: Vec<u64> = Vec::new();
-    let mut learned: Vec<(PathBuf, Vec<String>)> = Vec::new();
-    let mut counted = Counted::default();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        if cancel.is_cancelled() {
-            return Ok(None);
-        }
-        let Ok(meta) = std::fs::symlink_metadata(&dir) else {
-            continue;
+    }
+
+    /// Read `dir`'s files that need it, and say the folders it holds.
+    fn folder(&self, dir: &Path) -> Vec<PathBuf> {
+        let mut inside = Vec::new();
+        let Ok(meta) = std::fs::symlink_metadata(dir) else {
+            return inside;
         };
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return inside;
         };
-        counted.folders += 1;
+        let (app, covered) = (self.app, self.covered);
+        self.folders.fetch_add(1, Ordering::Relaxed);
         // Off Unix a folder is known by its path alone (ADR-035).
-        let id = bibli_core::fs::stat::identity(&dir, &meta).unwrap_or(EntryId { dev: 0, ino: 0 });
-        let key = folder_key(id.dev, id.ino, &dir);
-        seen_dirs.push(key);
+        let id = bibli_core::fs::stat::identity(dir, &meta).unwrap_or(EntryId { dev: 0, ino: 0 });
+        let key = folder_key(id.dev, id.ino, dir);
+        self.seen_dirs.lock().push(key);
         // Read whole: on a first count, a folder not seen here before, or
         // one whose times do not tell.
-        let mut whole = covered.is_none() || !known_dirs.contains(&key) || !trusted(id.dev, &dir);
+        let mut whole =
+            covered.is_none() || !self.known_dirs.contains(&key) || !self.trusted(id.dev, dir);
         let mut present: HashSet<OsString> = HashSet::new();
         let mut candidates: Vec<(OsString, std::fs::Metadata)> = Vec::new();
         let mut owners: HashSet<OsString> = HashSet::new();
@@ -160,7 +263,7 @@ pub fn run_with(
                 continue;
             }
             if meta.is_dir() {
-                stack.push(entry.path());
+                inside.push(entry.path());
             } else if !meta.is_file() {
                 // Links are counted where their file is; a pipe or a
                 // device is never read.
@@ -183,8 +286,9 @@ pub fn run_with(
                 whole || owners.contains(name) || changed_since(&dir.join(name), meta, covered)
             })
             .collect();
+        let mut learned = Vec::new();
         // The tagged files known here that are gone.
-        if let Some(here) = known.remove(&dir) {
+        if let Some(here) = self.known.lock().remove(dir) {
             for path in here {
                 if path.file_name().is_none_or(|n| !present.contains(n)) {
                     learned.push((path, Vec::new()));
@@ -203,29 +307,22 @@ pub fn run_with(
                 })
                 .collect();
             let listed = |name: &OsStr| present.contains(name);
-            let notes = app.notes.read(&dir, &named, &policy, Some(&listed));
-            counted.read += read.len();
+            let notes = app.notes.read(dir, &named, &self.policy, Some(&listed));
+            self.read.fetch_add(read.len(), Ordering::Relaxed);
             for ((name, _), notes) in read.iter().zip(notes) {
                 learned.push((dir.join(name), notes.notes.tag_names()));
             }
         }
-        if learned.len() >= LEARN_EVERY {
-            index.learn(std::mem::take(&mut learned));
+        let full = {
+            let mut all = self.learned.lock();
+            all.append(&mut learned);
+            (all.len() >= LEARN_EVERY).then(|| std::mem::take(&mut *all))
+        };
+        if let Some(full) = full {
+            self.index.learn(full);
         }
+        inside
     }
-    // What the index knew in folders no longer there (or now hidden: those
-    // are not counted anyway, and forgetting them costs a read later).
-    for (dir, paths) in known {
-        if !dir
-            .strip_prefix(root)
-            .is_ok_and(|rest| rest.components().any(|c| hidden(c.as_os_str())))
-            && std::fs::symlink_metadata(&dir).is_err()
-        {
-            learned.extend(paths.into_iter().map(|p| (p, Vec::new())));
-        }
-    }
-    index.learn(learned);
-    Ok(Some((began, seen_dirs, counted)))
 }
 
 #[cfg(test)]

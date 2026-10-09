@@ -185,12 +185,18 @@ fn read_json(path: &Path) -> Option<Value> {
 pub struct TagSpacesStore {
     /// The names in a folder's `.ts` folder.
     names: bibli_core::companions::FolderNames,
+    /// Whether a `TagSpaces` location covers a folder (a `.ts` there or
+    /// above): only there are its folders' own sidecars looked for, a
+    /// `stat` inside each folder listed elsewhere, which a sleeping disk
+    /// or a network volume answers slowly.
+    used: bibli_core::companions::MarkedAbove,
 }
 
 impl Default for TagSpacesStore {
     fn default() -> Self {
         TagSpacesStore {
             names: bibli_core::companions::FolderNames::new(|name| Some(name.to_owned())),
+            used: bibli_core::companions::MarkedAbove::new(FOLDER),
         }
     }
 }
@@ -233,6 +239,8 @@ impl NotesStore for TagSpacesStore {
         } else {
             Arc::default()
         };
+        // Asked only once a folder is among the files.
+        let mut covered = None;
         files
             .iter()
             .map(|f| {
@@ -241,7 +249,8 @@ impl NotesStore for TagSpacesStore {
                 }
                 let relative = sidecar(f.name, f.folder);
                 let there = if f.folder {
-                    dir.join(&relative).is_file()
+                    *covered.get_or_insert_with(|| self.used.covers(dir))
+                        && dir.join(&relative).is_file()
                 } else {
                     relative.file_name().is_some_and(|n| names.contains(n))
                 };
