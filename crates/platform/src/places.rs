@@ -767,7 +767,7 @@ fn is_interesting_mountpoint(p: &Path) -> bool {
 
 /// The volumes worth showing among `/proc/self/mountinfo`'s mounts
 /// (`fs::volume::mountinfo`, the one reading of it).
-pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
+pub fn parse_mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mount> {
     let mut out: Vec<Mount> = Vec::new();
     for mounted in bibli_core::fs::volume::mountinfo(text) {
         let mountpoint = mounted.point;
@@ -805,7 +805,7 @@ mod imp {
 
     /// Reads procfs, `/dev` and sysfs, never a volume itself.
     pub fn mounts() -> Vec<Mount> {
-        let mut mounts = std::fs::read_to_string("/proc/self/mountinfo")
+        let mut mounts = std::fs::read("/proc/self/mountinfo")
             .map(|t| parse_mountinfo(&t))
             .unwrap_or_default();
         for mount in &mut mounts {
@@ -1266,6 +1266,16 @@ mod tests {
             "26 23 0:30 / /run/media/u/Cl\\303\\251\\040A rw - vfat /dev/sdb1 rw\n",
         );
         assert_eq!(mounts[0].path, Path::new("/run/media/u/Clé A"));
+        // As the kernel writes it: a byte that is not UTF-8 raw, which
+        // must not empty the list.
+        let raw: &[u8] = b"22 1 0:30 / / rw - btrfs /dev/root rw\n\
+            26 23 0:30 / /mnt/caf\xe9 rw - vfat /dev/sdb1 rw\n";
+        let mounts = parse_mountinfo(raw);
+        assert_eq!(mounts.len(), 2);
+        assert_eq!(
+            mounts[1].path.as_os_str().as_encoded_bytes(),
+            b"/mnt/caf\xe9"
+        );
         let dir = tempfile::tempdir().unwrap();
         let label = dir.path().join("Backup.");
         std::fs::create_dir(&label).unwrap();

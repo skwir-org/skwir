@@ -63,12 +63,15 @@ pub struct Catalog {
     lists: HashMap<String, Associations>,
 }
 
-/// Modification times of everything [`Catalog::load`] reads the list of:
-/// the applications directories and the `mimeapps.list` files. Installing
-/// or removing an application changes its directory; changing a default
-/// rewrites a list.
+/// What [`Catalog::load`] reads the list of, as it stands: each
+/// applications directory and the folders in it, and the `mimeapps.list`
+/// files, by where they lead and when they changed. Installing or removing
+/// an application changes its directory; changing a default rewrites a
+/// list. Where they lead counts as much as the time: on NixOS a profile is
+/// a link into the store, whose every folder is dated 1970, so switching
+/// to another changes only where it leads.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stamp(Vec<Option<SystemTime>>);
+pub struct Stamp(Vec<(Option<PathBuf>, Option<SystemTime>)>);
 
 impl Stamp {
     /// Stats the directories and lists: call from a worker.
@@ -80,11 +83,31 @@ impl Stamp {
     /// The stamp of explicit directories and lists, as
     /// [`Catalog::from_paths`] reads them.
     pub fn of(app_dirs: &[PathBuf], lists: &[PathBuf]) -> Self {
+        let mut seen = Vec::new();
+        let mut dirs = app_dirs.to_vec();
+        // The folders inside, as `collect_entries` walks them (not through
+        // links to folders).
+        let mut at = 0;
+        while let Some(dir) = dirs.get(at).cloned() {
+            at += 1;
+            if let Ok(read) = std::fs::read_dir(&dir) {
+                dirs.extend(
+                    read.flatten()
+                        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                        .map(|e| e.path()),
+                );
+            }
+            seen.push(dir);
+        }
         Stamp(
-            app_dirs
-                .iter()
+            seen.iter()
                 .chain(lists)
-                .map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+                .map(|p| {
+                    (
+                        std::fs::canonicalize(p).ok(),
+                        std::fs::metadata(p).and_then(|m| m.modified()).ok(),
+                    )
+                })
                 .collect(),
         )
     }
@@ -193,7 +216,11 @@ impl Catalog {
                 };
                 let index = catalog.apps.len();
                 for m in &app.mime_types {
-                    catalog.declared.entry(m.clone()).or_default().push(index);
+                    catalog
+                        .declared
+                        .entry(canonical(m))
+                        .or_default()
+                        .push(index);
                 }
                 catalog.by_id.insert(app.id.clone(), index);
                 catalog.apps.push(app);
@@ -212,6 +239,7 @@ impl Catalog {
     fn read_list(&mut self, text: &str) {
         let mut removed_here: Vec<(String, String)> = Vec::new();
         for (group, key, value) in keyfile::entries(text) {
+            let key = &canonical(key);
             let ids = value
                 .split(';')
                 .map(str::trim)
@@ -310,6 +338,14 @@ impl Catalog {
         }
         out
     }
+}
+
+/// A type as the catalog keeps it: by its canonical name, as GIO keeps
+/// it. An editor's entry, or a default the user saved, under a name that
+/// became an alias (`application/x-shellscript`, since shared-mime-info
+/// 2.5.1) still applies to its files, which are typed by the new one.
+fn canonical(mime: &str) -> String {
+    crate::mime::unalias(&crate::mime::Mime(mime.to_owned())).0
 }
 
 /// Every `*.desktop` under `dir`, with its desktop file ID.
@@ -889,6 +925,29 @@ mod tests {
         let name = std::ffi::OsStr::from_bytes(b"/d/caf\xe9.txt");
         let argv = app("viewer %f").command_lines(&[PathBuf::from(name)]);
         assert_eq!(argv[0][1].as_bytes(), name.as_bytes());
+    }
+
+    /// A profile switched to another store path changes no time (the
+    /// store dates every folder 1970), only where the link leads: the
+    /// catalog is read again all the same.
+    #[cfg(unix)]
+    #[test]
+    fn a_profile_switched_to_another_folder_changes_the_stamp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = (tmp.path().join("store-a"), tmp.path().join("store-b"));
+        for dir in [&a, &b] {
+            std::fs::create_dir(dir).unwrap();
+            std::fs::File::open(dir)
+                .unwrap()
+                .set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1))
+                .unwrap();
+        }
+        let profile = tmp.path().join("applications");
+        std::os::unix::fs::symlink(&a, &profile).unwrap();
+        let before = Stamp::of(std::slice::from_ref(&profile), &[]);
+        std::fs::remove_file(&profile).unwrap();
+        std::os::unix::fs::symlink(&b, &profile).unwrap();
+        assert_ne!(Stamp::of(std::slice::from_ref(&profile), &[]), before);
     }
 
     #[test]

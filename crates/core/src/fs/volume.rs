@@ -118,7 +118,7 @@ fn number(device: u64) -> String {
 #[cfg(target_os = "linux")]
 fn mounted_from(path: &Path) -> Option<PathBuf> {
     let path = std::fs::canonicalize(path).ok()?;
-    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
+    let mountinfo = std::fs::read("/proc/self/mountinfo").ok()?;
     source_of(&path, &mountinfo)
 }
 
@@ -131,7 +131,7 @@ fn mounted_from(path: &Path) -> Option<PathBuf> {
 pub fn only_here(path: &Path) -> bool {
     let (Ok(path), Ok(mountinfo)) = (
         std::fs::canonicalize(path),
-        std::fs::read_to_string("/proc/self/mountinfo"),
+        std::fs::read("/proc/self/mountinfo"),
     ) else {
         return false;
     };
@@ -147,7 +147,7 @@ pub fn only_here(_: &Path) -> bool {
 /// [`only_here`] for `path` in `mountinfo`. The filesystems of a cluster
 /// are mounted from a disk several machines share.
 #[cfg(target_os = "linux")]
-fn only_here_in(path: &Path, mountinfo: &str) -> bool {
+fn only_here_in(path: &Path, mountinfo: &(impl AsRef<[u8]> + ?Sized)) -> bool {
     mount_of(path, mountinfo).is_some_and(|mount| {
         Path::new(&mount.source).starts_with("/dev/")
             && !matches!(mount.fstype.as_str(), "gfs2" | "ocfs2")
@@ -167,22 +167,27 @@ pub struct Mounted {
     pub source: std::ffi::OsString,
 }
 
-/// Every mount `mountinfo` (the text of `/proc/self/mountinfo`) lists, in
-/// its order, its paths exact whatever bytes they hold. The one reading of
-/// it: the places plugin's volumes and the write-through's devices.
-pub fn mountinfo(text: &str) -> Vec<Mounted> {
-    text.lines()
+/// Every mount `mountinfo` (the bytes of `/proc/self/mountinfo`) lists,
+/// in its order, its paths exact whatever bytes they hold. The one reading
+/// of it: the places plugin's volumes and the write-through's devices.
+/// Bytes, not text: the kernel escapes only a space, a tab, a line end and
+/// a backslash, and writes every other byte of a path as it is, so one
+/// mount point anywhere whose name is not UTF-8 made the whole read fail.
+pub fn mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mounted> {
+    text.as_ref()
+        .split(|b| *b == b'\n')
         .filter_map(|line| {
             // 36 35 98:0 /mnt1 /mnt2 rw,noatime master:1 - ext3 /dev/root rw
-            let (own, rest) = line.split_once(" - ")?;
-            let mut own = own.split(' ');
+            let at = line.windows(3).position(|w| w == b" - ")?;
+            let (own, rest) = (&line[..at], &line[at + 3..]);
+            let mut own = own.split(|b| *b == b' ');
             let root = own.nth(3)?;
             let point = own.next()?;
-            let mut rest = rest.split(' ');
+            let mut rest = rest.split(|b| *b == b' ');
             Some(Mounted {
                 root: PathBuf::from(unescape(root)),
                 point: PathBuf::from(unescape(point)),
-                fstype: rest.next()?.to_owned(),
+                fstype: String::from_utf8_lossy(rest.next()?).into_owned(),
                 source: unescape(rest.next().unwrap_or_default()),
             })
         })
@@ -192,7 +197,7 @@ pub fn mountinfo(text: &str) -> Vec<Mounted> {
 /// In `mountinfo`, the mount that holds `path`: the last of the deepest,
 /// as the kernel stacks them.
 #[cfg(target_os = "linux")]
-fn mount_of(path: &Path, mountinfo: &str) -> Option<Mounted> {
+fn mount_of(path: &Path, mountinfo: &(impl AsRef<[u8]> + ?Sized)) -> Option<Mounted> {
     let mut best: Option<Mounted> = None;
     for mount in self::mountinfo(mountinfo) {
         if path.starts_with(&mount.point)
@@ -208,14 +213,14 @@ fn mount_of(path: &Path, mountinfo: &str) -> Option<Mounted> {
 
 /// In `mountinfo`, the device mounted where `path` is.
 #[cfg(target_os = "linux")]
-fn source_of(path: &Path, mountinfo: &str) -> Option<PathBuf> {
+fn source_of(path: &Path, mountinfo: &(impl AsRef<[u8]> + ?Sized)) -> Option<PathBuf> {
     let source = PathBuf::from(mount_of(path, mountinfo)?.source);
     source.starts_with("/dev/").then_some(source)
 }
 
 /// mountinfo writes a space, a tab, a newline and a backslash as `\040`…
-fn unescape(field: &str) -> std::ffi::OsString {
-    let b = field.as_bytes();
+fn unescape(field: &[u8]) -> std::ffi::OsString {
+    let b = field;
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {

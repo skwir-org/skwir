@@ -243,11 +243,12 @@ pub struct Finished {
 /// Bytes of standard error kept in [`Finished::stderr`].
 const DIAGNOSTIC: u64 = 4096;
 
-/// The most [`run_to_exit`] writes to a child's standard input. It is
-/// written before the child starts, into the pipe's buffer, which is never
-/// smaller than a page: a child that exits without reading it cannot make
-/// the write fail or block.
-pub const MAX_INPUT: usize = 4096;
+/// The most [`run_to_exit`] gives a child as its standard input. It is a
+/// private temporary file written before the child starts, not a pipe: a
+/// child that exits without reading it cannot make the write fail or
+/// block, whatever its length (a pipe's buffer holds a page at least, and
+/// a Mermaid diagram's source was refused past it).
+pub const MAX_INPUT: usize = 1024 * 1024;
 
 /// Run `command` to its end, however it ends: cancelled or timed out is an
 /// error, a failed exit status is not. `input`, if any, is its standard
@@ -292,9 +293,10 @@ pub fn run_capped(
     let stdin = match input {
         Some(bytes) => {
             anyhow::ensure!(bytes.len() <= MAX_INPUT, "{program}: input too large");
-            let (reader, mut writer) = io::pipe()?;
-            writer.write_all(bytes)?;
-            Stdio::from(reader)
+            let mut file = tempfile::tempfile()?;
+            file.write_all(bytes)?;
+            file.seek(io::SeekFrom::Start(0))?;
+            Stdio::from(file)
         }
         None => Stdio::null(),
     };
@@ -801,10 +803,21 @@ mod tests {
         assert_eq!(finished.stdout, b"secret");
         assert_eq!(finished.stderr, "oops");
         assert_eq!(finished.status.code(), Some(2));
+        // Input longer than a pipe's buffer reaches it whole (a diagram's
+        // source of 64 KB).
+        let long = vec![b'y'; 100_000];
+        let finished = run_to_exit(
+            Command::new("sh").args(["-c", "wc -c"]),
+            Some(&long),
+            &token,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8_lossy(&finished.stdout).trim(), "100000");
         // A child that never reads its input still ends normally.
         let finished = run_to_exit(
             Command::new("sh").args(["-c", "exit 0"]),
-            Some(&[b'x'; MAX_INPUT]),
+            Some(&vec![b'x'; MAX_INPUT]),
             &token,
             Duration::from_secs(2),
         )

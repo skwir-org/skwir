@@ -34,11 +34,12 @@ pub fn unescape(value: &str) -> String {
             Some('n') => out.push('\n'),
             Some('t') => out.push('\t'),
             Some('r') => out.push('\r'),
+            // An escaped backslash is one, as is one at the end.
+            Some('\\') | None => out.push('\\'),
             Some(other) => {
                 out.push('\\');
                 out.push(other);
             }
-            None => out.push('\\'),
         }
     }
     out
@@ -152,6 +153,10 @@ mod tests {
             ]
         );
         assert_eq!(unescape("view\\s%f"), "view %f");
+        // An escaped backslash is one: the specification's `\\\\` in an
+        // `Exec` is one backslash once its quotes are read too.
+        assert_eq!(unescape(r"C:\\Temp"), r"C:\Temp");
+        assert_eq!(exec_words(&unescape(r#"sh "a\\\\b""#))[1].0, r"a\b");
         assert_eq!(list("a;b;;c ;"), ["a", "b", "c"]);
     }
 }
