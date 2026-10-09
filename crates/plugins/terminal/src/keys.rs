@@ -98,11 +98,14 @@ pub fn encode(key: Key, app_cursor: bool) -> Vec<u8> {
 
 /// Text pasted into the terminal: framed when the program asked for
 /// bracketed paste, so a shell does not run pasted lines as they arrive,
-/// and with no end marker of its own inside that could close the frame
-/// early. Without the frame, line ends become the Enter a program expects.
+/// and with no escape inside, so nothing pasted can close the frame early
+/// or send the program a sequence of its own: removing the end marker
+/// alone left one made whole by the removal (`\x1b[201\x1b[201~~`), as
+/// Alacritty found. Without the frame, line ends become the Enter a
+/// program expects.
 pub fn paste(text: &str, bracketed: bool) -> Vec<u8> {
     if bracketed {
-        let inner = text.replace("\x1b[201~", "");
+        let inner = text.replace('\x1b', "");
         format!("\x1b[200~{inner}\x1b[201~").into_bytes()
     } else {
         text.replace("\r\n", "\r").replace('\n', "\r").into_bytes()
@@ -199,8 +202,13 @@ mod tests {
         assert_eq!(paste("ls\nrm -rf x\n", false), b"ls\rrm -rf x\r");
         assert_eq!(
             paste("a\x1b[201~b", true),
-            b"\x1b[200~ab\x1b[201~",
-            "an end marker inside is dropped"
+            b"\x1b[200~a[201~b\x1b[201~",
+            "an end marker inside loses its escape"
+        );
+        assert_eq!(
+            paste("a\x1b[201\x1b[201~~\nrm -rf x\n", true),
+            b"\x1b[200~a[201[201~~\nrm -rf x\n\x1b[201~",
+            "nor is one made whole by taking another out"
         );
     }
 }
