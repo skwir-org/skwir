@@ -310,6 +310,8 @@ impl Shell {
     /// old one is now late. Returns the pin that was.
     fn set_pin(&mut self, pin: Option<Pinned>) -> Option<Pinned> {
         self.player.generation += 1;
+        // Full screen was asked for the film pinned, not whatever follows.
+        self.player.fullscreen_wanted = false;
         std::mem::replace(&mut self.player.pinned, pin)
     }
 
@@ -828,6 +830,16 @@ impl Shell {
         for request in self.app.player.take_requests() {
             self.player_request(request, window, cx);
         }
+        // The dock's More goes with the dock: it steers the pin from there.
+        if !self.dock_shown()
+            && self
+                .toolbar_menu
+                .as_ref()
+                .is_some_and(|menu| menu.kind == crate::dock::MENU)
+        {
+            self.close_popup(window);
+            cx.notify();
+        }
         self.publish_now_playing();
     }
 
@@ -889,7 +901,12 @@ impl Shell {
             PlayerRequest::SeekTo(seconds) if seekable => Some(Control::Seek(seconds)),
             PlayerRequest::Volume(volume) => Some(Control::Volume(volume)),
             PlayerRequest::Mute => Some(Control::Mute(!state.muted)),
-            PlayerRequest::SeekBy(_) | PlayerRequest::SeekTo(_) => None,
+            // Rate changes are seeks; a stream that cannot seek keeps 1×.
+            PlayerRequest::Rate(rate) if seekable => Some(Control::Rate(rate)),
+            PlayerRequest::Audio(track) => Some(Control::Audio(track)),
+            PlayerRequest::Subtitle(track) => Some(Control::Subtitle(track)),
+            PlayerRequest::SeekBy(_) | PlayerRequest::SeekTo(_) | PlayerRequest::Rate(_) => None,
+            PlayerRequest::Fullscreen => return self.player_fullscreen(window, cx),
             PlayerRequest::Next => return self.player_step(1, window, cx),
             PlayerRequest::Previous => return self.player_step(-1, window, cx),
             PlayerRequest::Stop => {
@@ -918,6 +935,29 @@ impl Shell {
                 self.set_status(error.to_string(), true, cx);
             }
             cx.notify();
+        }
+    }
+
+    /// A film on the whole screen, which is the panel's: one the panel
+    /// shows goes there at once; a pinned one the dock shows is shown in
+    /// the panel first (its folder, the file selected) and goes there once
+    /// the panel shows it (`fullscreen_wanted`). Music has nothing to show.
+    pub fn player_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview.media.fullscreen.is_some() || self.preview_is_pinned() {
+            if !self.media_is_audio() {
+                self.media_fullscreen(window, cx);
+            }
+            return;
+        }
+        if self
+            .player
+            .pinned
+            .as_ref()
+            .is_some_and(|pinned| pinned.video)
+            && self.preview.open
+        {
+            self.player.fullscreen_wanted = true;
+            self.player_reveal(window, cx);
         }
     }
 

@@ -861,7 +861,7 @@ pub fn declare_all(app: &App) {
         app,
         "ui.toolbar_menu",
         "Toolbar menu",
-        "Open or close More, the View menu, or the Map view's backgrounds (kind: more, view_options, map_backgrounds)",
+        "Open or close More, the View menu, the Map view's backgrounds or the pinned player's More (kind: more, view_options, map_backgrounds, player)",
     );
     // Answered by the focused button and the open popup themselves.
     none(

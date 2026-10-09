@@ -31,6 +31,7 @@ impl Shell {
         let kind = match args.get("kind").and_then(serde_json::Value::as_str) {
             Some("view_options") => VIEW_OPTIONS,
             Some(crate::map_view::BACKGROUNDS) => crate::map_view::BACKGROUNDS,
+            Some(crate::dock::MENU) => crate::dock::MENU,
             _ => MORE,
         };
         if self.toggle_popup(kind, args, window) {

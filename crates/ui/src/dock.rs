@@ -19,6 +19,12 @@
 //! anywhere else but the transport, the ring round the disc and the film's
 //! letterbox included, shows the track in the panel, as it plays.
 //!
+//! The transport keeps what the panel's width has room for (`FORMS`,
+//! measured by `AdaptiveRow`) and leaves the rest to its More, which also
+//! holds the panel's player rows (what follows a track, volume, speed, a
+//! film's tracks), so the pin can be steered there without being shown.
+//! Fullscreen is the panel's: the film is shown there first.
+//!
 //! The height is a remembered preference, not a measured size, so the form
 //! is chosen here in render, as the panel's width is. The dock steps aside
 //! while the panel shows the pinned session itself, and gives way to the
@@ -28,9 +34,14 @@ use std::sync::Arc;
 
 use gpui::{AnyElement, Context, DragMoveEvent, Window, div, prelude::*, px};
 
+use crate::elements::{
+    adaptive::{AdaptiveRow, Chosen},
+    popover::PopoverAnchor,
+};
 use crate::media::{Flash, Scrub};
 use crate::shell::Shell;
 use crate::theme::Theme;
+use crate::toolbar::{self, Button};
 
 /// The dock's height until it is dragged: one row and the transport.
 pub const COMPACT: f32 = 108.;
@@ -247,80 +258,22 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         .into_any_element()
     };
 
-    // The transport: the same requests the footer's strip and the desktop send.
-    let request = crate::player::request;
-    let duration = state.duration.unwrap_or(0.);
-    let position = pinned.scrub.unwrap_or(state.position);
-    let fraction = if duration > 0. {
-        (position / duration).clamp(0., 1.) as f32
-    } else {
-        0.
-    };
-    let scrub: Scrub = Rc::new(|this, phase, fraction, _, cx| {
-        this.player_scrub(phase, fraction, cx);
+    // The transport, in the richest form that fits, and its More.
+    let open = shell
+        .toolbar_menu
+        .as_ref()
+        .is_some_and(|menu| menu.kind == MENU);
+    let anchor = PopoverAnchor::default();
+    let chosen = Chosen::default();
+    let transport = div().flex_none().child(AdaptiveRow {
+        variants: FORMS
+            .into_iter()
+            .map(|kept| transport(shell, pinned, kept, &anchor, open, &theme, cx))
+            .collect(),
+        height: TRANSPORT,
+        chosen: Some(chosen.clone()),
     });
-    let time = |text: String, muted: bool| {
-        div()
-            .flex_none()
-            .text_xs()
-            .when(muted, |d| d.text_color(theme.text_muted))
-            .child(text)
-    };
-    let transport = div()
-        .flex_none()
-        .h(px(TRANSPORT))
-        .px_1()
-        .flex()
-        .items_center()
-        .gap_1()
-        .child(
-            request(
-                "dock-previous",
-                "skip-previous",
-                "Previous track",
-                "previous",
-            )
-            .enabled(pinned.can_step(-1, shell.prefs.player.continue_with))
-            .render(shell, cx),
-        )
-        .child(
-            request(
-                "dock-play",
-                if state.playing() { "pause" } else { "play" },
-                "Play / pause",
-                "play_pause",
-            )
-            .render(shell, cx),
-        )
-        .child(
-            request("dock-next", "skip-next", "Next track", "next")
-                .enabled(pinned.can_step(1, shell.prefs.player.continue_with))
-                .render(shell, cx),
-        )
-        .child(time(crate::media::time(position), false))
-        .when(state.seekable && duration > 0., |d| {
-            d.child(crate::media::seek_bar_of(
-                "dock-seek",
-                fraction,
-                &theme,
-                scrub,
-                cx,
-            ))
-        })
-        .when(!(state.seekable && duration > 0.), |d| {
-            d.child(div().flex_1())
-        })
-        .child(time(crate::media::duration(state), true))
-        .child(
-            request(
-                "dock-mute",
-                if state.muted { "muted" } else { "volume" },
-                if state.muted { "Unmute" } else { "Mute" },
-                "mute",
-            )
-            .render(shell, cx),
-        )
-        .child(request("dock-close", "close", "Stop and let go", "stop").render(shell, cx));
+    let menu = menu(shell, pinned, &anchor, &chosen, &theme, cx);
 
     // A film's title goes under its picture; the figure carries its own.
     let caption = pinned.video.then(|| {
@@ -374,9 +327,229 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .child(picture)
             .children(caption)
             .child(transport)
+            .children(menu)
             .child(handle)
             .into_any_element(),
     )
+}
+
+/// The dock's More (`ui.toolbar_menu`'s `kind`): what the panel's player
+/// has that the transport has no button for.
+pub const MENU: &str = "player";
+
+/// What a form of the transport keeps as buttons; More has the rest.
+#[derive(Clone, Copy)]
+struct Kept {
+    /// Previous, Next and the times either side of the seek bar.
+    steps: bool,
+    mute: bool,
+    /// A film's: music has nothing to show on the whole screen.
+    fullscreen: bool,
+}
+
+/// The transport's forms, richest first, each giving More one thing more
+/// as the panel's bar gives them up: Mute, then Fullscreen, then the steps
+/// and the times, so a panel at its narrowest keeps Play, the seek bar,
+/// More and the close button.
+const FORMS: [Kept; 4] = [
+    Kept {
+        steps: true,
+        mute: true,
+        fullscreen: true,
+    },
+    Kept {
+        steps: true,
+        mute: false,
+        fullscreen: true,
+    },
+    Kept {
+        steps: true,
+        mute: false,
+        fullscreen: false,
+    },
+    Kept {
+        steps: false,
+        mute: false,
+        fullscreen: false,
+    },
+];
+
+/// The transport in one of its forms: the same requests the footer's strip
+/// and the desktop send.
+fn transport(
+    shell: &Shell,
+    pinned: &crate::player::Pinned,
+    kept: Kept,
+    anchor: &PopoverAnchor,
+    open: bool,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let state = &pinned.state;
+    let duration = state.duration.unwrap_or(0.);
+    let position = pinned.scrub.unwrap_or(state.position);
+    let fraction = if duration > 0. {
+        (position / duration).clamp(0., 1.) as f32
+    } else {
+        0.
+    };
+    let scrub: Scrub = Rc::new(|this, phase, fraction, _, cx| {
+        this.player_scrub(phase, fraction, cx);
+    });
+    let time = |text: String, muted: bool| {
+        div()
+            .flex_none()
+            .text_xs()
+            .when(muted, |d| d.text_color(theme.text_muted))
+            .child(text)
+    };
+    let play = crate::player::request(
+        "dock-play",
+        if state.playing() { "pause" } else { "play" },
+        "Play / pause",
+        "play_pause",
+    );
+    div()
+        .id("dock-transport")
+        .size_full()
+        .px_1()
+        .flex()
+        .items_center()
+        .gap_1()
+        .map(|d| {
+            if kept.steps {
+                d.child(step("dock-previous", -1, shell).render(shell, cx))
+                    .child(play.render(shell, cx))
+                    .child(step("dock-next", 1, shell).render(shell, cx))
+                    .child(time(crate::media::time(position), false))
+            } else {
+                d.child(play.render(shell, cx))
+            }
+        })
+        .when(state.seekable && duration > 0., |d| {
+            d.child(crate::media::seek_bar_of(
+                "dock-seek",
+                fraction,
+                theme,
+                scrub,
+                cx,
+            ))
+        })
+        .when(!(state.seekable && duration > 0.), |d| {
+            d.child(div().flex_1())
+        })
+        .when(kept.steps, |d| {
+            d.child(time(crate::media::duration(state), true))
+        })
+        .when(kept.mute, |d| {
+            d.child(mute("dock-mute", state).render(shell, cx))
+        })
+        .when(kept.fullscreen && pinned.video, |d| {
+            d.child(fullscreen("dock-fullscreen").render(shell, cx))
+        })
+        .child(
+            Button::new("dock-more", "more", "More", "ui.toolbar_menu")
+                .args(serde_json::json!({ "kind": MENU }))
+                .anchor_if(anchor, true)
+                .active(open)
+                .render(shell, cx),
+        )
+        .child(
+            crate::player::request("dock-close", "close", "Stop and let go", "stop")
+                .render(shell, cx),
+        )
+        .into_any_element()
+}
+
+/// Previous track (`delta` -1) or Next, there while the pin has one.
+fn step(id: &'static str, delta: i64, shell: &Shell) -> Button {
+    let there = shell
+        .player
+        .pinned
+        .as_ref()
+        .is_some_and(|pinned| pinned.can_step(delta, shell.prefs.player.continue_with));
+    if delta < 0 {
+        crate::player::request(id, "skip-previous", "Previous track", "previous")
+    } else {
+        crate::player::request(id, "skip-next", "Next track", "next")
+    }
+    .enabled(there)
+}
+
+fn mute(id: &'static str, state: &bibli_core::media::Playback) -> Button {
+    crate::player::request(
+        id,
+        if state.muted { "muted" } else { "volume" },
+        if state.muted { "Unmute" } else { "Mute" },
+        "mute",
+    )
+}
+
+/// Full screen is the panel's: the film is shown there first
+/// (`Shell::player_fullscreen`).
+fn fullscreen(id: &'static str) -> Button {
+    crate::player::request(id, "fullscreen", "Fullscreen", "fullscreen")
+}
+
+/// The dock's More, above its button (the dock is at the window's foot):
+/// what the transport left out, what follows a track, and the volume, the
+/// speed and a film's tracks, each a request to the pinned player as the
+/// transport's buttons are. One panel per form of the transport, the one
+/// drawn chosen in the same frame.
+fn menu(
+    shell: &Shell,
+    pinned: &crate::player::Pinned,
+    anchor: &PopoverAnchor,
+    chosen: &Chosen,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
+    let popup = shell
+        .toolbar_menu
+        .as_ref()
+        .filter(|menu| menu.kind == MENU)?;
+    let state = &pinned.state;
+    let send = |id: String, title: String, action: &str, value: serde_json::Value| {
+        let mut request = serde_json::Map::new();
+        request.insert(action.to_owned(), value);
+        Button::new(id, "", title, "ui.player").args(serde_json::json!({ "request": request }))
+    };
+    let panels = FORMS
+        .into_iter()
+        .map(|kept| {
+            let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx);
+            let mut left = Vec::new();
+            if !kept.steps {
+                let position = pinned.scrub.unwrap_or(state.position);
+                panel = panel.child(div().px_2().text_xs().child(format!(
+                    "{} / {}",
+                    crate::media::time(position),
+                    crate::media::duration(state)
+                )));
+                left.push(step("dock-menu-previous", -1, shell));
+                left.push(step("dock-menu-next", 1, shell));
+            }
+            if !kept.mute {
+                left.push(mute("dock-menu-mute", state));
+            }
+            if !kept.fullscreen && pinned.video {
+                left.push(fullscreen("dock-menu-fullscreen"));
+            }
+            if !left.is_empty() {
+                for button in left {
+                    let title = button.title();
+                    panel = panel.child(button.label(title).menu().render(shell, cx));
+                }
+                panel = panel.child(crate::preview_bar::separator(theme));
+            }
+            panel
+                .children(crate::media::continue_rows(shell, theme, cx))
+                .child(crate::preview_bar::separator(theme))
+                .children(crate::media::playback_rows(state, &send, shell, theme, cx))
+                .into_any_element()
+        })
+        .collect();
+    Some(anchor.popup_above_for(chosen, panels))
 }
 
 /// What a click on the dock's text does, said by its tooltip.

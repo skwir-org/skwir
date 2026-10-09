@@ -473,9 +473,7 @@ impl Shell {
                 let (playing, video) = (!pinned.state.playing(), pinned.video);
                 self.player_request(bibli_core::playing::PlayerRequest::PlayPause, window, cx);
                 if double && video {
-                    // Fullscreen is the panel's: show the film there first.
-                    self.player.fullscreen_wanted = true;
-                    self.player_reveal(window, cx);
+                    self.player_fullscreen(window, cx);
                 }
                 playing
             }
@@ -1218,17 +1216,32 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
 pub const CONTINUE_POPUP: &str = "continue";
 
 fn continue_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    use crate::player::Continue;
     let popup = shell.preview.menu.as_ref()?;
-    let mut choices = div().flex().flex_col().gap_1().child(
+    Some(
+        crate::toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+            .children(continue_rows(shell, theme, cx))
+            .into_any_element(),
+    )
+}
+
+/// What follows a track that ends, one row a choice: the panel's popup and
+/// the dock's More.
+pub(crate) fn continue_rows(
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Vec<AnyElement> {
+    use crate::player::Continue;
+    let mut rows = vec![
         div()
             .px_2()
             .text_xs()
             .text_color(theme.text_muted)
-            .child("When a track ends"),
-    );
+            .child("When a track ends")
+            .into_any_element(),
+    ];
     for mode in Continue::ALL {
-        choices = choices.child(
+        rows.push(
             Button::new(
                 format!("continue-{}", mode.key()),
                 "",
@@ -1239,27 +1252,23 @@ fn continue_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Opti
             .label(mode.label())
             .active(shell.prefs.player.continue_with == mode)
             .menu()
-            .render(shell, cx),
+            .render(shell, cx)
+            .into_any_element(),
         );
     }
-    Some(
-        crate::toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
-            .child(choices)
-            .into_any_element(),
-    )
+    rows
 }
+
+/// How a row of a player's menu reaches its player: the row's id, its
+/// title, and the `action` with its `value`, named as `ui.media_control`
+/// takes them for the panel's player and as a `PlayerRequest` names them
+/// for the pinned one (`dock.rs`).
+pub(crate) type Send<'a> = &'a dyn Fn(String, String, &str, serde_json::Value) -> Button;
 
 /// What playback has no button for: whether it goes on while you browse,
 /// whether it starts on selection, volume, speed and the tracks.
 fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyElement> {
     let state = &shell.preview.media.state;
-    let heading = |title: &'static str| {
-        div()
-            .text_xs()
-            .text_color(theme.text_muted)
-            .child(title)
-            .into_any_element()
-    };
     let mut toggle = |id: &'static str, icon: &'static str, title: &'static str, command, on| {
         Button::new(id, icon, title, command)
             .label(title)
@@ -1288,15 +1297,36 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
             .text_xs()
             .child(format!("{} / {}", time(state.position), duration(state)))
             .into_any_element(),
-        heading("Volume"),
     ];
+    let send =
+        |id: String, title: String, action: &str, value| control(id, "", title, action, value);
+    rows.extend(playback_rows(state, &send, shell, theme, cx));
+    rows
+}
+
+/// The volume, the speed and a film's tracks, as rows of a player's menu
+/// reaching it through `send`: the panel's More and the dock's.
+pub(crate) fn playback_rows(
+    state: &Playback,
+    send: Send,
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Vec<AnyElement> {
+    let heading = |title: &'static str| {
+        div()
+            .text_xs()
+            .text_color(theme.text_muted)
+            .child(title)
+            .into_any_element()
+    };
+    let mut rows = vec![heading("Volume")];
     let mut row = div().flex().gap_1();
     for value in [0., 0.25, 0.5, 0.75, 1.] {
         let label = format!("{:.0}%", value * 100.);
         row = row.child(
-            control(
+            send(
                 format!("volume-{label}"),
-                "",
                 label.clone(),
                 "volume",
                 value.into(),
@@ -1312,36 +1342,33 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
     for value in [0.5, 1., 1.25, 1.5, 2.] {
         let label = format!("{value}×");
         row = row.child(
-            control(
-                format!("rate-{label}"),
-                "",
-                label.clone(),
-                "rate",
-                value.into(),
-            )
-            .label(label)
-            .active((state.rate - value).abs() < 0.01)
-            .enabled(state.seekable)
-            .render(shell, cx),
+            send(format!("rate-{label}"), label.clone(), "rate", value.into())
+                .label(label)
+                .active((state.rate - value).abs() < 0.01)
+                .enabled(state.seekable)
+                .render(shell, cx),
         );
     }
     rows.push(row.into_any_element());
-    for (title, action, tracks, selected) in [
-        ("Audio", "audio", &state.audio_tracks, state.audio),
+    // A choice of tracks: one sound track is none, one subtitle track is
+    // still a choice with Off.
+    for (title, action, tracks, selected, least) in [
+        ("Audio", "audio", &state.audio_tracks, state.audio, 2),
         (
             "Subtitles",
             "subtitle",
             &state.subtitle_tracks,
             state.subtitle,
+            1,
         ),
     ] {
-        if tracks.is_empty() {
+        if tracks.len() < least {
             continue;
         }
         rows.push(heading(title));
         if action == "subtitle" {
             rows.push(
-                control("subtitles-off", "", "Off", action, (-1).into())
+                send("subtitles-off".into(), "Off".into(), action, (-1).into())
                     .label("Off")
                     .active(selected == -1)
                     .menu()
@@ -1351,7 +1378,7 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
         }
         for (i, label) in tracks.iter().enumerate() {
             rows.push(
-                control(format!("{action}-{i}"), "", label.clone(), action, i.into())
+                send(format!("{action}-{i}"), label.clone(), action, i.into())
                     .label(label.clone())
                     .active(i as i32 == selected)
                     .menu()

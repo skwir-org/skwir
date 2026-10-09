@@ -155,7 +155,7 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   hands over at the end of a track.
 - The dock (`dock.rs`) is the pinned player's home: a strip at the foot of
   the preview panel with the cover or the film, a bar meter of the spectrum,
-  the transport, the seek bar and a close button. Its height is dragged on
+  the transport, the seek bar, More and a close button. Its height is dragged on
   its top edge and remembered with the window's shape, a preference decided
   in render like the panel's width, never a measured size: below `TALL_FROM`
   a row, above it the panel's halo figure; a film takes whatever height it
@@ -174,15 +174,26 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   spectrum and the room beside it are the figure's, and the disc hides the
   figure's hover, so its accent edge is the limit. A click anywhere else in the dock but
   the transport shows the track in the panel, and shows it as it plays,
-  never pausing it. A double click on a film reveals it in
-  the panel, which goes fullscreen once it shows the session
-  (`fullscreen_wanted`). The compact row has three forms measured by
+  never pausing it. Full screen is the panel's: a double click on a film,
+  its Fullscreen button and F (`PlayerRequest::Fullscreen`,
+  `Shell::player_fullscreen`) reveal it in the panel, which goes
+  fullscreen once it shows the session (`fullscreen_wanted`, forgotten
+  when the pin changes). The transport has four forms measured by
+  `AdaptiveRow`, each giving More one thing more in the order the panel's
+  bar gives them up: Mute, then a film's Fullscreen, then Previous, Next
+  and the times, so the narrowest panel keeps Play, the seek bar, More and
+  the close button. More (`dock::MENU`, a `ui.toolbar_menu` popup hanging
+  above its button, `PopoverAnchor::popup_above_for`) holds what the form
+  drawn left out, then the panel's own rows for what follows a track, the
+  volume, the speed and a film's tracks (`media::continue_rows`,
+  `media::playback_rows`), each a `PlayerRequest` to the pin; it closes
+  when the dock steps aside. The compact row has three forms measured by
   `AdaptiveRow`, richest first: the meter beside the text with the text
   whole, beside it with the text at least `TEXT_LEAST` wide, and under the
   text, so the meter never costs the title its end; beside the text it is
   as tall as the two lines and takes what the panel has beyond the text. The dock's keys
   (`Player` context: Space, Left,
-  Right, Shift+Left/Right, M) send the same `PlayerRequest`s as the desktop.
+  Right, Shift+Left/Right, M, F) send the same `PlayerRequest`s as the desktop.
 - What plays is core data. `App::player` holds `playing::NowPlaying`, which
   the shell publishes once per wake for the pin or, without one, the audio
   preview; listeners hear of changes, not of time passing, and work out the

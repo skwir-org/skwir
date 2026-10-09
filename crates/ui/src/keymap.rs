@@ -464,6 +464,12 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     ),
     ("m", "ui.player", r#"{"request":"mute"}"#, Some("player")),
     (
+        "f",
+        "ui.player",
+        r#"{"request":"fullscreen"}"#,
+        Some("player"),
+    ),
+    (
         "up",
         "ui.player_volume",
         r#"{"delta":0.05}"#,

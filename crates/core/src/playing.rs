@@ -15,7 +15,7 @@ use std::time::Instant;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
-use crate::media::PlaybackStatus;
+use crate::media::{Control, PlaybackStatus};
 
 // Each is a separate fact about what the player can do right now.
 #[allow(clippy::struct_excessive_bools)]
@@ -110,16 +110,27 @@ pub enum PlayerRequest {
     Volume(f64),
     /// Its sound off, or on again.
     Mute,
+    /// How fast it plays, 1 as recorded; the pitch stays.
+    Rate(f64),
+    /// A film's audio track, by its place among them.
+    Audio(i32),
+    /// A film's subtitles, by their place among them; -1 for none.
+    Subtitle(i32),
+    /// A film on the whole screen, or back from it.
+    Fullscreen,
     /// Bring the window forward and show the track.
     Raise,
 }
 
 impl PlayerRequest {
     pub fn valid(&self) -> bool {
-        match self {
+        match *self {
             Self::SeekBy(v) => v.is_finite(),
-            Self::SeekTo(v) => v.is_finite() && *v >= 0.,
-            Self::Volume(v) => v.is_finite() && (0. ..=1.).contains(v),
+            Self::SeekTo(v) => Control::Seek(v).valid(),
+            Self::Volume(v) => Control::Volume(v).valid(),
+            Self::Rate(v) => Control::Rate(v).valid(),
+            Self::Audio(v) => Control::Audio(v).valid(),
+            Self::Subtitle(v) => Control::Subtitle(v).valid(),
             _ => true,
         }
     }
@@ -137,7 +148,7 @@ pub(crate) fn register(app: &crate::App) {
         "core",
         "player.request",
         "Steer the player",
-        "Ask whatever is playing to play, pause, stop, step to the next or previous track, seek or change its volume; it is carried out when the player next wakes",
+        "Ask whatever is playing to play, pause, stop, step to the next or previous track, seek, change its volume or its speed, choose a film's audio or subtitles or show it on the whole screen; it is carried out when the player next wakes",
         |args, app| {
             anyhow::ensure!(args.request.valid(), "this request makes no sense");
             anyhow::ensure!(app.player.get().is_some(), "nothing is playing");
@@ -354,6 +365,8 @@ mod tests {
         assert!(player.request(PlayerRequest::SeekBy(-5.)));
         assert!(!player.request(PlayerRequest::Volume(7.)));
         assert!(!player.request(PlayerRequest::SeekTo(f64::NAN)));
+        assert!(!player.request(PlayerRequest::Rate(0.)));
+        assert!(!player.request(PlayerRequest::Subtitle(-2)));
         assert_eq!(
             player.take_requests(),
             [PlayerRequest::PlayPause, PlayerRequest::SeekBy(-5.)]
