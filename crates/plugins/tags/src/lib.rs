@@ -657,6 +657,17 @@ impl Plugin for TagsPlugin {
                             _ => {}
                         }
                     }
+                    places.changed(
+                        &paths
+                            .iter()
+                            .chain(
+                                moves.iter().flat_map(|(from, to)| {
+                                    std::iter::once(from).chain(to.as_ref())
+                                }),
+                            )
+                            .map(std::path::PathBuf::as_path)
+                            .collect::<Vec<_>>(),
+                    );
                     if !moves.is_empty() {
                         index.moved(&moves);
                         // The tag locations shown follow at once, not when
@@ -668,20 +679,35 @@ impl Plugin for TagsPlugin {
                     };
                     let (index, weak, places) =
                         (Arc::clone(&index), weak.clone(), Arc::clone(&places));
+                    let job = lifetime.child();
                     app.scheduler.spawn(
                         Priority::Background,
                         "tags.learn",
-                        lifetime.child(),
+                        job.clone(),
                         move || {
                             let Some(app) = weak.upgrade() else { return };
                             let learned = paths
-                                .into_iter()
+                                .iter()
                                 .map(|p| {
-                                    let tags = notes_of(&app, &p).tag_names();
-                                    (p, tags)
+                                    let tags = notes_of(&app, p).tag_names();
+                                    (p.clone(), tags)
                                 })
                                 .collect();
                             index.learn(learned);
+                            // A folder restored or copied brings its files:
+                            // the trash made the index forget them, and
+                            // their change times did not move, so no check
+                            // would read them again. They are counted.
+                            for folder in paths
+                                .iter()
+                                .filter(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir()))
+                            {
+                                if let Err(error) =
+                                    crate::count::run(&app, &index, folder, None, &job)
+                                {
+                                    tracing::debug!("tags: a folder brought back: {error:#}");
+                                }
+                            }
                             places.touch();
                         },
                     );

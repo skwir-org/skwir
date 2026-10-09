@@ -608,17 +608,21 @@ impl OpenLocation for TrashLocation {
                     if cancel.is_cancelled() {
                         return;
                     }
-                    let mut entries: Vec<Entry> = items
+                    // Each entry beside its own item: one gone since it was
+                    // read is left out of both, so no row takes the name,
+                    // date and folder of the item before it. Marked after
+                    // the fill, which reads each by its name in the trash.
+                    let (mut entries, trashed): (Vec<Entry>, Vec<&Trashed>) = items
                         .iter()
                         .filter_map(|item| {
                             let mut entry = stat_path(&item.trashed.file)?;
                             entry.id = item.entry.id;
-                            Some(entry)
+                            Some((entry, &item.trashed))
                         })
-                        .collect();
+                        .unzip();
                     metadata.fill(folder, &mut entries);
-                    for (entry, item) in entries.iter_mut().zip(&items) {
-                        mark(entry, &item.trashed);
+                    for (entry, trashed) in entries.iter_mut().zip(trashed) {
+                        mark(entry, trashed);
                     }
                     updated.append(&mut entries);
                 }

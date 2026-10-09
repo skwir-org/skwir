@@ -68,6 +68,21 @@ pub struct Notes {
 }
 
 impl Notes {
+    /// Each tag made one as a store reads it (`metadata::clean_tag`: no
+    /// empty category, no space round one), empties and repeats dropped:
+    /// another application's `Places//Été` is `Places/Été` here, as a tag
+    /// typed so would be.
+    fn clean_tags(&mut self) {
+        let mut kept: Vec<Tag> = Vec::with_capacity(self.tags.len());
+        for mut tag in std::mem::take(&mut self.tags) {
+            tag.name = crate::metadata::clean_tag(&tag.name);
+            if !tag.name.is_empty() && !kept.iter().any(|t| same_tag(&t.name, &tag.name)) {
+                kept.push(tag);
+            }
+        }
+        self.tags = kept;
+    }
+
     /// Whether it holds what the user gives a file (tags, a rating, a
     /// comment): what a store creates a file for. Where a download came
     /// from is the system's, read only.
@@ -607,7 +622,8 @@ impl NoteStores {
         let mut each: Vec<Vec<(&'static str, Notes)>> = vec![Vec::new(); probes.len()];
         for store in &stores {
             for (i, found) in store.read(dir, &probes, listed).into_iter().enumerate() {
-                if let (Some(found), Some(list)) = (found, each.get_mut(i)) {
+                if let (Some(mut found), Some(list)) = (found, each.get_mut(i)) {
+                    found.clean_tags();
                     list.push((store.id(), found));
                 }
             }

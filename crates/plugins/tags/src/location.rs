@@ -503,17 +503,19 @@ pub fn contents(address: &Address, files: &[Tagged], drafts: &[String]) -> Conte
         let mut here = false;
         for tag in &file.tags {
             let child = match &address.tag {
-                Some(category) => match tag_under(tag, category) {
-                    Some("") => {
+                Some(category) => {
+                    let Some(rest) = tag_under(tag, category) else {
+                        continue;
+                    };
+                    // The tag within the category, by its first name: the
+                    // category as the tag spells it, then that name. None
+                    // (the category itself): a file of its own.
+                    let Some(next) = rest.split('/').find(|name| !name.is_empty()) else {
                         here = true;
                         continue;
-                    }
-                    Some(rest) => {
-                        let next = rest.trim_start_matches('/').split('/').next().unwrap_or("");
-                        format!("{}{}", &tag[..tag.len() - rest.len()], &rest[..=next.len()])
-                    }
-                    None => continue,
-                },
+                    };
+                    format!("{}/{next}", &tag[..tag.len() - rest.len()])
+                }
                 None => tag.split('/').next().unwrap_or(tag).to_owned(),
             };
             if !seen.iter().any(|s| same_tag(s, &child)) {
@@ -610,6 +612,11 @@ struct Scope {
     /// Counted or checked since bibli started: what the index says of it
     /// holds.
     done: bool,
+    /// A plan changed something under it while its count ran: what the
+    /// count read before may be older than what the index learned from
+    /// the plan, so it is checked again once the count ends (cheaply: by
+    /// change times).
+    touched: bool,
 }
 
 /// What every open tag location shares: the index, the counts under way,
@@ -642,6 +649,16 @@ impl Places {
     /// The index changed: every open tag location lists again.
     pub fn touch(self: &Arc<Self>) {
         self.relist(None);
+    }
+
+    /// A plan changed `paths`: a count running over one of them is checked
+    /// again once it ends (`Scope::touched`).
+    pub fn changed(&self, paths: &[&Path]) {
+        for (root, scope) in self.scopes.lock().iter_mut() {
+            if scope.running && paths.iter().any(|p| p.starts_with(root)) {
+                scope.touched = true;
+            }
+        }
     }
 
     /// List again the open tag locations of `root` (all with `None`), each
@@ -697,9 +714,13 @@ impl Places {
                     Ok(None) => return,
                     Err(error) => tracing::debug!("tags: a tag location's count: {error:#}"),
                 }
-                if let Some(scope) = this.scopes.lock().get_mut(&root) {
+                let touched = this.scopes.lock().get_mut(&root).is_some_and(|scope| {
                     scope.running = false;
                     scope.done = true;
+                    std::mem::take(&mut scope.touched)
+                });
+                if touched {
+                    this.ensure(&root, true);
                 }
                 if this.index.is_full()
                     && !this
@@ -845,14 +866,24 @@ impl Open {
             Priority::Visible,
             "tags.location",
             self.ctx.cancel.child(),
-            move || loop {
-                me.relist();
-                let mut r = me.relisting.lock();
-                if !r.again || me.ctx.cancel.is_cancelled() {
-                    r.running = false;
-                    return;
+            move || {
+                // However the relisting ends, a panic included, it ends:
+                // else the location would never list again.
+                struct Ended<'a>(&'a Open);
+                impl Drop for Ended<'_> {
+                    fn drop(&mut self) {
+                        self.0.relisting.lock().running = false;
+                    }
                 }
-                r.again = false;
+                let _ended = Ended(&me);
+                loop {
+                    me.relist();
+                    let mut r = me.relisting.lock();
+                    if !r.again || me.ctx.cancel.is_cancelled() {
+                        return;
+                    }
+                    r.again = false;
+                }
             },
         );
     }
@@ -1349,6 +1380,20 @@ mod tests {
             3,
             "everything within"
         );
+    }
+
+    /// A tag written by another application with an empty category or a
+    /// trailing separator lists as the tag it means, and never cuts a
+    /// name inside a character.
+    #[test]
+    fn a_tag_spelled_loosely_lists_as_the_tag_it_means() {
+        let files = [
+            file("/p/a.jpg", &["Lieux//Été"]),
+            file("/p/b.jpg", &["Lieux/"]),
+        ];
+        let lieux = contents(&at(Some("Lieux")), &files, &[]);
+        assert_eq!(lieux.places, [("Lieux/Été".into(), 1)]);
+        assert_eq!(lieux.files, [PathBuf::from("/p/b.jpg")]);
     }
 
     #[test]
