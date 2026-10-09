@@ -56,6 +56,8 @@ pub struct TerminalState {
     /// The folder the session was last told the pane shows.
     followed: Option<PathBuf>,
     palette: Option<Palette>,
+    /// Whether the session was told the panel shows it (`Input::Shown`).
+    shown: Option<bool>,
     grid: Rc<GridState>,
     /// The links are labelled (Ctrl+Shift+O): what was typed of a label.
     labelled: Option<String>,
@@ -75,6 +77,7 @@ impl TerminalState {
             provider_revision: 0,
             followed: None,
             palette: None,
+            shown: None,
             grid: Rc::default(),
             labelled: None,
         }
@@ -93,6 +96,7 @@ impl TerminalState {
         self.moved = 0;
         self.followed = None;
         self.palette = None;
+        self.shown = None;
         self.grid = Rc::default();
         self.labelled = None;
     }
@@ -334,6 +338,12 @@ impl Shell {
         {
             self.terminal.followed = Some(dir.clone());
             session.send(Input::Follow(dir));
+        }
+        // Hidden (F4), a session running a build publishes no screen, so
+        // its output no longer has the window draw at every one.
+        if self.terminal.shown != Some(self.terminal.open) {
+            self.terminal.shown = Some(self.terminal.open);
+            session.send(Input::Shown(self.terminal.open));
         }
         let colors = palette(cx.global::<Theme>());
         if self.terminal.palette != Some(colors) {

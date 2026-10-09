@@ -43,6 +43,13 @@ type Controller = ();
 
 /// The least time between two screens published: about one frame.
 const INTERVAL: Duration = Duration::from_millis(8);
+/// How often a hidden session looks at its shell while output comes: for
+/// a folder the pane follows, not for a screen.
+const HIDDEN_INTERVAL: Duration = Duration::from_millis(250);
+/// How long output must pause for its screen to be read for links: while
+/// it floods in, every word of every new line would be a path to check.
+/// Once it pauses, the screen is published again with them.
+const QUIET: Duration = Duration::from_millis(60);
 
 /// How a terminal is started, from the plugin's settings.
 #[derive(Clone, Debug)]
@@ -266,6 +273,10 @@ pub(crate) fn open(
         follow: Follow::starting_in(spawn.dir),
         // A path found to lead somewhere is a link more to publish.
         links: links::Finder::new(move || found.with_state(|state| state.dirty = true)),
+        shown: true,
+        stale: false,
+        unread: false,
+        selected: None,
     };
     std::thread::Builder::new()
         .name("bibli-terminal".into())
@@ -291,6 +302,16 @@ struct Worker {
     /// from.
     cwd: Option<PathBuf>,
     links: links::Finder,
+    /// Whether the panel shows it (`Input::Shown`).
+    shown: bool,
+    /// Output came while it was hidden, and was not published: shown
+    /// again, it publishes at once.
+    stale: bool,
+    /// A screen was published without its links read (output flooding
+    /// in): once it pauses for `QUIET`, it is published again with them.
+    unread: bool,
+    /// The selection the last screen's text was read for.
+    selected: Option<alacritty_terminal::selection::SelectionRange>,
 }
 
 impl Worker {
@@ -307,17 +328,24 @@ impl Worker {
                     if state.stopped || !state.inputs.is_empty() {
                         break;
                     }
+                    if !pending && self.unread && self.shown {
+                        // Read for links once output pauses.
+                        if self.shared.nudge.wait_for(&mut state, QUIET).timed_out() {
+                            pending = true;
+                        }
+                        continue;
+                    }
                     if !pending {
                         self.shared.nudge.wait(&mut state);
                         continue;
                     }
                     let since = published.elapsed();
-                    if since >= INTERVAL {
+                    if since >= self.interval() {
                         break;
                     }
                     self.shared
                         .nudge
-                        .wait_for(&mut state, INTERVAL.saturating_sub(since));
+                        .wait_for(&mut state, self.interval().saturating_sub(since));
                 }
                 if state.stopped {
                     break;
@@ -327,8 +355,21 @@ impl Worker {
             for input in inputs {
                 pending |= self.apply(input);
             }
-            if pending && published.elapsed() >= INTERVAL {
-                self.publish(exited);
+            if pending && published.elapsed() >= self.interval() {
+                // Hidden, only what the window acts on is published: the
+                // shell gone, or in another folder for the pane.
+                let moved = self.follow.moved;
+                if !self.shown && !exited {
+                    self.look_at_shell();
+                }
+                if self.shown || exited || self.follow.moved != moved {
+                    // Right after the last one, output floods in.
+                    let quiet = published.elapsed() >= QUIET;
+                    self.publish(exited, quiet);
+                    self.stale = false;
+                } else {
+                    self.stale = true;
+                }
                 published = Instant::now();
                 pending = false;
                 if exited {
@@ -510,6 +551,20 @@ impl Worker {
                 *self.shared.palette.lock() = palette;
                 false
             }
+            Input::Shown(shown) => {
+                self.shown = shown;
+                // Shown again after output it did not publish: at once.
+                shown && self.stale
+            }
+        }
+    }
+
+    /// The least time between two looks at output: a screen's while shown.
+    fn interval(&self) -> Duration {
+        if self.shown {
+            INTERVAL
+        } else {
+            HIDDEN_INTERVAL
         }
     }
 
@@ -529,13 +584,25 @@ impl Worker {
         }
     }
 
-    fn publish(&mut self, exited: bool) {
+    /// Publish the screen. `quiet`: output paused, so its links are read,
+    /// and its selection's text; flooding in, what was read before stays.
+    fn publish(&mut self, exited: bool, quiet: bool) {
         if !exited {
             self.look_at_shell();
         }
         let mut term = self.term.lock();
-        self.links.stamp(&mut term, self.cwd.as_deref());
-        let mut screen = screen::build(&term, &self.links.stamps());
+        if quiet {
+            self.links.stamp(&mut term, self.cwd.as_deref());
+        }
+        self.unread = !quiet;
+        let range = term.selection.as_ref().and_then(|s| s.to_range(&term));
+        let selected = if !quiet && range == self.selected {
+            screen::Selected::Kept(self.shared.screen.read().selected_text.clone())
+        } else {
+            screen::Selected::Read
+        };
+        self.selected = range;
+        let mut screen = screen::build(&term, &self.links.stamps(), selected);
         drop(term);
         screen.title.clone_from(&self.shared.title.lock());
         screen.cwd = self.follow.seen().map(PathBuf::from);

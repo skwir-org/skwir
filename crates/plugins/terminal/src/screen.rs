@@ -195,9 +195,19 @@ impl Linked {
 
 /// Everything the UI needs of `term`'s visible part, its links as the
 /// stamps on it (`links.rs`) and its programs say.
+/// The selection's text a screen carries.
+pub enum Selected {
+    /// Read from the grid.
+    Read,
+    /// What the screen before carried: the same selection, over output
+    /// flooding in.
+    Kept(Option<String>),
+}
+
 pub fn build<T: alacritty_terminal::event::EventListener>(
     term: &Term<T>,
     stamps: &Stamps,
+    selected: Selected,
 ) -> Screen {
     let content = term.renderable_content();
     let (cols, rows) = (term.columns(), term.screen_lines());
@@ -326,7 +336,10 @@ pub fn build<T: alacritty_terminal::event::EventListener>(
         lines: lines.into_iter().map(Line::finish).collect(),
         cursor,
         selection,
-        selected_text: term.selection_to_string().filter(|text| !text.is_empty()),
+        selected_text: match selected {
+            Selected::Kept(text) => text,
+            Selected::Read => term.selection_to_string().filter(|text| !text.is_empty()),
+        },
         links: linked.links(stamps),
         scrolled: offset,
         history: term.grid().history_size(),
@@ -359,7 +372,11 @@ mod tests {
 
     #[test]
     fn words_are_one_run_and_blanks_draw_nothing() {
-        let screen = build(&term(20, 3, b"ls -la  \r\n\r\n   x"), &Stamps::default());
+        let screen = build(
+            &term(20, 3, b"ls -la  \r\n\r\n   x"),
+            &Stamps::default(),
+            Selected::Read,
+        );
         assert_eq!((screen.cols, screen.rows), (20, 3));
         assert_eq!(texts(&screen, 0), [(0, "ls -la")]);
         assert!(screen.lines[1].is_empty());
@@ -375,7 +392,7 @@ mod tests {
             1,
             b"\x1b[31mred\x1b[0m \x1b[1;38;5;196mcube\x1b[0m \x1b[7mrev\x1b[0m",
         );
-        let screen = build(&shown, &Stamps::default());
+        let screen = build(&shown, &Stamps::default(), Selected::Read);
         let runs = &screen.lines[0];
         assert_eq!(runs[0].style.fg, Color::Ansi(1));
         assert_eq!(runs[0].text, "red");
@@ -394,6 +411,7 @@ mod tests {
         let screen = build(
             &term(20, 1, "a漢b e\u{301}!".as_bytes()),
             &Stamps::default(),
+            Selected::Read,
         );
         let runs = &screen.lines[0];
         let at = |text: &str| runs.iter().find(|run| run.text == text).unwrap();

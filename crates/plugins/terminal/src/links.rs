@@ -439,7 +439,7 @@ mod tests {
                 assert!(Instant::now() < deadline, "the paths were never looked for");
                 std::thread::sleep(Duration::from_millis(5));
             }
-            screen::build(&self.term, &self.finder.stamps()).links
+            screen::build(&self.term, &self.finder.stamps(), screen::Selected::Read).links
         }
     }
 

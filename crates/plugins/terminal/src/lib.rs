@@ -30,8 +30,10 @@ const ID: &str = "terminal";
 const PROGRAM_KEY: &str = "terminal.program";
 const SCROLLBACK_KEY: &str = "terminal.scrollback";
 const FOLLOW_KEY: &str = "terminal.follow";
-/// Lines of history by default: what `less` of a long build log needs,
-/// about 2.4 MB for a 120-column terminal once full.
+/// Lines of history by default: what `less` of a long build log needs.
+/// A cell takes 24 bytes (alacritty's own test holds it to that), so
+/// 10,000 lines of a 120-column terminal take about 29 MB once full, and
+/// the most the setting allows, 100,000, some 290 MB.
 const SCROLLBACK: i64 = 10_000;
 
 struct Provider {
@@ -116,7 +118,7 @@ impl Plugin for TerminalPlugin {
             SettingSpec::integer(
                 SCROLLBACK_KEY,
                 "History",
-                "How many lines you can scroll back to, for terminals opened from now on",
+                "How many lines you can scroll back to, for terminals opened from now on. Once full, every 10,000 lines of a wide terminal take about 30 MB",
                 SCROLLBACK,
                 (0, 100_000),
             )

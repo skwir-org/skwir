@@ -276,6 +276,11 @@ pub enum Input {
     /// terminal and is not there already. Ignored when following is off.
     Follow(PathBuf),
     Palette(Palette),
+    /// Whether the panel shows the session. Hidden, it publishes a screen
+    /// only for what the window must act on (the shell ending, or going
+    /// to another folder the pane follows), never for each output: each
+    /// screen published wakes the window, which draws.
+    Shown(bool),
 }
 
 pub trait TerminalSession: Send + Sync {
