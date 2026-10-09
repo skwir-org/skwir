@@ -56,6 +56,9 @@ pub const GRID_FILL_KEY: &str = "ui.grid_fill";
 pub const NARROW_FOLDERS_KEY: &str = "ui.narrow_folders";
 /// Whether the tab strip shows for a window that has only one tab.
 pub const SINGLE_TAB_KEY: &str = "ui.single_tab";
+/// Whether a folder's trail starts at the root rather than at the
+/// sidebar's folder that holds it (`Shell::sync_roots`).
+pub const FULL_PATH_KEY: &str = "ui.full_path";
 /// How documents are read: one scrolling column, or a page at a time.
 pub const READER_CONTINUOUS_KEY: &str = "reading.continuous";
 /// How wide a reading column may grow (`markdown::measure`).
@@ -187,6 +190,15 @@ pub fn declare(app: &App) {
             false,
         )
         .section("Tabs"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            FULL_PATH_KEY,
+            "Show the full path",
+            "Show a folder's whole path above its files, from the root, each folder under its own name: / › home › someone › Documents › 2026. Off starts it at the deepest folder of the sidebar that holds it, under the sidebar's name: Documents › 2026, a drive's name for a folder on a drive.",
+            false,
+        )
+        .section("Address"),
     );
     app.settings.declare(
         SettingSpec::toggle(

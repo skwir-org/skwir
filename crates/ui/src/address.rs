@@ -1070,7 +1070,8 @@ fn tool_pane(
 /// (`sidebar::roots`, the home folder among them) stands for everything
 /// above it, under the sidebar's name: `Papers › 2026` for a folder of
 /// Documents the user named Papers, `stick › Photos` on a drive. Of two
-/// on one folder, the first in the sidebar.
+/// on one folder, the first in the sidebar. With no roots (`ui.full_path`)
+/// it starts at `/`.
 pub fn crumbs(path: &std::path::Path, roots: &[crate::sidebar::Root]) -> Vec<(String, PathBuf)> {
     let root = roots
         .iter()

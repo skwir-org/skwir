@@ -141,6 +141,8 @@ pub struct Preferences {
     pub narrow_folders: bool,
     /// `ui.single_tab`: the tab of a window that has only one is drawn.
     pub single_tab: bool,
+    /// `ui.full_path`: a folder's trail starts at the root.
+    pub full_path: bool,
     /// `ui.printed_pages`: a book's position counts its printed pages.
     pub printed_pages: bool,
     /// `core.close_split`: which pane closing the split takes away.
@@ -156,6 +158,7 @@ impl Default for Preferences {
             grid_fill: false,
             narrow_folders: false,
             single_tab: false,
+            full_path: false,
             printed_pages: false,
             close_split: crate::layout::CloseSplit::Other,
             player: crate::player::PlayerPrefs::default(),
@@ -2082,6 +2085,11 @@ impl Shell {
                 .app
                 .settings
                 .get::<bool>(crate::settings::SINGLE_TAB_KEY)
+                .unwrap_or(false);
+            self.prefs.full_path = self
+                .app
+                .settings
+                .get::<bool>(crate::settings::FULL_PATH_KEY)
                 .unwrap_or(false);
             self.prefs.close_split = crate::layout::CloseSplit::read(
                 self.app

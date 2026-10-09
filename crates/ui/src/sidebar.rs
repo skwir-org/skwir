@@ -334,11 +334,13 @@ pub fn roots(places: Vec<Place>, sections: &Sections, home: Option<&std::path::P
     roots
 }
 
-/// `roots`, read again only when the places or their arrangement change,
-/// and how many times they were.
+/// `roots`, read again only when the places, their arrangement or
+/// `ui.full_path` change, and how many times they were. With the full
+/// path there are none: every folder's trail starts at the root, each
+/// folder under its own name.
 #[derive(Default)]
 pub struct Roots {
-    key: Option<(u64, Sections)>,
+    key: Option<(u64, Sections, bool)>,
     pub roots: Vec<Root>,
     pub generation: u64,
 }
@@ -348,11 +350,12 @@ impl Shell {
     /// changed since.
     pub fn sync_roots(&mut self) {
         let revision = self.app.registry.places.revision();
+        let full = self.prefs.full_path;
         if self
             .roots
             .key
             .as_ref()
-            .is_some_and(|(r, s)| *r == revision && *s == self.sidebar_sections)
+            .is_some_and(|(r, s, f)| *r == revision && *s == self.sidebar_sections && *f == full)
         {
             return;
         }
@@ -372,12 +375,16 @@ impl Shell {
         self.app.registry.set_place_titles(titles);
         let home = bibli_core::os_path::home();
         self.roots = Roots {
-            roots: roots(
-                self.app.registry.places.all(),
-                &self.sidebar_sections,
-                home.as_deref(),
-            ),
-            key: Some((revision, self.sidebar_sections.clone())),
+            roots: if full {
+                Vec::new()
+            } else {
+                roots(
+                    self.app.registry.places.all(),
+                    &self.sidebar_sections,
+                    home.as_deref(),
+                )
+            },
+            key: Some((revision, self.sidebar_sections.clone(), full)),
             generation: self.roots.generation + 1,
         };
     }

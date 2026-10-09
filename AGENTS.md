@@ -158,7 +158,9 @@ current source before assuming a planned crate, command, or API exists.
   when the places or their arrangement change; `address::crumbs`):
   `Papers › 2026` for a folder of Documents the user named Papers in the
   sidebar, `stick › Photos` on a drive, Home when nothing deeper holds
-  it. A tab and the history name such a folder as the sidebar does
+  it. With Appearance's `ui.full_path` there are no roots, so every
+  trail starts at `/` under the folders' own names, a tag's folder's
+  too; nothing else changes. A tab and the history name such a folder as the sidebar does
   (`App::location_title`); a listing, a toast and Details keep the
   folder's own name. Up still goes to the real parent, and Ctrl+L edits
   the real path.
