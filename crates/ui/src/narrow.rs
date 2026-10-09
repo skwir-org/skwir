@@ -78,6 +78,8 @@ pub struct Narrow {
     counted: Option<Instant>,
     pub offer: Offer,
     command: Option<bibli_core::command::Invocation>,
+    /// A count put off (`EVERY`), done by a wake of its own.
+    recount: Option<gpui::Task<()>>,
 }
 
 /// Each value's count, most first, then in the order met.
@@ -168,7 +170,7 @@ pub fn offer(files: &[File], tags: &[String], complete: bool) -> Offer {
 impl Shell {
     /// Count again what the pane being rendered's search can be narrowed
     /// to, when its listing changed.
-    pub(crate) fn sync_narrow(&mut self) {
+    pub(crate) fn sync_narrow(&mut self, cx: &mut Context<Self>) {
         // A search's tags, or what a location that narrows itself (a tag
         // location) says its files all have.
         let (mut tags, _) = self.ui().chips.tags();
@@ -202,6 +204,28 @@ impl Shell {
         if self.ui().narrow.key == Some(key) {
             return;
         }
+        // Counted at most every `EVERY` while what it counts changes (a
+        // search streaming, a folder's files hydrating, each batch moving
+        // the listing): a count walks every file. The listing completing
+        // counts at once; any other change put off is counted by a wake
+        // of its own.
+        let ended = key.3 && self.ui().narrow.key.is_some_and(|before| !before.3);
+        if !ended
+            && let Some(at) = self.ui().narrow.counted
+            && at.elapsed() < EVERY
+        {
+            if self.ui().narrow.recount.is_none() {
+                let wait = EVERY.saturating_sub(at.elapsed());
+                self.ui_mut().narrow.recount = Some(cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(wait).await;
+                    let _ = this.update(cx, |shell, cx| {
+                        shell.ui_mut().narrow.recount = None;
+                        cx.notify();
+                    });
+                }));
+            }
+            return;
+        }
         // A folder's files are complete once each has its metadata.
         let mut complete = key.3;
         if folder.is_some() {
@@ -213,11 +237,6 @@ impl Shell {
             };
             complete &= unknown.is_empty();
             self.request_hydrate_off_screen(unknown);
-        }
-        // While it streams, at most every `EVERY`; the end counts at once.
-        let narrow = &self.ui().narrow;
-        if !complete && narrow.counted.is_some_and(|at| at.elapsed() < EVERY) {
-            return;
         }
         let calendar = bibli_platform::calendar::Calendar::system();
         let files: Vec<File> = {
@@ -270,6 +289,7 @@ impl Shell {
             counted: Some(Instant::now()),
             offer,
             command: own.map(|own| own.command),
+            recount: None,
         };
     }
 }

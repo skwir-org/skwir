@@ -72,6 +72,11 @@ struct Names {
     by_name: HashMap<OsString, EntryId>,
     /// Provisional (device, `d_ino`) ids to the id a stat reports.
     aliases: HashMap<EntryId, EntryId>,
+    /// The entries stat-ed since they were listed: what a listing again
+    /// (F5, a watcher's rescan) stats again, its metadata kept meanwhile.
+    /// The others were never asked for, and a refresh does not read the
+    /// whole folder for them.
+    stated: HashSet<EntryId>,
 }
 
 impl Names {
@@ -94,6 +99,7 @@ impl Names {
     }
 
     fn remove_id(&mut self, id: EntryId) -> Option<OsString> {
+        self.stated.remove(&id);
         let name = self.by_id.remove(&id)?;
         self.by_name.remove(&name);
         Some(name)
@@ -102,6 +108,7 @@ impl Names {
     fn remove_name(&mut self, name: &OsStr) -> Option<EntryId> {
         let id = self.by_name.remove(name)?;
         self.by_id.remove(&id);
+        self.stated.remove(&id);
         Some(id)
     }
 
@@ -330,7 +337,14 @@ impl Shared {
             let seen: HashSet<EntryId> = seen.into_iter().collect();
             let (kept, gone): (Vec<EntryId>, Vec<EntryId>) =
                 prev.into_iter().partition(|id| seen.contains(id));
-            stayed = kept;
+            // What was stat-ed is stat-ed again; the rest still waits to be
+            // asked for.
+            let names = self.names.lock();
+            stayed = kept
+                .into_iter()
+                .filter(|id| names.stated.contains(id))
+                .collect();
+            drop(names);
             if !gone.is_empty() {
                 let mut names = self.names.lock();
                 for id in &gone {
@@ -395,9 +409,11 @@ impl Shared {
             let mut names = self.names.lock();
             for (id, e) in stated {
                 if e.id == id {
+                    names.stated.insert(id);
                     updated.push(e);
                 } else if names.by_id.contains_key(&id) {
                     names.rekey(id, e.id);
+                    names.stated.insert(e.id);
                     stale.push(id);
                     rekeyed.push(e);
                 }

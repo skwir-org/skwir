@@ -254,6 +254,24 @@ pub mod keys {
     pub const TRASHED_FROM: &str = "trashed_from";
 }
 
+/// `key` as one shared `Arc`: the same few keys are set on every entry
+/// hydrated, and allocating each anew cost a few hundred bytes an entry.
+/// Read-locked once a key was seen.
+fn interned(key: &str) -> Arc<str> {
+    static KEYS: std::sync::LazyLock<parking_lot::RwLock<std::collections::HashSet<Arc<str>>>> =
+        std::sync::LazyLock::new(Default::default);
+    if let Some(known) = KEYS.read().get(key) {
+        return Arc::clone(known);
+    }
+    let mut keys = KEYS.write();
+    if let Some(known) = keys.get(key) {
+        return Arc::clone(known);
+    }
+    let key: Arc<str> = Arc::from(key);
+    keys.insert(Arc::clone(&key));
+    key
+}
+
 /// The metadata bag. Keys are sorted for deterministic serialization.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Metadata {
@@ -269,8 +287,11 @@ impl Metadata {
         self.fields.get(key).map(|f| &f.value)
     }
 
-    pub fn set(&mut self, key: impl Into<Arc<str>>, value: Value, provenance: Provenance) {
-        self.fields.insert(key.into(), Field { value, provenance });
+    /// Set `key`'s field. The key is interned (`interned`): every entry of
+    /// a folder of 100 000 holds its keys without a copy of each name.
+    pub fn set(&mut self, key: impl AsRef<str>, value: Value, provenance: Provenance) {
+        self.fields
+            .insert(interned(key.as_ref()), Field { value, provenance });
     }
 
     pub fn remove(&mut self, key: &str) -> Option<Field> {

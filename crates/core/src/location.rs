@@ -732,6 +732,9 @@ struct Delta {
     size: bool,
     /// A date changed: when it was modified, or put in the trash.
     modified: bool,
+    /// A modification time already known changed: the file was written
+    /// again, not stat-ed for the first time.
+    rewritten: bool,
     rating: bool,
 }
 
@@ -743,6 +746,8 @@ impl Delta {
             || old.metadata.value(keys::FILES) != new.metadata.value(keys::FILES);
         let modified = old.metadata.value(keys::MODIFIED) != new.metadata.value(keys::MODIFIED)
             || old.metadata.value(keys::TRASHED) != new.metadata.value(keys::TRASHED);
+        let rewritten = old.metadata.value(keys::MODIFIED).is_some()
+            && old.metadata.value(keys::MODIFIED) != new.metadata.value(keys::MODIFIED);
         let rating = old.metadata.value(keys::RATING) != new.metadata.value(keys::RATING);
         Delta {
             any: old != new,
@@ -751,6 +756,7 @@ impl Delta {
             order: name || old.is_dir() != new.is_dir(),
             size,
             modified,
+            rewritten,
             rating,
         }
     }
@@ -834,6 +840,8 @@ pub struct Listing {
     /// changes: only the sorts by those keys depend on them.
     size_version: u64,
     modified_version: u64,
+    /// Incremented when a known modification time changes (`Delta::rewritten`).
+    rewritten_version: u64,
     rating_version: u64,
     /// Incremented when the location itself changed (`ListingEvent::Changed`).
     itself_version: u64,
@@ -861,6 +869,7 @@ impl Default for Listing {
             order_version: id,
             size_version: id,
             modified_version: id,
+            rewritten_version: id,
             rating_version: id,
             itself_version: id,
             removed_version: id,
@@ -974,6 +983,7 @@ impl Listing {
             (delta.order, &mut self.order_version),
             (delta.size, &mut self.size_version),
             (delta.modified, &mut self.modified_version),
+            (delta.rewritten, &mut self.rewritten_version),
             (delta.rating, &mut self.rating_version),
             (delta.any, &mut self.version),
         ] {
@@ -1023,6 +1033,7 @@ impl Listing {
                 delta.order |= d.order;
                 delta.size |= d.size;
                 delta.modified |= d.modified;
+                delta.rewritten |= d.rewritten;
                 delta.rating |= d.rating;
             }
             indexmap::map::Entry::Vacant(_) => {
@@ -1065,6 +1076,14 @@ impl Listing {
     /// taken) looks again when it moves.
     pub fn modified_version(&self) -> u64 {
         self.modified_version
+    }
+
+    /// Files written again so far: a modification time known before that
+    /// changed. Hydration learning one for the first time leaves it alone,
+    /// so work that reads files' contents (where a picture was taken)
+    /// looks again when a file changes, not when a row is first stat-ed.
+    pub fn rewritten_version(&self) -> u64 {
+        self.rewritten_version
     }
 
     /// Changes to sizes (and to the files a place counts) so far,

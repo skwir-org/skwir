@@ -181,6 +181,7 @@ fn listed_bytes(p: &bibli_core::workspace::Pane) -> Option<u64> {
 /// or when the folder cannot be read.
 fn weigh(dir: &Path, hidden: bool, filter: Option<&str>, cancel: &CancelToken) -> Option<u64> {
     let mut bytes = 0u64;
+    let filter = filter.map(bibli_core::workspace::NameFilter::new);
     for entry in std::fs::read_dir(dir).ok()? {
         if cancel.is_cancelled() {
             return None;
@@ -190,7 +191,7 @@ fn weigh(dir: &Path, hidden: bool, filter: Option<&str>, cancel: &CancelToken) -
         if !hidden && bibli_core::fs::is_hidden(&entry) {
             continue;
         }
-        if filter.is_some_and(|f| !bibli_core::workspace::name_holds(&name, f)) {
+        if filter.as_ref().is_some_and(|f| !f.holds(&name)) {
             continue;
         }
         // Not followed: a link weighs what the listing says it does.

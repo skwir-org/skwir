@@ -290,7 +290,7 @@ impl PaneView for MapView {
                 p.location().map(ToString::to_string).unwrap_or_default(),
                 p.listing.id(),
                 p.listing.names_version(),
-                p.listing.modified_version(),
+                p.listing.rewritten_version(),
                 p.listing.is_complete(),
             );
             let selection = (self.selection.0 != p.selection.revision())

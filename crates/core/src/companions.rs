@@ -196,14 +196,17 @@ impl Companions {
         self.rules().iter().flat_map(|r| r.of(name)).collect()
     }
 
-    /// The file a companion named `name` belongs to, by any rule.
+    /// The file a companion named `name` belongs to, by any rule. Asked of
+    /// every entry listed: the rules are not cloned for it.
     pub fn owner(&self, name: &OsStr) -> Option<OsString> {
-        self.rules().iter().find_map(|r| r.owner(name))
+        self.list.find_map(|r| r.owner(name))
     }
 
     /// Whether `name` is a folder of companions (`.ts`).
     pub fn is_folder(&self, name: &OsStr) -> bool {
-        self.rules().iter().any(|r| r.is_folder(name))
+        self.list
+            .find_map(|r| r.is_folder(name).then_some(()))
+            .is_some()
     }
 
     /// The companions of the file at `path` that are there. Blocking: it

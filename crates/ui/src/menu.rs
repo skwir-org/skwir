@@ -29,6 +29,10 @@ pub struct SelectionCtx {
     pub all_files: bool,
     /// Total size of the selected files whose size is known.
     pub bytes: u64,
+    /// Selected files whose size is not known yet (not stat-ed): until
+    /// none is, `bytes` is a part, which is never shown as the total
+    /// (`Shell::sync_selection_hydration` asks for them).
+    pub unknown_sizes: usize,
     /// The pane shows a folder, not a search, the shelf or another virtual
     /// location.
     pub folder: bool,

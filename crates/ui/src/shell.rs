@@ -2326,7 +2326,8 @@ impl Shell {
         };
         let message = crate::loading::message(self, id);
         self.sync_sort_hydration();
-        self.sync_narrow();
+        self.sync_selection_hydration();
+        self.sync_narrow(cx);
         let narrow = crate::narrow::render(self, cx);
         let file_area = self.pane_container(body, cx);
         let strip = if active {

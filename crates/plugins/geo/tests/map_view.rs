@@ -142,8 +142,9 @@ fn a_folder_s_pictures_and_tracks_are_placed_once_each() {
     let again = scan(&app, pane);
     assert_eq!(again["generation"], found["generation"]);
 
-    // Hydration gives the listing its modification times: the files are
-    // looked at again, and nothing moved, so the view keeps what it has.
+    // Hydration gives the listing its modification times, first learned:
+    // no file changed, and the scan stats each file itself, so the same
+    // scan stands, looked at nothing again.
     let modified = || {
         let ws = app.workspace.read();
         ws.pane(pane).unwrap().listing.modified_version()
@@ -164,23 +165,13 @@ fn a_folder_s_pictures_and_tracks_are_placed_once_each() {
         assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
         std::thread::sleep(Duration::from_millis(10));
     }
-    app.dispatch(&Invocation::with_args("geo.scan", &json!({ "pane": pane })))
-        .unwrap();
-    let asked = points(&app, pane, 0);
-    assert_eq!(asked["rechecking"], true, "looked at again: {asked}");
-    assert_eq!(asked["complete"], true, "beside what is shown: {asked}");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let quiet = loop {
-        let quiet = points(&app, pane, 0);
-        if quiet["rechecking"] == false {
-            break quiet;
-        }
-        assert!(Instant::now() < deadline, "looking again did not end");
-        std::thread::sleep(Duration::from_millis(10));
-    };
+    let quiet = scan(&app, pane);
+    assert_eq!(
+        quiet["rechecking"], false,
+        "nothing looked at again: {quiet}"
+    );
     assert_eq!(quiet["generation"], found["generation"], "{quiet}");
     assert_eq!(quiet["placed"], 2);
-    assert_eq!(quiet["complete"], true, "what was shown stays shown");
 
     // A file that changed is read again: the receiver found its fix.
     std::fs::write(dir.join("No fix.tif"), tiff(12, 35, None)).unwrap();

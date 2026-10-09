@@ -150,7 +150,16 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         .child(items);
     if selection.count > 0 {
         let mut text = format!("{} selected", format::thousands(selection.count));
-        let bytes = weighs.map_or(selection.bytes, |w| w.selected.unwrap_or(0));
+        // A part of the size is never said as the whole: until every
+        // selected file is stat-ed (`sync_selection_hydration`), none.
+        let bytes = weighs.map_or(
+            if selection.unknown_sizes == 0 {
+                selection.bytes
+            } else {
+                0
+            },
+            |w| w.selected.unwrap_or(0),
+        );
         if bytes > 0 {
             text = format!("{text} · {}", format::size(bytes));
         }

@@ -125,6 +125,13 @@ impl<T: Clone> Contributions<T> {
         self.items.read().is_empty()
     }
 
+    /// The first answer `f` gives, asked of each in order under the read
+    /// lock, nothing cloned: for what is asked per entry of a listing
+    /// (whether a name is a companion). `f` must not reach this registry.
+    pub fn find_map<R>(&self, f: impl FnMut(&T) -> Option<R>) -> Option<R> {
+        self.items.read().iter().map(|(_, t)| t).find_map(f)
+    }
+
     pub fn find(&self, pred: impl Fn(&T) -> bool) -> Option<T> {
         self.items
             .read()

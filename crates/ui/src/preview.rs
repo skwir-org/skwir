@@ -352,6 +352,19 @@ pub struct PreviewState {
     pub beside: Vec<crate::details::Row>,
     fields_tx: flume::Sender<(u64, FieldRows)>,
     fields_rx: flume::Receiver<(u64, FieldRows)>,
+    /// The file the fields were read of, as of its version (its path,
+    /// modification time and size): read again only when it changes, not
+    /// when a batch of metadata changes the listing, so they do not blink.
+    fields_for: Option<(
+        std::path::PathBuf,
+        Option<std::time::SystemTime>,
+        Option<u64>,
+    )>,
+    /// The reading of the fields under way, cancelled by the next.
+    fields_cancel: Option<CancelToken>,
+    /// The entry Details was collected for: collected again when it
+    /// changes, whatever else the listing does.
+    details_entry: Option<bibli_core::entry::Entry>,
     /// What the entry says about itself, collected when it or its listing
     /// changes (`details_at`), never while painting.
     pub details: Vec<crate::details::Group>,
@@ -495,6 +508,9 @@ impl Default for PreviewState {
             beside: Vec::new(),
             fields_tx,
             fields_rx,
+            fields_for: None,
+            fields_cancel: None,
+            details_entry: None,
             details: Vec::new(),
             details_at: None,
             selection_summary: None,
@@ -988,18 +1004,20 @@ impl Shell {
                 let e = pane.entry(id)?;
                 let path = pane.path_of(id)?;
                 // What Details and the neighbouring tracks were collected
-                // for: the listing as it is, in the order shown (a new sort
-                // is a new order), and how much of it is selected.
+                // for: the listing's names, in the order shown (a new sort
+                // is a new order), and what is selected; the entry itself
+                // is compared whole (`details_entry`). Not the listing's
+                // version, which every batch of metadata moves.
                 let order = std::sync::Arc::as_ptr(&self.ui().list.sorted).cast::<()>() as u64;
                 let seen = pane
                     .listing
-                    .version()
+                    .names_version()
                     .wrapping_mul(31)
                     .wrapping_add(pane.tree_version())
                     .wrapping_mul(31)
                     .wrapping_add(order)
                     .wrapping_mul(31)
-                    .wrapping_add(pane.selection.len() as u64)
+                    .wrapping_add(pane.selection.revision())
                     .wrapping_mul(2)
                     .wrapping_add(u64::from(bibli_platform::users::loaded()));
                 Some((
@@ -1115,8 +1133,11 @@ impl Shell {
         if self.preview.info.icon.is_none() {
             self.preview.info.icon = self.icons.for_entry(&entry, || Some(key.path.clone()), 48);
         }
-        if self.preview.details_at != Some(seen) {
+        if self.preview.details_at != Some(seen)
+            || self.preview.details_entry.as_ref() != Some(&entry)
+        {
             self.preview.details_at = Some(seen);
+            self.preview.details_entry = Some(entry.clone());
             // Notes while a store keeps some (`NoteStores::held`).
             let held = self.app.notes.held();
             let notes = held.tags || held.rating || held.comment;
@@ -1129,18 +1150,30 @@ impl Shell {
             {
                 self.preview.details.push(volume);
             }
-            self.read_fields(&entry, &key.path);
+            // Fields read of the file: again when the file changed, never
+            // for a batch of metadata, which would blank them meanwhile.
+            let file = (key.path.clone(), version.modified, version.size);
+            if self.preview.fields_for.as_ref() != Some(&file) {
+                self.preview.fields_for = Some(file);
+                self.read_fields(&entry, &key.path);
+            }
             self.preview.neighbours = self
                 .media_kind()
                 .map_or((None, None), |kind| self.media_neighbours(id, kind));
             let selection = self.selection_ctx();
-            self.preview.selection_summary = (selection.count > 1).then(|| crate::details::Group {
-                title: "Selection".into(),
-                rows: vec![
-                    crate::details::Row::new("Selected", format::count(selection.count, "item")),
-                    crate::details::Row::new("Total size", format::size(selection.bytes)),
-                ],
-            });
+            self.preview.selection_summary =
+                (selection.count > 1).then(|| crate::details::Group {
+                    title: "Selection".into(),
+                    rows: std::iter::once(crate::details::Row::new(
+                        "Selected",
+                        format::count(selection.count, "item"),
+                    ))
+                    // The whole size once every file's is known, never a part.
+                    .chain((selection.unknown_sizes == 0).then(|| {
+                        crate::details::Row::new("Total size", format::size(selection.bytes))
+                    }))
+                    .collect(),
+                });
         }
         while let Ok((generation, (rows, access, beside))) = self.preview.fields_rx.try_recv() {
             if generation == self.preview.fields_generation {
@@ -1190,15 +1223,17 @@ impl Shell {
             let p = ws.pane(pane)?;
             let location = p.location()?;
             let listing = &p.listing;
+            // What the folder's Details read: what it holds (its names),
+            // not each batch of its entries' metadata.
             (
                 location.to_string(),
                 location.path()?,
                 if listing.is_complete() {
-                    listing.version()
+                    listing.names_version()
                 } else {
                     0
                 },
-                listing.version(),
+                listing.names_version(),
                 listing.itself_version(),
             )
         };
@@ -1287,6 +1322,7 @@ impl Shell {
         });
         self.preview.details.clear();
         self.preview.details_at = None;
+        self.preview.details_entry = None;
     }
 
     /// The header's size and date, from the listing's metadata.
@@ -1295,6 +1331,7 @@ impl Shell {
         self.preview.info.size = version.size.filter(|_| !is_dir).map(format::size);
         self.preview.info.modified = version.modified.map(format::time);
         self.preview.details_at = None;
+        self.preview.details_entry = None;
     }
 
     /// The shown file changed, or the theme did: read it again without
@@ -2032,7 +2069,12 @@ impl Shell {
         let path = path.to_path_buf();
         let name = entry.type_name().to_owned();
         let wake = self.app.waker_handle();
+        // The reading before is for another file, or another version.
+        if let Some(before) = self.preview.fields_cancel.take() {
+            before.cancel();
+        }
         let cancel = self.app.lifetime().child();
+        self.preview.fields_cancel = Some(cancel.clone());
         let companions = Arc::clone(&self.app.companions);
         self.app.scheduler.spawn(
             bibli_core::scheduler::Priority::Visible,

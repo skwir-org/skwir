@@ -1706,16 +1706,28 @@ mod builtin {
                     .pane_mut(pane)
                     .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
                 let mut ids = a.ids;
-                for n in &a.names {
-                    match p.listing.find_by_name(n.as_os_str()) {
-                        Some(e) => ids.push(e.id),
-                        None => anyhow::bail!("no entry named `{}`", n.display()),
+                // Names looked up in one pass over the listing: one each
+                // was the whole listing's for every name given.
+                if !a.names.is_empty() {
+                    let mut by_name: HashMap<&std::ffi::OsStr, EntryId> = p
+                        .listing
+                        .iter()
+                        .map(|e| (e.name.as_os_str(), e.id))
+                        .collect();
+                    for n in &a.names {
+                        match by_name
+                            .remove(n.as_os_str())
+                            .or_else(|| p.listing.find_by_name(n.as_os_str()).map(|e| e.id))
+                        {
+                            Some(id) => ids.push(id),
+                            None => anyhow::bail!("no entry named `{}`", n.display()),
+                        }
                     }
                 }
                 match a.mode {
                     SelectMode::Replace => p.selection.set(ids),
                     SelectMode::Add => ids.into_iter().for_each(|id| p.selection.add(id)),
-                    SelectMode::Toggle => ids.into_iter().for_each(|id| p.selection.toggle(id)),
+                    SelectMode::Toggle => p.selection.toggle_all(&ids),
                     mode @ (SelectMode::RangeTo | SelectMode::AddRange) => {
                         let Some(&target) = ids.last() else {
                             anyhow::bail!("a range needs a target id")

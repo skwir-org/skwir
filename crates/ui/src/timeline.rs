@@ -59,7 +59,14 @@ pub struct TimelineState {
     /// The pane's order it counted (`Pane::order`): a filter or a
     /// narrowing changes it, not the listing's version.
     counted: Option<std::sync::Arc<[bibli_core::EntryId]>>,
+    /// When it last counted: while the dates come in batches, at most
+    /// every `RECOUNT`, the last batch counted by a wake of its own.
+    counted_at: Option<std::time::Instant>,
+    recount: Option<gpui::Task<()>>,
 }
+
+/// How often the bars are counted again while dates come in.
+const RECOUNT: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// Bar heights in px for `counts`, the tallest reaching `max_h`; a non-zero
 /// count is at least 2 px so it stays visible.
@@ -99,7 +106,7 @@ impl Shell {
     /// would re-stat the folder for as long as the timeline is open.
     fn hydrate_for_timeline(&mut self) {
         let shown = self.ui().list.sorted.clone();
-        self.request_hydrate(shown.iter().copied());
+        self.request_hydrate_off_screen(shown.iter().copied());
     }
 
     pub fn timeline_set_bucket(&mut self, bucket: &str, cx: &mut Context<Self>) {
@@ -122,21 +129,55 @@ impl Shell {
         if !self.timeline.open {
             return;
         }
-        let version = self.ui().list.version().unwrap_or(0);
+        // What the bars count: the files' dates and names, never every
+        // batch of other metadata.
+        let version = {
+            let ws = self.app.workspace.read();
+            ws.pane(self.pane).map_or(0, |p| {
+                p.listing.modified_version() ^ p.listing.names_version().rotate_left(32)
+            })
+        };
         let key = (
             self.pane,
             version,
             self.timeline.bucket,
             self.timeline.subtree,
         );
-        let shown = &self.ui().list.sorted;
+        let shown = std::sync::Arc::clone(&self.ui().list.sorted);
         let other_files = self
             .timeline
             .counted
             .as_ref()
-            .is_none_or(|counted| !std::sync::Arc::ptr_eq(counted, shown));
+            .is_none_or(|counted| !std::sync::Arc::ptr_eq(counted, &shown));
+        // Dates arriving batch after batch: counted at most every
+        // `RECOUNT`, and once more after the last.
+        let dates_only = self
+            .timeline
+            .computed_for
+            .is_some_and(|(pane, _, bucket, subtree)| {
+                (pane, bucket, subtree) == (key.0, key.2, key.3)
+            })
+            && !other_files;
+        if dates_only
+            && self.timeline.computed_for != Some(key)
+            && let Some(at) = self.timeline.counted_at
+            && at.elapsed() < RECOUNT
+        {
+            if self.timeline.recount.is_none() {
+                let wait = RECOUNT.saturating_sub(at.elapsed());
+                self.timeline.recount = Some(cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(wait).await;
+                    let _ = this.update(cx, |shell, cx| {
+                        shell.timeline.recount = None;
+                        cx.notify();
+                    });
+                }));
+            }
+            return;
+        }
         if self.timeline.computed_for != Some(key) || other_files {
-            self.timeline.counted = Some(std::sync::Arc::clone(shown));
+            self.timeline.counted_at = Some(std::time::Instant::now());
+            self.timeline.counted = Some(shown);
             // Entries without metadata need it before they count.
             self.hydrate_for_timeline();
             let args = serde_json::json!({

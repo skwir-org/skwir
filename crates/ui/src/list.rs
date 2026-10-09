@@ -147,6 +147,9 @@ pub struct ListState {
     /// pane for: the listing, its names, the folders opened, the sort and
     /// the filter.
     sort_hydrated: Option<(u64, u64, u64, SortSpec, u64)>,
+    /// What `sync_selection_hydration` last asked for: the listing and the
+    /// selection's revision.
+    selection_hydrated: Option<(u64, u64)>,
     pub visible_rows: usize,
     /// How many entries the view laid out: what a tab shown again shows
     /// first.
@@ -167,6 +170,7 @@ impl Default for ListState {
             listing: None,
             removed: 0,
             sort_hydrated: None,
+            selection_hydrated: None,
             visible_rows: 20,
             visible_items: 0,
             typed: None,
@@ -219,6 +223,7 @@ impl ListState {
         self.sorted_at = None;
         self.pending_hydrate.clear();
         self.sort_hydrated = None;
+        self.selection_hydrated = None;
         self.selection.set(None);
     }
 
@@ -247,11 +252,14 @@ fn summarize(pane: &bibli_core::workspace::Pane) -> SelectionCtx {
             Some(e) if e.is_dir() => ctx.all_files = false,
             Some(e) => {
                 ctx.all_dirs = false;
-                ctx.bytes += e
+                match e
                     .metadata
                     .value(bibli_core::entry::keys::SIZE)
                     .and_then(bibli_core::Value::as_u64)
-                    .unwrap_or(0);
+                {
+                    Some(bytes) => ctx.bytes += bytes,
+                    None => ctx.unknown_sizes += 1,
+                }
             }
             None => {}
         }
@@ -261,9 +269,10 @@ fn summarize(pane: &bibli_core::workspace::Pane) -> SelectionCtx {
 
 impl Shell {
     /// Selection summary for `when` evaluation and the pane key context.
-    /// Cached per pane on the selection's revision and the listing's
-    /// version: with 100 000 entries selected, a frame must not walk them
-    /// for every reader.
+    /// Cached per pane on the selection's revision and what the summary
+    /// reads of the listing (its names and kinds, its sizes): with 100 000
+    /// entries selected, a frame must not walk them for every reader, nor
+    /// a batch of metadata that changed no size.
     pub fn selection_ctx(&self) -> SelectionCtx {
         let ws = self.app.workspace.read();
         let Some(pane) = ws.pane(self.pane) else {
@@ -283,7 +292,7 @@ impl Shell {
         };
         let key = (
             pane.selection.revision(),
-            pane.listing.version(),
+            pane.listing.names_version() ^ pane.listing.size_version().rotate_left(32),
             pane.tree_version(),
         );
         let cache = &self.ui().list.selection;
@@ -413,6 +422,38 @@ impl Shell {
         )) {
             tracing::warn!("hydrate: {e:#}");
         }
+    }
+
+    /// Ask for the metadata of the selected files whose size is not known
+    /// yet, after what is drawn: until each has it, the selection's size
+    /// is not said, rather than a part of it that grows as rows are drawn.
+    /// Asked again only when the selection changes.
+    pub(crate) fn sync_selection_hydration(&mut self) {
+        let selection = self.selection_ctx();
+        if selection.unknown_sizes == 0 {
+            return;
+        }
+        let pane = self.pane;
+        let app = std::sync::Arc::clone(&self.app);
+        let (revision, unknown) = {
+            let ws = app.workspace.read();
+            let Some(p) = ws.pane(pane) else { return };
+            let revision = (p.listing.id(), p.selection.revision());
+            if self.ui().list.selection_hydrated == Some(revision) {
+                return;
+            }
+            let unknown: Vec<EntryId> = p
+                .selection
+                .iter()
+                .filter(|id| {
+                    p.entry(*id)
+                        .is_some_and(|e| !e.is_dir() && !e.metadata.is_hydrated())
+                })
+                .collect();
+            (revision, unknown)
+        };
+        self.ui_mut().list.selection_hydrated = Some(revision);
+        self.request_hydrate_off_screen(unknown);
     }
 
     /// Under a sort by size, date or rating, ask for the metadata of every

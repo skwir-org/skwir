@@ -274,8 +274,10 @@ impl Scanner {
             let source = (
                 location,
                 listing.id(),
+                // Files new, gone or written again, not first stat-ed:
+                // the scan stats each file itself.
                 listing.names_version(),
-                listing.modified_version(),
+                listing.rewritten_version(),
                 listing.is_complete(),
             );
             let start = match self.scans.lock().get(&pane) {

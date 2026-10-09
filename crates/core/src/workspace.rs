@@ -143,6 +143,33 @@ impl Selection {
         self.sweep = None;
     }
 
+    /// Toggle each of `ids`, in one pass over the selection: a shift per
+    /// id was the whole selection's each.
+    pub fn toggle_all(&mut self, ids: &[EntryId]) {
+        if ids.len() <= 16 {
+            for id in ids {
+                self.toggle(*id);
+            }
+            return;
+        }
+        let Some(&last) = ids.last() else { return };
+        self.touch();
+        let toggled: std::collections::HashSet<EntryId> = ids.iter().copied().collect();
+        let added: Vec<EntryId> = ids
+            .iter()
+            .copied()
+            .filter(|id| !self.items.contains(id))
+            .collect();
+        self.items.retain(|id| !toggled.contains(id));
+        for id in added {
+            self.items.insert(id);
+            self.anchor.get_or_insert(id);
+        }
+        self.cursor = Some(last);
+        self.picked = !self.items.is_empty();
+        self.sweep = None;
+    }
+
     /// Pick `id`, or unpick it if it was picked. A selection that followed
     /// the cursor is not a pick, so the first pick starts from nothing;
     /// unpicking the last item gives the selection back to the cursor.
@@ -210,9 +237,9 @@ impl Selection {
         };
         let mut items = sweep.base.clone();
         if sweep.unset {
-            for id in range {
-                items.shift_remove(id);
-            }
+            // One pass: a shift per id swept was the whole selection's each.
+            let swept: std::collections::HashSet<&EntryId> = range.iter().collect();
+            items.retain(|id| !swept.contains(id));
         } else {
             items.extend(range.iter().copied());
         }
@@ -342,13 +369,20 @@ pub struct Opened {
 }
 
 /// The folders a pane opened in place, with their listings: a walk over
-/// them, shallowest first, never without their listing.
+/// them, shallowest first, never without their listing. Many opened among
+/// many kept (a deep tree), each is found by a map made for the walk
+/// rather than a search of them all.
 fn opened<'a>(
     kept: &'a [Kept],
     expanded: &'a [Opened],
 ) -> impl Iterator<Item = (&'a Opened, &'a Kept)> + 'a {
+    let by_location: Option<HashMap<&Location, &Kept>> =
+        (expanded.len() * kept.len() > 64).then(|| kept.iter().map(|k| (&k.location, k)).collect());
     expanded.iter().filter_map(move |o| {
-        let kept = kept.iter().find(|k| k.location == o.location)?;
+        let kept = match &by_location {
+            Some(map) => map.get(&o.location).copied(),
+            None => kept.iter().find(|k| k.location == o.location),
+        }?;
         Some((o, kept))
     })
 }
@@ -468,18 +502,52 @@ pub struct Pill {
 
 /// Whether the pane shows `entry`: its name holds the filter, and the
 /// narrowing keeps it.
-fn shown(filter: Option<&str>, narrowed: Option<&Narrowed>, entry: &Entry) -> bool {
-    filter.is_none_or(|f| name_holds(&entry.name, f)) && narrowed.is_none_or(|n| n.shows(entry))
+fn shown(filter: Option<&NameFilter>, narrowed: Option<&Narrowed>, entry: &Entry) -> bool {
+    filter.is_none_or(|f| f.holds(&entry.name)) && narrowed.is_none_or(|n| n.shows(entry))
 }
 
 /// Whether `name` holds `filter`: anywhere in it, case ignored unless the
-/// filter has a capital.
+/// filter has a capital. For many names, make a [`NameFilter`] once.
 pub fn name_holds(name: &OsStr, filter: &str) -> bool {
-    let name = name.to_string_lossy();
-    if filter.chars().any(char::is_uppercase) {
-        name.contains(filter)
-    } else {
-        name.to_lowercase().contains(&filter.to_lowercase())
+    NameFilter::new(filter).holds(name)
+}
+
+/// A name filter made once for the names it is asked about (every entry of
+/// a folder at each keystroke): its lowercase form, and whether it can be
+/// compared byte by byte. A name is then asked without an allocation,
+/// unless it is not ASCII and case is ignored.
+pub struct NameFilter<'a> {
+    text: &'a str,
+    /// The filter lowercased, when case is ignored (it has no capital).
+    lower: Option<String>,
+}
+
+impl<'a> NameFilter<'a> {
+    pub fn new(text: &'a str) -> Self {
+        NameFilter {
+            text,
+            lower: (!text.chars().any(char::is_uppercase)).then(|| text.to_lowercase()),
+        }
+    }
+
+    /// Whether `name` holds it: anywhere in it, case ignored unless it has
+    /// a capital.
+    pub fn holds(&self, name: &OsStr) -> bool {
+        let Some(lower) = &self.lower else {
+            return name.to_string_lossy().contains(self.text);
+        };
+        let bytes = name.as_encoded_bytes();
+        // ASCII both: compared byte by byte, case folded as it goes.
+        if lower.is_ascii() && bytes.is_ascii() {
+            let needle = lower.as_bytes();
+            return needle.is_empty()
+                || bytes
+                    .windows(needle.len())
+                    .any(|window| window.eq_ignore_ascii_case(needle));
+        }
+        name.to_string_lossy()
+            .to_lowercase()
+            .contains(lower.as_str())
     }
 }
 
@@ -872,7 +940,8 @@ impl Pane {
     /// yet included: it waits hidden, and nothing acts on what is hidden.
     fn retain_shown(&mut self) {
         let (listing, kept, expanded) = (&self.listing, &self.kept, &self.expanded);
-        let (filter, narrowed, sort) = (self.filter.as_deref(), self.narrowed.as_ref(), self.sort);
+        let filter = self.filter.as_deref().map(NameFilter::new);
+        let (narrowed, sort) = (self.narrowed.as_ref(), self.sort);
         let top = listing.shows(sort);
         let opened: Vec<_> = opened(kept, expanded)
             .map(|(_, k)| (&k.listing, k.listing.shows(sort)))
@@ -883,7 +952,7 @@ impl Pane {
                 .find_map(|(l, shows)| l.get(id).map(|e| (e, shows(id))));
             match found {
                 Some((e, true)) => {
-                    filter.is_none_or(|f| name_holds(&e.name, f))
+                    filter.as_ref().is_none_or(|f| f.holds(&e.name))
                         && narrowed.is_none_or(|n| n.shows(e))
                 }
                 _ => false,
@@ -1180,7 +1249,8 @@ impl Pane {
         {
             return Arc::clone(order);
         }
-        let (filter, narrowed) = (self.filter.as_deref(), self.narrowed.as_ref());
+        let filter = self.filter.as_deref().map(NameFilter::new);
+        let (filter, narrowed) = (filter.as_ref(), self.narrowed.as_ref());
         let order: Arc<[EntryId]> = all
             .iter()
             .copied()
@@ -1645,6 +1715,18 @@ mod tests {
         p.selection.set([2].map(|ino| EntryId { dev: 1, ino }));
         p.set_filter(Some("ÉTÉ"));
         assert!(p.selection.is_empty());
+    }
+
+    #[test]
+    fn a_name_filter_ignores_case_unless_it_has_a_capital() {
+        let holds = |name: &str, filter: &str| name_holds(OsStr::new(name), filter);
+        assert!(holds("README.md", "read"));
+        assert!(holds("it's a Report.txt", "s a rep"));
+        assert!(!holds("README.md", "Read"), "a capital: case counts");
+        assert!(holds("Été 2024.jpg", "été"), "beyond ASCII, folded too");
+        assert!(holds("KELVIN", "kel"));
+        assert!(holds("anything", ""));
+        assert!(!holds("short", "much longer"));
     }
 
     fn items(sel: &Selection) -> Vec<u64> {
