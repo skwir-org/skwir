@@ -158,6 +158,25 @@ pub struct StepContext {
     /// What failed of a write-out on the way, or of what waited for it:
     /// told at the plan's end, never by the step it fell on.
     failed: RefCell<Option<anyhow::Error>>,
+    /// The staging folder this plan's copies into a folder share
+    /// ([`Self::staging_for`]), by folder, and how many things were staged.
+    stagings: RefCell<HashMap<PathBuf, Rc<super::staging::Staging>>>,
+    staged: std::cell::Cell<u64>,
+    /// The devices the kernel would not clone or copy between, by the
+    /// pair: not asked again for each file (copied onto a stick, every
+    /// file is refused both).
+    refused: RefCell<HashSet<(u64, u64, Kernel)>>,
+    /// What a copy the kernel does not make goes through, made once.
+    buffer: RefCell<Vec<u8>>,
+}
+
+/// What a copy asks the kernel to do between two devices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum Kernel {
+    /// Share the blocks (`FICLONE`).
+    Clone,
+    /// Copy the bytes in the kernel (`copy_file_range`).
+    Range,
 }
 
 /// A plan's write-outs before its end are at least this far apart, and
@@ -182,7 +201,61 @@ impl StepContext {
             waiting: RefCell::default(),
             written_out: std::cell::Cell::new((None, Duration::ZERO)),
             failed: RefCell::default(),
+            stagings: RefCell::default(),
+            staged: std::cell::Cell::new(0),
+            refused: RefCell::default(),
+            buffer: RefCell::default(),
         }
+    }
+
+    /// The staging folder in `dest_dir` this plan's copies there share,
+    /// and a name for one more thing staged in it: made (and the folder
+    /// swept) the first time, removed with the plan's context. A folder
+    /// of each copy's own changed the destination six times more for
+    /// every file copied (made, locked, named, unlocked, removed).
+    ///
+    /// # Errors
+    /// When the folder cannot be made in `dest_dir`.
+    pub(super) fn staging_for(
+        &self,
+        dest_dir: &Path,
+    ) -> std::io::Result<(Rc<super::staging::Staging>, String)> {
+        self.staging_in(dest_dir);
+        let known = self.stagings.borrow().get(dest_dir).cloned();
+        let staging = if let Some(staging) = known {
+            staging
+        } else {
+            let made = Rc::new(super::staging::Staging::new(dest_dir)?);
+            self.stagings
+                .borrow_mut()
+                .insert(dest_dir.to_path_buf(), Rc::clone(&made));
+            made
+        };
+        let n = self.staged.get();
+        self.staged.set(n + 1);
+        Ok((staging, n.to_string()))
+    }
+
+    /// Whether the kernel refused `kernel` between `devices` before.
+    pub(super) fn kernel_refuses(&self, devices: Option<(u64, u64)>, kernel: Kernel) -> bool {
+        devices.is_some_and(|(from, to)| self.refused.borrow().contains(&(from, to, kernel)))
+    }
+
+    /// The kernel refused `kernel` between `devices`: not asked again in
+    /// this plan.
+    pub(super) fn kernel_refused(&self, devices: Option<(u64, u64)>, kernel: Kernel) {
+        if let Some((from, to)) = devices {
+            self.refused.borrow_mut().insert((from, to, kernel));
+        }
+    }
+
+    /// The buffer a copy the kernel does not make goes through.
+    pub(super) fn copy_buffer(&self) -> std::cell::RefMut<'_, Vec<u8>> {
+        let mut buffer = self.buffer.borrow_mut();
+        if buffer.is_empty() {
+            buffer.resize(1 << 20, 0);
+        }
+        buffer
     }
 
     /// How this plan's copies into `dest_dir`, a folder of a drive the user

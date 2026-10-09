@@ -827,6 +827,8 @@ fn a_copy_whose_companion_cannot_go_with_it_leaves_nothing() {
     // Its place taken after the check, as by another application.
     std::fs::write(root.join("dest/._it's a.txt"), b"other").unwrap();
     assert!(copy.apply(&ctx).is_err());
+    // The plan's staging folder goes with the plan.
+    drop(ctx);
     let left: Vec<_> = std::fs::read_dir(root.join("dest"))
         .unwrap()
         .map(|e| e.unwrap().file_name())
@@ -863,6 +865,88 @@ fn a_named_pipe_is_copied_as_a_pipe_without_blocking() {
             .unwrap()
             .file_type()
             .is_fifo()
+    );
+}
+
+/// A plan's copies into one folder are staged in one folder of the plan's,
+/// which goes with the plan: each copy placed out of it whole.
+#[test]
+fn copies_into_a_folder_share_one_staging_folder_that_goes_with_the_plan() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    std::fs::create_dir(root.join("dest")).unwrap();
+    let staging_folders = |dest: &Path| {
+        std::fs::read_dir(dest)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".bibli-copy-")
+            })
+            .count()
+    };
+    let ctx = StepContext::detached();
+    for name in ["a", "b's", "c d"] {
+        std::fs::write(root.join(name), name).unwrap();
+        Copy {
+            entry: EntryRef::from_path(root.join(name)).unwrap(),
+            dest_dir: root.join("dest"),
+            new_name: None,
+            preserve_attributes: true,
+        }
+        .apply(&ctx)
+        .unwrap();
+        assert_eq!(staging_folders(&root.join("dest")), 1, "one for the plan");
+    }
+    drop(ctx);
+    assert_eq!(staging_folders(&root.join("dest")), 0);
+    for name in ["a", "b's", "c d"] {
+        assert_eq!(
+            std::fs::read_to_string(root.join("dest").join(name)).unwrap(),
+            name
+        );
+    }
+}
+
+/// A file with holes is copied with its holes: its data where it was, its
+/// length, and no more blocks than it had.
+// Holes are asked of Linux's filesystems (SEEK_DATA).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_file_with_holes_keeps_them_when_copied() {
+    use std::os::unix::fs::{FileExt, MetadataExt};
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    std::fs::create_dir(root.join("dest")).unwrap();
+    let image = root.join("disk image.raw");
+    let file = std::fs::File::create(&image).unwrap();
+    let len = 64u64 << 20;
+    file.set_len(len).unwrap();
+    file.write_all_at(b"start", 0).unwrap();
+    file.write_all_at(b"middle", 32 << 20).unwrap();
+    file.sync_all().unwrap();
+    drop(file);
+    if std::fs::metadata(&image).unwrap().blocks() * 512 >= len {
+        eprintln!("this filesystem keeps no holes: nothing to compare");
+        return;
+    }
+    Copy {
+        entry: EntryRef::from_path(&image).unwrap(),
+        dest_dir: root.join("dest"),
+        new_name: None,
+        preserve_attributes: true,
+    }
+    .apply(&StepContext::detached())
+    .unwrap();
+    let copied = root.join("dest/disk image.raw");
+    let meta = std::fs::metadata(&copied).unwrap();
+    assert_eq!(meta.len(), len);
+    assert!(meta.blocks() * 512 < len / 2, "{} blocks", meta.blocks());
+    assert_eq!(
+        std::fs::read(&copied).unwrap(),
+        std::fs::read(&image).unwrap()
     );
 }
 

@@ -13,6 +13,7 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::Context;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use super::context::Kernel;
 use super::pace::Pace;
 use super::{
     Change, EntryRef, OpRegistry, Operation, ResolveError, StepContext, StepStatus, sys,
@@ -738,16 +739,19 @@ fn copy_staged(
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     ctx.add_total(tree_size(src, ctx)?);
-    ctx.staging_in(dest_dir);
-    let staging = super::staging::Staging::new(dest_dir)?;
-    let staged = staging.path().join("entry");
+    // The plan's staging folder there, shared by its copies, each under a
+    // name of its own.
+    let (staging, name) = ctx.staging_for(dest_dir)?;
+    let staged = staging.path().join(&name);
+    let mut staged_along = Vec::new();
     // What the copy put beside the staged entry (the companion that holds
     // its attributes, on a volume that refuses them) follows it out.
     let result = copy_recursive_with_attributes(src, &staged, preserve_attributes, pace, ctx)
         .and_then(|()| {
             let mut beside = along(ctx, &staged, target);
             for (n, a) in along_src.iter().filter(|a| !a.attributes).enumerate() {
-                let at = staging.path().join(format!("along-{n}"));
+                let at = staging.path().join(format!("{name}-along-{n}"));
+                staged_along.push(at.clone());
                 copy_recursive_with_attributes(&a.from, &at, true, pace, ctx)?;
                 beside.push(Along {
                     from: at,
@@ -763,19 +767,30 @@ fn copy_staged(
                 )
             })?;
             // The companions placed, or the copy taken back to be removed
-            // with the staging folder.
+            // from the staging folder.
             rename_along(&beside).inspect_err(|_| {
                 let _ = sys::rename_noreplace(target, &staged);
             })
         });
     if let Err(error) = result {
-        let left = staging.path().to_path_buf();
-        if let Err(cleanup) = staging.remove() {
-            return Err(error.context(format!(
-                "a part of the copy is left in “{}” ({})",
-                left.display(),
-                super::io_words(&cleanup)
-            )));
+        // What this copy staged goes; the folder stays for the plan's
+        // other copies, and goes with the plan.
+        let made = along(ctx, &staged, target)
+            .into_iter()
+            .map(|a| a.from)
+            .chain([staged])
+            .chain(staged_along);
+        for path in made {
+            if std::fs::symlink_metadata(&path).is_err() {
+                continue;
+            }
+            if let Err(cleanup) = super::staging::remove_tree(&path) {
+                return Err(error.context(format!(
+                    "a part of the copy is left in “{}” ({})",
+                    path.display(),
+                    super::io_words(&cleanup)
+                )));
+            }
         }
         return Err(error);
     }
@@ -835,10 +850,15 @@ fn copy_file(
         .create_new(true)
         .open(dst)?;
     let m = sf.metadata()?;
-    if sys::clone_file(&sf, &df) {
+    // What the kernel refused between these devices once, it is not asked
+    // for each file again.
+    let devices = sys::devices(&m, &df);
+    let cloned = !ctx.kernel_refuses(devices, Kernel::Clone) && sys::clone_file(&sf, &df);
+    if cloned {
         ctx.advance(m.len());
     } else {
-        copy_contents(&sf, &df, pace, ctx)
+        ctx.kernel_refused(devices, Kernel::Clone);
+        copy_contents(&sf, &df, (&m, devices), pace, ctx)
             .with_context(|| format!("“{}” could not be copied", display_name(src)))?;
     }
     // Set attributes before restoring a read-only source's permissions.
@@ -852,16 +872,22 @@ fn copy_file(
 
 /// Copy the bytes in chunks, checking for Cancel and reporting progress
 /// between them (as `pace` counts it): in the kernel where it can
-/// (`copy_file_range`), through a buffer where it cannot.
+/// (`copy_file_range`), through a buffer where it cannot. A file with
+/// holes keeps them, where the copy is left to the system: a disk image
+/// of 100 GB holding 5 copied 100.
 fn copy_contents(
     mut sf: &std::fs::File,
     mut df: &std::fs::File,
+    (meta, devices): (&std::fs::Metadata, Option<(u64, u64)>),
     pace: &Pace,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
+    if pace.is_at_once() && sys::is_sparse(meta) {
+        return copy_sparse(sf, df, meta.len(), devices, ctx);
+    }
     let mut writing = pace.writing(df);
     let mut copied = 0u64;
-    loop {
+    while !ctx.kernel_refuses(devices, Kernel::Range) {
         ctx.check_cancelled()?;
         match sys::copy_range(sf, df, COPY_CHUNK)? {
             Some(0) if copied > 0 => return writing.close(ctx),
@@ -872,11 +898,15 @@ fn copy_contents(
             // Some filesystems (procfs, a few FUSE) report 0 before the end,
             // so a first 0 is not trusted; others cannot copy in the kernel.
             // Either way the buffer takes over.
-            Some(0) | None => break,
+            Some(0) => break,
+            None => {
+                ctx.kernel_refused(devices, Kernel::Range);
+                break;
+            }
         }
     }
     // Both offsets advanced together, so the buffered copy resumes in place.
-    let mut buf = vec![0; 1 << 20];
+    let mut buf = ctx.copy_buffer();
     loop {
         ctx.check_cancelled()?;
         let n = match sf.read(&mut buf) {
@@ -888,6 +918,63 @@ fn copy_contents(
         df.write_all(&buf[..n])?;
         writing.wrote(n as u64, ctx)?;
     }
+}
+
+/// Copy a file's stretches of data, leaving its holes holes, then give
+/// the copy its length: its holes count as done.
+fn copy_sparse(
+    sf: &std::fs::File,
+    df: &std::fs::File,
+    len: u64,
+    devices: Option<(u64, u64)>,
+    ctx: &StepContext,
+) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    use std::os::unix::fs::FileExt;
+    let mut at = 0;
+    while let Some((data, hole)) = sys::next_data(sf, at)? {
+        ctx.advance(data.saturating_sub(at));
+        let mut from = data;
+        while from < hole {
+            ctx.check_cancelled()?;
+            let want = usize::try_from(hole - from)
+                .unwrap_or(usize::MAX)
+                .min(COPY_CHUNK);
+            let kernel = if ctx.kernel_refuses(devices, Kernel::Range) {
+                None
+            } else {
+                sys::copy_range_at(sf, df, from, want)?
+            };
+            let n = if let Some(n @ 1..) = kernel {
+                n
+            } else {
+                if kernel.is_none() {
+                    ctx.kernel_refused(devices, Kernel::Range);
+                }
+                #[cfg(unix)]
+                {
+                    let mut buf = ctx.copy_buffer();
+                    let take = want.min(buf.len());
+                    let n = sf.read_at(&mut buf[..take], from)?;
+                    if n == 0 {
+                        break;
+                    }
+                    df.write_all_at(&buf[..n], from)?;
+                    n
+                }
+                #[cfg(not(unix))]
+                {
+                    anyhow::bail!("a file with holes is copied on Unix alone")
+                }
+            };
+            from += n as u64;
+            ctx.advance(n as u64);
+        }
+        at = hole.max(from);
+    }
+    ctx.advance(len.saturating_sub(at));
+    df.set_len(len)?;
+    Ok(())
 }
 
 fn copy_recursive_with_attributes(
@@ -949,9 +1036,21 @@ fn copy_recursive_with_attributes(
 fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Result<()> {
     let own = user_attributes(src)?;
     let rules = ctx.companions();
-    let aside: Vec<Along> = along(ctx, src, dst)
+    // The companion holding attributes alone (`._x`): asked for every file
+    // and folder of a tree copied, looking for every other rule's too
+    // stat-ed four names for each, a scan of the folder each on a FAT
+    // card.
+    let aside: Vec<Along> = rules
+        .existing_holding_attributes(src)
         .into_iter()
-        .filter(|a| a.attributes)
+        .filter_map(|found| {
+            Some(Along {
+                to: rules.place(&found, dst)?,
+                attributes: true,
+                from: found.path,
+            })
+        })
+        .filter(|a| a.from != a.to)
         .collect();
     let beside = if aside.is_empty() {
         Vec::new()

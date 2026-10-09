@@ -235,6 +235,9 @@ struct Lane {
     closed: bool,
 }
 
+/// How often steps' events may wake the window: as often as bytes do.
+const STEP_WAKE: Duration = Duration::from_millis(100);
+
 /// The executor. One per app.
 pub struct Executor {
     scheduler: Scheduler,
@@ -245,6 +248,8 @@ pub struct Executor {
     tx: Sender<ExecEvent>,
     rx: Receiver<ExecEvent>,
     waker: Mutex<Option<crate::location::Waker>>,
+    /// When a step's event last woke the window (`emit_step`).
+    step_woken: Mutex<Option<Instant>>,
     /// Plans being applied, so a surface can pause or cancel one by id and
     /// read its byte progress.
     running: Mutex<Vec<Active>>,
@@ -299,6 +304,7 @@ impl Executor {
             tx,
             rx,
             waker: Mutex::new(None),
+            step_woken: Mutex::new(None),
             running: Mutex::new(Vec::new()),
             observers: Contributions::default(),
             companions: Mutex::new(Arc::default()),
@@ -362,6 +368,22 @@ impl Executor {
     fn wake(&self) {
         if let Some(w) = self.waker.lock().as_ref() {
             w();
+        }
+    }
+
+    /// A step's event, sent at once, the window woken for it at most
+    /// every `STEP_WAKE`: a plan of many small steps (a hundred thousand
+    /// files put in the trash) woke it, and it drew, for each one. The
+    /// events not woken for are read at the next wake, the plan's end's
+    /// at the latest.
+    fn emit_step(&self, ev: ExecEvent) {
+        let _ = self.tx.send(ev);
+        let now = Instant::now();
+        let mut last = self.step_woken.lock();
+        if last.is_none_or(|t| now.duration_since(t) >= STEP_WAKE) {
+            *last = Some(now);
+            drop(last);
+            self.wake();
         }
     }
 
@@ -880,7 +902,7 @@ impl Executor {
                 held.push(change.clone());
             }
             meter.step_ended();
-            self.emit(ExecEvent::Step(Progress {
+            self.emit_step(ExecEvent::Step(Progress {
                 plan: plan.id,
                 step: i,
                 total,

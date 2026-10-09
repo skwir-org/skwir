@@ -1,12 +1,14 @@
 //! A copy's staging folder, and what a copy that ended without cleaning
 //! up left.
 //!
-//! A copy, and a move across drives, is made in a folder of its own in its
-//! destination (`.bibli-copy-…`) and renamed into place once whole
+//! A copy, and a move across drives, is made in a folder in its
+//! destination (`.bibli-copy-…`, one a plan's copies there share,
+//! `StepContext::staging_for`) and renamed into place once whole
 //! (`builtin::copy_staged`), so a partial copy never looks finished. Any
 //! step that makes something in a destination does the same through
 //! `StepContext::stage` (a plugin's: an archive extracted).
-//! Stopped or failed, it removes that folder; a process that ends mid-copy
+//! Stopped or failed, a copy removes what it made there, and the plan the
+//! folder when it ends; a process that ends mid-copy
 //! (a crash, a kill, a logout) cannot. So the folder holds a `lock` its
 //! copy keeps locked while it runs, and a later bibli removes the folders
 //! whose lock nobody holds ([`sweep`]): a copy into a folder sweeps it

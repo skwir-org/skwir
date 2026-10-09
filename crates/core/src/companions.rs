@@ -253,11 +253,25 @@ impl Companions {
     /// The companions of the file at `path` that are there. Blocking: it
     /// looks at the disk.
     pub fn existing(&self, path: &Path) -> Vec<Found> {
+        self.existing_where(path, |_| true)
+    }
+
+    /// The companions of the file at `path` that hold its attributes (a
+    /// Mac's `._x`) and are there: the others are not looked for.
+    /// Blocking.
+    pub fn existing_holding_attributes(&self, path: &Path) -> Vec<Found> {
+        self.existing_where(path, |r| r.holds_attributes())
+    }
+
+    fn existing_where(&self, path: &Path, wanted: impl Fn(&dyn Companion) -> bool) -> Vec<Found> {
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
             return Vec::new();
         };
         let mut out = Vec::new();
         for (rule, r) in self.rules().iter().enumerate() {
+            if !wanted(r.as_ref()) {
+                continue;
+            }
             for (index, relative) in r.of(name).into_iter().enumerate() {
                 let at = dir.join(relative);
                 let known = out.iter().any(|f: &Found| f.path == at);

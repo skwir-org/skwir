@@ -146,6 +146,85 @@ pub(super) fn copy_whole(
     }
 }
 
+/// The devices of a file read (`src`, its metadata) and of one written:
+/// what the kernel refusing to copy between them is remembered by.
+pub(super) fn devices(src: &std::fs::Metadata, dst: &File) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some((src.dev(), dst.metadata().ok()?.dev()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (src, dst);
+        None
+    }
+}
+
+/// Whether the file holds holes: fewer blocks than its length needs.
+pub(super) fn is_sparse(meta: &std::fs::Metadata) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta.blocks().saturating_mul(512) < meta.len()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = meta;
+        false
+    }
+}
+
+/// The next stretch of data in `file` at or after `from`, up to the hole
+/// after it: `None` once only a hole is left.
+///
+/// # Errors
+/// When the file cannot be asked.
+pub(super) fn next_data(file: &File, from: u64) -> io::Result<Option<(u64, u64)>> {
+    #[cfg(target_os = "linux")]
+    {
+        use rustix::fs::{SeekFrom, seek};
+        let data = match seek(file, SeekFrom::Data(from)) {
+            Ok(data) => data,
+            Err(rustix::io::Errno::NXIO) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let hole = seek(file, SeekFrom::Hole(data))?;
+        Ok(Some((data, hole)))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (file, from);
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
+}
+
+/// [`copy_range`] at `at` in both files, leaving their offsets alone.
+pub(super) fn copy_range_at(
+    src: &File,
+    dst: &File,
+    at: u64,
+    len: usize,
+) -> io::Result<Option<usize>> {
+    #[cfg(target_os = "linux")]
+    {
+        use rustix::io::Errno;
+        let (mut from, mut to) = (at, at);
+        match rustix::fs::copy_file_range(src, Some(&mut from), dst, Some(&mut to), len) {
+            Ok(n) => Ok(Some(n)),
+            Err(Errno::XDEV | Errno::NOSYS | Errno::INVAL | Errno::OPNOTSUPP | Errno::PERM) => {
+                Ok(None)
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (src, dst, at, len);
+        Ok(None)
+    }
+}
+
 /// Copy up to `len` bytes from `src` to `dst` at their offsets, in the
 /// kernel: `Some(n)` copied (0 is not trusted as the end, some
 /// filesystems say it early), `None` where the kernel cannot, and a

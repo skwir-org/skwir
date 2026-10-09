@@ -131,6 +131,11 @@ impl Pace {
         Self { through: None }
     }
 
+    /// Whether what is written is left to the system, not written through.
+    pub(super) fn is_at_once(&self) -> bool {
+        self.through.is_none()
+    }
+
     /// Written through to the volume `drive` is on.
     pub(super) fn through(drive: Dir) -> Self {
         let handed = if sys::written_by_a_program(&drive) {
