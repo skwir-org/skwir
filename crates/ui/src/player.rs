@@ -185,6 +185,20 @@ impl Drop for Pinned {
 }
 
 impl Pinned {
+    /// Show `cover`, the one it replaces given back (`PlayerState::retired`).
+    fn set_cover(&mut self, cover: Option<Arc<RenderImage>>, retired: &mut Vec<Arc<RenderImage>>) {
+        retired.extend(std::mem::replace(&mut self.cover, cover));
+    }
+
+    /// Show `frame`, the one it replaces given back.
+    fn set_frame(
+        &mut self,
+        frame: Option<(Arc<RenderImage>, u32, u32)>,
+        retired: &mut Vec<Arc<RenderImage>>,
+    ) {
+        retired.extend(std::mem::replace(&mut self.frame, frame).map(|(image, ..)| image));
+    }
+
     /// The track `delta` steps away in the order played: the shuffle's
     /// while shuffling, otherwise the queue's own.
     pub fn step_target(&self, delta: i64, mode: Continue) -> Option<usize> {
@@ -272,6 +286,12 @@ pub struct PlayerState {
     /// Whether the preview was playing when last looked at: it is starting to
     /// play that engages, so a Stop still being carried out does not undo itself.
     was_playing: bool,
+    /// Pictures the dock drew and will not draw again (a cover, a film's
+    /// frame, a pin let go of): given back to the atlas at the next sync,
+    /// where a window is at hand (`drop_image` runs in update code, never
+    /// while drawing). A film's frames would otherwise stay in it, a
+    /// texture each, for as long as it plays.
+    retired: Vec<Arc<RenderImage>>,
 }
 
 impl Default for PlayerState {
@@ -283,6 +303,7 @@ impl Default for PlayerState {
             cover: None,
             cover_tx,
             cover_rx,
+            retired: Vec::new(),
             pinned: None,
             generation: 0,
             tx,
@@ -312,7 +333,12 @@ impl Shell {
         self.player.generation += 1;
         // Full screen was asked for the film pinned, not whatever follows.
         self.player.fullscreen_wanted = false;
-        std::mem::replace(&mut self.player.pinned, pin)
+        let mut old = std::mem::replace(&mut self.player.pinned, pin);
+        if let Some(old) = &mut old {
+            old.set_cover(None, &mut self.player.retired);
+            old.set_frame(None, &mut self.player.retired);
+        }
+        old
     }
 
     /// Whether the panel shows the pinned session itself.
@@ -681,6 +707,9 @@ impl Shell {
     /// Once per wake: tracks that finished opening, the pin's state, what
     /// others asked for, and the record of what plays.
     pub fn sync_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for image in self.player.retired.drain(..) {
+            cx.drop_image(image, Some(window));
+        }
         while let Ok((track, file, image)) = self.player.cover_rx.try_recv() {
             if let Some((wanted, cover)) = &mut self.player.cover
                 && *wanted == track
@@ -691,7 +720,10 @@ impl Shell {
                 && pinned.path == track
                 && !pinned.video
             {
-                pinned.cover = crate::thumbs::to_render_image(&image);
+                pinned.set_cover(
+                    crate::thumbs::to_render_image(&image),
+                    &mut self.player.retired,
+                );
                 cx.notify();
             }
         }
@@ -731,8 +763,8 @@ impl Shell {
                         ..Playback::default()
                     };
                     // Another track: its own cover comes when found.
-                    pinned.cover = None;
-                    pinned.frame = None;
+                    pinned.set_cover(None, &mut self.player.retired);
+                    pinned.set_frame(None, &mut self.player.retired);
                 }
                 Ok(None) => {
                     opened.lifetime.cancel();
@@ -783,7 +815,7 @@ impl Shell {
                 }
                 if let Some(path) = update.advanced {
                     pinned.advance(&path);
-                    pinned.frame = None;
+                    pinned.set_frame(None, &mut self.player.retired);
                     cx.notify();
                 }
                 // A film's frames go to the dock while the panel shows
@@ -793,7 +825,7 @@ impl Shell {
                     .filter(|_| pinned.video)
                     .and_then(crate::media::frame_image)
                 {
-                    pinned.frame = Some(frame);
+                    pinned.set_frame(Some(frame), &mut self.player.retired);
                     cx.notify();
                 }
                 failed = update.error;
