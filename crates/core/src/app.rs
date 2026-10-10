@@ -147,6 +147,9 @@ pub struct App {
     /// (an agent, a script): they wait for it, which takes them when it
     /// next wakes (`take_front_requests`).
     front: parking_lot::Mutex<Vec<Invocation>>,
+    /// Whether the window is up and has shown what it starts on
+    /// (`window_shown`), with what waits for it.
+    shown: (parking_lot::Mutex<bool>, parking_lot::Condvar),
     /// The tabs closed last, to reopen (`tab.reopen`).
     pub(crate) closed_tabs: parking_lot::Mutex<crate::tabs::Closed>,
     /// Self reference so background work can keep a `Weak<App>`.
@@ -195,6 +198,7 @@ impl App {
             questions: parking_lot::Mutex::new(Vec::new()),
             answers: parking_lot::Mutex::new(HashMap::new()),
             front: parking_lot::Mutex::new(Vec::new()),
+            shown: (parking_lot::Mutex::new(false), parking_lot::Condvar::new()),
             scheduler,
             commands: CommandRegistry::default(),
             ops: OpRegistry::default(),
@@ -801,6 +805,24 @@ impl App {
     /// The window's commands asked for since the last call, oldest first.
     pub fn take_front_requests(&self) -> Vec<Invocation> {
         std::mem::take(&mut *self.front.lock())
+    }
+
+    /// The window is up and shows what it starts on (the location it was
+    /// given, the tabs it had): what a script or an agent asks of it from
+    /// now on comes after, never undone by the window's own start.
+    pub fn set_window_shown(&self) {
+        *self.shown.0.lock() = true;
+        self.shown.1.notify_all();
+    }
+
+    /// Wait at most `timeout` for the window to be shown
+    /// (`set_window_shown`); whether it is.
+    pub fn wait_window_shown(&self, timeout: std::time::Duration) -> bool {
+        let mut shown = self.shown.0.lock();
+        if !*shown {
+            self.shown.1.wait_for(&mut shown, timeout);
+        }
+        *shown
     }
 
     /// Offer a plan for the user to review. Never applies anything; wakes the UI.

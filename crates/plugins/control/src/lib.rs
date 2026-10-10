@@ -143,7 +143,7 @@ impl Plugin for Control {
             tracing::warn!("no channel for agents and scripts on this system");
             return;
         };
-        if let Some(running) = start(app.weak(), address, shared) {
+        if let Some(running) = start(app.weak(), address, shared, true) {
             *self.running.lock() = Some(running);
         }
     }
@@ -155,12 +155,32 @@ impl Plugin for Control {
 }
 
 /// Listen at `address` for `app`, on a thread with a runtime of its own,
-/// until the returned handle is stopped.
-fn start(app: Weak<App>, address: channel::Address, shared: Shared) -> Option<Running> {
+/// until the returned handle is stopped. With `after_window`, once the
+/// window is shown (`App::wait_window_shown`): a command that comes before
+/// would race the window's own start, which shows the location it was
+/// given over a search a script asked for meanwhile.
+fn start(
+    app: Weak<App>,
+    address: channel::Address,
+    shared: Shared,
+    after_window: bool,
+) -> Option<Running> {
     let (stop, stopped) = tokio::sync::watch::channel(());
     let thread = std::thread::Builder::new()
         .name("bibli-control".into())
         .spawn(move || {
+            if after_window {
+                loop {
+                    let Some(app) = app.upgrade() else { return };
+                    if app.wait_window_shown(std::time::Duration::from_millis(200)) {
+                        break;
+                    }
+                    // Turned off, or bibli ends, before the window was shown.
+                    if stopped.has_changed().is_err() {
+                        return;
+                    }
+                }
+            }
             let runtime = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -197,7 +217,12 @@ impl Drop for Server {
 
 /// Listen at `address` for `app` until the returned server is dropped.
 pub fn serve(app: &Arc<App>, address: channel::Address) -> Server {
-    Server(start(Arc::downgrade(app), address, Shared::default()))
+    Server(start(
+        Arc::downgrade(app),
+        address,
+        Shared::default(),
+        false,
+    ))
 }
 
 async fn listen(

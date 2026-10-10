@@ -618,6 +618,9 @@ impl Shell {
             shell.set_status(format!("{e:#}"), true, cx);
         }
         shell.restore_session(initial_given, window, cx);
+        // Scripts and agents reach the window from now on: what they ask
+        // comes after what it starts on.
+        shell.app.set_window_shown();
         shell
     }
 

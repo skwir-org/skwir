@@ -34,6 +34,11 @@ fn turned_on_the_window_listens_and_turned_off_it_leaves_nothing() {
     assert!(!address.0.exists(), "off until the user turns it on");
 
     assert!(app.plugins.set_enabled(ID, true, &app));
+    // Not before the window shows what it starts on: a script's command
+    // would race the window's own start.
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!address.0.exists(), "listening before the window is shown");
+    app.set_window_shown();
     let deadline = Instant::now() + Duration::from_secs(10);
     while !address.0.exists() {
         assert!(Instant::now() < deadline, "listening");
@@ -86,6 +91,7 @@ fn turned_on_where_it_cannot_listen_it_says_why() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+    app.set_window_shown();
     app.plugins.add(Arc::new(Control::default()), &app);
     assert!(app.plugins.set_enabled(ID, true, &app));
     let deadline = Instant::now() + Duration::from_secs(10);
