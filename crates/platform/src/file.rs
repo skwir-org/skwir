@@ -76,3 +76,21 @@ pub fn rewrite<T>(
     staged.persist(&file)?;
     Ok(Some(value))
 }
+
+/// A private folder for what a helper hands bibli and is read at once (a
+/// video's frames, a document's pages): in memory through `/dev/shm` where
+/// that exists and is writable, else the ordinary temporary folder, which
+/// may be on a disk.
+///
+/// # Errors
+/// When no folder can be made.
+pub fn memory_dir(prefix: &str) -> std::io::Result<tempfile::TempDir> {
+    #[cfg(target_os = "linux")]
+    if let Ok(dir) = tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir_in("/dev/shm")
+    {
+        return Ok(dir);
+    }
+    tempfile::Builder::new().prefix(prefix).tempdir()
+}

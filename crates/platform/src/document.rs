@@ -141,7 +141,7 @@ pub fn open_book(
         Engine::Mupdf,
         source.clone(),
         source,
-        tempfile::tempdir()?,
+        crate::file::memory_dir("bibli-pages-")?,
         setup,
         lifetime,
     )
@@ -180,7 +180,7 @@ pub fn first_page(
             engine,
             pdf.to_owned(),
             pdf.to_owned(),
-            tempfile::tempdir()?,
+            crate::file::memory_dir("bibli-pages-")?,
             setup,
             cancel.child(),
         )?
@@ -433,8 +433,13 @@ impl Manager {
                 let bytes = u64::from(width) * u64::from(height) * 4;
                 // Read as a file, no more than the page: the worker reads
                 // an untrusted document, and what it leaves could be a pipe.
-                let rgba =
-                    crate::file::read_regular(&self.launch.scratch.join(PIXELS_FILE), bytes)?;
+                let pixels = self.launch.scratch.join(PIXELS_FILE);
+                let rgba = crate::file::read_regular(&pixels, bytes)?;
+                // Read: emptied, so a page kept in memory (`memory_dir`) is
+                // not held twice until the next.
+                if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&pixels) {
+                    let _ = file.set_len(0);
+                }
                 anyhow::ensure!(rgba.len() as u64 == bytes, "invalid document bitmap length");
                 Ok(Response::Page(DocumentPage {
                     width,

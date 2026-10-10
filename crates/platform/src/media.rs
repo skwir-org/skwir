@@ -399,17 +399,7 @@ fn manage(
 /// `/dev/shm` where that exists and is writable, otherwise the ordinary
 /// temporary directory, which may be disk-backed.
 fn frame_slot_dir() -> anyhow::Result<tempfile::TempDir> {
-    #[cfg(target_os = "linux")]
-    if let Ok(dir) = tempfile::Builder::new()
-        .prefix("bibli-video-")
-        .tempdir_in("/dev/shm")
-    {
-        return Ok(dir);
-    }
-    tempfile::Builder::new()
-        .prefix("bibli-video-")
-        .tempdir()
-        .context("create video frame slot")
+    crate::file::memory_dir("bibli-video-").context("create video frame slot")
 }
 
 #[cfg(all(test, target_os = "linux"))]
