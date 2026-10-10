@@ -429,6 +429,63 @@ fn trashing_or_deleting_a_name_gone_spares_the_files_other_name() {
     }
 }
 
+/// A copy keeps the links among what it copies, as `cp -a` does
+/// (ADR-049): two names of one file in a folder copied are two names of
+/// one copy, two names copied as two items of a plan too, and a name
+/// copied alone is a file of its own.
+#[cfg(unix)]
+#[test]
+fn a_copy_keeps_the_links_among_what_it_copies() {
+    use std::os::unix::fs::MetadataExt;
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    std::fs::create_dir_all(root.join("album")).unwrap();
+    std::fs::write(root.join("album/a.jpg"), b"one picture").unwrap();
+    std::fs::hard_link(root.join("album/a.jpg"), root.join("album/b.jpg")).unwrap();
+    let app = app(tmp.path());
+    let copy = |path: &Path, dest: &str| -> Box<dyn Operation> {
+        std::fs::create_dir_all(root.join(dest)).unwrap();
+        Box::new(Copy {
+            entry: EntryRef::from_path(path).unwrap(),
+            dest_dir: root.join(dest),
+            new_name: None,
+            preserve_attributes: true,
+        })
+    };
+    let ino = |path: &str| std::fs::metadata(root.join(path)).unwrap().ino();
+    let links = |path: &str| std::fs::metadata(root.join(path)).unwrap().nlink();
+
+    apply(
+        &app,
+        &Plan::with_steps("copy", vec![copy(&root.join("album"), "folder")]),
+    );
+    assert_eq!(ino("folder/album/a.jpg"), ino("folder/album/b.jpg"));
+    assert_ne!(ino("folder/album/a.jpg"), ino("album/a.jpg"), "a copy");
+    assert_eq!(links("folder/album/a.jpg"), 2);
+
+    apply(
+        &app,
+        &Plan::with_steps(
+            "copy",
+            vec![
+                copy(&root.join("album/a.jpg"), "items"),
+                copy(&root.join("album/b.jpg"), "items"),
+            ],
+        ),
+    );
+    assert_eq!(ino("items/a.jpg"), ino("items/b.jpg"));
+    assert_eq!(
+        std::fs::read(root.join("items/b.jpg")).unwrap(),
+        b"one picture"
+    );
+
+    apply(
+        &app,
+        &Plan::with_steps("copy", vec![copy(&root.join("album/a.jpg"), "alone")]),
+    );
+    assert_eq!(links("alone/a.jpg"), 1, "a copy of its own");
+}
+
 /// A step that cancels or pauses its own plan while it runs, so the test
 /// needs no timing.
 #[derive(Debug, Clone)]

@@ -3,8 +3,8 @@
 Status: accepted, 2026-10-10. Revises ADR-000's principle 6 ("entries
 have stable identity: device + inode") and ADR-036's first point: the
 device and the inode are the identity of a file, not of a row. Points 1
-to 4 and 7 are built (4 but where a deletion asks); the others are the
-plan in Consequences.
+to 5 and 7 are built (4 but where a deletion asks); point 6 is the plan
+in Consequences.
 
 ## Context
 
@@ -149,5 +149,12 @@ sizes mean rather than estimate extents, a filesystem tool's work.
   `x.jpg` and its link `x.bin` share one; what a deletion frees, said in
   its question (Delete for good, Empty Trash), which needs each file's
   names counted off the window's thread; two folders selected in Usage
-  that share a file each count it (a row keeps no table of its links);
-  points 5 and 6.
+  that share a file each count it (a row keeps no table of its links).
+  Then point 5: a copy, and a move to another filesystem, link a later
+  name of a file to the copy the plan made of it (`StepContext::
+  link_copied`, its table forgetting a file once all its names are
+  copied), and count its bytes once; a link refused (another volume, one
+  that keeps none) copies the data. Tested by
+  `a_copy_keeps_the_links_among_what_it_copies`. On Windows `std` says
+  nothing of a file's names: there each name is copied, as before.
+  Left: point 6.

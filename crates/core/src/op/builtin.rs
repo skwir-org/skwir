@@ -768,6 +768,7 @@ fn copy_staged(
                     display_name(dest_dir)
                 )
             })?;
+            ctx.placed(&staged, target);
             // The companions placed, or the copy taken back to be removed
             // from the staging folder.
             rename_along(&beside).inspect_err(|_| {
@@ -799,12 +800,17 @@ fn copy_staged(
     Ok(())
 }
 
-/// Bytes of regular files under `path`, so progress has a total.
+/// Bytes of regular files under `path`, so progress has a total: a file
+/// of several names once in the plan, as it is copied once.
 fn tree_size(path: &Path, ctx: &StepContext) -> anyhow::Result<u64> {
     ctx.check_cancelled()?;
     let m = std::fs::symlink_metadata(path)?;
     if !m.is_dir() {
-        return Ok(if m.is_file() { m.len() } else { 0 });
+        return Ok(if m.is_file() && ctx.sized_once(&m) {
+            m.len()
+        } else {
+            0
+        });
     }
     let mut total = 0;
     for e in std::fs::read_dir(path)? {
@@ -1016,7 +1022,12 @@ fn copy_recursive_with_attributes(
         }
         std::fs::set_permissions(dst, m.permissions())?;
     } else if kind.is_file() {
-        copy_file(src, dst, preserve_attributes, pace, ctx)?;
+        // A later name of a file of several names this plan copied is a
+        // link to that copy (ADR-049).
+        if !ctx.link_copied(&m, dst) {
+            copy_file(src, dst, preserve_attributes, pace, ctx)?;
+            ctx.copied(&m, dst);
+        }
     } else if sys::is_fifo(kind) {
         // A named pipe has no content to copy; reading one would wait for a
         // writer forever. Make a new pipe, as `cp -R` does.

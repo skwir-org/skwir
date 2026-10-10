@@ -176,6 +176,44 @@ pub struct StepContext {
     /// what the check read is what is there. Each step starts without
     /// ([`Self::step_begins`]); a dry run never applies.
     checked: RefCell<Option<Box<dyn std::any::Any>>>,
+    /// The copies this plan made of files with several names, by the file
+    /// copied: a later name of one is linked to its copy (ADR-049).
+    copies: RefCell<HashMap<crate::FileId, Copied>>,
+    /// The files of several names whose bytes this plan counted already:
+    /// copied once, they are counted once.
+    sized: RefCell<HashSet<crate::FileId>>,
+}
+
+/// A copy a plan made of a file with several names: where it is now, the
+/// file it is, and how many of the file's names are still to be copied,
+/// so that it is forgotten once they all are.
+struct Copied {
+    at: PathBuf,
+    copy: crate::FileId,
+    left: u64,
+}
+
+/// The file `meta` is of, and how many names it has, when it has several:
+/// Unix says, `std` on Windows does not (there each name is copied).
+fn several_names(meta: &std::fs::Metadata) -> Option<(crate::FileId, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (meta.nlink() > 1).then(|| {
+            (
+                crate::FileId {
+                    dev: meta.dev(),
+                    ino: meta.ino(),
+                },
+                meta.nlink(),
+            )
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        None
+    }
 }
 
 /// What a copy asks the kernel to do between two devices.
@@ -216,7 +254,75 @@ impl StepContext {
             #[cfg(target_os = "linux")]
             trashes: super::put_trash::Trashes::default(),
             checked: RefCell::default(),
+            copies: RefCell::default(),
+            sized: RefCell::default(),
         }
+    }
+
+    /// Make `dst` a link to the copy this plan made already of the file
+    /// `meta` is of, when it has several names (ADR-049): a copy keeps the
+    /// links among what it copies, as `cp -a` does. False when there is
+    /// none, or no link can be made (to another volume, on one that keeps
+    /// none): the file is copied then.
+    pub(super) fn link_copied(&self, meta: &std::fs::Metadata, dst: &Path) -> bool {
+        let Some((file, _)) = several_names(meta) else {
+            return false;
+        };
+        let mut made = self.copies.borrow_mut();
+        let Some(copy) = made.get_mut(&file) else {
+            return false;
+        };
+        // Still the copy made, not a file put in its place since.
+        if crate::fs::stat::id_of(&copy.at) != Some(copy.copy)
+            || std::fs::hard_link(&copy.at, dst).is_err()
+        {
+            return false;
+        }
+        copy.left = copy.left.saturating_sub(1);
+        if copy.left == 0 {
+            made.remove(&file);
+        }
+        true
+    }
+
+    /// The file `meta` is of was copied to `dst`: a later name of it in
+    /// this plan is linked to that copy ([`Self::link_copied`]).
+    pub(super) fn copied(&self, meta: &std::fs::Metadata, dst: &Path) {
+        let Some((file, names)) = several_names(meta) else {
+            return;
+        };
+        let Some(copy) = crate::fs::stat::id_of(dst) else {
+            return;
+        };
+        self.copies.borrow_mut().insert(
+            file,
+            Copied {
+                at: dst.to_path_buf(),
+                copy,
+                left: names - 1,
+            },
+        );
+    }
+
+    /// What was staged at `staged` is at `target` now: the copies made
+    /// under it are found there.
+    pub(super) fn placed(&self, staged: &Path, target: &Path) {
+        for copied in self.copies.borrow_mut().values_mut() {
+            if let Ok(rest) = copied.at.strip_prefix(staged) {
+                // The file staged itself, or one in the folder staged.
+                copied.at = if rest.as_os_str().is_empty() {
+                    target.to_path_buf()
+                } else {
+                    target.join(rest)
+                };
+            }
+        }
+    }
+
+    /// Whether the bytes of the file `meta` is of are to be counted: a
+    /// file of several names once in this plan, as it is copied once.
+    pub(super) fn sized_once(&self, meta: &std::fs::Metadata) -> bool {
+        several_names(meta).is_none_or(|(file, _)| self.sized.borrow_mut().insert(file))
     }
 
     /// Keep what this step's check read, for its apply to take

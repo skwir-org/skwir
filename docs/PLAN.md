@@ -2483,8 +2483,9 @@ Steps, each with what was found and what is left:
    name; the trash keeps an item per record), each with its test, and
    so is the first: a row per name (`FileId` and `EntryId`, a rename
    sent as one), and space counted per file (the footer, the selection,
-   Usage, which says what deleting frees). Left before the release:
-   copies that keep hard links, a free-space check.
+   Usage, which says what deleting frees), and copies keep the hard
+   links among what they carry. Left before the release: a free-space
+   check.
 5. **What users keep from 0.1 on**: settings keys and values, the
    window's session, saved searches, pins, the cache's layout (versioned,
    or thrown away whole), so that later versions read them. Done
