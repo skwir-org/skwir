@@ -454,19 +454,23 @@ impl OpenLocation for RecentLocation {
         if wanted.is_empty() {
             return;
         }
-        let tx = self.tx.clone();
-        let metadata = Arc::clone(&self.ctx.metadata);
-        let paths = Arc::clone(&self.paths);
-        let cancel = self.ctx.cancel.child();
-        self.ctx
-            .scheduler
-            .spawn(priority, "recent.stat", cancel.clone(), move || {
-                let gone = hydrate_paths(&wanted, &metadata, &tx, &cancel);
-                let mut paths = paths.lock();
-                for id in gone {
-                    paths.remove(&id);
-                }
-            });
+        // A job for each slice, side by side on the workers.
+        for wanted in wanted.chunks(bibli_core::fs::HYDRATE_JOB) {
+            let wanted = wanted.to_vec();
+            let tx = self.tx.clone();
+            let metadata = Arc::clone(&self.ctx.metadata);
+            let paths = Arc::clone(&self.paths);
+            let cancel = self.ctx.cancel.child();
+            self.ctx
+                .scheduler
+                .spawn(priority, "recent.stat", cancel.clone(), move || {
+                    let gone = hydrate_paths(&wanted, &metadata, &tx, &cancel);
+                    let mut paths = paths.lock();
+                    for id in gone {
+                        paths.remove(&id);
+                    }
+                });
+        }
     }
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {
         self.paths.lock().get(&id).cloned()

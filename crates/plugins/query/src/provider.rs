@@ -869,15 +869,18 @@ impl OpenLocation for QueryLocation {
         if ids.is_empty() {
             return;
         }
-        let s = Arc::clone(&self.shared);
-        let ids = ids.to_vec();
-        let cancel = s.lifetime.child();
-        self.shared
-            .ctx
-            .scheduler
-            .spawn(priority, "query.stat", cancel.clone(), move || {
-                s.hydrate(&ids, &cancel);
-            });
+        // A job for each slice, side by side on the workers.
+        for ids in ids.chunks(bibli_core::fs::HYDRATE_JOB) {
+            let s = Arc::clone(&self.shared);
+            let ids = ids.to_vec();
+            let cancel = s.lifetime.child();
+            self.shared
+                .ctx
+                .scheduler
+                .spawn(priority, "query.stat", cancel.clone(), move || {
+                    s.hydrate(&ids, &cancel);
+                });
+        }
     }
 
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {

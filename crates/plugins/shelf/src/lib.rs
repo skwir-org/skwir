@@ -386,31 +386,35 @@ impl OpenLocation for ShelfLocation {
         if items.is_empty() {
             return;
         }
-        let sink = self.sink.clone();
-        let metadata = Arc::clone(&self.ctx.metadata);
-        let state = Arc::clone(&self.state);
-        let cancel = self.ctx.cancel.child();
-        self.ctx
-            .scheduler
-            .spawn(priority, "shelf.stat", cancel.clone(), move || {
-                let gone = hydrate_paths(&items, &metadata, &sink, &cancel);
-                if gone.is_empty() {
-                    return;
-                }
-                // Gone from where it was looked for, unless a change moved
-                // it meanwhile: then the next hydration looks there.
-                let mut s = state.lock();
-                let vanished: Vec<EntryId> = gone
-                    .into_iter()
-                    .filter(|id| {
-                        let asked = items.iter().find(|(i, _)| i == id).map(|(_, p)| p);
-                        s.items
-                            .iter()
-                            .any(|i| i.id == *id && Some(&i.path) == asked)
-                    })
-                    .collect();
-                s.forget(&vanished);
-            });
+        // A job for each slice, side by side on the workers.
+        for items in items.chunks(bibli_core::fs::HYDRATE_JOB) {
+            let items = items.to_vec();
+            let sink = self.sink.clone();
+            let metadata = Arc::clone(&self.ctx.metadata);
+            let state = Arc::clone(&self.state);
+            let cancel = self.ctx.cancel.child();
+            self.ctx
+                .scheduler
+                .spawn(priority, "shelf.stat", cancel.clone(), move || {
+                    let gone = hydrate_paths(&items, &metadata, &sink, &cancel);
+                    if gone.is_empty() {
+                        return;
+                    }
+                    // Gone from where it was looked for, unless a change
+                    // moved it meanwhile: then the next hydration looks there.
+                    let mut s = state.lock();
+                    let vanished: Vec<EntryId> = gone
+                        .into_iter()
+                        .filter(|id| {
+                            let asked = items.iter().find(|(i, _)| i == id).map(|(_, p)| p);
+                            s.items
+                                .iter()
+                                .any(|i| i.id == *id && Some(&i.path) == asked)
+                        })
+                        .collect();
+                    s.forget(&vanished);
+                });
+        }
     }
 
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {

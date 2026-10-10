@@ -1074,17 +1074,19 @@ impl OpenLocation for Open {
         if items.is_empty() {
             return;
         }
-        let sink = self.sink.clone();
-        let metadata = Arc::clone(&self.ctx.metadata);
-        let cancel = self.ctx.cancel.child();
-        self.ctx
-            .scheduler
-            .spawn(priority, "tags.location.stat", cancel.clone(), move || {
-                let gone = bibli_core::fs::hydrate_paths(&items, &metadata, &sink, &cancel);
-                if !gone.is_empty() {
-                    sink.send(ListingEvent::Removed(gone));
-                }
-            });
+        // A job for each slice, side by side on the workers; what is gone
+        // is sent as removed by the hydration itself.
+        for items in items.chunks(bibli_core::fs::HYDRATE_JOB) {
+            let items = items.to_vec();
+            let sink = self.sink.clone();
+            let metadata = Arc::clone(&self.ctx.metadata);
+            let cancel = self.ctx.cancel.child();
+            self.ctx
+                .scheduler
+                .spawn(priority, "tags.location.stat", cancel.clone(), move || {
+                    bibli_core::fs::hydrate_paths(&items, &metadata, &sink, &cancel);
+                });
+        }
     }
 
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {

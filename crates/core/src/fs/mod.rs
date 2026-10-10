@@ -12,7 +12,7 @@ pub(crate) mod win;
 pub mod xattr;
 
 pub use dir::Dir;
-pub use hydrate::{hydrate_path, hydrate_paths};
+pub use hydrate::{HYDRATE_JOB, hydrate_path, hydrate_paths};
 pub use path_provider::PathProvider;
 pub use stat::{Statter, content_path, stat_entry, stat_path};
 pub use watch::Settled;

@@ -27,12 +27,22 @@ pub fn hydrate_path(path: &Path, metadata: &MetadataProviders) -> Option<Entry> 
     Some(entry)
 }
 
+/// What one hydration job of a location of many folders takes at most
+/// (`OpenLocation::hydrate`): a request for more is several jobs, run side
+/// by side on the workers, where one job stat-ed them all in turn.
+pub const HYDRATE_JOB: usize = 512;
+
+/// Entries found are sent at least this many at a time as folders are
+/// read, so the window applies them in slices as they come rather than in
+/// one event it cannot split.
+const SENT_EVERY: usize = 256;
+
 /// Stat `items` and run the metadata providers over them, one folder at a
-/// time so each folder is opened once and providers get a batch. Sends one
-/// `Updated` for what was found (under the ids given, which the location
-/// listed them by) and one `Removed` for what is gone, and returns the gone
-/// ids so the caller can forget their paths. Worker-only: this is I/O.
-/// Nothing is sent once `cancel` fires.
+/// time so each folder is opened once and providers get a batch. Sends
+/// `Updated` for what was found as it goes (under the ids given, which the
+/// location listed them by) and one `Removed` for what is gone, and
+/// returns the gone ids so the caller can forget their paths. Worker-only:
+/// this is I/O. Nothing more is sent once `cancel` fires.
 pub fn hydrate_paths(
     items: &[(EntryId, PathBuf)],
     metadata: &MetadataProviders,
@@ -71,6 +81,9 @@ pub fn hydrate_paths(
         }
         metadata.fill(dir, &mut found);
         updated.append(&mut found);
+        if updated.len() >= SENT_EVERY && !cancel.is_cancelled() {
+            sink.send(ListingEvent::Updated(std::mem::take(&mut updated)));
+        }
     }
     if cancel.is_cancelled() {
         return Vec::new();
