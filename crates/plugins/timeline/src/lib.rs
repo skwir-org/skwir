@@ -44,6 +44,8 @@ const LAST_SECOND: u64 = 253_402_300_799;
 /// (day, week, month, year), and entries outside the busiest span of years
 /// are counted as `outside`.
 pub const MAX_BARS: usize = 400;
+/// The entries of a pane read under one hold of the workspace's lock.
+const SLICE: usize = 1024;
 
 /// Bucket width.
 #[derive(
@@ -402,29 +404,44 @@ impl TimelinePlugin {
         let mut unknown = 0;
         let mut days = Days::default();
         let withheld = app.withheld(pane);
-        {
-            let ws = app.workspace.read();
-            let p = ws
-                .pane(pane)
-                .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-            // What the pane shows (`Pane::order`): hidden files and
-            // companions as it shows them, filtered by name, narrowed.
-            for e in p
-                .order()
-                .iter()
-                .filter(|id| !withheld.contains(id))
-                .filter_map(|id| p.entry(*id))
+        // What the pane shows (`Pane::order`): hidden files and companions
+        // as it shows them, filtered by name, narrowed.
+        let order = app
+            .workspace
+            .read()
+            .pane(pane)
+            .ok_or_else(|| anyhow::anyhow!("no such pane"))?
+            .order();
+        // Read a slice at a time, each under a hold of the lock of its
+        // own: the window's thread applies what the core sends meanwhile.
+        // The days are told after the slice lets the lock go.
+        let mut dated: Vec<(SystemTime, u64)> = Vec::new();
+        for slice in order.chunks(SLICE) {
+            dated.clear();
             {
-                match e.metadata.value(keys::MODIFIED).and_then(Value::as_time) {
-                    Some(t) => days.add(
-                        t,
-                        e.metadata
-                            .value(keys::SIZE)
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0),
-                    ),
-                    None => unknown += 1,
+                let ws = app.workspace.read();
+                let p = ws
+                    .pane(pane)
+                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                for e in slice
+                    .iter()
+                    .filter(|id| !withheld.contains(id))
+                    .filter_map(|id| p.entry(*id))
+                {
+                    match e.metadata.value(keys::MODIFIED).and_then(Value::as_time) {
+                        Some(t) => dated.push((
+                            t,
+                            e.metadata
+                                .value(keys::SIZE)
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0),
+                        )),
+                        None => unknown += 1,
+                    }
                 }
+            }
+            for &(t, bytes) in &dated {
+                days.add(t, bytes);
             }
         }
         let mut state = self.state.lock();

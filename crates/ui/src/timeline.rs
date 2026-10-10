@@ -1,5 +1,8 @@
 //! Timeline strip: a histogram of modification times under the file area.
+//! The plugin counts it (`timeline.histogram`), on a worker: a count reads
+//! every file the pane shows, which the window's thread does not wait for.
 
+use bibli_core::command::{Invocation, Outcome};
 use bibli_core::workspace::PaneId;
 use gpui::{AnyElement, Context, div, prelude::*, px};
 use serde::Deserialize;
@@ -56,13 +59,17 @@ pub struct TimelineState {
     pub histogram: Option<Histogram>,
     pub hover: Option<usize>,
     computed_for: Option<(PaneId, u64, usize, bool)>,
-    /// The pane's order it counted (`Pane::order`): a filter or a
-    /// narrowing changes it, not the listing's version.
-    counted: Option<std::sync::Arc<[bibli_core::EntryId]>>,
+    /// Which files it counted: the listing, its names, and what the pane
+    /// shows of them (hidden files, the filter and the narrowing, the
+    /// folders opened in place). Sorted again, they are the same files.
+    counted: Option<(u64, u64, bool, u64, u64)>,
     /// When it last counted: while the dates come in batches, at most
     /// every `RECOUNT`, the last batch counted by a wake of its own.
     counted_at: Option<std::time::Instant>,
     recount: Option<gpui::Task<()>>,
+    /// The count a worker is doing: the plugin's answer, and whether it
+    /// was asked of the subtree.
+    asked: crate::latest::Latest<(bool, Result<Option<serde_json::Value>, String>)>,
 }
 
 /// How often the bars are counted again while dates come in.
@@ -129,13 +136,28 @@ impl Shell {
         if !self.timeline.open {
             return;
         }
+        if let Some((subtree, answer)) = self.timeline.asked.take() {
+            self.take_histogram(subtree, answer, cx);
+        }
         // What the bars count: the files' dates and names, never every
         // batch of other metadata.
-        let version = {
+        let Some((version, shown, lifetime)) = ({
             let ws = self.app.workspace.read();
-            ws.pane(self.pane).map_or(0, |p| {
-                p.listing.modified_version() ^ p.listing.names_version().rotate_left(32)
+            ws.pane(self.pane).map(|p| {
+                (
+                    p.listing.modified_version() ^ p.listing.names_version().rotate_left(32),
+                    (
+                        p.listing.id(),
+                        p.listing.names_version(),
+                        p.sort.show_hidden,
+                        p.filter_version(),
+                        p.tree_version(),
+                    ),
+                    p.location_lifetime(),
+                )
             })
+        }) else {
+            return;
         };
         let key = (
             self.pane,
@@ -143,12 +165,7 @@ impl Shell {
             self.timeline.bucket,
             self.timeline.subtree,
         );
-        let shown = std::sync::Arc::clone(&self.ui().list.sorted);
-        let other_files = self
-            .timeline
-            .counted
-            .as_ref()
-            .is_none_or(|counted| !std::sync::Arc::ptr_eq(counted, &shown));
+        let other_files = self.timeline.counted != Some(shown);
         // Dates arriving batch after batch: counted at most every
         // `RECOUNT`, and once more after the last.
         let dates_only = self
@@ -178,33 +195,36 @@ impl Shell {
         if self.timeline.computed_for != Some(key) || other_files {
             self.timeline.counted_at = Some(std::time::Instant::now());
             self.timeline.counted = Some(shown);
-            // Entries without metadata need it before they count.
-            self.hydrate_for_timeline();
-            let args = serde_json::json!({
-                "bucket": BUCKETS[self.timeline.bucket],
-                "subtree": self.timeline.subtree,
-                "pane": self.pane,
-            });
-            match self.query_value("timeline.histogram", args, cx) {
-                Some(v) if self.timeline.subtree => {
-                    // The walk runs in the plugin; `timeline.status` follows it.
-                    match serde_json::from_value::<SubtreeStatus>(v) {
-                        Ok(status) => {
-                            self.timeline.scanning = status.scanning;
-                            self.timeline.histogram = status.histogram;
-                        }
-                        Err(e) => tracing::warn!("timeline.histogram: {e}"),
-                    }
-                }
-                Some(v) => {
-                    self.timeline.scanning = false;
-                    match serde_json::from_value::<Histogram>(v) {
-                        Ok(h) => self.timeline.histogram = Some(h),
-                        Err(e) => tracing::warn!("timeline.histogram: {e}"),
-                    }
-                }
-                None => self.timeline.histogram = None,
+            // Entries without metadata need it before they count; dates
+            // coming in are the answers to what was asked already.
+            if !dates_only {
+                self.hydrate_for_timeline();
             }
+            let subtree = self.timeline.subtree;
+            let ask = Invocation::with_args(
+                "timeline.histogram",
+                &serde_json::json!({
+                    "bucket": BUCKETS[self.timeline.bucket],
+                    "subtree": subtree,
+                    "pane": self.pane,
+                }),
+            );
+            let app = std::sync::Arc::clone(&self.app);
+            let worker = std::sync::Arc::clone(&self.app);
+            self.timeline.asked.ask(
+                &app,
+                &lifetime,
+                bibli_core::scheduler::Priority::Visible,
+                "timeline-count",
+                move |_| {
+                    let answer = match worker.dispatch(&ask) {
+                        Ok(Outcome::Value(v)) => Ok(Some(v)),
+                        Ok(_) => Ok(None),
+                        Err(e) => Err(format!("{e:#}")),
+                    };
+                    (subtree, answer)
+                },
+            );
             self.timeline.computed_for = Some(key);
         }
         if self.timeline.subtree
@@ -221,6 +241,42 @@ impl Shell {
                 self.timeline.histogram = Some(h);
             }
         }
+    }
+}
+
+impl Shell {
+    /// What the plugin counted, once a worker has it.
+    fn take_histogram(
+        &mut self,
+        subtree: bool,
+        answer: Result<Option<serde_json::Value>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        match answer {
+            Ok(Some(v)) if subtree => {
+                // The walk runs in the plugin; `timeline.status` follows it.
+                match serde_json::from_value::<SubtreeStatus>(v) {
+                    Ok(status) => {
+                        self.timeline.scanning = status.scanning;
+                        self.timeline.histogram = status.histogram;
+                    }
+                    Err(e) => tracing::warn!("timeline.histogram: {e}"),
+                }
+            }
+            Ok(Some(v)) => {
+                self.timeline.scanning = false;
+                match serde_json::from_value::<Histogram>(v) {
+                    Ok(h) => self.timeline.histogram = Some(h),
+                    Err(e) => tracing::warn!("timeline.histogram: {e}"),
+                }
+            }
+            Ok(None) => self.timeline.histogram = None,
+            Err(e) => {
+                self.timeline.histogram = None;
+                self.set_status(e, true, cx);
+            }
+        }
+        cx.notify();
     }
 }
 
