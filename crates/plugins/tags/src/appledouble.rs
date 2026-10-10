@@ -591,6 +591,11 @@ impl NotesStore for AppleDoubleStore {
             return Ok(Wrote::Unchanged);
         }
         write(file.path, &ad)?;
+        if let Some(aside) = sidecar(file.path)
+            && let (Some(dir), Some(name)) = (aside.parent(), aside.file_name())
+        {
+            self.aside.wrote(dir, name);
+        }
         Ok(Wrote::Written)
     }
 }

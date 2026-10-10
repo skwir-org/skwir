@@ -134,6 +134,23 @@ impl FolderNames {
         });
         names
     }
+
+    /// The store that asks wrote the file `name` in `dir` (a sidecar made
+    /// or replaced): the names kept of `dir` take it, and the folder's new
+    /// time, rather than the folder being read again for the next file.
+    /// Tagging a folder of raw files and their sidecars read it again for
+    /// each, the folder's time moved by each sidecar written.
+    pub fn wrote(&self, dir: &Path, name: &OsStr) {
+        let modified = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
+        let mut folders = self.folders.lock();
+        if let Some(seen) = folders.iter_mut().find(|s| s.dir == dir) {
+            if let Some(kept) = (self.keep)(name) {
+                Arc::make_mut(&mut seen.names).insert(kept);
+            }
+            seen.modified = modified;
+            seen.at = std::time::Instant::now();
+        }
+    }
 }
 
 /// Whether a folder, or one above it, holds a marker folder (`.ts`:
@@ -334,6 +351,19 @@ impl Companions {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// A file the store wrote joins the names it keeps of its folder.
+    #[test]
+    fn a_file_written_joins_the_names_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.xmp"), b"").unwrap();
+        let names = FolderNames::new(|name| Some(name.to_owned()));
+        assert_eq!(names.of(dir.path()).len(), 1);
+        std::fs::write(dir.path().join("b's.xmp"), b"").unwrap();
+        names.wrote(dir.path(), OsStr::new("b's.xmp"));
+        let kept = names.of(dir.path());
+        assert!(kept.contains(OsStr::new("b's.xmp")) && kept.contains(OsStr::new("a.xmp")));
+    }
 
     /// `._x`, and `x.note` in a `.notes` folder.
     pub(crate) struct Rules;

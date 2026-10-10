@@ -295,6 +295,9 @@ impl NotesStore for TagSpacesStore {
         }
         let text = serde_json::to_vec_pretty(&after).map_err(std::io::Error::other)?;
         raw::replace(&path, &text)?;
+        if let (Some(folder), Some(name)) = (path.parent(), path.file_name()) {
+            self.names.wrote(folder, name);
+        }
         Ok(Wrote::Written)
     }
 }

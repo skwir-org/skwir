@@ -224,6 +224,9 @@ impl NotesStore for XmpStore {
             None => return Ok(Wrote::NotHere),
         };
         raw::replace(&path, text.as_bytes())?;
+        if let Some(name) = path.file_name() {
+            self.names.wrote(dir, name);
+        }
         Ok(Wrote::Written)
     }
 }
