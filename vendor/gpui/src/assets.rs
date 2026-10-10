@@ -67,6 +67,15 @@ impl RenderImage {
         }
     }
 
+    /// Take back the frames this image was made of, their pixels with
+    /// them: a caller that makes one image after another of the same size
+    /// (a video's frames) can reuse their buffers rather than allocating
+    /// each anew. The image's textures are the caller's to drop first
+    /// ([`crate::App::drop_image`]).
+    pub fn into_frames(self) -> SmallVec<[Frame; 1]> {
+        self.data
+    }
+
     /// Convert this image into a byte slice.
     pub fn as_bytes(&self, frame_index: usize) -> Option<&[u8]> {
         self.data

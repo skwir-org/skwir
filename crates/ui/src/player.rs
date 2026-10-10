@@ -171,6 +171,8 @@ pub struct Pinned {
     pub cover: Option<Arc<RenderImage>>,
     /// The film's last frame, with its size.
     pub frame: Option<(Arc<RenderImage>, u32, u32)>,
+    /// The frames it replaced, until their buffers go back to the session.
+    recycled: crate::media::Recycled,
     /// Where the seek bar's knob is being dragged to, in seconds.
     pub scrub: Option<f64>,
     /// The track's file icon, in the place of a cover it has none of: the
@@ -190,13 +192,17 @@ impl Pinned {
         retired.extend(std::mem::replace(&mut self.cover, cover));
     }
 
-    /// Show `frame`, the one it replaces given back.
+    /// Show `frame`, the one it replaces given back: its texture, and its
+    /// buffer to the session once nothing draws it.
     fn set_frame(
         &mut self,
         frame: Option<(Arc<RenderImage>, u32, u32)>,
         retired: &mut Vec<Arc<RenderImage>>,
     ) {
-        retired.extend(std::mem::replace(&mut self.frame, frame).map(|(image, ..)| image));
+        if let Some((image, ..)) = std::mem::replace(&mut self.frame, frame) {
+            self.recycled.keep(Arc::clone(&image));
+            retired.push(image);
+        }
     }
 
     /// The track `delta` steps away in the order played: the shuffle's
@@ -431,6 +437,7 @@ impl Shell {
                 .filter(|_| !video)
                 .map(|(image, ..)| Arc::clone(image)),
             frame: picture.filter(|_| video),
+            recycled: crate::media::Recycled::default(),
             scrub: None,
             icon: None,
         };
@@ -832,6 +839,7 @@ impl Shell {
                     follow = Some(pinned.path.clone());
                 }
             } else {
+                pinned.recycled.give_back(&*pinned.session);
                 let update = pinned.session.take_update();
                 if let Some(state) = update.state {
                     finished = state.ended() && !pinned.state.ended();

@@ -196,6 +196,10 @@ pub trait MediaSession: Send + Sync {
     }
     /// Take the latest update, discarding intermediate frames on the producer.
     fn take_update(&self) -> Update;
+    /// A frame's buffer (`Frame::bgra`) the window no longer draws, for the
+    /// next frame to be read into: a session that reads frames keeps a few,
+    /// one that does not lets it go.
+    fn recycle(&self, _bgra: Vec<u8>) {}
 }
 
 #[derive(Debug, Serialize, Deserialize)]

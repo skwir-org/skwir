@@ -288,6 +288,14 @@ that path.
   family that does not exist and comparing: on a minimal system with
   only Liberation or Inter, that panicked before the window opened.
 
+- `0020-render-image-into-frames.patch`: `RenderImage::into_frames` gives
+  back the frames an image was made of, their pixel buffers with them. A
+  video's frames are images of one size made thirty times a second: the
+  window hands each frame's buffer back to its player once nothing draws
+  it any more (its texture dropped first), and the next frame is read into
+  it, where a fresh 8 MB at 1080p was mapped and zeroed by the kernel for
+  each.
+
 ## Regenerating a patch
 
     G=$(ls -d ~/.cargo/registry/src/*/gpui-0.2.2)

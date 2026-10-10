@@ -65,6 +65,47 @@ pub struct MediaState {
     /// every click.
     flash: Option<(u64, bool)>,
     flashes: u64,
+    /// The frames shown and replaced, until their buffers go back to the
+    /// session.
+    recycled: Recycled,
+}
+
+/// A film's frames the window drew and let go of, kept until nothing
+/// draws them any more, then given back to their session for its next
+/// frames (`MediaSession::recycle`, `RenderImage::into_frames`): a fresh
+/// buffer for each, 8 MB at 1080p thirty times a second, was mapped and
+/// zeroed by the kernel anew. A few are kept: one still held elsewhere
+/// after them is let go of.
+#[derive(Default)]
+pub(crate) struct Recycled(Vec<Arc<RenderImage>>);
+
+impl Recycled {
+    const KEPT: usize = 4;
+
+    /// Keep `frame`, its texture dropped by the caller, until it can be
+    /// given back.
+    pub(crate) fn keep(&mut self, frame: Arc<RenderImage>) {
+        if self.0.len() >= Self::KEPT {
+            self.0.remove(0);
+        }
+        self.0.push(frame);
+    }
+
+    /// Give `session` the buffers of the frames nothing holds any more.
+    pub(crate) fn give_back(&mut self, session: &dyn MediaSession) {
+        let mut held = Vec::new();
+        for frame in self.0.drain(..) {
+            match Arc::try_unwrap(frame) {
+                Ok(image) => {
+                    for frame in image.into_frames() {
+                        session.recycle(frame.into_buffer().into_raw());
+                    }
+                }
+                Err(frame) => held.push(frame),
+            }
+        }
+        self.0 = held;
+    }
 }
 
 impl Drop for MediaState {
@@ -303,9 +344,13 @@ impl Shell {
     }
 
     pub fn sync_media(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(session) = &self.preview.media.session else {
+        let MediaState {
+            session, recycled, ..
+        } = &mut self.preview.media;
+        let Some(session) = session else {
             return;
         };
+        recycled.give_back(&**session);
         let update = session.take_update();
         if let Some(path) = update.advanced {
             self.preview.media.advanced = Some(path);
@@ -360,6 +405,16 @@ impl Shell {
             }
         }
         if let Some((image, width, height)) = frame.and_then(frame_image) {
+            // The frame it replaces goes back to the session once nothing
+            // draws it.
+            if let Some(PreviewContent::Image {
+                image: shown,
+                detail: Some(bibli_core::preview::PreviewInfo::Video { .. }),
+                ..
+            }) = &self.preview.content
+            {
+                self.preview.media.recycled.keep(Arc::clone(shown));
+            }
             let state = &self.preview.media.state;
             self.replace_preview_content(
                 Some(PreviewContent::Image {

@@ -44,8 +44,28 @@ struct Shared {
     update: Mutex<Update>,
     generation: AtomicU64,
     wake: Waker,
+    /// Buffers of frames the window drew and gave back
+    /// (`MediaSession::recycle`): the next frames are read into them, not
+    /// into memory mapped and zeroed anew. Gone with the session.
+    spares: Mutex<Vec<Vec<u8>>>,
 }
+
+/// Frame buffers a session keeps for its next frames: the one drawn, the
+/// one taken, the one read.
+const SPARES: usize = 2;
+
 impl Shared {
+    fn recycle(&self, bgra: Vec<u8>) {
+        let mut spares = self.spares.lock();
+        if bgra.capacity() > 0 && spares.len() < SPARES {
+            spares.push(bgra);
+        }
+    }
+
+    fn spare(&self) -> Option<Vec<u8>> {
+        self.spares.lock().pop()
+    }
+
     fn state(&self, generation: u64, state: bibli_core::media::Playback) {
         let mut update = self.update.lock();
         if generation != self.generation.load(Ordering::Acquire) {
@@ -144,6 +164,9 @@ impl MediaSession for WorkerSession {
     fn take_update(&self) -> Update {
         std::mem::take(&mut *self.shared.update.lock())
     }
+    fn recycle(&self, bgra: Vec<u8>) {
+        self.shared.recycle(bgra);
+    }
 }
 impl WorkerSession {
     /// Open a player on `path`, with how the worker should treat the sound:
@@ -183,6 +206,7 @@ impl WorkerSession {
             update: Mutex::new(Update::default()),
             generation: AtomicU64::new(0),
             wake,
+            spares: Mutex::default(),
         });
         let (commands, rx) = crossbeam_channel::bounded(32);
         let (startup, ready) = crossbeam_channel::bounded(1);
@@ -277,11 +301,18 @@ fn manage(
     startup: &crossbeam_channel::Sender<anyhow::Result<bool>>,
 ) -> anyhow::Result<()> {
     let scratch = frame_slot_dir()?;
-    let mut pixels = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(scratch.path().join(PIXELS_FILE))?;
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    // Windows writes a file's changed pages out a second apart; one marked
+    // temporary stays in memory while there is room, so the frames
+    // written over it thirty times a second never reach the disk.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_ATTRIBUTE_TEMPORARY: u32 = 0x100;
+        options.attributes(FILE_ATTRIBUTE_TEMPORARY);
+    }
+    let mut pixels = options.open(scratch.path().join(PIXELS_FILE))?;
     pixels.set_len(u64::try_from(bibli_core::media::frame_bytes(
         bibli_core::media::MAX_SIDE,
         bibli_core::media::MAX_SIDE,
@@ -368,8 +399,14 @@ fn manage(
                 height,
                 ..
             } => {
-                let mut bgra = std::mem::take(&mut spare);
                 let bytes = bibli_core::media::frame_bytes(width, height)?;
+                let mut bgra = std::mem::take(&mut spare);
+                // A buffer the window gave back, when this one is too small.
+                if bgra.capacity() < bytes
+                    && let Some(given) = shared.spare()
+                {
+                    bgra = given;
+                }
                 pixels.seek(SeekFrom::Start(0))?;
                 // Read into room set aside, never zeroed first: the window
                 // keeps each frame it takes, so most come into a new buffer,
@@ -594,6 +631,7 @@ mod tests {
             update: Mutex::new(Update::default()),
             generation: AtomicU64::new(0),
             wake: Arc::new(|| {}),
+            spares: Mutex::default(),
         };
         let frame = |value: u8| Frame {
             width: 1,
@@ -614,6 +652,16 @@ mod tests {
             vec![2; 4]
         );
         assert!(shared.frame(0, frame(4)).is_empty(), "taken by the UI");
+        // What the window drew and gave back is kept for the next frames,
+        // a few, and only buffers that hold something.
+        shared.recycle(Vec::new());
+        assert!(shared.spare().is_none(), "an empty buffer is no room");
+        for value in 5..9 {
+            shared.recycle(vec![value; 4]);
+        }
+        assert_eq!(shared.spare(), Some(vec![6; 4]));
+        assert_eq!(shared.spare(), Some(vec![5; 4]));
+        assert!(shared.spare().is_none(), "at most SPARES kept");
     }
     #[test]
     fn latest_frame_is_bounded_and_controls_reject_stale_frames() {
@@ -621,6 +669,7 @@ mod tests {
             update: Mutex::new(Update::default()),
             generation: AtomicU64::new(0),
             wake: Arc::new(|| {}),
+            spares: Mutex::default(),
         });
         let (commands, rx) = crossbeam_channel::bounded(1);
         let session = WorkerSession {

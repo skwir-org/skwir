@@ -86,7 +86,10 @@ pub const DESKTOP_FILE: u64 = 4 << 20;
 /// A private folder for what a helper hands bibli and is read at once (a
 /// video's frames, a document's pages): in memory through `/dev/shm` where
 /// that exists and is writable, else the ordinary temporary folder, which
-/// may be on a disk.
+/// may be on a disk. There a file rewritten in place (the video's one
+/// frame slot) stays in the page cache, its pages written out at most at
+/// the system's pace, not at each frame; Windows is asked to keep the
+/// video's slot in memory (`FILE_ATTRIBUTE_TEMPORARY`).
 ///
 /// # Errors
 /// When no folder can be made.
