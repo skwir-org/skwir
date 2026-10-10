@@ -111,6 +111,49 @@ pub trait ThumbnailProvider: Send + Sync {
     fn store_failure(&self, _req: &ThumbRequest) {}
 }
 
+/// What a provider answers, as its error, when it cannot make the
+/// thumbnail now without keeping a worker waiting: a program it runs only
+/// so many at once (`ImageMagick`), all running. The request is set
+/// aside, the worker goes on with others, and it is taken again, from
+/// that provider on, once `Busy` says it can run.
+pub struct Busy {
+    when_free: Mutex<Option<WhenFree>>,
+}
+
+/// Given what to call once the provider can run.
+type WhenFree = Box<dyn FnOnce(Box<dyn FnOnce() + Send>) + Send>;
+
+impl Busy {
+    /// `when_free` is handed what to call once the provider can run: at
+    /// once if it can already.
+    pub fn new(when_free: impl FnOnce(Box<dyn FnOnce() + Send>) + Send + 'static) -> Self {
+        Busy {
+            when_free: Mutex::new(Some(Box::new(when_free))),
+        }
+    }
+
+    fn when_free(&self, then: Box<dyn FnOnce() + Send>) {
+        match self.when_free.lock().take() {
+            Some(when_free) => when_free(then),
+            None => then(),
+        }
+    }
+}
+
+impl std::fmt::Debug for Busy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Busy")
+    }
+}
+
+impl std::fmt::Display for Busy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("waiting for a turn")
+    }
+}
+
+impl std::error::Error for Busy {}
+
 /// What the UI gets back synchronously.
 #[derive(Clone, Debug)]
 pub enum ThumbState {
@@ -132,6 +175,19 @@ struct Queued {
     /// viewport has moved on and it is dropped before it runs.
     frame: u64,
     seq: u64,
+    /// Where it goes on from once set aside ([`Busy`]): the provider that
+    /// was busy, and whether one that makes thumbnails tried before it.
+    /// What ran before is not asked again.
+    resume: Option<Resume>,
+}
+
+#[derive(Clone, Copy)]
+struct Resume {
+    provider: usize,
+    /// The providers' version it was set aside under: another set starts
+    /// over.
+    providers: u64,
+    tried: bool,
 }
 
 struct State {
@@ -139,6 +195,9 @@ struct State {
     unavailable: HashSet<Key>,
     /// Pending requests; workers take the best priority, most recent first.
     queue: Vec<Queued>,
+    /// Requests set aside while their provider is busy ([`Busy`]), queued
+    /// again once it can run.
+    parked: Vec<Queued>,
     /// Running requests: the frame they were last asked for, and the token
     /// that stops their provider once nobody asks any more.
     in_flight: HashMap<Key, (u64, CancelToken)>,
@@ -185,6 +244,7 @@ impl Thumbnails {
                 lru: ByteLru::new(16 << 20),
                 unavailable: HashSet::new(),
                 queue: Vec::new(),
+                parked: Vec::new(),
                 in_flight: HashMap::new(),
                 providers: 0,
                 frame: 0,
@@ -298,7 +358,13 @@ impl Thumbnails {
             let frame = s.frame;
             if let Some((asked, _)) = s.in_flight.get_mut(&key) {
                 *asked = frame;
-                if let Some(q) = s.queue.iter_mut().find(|q| q.key == key) {
+                let state = &mut *s;
+                if let Some(q) = state
+                    .queue
+                    .iter_mut()
+                    .chain(state.parked.iter_mut())
+                    .find(|q| q.key == key)
+                {
                     q.frame = frame;
                     q.priority = q.priority.min(priority);
                 }
@@ -329,6 +395,7 @@ impl Thumbnails {
             priority,
             frame,
             seq,
+            resume: None,
         });
         drop(s);
         self.spawn_worker(priority);
@@ -365,11 +432,26 @@ impl Thumbnails {
         self.scheduler.workers().saturating_sub(1).max(1)
     }
 
+    /// Queue again what was set aside for a busy provider, which can run
+    /// now, and have workers take it.
+    fn unpark(self: &Arc<Self>) {
+        let priorities: Vec<Priority> = {
+            let mut s = self.state.lock();
+            let parked = std::mem::take(&mut s.parked);
+            let priorities = parked.iter().map(|q| q.priority).collect();
+            s.queue.extend(parked);
+            priorities
+        };
+        for priority in priorities {
+            self.spawn_worker(priority);
+        }
+    }
+
     /// Take the best live request (visible first, most recent first) and run
     /// the providers on it. False once nothing is queued: the worker stops
     /// taking requests.
     fn work_one(self: &Arc<Self>) -> bool {
-        let (key, req, cancel, generation) = {
+        let (key, req, cancel, generation, asked, resume) = {
             let mut s = self.state.lock();
             // The requests no frame asked for lately, or cancelled, go in
             // one pass: dropped one at a time, each after a look for the
@@ -406,7 +488,15 @@ impl Thumbnails {
             let Some(cancel) = s.in_flight.get(&q.key).map(|(_, c)| c.clone()) else {
                 return true;
             };
-            (q.key, q.req, cancel, s.providers)
+            let resume = q.resume.filter(|r| r.providers == s.providers);
+            (
+                q.key,
+                q.req,
+                cancel,
+                s.providers,
+                (q.priority, q.frame, q.seq),
+                resume,
+            )
         };
         let providers: Vec<Arc<dyn ThumbnailProvider>> = self
             .providers
@@ -417,30 +507,62 @@ impl Thumbnails {
         let mut produced: Option<(usize, Image)> = None;
         // Remembered as one nothing could draw, as it is and with the tools
         // there are: no provider is run again for it.
-        let failed_before = providers.iter().any(|p| p.failed_before(&req));
+        let failed_before = resume.is_none() && providers.iter().any(|p| p.failed_before(&req));
         // Whether anything that makes thumbnails tried: a file only a cache
         // takes (a text file) failed nothing worth remembering.
-        let mut tried = false;
-        for (i, p) in providers.iter().enumerate() {
+        let mut tried = resume.is_some_and(|r| r.tried);
+        let mut busy = None;
+        let from = resume.map_or(0, |r| r.provider);
+        for (i, p) in providers.iter().enumerate().skip(from) {
             if cancel.is_cancelled() || failed_before {
                 break;
             }
             if !p.accepts(&req) {
                 continue;
             }
-            tried |= p.stage() != Stage::Cache;
             match p.thumbnail(&req, &cancel) {
                 Ok(Some(img)) => {
                     produced = Some((i, img));
                     break;
                 }
                 Ok(None) => {}
-                Err(e) => {
-                    tracing::debug!(provider = p.id(), path = %req.entry.path.display(), "thumbnail failed: {e:#}");
-                }
+                Err(e) => match e.downcast::<Busy>() {
+                    Ok(b) => {
+                        busy = Some((i, b));
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::debug!(provider = p.id(), path = %req.entry.path.display(), "thumbnail failed: {e:#}");
+                    }
+                },
             }
+            tried |= p.stage() != Stage::Cache;
         }
         let cancelled = cancel.is_cancelled();
+        if let Some((provider, busy)) = busy
+            && !cancelled
+        {
+            let (priority, frame, seq) = asked;
+            self.state.lock().parked.push(Queued {
+                key,
+                req,
+                priority,
+                frame,
+                seq,
+                resume: Some(Resume {
+                    provider,
+                    providers: generation,
+                    tried,
+                }),
+            });
+            let this = Arc::downgrade(self);
+            busy.when_free(Box::new(move || {
+                if let Some(this) = this.upgrade() {
+                    this.unpark();
+                }
+            }));
+            return true;
+        }
         if let Some((i, img)) = &produced
             && !cancelled
         {
@@ -603,6 +725,82 @@ mod tests {
             ThumbState::Ready(_)
         ));
         assert_eq!(decoder.calls.load(Ordering::Relaxed), 1);
+    }
+
+    /// Draws only with a turn, of which there is none until the test
+    /// frees it, but file 2, which needs none.
+    struct Turned {
+        free: AtomicBool,
+        calls: AtomicUsize,
+        waiting: Arc<Mutex<Vec<Box<dyn FnOnce() + Send>>>>,
+    }
+
+    impl ThumbnailProvider for Turned {
+        fn id(&self) -> &'static str {
+            "turned"
+        }
+        fn stage(&self) -> Stage {
+            Stage::LastResort
+        }
+        fn accepts(&self, _: &ThumbRequest) -> bool {
+            true
+        }
+        fn thumbnail(&self, req: &ThumbRequest, _: &CancelToken) -> anyhow::Result<Option<Image>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            if req.entry.id.ino != 2 && !self.free.load(Ordering::Relaxed) {
+                let waiting = Arc::clone(&self.waiting);
+                return Err(Busy::new(move |then| waiting.lock().push(then)).into());
+            }
+            Ok(Some(Image {
+                width: 2,
+                height: 2,
+                rgba: Arc::from(vec![0u8; 16]),
+            }))
+        }
+    }
+
+    #[test]
+    fn a_busy_provider_holds_no_worker_and_is_asked_again_once_free() {
+        // One worker takes requests: all but one of two.
+        let t = Thumbnails::new(Scheduler::new(2));
+        let earlier = Fake::new("earlier", Stage::Generate, false);
+        let turned = Arc::new(Turned {
+            free: AtomicBool::new(false),
+            calls: AtomicUsize::new(0),
+            waiting: Arc::default(),
+        });
+        t.register("core", earlier.clone());
+        t.register("core", turned.clone());
+        assert!(matches!(
+            t.get(req(1), Priority::Visible),
+            ThumbState::Pending
+        ));
+        for _ in 0..500 {
+            if !turned.waiting.lock().is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(turned.waiting.lock().len(), 1, "set aside, waiting");
+        // The worker goes on with another file meanwhile.
+        assert!(matches!(wait_ready(&t, &req(2)), ThumbState::Ready(_)));
+        assert!(matches!(
+            t.get(req(1), Priority::Visible),
+            ThumbState::Pending
+        ));
+        // A turn free: taken again from the provider that was busy.
+        turned.free.store(true, Ordering::Relaxed);
+        let waiting = std::mem::take(&mut *turned.waiting.lock());
+        for then in waiting {
+            then();
+        }
+        assert!(matches!(wait_ready(&t, &req(1)), ThumbState::Ready(_)));
+        assert_eq!(
+            earlier.calls.load(Ordering::Relaxed),
+            2,
+            "once for each file, not again for the one set aside"
+        );
+        assert_eq!(turned.calls.load(Ordering::Relaxed), 3);
     }
 
     #[test]

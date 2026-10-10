@@ -256,8 +256,14 @@ pub const MAX_INPUT: usize = 1024 * 1024;
 /// one helper per worker, each holding most of a gigabyte.
 pub struct Turns {
     most: usize,
-    running: parking_lot::Mutex<usize>,
+    held: parking_lot::Mutex<Held>,
     freed: parking_lot::Condvar,
+}
+
+/// The turns running, and what is to be told when one is free.
+struct Held {
+    running: usize,
+    waiting: Vec<Box<dyn FnOnce() + Send>>,
 }
 
 /// A turn taken, given back when dropped.
@@ -267,32 +273,64 @@ impl Turns {
     pub const fn new(most: usize) -> Self {
         Turns {
             most,
-            running: parking_lot::const_mutex(0),
+            held: parking_lot::const_mutex(Held {
+                running: 0,
+                waiting: Vec::new(),
+            }),
             freed: parking_lot::Condvar::new(),
         }
     }
 
     /// Wait for a turn; `None` once `cancel` is cancelled.
     pub fn take(&self, cancel: &CancelToken) -> Option<Turn<'_>> {
-        let mut running = self.running.lock();
-        while *running >= self.most {
+        let mut held = self.held.lock();
+        while held.running >= self.most {
             if cancel.is_cancelled() {
                 return None;
             }
-            self.freed.wait_for(&mut running, Duration::from_millis(50));
+            self.freed.wait_for(&mut held, Duration::from_millis(50));
         }
         if cancel.is_cancelled() {
             return None;
         }
-        *running += 1;
+        held.running += 1;
         Some(Turn(self))
+    }
+
+    /// A turn if one is free now, without waiting.
+    pub fn try_take(&self) -> Option<Turn<'_>> {
+        let mut held = self.held.lock();
+        (held.running < self.most).then(|| {
+            held.running += 1;
+            Turn(self)
+        })
+    }
+
+    /// Call `then` once a turn is free: now if one is, else when the next
+    /// is given back (on the thread giving it back). What waits for a turn
+    /// this way holds no thread meanwhile.
+    pub fn when_free(&self, then: Box<dyn FnOnce() + Send>) {
+        let mut held = self.held.lock();
+        if held.running < self.most {
+            drop(held);
+            then();
+        } else {
+            held.waiting.push(then);
+        }
     }
 }
 
 impl Drop for Turn<'_> {
     fn drop(&mut self) {
-        *self.0.running.lock() -= 1;
+        let waiting = {
+            let mut held = self.0.held.lock();
+            held.running -= 1;
+            std::mem::take(&mut held.waiting)
+        };
         self.0.freed.notify_one();
+        for then in waiting {
+            then();
+        }
     }
 }
 

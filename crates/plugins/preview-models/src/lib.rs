@@ -27,7 +27,7 @@ use bibli_core::{
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
 use bibli_platform::inspection::{self, limits};
-use bibli_platform::model::MeshFormat;
+use bibli_platform::model::{Asked, MeshFormat};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -145,20 +145,26 @@ impl Format {
 
     /// What the file says of itself, its picture at most `side` pixels on
     /// its longer side.
-    fn read(self, path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
+    fn read(
+        self,
+        path: &Path,
+        side: u32,
+        asked: Asked,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Found> {
         bibli_platform::thumb_providers::ensure_file(path)?;
         match self {
             Format::Blend => blend::read(path, side, cancel),
             Format::Gcode => gcode::text(path, side, cancel),
             Format::Bgcode => gcode::binary(path, side, cancel),
-            Format::ThreeMf => package::three_mf(path, side, cancel),
+            Format::ThreeMf => package::three_mf(path, side, asked, cancel),
             Format::FreeCad => package::freecad(path, side, cancel),
             Format::Dwg => cad::dwg(path, side, cancel),
             Format::Dxf => cad::dxf(path, side, cancel),
             Format::SketchUp => sketchup::model(path, side, cancel),
             Format::LayOut => sketchup::layout(path, side, cancel),
             Format::Rhino => rhino::read(path, side, cancel),
-            Format::Mesh(format) => mesh::read(path, format, side, cancel),
+            Format::Mesh(format) => mesh::read(path, format, side, asked, cancel),
         }
     }
 }
@@ -242,7 +248,7 @@ impl PreviewProvider for Provider {
             Format::Mesh(_) | Format::ThreeMf => MESH_SIDE,
             _ => limits::IMAGE_DISPLAY_SIDE,
         };
-        let found = format.read(&path, side, cancel)?;
+        let found = format.read(&path, side, Asked::Preview, cancel)?;
         let notice = found.notice.unwrap_or_default();
         let details = found
             .details
@@ -324,7 +330,9 @@ impl ThumbnailProvider for Pictures {
         if !format.available() || (text_only && !is_text(&path)?) {
             return Ok(None);
         }
-        Ok(format.read(&path, req.size.pixels(), cancel)?.picture)
+        Ok(format
+            .read(&path, req.size.pixels(), Asked::Thumbnail, cancel)?
+            .picture)
     }
 }
 

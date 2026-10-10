@@ -4,7 +4,7 @@
 //! print needs: its size, whether it is watertight and what it holds.
 use crate::Found;
 use bibli_core::CancelToken;
-use bibli_platform::model::{self, Measures, MeshFormat};
+use bibli_platform::model::{self, Asked, Measures, MeshFormat};
 use std::path::Path;
 
 /// The unit's volume as it is usually said, from a length unit cubed.
@@ -67,9 +67,10 @@ pub fn read(
     path: &Path,
     format: MeshFormat,
     side: u32,
+    asked: Asked,
     cancel: &CancelToken,
 ) -> anyhow::Result<Found> {
-    let drawn = model::draw(path, format, side, cancel)?;
+    let drawn = model::draw(path, format, side, asked, cancel)?;
     Ok(Found {
         title: title(format).into(),
         picture: Some(drawn.picture),

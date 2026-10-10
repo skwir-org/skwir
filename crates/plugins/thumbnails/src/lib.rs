@@ -93,7 +93,7 @@ impl ThumbnailProvider for Converted {
         let (Some(magick), Some(mime)) = (self.0.magick(), mime_of(req)) else {
             return Ok(None);
         };
-        magick.draw(&req.entry.path, &mime, req.size.pixels(), cancel)
+        magick.thumbnail(&req.entry.path, &mime, req.size.pixels(), cancel)
     }
 }
 

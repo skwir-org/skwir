@@ -6,6 +6,7 @@
 use crate::Found;
 use bibli_core::CancelToken;
 use bibli_platform::inspection::{self, limits};
+use bibli_platform::model::Asked;
 use quick_xml::events::Event;
 use std::path::Path;
 
@@ -67,7 +68,12 @@ fn thumbnail_target(archive: &mut Archive) -> Option<String> {
 
 /// A 3MF package: its picture, the plates its slicer stored, and what its
 /// model and its slicer say.
-pub fn three_mf(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
+pub fn three_mf(
+    path: &Path,
+    side: u32,
+    asked: Asked,
+    cancel: &CancelToken,
+) -> anyhow::Result<Found> {
     let mut archive = open(path, cancel)?;
     inspection::check(cancel)?;
     let names: Vec<String> = archive.names().map(str::to_owned).collect();
@@ -123,7 +129,7 @@ pub fn three_mf(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
             )),
         });
     }
-    match crate::mesh::read(path, format, side, cancel) {
+    match crate::mesh::read(path, format, side, asked, cancel) {
         Ok(mut drawn) => {
             // The size says the unit.
             details.retain(|(label, _)| label != "Unit");
@@ -131,6 +137,8 @@ pub fn three_mf(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
             drawn.details = details;
             Ok(drawn)
         }
+        // A thumbnail asked again once the helper has a turn.
+        Err(error) if error.is::<bibli_core::thumbs::Busy>() => Err(error),
         // What the package says is still worth reading.
         Err(error) => Ok(Found {
             title: "3MF".into(),
@@ -343,7 +351,7 @@ mod tests {
                 ("Metadata/slice_info.config", SLICE_INFO.as_bytes()),
             ],
         );
-        let found = three_mf(&path, 256, &CancelToken::new()).unwrap();
+        let found = three_mf(&path, 256, Asked::Preview, &CancelToken::new()).unwrap();
         let picture = found.picture.as_ref().expect("the package thumbnail");
         assert_eq!((picture.width, picture.height), (30, 20));
         assert_eq!(detail(&found, "Made with"), Some("PrusaSlicer-2.8.1"));
@@ -366,14 +374,14 @@ mod tests {
                 ("Metadata/plate_1.png", &plate),
             ],
         );
-        let found = three_mf(&path, 256, &CancelToken::new()).unwrap();
+        let found = three_mf(&path, 256, Asked::Preview, &CancelToken::new()).unwrap();
         let picture = found.picture.as_ref().expect("the first plate");
         assert_eq!((picture.width, picture.height), (12, 8));
         assert_eq!(detail(&found, "Plates"), None, "one plate is not a count");
         let bare = dir.path().join("bare.3mf");
         zip(&bare, &[("3D/3dmodel.model", MODEL.as_bytes())]);
         assert!(
-            three_mf(&bare, 256, &CancelToken::new())
+            three_mf(&bare, 256, Asked::Preview, &CancelToken::new())
                 .unwrap()
                 .picture
                 .is_none()

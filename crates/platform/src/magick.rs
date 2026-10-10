@@ -210,20 +210,57 @@ impl Magick {
         pixels: u32,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Image>> {
+        let format = self.readable(path, mime)?;
+        let Some(turn) = TURNS.take(cancel) else {
+            return Ok(None);
+        };
+        self.run(turn, path, &format, pixels, cancel)
+    }
+
+    /// The thumbnail of the picture at `path`, as [`draw`] would draw it,
+    /// but never waiting for a turn: with none free it answers
+    /// [`bibli_core::thumbs::Busy`], and the thumbnails take it again once
+    /// one is, their worker going on with other files meanwhile.
+    ///
+    /// [`draw`]: Magick::draw
+    pub fn thumbnail(
+        &self,
+        path: &Path,
+        mime: &str,
+        pixels: u32,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Image>> {
+        let format = self.readable(path, mime)?;
+        let Some(turn) = TURNS.try_take() else {
+            return Err(bibli_core::thumbs::Busy::new(|then| TURNS.when_free(then)).into());
+        };
+        self.run(turn, path, &format, pixels, cancel)
+    }
+
+    /// The format `ImageMagick` reads the regular file at `path` as.
+    fn readable(&self, path: &Path, mime: &str) -> anyhow::Result<String> {
         let format = self
             .format(mime, Some(path))
             .context("ImageMagick does not read this picture")?;
         crate::thumb_providers::ensure_file(path)?;
-        let Some(_turn) = TURNS.take(cancel) else {
-            return Ok(None);
-        };
+        Ok(format)
+    }
+
+    fn run(
+        &self,
+        _turn: process::Turn<'_>,
+        path: &Path,
+        format: &str,
+        pixels: u32,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Image>> {
         let work = tempfile::tempdir()?;
-        prepare(work.path(), &format)?;
+        prepare(work.path(), format)?;
         let mut run = sandbox::command(&self.path, path, work.path())?;
         let (Some(input), Some(folder)) = (run.input.to_str(), run.work.to_str()) else {
             anyhow::bail!("the picture's path inside the sandbox is not text");
         };
-        let arguments = arguments(&format, input, folder, pixels);
+        let arguments = arguments(format, input, folder, pixels);
         run.command.envs(environment(&run.work)).args(arguments);
         let result = process::run(&mut run.command, cancel, TIMEOUT);
         if cancel.is_cancelled() {
@@ -471,7 +508,15 @@ mod tests {
         std::thread::sleep(Duration::from_millis(120));
         waiting.cancel();
         assert!(!waiter.join().unwrap(), "a cancelled wait takes no turn");
+        // A thumbnail takes none without waiting, and is told when one is
+        // given back.
+        assert!(TURNS.try_take().is_none());
+        let (told, free) = std::sync::mpsc::channel();
+        TURNS.when_free(Box::new(move || told.send(()).unwrap()));
+        assert!(free.try_recv().is_err(), "not while all are taken");
         drop(taken);
+        assert!(free.try_recv().is_ok(), "told as one is given back");
+        assert!(TURNS.try_take().is_some());
         assert!(TURNS.take(&cancel).is_some(), "turns come back");
     }
 

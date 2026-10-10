@@ -106,16 +106,36 @@ fn gltf_buffers(path: &Path) -> Vec<(PathBuf, PathBuf)> {
 /// of a gigabyte.
 static TURNS: crate::process::Turns = crate::process::Turns::new(2);
 
+/// Who asks for a drawing, which decides whether it waits for its turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asked {
+    /// The preview of the file looked at: it waits.
+    Preview,
+    /// A thumbnail: with no turn free it answers
+    /// [`bibli_core::thumbs::Busy`], and its worker goes on with other
+    /// files until one is.
+    Thumbnail,
+}
+
 /// The mesh at `path` drawn at most `side` pixels on its longer side, and
 /// measured. An error when the helper is missing, or says why it cannot.
 pub fn draw(
     path: &Path,
     format: MeshFormat,
     side: u32,
+    asked: Asked,
     cancel: &CancelToken,
 ) -> anyhow::Result<Drawn> {
     let worker = WORKER.require("draw 3D models")?;
-    let Some(_turn) = TURNS.take(cancel) else {
+    let turn = match asked {
+        Asked::Preview => TURNS.take(cancel),
+        Asked::Thumbnail => Some(
+            TURNS
+                .try_take()
+                .ok_or_else(|| bibli_core::thumbs::Busy::new(|then| TURNS.when_free(then)))?,
+        ),
+    };
+    let Some(_turn) = turn else {
         anyhow::bail!("cancelled");
     };
     let work = tempfile::tempdir()?;
