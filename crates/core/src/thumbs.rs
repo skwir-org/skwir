@@ -38,6 +38,13 @@ impl Image {
     pub fn bytes(&self) -> usize {
         self.rgba.len()
     }
+
+    /// Whether its pixels are as many as its size says, four bytes each,
+    /// and there are some: what a window can draw.
+    pub fn is_whole(&self) -> bool {
+        let pixels = u64::from(self.width) * u64::from(self.height);
+        pixels > 0 && u64::try_from(self.rgba.len()).is_ok_and(|len| len == pixels * 4)
+    }
 }
 
 /// Thumbnail sizes, matching the freedesktop spec's directories.
@@ -76,7 +83,9 @@ pub struct ThumbRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage {
     /// Reads what exists (the desktop's cache) and stores what later
-    /// providers make (`ThumbnailProvider::store`).
+    /// providers make (`ThumbnailProvider::store`): asked only of a file
+    /// one of them takes, so what a folder shows does not depend on which
+    /// application saw it first.
     Cache,
     /// Makes a thumbnail: in-process decoders, the desktop's thumbnailers.
     Generate,
@@ -276,8 +285,9 @@ impl Thumbnails {
 
     /// Bytes of decoded images the thumbnails shown may take, as the user
     /// set it (64 MiB by default). Whoever draws them keeps them
-    /// (`budget`); this keeps a quarter of it, of those made and not taken
-    /// yet, so the same pixels are not held twice in full.
+    /// (`budget`, [`Thumbnails::take`]); this keeps a quarter of it, of
+    /// those made and not taken yet, so the same pixels are not held
+    /// twice.
     pub fn set_budget(&self, bytes: usize) {
         let evicted = {
             let mut s = self.state.lock();
@@ -356,11 +366,28 @@ impl Thumbnails {
 
     /// Ask for a thumbnail. Returns immediately.
     pub fn get(self: &Arc<Self>, req: ThumbRequest, priority: Priority) -> ThumbState {
+        self.ask(req, priority, false)
+    }
+
+    /// [`Thumbnails::get`], for a caller that keeps the picture it is
+    /// handed (the window's own cache of what it draws): once ready, it is
+    /// taken out of these, not kept here beside the caller's copy, and
+    /// made again if asked again.
+    pub fn take(self: &Arc<Self>, req: ThumbRequest, priority: Priority) -> ThumbState {
+        self.ask(req, priority, true)
+    }
+
+    fn ask(self: &Arc<Self>, req: ThumbRequest, priority: Priority, take: bool) -> ThumbState {
         let key = (req.entry.id, req.size, req.mtime);
         {
             let mut s = self.state.lock();
-            if let Some(img) = s.lru.get(&key) {
-                return ThumbState::Ready(Arc::clone(img));
+            let ready = if take {
+                s.lru.remove(&key)
+            } else {
+                s.lru.get(&key).cloned()
+            };
+            if let Some(img) = ready {
+                return ThumbState::Ready(img);
             }
             if s.unavailable.contains(&key) {
                 return ThumbState::Unavailable;
@@ -372,10 +399,15 @@ impl Thumbnails {
                 return ThumbState::Pending;
             }
         }
-        // Plugin code runs outside the state lock.
+        // Plugin code runs outside the state lock. A cache holds what a
+        // thumbnailer made: a file none takes is no picture at once, not a
+        // worker's look in the cache for each one drawn, the window drawing
+        // a placeholder until it answers.
         let accepted = {
             let providers = self.providers.read();
-            providers.iter().any(|(_, _, p)| p.accepts(&req))
+            providers
+                .iter()
+                .any(|(_, stage, p)| *stage != Stage::Cache && p.accepts(&req))
         };
         let mut s = self.state.lock();
         if !accepted {
@@ -523,9 +555,19 @@ impl Thumbnails {
                 continue;
             }
             match p.thumbnail(&req, &cancel) {
-                Ok(Some(img)) => {
+                Ok(Some(img)) if img.is_whole() => {
                     produced = Some((i, img));
                     break;
+                }
+                Ok(Some(img)) => {
+                    // No picture can be drawn of it: the next one tries.
+                    tracing::debug!(
+                        provider = p.id(),
+                        width = img.width,
+                        height = img.height,
+                        bytes = img.bytes(),
+                        "a thumbnail of the wrong size"
+                    );
                 }
                 Ok(None) => {}
                 Err(e) => match e.downcast::<Busy>() {
@@ -724,6 +766,40 @@ mod tests {
             ThumbState::Ready(_)
         ));
         assert_eq!(decoder.calls.load(Ordering::Relaxed), 1);
+    }
+
+    /// A caller that keeps what it draws takes the picture out: it is not
+    /// kept twice, and is made again if asked again. A picture of the
+    /// wrong size is no picture.
+    #[test]
+    fn a_picture_taken_is_kept_by_its_taker_alone() {
+        let t = Thumbnails::new(Scheduler::new(2));
+        let decoder = Fake::new("decoder", Stage::Generate, true);
+        t.register("core", decoder.clone());
+        assert!(matches!(wait_ready(&t, &req(1)), ThumbState::Ready(_)));
+        assert!(matches!(
+            t.take(req(1), Priority::Visible),
+            ThumbState::Ready(_)
+        ));
+        assert_eq!(t.state.lock().lru.bytes(), 0, "not kept beside the taker's");
+        assert!(matches!(wait_ready(&t, &req(1)), ThumbState::Ready(_)));
+        assert_eq!(decoder.calls.load(Ordering::Relaxed), 2, "made again");
+        assert!(
+            !Image {
+                width: 2,
+                height: 2,
+                rgba: Arc::from(vec![0u8; 15])
+            }
+            .is_whole()
+        );
+        assert!(
+            !Image {
+                width: 0,
+                height: 2,
+                rgba: Arc::from(vec![])
+            }
+            .is_whole()
+        );
     }
 
     /// Draws only with a turn, of which there is none until the test

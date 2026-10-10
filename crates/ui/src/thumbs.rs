@@ -192,9 +192,10 @@ impl Shell {
         self.thumb_asked(key, req)
     }
 
-    /// `req` asked of the thumbnails, kept under `key` once ready.
+    /// `req` asked of the thumbnails, kept under `key` once ready: taken
+    /// from the core's, which keeps it no longer.
     fn thumb_asked(&mut self, key: Key, req: ThumbRequest) -> ThumbView {
-        match self.app.thumbnails.get(req, Priority::Visible) {
+        match self.app.thumbnails.take(req, Priority::Visible) {
             ThumbState::Ready(img) => {
                 let Some(ri) = to_render_image(&img) else {
                     return ThumbView::Unavailable;
