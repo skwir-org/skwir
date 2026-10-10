@@ -495,25 +495,56 @@ fn full_match(q: &Query, entry: &Entry, path: &Path, late: Late<'_>) -> bool {
 }
 
 /// Evaluate one path as far as the dirent and a stat allow.
+/// What is known of a file before its cheap terms: its kind, from the
+/// walk's dirent, or the file stat-ed whole, one an index or `plocate`
+/// named, stat-ed once for its kind and its entry.
+enum Known {
+    Kind(EntryKind),
+    Stated(Entry),
+}
+
+impl Known {
+    /// The file `path` named by an index or `plocate`, stat-ed: `None`
+    /// once it is gone.
+    fn stated(path: &Path, statter: &mut Statter) -> Option<Known> {
+        statter.stat(path).map(Known::Stated)
+    }
+
+    fn kind(&self) -> EntryKind {
+        match self {
+            Known::Kind(kind) => *kind,
+            Known::Stated(entry) => entry.kind,
+        }
+    }
+
+    /// The file's entry: stat-ed now, unless it was.
+    fn entry(self, path: &Path, statter: &mut Statter) -> Option<Entry> {
+        match self {
+            Known::Kind(_) => statter.stat(path),
+            Known::Stated(entry) => Some(entry),
+        }
+    }
+}
+
 fn first(
     q: &Query,
     path: &Path,
     name: &OsStr,
-    kind: EntryKind,
+    known: Known,
     late: Late<'_>,
     statter: &mut Statter,
 ) -> First {
     let Some(expr) = &q.expr else {
-        return statter.stat(path).map_or(First::No, First::Yes);
+        return known.entry(path, statter).map_or(First::No, First::Yes);
     };
     // 1. Cheap terms from the dirent.
-    match expr.eval(&Candidate::new(name, kind, path, None), false) {
+    match expr.eval(&Candidate::new(name, known.kind(), path, None), false) {
         Verdict::No => return First::No,
-        Verdict::Yes => return statter.stat(path).map_or(First::No, First::Yes),
+        Verdict::Yes => return known.entry(path, statter).map_or(First::No, First::Yes),
         Verdict::Unknown => {}
     }
     // 2. Stat; metadata comes later, in batches.
-    let Some(entry) = statter.stat(path) else {
+    let Some(entry) = known.entry(path, statter) else {
         return First::No;
     };
     if q.needs_metadata() {
@@ -529,12 +560,12 @@ fn first(
 fn consider(
     q: &Query,
     path: &Path,
-    (name, kind): (&OsStr, EntryKind),
+    (name, known): (&OsStr, Known),
     batcher: &Batcher<'_>,
     deferred: &Deferred<'_>,
     statter: &mut Statter,
 ) {
-    match first(q, path, name, kind, batcher.late(), statter) {
+    match first(q, path, name, known, batcher.late(), statter) {
         First::No => {
             if q.needs_metadata()
                 && let Some(dir) = path.parent()
@@ -640,8 +671,10 @@ impl Shared {
                     continue;
                 }
                 let Some(name) = p.file_name() else { continue };
-                let kind = kind_of(std::fs::symlink_metadata(&p).ok().map(|m| m.file_type()));
-                consider(q, &p, (name, kind), &batcher, &deferred, &mut statter);
+                let Some(known) = Known::stated(&p, &mut statter) else {
+                    continue;
+                };
+                consider(q, &p, (name, known), &batcher, &deferred, &mut statter);
             }
         } else {
             let mut builder = ignore::WalkBuilder::new(&q.root);
@@ -676,8 +709,8 @@ impl Shared {
                     if hinted.contains(path) {
                         return ignore::WalkState::Continue;
                     }
-                    let kind = kind_of(dent.file_type());
-                    consider(q, path, (name, kind), batcher, deferred, &mut statter);
+                    let known = Known::Kind(kind_of(dent.file_type()));
+                    consider(q, path, (name, known), batcher, deferred, &mut statter);
                     ignore::WalkState::Continue
                 })
             });
@@ -739,8 +772,11 @@ impl Shared {
                 continue;
             }
             let path = q.root.join(relative);
-            let kind = kind_of(std::fs::symlink_metadata(&path).ok().map(|m| m.file_type()));
-            consider(q, &path, (name, kind), batcher, deferred, &mut statter);
+            // Gone since the index saw it: the walk will not find it either.
+            let Some(known) = Known::stated(&path, &mut statter) else {
+                continue;
+            };
+            consider(q, &path, (name, known), batcher, deferred, &mut statter);
             hinted.insert(path);
         }
         tracing::debug!(
@@ -862,8 +898,8 @@ impl Shared {
             return None;
         }
         let name = path.file_name()?;
-        let kind = kind_of(std::fs::symlink_metadata(path).ok().map(|m| m.file_type()));
-        match first(q, path, name, kind, late, statter) {
+        let known = Known::stated(path, statter)?;
+        match first(q, path, name, known, late, statter) {
             First::No => None,
             First::Yes(entry) => Some(entry),
             First::NeedsMetadata(entry) => {
