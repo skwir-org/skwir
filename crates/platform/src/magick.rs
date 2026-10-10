@@ -128,6 +128,45 @@ impl Magick {
         }
     }
 
+    /// [`Magick::find`], its answer kept in `kept` (bibli's cache) by the
+    /// programs' paths, sizes and modification times: a start asks
+    /// nothing of an `ImageMagick` that did not change, where each ran it
+    /// three times and bubblewrap once. Call on a worker.
+    pub fn find_kept(kept: Option<&bibli_core::cache::CacheSlot>) -> Option<Magick> {
+        const KEY: &[u8] = b"imagemagick.1";
+        let stamp = installed_stamp();
+        if let Some(text) = kept
+            .and_then(|slot| slot.get(KEY))
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+        {
+            let mut lines = text.splitn(3, '\n');
+            if lines.next() == Some(stamp.as_str()) {
+                return match (lines.next(), lines.next()) {
+                    (Some(path), Some(formats)) if !path.is_empty() => Some(Magick {
+                        path: PathBuf::from(path),
+                        formats: Arc::new(formats.split(' ').map(str::to_owned).collect()),
+                    }),
+                    _ => None,
+                };
+            }
+        }
+        let found = Magick::find();
+        let record = match &found {
+            Some(magick) => magick.path.to_str().map(|path| {
+                let mut formats: Vec<&str> = magick.formats.iter().map(String::as_str).collect();
+                formats.sort_unstable();
+                format!("{stamp}\n{path}\n{}", formats.join(" "))
+            }),
+            None => Some(format!("{stamp}\n\n")),
+        };
+        if let (Some(slot), Some(record)) = (kept, record)
+            && let Err(error) = slot.put(KEY, record.as_bytes())
+        {
+            tracing::debug!("ImageMagick's probe not kept: {error:#}");
+        }
+        found
+    }
+
     /// `path`, reading what its `-list format` said.
     pub fn listing(path: PathBuf, listing: &str) -> Magick {
         Magick {
@@ -217,6 +256,35 @@ impl Magick {
             false
         })
     }
+}
+
+/// Which `ImageMagick` programs are installed, and bubblewrap, each by its
+/// path, size and modification time: what its probe is kept by.
+fn installed_stamp() -> String {
+    // Bubblewrap too: it isolates every run.
+    ["magick", "convert", "bwrap"]
+        .into_iter()
+        .map(|name| {
+            process::required(name)
+                .ok()
+                .and_then(|path| {
+                    let meta = std::fs::metadata(&path).ok()?;
+                    let changed = meta
+                        .modified()
+                        .ok()?
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .ok()?;
+                    Some(format!(
+                        "{}:{}:{}",
+                        path.display(),
+                        meta.len(),
+                        changed.as_nanos()
+                    ))
+                })
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 /// What a program said, run outside the sandbox: it reads no file of

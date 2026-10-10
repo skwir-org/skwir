@@ -693,6 +693,9 @@ impl TagIndex {
                         }
                     }
                     let read = index.slot.is_some() && index.unload_idle();
+                    // What a write or the pieces let go of freed, given
+                    // back before it sleeps: it is no scheduler worker.
+                    bibli_core::scheduler::release_now();
                     if ended || (!read && !index.pending.load(Ordering::Acquire)) {
                         index.working.store(false, Ordering::Release);
                         // Something changed as it ended: carry on.

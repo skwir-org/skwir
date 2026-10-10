@@ -370,6 +370,7 @@ impl Plugin for ThumbnailsPlugin {
         if !self.thumbnailers.started.swap(true, Ordering::AcqRel) {
             let discovered = Arc::clone(&self.thumbnailers);
             let service = Arc::clone(&app.thumbnails);
+            let kept = app.cache.namespace(ID);
             app.scheduler.spawn(
                 Priority::Background,
                 "thumbnailers.discover",
@@ -381,7 +382,7 @@ impl Plugin for ThumbnailsPlugin {
                     if any {
                         service.providers_changed();
                     }
-                    let magick = Magick::find();
+                    let magick = Magick::find_kept(Some(&kept));
                     let any = magick.is_some();
                     let _ = discovered.magick.set(magick);
                     if any {

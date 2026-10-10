@@ -456,6 +456,7 @@ impl Settled {
                     if !then() {
                         return;
                     }
+                    crate::scheduler::release_now();
                 }
             })
             .ok()?;

@@ -248,6 +248,16 @@ pub fn release_when_idle(release: fn()) {
     let _ = RELEASE.set(release);
 }
 
+/// Give back now what the calling thread freed (the hook
+/// `release_when_idle` set): a thread of a plugin's own, about to wait
+/// long after a burst of work (a scan, a write), which no worker's idle
+/// release covers.
+pub fn release_now() {
+    if let Some(release) = RELEASE.get() {
+        release();
+    }
+}
+
 fn worker(inner: &Inner) {
     // Whether this worker ran a job since it last released.
     let mut ran = false;

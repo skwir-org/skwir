@@ -1310,6 +1310,7 @@ impl Worker {
             }
             self.cache.clear();
             self.idle_since = None;
+            bibli_core::scheduler::release_now();
         }
     }
 
@@ -1497,6 +1498,9 @@ impl Worker {
                 state.coverage = coverage;
                 state.last_scan = Instant::now();
                 state.last_duration = started.elapsed();
+                // What the scan freed, given back before the worker
+                // sleeps: it is no scheduler worker.
+                bibli_core::scheduler::release_now();
             }
         }
     }

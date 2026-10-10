@@ -261,10 +261,9 @@ pub fn week_start() -> Weekday {
 /// Linux runs `locale`: blocks for as long as it takes, so call it from a
 /// worker.
 pub fn prewarm() {
-    if WEEK_START.get().is_some() {
-        return;
-    }
-    let _ = WEEK_START.set(system_week_start().unwrap_or(Weekday::Monday));
+    // One asks, the others wait for its answer: two plugins prewarming at
+    // startup each ran `locale`.
+    WEEK_START.get_or_init(|| system_week_start().unwrap_or(Weekday::Monday));
 }
 
 /// The locale's first weekday, as the system says it: glibc's `locale`

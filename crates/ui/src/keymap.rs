@@ -1,6 +1,8 @@
 //! Translate the core keymap registry (plus UI defaults) into GPUI key bindings.
 //! Every binding runs one action, [`RunCommand`], which the shell routes.
 
+use std::collections::HashMap;
+
 use bibli_core::App;
 use bibli_core::keymap::UserBinding;
 use gpui::{Action, KeyBinding, Keystroke};
@@ -1255,19 +1257,26 @@ fn conditions(context: &str) -> Vec<&str> {
 /// the latest binding, so a later binding of the same keys that asks for no
 /// more than an earlier one (`Pane` over `Pane && empty`) always wins where
 /// the earlier would apply.
+/// Each spec's keys are read once, and compared only with the specs of
+/// the same keys: every spec against every later one, parsing both each
+/// time, cost the first frame milliseconds.
 fn shadowed(specs: &[Spec]) -> Vec<bool> {
-    (0..specs.len())
-        .map(|i| {
+    let mut by_keys: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, spec) in specs.iter().enumerate() {
+        by_keys.entry(normal_keys(&spec.keys)).or_default().push(i);
+    }
+    let mut hidden = vec![false; specs.len()];
+    for same in by_keys.values() {
+        for (n, &i) in same.iter().enumerate() {
             let mine = conditions(&specs[i].context);
-            let keys = normal_keys(&specs[i].keys);
-            specs[i + 1..].iter().any(|later| {
-                normal_keys(&later.keys) == keys
-                    && conditions(&later.context)
-                        .iter()
-                        .all(|atom| mine.contains(atom))
-            })
-        })
-        .collect()
+            hidden[i] = same[n + 1..].iter().any(|&later| {
+                conditions(&specs[later].context)
+                    .iter()
+                    .all(|atom| mine.contains(atom))
+            });
+        }
+    }
+    hidden
 }
 
 /// Whether a binding takes a character typed in the file list: its first

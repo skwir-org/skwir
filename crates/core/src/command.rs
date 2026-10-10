@@ -147,13 +147,72 @@ pub enum Effect {
     UserOnly,
 }
 
+/// The JSON schema of a command's arguments, made the first time it is
+/// asked for (an agent's list of tools, the palette's required
+/// arguments): made for every command as it was declared, it held up the
+/// first frame and kept a tree of each.
+#[derive(Clone)]
+pub struct ArgsSchema(Arc<ArgsSchemaInner>);
+
+struct ArgsSchemaInner {
+    made: std::sync::OnceLock<schemars::Schema>,
+    make: fn() -> schemars::Schema,
+}
+
+impl ArgsSchema {
+    /// The schema of `A`, made when asked for.
+    fn of<A: JsonSchema>() -> Self {
+        fn make<A: JsonSchema>() -> schemars::Schema {
+            schemars::schema_for!(A)
+        }
+        ArgsSchema(Arc::new(ArgsSchemaInner {
+            made: std::sync::OnceLock::new(),
+            make: make::<A>,
+        }))
+    }
+
+    /// A schema given whole.
+    fn given(schema: schemars::Schema) -> Self {
+        fn none() -> schemars::Schema {
+            schemars::json_schema!({ "type": "object" })
+        }
+        ArgsSchema(Arc::new(ArgsSchemaInner {
+            made: std::sync::OnceLock::from(schema),
+            make: none,
+        }))
+    }
+
+    pub fn get(&self) -> &schemars::Schema {
+        self.0.made.get_or_init(self.0.make)
+    }
+}
+
+impl std::ops::Deref for ArgsSchema {
+    type Target = schemars::Schema;
+    fn deref(&self) -> &schemars::Schema {
+        self.get()
+    }
+}
+
+impl std::fmt::Debug for ArgsSchema {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(f)
+    }
+}
+
+impl Serialize for ArgsSchema {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.get().serialize(serializer)
+    }
+}
+
 /// Declared metadata of a command, including the JSON schema of its arguments.
 #[derive(Clone, Debug, Serialize)]
 pub struct CommandSpec {
     pub name: Arc<str>,
     pub title: String,
     pub description: String,
-    pub args_schema: schemars::Schema,
+    pub args_schema: ArgsSchema,
     /// Plugin id, or `core`.
     pub owner: Arc<str>,
     /// What it does: what an agent may run without asking.
@@ -365,7 +424,15 @@ impl CommandRegistry {
         });
         let schema = serde_json::from_value(schema)
             .unwrap_or_else(|_| schemars::json_schema!({ "type": "object" }));
-        self.insert_spec(owner, name, title, description, schema, v, h)
+        self.insert_spec(
+            owner,
+            name,
+            title,
+            description,
+            ArgsSchema::given(schema),
+            v,
+            h,
+        )
     }
 
     fn insert<A>(
@@ -380,15 +447,7 @@ impl CommandRegistry {
         A: DeserializeOwned + JsonSchema + 'static,
     {
         let v: Validator = Arc::new(|args| serde_json::from_value::<A>(args.clone()).map(|_| ()));
-        self.insert_spec(
-            owner,
-            name,
-            title,
-            description,
-            schemars::schema_for!(A),
-            v,
-            h,
-        )
+        self.insert_spec(owner, name, title, description, ArgsSchema::of::<A>(), v, h)
     }
 
     #[allow(clippy::too_many_arguments)] // A command's declaration, whole.
@@ -398,7 +457,7 @@ impl CommandRegistry {
         name: &str,
         title: &str,
         description: &str,
-        args_schema: schemars::Schema,
+        args_schema: ArgsSchema,
         v: Validator,
         h: Handler,
     ) -> Declared<'_> {
