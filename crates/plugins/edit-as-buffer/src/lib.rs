@@ -567,7 +567,7 @@ fn start_session(
             .filter_map(|&id| {
                 let e = p.listing.get(id)?;
                 Some((
-                    EntryRef::new(id, open.path_of(id)?),
+                    EntryRef::new(id, open.path_of(id)?).with_only_name(e.is_only_name()),
                     e.name.clone(),
                     e.is_dir(),
                 ))

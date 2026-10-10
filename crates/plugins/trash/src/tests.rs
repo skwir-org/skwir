@@ -234,6 +234,43 @@ fn emptying_the_trash_deletes_its_files_and_what_it_said_of_them() {
     );
 }
 
+/// Two records whose files are one (names of one file, hard links,
+/// trashed apart) are two items, and emptying the trash deletes both.
+#[cfg(unix)]
+#[test]
+fn emptying_the_trash_deletes_every_name_of_a_file_trashed_twice() {
+    let tmp = base();
+    let trash = tmp.path().join("volume/.Trash-1000");
+    std::fs::create_dir_all(trash.join("files")).unwrap();
+    std::fs::create_dir_all(trash.join("info")).unwrap();
+    std::fs::write(trash.join("files/a.txt"), "one file").unwrap();
+    std::fs::hard_link(trash.join("files/a.txt"), trash.join("files/b.txt")).unwrap();
+    for name in ["a.txt", "b.txt"] {
+        std::fs::write(
+            trash.join(format!("info/{name}.trashinfo")),
+            format!("[Trash Info]\nPath=docs/{name}\nDeletionDate=2026-10-04T09:30:00\n"),
+        )
+        .unwrap();
+    }
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("app"))).unwrap();
+    app.plugins.add(
+        Arc::new(TrashPlugin::with_trashes(vec![trash.clone()])),
+        &app,
+    );
+    eventually("both are listed", || listed(&app).len() == 2);
+    let empty = plan(&app, "trash.empty", &serde_json::json!({}));
+    assert_eq!(empty.len(), 2);
+    let r = app.executor.execute_blocking(&empty, app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    for kept in ["files", "info"] {
+        assert_eq!(
+            std::fs::read_dir(trash.join(kept)).unwrap().count(),
+            0,
+            "{kept} is empty"
+        );
+    }
+}
+
 /// What the trash holds is known by its files alone (the place's icon,
 /// Empty Trash) until a listing shows it: its items are read whole then,
 /// and let go of once nothing shows them.

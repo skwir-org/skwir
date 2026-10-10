@@ -349,6 +349,86 @@ fn entry_ref_follows_a_rename_and_rejects_a_replacement() {
     ));
 }
 
+/// A file with several names (hard links) is never followed from the
+/// name referenced to another of its names: that name gone, the
+/// reference is gone too, and replaced, it says so, though another name
+/// of the file is beside it.
+#[cfg(unix)]
+#[test]
+fn entry_ref_never_follows_a_file_to_another_of_its_names() {
+    use bibli_core::op::ResolveError;
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    std::fs::write(root.join("a.txt"), b"one file").unwrap();
+    std::fs::hard_link(root.join("a.txt"), root.join("b.txt")).unwrap();
+    let b = EntryRef::from_path(root.join("b.txt")).unwrap();
+    assert!(!b.only_name, "two names");
+    std::fs::remove_file(root.join("b.txt")).unwrap();
+    assert!(
+        matches!(b.resolve(), Err(ResolveError::Gone(_))),
+        "never a.txt"
+    );
+    std::fs::write(root.join("b.txt"), b"another file").unwrap();
+    assert!(matches!(b.resolve(), Err(ResolveError::Replaced { .. })));
+    // Knowing nothing of the file's names, a reference resolves at its
+    // path alone.
+    let id = bibli_core::fs::stat::id_of(&root.join("a.txt")).unwrap();
+    let a = EntryRef::new(id, root.join("a.txt"));
+    std::fs::rename(root.join("a.txt"), root.join("c.txt")).unwrap();
+    assert!(matches!(a.resolve(), Err(ResolveError::Gone(_))));
+}
+
+/// A file of one name is followed to its new name in its folder while one
+/// name there holds it: two, one made since, could be either. A folder
+/// has one name whatever its link count says.
+#[cfg(unix)]
+#[test]
+fn entry_ref_follows_one_name_only_while_one_name_holds_it() {
+    use bibli_core::op::ResolveError;
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    std::fs::write(root.join("x"), b"x").unwrap();
+    let r = EntryRef::from_path(root.join("x")).unwrap();
+    assert!(r.only_name);
+    std::fs::rename(root.join("x"), root.join("y")).unwrap();
+    assert_eq!(r.resolve().unwrap(), root.join("y"));
+    std::fs::hard_link(root.join("y"), root.join("z")).unwrap();
+    assert!(matches!(r.resolve(), Err(ResolveError::Gone(_))));
+    std::fs::create_dir_all(root.join("dir/sub")).unwrap();
+    let d = EntryRef::from_path(root.join("dir")).unwrap();
+    assert!(d.only_name, "its link count counts its subfolders");
+    std::fs::rename(root.join("dir"), root.join("moved")).unwrap();
+    assert_eq!(d.resolve().unwrap(), root.join("moved"));
+}
+
+/// A plan to trash, or to delete, a name of a file that has two leaves
+/// the other name alone when the name it named is gone before it applies.
+// The freedesktop trash (ADR-035).
+#[cfg(target_os = "linux")]
+#[test]
+fn trashing_or_deleting_a_name_gone_spares_the_files_other_name() {
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    std::fs::create_dir_all(&root).unwrap();
+    let app = app(tmp.path());
+    for how in ["trash", "delete"] {
+        std::fs::write(root.join("a.txt"), b"kept").unwrap();
+        std::fs::hard_link(root.join("a.txt"), root.join("b.txt")).unwrap();
+        let entry = EntryRef::from_path(root.join("b.txt")).unwrap();
+        let step: Box<dyn Operation> = if how == "trash" {
+            Box::new(Trash { entry })
+        } else {
+            Box::new(bibli_core::op::Delete { entry })
+        };
+        let plan = Plan::with_steps(how, vec![step]);
+        std::fs::remove_file(root.join("b.txt")).unwrap();
+        let r = apply(&app, &plan);
+        assert_eq!(r.applied, 0, "{how}: nothing left to do");
+        assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), b"kept", "{how}");
+        std::fs::remove_file(root.join("a.txt")).unwrap();
+    }
+}
+
 /// A step that cancels or pauses its own plan while it runs, so the test
 /// needs no timing.
 #[derive(Debug, Clone)]

@@ -160,7 +160,7 @@ fn dropped_plan(
     let steps: Vec<Box<dyn op::Operation>> = paths
         .iter()
         .filter_map(|p| {
-            let entry = EntryRef::new(fs::stat::id_of(p)?, p.clone());
+            let entry = EntryRef::from_path(p.clone())?;
             let dest_dir = dest.to_path_buf();
             Some(match how {
                 DropOp::Copy => Box::new(op::Copy::from_settings(entry, dest_dir, settings))
@@ -819,14 +819,15 @@ impl Shell {
             let ws = self.app.workspace.read();
             let Some(p) = ws.pane(pane) else { return };
             // Gone since it was drawn: nothing to give to.
-            if p.entry(id).is_none() {
+            let Some(entry) = p.entry(id) else {
                 return;
-            }
+            };
             if p.selection.contains(id) {
                 None
             } else {
+                let only = entry.is_only_name();
                 p.path_of(id)
-                    .map(|path| bibli_core::op::EntryRef::new(id, path))
+                    .map(|path| bibli_core::op::EntryRef::new(id, path).with_only_name(only))
             }
         };
         let mut args = gives.args.clone();

@@ -219,6 +219,17 @@ mod sys {
         .ok()?;
         Some(of(&st).id)
     }
+
+    pub(super) fn named(path: &Path) -> Option<Stat> {
+        let st = rustix::fs::statx(
+            rustix::fs::CWD,
+            path,
+            AtFlags::SYMLINK_NOFOLLOW,
+            StatxFlags::TYPE | StatxFlags::INO | StatxFlags::NLINK,
+        )
+        .ok()?;
+        Some(of(&st))
+    }
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
@@ -271,6 +282,10 @@ mod sys {
     pub(super) fn id_of(path: &Path) -> Option<EntryId> {
         Some(of(&rustix::fs::lstat(path).ok()?).id)
     }
+
+    pub(super) fn named(path: &Path) -> Option<Stat> {
+        Some(of(&rustix::fs::lstat(path).ok()?))
+    }
 }
 
 #[cfg(windows)]
@@ -305,6 +320,23 @@ mod sys {
 
     pub(super) fn id_of(path: &Path) -> Option<EntryId> {
         win::identity(&win::open(path, false, false).ok()?).ok()
+    }
+
+    pub(super) fn named(path: &Path) -> Option<Stat> {
+        let info = win::info(&win::open(path, false, false).ok()?).ok()?;
+        Some(Stat {
+            id: info.id,
+            kind: info.kind,
+            mode: None,
+            size: info.size,
+            nlink: info.links,
+            uid: None,
+            gid: None,
+            modified: info.modified,
+            accessed: info.accessed,
+            created: info.created,
+            hidden: info.hidden,
+        })
     }
 
     pub(super) fn read_link_at(dir: &Dir, name: &OsStr) -> Option<std::ffi::OsString> {
@@ -478,6 +510,14 @@ impl Statter {
 /// point is replaced by this one when the entry is stat-ed.
 pub fn id_of(path: &Path) -> Option<EntryId> {
     sys::id_of(path)
+}
+
+/// [`id_of`], and whether `path` is its file's one name: a folder always
+/// is (no folder has two), any other file when its link count is one. A
+/// file with several names (hard links) is one file under each.
+pub fn named(path: &Path) -> Option<(EntryId, bool)> {
+    let st = sys::named(path)?;
+    Some((st.id, st.kind == EntryKind::Directory || st.nlink == 1))
 }
 
 #[cfg(test)]

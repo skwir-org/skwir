@@ -119,7 +119,8 @@ pub fn order_renames(
     let mut done = vec![false; requests.len()];
     let mut step = |i: usize, to: &Path, current: &mut Vec<PathBuf>| {
         steps.push(Rename {
-            entry: EntryRef::new(requests[i].entry.id, current[i].clone()),
+            entry: EntryRef::new(requests[i].entry.id, current[i].clone())
+                .with_only_name(requests[i].entry.only_name),
             new_name: to.file_name().unwrap_or_default().to_os_string(),
         });
         current[i] = to.to_path_buf();

@@ -448,13 +448,35 @@ impl Entry {
             return None;
         }
         Some(match &self.target {
+            // A link's link count is its target's, as stat-ed.
             Some(LinkTarget {
                 id,
+                kind,
                 path: Some(path),
-                ..
-            }) => crate::op::EntryRef::new(*id, path.clone()),
-            _ => crate::op::EntryRef::new(self.id, own),
+            }) => crate::op::EntryRef::new(*id, path.clone())
+                .with_only_name(*kind == EntryKind::Directory || self.links() == Some(1)),
+            _ => crate::op::EntryRef::new(self.id, own).with_only_name(self.is_only_name()),
         })
+    }
+
+    /// Whether this entry is its file's one name, as far as is known: a
+    /// folder always is (no folder has two), a file once stat-ed when its
+    /// link count is one. A link's own count is not known (what is read
+    /// is its target's), nor one not stat-ed yet: no.
+    pub fn is_only_name(&self) -> bool {
+        match self.kind {
+            EntryKind::Directory => true,
+            EntryKind::Symlink | EntryKind::Unknown => false,
+            _ => self.links() == Some(1),
+        }
+    }
+
+    /// The link count a stat read (of a link, its target's).
+    fn links(&self) -> Option<u64> {
+        match self.metadata.value(keys::NLINK) {
+            Some(Value::UInt(n)) => Some(*n),
+            _ => None,
+        }
     }
 
     /// Whether the entry is a link, resolved or not.

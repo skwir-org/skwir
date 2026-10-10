@@ -523,7 +523,7 @@ impl Operation for SetNotes {
         );
         let (_, _, field) = self.words();
         Ok(Some(Box::new(RestoreNotes {
-            entry: EntryRef::new(self.entry.id, path),
+            entry: EntryRef::new(self.entry.id, path).with_only_name(self.entry.only_name),
             field: field.to_owned(),
             before,
             after,
@@ -668,7 +668,7 @@ impl Operation for RestoreNotes {
             stores.forget(self.entry.id);
         }
         Ok(Some(Box::new(RestoreNotes {
-            entry: EntryRef::new(self.entry.id, path),
+            entry: EntryRef::new(self.entry.id, path).with_only_name(self.entry.only_name),
             field: self.field.clone(),
             before: now,
             after: self.before.clone(),

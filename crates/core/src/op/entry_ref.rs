@@ -5,16 +5,41 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::entry::EntryId;
-use crate::fs::stat::id_of;
+use crate::fs::stat::{id_of, named};
 use crate::os_path::PathArg;
 
 /// A stable reference: the entry's identity plus where we last saw it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+/// Two references are equal when they name the same file at the same
+/// path, whatever they knew of its names.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EntryRef {
     pub id: EntryId,
     #[serde(with = "crate::os_path")]
     #[schemars(with = "crate::os_path::PathArg")]
     pub path: PathBuf,
+    /// Whether the file had no other name when it was referenced (a
+    /// folder never has; a file had when its link count was one). Only
+    /// then may [`EntryRef::resolve`] follow it to another name: of a
+    /// file with several names (hard links), the name referenced gone and
+    /// that name renamed look alike, and following would act on another
+    /// name. Not known is no.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub only_name: bool,
+}
+
+impl PartialEq for EntryRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.path == other.path
+    }
+}
+
+impl Eq for EntryRef {}
+
+impl std::hash::Hash for EntryRef {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+        self.path.hash(state);
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -36,28 +61,44 @@ fn name_of(path: &Path) -> std::path::Display<'_> {
 }
 
 impl EntryRef {
+    /// A reference that knows nothing of the file's other names: it
+    /// resolves at `path` alone ([`EntryRef::only_name`]).
     pub fn new(id: EntryId, path: impl Into<PathBuf>) -> Self {
         EntryRef {
             id,
             path: path.into(),
+            only_name: false,
         }
+    }
+
+    /// This reference, saying whether the file had no other name.
+    #[must_use]
+    pub fn with_only_name(mut self, only_name: bool) -> Self {
+        self.only_name = only_name;
+        self
     }
 
     /// Reference a path by stat-ing it now.
     pub fn from_path(path: impl Into<PathBuf>) -> Option<Self> {
         let path = path.into();
-        let id = id_of(&path)?;
-        Some(EntryRef { id, path })
+        let (id, only_name) = named(&path)?;
+        Some(EntryRef {
+            id,
+            path,
+            only_name,
+        })
     }
 
-    /// Where the entry is right now. The hint is trusted only if its identity
-    /// still matches; otherwise the parent directory is searched for the inode
-    /// (a rename in place), and failing that the entry is reported gone.
+    /// Where the entry is right now. The hint is trusted only if its
+    /// identity still matches; otherwise the file is followed to its new
+    /// name in the hint's folder (a rename in place) when that can be
+    /// told ([`EntryRef::only_name`], and one name holding it there), and
+    /// failing that the entry is reported gone, or replaced.
     pub fn resolve(&self) -> Result<PathBuf, ResolveError> {
         match id_of(&self.path) {
             Some(id) if id == self.id => return Ok(self.path.clone()),
             Some(found) => {
-                if let Some(p) = self.find_in_parent() {
+                if let Some(p) = self.renamed() {
                     return Ok(p);
                 }
                 return Err(ResolveError::Replaced {
@@ -68,22 +109,37 @@ impl EntryRef {
             }
             None => {}
         }
-        self.find_in_parent()
+        self.renamed()
             .ok_or_else(|| ResolveError::Gone(self.path.clone()))
     }
 
-    /// The entry's current path in the hint's directory. The directory
+    /// The file's new name in the hint's folder, when that can be told:
+    /// it had no other name when referenced, and exactly one name there
+    /// holds it now. Two would be a link made since, either of which may
+    /// be the one renamed.
+    fn renamed(&self) -> Option<PathBuf> {
+        if !self.only_name {
+            return None;
+        }
+        let mut names = self.names_in_parent()?;
+        let first = names.next()?;
+        names.next().is_none().then_some(first)
+    }
+
+    /// The names of the file in the hint's directory. The directory
     /// listing carries each inode number (`d_ino`), so only a matching name
     /// is stat-ed: a folder of 100k entries costs one read, not 100k stats.
     /// `d_ino` differs from the stat inode only on a mount point, which
     /// cannot be renamed in place anyway.
-    fn find_in_parent(&self) -> Option<PathBuf> {
+    fn names_in_parent(&self) -> Option<impl Iterator<Item = PathBuf> + '_> {
         let parent: &Path = self.path.parent()?;
         let rd = std::fs::read_dir(parent).ok()?;
-        rd.flatten()
-            .filter(|e| self.may_be(e))
-            .map(|e| e.path())
-            .find(|p| id_of(p) == Some(self.id))
+        Some(
+            rd.flatten()
+                .filter(|e| self.may_be(e))
+                .map(|e| e.path())
+                .filter(|p| id_of(p) == Some(self.id)),
+        )
     }
 
     /// Whether the folder's entry `e` may be this one, by what the listing
@@ -142,7 +198,9 @@ impl EntryArg {
         };
         crate::os_path::absolute(&path)?;
         match id {
-            Some(id) => Ok(EntryRef { id, path }),
+            // What it knew of the file's names is not said: it resolves
+            // at its path alone.
+            Some(id) => Ok(EntryRef::new(id, path)),
             None => EntryRef::from_path(&path)
                 .ok_or_else(|| anyhow::anyhow!("{} does not exist", path.display())),
         }

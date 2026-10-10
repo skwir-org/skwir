@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::cache::Cache;
 use crate::cancel::CancelToken;
 use crate::command::{CommandRegistry, Invocation, NoArgs, Outcome};
-use crate::entry::EntryId;
+use crate::entry::{Entry, EntryId};
 use crate::fs::PathProvider;
 use crate::location::{Location, LocationProvider, OpenContext, OpenLocation, Waker};
 use crate::op::{self, EntryRef, Executor, OpRegistry, Plan, PlanData};
@@ -1092,7 +1092,10 @@ impl App {
             };
             p.selection
                 .iter()
-                .filter_map(|id| Some(EntryRef::new(id, p.path_of(id)?)))
+                .filter_map(|id| {
+                    let only = p.entry(id).is_some_and(Entry::is_only_name);
+                    Some(EntryRef::new(id, p.path_of(id)?).with_only_name(only))
+                })
                 .collect()
         };
         Self::unwithheld(refs, |r| &r.path)
@@ -1126,11 +1129,13 @@ impl App {
                 .iter()
                 .filter_map(|id| {
                     let path = p.path_of(id)?;
-                    let type_name = match p.entry(id) {
+                    let entry = p.entry(id);
+                    let type_name = match entry {
                         Some(e) => e.inode_type().is_none().then(|| e.type_name().to_owned()),
                         None => path.file_name().map(std::ffi::OsStr::to_os_string),
                     };
-                    Some((EntryRef::new(id, path), type_name))
+                    let only = entry.is_some_and(Entry::is_only_name);
+                    Some((EntryRef::new(id, path).with_only_name(only), type_name))
                 })
                 .collect()
         };

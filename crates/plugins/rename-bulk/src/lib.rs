@@ -464,7 +464,11 @@ fn plan_selection(
             continue;
         };
         let mtime = e.metadata.value(keys::MODIFIED).and_then(Value::as_time);
-        items.push((EntryRef::new(id, path), e.name.clone(), mtime));
+        items.push((
+            EntryRef::new(id, path).with_only_name(e.is_only_name()),
+            e.name.clone(),
+            mtime,
+        ));
     }
     if items.is_empty() {
         return Err(bibli_core::command::NothingSelected.into());

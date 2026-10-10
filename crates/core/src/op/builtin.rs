@@ -19,7 +19,7 @@ use super::{
     Change, EntryRef, OpRegistry, Operation, ResolveError, StepContext, StepStatus, sys,
     valid_file_name,
 };
-use crate::fs::stat::id_of;
+use crate::fs::stat::{id_of, named};
 use crate::os_path::PathArg;
 
 fn pending(reversible: bool) -> StepStatus {
@@ -281,7 +281,7 @@ impl super::Effect for Rename {
             return Err(e);
         }
         Ok(Some(Box::new(Rename {
-            entry: EntryRef::new(self.entry.id, target),
+            entry: EntryRef::new(self.entry.id, target).with_only_name(self.entry.only_name),
             new_name: file_name(&src),
         })))
     }
@@ -371,9 +371,10 @@ impl super::Effect for Move {
         let origin = src.parent().unwrap_or(Path::new("/")).to_path_buf();
         let along = along(ctx, &src, &target);
         move_entry(ctx, &src, &target, &along)?;
-        let id = id_of(&target).unwrap_or(self.entry.id);
+        // Moved to another filesystem, it is a new file, of one name.
+        let (id, only) = named(&target).unwrap_or((self.entry.id, self.entry.only_name));
         Ok(Some(Box::new(Move {
-            entry: EntryRef::new(id, target),
+            entry: EntryRef::new(id, target).with_only_name(only),
             dest_dir: origin,
         })))
     }
@@ -386,7 +387,8 @@ impl Move {
     /// with it undone).
     fn restoring(&self, src: &Path) -> RestorePart {
         RestorePart {
-            entry: EntryRef::new(self.entry.id, src.to_path_buf()),
+            entry: EntryRef::new(self.entry.id, src.to_path_buf())
+                .with_only_name(self.entry.only_name),
             path: self.target(src),
         }
     }
@@ -1281,8 +1283,8 @@ impl super::Effect for Swap {
             }
         }
         Ok(Some(Box::new(Swap {
-            a: EntryRef::new(self.a.id, pb),
-            b: EntryRef::new(self.b.id, pa),
+            a: EntryRef::new(self.a.id, pb).with_only_name(self.a.only_name),
+            b: EntryRef::new(self.b.id, pa).with_only_name(self.b.only_name),
         })))
     }
 }
@@ -2702,7 +2704,7 @@ impl super::Effect for Link {
         })?;
         Ok(Some(Box::new(Unlink {
             path: link,
-            entry: EntryRef::new(self.entry.id, src),
+            entry: EntryRef::new(self.entry.id, src).with_only_name(self.entry.only_name),
         })))
     }
 }

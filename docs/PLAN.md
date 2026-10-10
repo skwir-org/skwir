@@ -2475,7 +2475,15 @@ Steps, each with what was found and what is left:
    a copy leaves the hidden `.bibli-copy-…` folder it was copying into
    in the destination (never a part copy under the file's name; the
    user guide says so); the journal is memory, so Undo does not outlive
-   bibli (by design: no database).
+   bibli (by design: no database). Found 2026-10-10 (ADR-049): two
+   names of one file (hard links) were one row, a plan whose name had
+   gone could trash or delete another name of its file, and Empty
+   Trash left one of two names trashed apart. The last two are fixed
+   (a reference follows a file only when it knew the file had one
+   name; the trash keeps an item per record), each with its test. Left
+   before the release, since it changes the agents' wire format: a row
+   per name (`FileId` and `EntryId`), space counted per file, copies
+   that keep hard links, a free-space check.
 5. **What users keep from 0.1 on**: settings keys and values, the
    window's session, saved searches, pins, the cache's layout (versioned,
    or thrown away whole), so that later versions read them. Done

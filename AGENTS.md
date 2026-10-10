@@ -829,8 +829,9 @@ current source before assuming a planned crate, command, or API exists.
   trashed file is deleted from; and Trash refuses a file in a trash at
   any depth (`op::in_trash`), and moves within the trash only a trashed
   folder's files. A `.trashinfo` is read one way
-  (`op::parse_trash_info`, which the platform re-exports). A location
-  whose files are the trash's says `Verbs::restore` (the `restores`
+  (`op::parse_trash_info`, which the platform re-exports). An item is
+  its record: two names of one file trashed apart are two (ADR-049). A
+  location whose files are the trash's says `Verbs::restore` (the `restores`
   token): Restore in their menu, no Move to Trash, a drop or a paste
   trashes, Cut takes them out where they are pasted, and Delete deletes
   for good. A step Undo cannot take back
@@ -1025,6 +1026,11 @@ current source before assuming a planned crate, command, or API exists.
   do, for the review, and what it did, for the toast); what a plan left out
   goes in its note (`Plan::with_note`), under the title, never in it.
   Reference entries by `EntryRef` (id + path hint), never by path alone.
+  A reference follows a file to a new name only when it knew the file
+  had one name (`EntryRef::only_name`: from `EntryRef::from_path`,
+  `Entry::is_only_name`, and carried into inverses with
+  `with_only_name`), never to another name of a file with several
+  (hard links, ADR-049): not known, it resolves at its path.
 - **Plugins depend only on `bibli-core` (and `bibli-platform`), never on each
   other.** They talk through core-owned data (entries, metadata fields,
   selection, locations). Every contribution is tagged with the plugin id and

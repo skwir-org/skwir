@@ -101,6 +101,10 @@ fn mark(entry: &mut Entry, trashed: &Trashed) {
 /// trash's folders listed, no record opened and nothing stat-ed but on
 /// Windows. What the place's icon and Empty Trash need, read again at
 /// every change. I/O: a worker's.
+///
+/// An item is its record: two whose files are one (names of one file,
+/// hard links, trashed apart) are two items, and only the same record
+/// reached twice (one trash under two paths) is one.
 fn read_held(trashes: &[PathBuf]) -> Vec<EntryRef> {
     let mut seen = HashSet::new();
     let mut held = Vec::new();
@@ -124,7 +128,7 @@ fn read_held(trashes: &[PathBuf]) -> Vec<EntryRef> {
                 dev,
                 ino: listed.ino,
             };
-            if records.contains(&record) && seen.insert(id) {
+            if records.contains(&record) && seen.insert((id, listed.name.clone())) {
                 held.push(EntryRef::new(id, files.join(&listed.name)));
             }
         }
@@ -166,7 +170,12 @@ fn read_items(
                 mark(&mut entry, &trashed);
                 Arc::new(Item { entry, trashed })
             };
-            seen.insert(item.entry.id).then_some(item)
+            // As `read_held` tells items apart.
+            seen.insert((
+                item.entry.id,
+                r.path.file_name().map(std::ffi::OsStr::to_os_string),
+            ))
+            .then_some(item)
         })
         .collect()
 }
