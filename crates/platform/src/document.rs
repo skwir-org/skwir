@@ -552,7 +552,24 @@ impl Worker {
             crate::sandbox::plain(&launch.executable, &launch.pdf, &launch.scratch)
         };
         let mut command = run.command;
-        command.arg(&run.input).arg(&run.work);
+        // Run as it is (no sandbox here), a document whose path is no
+        // UTF-8 is named by a link in the session's own folder: an engine
+        // (MuPDF) takes its path as text, and refused it.
+        #[cfg(unix)]
+        let input = if run.isolated || run.input.to_str().is_some() {
+            run.input.clone()
+        } else {
+            let inside = crate::sandbox::inside_name(&run.input);
+            let name = Path::new(&inside).file_name().unwrap_or_default();
+            let link = run.work.join(name);
+            if std::fs::symlink_metadata(&link).is_err() {
+                std::os::unix::fs::symlink(&run.input, &link)?;
+            }
+            link
+        };
+        #[cfg(not(unix))]
+        let input = run.input.clone();
+        command.arg(&input).arg(&run.work);
         if let Some(Layout { width, height, em }) = launch.setup.layout {
             command.arg(format!("--layout={width},{height},{em}"));
         }
@@ -716,6 +733,53 @@ mod tests {
                 .parse()
                 .unwrap()
         }
+    }
+
+    /// Run as it is, a worker is handed a document whose path is no UTF-8
+    /// by a link of a UTF-8 name: `MuPDF` takes its path as text.
+    #[test]
+    fn a_document_named_in_no_utf8_is_handed_by_a_link() {
+        use std::os::unix::ffi::OsStrExt;
+        let helpers = tempfile::tempdir().unwrap();
+        let documents = tempfile::tempdir().unwrap();
+        let source = documents
+            .path()
+            .join(std::ffi::OsStr::from_bytes(b"caf\xe9 report.pdf"));
+        std::fs::write(&source, b"%PDF synthetic").unwrap();
+        let executable = helpers.path().join("worker");
+        let shell = crate::process::required("sh").unwrap();
+        let script = format!(
+            concat!(
+                "#!{shell}\n",
+                "printf '%s' \"$1\" > \"$2/args\"\n",
+                "head -c 4 \"$1\" > \"$2/read\"\n",
+                "printf '%s\\n' '{{\"id\":0,\"body\":{{\"Ready\":{{\"pages\":1,\"outlines\":[]}}}}}}'\n",
+                "while IFS= read -r line; do :; done\n"
+            ),
+            shell = shell.display(),
+        );
+        std::fs::write(&executable, script).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let scratch_path = scratch.path().to_owned();
+        let session = WorkerSession::open_with_worker(
+            executable,
+            source.clone(),
+            source,
+            scratch,
+            Setup::default(),
+            CancelToken::new(),
+            false,
+        )
+        .unwrap()
+        .unwrap();
+        let read = |name: &str| std::fs::read_to_string(scratch_path.join(name)).unwrap();
+        assert_eq!(
+            read("args"),
+            scratch_path.join("document.pdf").to_str().unwrap()
+        );
+        assert_eq!(read("read"), "%PDF");
+        drop(session);
     }
 
     #[test]
