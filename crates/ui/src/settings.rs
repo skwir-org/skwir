@@ -563,6 +563,12 @@ pub struct SettingsView {
     /// them, worked out when they are set: asked for every row of every
     /// frame, a command's title was a search of the shell's commands.
     pub(crate) key_words: Vec<(String, String)>,
+    /// The Keyboard page's rows for a query, worked out again when the
+    /// query or the bindings change, not at each frame.
+    pub(crate) key_rows:
+        std::cell::RefCell<Option<(String, std::rc::Rc<Vec<crate::settings_view::KeyRow>>)>>,
+    /// The Keyboard page's list of bindings, which draws those in view.
+    pub(crate) key_list: gpui::UniformListScrollHandle,
     pub(crate) page: Page,
     pub(crate) search: Entity<TextInput>,
     pub(crate) rows: Vec<Row>,
@@ -650,6 +656,8 @@ impl SettingsView {
             settings_revision: app.settings.revision(),
             plugins_revision: app.plugins.revision(),
             key_words: key_words(&app, &key_hints),
+            key_rows: std::cell::RefCell::default(),
+            key_list: gpui::UniformListScrollHandle::new(),
             app,
             font,
             key_hints,
@@ -714,6 +722,7 @@ impl SettingsView {
     pub fn set_key_hints(&mut self, hints: Vec<KeyHint>, cx: &mut Context<Self>) {
         self.key_words = key_words(&self.app, &hints);
         self.key_hints = hints;
+        self.key_rows.take();
         cx.notify();
     }
 

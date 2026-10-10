@@ -57,6 +57,21 @@ pub(crate) fn card_row(theme: &Theme, edge: Edge) -> gpui::Div {
         .when(edge.last, gpui::Styled::rounded_b_lg)
 }
 
+/// A row of the Keyboard page: a place's caption, or a binding of
+/// `key_hints` with its command's title.
+pub(crate) enum KeyRow {
+    Place(String),
+    Binding {
+        hint: usize,
+        title: String,
+        edge: Edge,
+    },
+}
+
+/// The height of every row of the Keyboard page's list, a caption's too:
+/// the same for all, so only the rows in view are drawn.
+const KEY_ROW: f32 = 40.;
+
 /// What a setting row needs, detached from `self` so controls can borrow it.
 struct Snapshot {
     spec: SettingSpec,
@@ -804,7 +819,7 @@ impl SettingsView {
         items.push(row.into_any_element());
     }
 
-    fn binding_row(&self, hint: &KeyHint, title: &str, edge: Edge, theme: &Theme) -> AnyElement {
+    fn binding_row(&self, hint: &KeyHint, title: &str, edge: Edge, theme: &Theme) -> gpui::Div {
         let mut keys = div().flex().flex_none().items_center().gap(px(10.));
         for stroke in crate::keymap::key_caps(&hint.keys) {
             let mut caps = div().flex().items_center().gap(px(3.));
@@ -837,7 +852,6 @@ impl SettingsView {
                 )
             })
             .child(keys)
-            .into_any_element()
     }
 
     // ------------------------------------------------------------ pages
@@ -962,36 +976,107 @@ impl SettingsView {
         self.owner_rows(id, items, theme, window, cx);
     }
 
-    fn page_keyboard(&self, query: &str, items: &mut Vec<AnyElement>, theme: &Theme) -> usize {
-        let mut hints: Vec<(&str, &str, &KeyHint)> = self
+    /// The Keyboard page's rows for `query`, its bindings grouped by
+    /// place ("Anywhere" first, then the places alphabetically, stable
+    /// within one): kept until the query or the bindings change.
+    fn key_rows(&self, query: &str) -> std::rc::Rc<Vec<KeyRow>> {
+        if let Some((kept, rows)) = self.key_rows.borrow().as_ref()
+            && kept == query
+        {
+            return std::rc::Rc::clone(rows);
+        }
+        let mut hints: Vec<(usize, &str, &str)> = self
             .key_hints
             .iter()
             .zip(&self.key_words)
-            .map(|(hint, (context, title))| (context.as_str(), title.as_str(), hint))
-            .filter(|(context, title, hint)| {
+            .enumerate()
+            .filter(|(_, (hint, (context, title)))| {
                 query.is_empty() || matches(query, &[context, &hint.keys, title])
             })
+            .map(|(n, (_, (context, title)))| (n, context.as_str(), title.as_str()))
             .collect();
-        // "Anywhere" first, then places alphabetically; stable within a place.
-        hints.sort_by_key(|(context, _, _)| (*context != "Anywhere", *context));
+        hints.sort_by_key(|(_, context, _)| (*context != "Anywhere", *context));
+        let mut rows = Vec::new();
         let mut start = 0;
         while start < hints.len() {
             let end = hints[start..]
                 .iter()
-                .position(|(context, _, _)| *context != hints[start].0)
+                .position(|(_, context, _)| *context != hints[start].1)
                 .map_or(hints.len(), |offset| start + offset);
-            Self::caption(items, hints[start].0.to_owned(), theme);
-            let group = &hints[start..end];
-            for (index, (_, title, hint)) in group.iter().enumerate() {
-                let edge = Edge {
-                    first: index == 0,
-                    last: index + 1 == group.len(),
-                };
-                items.push(self.binding_row(hint, title, edge, theme));
+            rows.push(KeyRow::Place(hints[start].1.to_owned()));
+            for (index, (hint, _, title)) in hints[start..end].iter().enumerate() {
+                rows.push(KeyRow::Binding {
+                    hint: *hint,
+                    title: (*title).to_owned(),
+                    edge: Edge {
+                        first: index == 0,
+                        last: start + index + 1 == end,
+                    },
+                });
             }
             start = end;
         }
-        hints.len()
+        let rows = std::rc::Rc::new(rows);
+        *self.key_rows.borrow_mut() = Some((query.to_owned(), std::rc::Rc::clone(&rows)));
+        rows
+    }
+
+    /// The bindings matching `query` as rows of the page, for a search;
+    /// how many.
+    fn page_keyboard(&self, query: &str, items: &mut Vec<AnyElement>, theme: &Theme) -> usize {
+        let rows = self.key_rows(query);
+        let mut found = 0;
+        for row in rows.iter() {
+            match row {
+                KeyRow::Place(place) => Self::caption(items, place.clone(), theme),
+                KeyRow::Binding { hint, title, edge } => {
+                    found += 1;
+                    items.push(
+                        self.binding_row(&self.key_hints[*hint], title, *edge, theme)
+                            .into_any_element(),
+                    );
+                }
+            }
+        }
+        found
+    }
+
+    /// Every binding, in a list that draws the rows in view: the Keyboard
+    /// page built all of them, hundreds, at every frame the dialog drew.
+    fn keyboard_list(&self, cx: &mut Context<Self>) -> AnyElement {
+        let rows = self.key_rows("");
+        let count = rows.len();
+        gpui::uniform_list(
+            "keyboard-bindings",
+            count,
+            cx.processor(
+                move |this: &mut Self, range: std::ops::Range<usize>, _, cx| {
+                    let theme = cx.global::<Theme>().clone();
+                    range
+                        .filter_map(|n| {
+                            let row = match rows.get(n)? {
+                                KeyRow::Place(place) => div()
+                                    .h(px(KEY_ROW))
+                                    .flex()
+                                    .items_end()
+                                    .pb_2()
+                                    .text_xs()
+                                    .text_color(theme.text_muted)
+                                    .child(place.clone()),
+                                KeyRow::Binding { hint, title, edge } => this
+                                    .binding_row(this.key_hints.get(*hint)?, title, *edge, &theme)
+                                    .h(px(KEY_ROW)),
+                            };
+                            Some(row.w_full().into_any_element())
+                        })
+                        .collect::<Vec<_>>()
+                },
+            ),
+        )
+        .track_scroll(self.key_list.clone())
+        .flex_1()
+        .min_h(px(8. * KEY_ROW))
+        .into_any_element()
     }
 
     fn search_results(
@@ -1115,7 +1200,7 @@ impl Render for SettingsView {
                 }
                 Page::Keyboard => {
                     self.owner_rows(bibli_core::keymap::OWNER, &mut items, &theme, window, cx);
-                    self.page_keyboard("", &mut items, &theme);
+                    items.push(self.keyboard_list(cx));
                 }
                 Page::Plugin(id) => self.page_plugin(id, &mut items, &theme, window, cx),
             }
