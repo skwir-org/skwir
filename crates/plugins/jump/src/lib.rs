@@ -122,8 +122,44 @@ impl Index {
 #[derive(Default)]
 pub struct JumpPlugin {
     index: Arc<Mutex<Index>>,
+    /// Whether the index was ever gathered: nothing is asked of zoxide or
+    /// the recent files until Jump is first used.
+    gathered: Arc<Mutex<bool>>,
     /// Cancelled on disable: a refresh in flight stops and publishes nothing.
     lifetime: Mutex<CancelToken>,
+}
+
+/// Gather the index now, the first time it is needed, unless it was: a
+/// first query waits for it (on a worker, as the window asks) rather than
+/// ranking nothing, and those asked meanwhile wait for the same gathering.
+/// On the window's thread it is left to a worker, and what there is ranked.
+fn first_need(
+    gathered: &Mutex<bool>,
+    index: &Arc<Mutex<Index>>,
+    lifetime: &CancelToken,
+    app: &App,
+) {
+    if bibli_core::scheduler::on_window_thread() {
+        if !*gathered.lock() {
+            refresh(index, lifetime, app);
+        }
+        return;
+    }
+    let mut done = gathered.lock();
+    if *done {
+        return;
+    }
+    let cancel = lifetime.child();
+    let dirs = zoxide::query(&cancel);
+    let files = recent_files();
+    if cancel.is_cancelled() {
+        return;
+    }
+    let mut ix = index.lock();
+    ix.dirs = dirs;
+    ix.files = files;
+    ix.asked = Some(Instant::now());
+    *done = true;
 }
 
 /// Start gathering the index again unless a refresh started less than
@@ -240,14 +276,15 @@ impl Plugin for JumpPlugin {
     fn register(&self, app: &App) {
         let lifetime = app.lifetime().child();
         *self.lifetime.lock() = lifetime.clone();
-        refresh(&self.index, &lifetime, app);
         let index = Arc::clone(&self.index);
+        let gathered = Arc::clone(&self.gathered);
         app.commands.register::<CandidatesArgs, _>(
             ID,
             "jump.candidates",
             "Jump candidates",
             "Rank jump targets for a query, from what zoxide and the recent files list said last",
             move |a, app| {
+                first_need(&gathered, &index, &lifetime, app);
                 let ranked = {
                     let ix = index.lock();
                     rank(&a.query, &ix.dirs, &ix.files, a.limit.unwrap_or(20))
@@ -289,6 +326,7 @@ impl Plugin for JumpPlugin {
     fn on_disable(&self, _app: &App) {
         self.lifetime.lock().cancel();
         *self.index.lock() = Index::default();
+        *self.gathered.lock() = false;
     }
 }
 
@@ -505,26 +543,23 @@ mod tests {
             std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
         }
         let app = app(tmp.path());
-        app.plugins.add(Arc::new(JumpPlugin::default()), &app);
-        // The index is gathered on a worker; the command only ranks it.
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        let arr = loop {
-            let Outcome::Value(v) = app
-                .dispatch(&Invocation::with_args(
-                    "jump.candidates",
-                    &serde_json::json!({ "query": "alpha" }),
-                ))
-                .unwrap()
-            else {
-                panic!("expected value")
-            };
-            let arr = v.as_array().unwrap().clone();
-            if !arr.is_empty() {
-                break arr;
-            }
-            assert!(std::time::Instant::now() < deadline, "no candidates");
-            std::thread::sleep(Duration::from_millis(10));
+        let plugin = Arc::new(JumpPlugin::default());
+        app.plugins
+            .add(Arc::clone(&plugin) as Arc<dyn Plugin>, &app);
+        // Nothing is asked of zoxide until Jump is used.
+        assert!(plugin.index.lock().asked.is_none());
+        // The first query, off the window's thread as the window asks it,
+        // gathers what it ranks: it is never answered empty.
+        let Outcome::Value(v) = app
+            .dispatch(&Invocation::with_args(
+                "jump.candidates",
+                &serde_json::json!({ "query": "alpha" }),
+            ))
+            .unwrap()
+        else {
+            panic!("expected value")
         };
+        let arr = v.as_array().unwrap().clone();
         assert!(
             arr.iter()
                 .any(|c| c["path"] == "/tmp/fake-alpha" && c["source"] == "zoxide")
