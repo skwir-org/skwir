@@ -360,9 +360,11 @@ fn draw(
                 continue;
             };
             let settings = skrifa::outline::DrawSettings::unhinted(scale, location);
-            // read-fonts (0.41 to 0.45 at least) indexes past a simple
-            // glyph's flags when it declares no points but holds bytes after
-            // its instructions: that glyph is left out, as one it refuses.
+            // read-fonts 0.41 indexes past a simple glyph's flags when it
+            // declares no points but holds bytes after its instructions
+            // (fontations#1962, fixed in 0.42, skrifa 0.45): that glyph is
+            // left out, as one it refuses. skrifa stays at 0.44 while the
+            // newest swash, gpui's rasterizer, takes no later one.
             let drawn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 outline.draw(settings, &mut pen)
             }));

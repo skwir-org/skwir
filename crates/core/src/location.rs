@@ -979,10 +979,13 @@ impl Listing {
                     });
                 if let Some(c) = self.sort_cache.get_mut().as_mut() {
                     // What the order placed leaves it; what it had not
-                    // placed yet leaves the arrivals still to place.
+                    // placed yet leaves the arrivals still to place. The
+                    // indexes are those before any of the batch goes, so
+                    // they are told against what was placed then.
+                    let placed = c.seen;
                     for id in &ids {
                         if let Some(at) = self.entries.get_index_of(id)
-                            && at < c.seen
+                            && at < placed
                             && c.gone.insert(*id)
                         {
                             c.seen -= 1;
@@ -2044,5 +2047,85 @@ mod tests {
         assert_eq!(rx.len(), 1);
         assert_eq!(listing.drain(&rx, long), 1);
         assert_eq!(listing.len(), 5);
+    }
+
+    /// What a provider may send, in any order, read between any two of its
+    /// events: the order kept is the one sorting it whole gives once the
+    /// listing is complete, holds only what is listed before, and never
+    /// panics. Empty Trash found an order
+    /// kept past the entries it held (2026-10-10).
+    #[test]
+    fn the_kept_order_follows_any_events() {
+        use crate::entry::{Provenance, Value, keys};
+        use proptest::prelude::*;
+
+        #[derive(Clone, Debug)]
+        enum Event {
+            Add(Vec<u64>),
+            Grow(u64, u64),
+            Remove(Vec<u64>),
+            Rename(u64, u64),
+            Complete,
+            Sort(bool),
+        }
+        let id = |ino| EntryId {
+            file: crate::FileId { dev: 1, ino },
+            at: 0,
+        };
+        let entry = |ino: u64, size: u64| {
+            let mut e = Entry::new(id(ino), format!("n{:02}", (ino * 7) % 23), EntryKind::File);
+            e.metadata
+                .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
+            e
+        };
+        let event = prop_oneof![
+            3 => proptest::collection::vec(0..24u64, 0..12).prop_map(Event::Add),
+            2 => (0..24u64, 0..5u64).prop_map(|(ino, size)| Event::Grow(ino, size)),
+            2 => proptest::collection::vec(0..24u64, 0..12).prop_map(Event::Remove),
+            1 => (0..24u64, 0..24u64).prop_map(|(old, new)| Event::Rename(old, new)),
+            1 => Just(Event::Complete),
+            3 => any::<bool>().prop_map(Event::Sort),
+        ];
+        proptest!(|(events in proptest::collection::vec(event, 1..60))| {
+            let mut listing = Listing::default();
+            for event in events {
+                match event {
+                    Event::Add(inos) => {
+                        listing.apply(ListingEvent::Added(
+                            inos.into_iter().map(|ino| entry(ino, 1)).collect(),
+                        ));
+                    }
+                    Event::Grow(ino, size) => {
+                        listing.apply(ListingEvent::Updated(vec![entry(ino, size)]));
+                    }
+                    Event::Remove(inos) => {
+                        listing.apply(ListingEvent::Removed(inos.into_iter().map(id).collect()));
+                    }
+                    Event::Rename(old, new) => {
+                        listing.apply(ListingEvent::Renamed(vec![(id(old), entry(new, 1))]));
+                    }
+                    Event::Complete => {
+                        listing.apply(ListingEvent::Complete);
+                    }
+                    Event::Sort(by_size) => {
+                        let spec = SortSpec {
+                            key: if by_size { SortKey::Size } else { SortKey::Name },
+                            ..SortSpec::default()
+                        };
+                        let shown = listing.sorted(spec);
+                        if listing.complete {
+                            prop_assert_eq!(&*shown, &*listing.compute_sorted(spec));
+                        } else {
+                            // While it streams, what arrived or moved is
+                            // placed by quarters: the order lags, but holds
+                            // only what is listed, once each.
+                            let held: std::collections::HashSet<_> = shown.iter().collect();
+                            prop_assert_eq!(held.len(), shown.len());
+                            prop_assert!(shown.iter().all(|id| listing.entries.contains_key(id)));
+                        }
+                    }
+                }
+            }
+        });
     }
 }
