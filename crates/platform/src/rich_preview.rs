@@ -869,22 +869,37 @@ pub fn local_image(base: &std::path::Path, href: &str, cancel: &CancelToken) -> 
     let bytes = read_bounded(&path, limits::BINARY_INPUT, "Embedded image", cancel).ok()?;
     crate::inspection::image(&bytes).ok()
 }
+/// What is read first of a picture beside a document for its size
+/// (`local_picture`).
+const PICTURE_FIRST_BYTES: usize = 4096;
+
 /// A picture beside a document, named for later (`local_image` decodes it
 /// by the same `href`) with the size it will be shown at, read from its
 /// header.
 pub fn local_picture(base: &std::path::Path, href: &str, cancel: &CancelToken) -> Option<Picture> {
     let path = local_path(base, href)?;
     // A photo's size is found by seeking to its frame; another picture's
-    // read from its head, or from all of it.
+    // read from its first bytes (where a PNG, a GIF, a WebP or a BMP says
+    // it), else from a longer head, else from all of it: a page of three
+    // hundred pictures read 256 KB of each.
     let (width, height) = crate::exif::jpeg_size(&path)
         .and_then(|(width, height)| crate::inspection::shown_size(width, height))
         .or_else(|| {
-            let head = crate::inspection::read(&path, 0, limits::PICTURE_HEADER, cancel).ok()?;
-            crate::inspection::picture_size(&head).or_else(|| {
-                let whole =
-                    read_bounded(&path, limits::BINARY_INPUT, "Embedded image", cancel).ok()?;
-                crate::inspection::picture_size(&whole)
-            })
+            let first = crate::inspection::read(&path, 0, PICTURE_FIRST_BYTES, cancel).ok()?;
+            crate::inspection::picture_size(&first)
+                .or_else(|| {
+                    if first.len() < PICTURE_FIRST_BYTES {
+                        return None;
+                    }
+                    let head =
+                        crate::inspection::read(&path, 0, limits::PICTURE_HEADER, cancel).ok()?;
+                    crate::inspection::picture_size(&head)
+                })
+                .or_else(|| {
+                    let whole =
+                        read_bounded(&path, limits::BINARY_INPUT, "Embedded image", cancel).ok()?;
+                    crate::inspection::picture_size(&whole)
+                })
         })?;
     Some(Picture::Later {
         key: href.to_owned(),
