@@ -202,6 +202,9 @@ pub fn for_name_now(name: &std::ffi::OsStr, size: u16) -> Option<Pic> {
 
 type Resolved = Vec<((Want, u16), Option<Pic>)>;
 
+/// How often a job of lookups hands over what it found so far.
+const PUBLISH: std::time::Duration = std::time::Duration::from_millis(16);
+
 /// Icons of the desktop's theme, or the system's, per size. Looking one up
 /// may read the theme from disk, so a miss is answered `None` for now and
 /// resolved on a worker with the others this frame missed (`request`);
@@ -320,7 +323,10 @@ impl IconCache {
         self.lookup(Want::Mime(key), size)
     }
 
-    /// Resolve what this frame missed, in one job. Call after drawing.
+    /// Resolve what this frame missed, in one job, handing over what it
+    /// has every `PUBLISH` (a cold theme answers a frame's first types in
+    /// a hundred milliseconds or more: each shows as it is found, not with
+    /// the last). Call after drawing.
     pub fn request(&mut self, app: &Arc<App>) {
         if self.wanted.is_empty() {
             return;
@@ -340,19 +346,25 @@ impl IconCache {
             "icons",
             app.lifetime().child(),
             move || {
-                let resolved: Resolved = wanted
-                    .into_iter()
-                    .map(|(want, size)| {
-                        let pic = resolve(&want, size);
-                        ((want, size), pic)
-                    })
-                    .collect();
-                if let Ok(mut slot) = results.lock() {
-                    slot.extend(resolved);
+                let publish = |resolved: &mut Resolved| {
+                    if let Ok(mut slot) = results.lock() {
+                        slot.extend(resolved.drain(..));
+                    }
+                    if let Some(app) = weak.upgrade() {
+                        app.wake();
+                    }
+                };
+                let mut resolved: Resolved = Vec::new();
+                let mut since = std::time::Instant::now();
+                for (want, size) in wanted {
+                    let pic = resolve(&want, size);
+                    resolved.push(((want, size), pic));
+                    if since.elapsed() >= PUBLISH {
+                        publish(&mut resolved);
+                        since = std::time::Instant::now();
+                    }
                 }
-                if let Some(app) = weak.upgrade() {
-                    app.wake();
-                }
+                publish(&mut resolved);
             },
         );
     }
