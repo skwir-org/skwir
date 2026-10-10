@@ -102,6 +102,10 @@ fn gltf_buffers(path: &Path) -> Vec<(PathBuf, PathBuf)> {
         .collect()
 }
 
+/// Models drawn at once at most: a helper reading a large mesh holds most
+/// of a gigabyte.
+static TURNS: crate::process::Turns = crate::process::Turns::new(2);
+
 /// The mesh at `path` drawn at most `side` pixels on its longer side, and
 /// measured. An error when the helper is missing, or says why it cannot.
 pub fn draw(
@@ -111,6 +115,9 @@ pub fn draw(
     cancel: &CancelToken,
 ) -> anyhow::Result<Drawn> {
     let worker = WORKER.require("draw 3D models")?;
+    let Some(_turn) = TURNS.take(cancel) else {
+        anyhow::bail!("cancelled");
+    };
     let work = tempfile::tempdir()?;
     // A glTF's buffers may be files beside it: the helper reads them where
     // it reads the model.

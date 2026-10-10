@@ -258,21 +258,25 @@ fn load(
     keep: Option<&std::path::Path>,
 ) -> anyhow::Result<Component> {
     use anyhow::Context as _;
-    let bytes = std::fs::read(path).with_context(|| format!("{}", path.display()))?;
-    let bytes = if is_component(&bytes) {
-        bytes
-    } else {
+    let file = std::fs::read(path).with_context(|| format!("{}", path.display()))?;
+    let component = is_component(&file);
+    // A core module made a component, validated: only to compile it, never
+    // to name what was kept of it, which a start loads as it was.
+    let encoded = || -> anyhow::Result<Vec<u8>> {
+        if component {
+            return Ok(file.clone());
+        }
         wit_component::ComponentEncoder::default()
-            .module(&bytes)
+            .module(&file)
             .and_then(|encoder| encoder.validate(true).encode())
-            .context("a module built with the plugin world's bindings")?
+            .context("a module built with the plugin world's bindings")
     };
     let Some(keep) = keep else {
-        return Component::new(engine, &bytes)
+        return Component::new(engine, &encoded()?)
             .map_err(anyhow::Error::from)
             .context("compiling the module");
     };
-    let kept = keep.join(format!("{}.cwasm", compiled_name(engine, &bytes)));
+    let kept = keep.join(format!("{}.cwasm", compiled_name(engine, &file, component)));
     if kept.is_file() {
         // SAFETY: the file is native code Wasmtime runs as it finds it, so
         // it must be what `Component::serialize` wrote for this component.
@@ -289,7 +293,7 @@ fn load(
             Err(error) => eprintln!("compiled module not loaded, compiling it again: {error:#}"),
         }
     }
-    let component = Component::new(engine, &bytes)
+    let component = Component::new(engine, &encoded()?)
         .map_err(anyhow::Error::from)
         .context("compiling the module")?;
     if let Err(error) = save(&component, keep, &kept) {
@@ -299,9 +303,10 @@ fn load(
 }
 
 /// The name a compiled component is kept under: what it was compiled from
-/// and by what, so another module, another Wasmtime or other settings is
-/// another name.
-fn compiled_name(engine: &Engine, component: &[u8]) -> String {
+/// (the file as it is, and whether it was a component already) and by
+/// what, so another module, another Wasmtime or other settings is another
+/// name.
+fn compiled_name(engine: &Engine, file: &[u8], component: bool) -> String {
     use std::hash::Hash as _;
     /// Feeds what Wasmtime hashes into BLAKE3.
     struct Blake3(blake3::Hasher);
@@ -314,7 +319,8 @@ fn compiled_name(engine: &Engine, component: &[u8]) -> String {
         }
     }
     let mut hasher = Blake3(blake3::Hasher::new());
-    hasher.0.update(component);
+    hasher.0.update(&[u8::from(component)]);
+    hasher.0.update(file);
     engine.precompile_compatibility_hash().hash(&mut hasher);
     hasher.0.finalize().to_hex().to_string()
 }

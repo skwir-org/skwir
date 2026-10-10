@@ -369,9 +369,16 @@ fn manage(
                 ..
             } => {
                 let mut bgra = std::mem::take(&mut spare);
-                bgra.resize(bibli_core::media::frame_bytes(width, height)?, 0);
+                let bytes = bibli_core::media::frame_bytes(width, height)?;
                 pixels.seek(SeekFrom::Start(0))?;
-                pixels.read_exact(&mut bgra)?;
+                // Read into room set aside, never zeroed first: the window
+                // keeps each frame it takes, so most come into a new buffer,
+                // and zeroing 8 MB at 1080p before reading over it, thirty
+                // times a second, was work for nothing.
+                bgra.clear();
+                bgra.reserve_exact(bytes);
+                (&mut pixels).take(bytes as u64).read_to_end(&mut bgra)?;
+                anyhow::ensure!(bgra.len() == bytes, "a video frame came short");
                 spare = shared.frame(
                     generation,
                     Frame {

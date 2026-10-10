@@ -69,6 +69,10 @@ pub fn rewrite<T>(
         std::fs::set_permissions(staged.path(), metadata.permissions())?;
     }
     staged.write_all(updated.as_bytes())?;
+    // On the disk before it takes the file's place: renamed over it first,
+    // a power cut could leave the desktop's bookmarks or its default
+    // applications empty (XFS, ext4 without `auto_da_alloc`).
+    staged.as_file().sync_all()?;
     staged.persist(&file)?;
     Ok(Some(value))
 }

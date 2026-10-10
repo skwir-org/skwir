@@ -250,6 +250,52 @@ const DIAGNOSTIC: u64 = 4096;
 /// a Mermaid diagram's source was refused past it).
 pub const MAX_INPUT: usize = 1024 * 1024;
 
+/// Turns to run a program heavy in memory or time (`ImageMagick`, a 3D
+/// model's helper): at most so many at once, the others waiting their
+/// turn, a wait given up once cancelled. A grid of large models started
+/// one helper per worker, each holding most of a gigabyte.
+pub struct Turns {
+    most: usize,
+    running: parking_lot::Mutex<usize>,
+    freed: parking_lot::Condvar,
+}
+
+/// A turn taken, given back when dropped.
+pub struct Turn<'a>(&'a Turns);
+
+impl Turns {
+    pub const fn new(most: usize) -> Self {
+        Turns {
+            most,
+            running: parking_lot::const_mutex(0),
+            freed: parking_lot::Condvar::new(),
+        }
+    }
+
+    /// Wait for a turn; `None` once `cancel` is cancelled.
+    pub fn take(&self, cancel: &CancelToken) -> Option<Turn<'_>> {
+        let mut running = self.running.lock();
+        while *running >= self.most {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            self.freed.wait_for(&mut running, Duration::from_millis(50));
+        }
+        if cancel.is_cancelled() {
+            return None;
+        }
+        *running += 1;
+        Some(Turn(self))
+    }
+}
+
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        *self.0.running.lock() -= 1;
+        self.0.freed.notify_one();
+    }
+}
+
 /// Run `command` to its end, however it ends: cancelled or timed out is an
 /// error, a failed exit status is not. `input`, if any, is its standard
 /// input (at most [`MAX_INPUT`] bytes); otherwise it reads nothing.
@@ -272,6 +318,54 @@ pub fn run_to_exit(
         timeout,
         crate::inspection::limits::HELPER_OUTPUT,
     )
+}
+
+/// How often a program running is looked at (cancelled, too long, too
+/// much said) while it has not ended.
+const CHECK_EVERY: Duration = Duration::from_millis(50);
+
+/// Wakes a wait for a child as it exits: its pidfd on Linux, asleep until
+/// it ends (a wait polled every 10 ms, a hundred wakes a second for each
+/// helper running); elsewhere a short sleep.
+struct ExitSignal {
+    #[cfg(target_os = "linux")]
+    pidfd: Option<rustix::fd::OwnedFd>,
+}
+
+impl ExitSignal {
+    fn of(child: &ChildGuard) -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            ExitSignal {
+                pidfd: child.pid().and_then(|pid| {
+                    rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).ok()
+                }),
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = child;
+            ExitSignal {}
+        }
+    }
+
+    /// Wait until the child exits, or `at_most` passes.
+    fn wait(&self, at_most: Duration) {
+        #[cfg(target_os = "linux")]
+        if let Some(pidfd) = &self.pidfd {
+            let mut fds = [rustix::event::PollFd::new(
+                pidfd,
+                rustix::event::PollFlags::IN,
+            )];
+            let timeout = rustix::time::Timespec {
+                tv_sec: i64::try_from(at_most.as_secs()).unwrap_or(i64::MAX),
+                tv_nsec: i64::from(at_most.subsec_nanos()),
+            };
+            let _ = rustix::event::poll(&mut fds, Some(&timeout));
+            return;
+        }
+        std::thread::sleep(at_most.min(Duration::from_millis(10)));
+    }
 }
 
 /// [`run_to_exit`] for a program whose output is bounded otherwise than a
@@ -319,18 +413,22 @@ pub fn run_capped(
     // The pipe's write end was dropped above and the child holds the read
     // end: it sees the input, then end of file.
     let start = Instant::now();
+    let exit = ExitSignal::of(&child);
+    let too_much = |stdout: &std::fs::File, stderr: &std::fs::File| -> io::Result<bool> {
+        Ok(stdout.metadata()?.len() > output || stderr.metadata()?.len() > output)
+    };
     loop {
         anyhow::ensure!(!cancel.is_cancelled(), "{program} was cancelled");
         anyhow::ensure!(start.elapsed() < timeout, "{program} timed out");
-        anyhow::ensure!(
-            stdout.metadata()?.len() <= output && stderr.metadata()?.len() <= output,
-            "{program}: excessive output"
-        );
+        anyhow::ensure!(!too_much(&stdout, &stderr)?, "{program}: excessive output");
         if child.exited()? {
             break;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        exit.wait(CHECK_EVERY.min(timeout.saturating_sub(start.elapsed())));
     }
+    // What it wrote since the last look: cut to the limit, a program that
+    // wrote too much and ended in between said less than it did.
+    anyhow::ensure!(!too_much(&stdout, &stderr)?, "{program}: excessive output");
     let status = child.finish()?;
     stderr.rewind()?;
     let mut diagnostic = Vec::new();
@@ -624,6 +722,32 @@ mod reaper {
 #[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
+
+    /// A program that says more than it may and ends before it is looked
+    /// at again is refused, not cut to the limit; one within it is read
+    /// whole, as soon as it ends.
+    #[cfg(unix)]
+    #[test]
+    fn output_past_the_limit_is_refused_even_once_the_program_ended() {
+        let said = |text: &str, limit: u64| {
+            run_capped(
+                Command::new("/bin/sh").args(["-c", &format!("printf '{text}'")]),
+                None,
+                &CancelToken::new(),
+                Duration::from_secs(5),
+                limit,
+            )
+        };
+        let error = said("0123456789", 4).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("excessive output"),
+            "{error:#}"
+        );
+        let started = Instant::now();
+        let finished = said("0123", 4).unwrap();
+        assert_eq!(finished.stdout, b"0123");
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
 
     // Scripts stand in for helpers.
     #[cfg(unix)]

@@ -8,13 +8,12 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
 use bibli_core::CancelToken;
 use bibli_core::thumbs::Image;
-use parking_lot::{Condvar, Mutex};
 
 use crate::inspection::limits;
 use crate::{process, sandbox};
@@ -215,7 +214,7 @@ impl Magick {
             .format(mime, Some(path))
             .context("ImageMagick does not read this picture")?;
         crate::thumb_providers::ensure_file(path)?;
-        let Some(_turn) = Turn::take(cancel) else {
+        let Some(_turn) = TURNS.take(cancel) else {
             return Ok(None);
         };
         let work = tempfile::tempdir()?;
@@ -373,40 +372,8 @@ fn arguments(format: &str, inside: &str, work: &str, pixels: u32) -> Vec<String>
     arguments
 }
 
-/// A turn to run: at most `RUNNING` at once.
-struct Turn;
-
-fn running() -> &'static (Mutex<usize>, Condvar) {
-    static RUNNING_NOW: OnceLock<(Mutex<usize>, Condvar)> = OnceLock::new();
-    RUNNING_NOW.get_or_init(|| (Mutex::new(0), Condvar::new()))
-}
-
-impl Turn {
-    /// Waits for a turn; `None` once `cancel` is cancelled.
-    fn take(cancel: &CancelToken) -> Option<Turn> {
-        let (count, freed) = running();
-        let mut count = count.lock();
-        while *count >= RUNNING {
-            if cancel.is_cancelled() {
-                return None;
-            }
-            freed.wait_for(&mut count, Duration::from_millis(50));
-        }
-        if cancel.is_cancelled() {
-            return None;
-        }
-        *count += 1;
-        Some(Turn)
-    }
-}
-
-impl Drop for Turn {
-    fn drop(&mut self) {
-        let (count, freed) = running();
-        *count.lock() -= 1;
-        freed.notify_one();
-    }
-}
+/// The turns to run `ImageMagick`: at most `RUNNING` at once.
+static TURNS: process::Turns = process::Turns::new(RUNNING);
 
 #[cfg(test)]
 mod tests {
@@ -493,19 +460,19 @@ mod tests {
     #[test]
     fn a_turn_waits_for_one_to_end_and_gives_way_when_cancelled() {
         let cancel = CancelToken::new();
-        let taken: Vec<Turn> = (0..RUNNING)
-            .map(|_| Turn::take(&cancel).expect("free"))
+        let taken: Vec<_> = (0..RUNNING)
+            .map(|_| TURNS.take(&cancel).expect("free"))
             .collect();
         let waiting = CancelToken::new();
         let waiter = {
             let waiting = waiting.clone();
-            std::thread::spawn(move || Turn::take(&waiting).is_some())
+            std::thread::spawn(move || TURNS.take(&waiting).is_some())
         };
         std::thread::sleep(Duration::from_millis(120));
         waiting.cancel();
         assert!(!waiter.join().unwrap(), "a cancelled wait takes no turn");
         drop(taken);
-        assert!(Turn::take(&cancel).is_some(), "turns come back");
+        assert!(TURNS.take(&cancel).is_some(), "turns come back");
     }
 
     /// `ImageMagick` and bubblewrap as installed: run by hand
