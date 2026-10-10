@@ -13,7 +13,9 @@
 //! (`Pane::location_lifetime`). Where the pane asks for every file's
 //! metadata anyway (a narrowing, a sort by size or date), what it shows is
 //! added up from the listing once each file has it, and again when a size
-//! changes: nothing is read twice. The footer keeps the last answer for
+//! changes: nothing is read twice. Until then each batch of metadata asks
+//! whether a file is still unknown, from where the last one was found
+//! (`Pane::file_unknown_from`), so a big folder is not walked per batch. The footer keeps the last answer for
 //! the same folder until the next, so it does not blink.
 
 use std::path::{Path, PathBuf};
@@ -45,6 +47,9 @@ pub struct Weight {
     dir: Option<PathBuf>,
     bytes: Option<u64>,
     cancel: Option<CancelToken>,
+    /// Where a file without its metadata was last found in the pane's
+    /// order: the next look starts there.
+    unknown_at: usize,
 }
 
 impl Shell {
@@ -80,6 +85,7 @@ impl Shell {
         if self.ui().weight.key == Some(key) {
             return;
         }
+        let unknown_at = self.ui().weight.unknown_at;
         let (asked, listed) = {
             let ws = self.app.workspace.read();
             let Some(p) = ws.pane(pane) else { return };
@@ -87,7 +93,7 @@ impl Shell {
                 p.location()
                     .and_then(bibli_core::Location::path)
                     .map(|dir| (dir, p.filter().map(str::to_owned), p.location_lifetime())),
-                key.from_listing.then(|| listed_bytes(p)),
+                key.from_listing.then(|| listed_bytes(p, unknown_at)),
             )
         };
         let weight = &mut self.ui_mut().weight;
@@ -95,15 +101,16 @@ impl Shell {
             cancel.cancel();
         }
         weight.key = Some(key);
-        if let Some(bytes) = listed {
+        if let Some(listed) = listed {
             let dir = asked.map(|(dir, _, _)| dir);
             if weight.dir != dir {
                 weight.dir = dir;
                 weight.bytes = None;
             }
             // Until every file has its size, the last answer stays.
-            if bytes.is_some() {
-                weight.bytes = bytes;
+            match listed {
+                Listed::Unknown(at) => weight.unknown_at = at,
+                Listed::Bytes(bytes) => weight.bytes = Some(bytes),
             }
             return;
         }
@@ -156,12 +163,20 @@ impl Shell {
     }
 }
 
-/// What the files the pane shows weigh, once each has its metadata.
-fn listed_bytes(p: &bibli_core::workspace::Pane) -> Option<u64> {
-    if !p.files_unknown().is_empty() {
-        return None;
+/// What the listing says of what the files a pane shows weigh.
+enum Listed {
+    /// A file has no metadata yet; the first found is there in the order.
+    Unknown(usize),
+    Bytes(u64),
+}
+
+/// What the files the pane shows weigh, once each has its metadata,
+/// looking for one without from `unknown_at` on.
+fn listed_bytes(p: &bibli_core::workspace::Pane, unknown_at: usize) -> Listed {
+    if let Some(at) = p.file_unknown_from(unknown_at) {
+        return Listed::Unknown(at);
     }
-    Some(
+    Listed::Bytes(
         p.order()
             .iter()
             .filter_map(|id| p.entry(*id))

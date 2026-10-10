@@ -1346,6 +1346,49 @@ impl Pane {
             .collect()
     }
 
+    /// Where the first file whose metadata has not come yet is in the
+    /// pane's order (as [`Pane::files_unknown`] reads it), looking from
+    /// `from` on and then from the start. Whoever asks again after each
+    /// batch of metadata starts where the last one was: hydration goes
+    /// through the order, so the look is about a batch long, not the
+    /// files known before it.
+    pub fn file_unknown_from(&self, from: usize) -> Option<usize> {
+        let order = self.unfiltered_order();
+        let from = from.min(order.len());
+        let unknown = |id: &EntryId| {
+            self.entry(*id)
+                .is_some_and(|e| !e.is_dir() && !e.is_place() && !e.metadata.is_hydrated())
+        };
+        order[from..]
+            .iter()
+            .position(unknown)
+            .map(|i| from + i)
+            .or_else(|| order[..from].iter().position(unknown))
+    }
+
+    /// Where the first selected file whose size is not known yet is in
+    /// the selection, looking from `from` on and then from the start: a
+    /// summary of the selection asks after each batch of metadata,
+    /// starting where the last one was, and the selection is hydrated in
+    /// its order, so the look is about a batch long.
+    pub fn selected_unknown_from(&self, from: usize) -> Option<usize> {
+        let items = &self.selection.items;
+        let from = from.min(items.len());
+        let unknown = |id: &EntryId| {
+            self.entry(*id).is_some_and(|e| {
+                !e.is_dir()
+                    && e.metadata
+                        .value(crate::entry::keys::SIZE)
+                        .and_then(crate::entry::Value::as_u64)
+                        .is_none()
+            })
+        };
+        let (before, after) = (items.get_range(..from), items.get_range(from..));
+        after
+            .and_then(|after| after.iter().position(unknown).map(|i| from + i))
+            .or_else(|| before.and_then(|before| before.iter().position(unknown)))
+    }
+
     /// The entries the pane shows whose metadata has not come yet,
     /// folders too (places count their files from the start): what a
     /// sort by size, date or rating places after the rest until it comes
@@ -1787,6 +1830,59 @@ mod tests {
         p.selection.set([2].map(|ino| EntryId { dev: 1, ino }));
         p.set_filter(Some("ÉTÉ"));
         assert!(p.selection.is_empty());
+    }
+
+    /// The weight asks after each batch of metadata whether a file is
+    /// still unknown, from where the last one was: it finds one wherever
+    /// it is, before or after, and none once every file is known.
+    #[test]
+    fn a_file_unknown_is_found_from_where_the_last_one_was() {
+        use crate::entry::{EntryKind, Provenance, Value, keys};
+        use crate::location::ListingEvent;
+        let entry = |ino, name: &str, kind, size: Option<u64>| {
+            let mut e = Entry::new(EntryId { dev: 1, ino }, name, kind);
+            if let Some(size) = size {
+                e.metadata
+                    .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
+            }
+            e
+        };
+        let mut p = Pane::new(PaneId(1));
+        p.listing.apply(ListingEvent::Added(vec![
+            entry(1, "a folder", EntryKind::Directory, None),
+            entry(2, "b known.txt", EntryKind::File, Some(3)),
+            entry(3, "c it's unknown.txt", EntryKind::File, None),
+            entry(4, "d known.txt", EntryKind::File, Some(5)),
+            entry(5, "é unknown.md", EntryKind::File, None),
+        ]));
+        // Folders are not waited for; the order is by name.
+        assert_eq!(p.file_unknown_from(0), Some(2));
+        assert_eq!(p.file_unknown_from(3), Some(4));
+        // Past the last one, from the start again; past the end too.
+        p.listing.apply(ListingEvent::Updated(vec![entry(
+            5,
+            "é unknown.md",
+            EntryKind::File,
+            Some(8),
+        )]));
+        assert_eq!(p.file_unknown_from(3), Some(2));
+        assert_eq!(p.file_unknown_from(99), Some(2));
+        // The selection's, in its own order: a folder has no size to wait
+        // for, nor a file known.
+        p.selection
+            .set([5, 1, 3, 2].map(|ino| EntryId { dev: 1, ino }));
+        assert_eq!(p.selected_unknown_from(0), Some(2));
+        assert_eq!(p.selected_unknown_from(3), Some(2));
+        p.selection
+            .set([1, 2, 5].map(|ino| EntryId { dev: 1, ino }));
+        assert_eq!(p.selected_unknown_from(1), None);
+        p.listing.apply(ListingEvent::Updated(vec![entry(
+            3,
+            "c it's unknown.txt",
+            EntryKind::File,
+            Some(1),
+        )]));
+        assert_eq!(p.file_unknown_from(2), None);
     }
 
     #[test]

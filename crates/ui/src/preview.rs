@@ -1161,19 +1161,20 @@ impl Shell {
                 .media_kind()
                 .map_or((None, None), |kind| self.media_neighbours(id, kind));
             let selection = self.selection_ctx();
-            self.preview.selection_summary =
-                (selection.count > 1).then(|| crate::details::Group {
-                    title: "Selection".into(),
-                    rows: std::iter::once(crate::details::Row::new(
-                        "Selected",
-                        format::count(selection.count, "item"),
-                    ))
-                    // The whole size once every file's is known, never a part.
-                    .chain((selection.unknown_sizes == 0).then(|| {
-                        crate::details::Row::new("Total size", format::size(selection.bytes))
-                    }))
-                    .collect(),
-                });
+            self.preview.selection_summary = (selection.count > 1).then(|| crate::details::Group {
+                title: "Selection".into(),
+                rows: std::iter::once(crate::details::Row::new(
+                    "Selected",
+                    format::count(selection.count, "item"),
+                ))
+                // The whole size once every file's is known, never a part.
+                .chain(
+                    selection
+                        .bytes
+                        .map(|bytes| crate::details::Row::new("Total size", format::size(bytes))),
+                )
+                .collect(),
+            });
         }
         while let Ok((generation, (rows, access, beside))) = self.preview.fields_rx.try_recv() {
             if generation == self.preview.fields_generation {

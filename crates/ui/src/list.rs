@@ -160,10 +160,23 @@ pub struct ListState {
     /// first.
     pub visible_items: usize,
     typed: Option<Typed>,
-    /// The selection summary and the (selection revision, listing version)
-    /// it was computed for: read several times a frame, recomputed only
-    /// when one of them moved.
+    /// The selection summary and the (selection revision, listing names,
+    /// opened folders) it was computed for: read several times a frame,
+    /// recomputed only when one of them moved.
     selection: Cell<Option<((u64, u64, u64), SelectionCtx)>>,
+    /// What the selection weighs, and the sizes it was added up for.
+    selection_bytes: Cell<Option<SelectionBytes>>,
+}
+
+/// What the selected files weigh, as last asked: for which summary and
+/// which sizes of the listing, and while a file's size is not known,
+/// where in the selection one was found, the next look's start.
+#[derive(Clone, Copy)]
+struct SelectionBytes {
+    key: (u64, u64, u64),
+    sizes: u64,
+    bytes: Option<u64>,
+    unknown_at: usize,
 }
 
 impl Default for ListState {
@@ -181,6 +194,7 @@ impl Default for ListState {
             visible_items: 0,
             typed: None,
             selection: Cell::new(None),
+            selection_bytes: Cell::new(None),
         }
     }
 }
@@ -258,7 +272,8 @@ impl ListState {
     }
 }
 
-/// What the selection of `pane` amounts to. Walks the whole selection.
+/// What the selection of `pane` amounts to, but for what it weighs
+/// (`selection_bytes`). Walks the whole selection.
 fn summarize(pane: &bibli_core::workspace::Pane) -> SelectionCtx {
     let mut ctx = SelectionCtx {
         count: pane.selection.len(),
@@ -271,29 +286,64 @@ fn summarize(pane: &bibli_core::workspace::Pane) -> SelectionCtx {
         ctx.all_places &= id.is_place();
         match pane.entry(id) {
             Some(e) if e.is_dir() => ctx.all_files = false,
-            Some(e) => {
-                ctx.all_dirs = false;
-                match e
-                    .metadata
-                    .value(bibli_core::entry::keys::SIZE)
-                    .and_then(bibli_core::Value::as_u64)
-                {
-                    Some(bytes) => ctx.bytes += bytes,
-                    None => ctx.unknown_sizes += 1,
-                }
-            }
+            Some(_) => ctx.all_dirs = false,
             None => {}
         }
     }
     ctx
 }
 
+/// What the selected files of `pane` weigh, once every one's size is
+/// known. A batch of metadata that leaves the file found unknown last
+/// time unknown costs one look; one that told it looks on from there
+/// (`Pane::selected_unknown_from`), and only a selection all known is
+/// added up, so hydrating a big selection is not a walk of it per batch.
+fn selection_bytes(
+    pane: &bibli_core::workspace::Pane,
+    key: (u64, u64, u64),
+    last: &Cell<Option<SelectionBytes>>,
+) -> Option<u64> {
+    let sizes = pane.listing.size_version();
+    let was = last.get();
+    if let Some(was) = was
+        && was.key == key
+        && was.sizes == sizes
+    {
+        return was.bytes;
+    }
+    let from = was.map_or(0, |w| w.unknown_at);
+    let (bytes, unknown_at) = if let Some(at) = pane.selected_unknown_from(from) {
+        (None, at)
+    } else {
+        let bytes = pane
+            .selection
+            .iter()
+            .filter_map(|id| pane.entry(id))
+            .filter(|e| !e.is_dir())
+            .filter_map(|e| {
+                e.metadata
+                    .value(bibli_core::entry::keys::SIZE)
+                    .and_then(bibli_core::Value::as_u64)
+            })
+            .sum();
+        (Some(bytes), 0)
+    };
+    last.set(Some(SelectionBytes {
+        key,
+        sizes,
+        bytes,
+        unknown_at,
+    }));
+    bytes
+}
+
 impl Shell {
     /// Selection summary for `when` evaluation and the pane key context.
     /// Cached per pane on the selection's revision and what the summary
-    /// reads of the listing (its names and kinds, its sizes): with 100 000
-    /// entries selected, a frame must not walk them for every reader, nor
-    /// a batch of metadata that changed no size.
+    /// reads of the listing (its names and kinds; its sizes for what the
+    /// selection weighs, `selection_bytes`): with 100 000 entries
+    /// selected, a frame must not walk them for every reader, nor a batch
+    /// of metadata.
     pub fn selection_ctx(&self) -> SelectionCtx {
         let ws = self.app.workspace.read();
         let Some(pane) = ws.pane(self.pane) else {
@@ -313,18 +363,20 @@ impl Shell {
         };
         let key = (
             pane.selection.revision(),
-            pane.listing.names_version() ^ pane.listing.size_version().rotate_left(32),
+            pane.listing.names_version(),
             pane.tree_version(),
         );
-        let cache = &self.ui().list.selection;
+        let list = &self.ui().list;
+        let bytes = selection_bytes(pane, key, &list.selection_bytes);
+        let cache = &list.selection;
         if let Some((at, ctx)) = cache.get()
             && at == key
         {
-            return here(ctx);
+            return here(SelectionCtx { bytes, ..ctx });
         }
         let ctx = summarize(pane);
         cache.set(Some((key, ctx)));
-        here(ctx)
+        here(SelectionCtx { bytes, ..ctx })
     }
 
     /// What the selected entries are, by name (a link's target's), for a
@@ -451,7 +503,7 @@ impl Shell {
     /// Asked again only when the selection changes.
     pub(crate) fn sync_selection_hydration(&mut self) {
         let selection = self.selection_ctx();
-        if selection.unknown_sizes == 0 {
+        if selection.bytes.is_some() {
             return;
         }
         let pane = self.pane;
