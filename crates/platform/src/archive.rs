@@ -7,6 +7,7 @@ use bibli_core::CancelToken;
 use serde::Deserialize;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::Arc;
 #[derive(Clone, Debug, Deserialize)]
 pub struct Member {
     pub index: u64,
@@ -43,7 +44,45 @@ pub struct Listing {
     /// Every member is listed. A longer archive shows its start, and says so.
     pub complete: bool,
 }
-pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Listing> {
+/// The listings read last, by the archive's identity, size and time: a
+/// member extracted, a page read, the listing shown again take the listing
+/// read, where each read the whole archive again (a compressed tar
+/// decompressed whole) before writing out one member.
+static LISTINGS: parking_lot::Mutex<Vec<(ListingKey, Arc<Listing>)>> =
+    parking_lot::const_mutex(Vec::new());
+/// Listings kept at most.
+const LISTINGS_KEPT: usize = 4;
+
+type ListingKey = (std::path::PathBuf, u64, u64, Option<std::time::SystemTime>);
+
+pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Arc<Listing>> {
+    let key = std::fs::metadata(path).ok().map(|meta| {
+        let id = bibli_core::fs::stat::identity(path, &meta);
+        (
+            path.to_path_buf(),
+            id.map_or(0, |id| id.ino),
+            meta.len(),
+            meta.modified().ok(),
+        )
+    });
+    if let Some(key) = &key
+        && let Some((_, listing)) = LISTINGS.lock().iter().find(|(k, _)| k == key)
+    {
+        return Ok(Arc::clone(listing));
+    }
+    let listing = Arc::new(read_listing(path, cancel)?);
+    if let Some(key) = key {
+        let mut kept = LISTINGS.lock();
+        kept.retain(|(k, _)| k.0 != key.0);
+        if kept.len() >= LISTINGS_KEPT {
+            kept.remove(0);
+        }
+        kept.push((key, Arc::clone(&listing)));
+    }
+    Ok(listing)
+}
+
+fn read_listing(path: &Path, cancel: &CancelToken) -> anyhow::Result<Listing> {
     let work = tempfile::tempdir()?;
     let mut run = sandbox::untrusted(&worker()?, path, work.path(), Otherwise::Run)?;
     run.command
@@ -52,7 +91,15 @@ pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Listing> {
         .arg("--members")
         .arg(limits::CONTAINER_MEMBERS.to_string())
         .arg("--names")
-        .arg(limits::MEMBER_NAMES.to_string());
+        .arg(limits::MEMBER_NAMES.to_string())
+        // Told what it listed before the run's time is up.
+        .arg("--seconds")
+        .arg(
+            limits::HELPER_TIMEOUT
+                .saturating_sub(std::time::Duration::from_secs(3))
+                .as_secs()
+                .to_string(),
+        );
     let bytes = crate::process::run(&mut run.command, cancel, limits::HELPER_TIMEOUT)?;
     Ok(serde_json::from_slice(&bytes)?)
 }

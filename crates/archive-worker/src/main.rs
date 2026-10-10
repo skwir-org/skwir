@@ -166,6 +166,9 @@ mod native {
         pub bytes: Option<usize>,
         pub members: Option<usize>,
         pub names: Option<usize>,
+        /// How long a listing may take: past it, what was listed is told,
+        /// as past the other bounds.
+        pub seconds: Option<usize>,
         pub extract: bool,
     }
     pub fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<Args> {
@@ -176,12 +179,14 @@ mod native {
         let mut bytes = None;
         let mut members = None;
         let mut names = None;
+        let mut seconds = None;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
             let slot = match arg.to_str() {
                 Some("--bytes") => &mut bytes,
                 Some("--members") => &mut members,
                 Some("--names") => &mut names,
+                Some("--seconds") => &mut seconds,
                 Some("--name") => {
                     name = Some(
                         args.next()
@@ -244,6 +249,7 @@ mod native {
             bytes,
             members,
             names,
+            seconds,
             extract,
         })
     }
@@ -412,8 +418,11 @@ mod native {
             bytes: byte_limit,
             members: member_limit,
             names: name_limit,
+            seconds,
             extract: extracting,
         } = parse_args(std::env::args_os().skip(1))?;
+        let started = std::time::Instant::now();
+        let budget = seconds.map(|s| std::time::Duration::from_secs(s as u64));
         utf8_locale();
         // What a file only compressed calls its member: the stem given, else
         // the file's own.
@@ -505,7 +514,12 @@ mod native {
                 names += name.len();
                 // Past either bound the listing ends there: what was
                 // listed is shown, with a word that it is not all.
-                if names > name_limit.unwrap_or(0) || entries.len() >= member_limit.unwrap_or(0) {
+                // So past the time given: a large compressed tar is read
+                // whole to be listed, and was not listed at all.
+                if names > name_limit.unwrap_or(0)
+                    || entries.len() >= member_limit.unwrap_or(0)
+                    || budget.is_some_and(|budget| started.elapsed() > budget)
+                {
                     complete = false;
                     break;
                 }

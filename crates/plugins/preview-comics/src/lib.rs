@@ -51,8 +51,9 @@ static COMICS: mime::Types = mime::Types::new(&[
 fn pages(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Vec<archive::Member>> {
     let mut pages: Vec<_> = archive::list(path, cancel)?
         .members
-        .into_iter()
-        .filter(is_page)
+        .iter()
+        .filter(|member| is_page(member))
+        .cloned()
         .collect();
     pages.sort_by_cached_key(|m| bibli_core::collate::sort_key(m.name.as_ref()));
     anyhow::ensure!(!pages.is_empty(), "Comic contains no supported images");
@@ -104,6 +105,7 @@ impl PreviewProvider for Provider {
         Ok(Some(Arc::new(Comic {
             path,
             pages,
+            read: std::sync::Mutex::default(),
             info: DocumentInfo {
                 pages: count,
                 outlines: Vec::new(),
@@ -118,7 +120,37 @@ impl PreviewProvider for Provider {
 struct Comic {
     path: std::path::PathBuf,
     pages: Vec<archive::Member>,
+    /// The pages read last, as the archive holds them, within `KEPT_BYTES`:
+    /// drawn sharper once the reader settles, or asked for beside the one
+    /// shown, a page was read from the archive again, which for a solid
+    /// one decompresses all the pages before it.
+    read: std::sync::Mutex<std::collections::VecDeque<(u32, Arc<Vec<u8>>)>>,
     info: DocumentInfo,
+}
+
+/// The bytes of pages a comic keeps read.
+const KEPT_BYTES: usize = 64 << 20;
+
+impl Comic {
+    /// Page `number` as the archive holds it: kept, or read and kept.
+    fn bytes(&self, number: u32, cancel: &CancelToken) -> anyhow::Result<Arc<Vec<u8>>> {
+        let kept = || {
+            self.read
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        if let Some((_, bytes)) = kept().iter().find(|(page, _)| *page == number) {
+            return Ok(Arc::clone(bytes));
+        }
+        let member = &self.pages[number as usize - 1];
+        let bytes = Arc::new(archive::read(&self.path, member, cancel)?);
+        let mut read = kept();
+        read.push_back((number, Arc::clone(&bytes)));
+        while read.iter().map(|(_, b)| b.len()).sum::<usize>() > KEPT_BYTES && read.len() > 1 {
+            read.pop_front();
+        }
+        Ok(bytes)
+    }
 }
 
 impl DocumentSession for Comic {
@@ -130,8 +162,7 @@ impl DocumentSession for Comic {
     /// size is what 100% is.
     fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage> {
         let number = page.clamp(1, self.info.pages);
-        let member = &self.pages[number as usize - 1];
-        let decoded = inspection::picture(&archive::read(&self.path, member, cancel)?, side)?;
+        let decoded = inspection::picture(&self.bytes(number, cancel)?, side)?;
         Ok(DocumentPage {
             width: decoded.width,
             height: decoded.height,
