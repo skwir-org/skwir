@@ -43,6 +43,8 @@ pub struct BulkState {
     current: bool,
     count: usize,
     back: FocusReturn,
+    /// Where the renames listed are scrolled to.
+    scroll: gpui::ScrollHandle,
     _subs: Vec<Subscription>,
 }
 
@@ -118,6 +120,7 @@ impl Shell {
             current: false,
             count,
             back,
+            scroll: gpui::ScrollHandle::new(),
             _subs: subs,
         });
         self.bulk_refresh(window, cx);
@@ -297,11 +300,15 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                     ),
             ),
     );
+    // The renames scroll under a scrollbar; how many more there are is
+    // said below them, never cut off with the rows the box cannot hold.
     let mut list = div()
+        .id("rename-preview")
         .flex()
         .flex_col()
         .max_h(px(260.))
-        .overflow_hidden()
+        .track_scroll(&b.scroll)
+        .overflow_y_scroll()
         .text_xs()
         .font_family(shell.mono_font.clone());
     let font = shell.mono_font.clone();
@@ -328,13 +335,22 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 )),
         );
     }
-    if b.renamed > b.preview.len() {
-        list = list.child(
-            div()
-                .text_color(theme.text_muted)
-                .child(format!("… {} more", b.renamed - b.preview.len())),
-        );
-    }
+    let list =
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .child(list)
+            .child(crate::elements::scrollbar::vertical(
+                "rename-preview-scrollbar",
+                crate::elements::scrollbar::Scrolls::Offset(b.scroll.clone()),
+            ));
+    let more = (b.renamed > b.preview.len()).then(|| {
+        div()
+            .text_xs()
+            .text_color(theme.text_muted)
+            .child(format!("… {} more", b.renamed - b.preview.len()))
+    });
     let panel = modal::panel(720., &theme)
         .p_3()
         .gap_2()
@@ -347,6 +363,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .map(|e| div().text_xs().text_color(theme.error).child(e)),
         )
         .child(list)
+        .children(more)
         .child(
             div()
                 .text_xs()
