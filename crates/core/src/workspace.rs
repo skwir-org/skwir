@@ -1332,22 +1332,9 @@ impl Pane {
         order
     }
 
-    /// The files the pane holds whose metadata has not come yet: what a
-    /// narrowing cannot tell yet, and does not show until it can. No view
-    /// draws them, so whoever narrows asks for them (`hydrate`).
-    pub fn files_unknown(&self) -> Vec<EntryId> {
-        self.unfiltered_order()
-            .iter()
-            .copied()
-            .filter(|id| {
-                self.entry(*id)
-                    .is_some_and(|e| !e.is_dir() && !e.is_place() && !e.metadata.is_hydrated())
-            })
-            .collect()
-    }
-
     /// Where the first file whose metadata has not come yet is in the
-    /// pane's order (as [`Pane::files_unknown`] reads it), looking from
+    /// pane's order before the filter ([`Pane::unfiltered_order`]: a
+    /// narrowing hides a file it cannot tell yet), looking from
     /// `from` on and then from the start. Whoever asks again after each
     /// batch of metadata starts where the last one was: hydration goes
     /// through the order, so the look is about a batch long, not the
@@ -1404,8 +1391,11 @@ impl Pane {
             .collect()
     }
 
-    /// `order` before the filter.
-    fn unfiltered_order(&self) -> Arc<[EntryId]> {
+    /// `order` before the name filter and the narrowing: what the pane
+    /// holds. A narrowing cannot tell a file whose metadata has not come
+    /// yet, and does not show it until it can; no view draws it, so
+    /// whoever narrows asks for it (`hydrate`) from here.
+    pub fn unfiltered_order(&self) -> Arc<[EntryId]> {
         let top = self.listing.sorted(self.sort);
         if self.expanded.is_empty() {
             return top;

@@ -97,9 +97,15 @@ pub fn by_name(name: &OsStr) -> Option<Mime> {
 /// name that says its type (`Entry::type_name`). Type an entry through
 /// this, never by `by_name` of a name of your choosing.
 pub fn of_entry(entry: &bibli_core::Entry) -> Option<Mime> {
-    match entry.inode_type() {
+    of_parts(entry.inode_type(), entry.type_name())
+}
+
+/// [`of_entry`] from what was read of an entry ([`bibli_core::Entry::inode_type`],
+/// [`bibli_core::Entry::type_name`]) under a lock, typed once it is let go.
+pub fn of_parts(inode_type: Option<&str>, type_name: &OsStr) -> Option<Mime> {
+    match inode_type {
         Some(mime) => Some(Mime(mime.to_owned())),
-        None => by_name(entry.type_name()),
+        None => by_name(type_name),
     }
 }
 

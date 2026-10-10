@@ -864,8 +864,9 @@ current source before assuming a planned crate, command, or API exists.
   the name filter (core's `workspace::Narrowed`, applied by
   `Pane::order`): the query plugin's words, their pills, and a test of
   each file from what the listing knows of it, never reading the file.
-  Its folders always show; every file is asked for its metadata
-  (`Pane::files_unknown`), and one the test cannot tell yet waits hidden.
+  Its folders always show; every file is asked for its metadata (the
+  bar's count, on a worker, reads `Pane::unfiltered_order` for those
+  without), and one the test cannot tell yet waits hidden.
   The sidebar suggests the tags at the top: a category
   stands for those within it. An
   affordance that goes with what it acts on (a pill's ×) takes no focus;

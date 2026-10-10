@@ -23,12 +23,20 @@
 //!
 //! What it offers is counted from the search's own results, so it holds
 //! for every facet the search has: once per change of the listing, never
-//! per frame, at most every `EVERY` while the search streams.
+//! per frame, at most every `EVERY` while the search streams. A count
+//! walks every file, so a worker does it (`count`), reading the pane a
+//! slice at a time and typing the files between the slices: the window's
+//! thread never waits for a walk.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 
+use bibli_core::CancelToken;
+use bibli_core::app::App;
+use bibli_core::entry::EntryId;
 use bibli_core::metadata::{same_tag, tag_leaf, tag_under, tag_within};
+use bibli_core::workspace::PaneId;
 use bibli_platform::mime::Kind;
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 
@@ -37,6 +45,8 @@ use crate::theme::Theme;
 
 /// How often what it offers is counted again while a search streams.
 const EVERY: Duration = Duration::from_millis(500);
+/// The entries a count reads under one hold of the workspace's lock.
+const SLICE: usize = 1024;
 /// The most of the other tags it offers.
 const RELATED: usize = 12;
 
@@ -74,12 +84,45 @@ pub struct File {
 /// `Verbs::narrow`), else the query plugin's.
 #[derive(Default)]
 pub struct Narrow {
+    /// What was last asked to be counted, and when.
     key: Option<Key>,
     counted: Option<Instant>,
     pub offer: Offer,
     command: Option<bibli_core::command::Invocation>,
     /// A count put off (`EVERY`), done by a wake of its own.
     recount: Option<gpui::Task<()>>,
+    /// The count a worker is doing.
+    asked: crate::latest::Latest<Counted>,
+}
+
+/// What a count is asked for, read on the window's thread.
+struct Ask {
+    pane: PaneId,
+    tags: Vec<String>,
+    /// The listing is complete.
+    complete: bool,
+    /// A folder narrowed: its folders are not counted, and its files
+    /// without metadata are asked for.
+    folder: bool,
+    chosen: Chosen,
+}
+
+/// What the search or the location chooses already, which the bar does
+/// not offer again.
+#[derive(Clone, Copy)]
+struct Chosen {
+    kinds: bool,
+    years: bool,
+    /// A tag location lists the tags within it as places.
+    within: bool,
+}
+
+/// What a count found: what the bar offers, and in a folder narrowed the
+/// files it cannot tell yet, which no view draws, so the bar asks for them
+/// (`hydrate`).
+struct Counted {
+    offer: Offer,
+    unknown: Vec<EntryId>,
 }
 
 /// Each value's count, most first, then in the order met.
@@ -171,6 +214,7 @@ impl Shell {
     /// Count again what the pane being rendered's search can be narrowed
     /// to, when its listing changed.
     pub(crate) fn sync_narrow(&mut self, cx: &mut Context<Self>) {
+        self.take_narrow_count();
         // A search's tags, or what a location that narrows itself (a tag
         // location) says its files all have.
         let (mut tags, _) = self.ui().chips.tags();
@@ -226,47 +270,11 @@ impl Shell {
             }
             return;
         }
-        // A folder's files are complete once each has its metadata.
-        let mut complete = key.3;
-        if folder.is_some() {
-            let unknown = {
-                let ws = self.app.workspace.read();
-                ws.pane(pane)
-                    .map(bibli_core::workspace::Pane::files_unknown)
-                    .unwrap_or_default()
-            };
-            complete &= unknown.is_empty();
-            self.request_hydrate_off_screen(unknown);
-        }
-        let calendar = bibli_platform::calendar::Calendar::system();
-        let files: Vec<File> = {
+        let lifetime = {
             let ws = self.app.workspace.read();
             let Some(p) = ws.pane(pane) else { return };
-            p.order()
-                .iter()
-                .filter_map(|id| p.entry(*id))
-                // A place (a tag's) is no file; a folder narrowed shows
-                // its folders whatever it offers.
-                .filter(|e| !(e.is_place() || folder.is_some() && e.is_dir()))
-                .map(|e| File {
-                    tags: crate::tags::tags_of(e),
-                    kinds: if complete {
-                        bibli_platform::mime::of_entry(e)
-                            .map(|m| bibli_platform::mime::kinds(&m))
-                            .unwrap_or_default()
-                    } else {
-                        Vec::new()
-                    },
-                    year: e
-                        .metadata
-                        .value(bibli_core::entry::keys::MODIFIED)
-                        .and_then(bibli_core::Value::as_time)
-                        .map(|t| calendar.year_of(t)),
-                })
-                .collect()
+            p.location_lifetime()
         };
-        let mut offer = offer(&files, &tags, complete);
-        // What the search chooses already is not offered again.
         let chips = &self.ui().chips;
         let set = |facet: &str| {
             chips.is_set(facet)
@@ -274,24 +282,141 @@ impl Shell {
                     .as_ref()
                     .is_some_and(|own| own.set.iter().any(|s| s == facet))
         };
-        if set("kind") {
-            offer.kinds.clear();
-        }
-        if set("modified") {
-            offer.years.clear();
-        }
-        // A tag location lists the tags within it as places.
-        if own.is_some() {
-            offer.within.clear();
-        }
-        self.ui_mut().narrow = Narrow {
-            key: Some(key),
-            counted: Some(Instant::now()),
-            offer,
-            command: own.map(|own| own.command),
-            recount: None,
+        let ask = Ask {
+            pane,
+            tags,
+            complete: key.3,
+            folder: folder.is_some(),
+            chosen: Chosen {
+                kinds: set("kind"),
+                years: set("modified"),
+                within: own.is_some(),
+            },
         };
+        let app = Arc::clone(&self.app);
+        let worker = Arc::clone(&self.app);
+        let narrow = &mut self.ui_mut().narrow;
+        // Another listing: what was offered for the one before is not its
+        // own, even while its count runs.
+        if narrow.key.is_none_or(|before| before.0 != key.0) {
+            narrow.offer = Offer::default();
+        }
+        narrow.key = Some(key);
+        narrow.counted = Some(Instant::now());
+        narrow.command = own.map(|own| own.command);
+        narrow.recount = None;
+        narrow.asked.ask(
+            &app,
+            &lifetime,
+            bibli_core::scheduler::Priority::Visible,
+            "narrow-count",
+            move |cancel| count(&worker, &ask, cancel),
+        );
     }
+
+    /// Take what a worker counted for the pane being rendered, and ask for
+    /// the metadata of the files a folder's narrowing cannot tell yet.
+    fn take_narrow_count(&mut self) {
+        let Some(counted) = self.ui_mut().narrow.asked.take() else {
+            return;
+        };
+        self.ui_mut().narrow.offer = counted.offer;
+        self.request_hydrate_off_screen(counted.unknown);
+    }
+}
+
+/// What the files of `ask.pane` can be narrowed to, on a worker. The pane
+/// is read `SLICE` entries at a time, each slice under a hold of the lock
+/// of its own, and what a file is (its type, its year) is worked out
+/// after the slice lets the lock go. A file taken out meanwhile is left
+/// out; a count of a listing that changed is asked again.
+fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
+    let mut counted = Counted {
+        offer: Offer::default(),
+        unknown: Vec::new(),
+    };
+    let Some((order, held)) = app
+        .workspace
+        .read()
+        .pane(ask.pane)
+        .map(|p| (p.order(), ask.folder.then(|| p.unfiltered_order())))
+    else {
+        return counted;
+    };
+    // A folder's files are complete once each has its metadata.
+    for slice in held.iter().flat_map(|held| held.chunks(SLICE)) {
+        if cancel.is_cancelled() {
+            return counted;
+        }
+        let ws = app.workspace.read();
+        let Some(p) = ws.pane(ask.pane) else {
+            return counted;
+        };
+        counted.unknown.extend(slice.iter().copied().filter(|id| {
+            p.entry(*id)
+                .is_some_and(|e| !e.is_dir() && !e.is_place() && !e.metadata.is_hydrated())
+        }));
+    }
+    let complete = ask.complete && counted.unknown.is_empty();
+    let calendar = bibli_platform::calendar::Calendar::system();
+    let mut files: Vec<File> = Vec::with_capacity(order.len());
+    for slice in order.chunks(SLICE) {
+        if cancel.is_cancelled() {
+            return counted;
+        }
+        let read: Vec<Read> = {
+            let ws = app.workspace.read();
+            let Some(p) = ws.pane(ask.pane) else {
+                return counted;
+            };
+            slice
+                .iter()
+                .filter_map(|id| p.entry(*id))
+                // A place (a tag's) is no file; a folder narrowed shows
+                // its folders whatever it offers.
+                .filter(|e| !(e.is_place() || ask.folder && e.is_dir()))
+                .map(|e| Read {
+                    tags: crate::tags::tags_of(e),
+                    typed: complete.then(|| (e.inode_type(), e.type_name().to_owned())),
+                    modified: e
+                        .metadata
+                        .value(bibli_core::entry::keys::MODIFIED)
+                        .and_then(bibli_core::Value::as_time),
+                })
+                .collect()
+        };
+        files.extend(read.into_iter().map(|r| {
+            File {
+                tags: r.tags,
+                kinds: r
+                    .typed
+                    .and_then(|(inode, name)| bibli_platform::mime::of_parts(inode, &name))
+                    .map(|m| bibli_platform::mime::kinds(&m))
+                    .unwrap_or_default(),
+                year: r.modified.map(|t| calendar.year_of(t)),
+            }
+        }));
+    }
+    let mut offer = offer(&files, &ask.tags, complete);
+    // What the search chooses already is not offered again.
+    if ask.chosen.kinds {
+        offer.kinds.clear();
+    }
+    if ask.chosen.years {
+        offer.years.clear();
+    }
+    if ask.chosen.within {
+        offer.within.clear();
+    }
+    counted.offer = offer;
+    counted
+}
+
+/// What a count reads of a file under the lock: its type is told after.
+struct Read {
+    tags: Vec<String>,
+    typed: Option<(Option<&'static str>, std::ffi::OsString)>,
+    modified: Option<SystemTime>,
 }
 
 impl Shell {
