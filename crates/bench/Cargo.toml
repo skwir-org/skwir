@@ -35,6 +35,9 @@ toml.workspace = true
 rustix.workspace = true
 rayon.workspace = true
 image.workspace = true
+ignore.workspace = true
+memchr.workspace = true
+regex-syntax.workspace = true
 
 [lints]
 workspace = true

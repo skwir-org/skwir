@@ -7,6 +7,7 @@
 mod generate;
 mod measure;
 mod profiles;
+mod trigram;
 
 use std::path::PathBuf;
 
@@ -56,6 +57,27 @@ enum Cmd {
         #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(1..))]
         runs: u16,
         profile: Profile,
+    },
+    /// Build a trigram index of what a `content:` search under `dir`
+    /// reads, and time its answers against the search's own, query by
+    /// query (the question of ADR-003). Prints counts and times as JSON
+    /// lines, never a path. Cold runs drop `dir`'s files from the page
+    /// cache first.
+    Trigram {
+        dir: PathBuf,
+        /// A query as typed in the address field, one `content:` term
+        /// (repeatable); a default set when omitted.
+        #[arg(long = "query")]
+        queries: Vec<String>,
+        /// Leave out the cold runs.
+        #[arg(long)]
+        warm_only: bool,
+        /// Leave out the scans: the index's answers, unchecked.
+        #[arg(long)]
+        no_scan: bool,
+        /// Runs of each query, by the index and by the scan, alternated.
+        #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u16).range(1..))]
+        runs: u16,
     },
     /// Measure and compare against a budgets file; exit 1 on any regression.
     Check {
@@ -136,6 +158,21 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::json!({ "run": run + 1, "us": us }));
             }
         }
+        Cmd::Trigram {
+            dir,
+            queries,
+            warm_only,
+            no_scan,
+            runs,
+        } => trigram::run(
+            &dir,
+            &trigram::Options {
+                queries,
+                cold: !warm_only,
+                scan: !no_scan,
+                runs: usize::from(runs),
+            },
+        )?,
         Cmd::Check { budgets, runs } => {
             let text = std::fs::read_to_string(&budgets)
                 .with_context(|| format!("reading {}", budgets.display()))?;
