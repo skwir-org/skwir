@@ -490,8 +490,14 @@ pub(super) fn open_to_owner(current: &Permissions) -> bool {
 /// Put `path` in the trash, and say where it went where only the system
 /// can tell (macOS: `trashItemAtURL`'s resulting path, kept for undo, the
 /// Mac's trash keeping no record of where an item came from); `None`
-/// where the trash's own records say it (freedesktop, Windows).
-pub(super) fn trash_item(path: &Path) -> Result<Option<std::path::PathBuf>, trash::Error> {
+/// where the trash's own records say it (freedesktop, Windows). On Linux
+/// the trash a plan puts files in is found once (`put_trash`).
+pub(super) fn trash_item(
+    path: &Path,
+    ctx: &super::context::StepContext,
+) -> Result<Option<std::path::PathBuf>, trash::Error> {
+    #[cfg(not(target_os = "linux"))]
+    let _ = ctx;
     #[cfg(target_os = "macos")]
     {
         use objc2_foundation::{NSFileManager, NSString, NSURL};
@@ -507,6 +513,10 @@ pub(super) fn trash_item(path: &Path) -> Result<Option<std::path::PathBuf>, tras
         Ok(landed
             .and_then(|url| url.path())
             .map(|p| std::path::PathBuf::from(p.to_string())))
+    }
+    #[cfg(target_os = "linux")]
+    if ctx.trashes().put(path) {
+        return Ok(None);
     }
     #[cfg(not(target_os = "macos"))]
     {

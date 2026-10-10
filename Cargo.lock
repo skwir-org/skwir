@@ -640,6 +640,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "blake3",
+ "chrono",
  "crossbeam-channel",
  "dirs 7.0.0",
  "indexmap",

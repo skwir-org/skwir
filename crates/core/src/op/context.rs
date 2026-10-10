@@ -168,6 +168,9 @@ pub struct StepContext {
     refused: RefCell<HashSet<(u64, u64, Kernel)>>,
     /// What a copy the kernel does not make goes through, made once.
     buffer: RefCell<Vec<u8>>,
+    /// Where this plan puts files in the trash, found once.
+    #[cfg(target_os = "linux")]
+    trashes: super::put_trash::Trashes,
 }
 
 /// What a copy asks the kernel to do between two devices.
@@ -205,6 +208,8 @@ impl StepContext {
             staged: std::cell::Cell::new(0),
             refused: RefCell::default(),
             buffer: RefCell::default(),
+            #[cfg(target_os = "linux")]
+            trashes: super::put_trash::Trashes::default(),
         }
     }
 
@@ -453,6 +458,12 @@ impl StepContext {
 
     /// The trash changed under the cached listing (an item was trashed, or
     /// put back): read again when next asked.
+    /// Where this plan puts files in the trash.
+    #[cfg(target_os = "linux")]
+    pub(super) fn trashes(&self) -> &super::put_trash::Trashes {
+        &self.trashes
+    }
+
     pub(super) fn forget_trash(&self) {
         self.trash.borrow_mut().take();
     }

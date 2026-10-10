@@ -12,6 +12,8 @@ mod entry_ref;
 mod executor;
 mod order;
 mod pace;
+#[cfg(target_os = "linux")]
+mod put_trash;
 pub mod records;
 pub mod staging;
 mod sys;

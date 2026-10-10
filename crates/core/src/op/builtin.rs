@@ -1332,12 +1332,12 @@ impl super::Effect for Trash {
             .into_iter()
             .map(|f| f.path)
             .collect();
-        let at = sys::trash_item(&src)
+        let at = sys::trash_item(&src, ctx)
             .with_context(|| format!("“{}” could not be moved to the trash", display_name(&src)))?;
         // Each an item of the trash of its own, restored with the file.
         let mut landed = Vec::new();
         for companion in companions {
-            if let Ok(Some(at)) = sys::trash_item(&companion) {
+            if let Ok(Some(at)) = sys::trash_item(&companion, ctx) {
                 landed.push(Landed {
                     at: PathArg(at),
                     from: PathArg(companion),
