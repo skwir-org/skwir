@@ -86,6 +86,8 @@ pub(crate) struct Builder {
     notes: Vec<String>,
     /// Words of running text in the whole document.
     pub words: usize,
+    /// The body ended: what is written now (its notes) is the part kept.
+    ended: bool,
 }
 
 impl Builder {
@@ -99,6 +101,13 @@ impl Builder {
 
     fn filled(&self) -> bool {
         !self.current.text.is_empty() || self.current.picture.is_some()
+    }
+
+    /// Whether what is written now is shown: the part kept, or its notes.
+    /// What another part holds is only counted (its words, its blocks,
+    /// where it ends), so its pictures need not be read for their size.
+    pub(crate) fn shows_this_part(&self) -> bool {
+        self.ended || self.part == self.wanted
     }
 
     /// A paragraph begins. In a table cell it is a new line of the cell's
@@ -356,6 +365,7 @@ impl Builder {
         if self.filled() || !self.blocks.is_empty() || self.part == 0 {
             self.cut();
         }
+        self.ended = true;
         let parts = self.part;
         let (blocks, notes) = if let Some(kept) = self.kept.take() {
             kept

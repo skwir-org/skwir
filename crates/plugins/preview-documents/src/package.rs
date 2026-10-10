@@ -42,6 +42,17 @@ impl Package {
         Ok(Some(inspection::decode(&bytes).0.into_owned()))
     }
 
+    /// A picture the document names by member in a part not shown: in
+    /// its place, unread. Each turn to another part read every picture of
+    /// the document for its size, a 256 KB head each, a drawing whole.
+    pub(crate) fn unread_picture(name: &str) -> Option<bibli_core::inspection::Picture> {
+        Some(bibli_core::inspection::Picture::Later {
+            key: normalize(name)?,
+            width: 1,
+            height: 1,
+        })
+    }
+
     /// A picture the document names by member, sized for later from its
     /// header (`Picture::Later`, read again by `picture`).
     pub(crate) fn picture(

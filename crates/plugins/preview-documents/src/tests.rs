@@ -630,3 +630,28 @@ fn pandoc_reads_rtf_and_keeps_its_pictures() {
         .unwrap();
     assert_eq!((picture.width, picture.height), (2, 3));
 }
+
+/// What Pandoc made is kept with its pictures' sizes, and read back as it
+/// was; anything else kept there is not taken for it.
+#[test]
+fn a_conversion_kept_reads_back_as_it_was() {
+    let sizes: std::collections::HashMap<String, (u32, u32)> = [
+        ("media/image1.png".to_owned(), (640, 480)),
+        ("media/sub/é.jpg".to_owned(), (3, 4)),
+    ]
+    .into_iter()
+    .collect();
+    let html = "<p>one</p>\n\n<p>two</p>";
+    let kept = super::converted_to(html, true, &sizes);
+    let (back, cut, back_sizes) = super::converted_from(&kept).unwrap();
+    assert_eq!((back.as_str(), cut), (html, true));
+    assert_eq!(back_sizes, sizes);
+    let (_, cut, none) = super::converted_from(&super::converted_to(
+        "x",
+        false,
+        &std::collections::HashMap::default(),
+    ))
+    .unwrap();
+    assert!(!cut && none.is_empty());
+    assert!(super::converted_from(b"\x89PNG\r\n").is_none());
+}

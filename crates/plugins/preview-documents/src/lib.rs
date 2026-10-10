@@ -294,25 +294,58 @@ impl Reading {
         format: &str,
         cancel: &CancelToken,
     ) -> anyhow::Result<Inspection> {
-        let work = tempfile::tempdir()?;
-        let (html, cut) = tool.convert(path, format, work.path(), cancel)?;
-        let mut kept = 0u64;
-        let keep = |name: &str, bytes: &[u8]| {
-            if let Ok(key) = Self::media_key(req, path, tool, name)
-                && self.cache.put(&key, bytes).is_ok()
-            {
-                kept += bytes.len() as u64;
+        // What Pandoc made of this very file before, with its pictures'
+        // sizes: kept, it is shown again without running Pandoc.
+        let html_key = bibli_platform::preview::made_key(
+            req.entry.id,
+            path,
+            &tool.path,
+            ("pandoc-html", format),
+        )?;
+        let (page, cut) = if let Some((html, cut, sizes)) = self
+            .cache
+            .get(&html_key)
+            .and_then(|bytes| converted_from(&bytes))
+        {
+            (
+                rich_preview::html(
+                    &html,
+                    rich_preview::Markup::Html,
+                    cancel,
+                    pandoc::Sized(&sizes),
+                )?,
+                cut,
+            )
+        } else {
+            let work = tempfile::tempdir()?;
+            let (html, cut) = tool.convert(path, format, work.path(), cancel)?;
+            let mut kept = 0u64;
+            let mut sizes = std::collections::HashMap::new();
+            let keep = |name: &str, bytes: &[u8]| {
+                if let Some(size) = inspection::picture_size(bytes) {
+                    sizes.insert(name.to_owned(), size);
+                }
+                if let Ok(key) = Self::media_key(req, path, tool, name)
+                    && self.cache.put(&key, bytes).is_ok()
+                {
+                    kept += bytes.len() as u64;
+                }
+            };
+            let media = pandoc::Media {
+                work: work.path(),
+                keep,
+                cancel,
+            };
+            let page = rich_preview::html(&html, rich_preview::Markup::Html, cancel, media)?;
+            let made = converted_to(&html, cut, &sizes);
+            if self.cache.put(&html_key, &made).is_ok() {
+                kept += made.len() as u64;
             }
+            if kept > 0 {
+                self.cache.trim_soon(kept, CACHE_BYTES);
+            }
+            (page, cut)
         };
-        let media = pandoc::Media {
-            work: work.path(),
-            keep,
-            cancel,
-        };
-        let page = rich_preview::html(&html, rich_preview::Markup::Html, cancel, media)?;
-        if kept > 0 {
-            self.cache.trim_soon(kept, CACHE_BYTES);
-        }
         let words = page
             .blocks
             .iter()
@@ -338,6 +371,51 @@ impl Reading {
 
 /// The plugin's cache namespace is bounded as the document preview's is.
 const CACHE_BYTES: u64 = 128 * 1024 * 1024;
+
+/// What Pandoc made of a file, as it is kept: whether it was cut, the size
+/// of each picture (`name`, tab, width, tab, height), a blank line, then
+/// the HTML.
+fn converted_to(
+    html: &str,
+    cut: bool,
+    sizes: &std::collections::HashMap<String, (u32, u32)>,
+) -> Vec<u8> {
+    use std::fmt::Write as _;
+    let mut made = String::from(if cut { "cut\n" } else { "whole\n" });
+    for (name, (width, height)) in sizes {
+        // A name holding a tab or a line could not be read back.
+        if !name.contains(['\t', '\n']) {
+            let _ = writeln!(made, "{name}\t{width}\t{height}");
+        }
+    }
+    made.push('\n');
+    made.push_str(html);
+    made.into_bytes()
+}
+
+/// What `converted_to` kept, read back.
+fn converted_from(
+    bytes: &[u8],
+) -> Option<(String, bool, std::collections::HashMap<String, (u32, u32)>)> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let (head, html) = text.split_once("\n\n")?;
+    let mut lines = head.lines();
+    let cut = match lines.next()? {
+        "cut" => true,
+        "whole" => false,
+        _ => return None,
+    };
+    let sizes = lines
+        .map(|line| {
+            let mut parts = line.split('\t');
+            let name = parts.next()?.to_owned();
+            let width = parts.next()?.parse().ok()?;
+            let height = parts.next()?.parse().ok()?;
+            Some((name, (width, height)))
+        })
+        .collect::<Option<_>>()?;
+    Some((html.to_owned(), cut, sizes))
+}
 
 /// What a Word or `OpenDocument` file says about itself, for Details; none
 /// for another format.
@@ -454,18 +532,34 @@ impl PreviewProvider for Reading {
                 if let Some(bytes) = self.cache.get(&cache_key) {
                     bytes
                 } else {
+                    // Converted again: every picture is kept again, not
+                    // only this one, so the others do not each convert.
                     let work = tempfile::tempdir()?;
                     tool.convert(&path, format, work.path(), cancel)?;
-                    let bytes = inspection::read_bounded(
-                        &work.path().join(&name),
-                        limits::BINARY_INPUT,
-                        "Embedded image",
-                        cancel,
-                    )?;
-                    if self.cache.put(&cache_key, &bytes).is_ok() {
-                        self.cache.trim_soon(bytes.len() as u64, CACHE_BYTES);
+                    let mut wanted = None;
+                    let mut kept = 0u64;
+                    for (each, file) in pandoc::extracted(work.path()) {
+                        let Ok(bytes) = inspection::read_bounded(
+                            &file,
+                            limits::BINARY_INPUT,
+                            "Embedded image",
+                            cancel,
+                        ) else {
+                            continue;
+                        };
+                        if let Ok(key) = Self::media_key(req, &path, &tool, &each)
+                            && self.cache.put(&key, &bytes).is_ok()
+                        {
+                            kept += bytes.len() as u64;
+                        }
+                        if each == name {
+                            wanted = Some(bytes);
+                        }
                     }
-                    bytes
+                    if kept > 0 {
+                        self.cache.trim_soon(kept, CACHE_BYTES);
+                    }
+                    wanted.ok_or_else(|| anyhow::anyhow!("not a picture of this document"))?
                 }
             }
             None => return Ok(None),

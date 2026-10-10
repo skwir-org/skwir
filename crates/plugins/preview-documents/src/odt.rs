@@ -767,8 +767,12 @@ impl Walk<'_> {
             .filter_map(|image| image.attribute((XLINK, "href")))
             .filter(|href| !href.contains(':'))
             .find_map(|href| {
-                self.package
-                    .picture(href.trim_start_matches("./"), self.cancel)
+                let href = href.trim_start_matches("./");
+                if self.builder.shows_this_part() {
+                    self.package.picture(href, self.cancel)
+                } else {
+                    Package::unread_picture(href)
+                }
             });
         if picture.is_some() || frame.children().any(|n| is(n, DRAW, "image")) {
             self.builder.picture(alt, picture);
@@ -965,6 +969,12 @@ pub(crate) fn read(path: &Path, wanted: u64, cancel: &CancelToken) -> anyhow::Re
     };
     walk.blocks(body, true, &mut notes)?;
     let (referenced, parts) = walk.builder.body_end();
+    // Asked past the end (the document shrank): the last part, read again
+    // with its pictures read.
+    if wanted >= parts && parts > 0 {
+        drop(walk);
+        return read(path, parts - 1, cancel);
+    }
     for (ordinal, target) in referenced.iter().enumerate() {
         let Some((label, body)) = notes
             .get(target)

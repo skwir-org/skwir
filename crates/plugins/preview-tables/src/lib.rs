@@ -60,6 +60,7 @@ impl Plugin for PreviewPlugin {
 mod jsonl;
 mod spreadsheet;
 mod sqlite;
+mod starts;
 
 struct Provider {
     /// Spreadsheets are `LibreOffice`'s to draw as pages, when it is there.
@@ -198,10 +199,42 @@ fn table(path: &std::path::Path, offset: u64, cancel: &CancelToken) -> anyhow::R
     } else {
         Vec::new()
     };
+    let page = limits::TABLE_ROWS as u64;
+    // From the nearest page start known before the page, past the header
+    // (a file read as bytes: one decoded whole is read from its start).
+    let (mut index, from) = match encoding {
+        Encoding::Utf16Le | Encoding::Utf16Be => (0, 0),
+        _ => starts::nearest(path, offset),
+    };
+    let mut base = 0;
+    if from > 0 {
+        use std::io::Seek as _;
+        let mut file = inspection::open(path)?;
+        file.seek(std::io::SeekFrom::Start(from))?;
+        reader = csv::ReaderBuilder::new()
+            .delimiter(if tsv { b'\t' } else { b',' })
+            .quoting(!tsv)
+            .flexible(true)
+            .has_headers(false)
+            .from_reader(RecordBound {
+                inner: Box::new(file),
+                since: std::rc::Rc::clone(&since),
+            });
+        base = from;
+    }
     let mut rows = Vec::new();
-    let mut index = 0u64;
     let mut more = false;
-    while reader.read_byte_record(&mut record)? {
+    loop {
+        // Where each page begins, for the next turn.
+        if index > 0
+            && index.is_multiple_of(page)
+            && !matches!(encoding, Encoding::Utf16Le | Encoding::Utf16Be)
+        {
+            starts::learn(path, index, base + reader.position().byte());
+        }
+        if !reader.read_byte_record(&mut record)? {
+            break;
+        }
         since.set(0);
         if index.is_multiple_of(1024) {
             inspection::check(cancel)?;
@@ -219,7 +252,6 @@ fn table(path: &std::path::Path, offset: u64, cancel: &CancelToken) -> anyhow::R
             ..Row::default()
         });
     }
-    let page = limits::TABLE_ROWS as u64;
     let shown = offset + rows.len() as u64;
     let details = inspection::details([
         ("Columns", inspection::count(columns.len())),
@@ -366,6 +398,51 @@ mod tests {
         assert_eq!(data.rows[0].cells.len(), limits::TABLE_COLUMNS);
         assert_eq!(data.rows[1].cells, ["short"]);
         assert_eq!(data.notice, "2 rows cut to 64 columns");
+    }
+
+    /// A page turned to is read from where the pages before it were seen
+    /// to begin, and says the same as one read from the file's start.
+    #[test]
+    fn pages_turned_to_start_where_they_were_seen_to_begin() {
+        use std::fmt::Write as _;
+        let dir = tempfile::tempdir().unwrap();
+        let rows = 2600;
+        let mut text = String::from("n,name\n");
+        for n in 1..=rows {
+            let _ = writeln!(text, "{n},\"row, {n}\"");
+        }
+        let path = dir.path().join("long.csv");
+        std::fs::write(&path, &text).unwrap();
+        let cancel = CancelToken::new();
+        let fresh = |offset| table(&path, offset, &cancel).unwrap();
+        let first_last = fresh(2500);
+        assert_eq!(first_last.rows[0].cells[0], "2501");
+        // Read in turn, each page's start is learned.
+        for offset in (0..=2000).step_by(500) {
+            table(&path, offset, &cancel).unwrap();
+        }
+        assert_eq!(starts::nearest(&path, 2500).0, 2500);
+        let again = fresh(2500);
+        assert_eq!(again.rows.len(), first_last.rows.len());
+        assert_eq!(again.rows[0].cells, first_last.rows[0].cells);
+        assert_eq!(again.title, first_last.title);
+        // JSON Lines alike, blank lines counting for nothing.
+        let mut lines = String::new();
+        for n in 1..=1200 {
+            let _ = writeln!(lines, "{{\"n\":{n}}}");
+            if n % 7 == 0 {
+                lines.push('\n');
+            }
+        }
+        let path = dir.path().join("long.jsonl");
+        std::fs::write(&path, &lines).unwrap();
+        let before = jsonl::table(&path, 1000, &cancel).unwrap();
+        jsonl::table(&path, 0, &cancel).unwrap();
+        jsonl::table(&path, 500, &cancel).unwrap();
+        assert_eq!(starts::nearest(&path, 1000).0, 1000);
+        let after = jsonl::table(&path, 1000, &cancel).unwrap();
+        assert_eq!(after.rows[0].cells, before.rows[0].cells);
+        assert_eq!(after.rows.len(), before.rows.len());
     }
 
     #[test]

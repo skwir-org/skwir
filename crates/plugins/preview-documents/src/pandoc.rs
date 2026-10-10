@@ -207,6 +207,48 @@ impl<K: FnMut(&str, &[u8])> rich_preview::Resources for Media<'_, K> {
     }
 }
 
+/// The pictures of a page Pandoc wrote before, by the sizes kept of them:
+/// a page shown again from its kept HTML reads no picture.
+pub(crate) struct Sized<'a>(pub &'a std::collections::HashMap<String, (u32, u32)>);
+
+impl rich_preview::Resources for Sized<'_> {
+    fn picture(&mut self, src: &str) -> Option<Picture> {
+        let name = media_name(src)?;
+        let &(width, height) = self.0.get(&name)?;
+        Some(Picture::Later {
+            key: name,
+            width,
+            height,
+        })
+    }
+}
+
+/// Each file Pandoc extracted into `work`'s pictures' folder, by the name
+/// its page gives it.
+pub(crate) fn extracted(work: &Path) -> Vec<(String, std::path::PathBuf)> {
+    let mut found = Vec::new();
+    let mut folders = vec![work.join(MEDIA)];
+    while let Some(folder) = folders.pop() {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                folders.push(path);
+            } else if let Some(name) = path
+                .strip_prefix(work)
+                .ok()
+                .and_then(|relative| relative.to_str())
+                .and_then(media_name)
+            {
+                found.push((name, path));
+            }
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

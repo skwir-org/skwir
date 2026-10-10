@@ -21,12 +21,21 @@ pub fn table(
     offset: u64,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
-    let mut reader = BufReader::new(inspection::open(path)?);
+    use std::io::Seek as _;
+    let page = limits::TABLE_ROWS as u64;
+    // From the nearest page start known before the page.
+    let (mut index, mut at) = crate::starts::nearest(path, offset);
+    let mut file = inspection::open(path)?;
+    file.seek(std::io::SeekFrom::Start(at))?;
+    let mut reader = BufReader::new(file);
     let mut line = Vec::new();
     let mut parsed = Vec::new();
-    let mut index = 0u64;
     let mut more = false;
     loop {
+        // Where each page begins, for the next turn.
+        if index > 0 && index.is_multiple_of(page) {
+            crate::starts::learn(path, index, at);
+        }
         line.clear();
         (&mut reader)
             .take(limits::TEXT_INPUT as u64 + 1)
@@ -34,6 +43,7 @@ pub fn table(
         if line.is_empty() {
             break;
         }
+        at += line.len() as u64;
         anyhow::ensure!(
             line.len() <= limits::TEXT_INPUT,
             "A line exceeds {} preview limit",
@@ -104,7 +114,6 @@ pub fn table(
     .flatten()
     .collect::<Vec<_>>()
     .join(" · ");
-    let page = limits::TABLE_ROWS as u64;
     let shown = offset + rows.len() as u64;
     let details = inspection::details([
         ("Columns", inspection::count(columns.len())),

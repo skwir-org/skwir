@@ -925,7 +925,13 @@ impl Walk<'_> {
             let picture = attr(blip, &R, "embed")
                 .and_then(|id| part.rels.get(id))
                 .filter(|(_, external)| !*external)
-                .and_then(|(target, _)| self.package.picture(target, self.cancel));
+                .and_then(|(target, _)| {
+                    if self.builder.shows_this_part() {
+                        self.package.picture(target, self.cancel)
+                    } else {
+                        Package::unread_picture(target)
+                    }
+                });
             self.builder
                 .picture(alt.take().unwrap_or_default(), picture);
         }
@@ -939,7 +945,13 @@ impl Walk<'_> {
             let picture = attr(image, &R, "id")
                 .and_then(|id| part.rels.get(id))
                 .filter(|(_, external)| !*external)
-                .and_then(|(target, _)| self.package.picture(target, self.cancel));
+                .and_then(|(target, _)| {
+                    if self.builder.shows_this_part() {
+                        self.package.picture(target, self.cancel)
+                    } else {
+                        Package::unread_picture(target)
+                    }
+                });
             self.builder.picture(alt.unwrap_or_default(), picture);
         }
         boxes.extend(node.descendants().filter(|n| is(*n, &W, "txbxContent")));
@@ -1102,6 +1114,12 @@ pub(crate) fn read(path: &Path, wanted: u64, cancel: &CancelToken) -> anyhow::Re
     };
     walk.blocks(body, &part, true)?;
     let (referenced, parts) = walk.builder.body_end();
+    // Asked past the end (the document shrank): the last part, read again
+    // with its pictures read.
+    if wanted >= parts && parts > 0 {
+        drop(walk);
+        return read(path, parts - 1, cancel);
+    }
     if !referenced.is_empty() {
         for (kind, name) in notes {
             let Some(name) = name else {

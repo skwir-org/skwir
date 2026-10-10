@@ -90,6 +90,36 @@ impl Book {
 /// Inflate every part calamine may read, counting, before it reads any:
 /// at most `limit` bytes together.
 fn bounded(path: &Path, limit: u64, cancel: &CancelToken) -> anyhow::Result<()> {
+    // A workbook found within the bound, as it is (its length and time),
+    // is not inflated again for that at each page turned: it was, every
+    // part of it, up to 128 MB.
+    type Version = (std::path::PathBuf, u64, Option<std::time::SystemTime>, u64);
+    static WITHIN: std::sync::Mutex<Vec<Version>> = std::sync::Mutex::new(Vec::new());
+    let version = std::fs::metadata(path)
+        .ok()
+        .map(|meta| (path.to_path_buf(), meta.len(), meta.modified().ok(), limit));
+    let within = || {
+        WITHIN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
+    if version.as_ref().is_some_and(|v| within().contains(v)) {
+        return Ok(());
+    }
+    measure(path, limit, cancel)?;
+    if let Some(version) = version {
+        let mut known = within();
+        known.retain(|v| v.0 != version.0);
+        if known.len() >= 8 {
+            known.remove(0);
+        }
+        known.push(version);
+    }
+    Ok(())
+}
+
+/// Every part calamine may read inflated and counted.
+fn measure(path: &Path, limit: u64, cancel: &CancelToken) -> anyhow::Result<()> {
     let mut package =
         bibli_platform::package::Package::open(path, "The spreadsheet", false, cancel)?;
     let parts: Vec<String> = package
