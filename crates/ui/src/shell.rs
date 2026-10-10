@@ -866,11 +866,26 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.off_thread_until(label, self.app.lifetime().child(), work, then, window, cx);
+    }
+
+    /// [`Shell::off_thread`], the job stopped by `cancel`: not begun once
+    /// it is cancelled, and what it calls asks
+    /// `scheduler::job_cancelled` to stop early.
+    pub fn off_thread_until<T: Send + 'static>(
+        &self,
+        label: &'static str,
+        cancel: bibli_core::CancelToken,
+        work: impl FnOnce() -> T + Send + 'static,
+        then: impl FnOnce(&mut Shell, T, &mut Window, &mut Context<Shell>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (tx, rx) = flume::bounded(1);
         self.app.scheduler.spawn(
             bibli_core::scheduler::Priority::Visible,
             label,
-            self.app.lifetime().child(),
+            cancel,
             move || {
                 let _ = tx.send(work());
             },

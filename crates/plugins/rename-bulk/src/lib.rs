@@ -107,7 +107,15 @@ pub enum BulkRenameError {
     MissingDate { item: String },
     #[error("nothing to rename")]
     Empty,
+    /// The job working it out was cancelled (`scheduler::job_cancelled`):
+    /// a preview the user typed past.
+    #[error("cancelled")]
+    Cancelled,
 }
+
+/// How many items are worked out between two looks at whether the job
+/// was cancelled.
+const LOOK_EVERY: usize = 256;
 
 /// One input item: where it is, what it is called, and when it changed.
 pub type Item = (EntryRef, OsString, Option<SystemTime>);
@@ -259,6 +267,9 @@ pub fn new_names(items: &[Item], spec: &RenameSpec) -> Result<Vec<OsString>, Bul
     let replacement = spec.replacement.clone().unwrap_or_default();
     let mut out = Vec::with_capacity(items.len());
     for (i, (entry, original, mtime)) in items.iter().enumerate() {
+        if i % LOOK_EVERY == 0 && bibli_core::scheduler::job_cancelled() {
+            return Err(BulkRenameError::Cancelled);
+        }
         let name = original.to_string_lossy();
         let mut n = name.clone().into_owned();
         if let Some(re) = &re {
@@ -305,6 +316,9 @@ pub fn plan_bulk_rename_in(
         return Err(BulkRenameError::Empty);
     }
     let new = new_names(items, spec)?;
+    if bibli_core::scheduler::job_cancelled() {
+        return Err(BulkRenameError::Cancelled);
+    }
     let requests: Vec<RenameRequest> = items
         .iter()
         .zip(new)
@@ -373,6 +387,17 @@ struct Args {
     entries: Vec<bibli_core::op::EntryArg>,
     #[serde(flatten)]
     spec: RenameSpec,
+}
+
+/// What a preview is asked: a bulk rename's arguments, and how many of
+/// its renames to say at most (all, by default); how many there are in all
+/// is said beside them.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct PreviewArgs {
+    #[serde(flatten)]
+    args: Args,
+    #[serde(default)]
+    limit: Option<usize>,
 }
 
 /// Plan a bulk rename of `a`'s entries, or of the pane's selection.
@@ -488,18 +513,23 @@ impl Plugin for RenameBulkPlugin {
             |a, app| Ok(Outcome::Plan(plan_bulk(app, a)?.plan)),
         )
         .plans();
-        app.commands.register::<Args, _>(ID, "rename_bulk.preview", "Preview bulk rename", "Return the old → new names a bulk rename would produce", |a, app| {
-            let r = plan_bulk(app, a)?;
+        app.commands.register::<PreviewArgs, _>(ID, "rename_bulk.preview", "Preview bulk rename", "Return the old → new names a bulk rename would produce (`renames`, the first `limit` of them when given) and how many there are (`count`)", |a, app| {
+            let r = plan_bulk(app, a.args)?;
             // Display names for the dialog; the plan itself is lossless.
-            let list: Vec<serde_json::Value> = r
+            let renames: Vec<(&Path, &Path)> = r
                 .preview
                 .iter()
                 .filter_map(|c| match c {
-                    Change::Rename { from, to } => Some(serde_json::json!({ "from": from.file_name()?.to_string_lossy(), "to": to.file_name()?.to_string_lossy() })),
+                    Change::Rename { from, to } => Some((from.as_path(), to.as_path())),
                     _ => None,
                 })
                 .collect();
-            Ok(Outcome::Value(serde_json::Value::Array(list)))
+            let shown: Vec<serde_json::Value> = renames
+                .iter()
+                .take(a.limit.unwrap_or(usize::MAX))
+                .filter_map(|(from, to)| Some(serde_json::json!({ "from": from.file_name()?.to_string_lossy(), "to": to.file_name()?.to_string_lossy() })))
+                .collect();
+            Ok(Outcome::Value(serde_json::json!({ "renames": shown, "count": renames.len() })))
         })
         .reads();
         app.registry.keymap.add(
@@ -823,7 +853,20 @@ mod tests {
             ))
             .unwrap();
         let Outcome::Value(v) = preview else { panic!() };
-        assert_eq!(v[0]["to"], "file-01.txt");
+        assert_eq!(v["renames"][0]["to"], "file-01.txt");
+        assert_eq!(v["count"], 2);
+        // At most `limit` said, all counted.
+        let Outcome::Value(v) = app
+            .dispatch(&Invocation::with_args(
+                "rename_bulk.preview",
+                &serde_json::json!({ "template": "file-{n:02}.{ext}", "limit": 1 }),
+            ))
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(v["renames"].as_array().map(Vec::len), Some(1));
+        assert_eq!(v["count"], 2);
         let Outcome::Plan(plan) = app
             .dispatch(&Invocation::with_args(
                 "rename_bulk",

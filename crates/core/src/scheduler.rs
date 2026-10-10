@@ -215,6 +215,17 @@ thread_local! {
     /// ([`let_go`]).
     static LET_GO: std::cell::RefCell<Option<std::sync::Weak<Inner>>> =
         const { std::cell::RefCell::new(None) };
+    /// The token of the job a worker runs now ([`job_cancelled`]).
+    static JOB: std::cell::RefCell<Option<CancelToken>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Whether the job the calling thread runs was cancelled since it began:
+/// code a job calls without a token of its own (a command dispatched on a
+/// worker, a preview superseded as the user types) stops early. False
+/// outside a job.
+pub fn job_cancelled() -> bool {
+    JOB.try_with(|job| job.borrow().as_ref().is_some_and(CancelToken::is_cancelled))
+        .unwrap_or(false)
 }
 
 /// Whether a window marked its thread: else bibli runs without one (a
@@ -347,10 +358,12 @@ fn worker(inner: &Inner) {
 /// Run one job, timed, its panic caught.
 fn run(inner: &Inner, task: Task) {
     let t = Instant::now();
+    JOB.with(|job| *job.borrow_mut() = Some(task.cancel.clone()));
     // A job that panics (a malformed file in a third-party parser, for
     // instance) must not take the worker thread with it: the pool is
     // never respawned, and the caller would wait forever for a result.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(task.job));
+    JOB.with(|job| job.borrow_mut().take());
     let took = t.elapsed();
     if let Err(payload) = outcome {
         let message = panic_message(&*payload);
@@ -379,6 +392,42 @@ pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a job calls sees its job cancelled, and stops early: a
+    /// command dispatched on a worker has no token of its own.
+    #[test]
+    fn a_job_sees_its_own_cancellation() {
+        assert!(!job_cancelled(), "outside a job");
+        let scheduler = Scheduler::new(2);
+        let cancel = CancelToken::new();
+        let (started, began) = crossbeam_channel::bounded(1);
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        scheduler.spawn(Priority::Normal, "test", cancel.clone(), move || {
+            let before = job_cancelled();
+            started.send(()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !job_cancelled() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            tx.send((before, job_cancelled())).unwrap();
+        });
+        began.recv_timeout(Duration::from_secs(5)).unwrap();
+        cancel.cancel();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            (false, true)
+        );
+        // The next job on that worker begins uncancelled.
+        let (tx, rx) = crossbeam_channel::bounded(2);
+        for _ in 0..2 {
+            let tx = tx.clone();
+            scheduler.spawn(Priority::Normal, "test", CancelToken::new(), move || {
+                tx.send(job_cancelled()).unwrap();
+            });
+        }
+        assert!(!rx.recv_timeout(Duration::from_secs(5)).unwrap());
+        assert!(!rx.recv_timeout(Duration::from_secs(5)).unwrap());
+    }
 
     #[test]
     fn dropping_the_last_handle_stops_the_workers() {

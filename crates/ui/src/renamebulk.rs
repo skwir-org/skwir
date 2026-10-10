@@ -35,10 +35,10 @@ pub struct BulkState {
     renamed: usize,
     pub error: Option<String>,
     /// Advances with each change; only the latest preview is shown, and
-    /// one asked for meanwhile is not worked out (`latest`, which the
-    /// worker reads).
+    /// the one asked before is cancelled (`pending`): not worked out if
+    /// it has not begun, stopped where it is if it has.
     asked: u64,
-    latest: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    pending: Option<bibli_core::CancelToken>,
     /// The preview shown is the answer to the latest change.
     current: bool,
     count: usize,
@@ -114,7 +114,7 @@ impl Shell {
             renamed: 0,
             error: None,
             asked: 0,
-            latest: std::sync::Arc::default(),
+            pending: None,
             current: false,
             count,
             back,
@@ -126,6 +126,9 @@ impl Shell {
 
     pub fn close_bulk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(bulk) = self.bulk.take() {
+            if let Some(pending) = &bulk.pending {
+                pending.cancel();
+            }
             bulk.back.restore(window, &self.ui().focus);
         }
         cx.notify();
@@ -157,53 +160,52 @@ impl Shell {
     }
 
     /// Ask for the preview again after a change, on a worker: the plugin
-    /// reads every selected entry and may stat the targets.
+    /// reads every selected entry and may stat the targets. The one asked
+    /// before is cancelled, and says the first `SHOWN` renames alone, with
+    /// how many there are.
     fn bulk_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let spec = self.bulk_spec(cx);
+        let mut spec = self.bulk_spec(cx);
+        spec["limit"] = SHOWN.into();
+        let cancel = self.app.lifetime().child();
         let Some(b) = &mut self.bulk else { return };
         b.asked += 1;
         b.current = false;
         let asked = b.asked;
-        b.latest.store(asked, std::sync::atomic::Ordering::Release);
-        let latest = std::sync::Arc::clone(&b.latest);
+        if let Some(before) = b.pending.replace(cancel.clone()) {
+            before.cancel();
+        }
         let app = std::sync::Arc::clone(&self.app);
-        self.off_thread(
+        self.off_thread_until(
             "rename-bulk-preview",
-            move || {
-                // Typed past while it waited: not worked out.
-                if latest.load(std::sync::atomic::Ordering::Acquire) != asked {
-                    return None;
+            cancel,
+            move || match app.dispatch(&Invocation::with_args("rename_bulk.preview", &spec)) {
+                Ok(Outcome::Value(v)) => {
+                    let shown = v["renames"]
+                        .as_array()
+                        .map_or(&[][..], Vec::as_slice)
+                        .iter()
+                        .filter_map(|x| {
+                            Some((
+                                x.get("from")?.as_str()?.to_owned(),
+                                x.get("to")?.as_str()?.to_owned(),
+                            ))
+                        })
+                        .collect();
+                    let count = v["count"]
+                        .as_u64()
+                        .and_then(|n| usize::try_from(n).ok())
+                        .unwrap_or_default();
+                    (shown, count, None)
                 }
-                // What the dialog shows, read here: the window's thread
-                // unpacked every rename to show forty.
-                Some(
-                    match app.dispatch(&Invocation::with_args("rename_bulk.preview", &spec)) {
-                        Ok(Outcome::Value(v)) => {
-                            let all = v.as_array().map_or(&[][..], Vec::as_slice);
-                            let shown = all
-                                .iter()
-                                .take(SHOWN)
-                                .filter_map(|x| {
-                                    Some((
-                                        x.get("from")?.as_str()?.to_owned(),
-                                        x.get("to")?.as_str()?.to_owned(),
-                                    ))
-                                })
-                                .collect();
-                            (shown, all.len(), None)
-                        }
-                        Ok(_) => (Vec::new(), 0, None),
-                        Err(e) => (Vec::new(), 0, Some(format!("{e:#}"))),
-                    },
-                )
+                Ok(_) => (Vec::new(), 0, None),
+                Err(e) => (Vec::new(), 0, Some(format!("{e:#}"))),
             },
             move |this, result, _, cx| {
-                let Some((preview, renamed, error)) = result else {
-                    return;
-                };
+                let (preview, renamed, error) = result;
                 let Some(b) = this.bulk.as_mut().filter(|b| b.asked == asked) else {
                     return;
                 };
+                b.pending = None;
                 b.preview = preview;
                 b.renamed = renamed;
                 b.error = error;
