@@ -1334,7 +1334,7 @@ impl crate::shell::Shell {
         let (app, font, hints) = (
             Arc::clone(&self.app),
             self.font.clone(),
-            self.key_hints.clone(),
+            self.key_hints.to_vec(),
         );
         // What had the keyboard gets it back when the dialog closes, as a
         // popup's does: the reader, the address, the pane.

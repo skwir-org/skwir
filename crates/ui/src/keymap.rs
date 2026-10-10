@@ -77,6 +77,49 @@ pub struct KeyHint {
     pub layer: Layer,
 }
 
+/// Every binding's hint, and which are each command's: every button drawn
+/// asks for its shortcut at each frame (a menu of folders, five hundred
+/// times), which scanned every binding.
+#[derive(Clone, Default)]
+pub struct Hints {
+    all: Vec<KeyHint>,
+    by_command: HashMap<String, Vec<usize>>,
+}
+
+impl Hints {
+    pub fn new(all: Vec<KeyHint>) -> Self {
+        let mut by_command: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, hint) in all.iter().enumerate() {
+            by_command.entry(hint.command.clone()).or_default().push(i);
+        }
+        Hints { all, by_command }
+    }
+
+    /// The hints of `command`, in the order of all of them.
+    pub fn of<'a>(&'a self, command: &str) -> impl Iterator<Item = &'a KeyHint> + 'a {
+        self.by_command
+            .get(command)
+            .into_iter()
+            .flatten()
+            .map(|&i| &self.all[i])
+    }
+}
+
+impl std::ops::Deref for Hints {
+    type Target = [KeyHint];
+    fn deref(&self) -> &[KeyHint] {
+        &self.all
+    }
+}
+
+impl<'a> IntoIterator for &'a Hints {
+    type Item = &'a KeyHint;
+    type IntoIter = std::slice::Iter<'a, KeyHint>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.all.iter()
+    }
+}
+
 /// Bindings the shell always needs, independent of plugins: every `ui.*`
 /// command the shell owns has its key here, so disabling a plugin never
 /// takes the palette or Quit with it. Keys for core and plugin commands are
@@ -1107,11 +1150,15 @@ impl Stamp {
 /// palette, toolbar tooltips, the footers): matching the name alone would
 /// show Zoom in's keys beside Zoom out. The highest layer's keys, the first
 /// of a layer that binds several (Ctrl+H before Alt+.).
-pub fn keys_for(hints: &[KeyHint], command: &str, args: &serde_json::Value) -> Option<String> {
+pub fn keys_for<'a>(
+    hints: impl IntoIterator<Item = &'a KeyHint>,
+    command: &str,
+    args: &serde_json::Value,
+) -> Option<String> {
     let empty = serde_json::Value::Object(serde_json::Map::new());
     let args = if args.is_null() { &empty } else { args };
     hints
-        .iter()
+        .into_iter()
         .filter(|hint| hint.command == command && hint.args == *args)
         .fold(None, |best: Option<&KeyHint>, hint| match best {
             Some(best) if best.layer >= hint.layer => Some(best),
@@ -1125,8 +1172,8 @@ pub fn keys_for(hints: &[KeyHint], command: &str, args: &serde_json::Value) -> O
 /// (`!refs` too), `None` for one it cannot tell, taken to hold. A menu
 /// item names the key that does it there (on a tag, Delete is Remove from
 /// the tag, not Move to Trash).
-pub fn keys_for_where(
-    hints: &[KeyHint],
+pub fn keys_for_where<'a>(
+    hints: impl IntoIterator<Item = &'a KeyHint>,
     command: &str,
     args: &serde_json::Value,
     holds: impl Fn(&str) -> Option<bool>,
@@ -1135,7 +1182,7 @@ pub fn keys_for_where(
     let empty = serde_json::Value::Object(serde_json::Map::new());
     let args = if args.is_null() { &empty } else { args };
     hints
-        .iter()
+        .into_iter()
         .filter(|hint| hint.command == command && hint.args == *args && applies(&hint.context))
         .fold(None, |best: Option<&KeyHint>, hint| match best {
             Some(best) if best.layer >= hint.layer => Some(best),

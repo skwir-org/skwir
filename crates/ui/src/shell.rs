@@ -19,7 +19,7 @@ use crate::choose::ChooseState;
 use crate::icons::IconCache;
 use crate::input::{InputEvent, TextInput};
 use crate::jump::JumpState;
-use crate::keymap::{self, KeyHint, RunCommand};
+use crate::keymap::{self, RunCommand};
 use crate::list::{ListState, Step};
 use crate::menu::MenuState;
 use crate::palette::PaletteState;
@@ -208,7 +208,7 @@ pub struct Shell {
     pub(crate) hold_timer: Option<gpui::Task<()>>,
     pub font: SharedString,
     pub mono_font: SharedString,
-    pub key_hints: Vec<KeyHint>,
+    pub key_hints: keymap::Hints,
     /// What `key_hints` and GPUI's bindings were built from.
     pub(crate) keys: Installed,
     /// Icon size of the grid's tiles.
@@ -510,7 +510,7 @@ impl Shell {
             hold_timer: None,
             font,
             mono_font,
-            key_hints: keymap.hints,
+            key_hints: keymap::Hints::new(keymap.hints),
             keys: Installed {
                 stamp: keymap.stamp,
                 settings: 0,
@@ -1144,14 +1144,14 @@ impl Shell {
 
     /// The keys bound to `command` with `args`, as people read them.
     pub fn keys_for(&self, command: &str, args: &serde_json::Value) -> Option<String> {
-        keymap::keys_for(&self.key_hints, command, args)
+        keymap::keys_for(self.key_hints.of(command), command, args)
     }
 
     /// The keys that run `command` in the pane being rendered, as it is
     /// now: a binding whose condition does not hold there is not named.
     pub fn keys_here(&self, command: &str, args: &serde_json::Value) -> Option<String> {
         let ctx = self.selection_ctx();
-        keymap::keys_for_where(&self.key_hints, command, args, |flag| {
+        keymap::keys_for_where(self.key_hints.of(command), command, args, |flag| {
             crate::menu::SELECTION_TOKENS
                 .contains(&crate::menu::canonical_token(flag))
                 .then(|| ctx.holds(flag))
@@ -1171,11 +1171,11 @@ impl Shell {
             return;
         }
         let keymap = keymap::install(&self.app, user, cx);
-        self.key_hints = keymap.hints;
+        self.key_hints = keymap::Hints::new(keymap.hints);
         self.keys.stamp = keymap.stamp;
         self.keys.typeahead = keymap.typeahead;
         if let Some(settings) = &self.settings {
-            let hints = self.key_hints.clone();
+            let hints = self.key_hints.to_vec();
             settings.update(cx, |settings, cx| settings.set_key_hints(hints, cx));
         }
         cx.notify();
