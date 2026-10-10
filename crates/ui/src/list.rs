@@ -88,6 +88,10 @@ struct Typed {
     /// (`Shell::seek_typed_again`), unless the selection changed since, as
     /// a selection made meanwhile wins.
     waiting: Option<u64>,
+    /// The listing's names when the order was last looked through while it
+    /// waits: sorted by what names say, an order brings nothing new until
+    /// names come, so it is not looked through at every slice streamed.
+    looked: Option<u64>,
 }
 
 impl Typed {
@@ -97,6 +101,7 @@ impl Typed {
             listing,
             at: now,
             waiting: None,
+            looked: None,
         }
     }
 
@@ -898,6 +903,15 @@ impl Shell {
         Some((found, whole))
     }
 
+    /// Whether the pane's listing is whole: the last look then settles.
+    fn typed_listing_whole(&self) -> bool {
+        let ws = self.app.workspace.read();
+        ws.pane(self.pane).is_some_and(|pane| {
+            self.ui().list.version() == Some(pane.listing.version())
+                && (pane.listing.is_complete() || pane.listing.error().is_some())
+        })
+    }
+
     /// Once the name typed has selected what it reaches so far: keep looking
     /// as the listing brings more, unless it is whole.
     fn typed_waits(&mut self, whole: bool) {
@@ -931,6 +945,21 @@ impl Shell {
                 typed.waiting = None;
             }
             return;
+        }
+        let names = {
+            let ws = self.app.workspace.read();
+            ws.pane(self.pane)
+                .filter(|p| !p.sort.key.needs_metadata())
+                .map(|p| p.listing.names_version())
+        };
+        if names.is_some()
+            && self.ui().list.typed.as_ref().and_then(|t| t.looked) == names
+            && !self.typed_listing_whole()
+        {
+            return;
+        }
+        if let Some(typed) = self.ui_mut().list.typed.as_mut() {
+            typed.looked = names;
         }
         let Some((found, whole)) = self.seek_typed() else {
             return;

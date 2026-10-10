@@ -371,32 +371,42 @@ impl Thumbnails {
     fn work_one(self: &Arc<Self>) -> bool {
         let (key, req, cancel, generation) = {
             let mut s = self.state.lock();
-            loop {
-                let best = s
-                    .queue
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, q)| (q.priority, std::cmp::Reverse(q.seq)))
-                    .map(|(i, _)| i);
-                let Some(i) = best else {
-                    s.running = s.running.saturating_sub(1);
-                    return false;
-                };
-                let q = s.queue.swap_remove(i);
-                let cancel = s.in_flight.get(&q.key).map(|(_, c)| c.clone());
-                match cancel {
-                    Some(cancel)
-                        if s.frame.saturating_sub(q.frame) <= STALE_FRAMES
-                            && !cancel.is_cancelled() =>
-                    {
-                        break (q.key, q.req, cancel, s.providers);
-                    }
-                    _ => {
-                        s.in_flight.remove(&q.key);
-                        s.skipped += 1;
-                    }
+            // The requests no frame asked for lately, or cancelled, go in
+            // one pass: dropped one at a time, each after a look for the
+            // best, a fast scroll's hundreds were quadratic under the lock.
+            let State {
+                queue,
+                in_flight,
+                skipped,
+                frame,
+                ..
+            } = &mut *s;
+            queue.retain(|q| {
+                let live = frame.saturating_sub(q.frame) <= STALE_FRAMES
+                    && in_flight
+                        .get(&q.key)
+                        .is_some_and(|(_, cancel)| !cancel.is_cancelled());
+                if !live {
+                    in_flight.remove(&q.key);
+                    *skipped += 1;
                 }
-            }
+                live
+            });
+            let best = s
+                .queue
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, q)| (q.priority, std::cmp::Reverse(q.seq)))
+                .map(|(i, _)| i);
+            let Some(i) = best else {
+                s.running = s.running.saturating_sub(1);
+                return false;
+            };
+            let q = s.queue.swap_remove(i);
+            let Some(cancel) = s.in_flight.get(&q.key).map(|(_, c)| c.clone()) else {
+                return true;
+            };
+            (q.key, q.req, cancel, s.providers)
         };
         let providers: Vec<Arc<dyn ThumbnailProvider>> = self
             .providers

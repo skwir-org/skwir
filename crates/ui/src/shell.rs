@@ -116,6 +116,9 @@ struct Reveal {
     pane: PaneId,
     name: std::ffi::OsString,
     until: Instant,
+    /// The listing and its names when last looked through: looked through
+    /// again only once they change, not at every sync while it waits.
+    looked: Option<(u64, u64)>,
 }
 
 /// The shell's switches read from the settings (`Shell::sync`, when their
@@ -960,6 +963,7 @@ impl Shell {
                     pane,
                     name,
                     until: Instant::now() + std::time::Duration::from_secs(10),
+                    looked: None,
                 });
                 cx.notify();
             },
@@ -974,19 +978,26 @@ impl Shell {
         let Some(reveal) = self.reveal.as_ref() else {
             return;
         };
-        let found = self
-            .app
-            .workspace
-            .read()
-            .pane(reveal.pane)
-            .and_then(|pane| {
-                pane.listing
-                    .find_by_name(&reveal.name)
-                    .map(|entry| entry.id)
-            });
+        let (found, looked) = {
+            let ws = self.app.workspace.read();
+            let Some(pane) = ws.pane(reveal.pane) else {
+                return;
+            };
+            let names = (pane.listing.id(), pane.listing.names_version());
+            let found = (reveal.looked != Some(names))
+                .then(|| {
+                    pane.listing
+                        .find_by_name(&reveal.name)
+                        .map(|entry| entry.id)
+                })
+                .flatten();
+            (found, names)
+        };
         let Some(id) = found else {
             if reveal.until < Instant::now() {
                 self.reveal = None;
+            } else if let Some(reveal) = self.reveal.as_mut() {
+                reveal.looked = Some(looked);
             }
             return;
         };

@@ -459,6 +459,9 @@ fn snapshot_key(id: EntryId) -> Vec<u8> {
     format!("{}:{}", id.dev, id.ino).into_bytes()
 }
 
+/// What the notes' snapshots may take in the cache.
+const SNAPSHOT_BYTES: u64 = 32 << 20;
+
 impl NoteStores {
     pub fn register(&self, owner: &str, store: Arc<dyn NotesStore>) {
         let mut list = self.list.write();
@@ -537,12 +540,17 @@ impl NoteStores {
     }
 
     /// Remember what bibli just wrote for the file `id`.
+    /// Kept within `SNAPSHOT_BYTES`, the oldest let go of first: a file
+    /// was kept for every file ever edited. One let go of says nothing of
+    /// which store bibli wrote last: the stores' notes are merged as when
+    /// none was kept.
     pub(crate) fn remember(&self, id: EntryId, snapshot: &Snapshot) {
         let slot = self.snapshots.read().clone();
-        if let (Some(slot), Ok(bytes)) = (slot, serde_json::to_vec(snapshot))
-            && let Err(error) = slot.put(&snapshot_key(id), &bytes)
-        {
-            tracing::debug!(%error, "notes: the snapshot was not kept");
+        if let (Some(slot), Ok(bytes)) = (slot, serde_json::to_vec(snapshot)) {
+            match slot.put(&snapshot_key(id), &bytes) {
+                Ok(()) => slot.trim_soon(bytes.len() as u64, SNAPSHOT_BYTES),
+                Err(error) => tracing::debug!(%error, "notes: the snapshot was not kept"),
+            }
         }
     }
 

@@ -23,7 +23,7 @@ use crate::icons;
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::view::{Nav, PaneView};
-use crate::views::list::{row, row_height};
+use crate::views::list::{row_elements, row_height};
 
 const MAX_ANCESTORS: usize = 3;
 const COLUMN_W: f32 = 240.0;
@@ -371,11 +371,9 @@ impl PaneView for ColumnsView {
                     let theme = cx.global::<Theme>().clone();
                     this.ui_mut().list.visible_rows = range.len().max(1);
                     let icon_px = u16::try_from(this.row_zoom).unwrap_or(u16::MAX);
-                    let rows = this.rows(range, icon_px, true);
+                    let rows = this.rows(range.clone(), icon_px, true);
                     this.request_hydrate(rows.iter().map(|r| r.look.id).collect::<Vec<_>>());
-                    rows.iter()
-                        .map(|r| row(this, &theme, r, true, false, cx))
-                        .collect::<Vec<_>>()
+                    row_elements(this, &theme, range, &rows, (true, false), cx)
                 })
             }),
         )

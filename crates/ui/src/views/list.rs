@@ -527,6 +527,28 @@ fn disclosure(r: &RowData, color: gpui::Hsla, cx: &mut Context<Shell>) -> Div {
 /// A full-width row for the list view, the tree view (`tree`: indented
 /// by depth after a disclosure triangle) and the last column of the
 /// columns view.
+/// An element for each row of `range`: an entry gone between the frame's
+/// reading of the order and its own (an agent's command meanwhile) is a
+/// blank of a row's height, so the rows after it stay in their places
+/// rather than each taking the one before's.
+pub(crate) fn row_elements(
+    shell: &Shell,
+    theme: &Theme,
+    range: Range<usize>,
+    rows: &[RowData],
+    (compact, tree): (bool, bool),
+    cx: &mut Context<Shell>,
+) -> Vec<Stateful<Div>> {
+    let height = row_height(shell.row_zoom);
+    let mut rows = rows.iter().peekable();
+    range
+        .map(|ix| match rows.next_if(|r| r.ix == ix) {
+            Some(r) => row(shell, theme, r, compact, tree, cx),
+            None => div().id(("row-gone", ix)).h(px(height)),
+        })
+        .collect()
+}
+
 pub fn row(
     shell: &Shell,
     theme: &Theme,
@@ -815,11 +837,9 @@ impl PaneView for ListView {
                     let list = &mut this.ui_mut().list;
                     list.visible_rows = range.len().max(1);
                     list.visible_items = range.len();
-                    let rows = this.rows(range, icon_px, false);
+                    let rows = this.rows(range.clone(), icon_px, false);
                     this.request_hydrate(rows.iter().map(|r| r.look.id).collect::<Vec<_>>());
-                    rows.iter()
-                        .map(|r| row(this, &theme, r, false, tree, cx))
-                        .collect::<Vec<_>>()
+                    row_elements(this, &theme, range, &rows, (false, tree), cx)
                 })
             }),
         )
