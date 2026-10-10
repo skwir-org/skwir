@@ -171,6 +171,11 @@ pub struct StepContext {
     /// Where this plan puts files in the trash, found once.
     #[cfg(target_os = "linux")]
     trashes: super::put_trash::Trashes,
+    /// What a step's check read that its apply needs too (a file's
+    /// notes): the executor applies a step right after it checks it, so
+    /// what the check read is what is there. Each step starts without
+    /// ([`Self::step_begins`]); a dry run never applies.
+    checked: RefCell<Option<Box<dyn std::any::Any>>>,
 }
 
 /// What a copy asks the kernel to do between two devices.
@@ -210,7 +215,25 @@ impl StepContext {
             buffer: RefCell::default(),
             #[cfg(target_os = "linux")]
             trashes: super::put_trash::Trashes::default(),
+            checked: RefCell::default(),
         }
+    }
+
+    /// Keep what this step's check read, for its apply to take
+    /// ([`Self::take_checked`]) instead of reading it again.
+    pub fn keep_checked(&self, read: impl std::any::Any) {
+        *self.checked.borrow_mut() = Some(Box::new(read));
+    }
+
+    /// What this step's check kept, if it kept one of this type.
+    pub fn take_checked<T: std::any::Any>(&self) -> Option<T> {
+        let kept = self.checked.borrow_mut().take()?;
+        kept.downcast::<T>().ok().map(|kept| *kept)
+    }
+
+    /// Another step begins: what the last one's check kept is not its own.
+    pub(super) fn step_begins(&self) {
+        self.checked.borrow_mut().take();
     }
 
     /// The staging folder in `dest_dir` this plan's copies there share,

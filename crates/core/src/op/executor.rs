@@ -860,6 +860,7 @@ impl Executor {
                 break;
             }
             let change = step.describe();
+            ctx.step_begins();
             // A step that panics fails, as one that errs: the plan ends
             // and says so, and what was applied before it stays undoable.
             // Unwound, it would take the plans' thread with it.

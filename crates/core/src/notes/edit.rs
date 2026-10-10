@@ -363,7 +363,7 @@ impl Operation for SetNotes {
             words: Some(Words { will, did }),
         }
     }
-    fn check(&self, _ctx: &StepContext) -> StepStatus {
+    fn check(&self, ctx: &StepContext) -> StepStatus {
         if self.rating.is_some_and(|r| r > super::RATING_MAX) {
             return StepStatus::Conflict {
                 reason: format!("a rating is from 1 to {}", super::RATING_MAX),
@@ -382,6 +382,8 @@ impl Operation for SetNotes {
                 if self.holds_in(&read.notes) && agreed {
                     StepStatus::AlreadyDone
                 } else {
+                    // Applied next: what was read here is what it edits.
+                    ctx.keep_checked(Checked { path: p, read });
                     StepStatus::Pending { reversible: true }
                 }
             }
@@ -396,7 +398,7 @@ impl Operation for SetNotes {
             },
         }
     }
-    fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         anyhow::ensure!(
             self.rating.is_none_or(|r| r <= super::RATING_MAX),
             "a rating is from 1 to {}",
@@ -407,8 +409,15 @@ impl Operation for SetNotes {
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
             anyhow::bail!("{} has no folder", path.display());
         };
-        let current = stores.read_path(&path, &self.policy);
-        let target = self.applied_to(&current);
+        // What the check read just before, else read now.
+        let read = ctx
+            .take_checked::<Checked>()
+            .filter(|checked| checked.path == path)
+            .map_or_else(
+                || stores.read_one(&path, &self.policy),
+                |checked| checked.read,
+            );
+        let target = self.applied_to(&read.notes);
         let attributes = super::attribute_names(&path);
         let probe = Probe {
             path: &path,
@@ -447,9 +456,15 @@ impl Operation for SetNotes {
             anyhow::anyhow!("{what} {}: {error}", path.display())
         };
         let mut held = false;
+        // The stores that wrote: what the others say is what was read.
+        let mut written: Vec<&'static str> = Vec::new();
         for (store, create) in &first {
             match store.write(&probe, &target, *create) {
-                Ok(Wrote::Written | Wrote::Unchanged) => held = true,
+                Ok(Wrote::Written) => {
+                    held = true;
+                    written.push(store.id());
+                }
+                Ok(Wrote::Unchanged) => held = true,
                 Ok(Wrote::NotHere) => {}
                 Err(e) => return Err(failed(e, "write the notes of")),
             }
@@ -457,7 +472,11 @@ impl Operation for SetNotes {
         for (i, store) in fallback.iter().enumerate() {
             let create = !held && i == 0;
             match store.write(&probe, &target, create) {
-                Ok(Wrote::Written | Wrote::Unchanged) => held = true,
+                Ok(Wrote::Written) => {
+                    held = true;
+                    written.push(store.id());
+                }
+                Ok(Wrote::Unchanged) => held = true,
                 Ok(Wrote::NotHere) => {}
                 Err(e) => return Err(failed(e, "write the notes of")),
             }
@@ -471,20 +490,27 @@ impl Operation for SetNotes {
         }
         let after = raw::snapshot(&path, &keys)?;
         // What each store says now, as bibli left it: the next read tells
-        // another application's edit from this one by it.
+        // another application's edit from this one by it. A store that did
+        // not write says what it was read saying; one that wrote is read
+        // again, as it keeps what it can of the notes.
         let attributes = super::attribute_names(&path);
         let probe = Probe {
             path: &path,
             name,
             attributes: &attributes,
-            folder: path.is_dir(),
+            folder: probe.folder,
         };
         let each = stores
             .stores()
             .into_iter()
             .filter(|s| self.policy.reads(s.id()) && s.applies(dir))
             .filter_map(|s| {
-                let found = s.read(dir, std::slice::from_ref(&probe), None).pop()??;
+                if !written.contains(&s.id()) {
+                    let (_, found) = read.each.iter().find(|(id, _)| *id == s.id())?;
+                    return Some((s.id().to_owned(), found.clone()));
+                }
+                let mut found = s.read(dir, std::slice::from_ref(&probe), None).pop()??;
+                found.clean_tags();
                 Some((s.id().to_owned(), found))
             })
             .collect();
@@ -504,6 +530,13 @@ impl Operation for SetNotes {
             stores: Some(stores),
         })))
     }
+}
+
+/// What [`SetNotes`]'s check read, for its apply: the file, and its
+/// notes as each store said them.
+struct Checked {
+    path: std::path::PathBuf,
+    read: super::Read,
 }
 
 /// Put back what a file's stores kept before an edit, byte for byte: the
