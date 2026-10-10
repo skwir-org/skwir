@@ -167,18 +167,28 @@ pub enum ThumbState {
 /// An entry's picture at one size, as of one modification time.
 type Key = (EntryId, ThumbSize, Option<SystemTime>);
 
+/// What waits for a worker: how much it is wanted is its [`Flight`]'s,
+/// which a frame asking again updates in place.
 struct Queued {
     key: Key,
     req: ThumbRequest,
-    priority: Priority,
-    /// The frame it was last asked for: older than a few frames, the
-    /// viewport has moved on and it is dropped before it runs.
-    frame: u64,
     seq: u64,
     /// Where it goes on from once set aside ([`Busy`]): the provider that
     /// was busy, and whether one that makes thumbnails tried before it.
     /// What ran before is not asked again.
     resume: Option<Resume>,
+}
+
+/// A request asked for and not answered yet, queued, set aside or
+/// running.
+struct Flight {
+    /// The frame it was last asked for: older than a few frames, the
+    /// viewport has moved on and it is dropped before it runs, or stopped
+    /// while it runs.
+    asked: u64,
+    /// The best priority it was asked with.
+    priority: Priority,
+    cancel: CancelToken,
 }
 
 #[derive(Clone, Copy)]
@@ -198,9 +208,9 @@ struct State {
     /// Requests set aside while their provider is busy ([`Busy`]), queued
     /// again once it can run.
     parked: Vec<Queued>,
-    /// Running requests: the frame they were last asked for, and the token
-    /// that stops their provider once nobody asks any more.
-    in_flight: HashMap<Key, (u64, CancelToken)>,
+    /// Every request asked for and not answered, by key: a frame asking
+    /// again finds it here, never by a walk of the queues.
+    in_flight: HashMap<Key, Flight>,
     /// Bumped when the providers change: a request that ran against an
     /// older set does not record the file as unavailable.
     providers: u64,
@@ -337,9 +347,9 @@ impl Thumbnails {
         let mut s = self.state.lock();
         s.frame += 1;
         let frame = s.frame;
-        for (asked, cancel) in s.in_flight.values() {
-            if frame.saturating_sub(*asked) > STALE_FRAMES {
-                cancel.cancel();
+        for flight in s.in_flight.values() {
+            if frame.saturating_sub(flight.asked) > STALE_FRAMES {
+                flight.cancel.cancel();
             }
         }
     }
@@ -356,18 +366,9 @@ impl Thumbnails {
                 return ThumbState::Unavailable;
             }
             let frame = s.frame;
-            if let Some((asked, _)) = s.in_flight.get_mut(&key) {
-                *asked = frame;
-                let state = &mut *s;
-                if let Some(q) = state
-                    .queue
-                    .iter_mut()
-                    .chain(state.parked.iter_mut())
-                    .find(|q| q.key == key)
-                {
-                    q.frame = frame;
-                    q.priority = q.priority.min(priority);
-                }
+            if let Some(flight) = s.in_flight.get_mut(&key) {
+                flight.asked = frame;
+                flight.priority = flight.priority.min(priority);
                 return ThumbState::Pending;
             }
         }
@@ -386,14 +387,19 @@ impl Thumbnails {
             return ThumbState::Pending;
         }
         let frame = s.frame;
-        s.in_flight.insert(key, (frame, self.lifetime.child()));
+        s.in_flight.insert(
+            key,
+            Flight {
+                asked: frame,
+                priority,
+                cancel: self.lifetime.child(),
+            },
+        );
         s.seq += 1;
         let seq = s.seq;
         s.queue.push(Queued {
             key,
             req,
-            priority,
-            frame,
             seq,
             resume: None,
         });
@@ -438,7 +444,10 @@ impl Thumbnails {
         let priorities: Vec<Priority> = {
             let mut s = self.state.lock();
             let parked = std::mem::take(&mut s.parked);
-            let priorities = parked.iter().map(|q| q.priority).collect();
+            let priorities = parked
+                .iter()
+                .filter_map(|q| s.in_flight.get(&q.key).map(|f| f.priority))
+                .collect();
             s.queue.extend(parked);
             priorities
         };
@@ -451,7 +460,7 @@ impl Thumbnails {
     /// the providers on it. False once nothing is queued: the worker stops
     /// taking requests.
     fn work_one(self: &Arc<Self>) -> bool {
-        let (key, req, cancel, generation, asked, resume) = {
+        let (key, req, cancel, generation, seq, resume) = {
             let mut s = self.state.lock();
             // The requests no frame asked for lately, or cancelled, go in
             // one pass: dropped one at a time, each after a look for the
@@ -464,39 +473,32 @@ impl Thumbnails {
                 ..
             } = &mut *s;
             queue.retain(|q| {
-                let live = frame.saturating_sub(q.frame) <= STALE_FRAMES
-                    && in_flight
-                        .get(&q.key)
-                        .is_some_and(|(_, cancel)| !cancel.is_cancelled());
+                let live = in_flight.get(&q.key).is_some_and(|f| {
+                    frame.saturating_sub(f.asked) <= STALE_FRAMES && !f.cancel.is_cancelled()
+                });
                 if !live {
                     in_flight.remove(&q.key);
                     *skipped += 1;
                 }
                 live
             });
-            let best = s
-                .queue
+            // Every request left in the queue is in flight: the pass above
+            // dropped the others.
+            let best = queue
                 .iter()
                 .enumerate()
-                .min_by_key(|(_, q)| (q.priority, std::cmp::Reverse(q.seq)))
+                .min_by_key(|(_, q)| (in_flight[&q.key].priority, std::cmp::Reverse(q.seq)))
                 .map(|(i, _)| i);
             let Some(i) = best else {
                 s.running = s.running.saturating_sub(1);
                 return false;
             };
             let q = s.queue.swap_remove(i);
-            let Some(cancel) = s.in_flight.get(&q.key).map(|(_, c)| c.clone()) else {
+            let Some(cancel) = s.in_flight.get(&q.key).map(|f| f.cancel.clone()) else {
                 return true;
             };
             let resume = q.resume.filter(|r| r.providers == s.providers);
-            (
-                q.key,
-                q.req,
-                cancel,
-                s.providers,
-                (q.priority, q.frame, q.seq),
-                resume,
-            )
+            (q.key, q.req, cancel, s.providers, q.seq, resume)
         };
         let providers: Vec<Arc<dyn ThumbnailProvider>> = self
             .providers
@@ -542,12 +544,9 @@ impl Thumbnails {
         if let Some((provider, busy)) = busy
             && !cancelled
         {
-            let (priority, frame, seq) = asked;
             self.state.lock().parked.push(Queued {
                 key,
                 req,
-                priority,
-                frame,
                 seq,
                 resume: Some(Resume {
                     provider,
