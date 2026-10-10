@@ -835,6 +835,9 @@ impl Shared {
             }
         }
         let mut found: Vec<(Entry, PathBuf)> = Vec::new();
+        // A result that is still one under another name (renamed, moved):
+        // its row follows it, and so does its selection.
+        let mut renamed: Vec<(EntryId, Entry, PathBuf)> = Vec::new();
         let mut statter = Statter::default();
         let late = Late {
             fields: &self.ctx.fields,
@@ -853,10 +856,7 @@ impl Shared {
             }
             let matched = self.matches_now(&q, &path, late, &mut statter, &mut reached);
             match (matched, was) {
-                (Some(entry), Some(id)) if entry.id != id => {
-                    removed.push(id);
-                    found.push((entry, path));
-                }
+                (Some(entry), Some(id)) if entry.id != id => renamed.push((id, entry, path)),
                 (Some(entry), _) => found.push((entry, path)),
                 (None, Some(id)) => removed.push(id),
                 (None, None) => {}
@@ -873,6 +873,23 @@ impl Shared {
             }
             drop(paths);
             self.tx.send(ListingEvent::Removed(removed));
+        }
+        if !renamed.is_empty() {
+            let _walk = self.walk.lock();
+            if cancel.is_cancelled() {
+                return;
+            }
+            let mut paths = self.paths.lock();
+            let pairs = renamed
+                .into_iter()
+                .map(|(was, entry, path)| {
+                    paths.remove(&was);
+                    paths.insert(entry.id, path);
+                    (was, entry)
+                })
+                .collect();
+            drop(paths);
+            self.tx.send(ListingEvent::Renamed(pairs));
         }
         self.publish(cancel, found, false);
     }
@@ -1005,7 +1022,7 @@ mod tests {
                 ListingEvent::Removed(ids) => removed += ids.len(),
                 ListingEvent::Complete => return (added, removed),
                 ListingEvent::Error(e) => panic!("{e}"),
-                ListingEvent::Updated(_) | ListingEvent::Changed => {}
+                ListingEvent::Updated(_) | ListingEvent::Renamed(_) | ListingEvent::Changed => {}
             }
         }
     }

@@ -396,7 +396,6 @@ impl Previews {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::EntryId;
     use std::time::Duration;
 
     struct SlowProvider(crossbeam_channel::Sender<()>);
@@ -458,7 +457,7 @@ mod tests {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let provider = Arc::new(SlowProvider(tx));
         let request = PreviewRequest {
-            entry: EntryRef::new(EntryId { dev: 1, ino: 1 }, "/synthetic.pdf"),
+            entry: EntryRef::new(crate::FileId { dev: 1, ino: 1 }, "/synthetic.pdf"),
             mime: None,
             page: 1,
             seconds: None,

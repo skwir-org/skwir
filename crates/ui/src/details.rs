@@ -164,7 +164,7 @@ fn note_source(provenance: &Provenance) -> Option<SharedString> {
 fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Option<Group>; 2] {
     let meta = &entry.metadata;
     let text = |key| meta.value(key).and_then(Value::as_str).map(str::to_owned);
-    let target = serde_json::json!([EntryRef::new(entry.id, path)]);
+    let target = serde_json::json!([EntryRef::new(entry.file(), path)]);
     let (valued, tags): (Vec<String>, Vec<String>) = crate::tags::tags_of(entry)
         .into_iter()
         .partition(|t| bibli_core::metadata::exclusive_category(t, fields).is_some());
@@ -206,7 +206,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
     let rating_row = Row {
         show: Show::Rating {
             rating,
-            target: EntryRef::new(entry.id, path),
+            target: EntryRef::new(entry.file(), path),
         },
         ..Row::new(
             "Rating",
@@ -729,7 +729,10 @@ mod tests {
     #[test]
     fn an_entry_says_what_it_knows_and_who_said_it() {
         let mut entry = Entry::new(
-            EntryId { dev: 1, ino: 2 },
+            EntryId {
+                file: bibli_core::FileId { dev: 1, ino: 2 },
+                at: 0,
+            },
             "it's a café.txt",
             EntryKind::File,
         );

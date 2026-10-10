@@ -94,34 +94,87 @@ fn watcher_reports_create_rename_and_delete() {
         l.len() == 2 && l.find_by_name("two".as_ref()).is_some()
     });
 
-    let id_two = app
-        .workspace
-        .read()
-        .pane(pane)
-        .unwrap()
-        .listing
-        .find_by_name("two".as_ref())
-        .unwrap()
-        .id;
+    let two = listed(&app, pane, "two");
+    select(&app, &["two"]);
     std::fs::rename(dir.join("two"), dir.join("deux")).unwrap();
     wait(&app, pane, |l| {
         l.find_by_name("deux".as_ref()).is_some() && l.find_by_name("two".as_ref()).is_none()
     });
-    assert_eq!(
-        app.workspace
-            .read()
-            .pane(pane)
-            .unwrap()
-            .listing
-            .find_by_name("deux".as_ref())
-            .unwrap()
-            .id,
-        id_two,
-        "identity survives a rename"
-    );
+    let deux = listed(&app, pane, "deux");
+    assert_eq!(deux.file(), two.file(), "the file survives a rename");
+    assert_eq!(selected(&app, pane), [deux.id], "and its row its selection");
 
     std::fs::remove_file(dir.join("deux")).unwrap();
     wait(&app, pane, |l| l.len() == 1);
+}
+
+/// The entry the pane lists under `name`.
+fn listed(
+    app: &bibli_core::App,
+    pane: bibli_core::workspace::PaneId,
+    name: &str,
+) -> bibli_core::Entry {
+    let ws = app.workspace.read();
+    let listing = &ws.pane(pane).unwrap().listing;
+    listing.find_by_name(name.as_ref()).unwrap().clone()
+}
+
+fn selected(
+    app: &bibli_core::App,
+    pane: bibli_core::workspace::PaneId,
+) -> Vec<bibli_core::EntryId> {
+    app.workspace
+        .read()
+        .pane(pane)
+        .unwrap()
+        .selection
+        .iter()
+        .collect()
+}
+
+/// Two names of one file (hard links) are two entries (ADR-049): each
+/// listed, told apart, one renamed keeps its selection and leaves the
+/// other alone, one removed takes only its own row.
+#[cfg(unix)]
+#[test]
+fn two_names_of_one_file_are_two_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("linked");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), b"one file").unwrap();
+    std::fs::hard_link(dir.join("a.txt"), dir.join("b.txt")).unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &dir);
+    wait(&app, pane, |l| l.len() == 2 && l.is_complete());
+    let (a, b) = (listed(&app, pane, "a.txt"), listed(&app, pane, "b.txt"));
+    assert_eq!(a.file(), b.file(), "one file");
+    assert_ne!(a.id, b.id, "two entries");
+
+    select(&app, &["a.txt"]);
+    std::fs::rename(dir.join("a.txt"), dir.join("c.txt")).unwrap();
+    wait(&app, pane, |l| {
+        l.find_by_name("c.txt".as_ref()).is_some() && l.find_by_name("a.txt".as_ref()).is_none()
+    });
+    let c = listed(&app, pane, "c.txt");
+    assert_eq!(
+        selected(&app, pane),
+        [c.id],
+        "the renamed name keeps its selection"
+    );
+    assert_eq!(
+        listed(&app, pane, "b.txt").id,
+        b.id,
+        "the other name is left alone"
+    );
+
+    std::fs::remove_file(dir.join("b.txt")).unwrap();
+    wait(&app, pane, |l| l.len() == 1);
+    assert_eq!(
+        listed(&app, pane, "c.txt").id,
+        c.id,
+        "only its own row goes"
+    );
 }
 
 fn wait(
@@ -461,7 +514,10 @@ fn virtual_locations_hydrate_by_path_in_one_batch() {
         companions: std::sync::Arc::clone(&app.companions),
     };
     let (sink, rx) = ctx.channel();
-    let id = |ino| bibli_core::EntryId { dev: 0, ino };
+    let id = |ino| bibli_core::EntryId {
+        file: bibli_core::FileId { dev: 0, ino },
+        at: 0,
+    };
     let gone = bibli_core::fs::hydrate_paths(
         &[
             (id(1), a.clone()),

@@ -347,7 +347,8 @@ fn card_element(
         ThumbView::Unavailable => look.picture(PICTURE, theme),
     };
     let el = div()
-        .id(("card", look.id.ino as usize ^ look.id.dev as usize))
+        // Two names of one file are two cards (ADR-049).
+        .id(("card", (look.id.at ^ look.id.file.ino) as usize))
         .relative()
         .h(px(CARD_H))
         .flex_1()
@@ -378,7 +379,9 @@ fn card_element(
                 .flex()
                 .flex_col()
                 .child(crate::views::entry::name(
-                    div().id(("card-name", look.id.ino as usize)).text_sm(),
+                    div()
+                        .id(("card-name", (look.id.at ^ look.id.file.ino) as usize))
+                        .text_sm(),
                     look,
                     shell,
                 ))

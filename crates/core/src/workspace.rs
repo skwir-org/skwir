@@ -278,6 +278,31 @@ impl Selection {
         self.items.iter().copied()
     }
 
+    /// Follow entries renamed (`Listing::take_renamed`, each id before and
+    /// after): what was selected of them stays selected, in its place, the
+    /// cursor and the anchor on it.
+    pub fn rekey(&mut self, renamed: &[(EntryId, EntryId)]) {
+        if renamed.is_empty() {
+            return;
+        }
+        let now = |id: EntryId| {
+            renamed
+                .iter()
+                .find(|(before, _)| *before == id)
+                .map_or(id, |(_, after)| *after)
+        };
+        if self.items.iter().any(|id| now(*id) != *id) {
+            self.items = self.items.iter().map(|id| now(*id)).collect();
+            self.touch();
+        }
+        self.anchor = self.anchor.map(now);
+        self.cursor = self.cursor.map(now);
+        if let Some(sweep) = &mut self.sweep {
+            sweep.from = now(sweep.from);
+            sweep.base = sweep.base.iter().map(|id| now(*id)).collect();
+        }
+    }
+
     /// Drop ids that no longer exist in the listing.
     pub fn retain_in(&mut self, listing: &Listing) {
         self.retain(|id| listing.get(id).is_some());
@@ -979,6 +1004,7 @@ impl Pane {
             self.tree_version += 1;
             self.opened_moved();
         }
+        self.follow_renamed();
         if self.open.is_none() {
             return 0;
         }
@@ -990,6 +1016,33 @@ impl Pane {
         }
         self.take_restore();
         n + opened
+    }
+
+    /// What the pane keeps by entry follows the entries its listings say
+    /// were renamed: the selection (and one waiting to come back), the
+    /// folders opened in place at them.
+    fn follow_renamed(&mut self) {
+        let mut renamed = self.listing.take_renamed();
+        for kept in &mut self.kept {
+            renamed.extend(kept.listing.take_renamed());
+        }
+        if renamed.is_empty() {
+            return;
+        }
+        self.selection.rekey(&renamed);
+        if let Some(restore) = &mut self.restore {
+            restore.rekey(&renamed);
+        }
+        let mut moved = false;
+        for o in &mut self.expanded {
+            if let Some((_, after)) = renamed.iter().find(|(before, _)| *before == o.at) {
+                o.at = *after;
+                moved = true;
+            }
+        }
+        if moved {
+            self.expanded_changed();
+        }
     }
 
     /// Drop from the selection what the pane no longer shows: an entry
@@ -1172,6 +1225,17 @@ impl Pane {
         self.listing
             .get(id)
             .or_else(|| self.opened_of(id).and_then(|(_, k)| k.listing.get(id)))
+    }
+
+    /// The entry the pane shows of the file `file` at `path`: of a file
+    /// with several names, the one listed there (ADR-049). Looks names up
+    /// one by one: for what a command was given, not for every row.
+    pub fn entry_at(&self, file: crate::FileId, path: &Path) -> Option<&Entry> {
+        let name = path.file_name()?;
+        std::iter::once(&self.listing)
+            .chain(self.kept.iter().map(|k| &k.listing))
+            .flat_map(|l| l.iter().filter(move |e| e.name == name && e.file() == file))
+            .find(|e| self.path_of(e.id).as_deref() == Some(path))
     }
 
     /// The listing (`Listing::id`) that holds entry `id`: the shown one's,
@@ -1786,7 +1850,10 @@ mod tests {
 
     #[test]
     fn removing_the_anchor_or_cursor_moves_them_to_what_remains() {
-        let id = |ino| EntryId { dev: 1, ino };
+        let id = |ino| EntryId {
+            file: crate::FileId { dev: 1, ino },
+            at: 0,
+        };
         let mut sel = Selection::default();
         sel.set([id(1), id(2), id(3)]);
         sel.remove(id(1));
@@ -1801,7 +1868,16 @@ mod tests {
     fn what_is_no_longer_shown_leaves_the_selection() {
         use crate::entry::EntryKind;
         use crate::location::ListingEvent;
-        let file = |ino, name: &str| Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File);
+        let file = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId { dev: 1, ino },
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
         let mut p = Pane::new(PaneId(1));
         p.listing.apply(ListingEvent::Added(vec![
             file(1, ".profile"),
@@ -1809,15 +1885,20 @@ mod tests {
             file(3, "Été.md"),
         ]));
         p.set_show_hidden(true);
-        p.selection
-            .set([1, 2, 3].map(|ino| EntryId { dev: 1, ino }));
+        p.selection.set([1, 2, 3].map(|ino| EntryId {
+            file: crate::FileId { dev: 1, ino },
+            at: 0,
+        }));
         p.set_show_hidden(false);
         assert_eq!(items(&p.selection), [2, 3]);
         p.listing
             .apply(ListingEvent::Updated(vec![file(3, ".Été.md")]));
         p.retain_shown();
         assert_eq!(items(&p.selection), [2]);
-        p.selection.set([2].map(|ino| EntryId { dev: 1, ino }));
+        p.selection.set([2].map(|ino| EntryId {
+            file: crate::FileId { dev: 1, ino },
+            at: 0,
+        }));
         p.set_filter(Some("ÉTÉ"));
         assert!(p.selection.is_empty());
     }
@@ -1830,7 +1911,14 @@ mod tests {
         use crate::entry::{EntryKind, Provenance, Value, keys};
         use crate::location::ListingEvent;
         let entry = |ino, name: &str, kind, size: Option<u64>| {
-            let mut e = Entry::new(EntryId { dev: 1, ino }, name, kind);
+            let mut e = Entry::new(
+                EntryId {
+                    file: crate::FileId { dev: 1, ino },
+                    at: 0,
+                },
+                name,
+                kind,
+            );
             if let Some(size) = size {
                 e.metadata
                     .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
@@ -1859,12 +1947,16 @@ mod tests {
         assert_eq!(p.file_unknown_from(99), Some(2));
         // The selection's, in its own order: a folder has no size to wait
         // for, nor a file known.
-        p.selection
-            .set([5, 1, 3, 2].map(|ino| EntryId { dev: 1, ino }));
+        p.selection.set([5, 1, 3, 2].map(|ino| EntryId {
+            file: crate::FileId { dev: 1, ino },
+            at: 0,
+        }));
         assert_eq!(p.selected_unknown_from(0), Some(2));
         assert_eq!(p.selected_unknown_from(3), Some(2));
-        p.selection
-            .set([1, 2, 5].map(|ino| EntryId { dev: 1, ino }));
+        p.selection.set([1, 2, 5].map(|ino| EntryId {
+            file: crate::FileId { dev: 1, ino },
+            at: 0,
+        }));
         assert_eq!(p.selected_unknown_from(1), None);
         p.listing.apply(ListingEvent::Updated(vec![entry(
             3,
@@ -1888,12 +1980,15 @@ mod tests {
     }
 
     fn items(sel: &Selection) -> Vec<u64> {
-        sel.iter().map(|id| id.ino).collect()
+        sel.iter().map(|id| id.file.ino).collect()
     }
 
     #[test]
     fn a_move_carries_a_selection_that_follows_and_leaves_a_picked_one() {
-        let id = |ino| EntryId { dev: 1, ino };
+        let id = |ino| EntryId {
+            file: crate::FileId { dev: 1, ino },
+            at: 0,
+        };
         let order: Vec<EntryId> = (1..=5).map(id).collect();
         let mut sel = Selection::default();
         sel.set([id(1)]);
@@ -1919,7 +2014,10 @@ mod tests {
 
     #[test]
     fn the_standard_keys_are_unchanged() {
-        let id = |ino| EntryId { dev: 1, ino };
+        let id = |ino| EntryId {
+            file: crate::FileId { dev: 1, ino },
+            at: 0,
+        };
         let mut sel = Selection::default();
         sel.set([id(1)]);
         // Ctrl+click on the one selected item deselects it, as it did.
@@ -1935,7 +2033,10 @@ mod tests {
 
     #[test]
     fn a_sweep_covers_the_range_over_what_was_picked_and_ends_on_any_other_change() {
-        let id = |ino| EntryId { dev: 1, ino };
+        let id = |ino| EntryId {
+            file: crate::FileId { dev: 1, ino },
+            at: 0,
+        };
         let order: Vec<EntryId> = (1..=6).map(id).collect();
         let mut sel = Selection::default();
         sel.set([id(1)]);
@@ -1970,7 +2071,10 @@ mod tests {
 
     #[test]
     fn a_sweep_whose_start_is_gone_ends() {
-        let id = |ino| EntryId { dev: 1, ino };
+        let id = |ino| EntryId {
+            file: crate::FileId { dev: 1, ino },
+            at: 0,
+        };
         let order: Vec<EntryId> = (1..=3).map(id).collect();
         let mut sel = Selection::default();
         sel.set([id(2)]);

@@ -546,7 +546,7 @@ fn read_tags(program: &Path, path: &Path, cancel: &CancelToken) -> anyhow::Resul
 /// (Windows, not read yet: ADR-035), and nothing is remembered.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Seen {
-    id: bibli_core::EntryId,
+    id: bibli_core::FileId,
     size: u64,
     modified: SystemTime,
     changed: SystemTime,

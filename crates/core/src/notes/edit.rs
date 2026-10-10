@@ -514,13 +514,17 @@ impl Operation for SetNotes {
                 Some((s.id().to_owned(), found))
             })
             .collect();
-        stores.remember(
-            self.entry.id,
-            &super::Snapshot {
-                written: target,
-                each,
-            },
-        );
+        // The name the notes were written under, which may be another
+        // than the one referenced (renamed since).
+        if let Some(id) = EntryRef::new(self.entry.id, &path).entry() {
+            stores.remember(
+                id,
+                &super::Snapshot {
+                    written: target,
+                    each,
+                },
+            );
+        }
         let (_, _, field) = self.words();
         Ok(Some(Box::new(RestoreNotes {
             entry: EntryRef::new(self.entry.id, path).with_only_name(self.entry.only_name),
@@ -664,8 +668,10 @@ impl Operation for RestoreNotes {
         );
         raw::restore(&path, &self.before)
             .map_err(|e| anyhow::anyhow!("put back the notes of {}: {e}", path.display()))?;
-        if let Some(stores) = &self.stores {
-            stores.forget(self.entry.id);
+        if let Some(stores) = &self.stores
+            && let Some(id) = EntryRef::new(self.entry.id, &path).entry()
+        {
+            stores.forget(id);
         }
         Ok(Some(Box::new(RestoreNotes {
             entry: EntryRef::new(self.entry.id, path).with_only_name(self.entry.only_name),
@@ -868,7 +874,7 @@ mod tests {
         let stores = stores(vec![Arc::new(Beside("a", Write::Create))]);
         let edit = stores
             .edit(EntryRef::new(
-                crate::entry::EntryId { dev: 1, ino: 2 },
+                crate::entry::FileId { dev: 1, ino: 2 },
                 "/x/a.txt",
             ))
             .tags(vec!["work".into()])

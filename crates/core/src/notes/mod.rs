@@ -455,8 +455,12 @@ pub fn write_key(store: &str) -> String {
     format!("{SETTINGS}.{store}.write")
 }
 
+/// A snapshot is a name's (ADR-049): what is kept beside a file is the
+/// name's, and what is kept in its attributes, the same under each name,
+/// is merged as an edit made elsewhere when read under another, which is
+/// what it is there.
 fn snapshot_key(id: EntryId) -> Vec<u8> {
-    format!("{}:{}", id.dev, id.ino).into_bytes()
+    format!("{}:{}:{:x}", id.file.dev, id.file.ino, id.at).into_bytes()
 }
 
 /// What the notes' snapshots may take in the cache.
@@ -695,7 +699,7 @@ impl NoteStores {
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
             return Read::default();
         };
-        let id = crate::op::EntryRef::from_path(path).map(|r| r.id);
+        let id = crate::op::EntryRef::from_path(path).and_then(|r| r.entry());
         self.read(dir, &[(name, id, path.is_dir())], policy, None)
             .pop()
             .unwrap_or_default()

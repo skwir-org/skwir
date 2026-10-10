@@ -629,9 +629,9 @@ impl Scanner {
             // A picture's or a video's position and clock are fields, read
             // together and kept by the core (`position.rs`).
             let app = self.app.upgrade()?;
-            let known = candidate
-                .known
-                .map(|(len, modified)| (candidate.id.dev, candidate.id.ino, len, modified));
+            let known = candidate.known.map(|(len, modified)| {
+                (candidate.id.file.dev, candidate.id.file.ino, len, modified)
+            });
             let mut said = app
                 .fields
                 .get_all(
@@ -671,7 +671,7 @@ impl Scanner {
         // Versioned: what an older bibli kept did not have the clock.
         let key = format!(
             "{FOUND_VERSION}:{}:{}:{}:{}",
-            candidate.id.dev, candidate.id.ino, identity.1, identity.2
+            candidate.id.file.dev, candidate.id.file.ino, identity.1, identity.2
         );
         let found = self
             .cache

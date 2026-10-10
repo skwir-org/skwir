@@ -47,7 +47,7 @@ pub struct ShelfItem {
 
 impl ShelfItem {
     fn entry_ref(&self) -> EntryRef {
-        EntryRef::new(self.id, self.path.clone())
+        EntryRef::new(self.id.file, self.path.clone())
     }
 
     fn entry(&self) -> Entry {
@@ -143,7 +143,9 @@ impl ShelfPlugin {
         let mut s = state.lock();
         let mut added = Vec::new();
         for (item, entry) in new {
-            if s.items.iter().any(|i| i.id == item.id) {
+            // A name shelved once, however it came: two names of one file
+            // are two items (ADR-049).
+            if s.items.iter().any(|i| i.path == item.path) {
                 continue;
             }
             added.push(entry.unwrap_or_else(|| item.entry()));
@@ -298,7 +300,7 @@ fn dropped_item(entry: &EntryRef) -> Option<(ShelfItem, Option<Entry>)> {
     let name = entry.path.file_name()?.to_owned();
     Some((
         ShelfItem {
-            id: entry.id,
+            id: EntryId::at_path(entry.id, &entry.path),
             path: entry.path.clone(),
             name,
             kind: EntryKind::Unknown,
@@ -905,7 +907,10 @@ mod tests {
         while !listing.is_complete() {
             listing.apply(open.events().recv_deadline(deadline).unwrap());
         }
-        let stranger = EntryId { dev: 0, ino: 1 };
+        let stranger = EntryId {
+            file: bibli_core::FileId { dev: 0, ino: 1 },
+            at: 0,
+        };
         let v = value(
             app.dispatch(&Invocation::with_args(
                 "shelf.remove",

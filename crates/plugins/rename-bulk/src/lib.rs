@@ -465,7 +465,7 @@ fn plan_selection(
         };
         let mtime = e.metadata.value(keys::MODIFIED).and_then(Value::as_time);
         items.push((
-            EntryRef::new(id, path).with_only_name(e.is_only_name()),
+            EntryRef::new(id.file, path).with_only_name(e.is_only_name()),
             e.name.clone(),
             mtime,
         ));
@@ -573,13 +573,13 @@ impl Plugin for RenameBulkPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::entry::EntryId;
+    use bibli_core::entry::FileId;
     use std::sync::Arc;
 
     fn item(name: &str) -> Item {
         (
             EntryRef::new(
-                EntryId {
+                FileId {
                     dev: 1,
                     ino: name.len() as u64 * 7919 + name.bytes().map(u64::from).sum::<u64>(),
                 },
@@ -670,7 +670,7 @@ mod tests {
     fn date_uses_mtime() {
         let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         let items = [(
-            EntryRef::new(EntryId { dev: 1, ino: 1 }, "/d/a.txt"),
+            EntryRef::new(FileId { dev: 1, ino: 1 }, "/d/a.txt"),
             "a.txt".into(),
             Some(t),
         )];
@@ -730,7 +730,7 @@ mod tests {
             ..Default::default()
         };
         let dated = [(
-            EntryRef::new(EntryId { dev: 1, ino: 1 }, "/d/a"),
+            EntryRef::new(FileId { dev: 1, ino: 1 }, "/d/a"),
             "a".into(),
             Some(SystemTime::UNIX_EPOCH),
         )];
@@ -746,7 +746,7 @@ mod tests {
         use std::os::unix::ffi::OsStringExt;
         let raw = OsString::from_vec(b"caf\xe9".to_vec());
         let items = [(
-            EntryRef::new(EntryId { dev: 1, ino: 1 }, Path::new("/d").join(&raw)),
+            EntryRef::new(FileId { dev: 1, ino: 1 }, Path::new("/d").join(&raw)),
             raw.clone(),
             None,
         )];

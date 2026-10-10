@@ -42,9 +42,10 @@ current source before assuming a planned crate, command, or API exists.
 5. **Small core.** Only what two plugins must agree on lives in `bibli-core`.
    Everything else is a plugin with a runtime toggle.
 6. **Agent-ready.** Commands are serializable data with JSON schemas. Mutations
-   are plans reviewed before apply. Entries have stable identity (device +
-   inode). Metadata carries provenance. AI output is a suggestion until a human
-   confirms it.
+   are plans reviewed before apply. Files have stable identity (device +
+   inode, `FileId`), and an entry is a file under one of its names
+   (`EntryId`, ADR-049). Metadata carries provenance. AI output is a
+   suggestion until a human confirms it.
 
 ## Engineering rules
 
@@ -612,7 +613,8 @@ current source before assuming a planned crate, command, or API exists.
   (`Pane::listing_of`), so one moved between two opened folders is
   asked for again.
 - **What waits for a paste is core data.** The clipboard's owner publishes
-  it in `App::pending` (entry ids and whether a paste will move them); the
+  it in `App::pending` (each entry by its file and its name, and whether a
+  paste will move them); the
   shell snapshots it once per frame. Every view dims cut entries
   (`views::list::CUT_OPACITY`) and the last pane's footer shows the count, because
   the clipboard is invisible once the pane shows another folder. Escape with
@@ -1250,6 +1252,20 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   retain that chart through subsequent refreshes and replace it atomically;
   a finished result can still be incomplete because of read errors. Automatic
   revalidation must not reintroduce unknown blocks or busy flashes. See ADR-007.
+- A file and an entry are two identities (ADR-049). A `FileId` (device
+  and inode, `fs::stat::id_of`) is the file, and what belongs to it is
+  kept by it: thumbnails, fields, notes in attributes, Usage's hard
+  links, an `EntryRef`'s identity. An `EntryId` is the file under one of
+  its names, its `at` a hash of the folder holding the name and the name
+  (`EntryId::in_folder`, which `stat_entry` gives every entry it stats; a
+  location that knows entries by path alone, the shelf, a tag's, uses
+  `EntryId::at_path`): two names of one file (hard links) are two rows.
+  Rows, the selection, the cursor and what waits for a paste are kept by
+  entry; a stat compared with a row compares `entry.file()`. A rename is
+  an entry renamed: the provider pairs the name that went with the one
+  that came by their file and sends `ListingEvent::Renamed`, which the
+  pane follows (`Listing::take_renamed`, `Selection::rekey`). A listed
+  entry named by a reference is found at its path (`Pane::entry_at`).
 - A link is an entry of its own (`kind: Symlink`, its identity the
   link's) that knows what it leads to (`Entry::target`: its kind,
   identity and resolved path, followed to the end when listed or

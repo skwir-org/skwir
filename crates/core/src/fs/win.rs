@@ -23,7 +23,7 @@ use windows_sys::Win32::System::SystemServices::{
     IO_REPARSE_TAG_MOUNT_POINT, IO_REPARSE_TAG_SYMLINK,
 };
 
-use crate::entry::{EntryId, EntryKind};
+use crate::entry::{EntryKind, FileId};
 
 const SHARE_ALL: u32 = fs::FILE_SHARE_READ | fs::FILE_SHARE_WRITE | fs::FILE_SHARE_DELETE;
 
@@ -75,7 +75,7 @@ unsafe fn query<T: Default>(file: &File, class: fs::FILE_INFO_BY_HANDLE_CLASS) -
     }
 }
 
-/// A 128-bit file ID folded into an [`EntryId`]'s 64 bits (ADR-036):
+/// A 128-bit file ID folded into a [`FileId`]'s 64 bits (ADR-036):
 /// NTFS's fill the low half and are kept as they are; `ReFS`'s use all 128,
 /// whose halves are folded together.
 pub fn fold(id: [u8; 16]) -> u64 {
@@ -86,7 +86,7 @@ pub fn fold(id: [u8; 16]) -> u64 {
 
 /// What a stat says of a file there.
 pub struct Info {
-    pub id: EntryId,
+    pub id: FileId,
     pub kind: EntryKind,
     pub size: u64,
     pub links: u64,
@@ -103,10 +103,10 @@ pub struct Info {
 /// The identity of what `file` holds open: the volume's serial and the
 /// file's ID, both from the 128-bit record where the filesystem keeps
 /// one (NTFS, `ReFS`), else from the older 32- and 64-bit one (FAT).
-pub fn identity(file: &File) -> io::Result<EntryId> {
+pub fn identity(file: &File) -> io::Result<FileId> {
     // SAFETY: FileIdInfo fills a FILE_ID_INFO.
     match unsafe { query::<fs::FILE_ID_INFO>(file, fs::FileIdInfo) } {
-        Ok(info) => Ok(EntryId {
+        Ok(info) => Ok(FileId {
             dev: info.VolumeSerialNumber,
             ino: fold(info.FileId.Identifier),
         }),
@@ -116,7 +116,7 @@ pub fn identity(file: &File) -> io::Result<EntryId> {
             if unsafe { fs::GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) } == 0 {
                 return Err(io::Error::last_os_error());
             }
-            Ok(EntryId {
+            Ok(FileId {
                 dev: u64::from(info.dwVolumeSerialNumber),
                 ino: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
             })

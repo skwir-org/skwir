@@ -83,7 +83,10 @@ impl LocationProvider for Fake {
         }
         if location.rest == "/few" {
             sink.send(ListingEvent::Added(vec![Entry::new(
-                EntryId { dev: 7, ino: 1 },
+                EntryId {
+                    file: bibli_core::FileId { dev: 7, ino: 1 },
+                    at: 0,
+                },
                 "inside.txt",
                 EntryKind::File,
             )]));
@@ -233,7 +236,14 @@ fn delete_takes_out_what_the_location_says_and_nothing_where_it_says_nothing() {
 #[test]
 fn places_sort_first_and_by_how_many_files_they_hold() {
     let mut listing = Listing::default();
-    let mut file = Entry::new(EntryId { dev: 1, ino: 1 }, "a.txt", EntryKind::File);
+    let mut file = Entry::new(
+        EntryId {
+            file: bibli_core::FileId { dev: 1, ino: 1 },
+            at: 0,
+        },
+        "a.txt",
+        EntryKind::File,
+    );
     file.metadata
         .set(keys::SIZE, Value::UInt(1_000_000), Provenance::Filesystem);
     listing.apply(ListingEvent::Added(vec![
@@ -273,7 +283,10 @@ fn a_place_opens_in_place_as_a_folder_does() {
         &serde_json::json!({ "ids": [few], "mode": "toggle" }),
     ))
     .unwrap();
-    let inside = EntryId { dev: 7, ino: 1 };
+    let inside = EntryId {
+        file: bibli_core::FileId { dev: 7, ino: 1 },
+        at: 0,
+    };
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let order = loop {
         app.pump();

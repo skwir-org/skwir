@@ -20,7 +20,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
 use crate::cancel::CancelToken;
-use crate::entry::EntryId;
+use crate::entry::FileId;
 use crate::location::Waker;
 use crate::lru::ByteLru;
 use crate::op::EntryRef;
@@ -174,7 +174,7 @@ pub enum ThumbState {
 }
 
 /// An entry's picture at one size, as of one modification time.
-type Key = (EntryId, ThumbSize, Option<SystemTime>);
+type Key = (FileId, ThumbSize, Option<SystemTime>);
 
 /// What waits for a worker: how much it is wanted is its [`Flight`]'s,
 /// which a frame asking again updates in place.
@@ -333,7 +333,7 @@ impl Thumbnails {
     /// Something a provider reads now exists for `id` (the preview converted
     /// it, say): forget that it had no thumbnail, and wake the UI to ask
     /// again if it had none.
-    pub fn retry(&self, id: EntryId) {
+    pub fn retry(&self, id: FileId) {
         let forgotten = {
             let mut s = self.state.lock();
             let before = s.unavailable.len();
@@ -466,12 +466,7 @@ impl Thumbnails {
     /// microseconds: one that ended since it was asked, finding nothing,
     /// is said so too, or the window would draw a picture on its way for
     /// a frame.
-    pub fn only_in_cache(
-        &self,
-        entry: EntryId,
-        size: ThumbSize,
-        mtime: Option<SystemTime>,
-    ) -> bool {
+    pub fn only_in_cache(&self, entry: FileId, size: ThumbSize, mtime: Option<SystemTime>) -> bool {
         let key = (entry, size, mtime);
         let s = self.state.lock();
         match s.in_flight.get(&key) {
@@ -763,7 +758,7 @@ mod tests {
 
     fn req(ino: u64) -> ThumbRequest {
         ThumbRequest {
-            entry: EntryRef::new(EntryId { dev: 1, ino }, format!("/x/{ino}")),
+            entry: EntryRef::new(FileId { dev: 1, ino }, format!("/x/{ino}")),
             mime: None,
             mtime: None,
             size: ThumbSize::Normal,
@@ -1105,7 +1100,7 @@ mod tests {
             assert!(matches!(wait_ready(&t, &req(ino)), ThumbState::Unavailable));
         }
         maker.produce.store(true, Ordering::Relaxed);
-        t.retry(EntryId { dev: 1, ino: 1 });
+        t.retry(FileId { dev: 1, ino: 1 });
         assert!(matches!(wait_ready(&t, &req(1)), ThumbState::Ready(_)));
         assert!(matches!(
             t.get(req(2), Priority::Visible),

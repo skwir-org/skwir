@@ -2300,7 +2300,7 @@ impl Shell {
         let Some(key) = &self.preview.key else {
             return;
         };
-        let entry = EntryRef::new(key.id, &key.path);
+        let entry = EntryRef::new(key.id.file, &key.path);
         let app = self.app.clone();
         self.app.scheduler.spawn(
             Priority::Visible,

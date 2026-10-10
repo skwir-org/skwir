@@ -2480,10 +2480,10 @@ Steps, each with what was found and what is left:
    gone could trash or delete another name of its file, and Empty
    Trash left one of two names trashed apart. The last two are fixed
    (a reference follows a file only when it knew the file had one
-   name; the trash keeps an item per record), each with its test. Left
-   before the release, since it changes the agents' wire format: a row
-   per name (`FileId` and `EntryId`), space counted per file, copies
-   that keep hard links, a free-space check.
+   name; the trash keeps an item per record), each with its test, and
+   so is the first: a row per name (`FileId` and `EntryId`, a rename
+   sent as one). Left before the release: space counted per file,
+   copies that keep hard links, a free-space check.
 5. **What users keep from 0.1 on**: settings keys and values, the
    window's session, saved searches, pins, the cache's layout (versioned,
    or thrown away whole), so that later versions read them. Done

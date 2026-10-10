@@ -93,7 +93,7 @@ fn fingerprint(request: &PreviewRequest, path: &Path) -> anyhow::Result<Vec<u8>>
     fingerprint_of(request.entry.id, path)
 }
 
-fn fingerprint_of(id: bibli_core::EntryId, path: &Path) -> anyhow::Result<Vec<u8>> {
+fn fingerprint_of(id: bibli_core::FileId, path: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(serde_json::to_vec(&(
         id,
         path,
@@ -109,7 +109,7 @@ fn key(base: &[u8], suffix: impl serde::Serialize) -> anyhow::Result<Vec<u8>> {
 /// the products of one conversion apart: by the file's version and the
 /// tool's, so either changing makes it again.
 pub fn made_key(
-    id: bibli_core::EntryId,
+    id: bibli_core::FileId,
     path: &Path,
     tool: &Path,
     what: impl serde::Serialize,
@@ -306,7 +306,7 @@ impl PreviewProvider for MediaPreviews {
 }
 
 /// Told which entry an Office document was just converted for.
-pub type Converted = std::sync::Arc<dyn Fn(bibli_core::EntryId) + Send + Sync>;
+pub type Converted = std::sync::Arc<dyn Fn(bibli_core::FileId) + Send + Sync>;
 
 pub struct DocumentPreviews {
     cache: CacheSlot,
@@ -395,7 +395,7 @@ fn conversion_key(base: &[u8], office: &Path) -> anyhow::Result<Vec<u8>> {
 /// an office suite for every document in view.
 pub(crate) fn converted_pdf(
     cache: &CacheSlot,
-    id: bibli_core::EntryId,
+    id: bibli_core::FileId,
     source: &Path,
     into: &Path,
 ) -> anyhow::Result<Option<PathBuf>> {

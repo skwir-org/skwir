@@ -213,7 +213,7 @@ fn ancestor_column(
                     .when(!is_on_path, |d| d.hover(|s| s.bg(theme.hover)))
                     // Cut, it is dimmed here as in the pane's own column.
                     .when(
-                        this.pending.cut && this.pending.entries.contains(&row.id),
+                        this.pending.cut && this.pending.holds(row.id.file, &row.name),
                         |d| d.opacity(crate::views::list::CUT_OPACITY),
                     )
                     // Not the pane's entry, so not its selection's menu: a
@@ -259,7 +259,7 @@ fn ancestor_column(
                 {
                     el = dnd::takes_gift_for(
                         el,
-                        bibli_core::op::EntryRef::new(row.id, target.clone()),
+                        bibli_core::op::EntryRef::new(row.id.file, target.clone()),
                         cx,
                     );
                 }

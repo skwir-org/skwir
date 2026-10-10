@@ -73,12 +73,12 @@ fn tagged(
             Ok(ListingEvent::Added(entries)) => {
                 for e in entries {
                     if let Some(path) = open.path_of(e.id) {
-                        found.push(EntryRef::new(e.id, path));
+                        found.push((e.id, EntryRef::new(e.file(), path)));
                     }
                 }
             }
-            Ok(ListingEvent::Removed(ids)) => found.retain(|r| !ids.contains(&r.id)),
-            Ok(ListingEvent::Complete) => break Ok(found),
+            Ok(ListingEvent::Removed(ids)) => found.retain(|(id, _)| !ids.contains(id)),
+            Ok(ListingEvent::Complete) => break Ok(found.into_iter().map(|(_, r)| r).collect()),
             Ok(ListingEvent::Error(e)) => break Err(anyhow::anyhow!("{e}")),
             Ok(_) | Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {

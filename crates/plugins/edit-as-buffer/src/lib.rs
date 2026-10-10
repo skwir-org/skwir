@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use bibli_core::CancelToken;
 use bibli_core::app::{App, NotifyLevel, PaneArg};
 use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::EntryId;
+use bibli_core::entry::FileId;
 use bibli_core::op::{
     EntryRef, Mkdir, Move, Operation, Plan, Rename, RenameOrderError, RenameRequest, Trash,
     order_renames, valid_file_name,
@@ -105,7 +105,7 @@ pub fn unescape(text: &str) -> Vec<u8> {
 }
 
 /// The buffer text for `entries` (id, name, `is_dir`), one line each.
-pub fn to_buffer(entries: &[(EntryId, OsString, bool)]) -> String {
+pub fn to_buffer(entries: &[(FileId, OsString, bool)]) -> String {
     let mut out = String::from(HEADER);
     for (i, (_, name, is_dir)) in entries.iter().enumerate() {
         let slash = if *is_dir { "/" } else { "" };
@@ -478,7 +478,7 @@ fn move_into(
     steps: &mut Vec<Box<dyn Operation>>,
     current: &mut [PathBuf],
     i: usize,
-    id: EntryId,
+    id: FileId,
     dir: &Path,
     target: &Target,
 ) {
@@ -567,7 +567,7 @@ fn start_session(
             .filter_map(|&id| {
                 let e = p.listing.get(id)?;
                 Some((
-                    EntryRef::new(id, open.path_of(id)?).with_only_name(e.is_only_name()),
+                    EntryRef::new(id.file, open.path_of(id)?).with_only_name(e.is_only_name()),
                     e.name.clone(),
                     e.is_dir(),
                 ))
@@ -735,8 +735,8 @@ mod tests {
     #[test]
     fn buffer_format() {
         let b = to_buffer(&[
-            (EntryId { dev: 1, ino: 1 }, "docs".into(), true),
-            (EntryId { dev: 1, ino: 2 }, "a.txt".into(), false),
+            (bibli_core::FileId { dev: 1, ino: 1 }, "docs".into(), true),
+            (bibli_core::FileId { dev: 1, ino: 2 }, "a.txt".into(), false),
         ]);
         assert!(b.starts_with("# bibli"));
         assert!(b.ends_with("   1  docs/\n   2  a.txt\n"));

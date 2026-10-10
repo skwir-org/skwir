@@ -195,6 +195,12 @@ pub enum ListingEvent {
     Updated(Vec<Entry>),
     /// Entries that no longer exist here.
     Removed(Vec<EntryId>),
+    /// Entries renamed: each the entry an id now is, under its new name
+    /// (a file's name changed, its file the same). The listing tells its
+    /// holders the old id is the new one (`Listing::take_renamed`), so a
+    /// selection follows it. An id the listing does not hold arrives as an
+    /// addition.
+    Renamed(Vec<(EntryId, Entry)>),
     /// The initial listing is complete; further events come from watching.
     Complete,
     /// The listing failed or was interrupted.
@@ -789,6 +795,10 @@ impl Delta {
 /// more are merged with the order in one pass.
 const FEW_PLACED: usize = 8;
 
+/// The renames a listing keeps for its holders until one asks
+/// (`Listing::take_renamed`).
+const RENAMED_KEPT: usize = 4096;
+
 /// A set of entries asked about once per entry of a big order
 /// (`Listing::place`): hashed by a multiply, an id being two numbers the
 /// system gave, not a key anyone chooses.
@@ -866,6 +876,9 @@ pub struct Listing {
     /// The names companions listed belong to: one arriving re-sorts, so
     /// its companion is hidden.
     owners: std::collections::HashSet<OsString>,
+    /// Entries renamed since a holder last asked (`take_renamed`): each
+    /// id before and after.
+    renamed: Vec<(EntryId, EntryId)>,
 }
 
 impl Default for Listing {
@@ -888,6 +901,7 @@ impl Default for Listing {
             sort_cache: parking_lot::Mutex::new(None),
             companions: None,
             owners: std::collections::HashSet::new(),
+            renamed: Vec::new(),
         }
     }
 }
@@ -989,6 +1003,24 @@ impl Listing {
                     delta = Delta::removal(companions);
                     self.removed_version = stamp();
                 }
+            }
+            ListingEvent::Renamed(pairs) => {
+                let (olds, news): (Vec<EntryId>, Vec<Entry>) = pairs.into_iter().unzip();
+                let held: Vec<(EntryId, EntryId)> = olds
+                    .iter()
+                    .zip(&news)
+                    .filter(|(old, new)| self.entries.contains_key(*old) && old != &&new.id)
+                    .map(|(old, new)| (*old, new.id))
+                    .collect();
+                let gone: Vec<EntryId> = held.iter().map(|(old, _)| *old).collect();
+                let removed = self.apply(ListingEvent::Removed(gone));
+                let added = self.apply(ListingEvent::Added(news));
+                self.renamed.extend(held);
+                // A listing no holder asks (a test's, a tool's) keeps the
+                // latest only.
+                let over = self.renamed.len().saturating_sub(RENAMED_KEPT);
+                self.renamed.drain(..over);
+                return removed || added;
             }
             ListingEvent::Complete => {
                 delta.any = !self.complete || self.error.is_some();
@@ -1446,6 +1478,13 @@ impl Listing {
     pub fn find_by_name(&self, name: &OsStr) -> Option<&Entry> {
         self.iter().find(|e| e.name == name)
     }
+
+    /// The entries renamed since this was last asked, each id before and
+    /// after (`ListingEvent::Renamed`): what keeps them by id (a
+    /// selection) follows them.
+    pub fn take_renamed(&mut self) -> Vec<(EntryId, EntryId)> {
+        std::mem::take(&mut self.renamed)
+    }
 }
 
 #[cfg(test)]
@@ -1502,7 +1541,16 @@ mod tests {
 
     #[test]
     fn names_version_ignores_hydration() {
-        let file = |ino, name: &str| Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File);
+        let file = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId { dev: 1, ino },
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
         let mut listing = Listing::default();
         listing.apply(ListingEvent::Added(vec![
             file(1, "a.txt"),
@@ -1520,9 +1568,15 @@ mod tests {
         listing.apply(ListingEvent::Updated(vec![file(1, "renamed.txt")]));
         let renamed = listing.names_version();
         assert!(renamed > names);
-        listing.apply(ListingEvent::Removed(vec![EntryId { dev: 1, ino: 9 }]));
+        listing.apply(ListingEvent::Removed(vec![EntryId {
+            file: crate::FileId { dev: 1, ino: 9 },
+            at: 0,
+        }]));
         assert_eq!(listing.names_version(), renamed, "nothing was removed");
-        listing.apply(ListingEvent::Removed(vec![EntryId { dev: 1, ino: 2 }]));
+        listing.apply(ListingEvent::Removed(vec![EntryId {
+            file: crate::FileId { dev: 1, ino: 2 },
+            at: 0,
+        }]));
         assert!(listing.names_version() > renamed);
     }
 
@@ -1531,7 +1585,16 @@ mod tests {
         // A pane that reopens the folder it shows gets a fresh listing of the
         // same entries. Work keyed on the old one's versions (the hydration
         // it asked for, its sorted order) must see the change.
-        let file = |ino, name: &str| Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File);
+        let file = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId { dev: 1, ino },
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
         let mut old = Listing::default();
         old.apply(ListingEvent::Added(vec![file(1, "a"), file(2, "b")]));
         let mut new = Listing::default();
@@ -1555,7 +1618,16 @@ mod tests {
 
     #[test]
     fn a_relisting_keeps_what_hydration_found() {
-        let file = |ino, name: &str| Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File);
+        let file = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId { dev: 1, ino },
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
         let mut listing = Listing::default();
         listing.apply(ListingEvent::Added(vec![file(1, "a"), file(2, "b")]));
         listing.apply(ListingEvent::Updated(vec![stat(file(1, "a"), 7)]));
@@ -1566,7 +1638,10 @@ mod tests {
         assert_eq!(listing.version(), version);
         assert!(
             listing
-                .get(EntryId { dev: 1, ino: 1 })
+                .get(EntryId {
+                    file: crate::FileId { dev: 1, ino: 1 },
+                    at: 0
+                })
                 .unwrap()
                 .metadata
                 .is_hydrated()
@@ -1581,7 +1656,10 @@ mod tests {
         listing.apply(ListingEvent::Added(vec![file(1, "c")]));
         assert!(
             !listing
-                .get(EntryId { dev: 1, ino: 1 })
+                .get(EntryId {
+                    file: crate::FileId { dev: 1, ino: 1 },
+                    at: 0
+                })
                 .unwrap()
                 .metadata
                 .is_hydrated()
@@ -1590,17 +1668,38 @@ mod tests {
 
     #[test]
     fn a_late_update_does_not_resurrect_a_removed_entry() {
-        let file = |ino, name: &str| Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File);
+        let file = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId { dev: 1, ino },
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
         let mut listing = Listing::default();
         listing.apply(ListingEvent::Added(vec![file(1, "a")]));
-        listing.apply(ListingEvent::Removed(vec![EntryId { dev: 1, ino: 1 }]));
+        listing.apply(ListingEvent::Removed(vec![EntryId {
+            file: crate::FileId { dev: 1, ino: 1 },
+            at: 0,
+        }]));
         assert!(!listing.apply(ListingEvent::Updated(vec![stat(file(1, "a"), 1)])));
         assert!(listing.is_empty());
     }
 
     #[test]
     fn hydration_re_sorts_only_the_sorts_that_depend_on_it() {
-        let file = |ino, name: &str| Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File);
+        let file = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId { dev: 1, ino },
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
         let mut listing = Listing::default();
         listing.apply(ListingEvent::Added(vec![
             file(1, "f10"),
@@ -1614,7 +1713,7 @@ mod tests {
             ..SortSpec::default()
         };
         let names = listing.sorted(by_name);
-        let ino: Vec<u64> = names.iter().map(|id| id.ino).collect();
+        let ino: Vec<u64> = names.iter().map(|id| id.file.ino).collect();
         assert_eq!(ino, [3, 2, 1, 4], "natural and case-folded");
         listing.apply(ListingEvent::Updated(vec![stat(file(4, "z"), 1)]));
         assert!(
@@ -1622,10 +1721,18 @@ mod tests {
             "not sorted again"
         );
         // What is not stat-ed yet comes after what is, by name.
-        let sizes: Vec<u64> = listing.sorted(by_size).iter().map(|id| id.ino).collect();
+        let sizes: Vec<u64> = listing
+            .sorted(by_size)
+            .iter()
+            .map(|id| id.file.ino)
+            .collect();
         assert_eq!(sizes, [4, 3, 2, 1]);
         listing.apply(ListingEvent::Updated(vec![stat(file(2, "f2"), 9)]));
-        let sizes: Vec<u64> = listing.sorted(by_size).iter().map(|id| id.ino).collect();
+        let sizes: Vec<u64> = listing
+            .sorted(by_size)
+            .iter()
+            .map(|id| id.file.ino)
+            .collect();
         assert_eq!(sizes, [4, 2, 3, 1]);
         let largest_first = SortSpec {
             ascending: false,
@@ -1634,7 +1741,7 @@ mod tests {
         let sizes: Vec<u64> = listing
             .sorted(largest_first)
             .iter()
-            .map(|id| id.ino)
+            .map(|id| id.file.ino)
             .collect();
         assert_eq!(sizes, [2, 4, 1, 3], "and still after it the other way");
     }
@@ -1644,7 +1751,14 @@ mod tests {
         use crate::entry::{Provenance, Value, keys};
         let rated = |ino, name: &str, rating: Option<u64>| {
             let mut e = stat(
-                Entry::new(EntryId { dev: 1, ino }, name, EntryKind::File),
+                Entry::new(
+                    EntryId {
+                        file: crate::FileId { dev: 1, ino },
+                        at: 0,
+                    },
+                    name,
+                    EntryKind::File,
+                ),
                 1,
             );
             if let Some(r) = rating {
@@ -1667,7 +1781,7 @@ mod tests {
         let order = |l: &Listing| {
             l.sorted(best_first)
                 .iter()
-                .map(|id| id.ino)
+                .map(|id| id.file.ino)
                 .collect::<Vec<_>>()
         };
         assert_eq!(order(&listing), [3, 1, 2], "unrated last");
@@ -1677,16 +1791,28 @@ mod tests {
 
     #[test]
     fn large_removals_keep_the_order_of_what_remains() {
-        let file = |ino| Entry::new(EntryId { dev: 1, ino }, format!("n{ino}"), EntryKind::File);
+        let file = |ino| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId { dev: 1, ino },
+                    at: 0,
+                },
+                format!("n{ino}"),
+                EntryKind::File,
+            )
+        };
         let mut listing = Listing::default();
         listing.apply(ListingEvent::Added((0..100).map(file).collect()));
         listing.apply(ListingEvent::Removed(
             (0..100)
                 .filter(|i| i % 3 != 0)
-                .map(|ino| EntryId { dev: 1, ino })
+                .map(|ino| EntryId {
+                    file: crate::FileId { dev: 1, ino },
+                    at: 0,
+                })
                 .collect(),
         ));
-        let left: Vec<u64> = listing.ids().map(|id| id.ino).collect();
+        let left: Vec<u64> = listing.ids().map(|id| id.file.ino).collect();
         assert_eq!(left, (0..100).filter(|i| i % 3 == 0).collect::<Vec<_>>());
     }
 
@@ -1728,7 +1854,14 @@ mod tests {
             } else {
                 EntryKind::File
             };
-            let mut e = Entry::new(EntryId { dev: 1, ino }, &name, kind);
+            let mut e = Entry::new(
+                EntryId {
+                    file: crate::FileId { dev: 1, ino },
+                    at: 0,
+                },
+                &name,
+                kind,
+            );
             e.metadata
                 .set(keys::SIZE, Value::UInt(ino % 4), Provenance::Filesystem);
             e
@@ -1758,9 +1891,15 @@ mod tests {
                         .collect();
                     assert_eq!(*shown, *whole, "{spec:?}");
                     if batch == 30 {
-                        listing.apply(ListingEvent::Removed(vec![EntryId { dev: 1, ino: 3 }]));
+                        listing.apply(ListingEvent::Removed(vec![EntryId {
+                            file: crate::FileId { dev: 1, ino: 3 },
+                            at: 0,
+                        }]));
                         listing.apply(ListingEvent::Updated(vec![Entry::new(
-                            EntryId { dev: 1, ino: 4 },
+                            EntryId {
+                                file: crate::FileId { dev: 1, ino: 4 },
+                                at: 0,
+                            },
                             "aaa renamed",
                             EntryKind::File,
                         )]));
@@ -1790,7 +1929,14 @@ mod tests {
             } else {
                 EntryKind::File
             };
-            Entry::new(EntryId { dev: 1, ino }, format!("n{}", ino % 13), kind)
+            Entry::new(
+                EntryId {
+                    file: crate::FileId { dev: 1, ino },
+                    at: 0,
+                },
+                format!("n{}", ino % 13),
+                kind,
+            )
         };
         let stated = |ino: u64| {
             let mut e = bare(ino);
@@ -1824,12 +1970,18 @@ mod tests {
                     if n % 3 == 1 {
                         listing.apply(ListingEvent::Removed(vec![
                             EntryId {
-                                dev: 1,
-                                ino: batch[0],
+                                file: crate::FileId {
+                                    dev: 1,
+                                    ino: batch[0],
+                                },
+                                at: 0,
                             },
                             EntryId {
-                                dev: 1,
-                                ino: 199 - batch[1],
+                                file: crate::FileId {
+                                    dev: 1,
+                                    ino: 199 - batch[1],
+                                },
+                                at: 0,
                             },
                         ]));
                     }
@@ -1855,7 +2007,10 @@ mod tests {
                     }
                     assert_eq!(*listing.sorted(spec), *listing.compute_sorted(spec));
                 }
-                listing.apply(ListingEvent::Removed(vec![EntryId { dev: 1, ino: 11 }]));
+                listing.apply(ListingEvent::Removed(vec![EntryId {
+                    file: crate::FileId { dev: 1, ino: 11 },
+                    at: 0,
+                }]));
                 assert_eq!(*listing.sorted(spec), *listing.compute_sorted(spec));
             }
         }
@@ -1866,7 +2021,16 @@ mod tests {
     #[test]
     fn a_drain_leaves_what_arrives_during_it_for_the_next() {
         let (tx, rx) = crossbeam_channel::unbounded();
-        let file = |ino: u64| Entry::new(EntryId { dev: 1, ino }, ino.to_string(), EntryKind::File);
+        let file = |ino: u64| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId { dev: 1, ino },
+                    at: 0,
+                },
+                ino.to_string(),
+                EntryKind::File,
+            )
+        };
         for ino in 0..3 {
             tx.send(ListingEvent::Added(vec![file(ino)])).unwrap();
         }

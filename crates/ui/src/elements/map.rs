@@ -1458,7 +1458,7 @@ impl Element for Map {
         if let Some(picking) = self.picking.as_ref().filter(|_| !spread_all) {
             let opened = self.handles.opened.borrow();
             let opened_stamp = opened.iter().fold(opened.len() as u64, |stamp, id| {
-                stamp ^ id.ino ^ id.dev.rotate_left(32)
+                stamp ^ id.file.ino ^ id.file.dev.rotate_left(32) ^ id.at
             });
             // The markers by their address, and, should new ones be made
             // where old ones were, by how many and where the ends are.
@@ -2270,7 +2270,10 @@ mod tests {
 
     fn place(n: u64, lat: f64, lon: f64) -> Place {
         Place {
-            entry: EntryId { dev: 1, ino: n },
+            entry: EntryId {
+                file: bibli_core::FileId { dev: 1, ino: n },
+                at: 0,
+            },
             at: LatLon::new(lat, lon).unwrap(),
             name: format!("{n}.jpg").into(),
             line: Vec::new(),

@@ -150,7 +150,7 @@ pub fn start(
     let known = {
         let ws = app.workspace.read();
         ws.pane(pane)
-            .and_then(|p| p.listing.get(selected.id).cloned())
+            .and_then(|p| p.entry_at(selected.id, &selected.path).cloned())
     };
     let weak = app.weak();
     app.scheduler.spawn(

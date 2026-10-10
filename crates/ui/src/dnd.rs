@@ -421,7 +421,7 @@ impl Shell {
         let devices: std::collections::HashSet<u64> = {
             let ws = self.app.workspace.read();
             ws.pane(from)
-                .map(|p| p.selection.iter().map(|id| id.dev).collect())
+                .map(|p| p.selection.iter().map(|id| id.file.dev).collect())
                 .unwrap_or_default()
         };
         let dest = dest.to_path_buf();
@@ -827,7 +827,7 @@ impl Shell {
             } else {
                 let only = entry.is_only_name();
                 p.path_of(id)
-                    .map(|path| bibli_core::op::EntryRef::new(id, path).with_only_name(only))
+                    .map(|path| bibli_core::op::EntryRef::new(id.file, path).with_only_name(only))
             }
         };
         let mut args = gives.args.clone();

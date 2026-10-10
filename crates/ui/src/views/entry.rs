@@ -71,7 +71,7 @@ impl Shell {
             is_dir: e.is_dir(),
             selected: pane.selection.contains(id),
             cursor: pane.selection.cursor == Some(id),
-            cut: self.pending.cut && self.pending.entries.contains(&id),
+            cut: self.pending.cut && self.pending.holds(e.file(), &e.name),
             icon: self.icons.for_entry(e, || pane.path_of(id), icon_px),
             link: icons::Link::of(e),
             tags: crate::tags::entry_tags(e, &self.tag_colors),

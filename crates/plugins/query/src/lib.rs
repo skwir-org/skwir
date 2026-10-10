@@ -917,7 +917,7 @@ mod tests {
                 }
                 ListingEvent::Complete => break,
                 ListingEvent::Error(e) => panic!("{expr}: {e}"),
-                ListingEvent::Removed(_) | ListingEvent::Changed => {}
+                ListingEvent::Removed(_) | ListingEvent::Renamed(_) | ListingEvent::Changed => {}
             }
         }
         names
@@ -925,6 +925,26 @@ mod tests {
 
     fn set(v: &[&str]) -> BTreeSet<String> {
         v.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// A file found under several names is a result under each, the same
+    /// name in two folders too (as pnpm links `node_modules`, ADR-049).
+    #[cfg(unix)]
+    #[test]
+    fn a_file_found_under_several_names_is_a_result_under_each() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("t");
+        std::fs::create_dir_all(root.join("one")).unwrap();
+        std::fs::create_dir_all(root.join("two")).unwrap();
+        std::fs::write(root.join("one/LICENSE"), "MIT licence").unwrap();
+        std::fs::hard_link(root.join("one/LICENSE"), root.join("two/LICENSE")).unwrap();
+        std::fs::hard_link(root.join("one/LICENSE"), root.join("one/COPYING")).unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        assert_eq!(
+            run(&app, "content:MIT", &root),
+            set(&["one/COPYING", "one/LICENSE", "two/LICENSE"])
+        );
     }
 
     #[test]

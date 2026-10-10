@@ -656,7 +656,10 @@ pub fn listing_sort(profile: Profile, runs: usize) -> (Stat, Stat) {
     let n: u64 = 100_000;
     let bare = |ino: u64| {
         Entry::new(
-            EntryId { dev: 1, ino },
+            EntryId {
+                file: bibli_core::FileId { dev: 1, ino },
+                at: 0,
+            },
             format!("IMG_{:06}.jpg", ino.wrapping_mul(7_919) % n),
             EntryKind::File,
         )

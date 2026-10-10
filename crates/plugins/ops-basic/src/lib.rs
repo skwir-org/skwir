@@ -95,8 +95,10 @@ fn taken_from(app: &App, a: &TargetsArgs) -> Option<bibli_core::Location> {
 
 /// Let every view show what is waiting for a paste.
 fn publish(app: &App, entries: &[EntryRef], cut: bool) {
-    app.pending
-        .set(ID, entries.iter().map(|entry| entry.id), cut);
+    let named = entries
+        .iter()
+        .filter_map(|entry| Some((entry.id, entry.path.file_name()?.to_owned())));
+    app.pending.set(ID, named, cut);
     app.wake();
 }
 
@@ -566,7 +568,7 @@ mod tests {
         app.dispatch(&Invocation::new("clipboard_cut")).unwrap();
         let pending = app.pending.get();
         assert!(
-            pending.cut && pending.entries.len() == 1,
+            pending.cut && pending.len() == 1,
             "views can see what was cut"
         );
         app.navigate(pane, &Location::from_path(&dst)).unwrap();
@@ -584,7 +586,7 @@ mod tests {
             "cut clears the clipboard"
         );
         assert!(
-            app.pending.get().entries.is_empty(),
+            app.pending.get().is_empty(),
             "nothing is waiting after the move"
         );
     }
@@ -620,7 +622,7 @@ mod tests {
         );
         let r = app.executor.execute_blocking(&plan, app.lifetime());
         assert!(r.error.is_some(), "the name is taken");
-        assert_eq!(app.pending.get().entries.len(), 1, "still waiting");
+        assert_eq!(app.pending.get().len(), 1, "still waiting");
 
         std::fs::remove_file(dst.join("a.txt")).unwrap();
         let Outcome::Plan(plan) = app.dispatch(&Invocation::new("clipboard_paste")).unwrap() else {
@@ -633,6 +635,6 @@ mod tests {
                 .is_none()
         );
         assert!(dst.join("a.txt").exists());
-        assert!(app.pending.get().entries.is_empty());
+        assert!(app.pending.get().is_empty());
     }
 }

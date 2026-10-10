@@ -929,7 +929,7 @@ impl Plugin for TagsPlugin {
                     let ws = app.workspace.read();
                     refs.iter()
                         .map(|r| {
-                            let e = ws.pane(pane)?.entry(r.id)?;
+                            let e = ws.pane(pane)?.entry_at(r.id, &r.path)?;
                             e.metadata.is_hydrated().then(|| has_tag(e, &tag))
                         })
                         .collect()

@@ -505,7 +505,7 @@ mod tests {
         let slow = Arc::new(Slow(parking_lot::Mutex::new(Vec::new())));
         t.register("test", slow.clone());
         let req = |ino: u64| ThumbRequest {
-            entry: EntryRef::new(bibli_core::EntryId { dev: 1, ino }, format!("/x/{ino}")),
+            entry: EntryRef::new(bibli_core::FileId { dev: 1, ino }, format!("/x/{ino}")),
             mime: None,
             mtime: None,
             size: ThumbSize::Normal,

@@ -87,7 +87,7 @@ pub struct Node {
 /// were found and what it weighs. A file whose links were all found is
 /// dropped: no folder above can find it again.
 #[derive(Clone, Debug, Default)]
-pub struct Links(pub(crate) HashMap<bibli_core::EntryId, Linked>);
+pub struct Links(pub(crate) HashMap<bibli_core::FileId, Linked>);
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Linked {

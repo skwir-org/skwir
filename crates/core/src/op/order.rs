@@ -177,11 +177,10 @@ pub fn order_renames(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entry::EntryId;
 
     fn request(n: u64, path: &str, to: &str) -> RenameRequest {
         RenameRequest {
-            entry: EntryRef::new(EntryId { dev: 1, ino: n }, path),
+            entry: EntryRef::new(crate::FileId { dev: 1, ino: n }, path),
             new_name: to.into(),
         }
     }

@@ -26,7 +26,7 @@ use std::time::Duration;
 use bibli_core::app::App;
 use bibli_core::cancel::CancelToken;
 use bibli_core::command::{Invocation, NoArgs, Outcome};
-use bibli_core::entry::{Entry, EntryId, keys};
+use bibli_core::entry::{Entry, EntryId, FileId, keys};
 use bibli_core::fs::stat::stat_path;
 use bibli_core::location::{
     Crumb, EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext,
@@ -124,7 +124,7 @@ fn read_held(trashes: &[PathBuf]) -> Vec<EntryRef> {
         for listed in names.flatten() {
             let mut record = listed.name.clone();
             record.push(".trashinfo");
-            let id = EntryId {
+            let id = FileId {
                 dev,
                 ino: listed.ino,
             };
@@ -888,7 +888,7 @@ fn chosen(app: &App, pane: Option<PaneId>, ids: Vec<EntryId>) -> Vec<EntryRef> {
         ids
     };
     ids.into_iter()
-        .filter_map(|id| Some(EntryRef::new(id, p.path_of(id)?)))
+        .filter_map(|id| Some(EntryRef::new(id.file, p.path_of(id)?)))
         .collect()
 }
 

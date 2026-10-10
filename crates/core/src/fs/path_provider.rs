@@ -11,7 +11,7 @@ use crossbeam_channel::Receiver;
 use parking_lot::{Mutex, RwLock};
 
 use crate::cancel::CancelToken;
-use crate::entry::{Entry, EntryId, EntryKind};
+use crate::entry::{Entry, EntryId, EntryKind, FileId};
 use crate::location::{
     EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation, PATH_SCHEME,
 };
@@ -48,7 +48,9 @@ struct Shared {
     dir: RwLock<PathBuf>,
     /// The directory held open: names are stat-ed relative to it.
     folder: Dir,
-    dev: u64,
+    /// The folder's own file: with each name, what its entries are told
+    /// apart by (`EntryId::in_folder`); its device, theirs until stat-ed.
+    id: FileId,
     names: Mutex<Names>,
     /// Every name of the folder is in `names`: a batch can ask them.
     listed: std::sync::atomic::AtomicBool,
@@ -64,12 +66,14 @@ struct Shared {
 /// The names of the listed entries, both ways, so a watcher event finds its
 /// entry without walking the directory.
 ///
-/// Identity is what a stat reports (`fs::stat::id_of`, which operations
+/// An entry is its file under its name in this folder
+/// (`EntryId::in_folder`, ADR-049): two names of one file are two. Its
+/// file is what a stat reports (`fs::stat::id_of`, which operations
 /// resolve against). A listing streams before it stats, so it names an
-/// entry by the directory's device and `d_ino`; the two differ only for a
-/// mount point or a subvolume root. Hydration finds out, re-keys the entry
-/// (removed under the provisional id, added under the real one) and keeps
-/// an alias, so a later re-listing uses the real id straight away.
+/// entry's file by the directory's device and `d_ino`; the two differ only
+/// for a mount point or a subvolume root. Hydration finds out, re-keys the
+/// entry (removed under the provisional id, added under the real one) and
+/// keeps an alias, so a later re-listing uses the real id straight away.
 #[derive(Default)]
 struct Names {
     by_id: HashMap<EntryId, OsString>,
@@ -194,14 +198,14 @@ impl PathLocation {
                     if ctx.cancel.is_cancelled() {
                         return Ok(());
                     }
-                    let dev = folder.device()?;
+                    let id = folder.identity()?;
                     if ctx.cancel.is_cancelled() {
                         return Ok(());
                     }
                     let shared = Arc::new(Shared {
                         dir: RwLock::new(dir.clone()),
                         folder,
-                        dev,
+                        id,
                         names: Mutex::new(Names::default()),
                         listed: std::sync::atomic::AtomicBool::new(false),
                         tx: tx.clone(),
@@ -292,10 +296,11 @@ impl Shared {
             };
             let id = {
                 let mut names = self.names.lock();
-                let id = names.listing_id(EntryId {
-                    dev: self.dev,
+                let file = FileId {
+                    dev: self.id.dev,
                     ino: ent.ino,
-                });
+                };
+                let id = names.listing_id(EntryId::in_folder(file, self.id, &ent.name));
                 names.insert(id, ent.name.clone());
                 id
             };
@@ -515,7 +520,7 @@ impl Shared {
             if self.ctx.cancel.is_cancelled() {
                 return;
             }
-            let mut e = Entry::new(EntryId { dev: 0, ino: 0 }, name.clone(), EntryKind::Unknown);
+            let mut e = Entry::new(EntryId::UNKNOWN, name.clone(), EntryKind::Unknown);
             let exists = stat_entry(&self.folder, &mut e);
             let mut names = self.names.lock();
             if exists {
@@ -528,21 +533,58 @@ impl Shared {
                 removed.push(id);
             }
         }
-        // An entry renamed within the folder is gone under its old name and
-        // back under its new one: it is an update, not a removal, so it keeps
-        // its place and its selection.
         let arrived: HashSet<EntryId> = added.iter().map(|e| e.id).collect();
         removed.retain(|id| !arrived.contains(id));
+        // A file renamed within the folder is gone under its old name and
+        // come under its new one: a rename, so its row keeps its place and
+        // its selection.
+        let mut renamed = renames(&mut removed, &mut added);
         if !removed.is_empty() {
             self.tx.send(ListingEvent::Removed(removed));
         }
+        // Changed entries arrive stat-ed; give providers their turn so
+        // fields such as tags survive the update.
+        if !renamed.is_empty() {
+            let (olds, mut news): (Vec<EntryId>, Vec<Entry>) = renamed.drain(..).unzip();
+            self.fill(&self.dir(), &mut news);
+            self.tx
+                .send(ListingEvent::Renamed(olds.into_iter().zip(news).collect()));
+        }
         if !added.is_empty() {
-            // Changed entries arrive stat-ed; give providers their turn so
-            // fields such as tags survive the update.
             self.fill(&self.dir(), &mut added);
             self.tx.send(ListingEvent::Added(added));
         }
     }
+}
+
+/// The renames among a batch's changes, taken out of `removed` and
+/// `added`: a file one of whose names went and one came. A file that lost
+/// or gained several names at once is left as it is: which name became
+/// which cannot be told.
+fn renames(removed: &mut Vec<EntryId>, added: &mut Vec<Entry>) -> Vec<(EntryId, Entry)> {
+    let count = |files: &mut HashMap<FileId, usize>, file| *files.entry(file).or_default() += 1;
+    let (mut gone, mut came) = (HashMap::new(), HashMap::new());
+    for id in removed.iter() {
+        count(&mut gone, id.file);
+    }
+    for e in added.iter() {
+        count(&mut came, e.file());
+    }
+    let one = |files: &HashMap<FileId, usize>, file| files.get(&file) == Some(&1);
+    let mut renamed = Vec::new();
+    let mut i = 0;
+    while i < added.len() {
+        let file = added[i].file();
+        if one(&came, file)
+            && one(&gone, file)
+            && let Some(at) = removed.iter().position(|id| id.file == file)
+        {
+            renamed.push((removed.swap_remove(at), added.swap_remove(i)));
+        } else {
+            i += 1;
+        }
+    }
+    renamed
 }
 
 impl OpenLocation for PathLocation {

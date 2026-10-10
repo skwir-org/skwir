@@ -324,7 +324,7 @@ fn mosaic_of(
             let [path, dev, ino, modified] = parts.as_slice() else {
                 return None;
             };
-            let id = EntryId {
+            let id = bibli_core::FileId {
                 dev: dev.as_u64()?,
                 ino: ino.as_u64()?,
             };

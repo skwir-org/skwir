@@ -12,7 +12,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::entry::EntryKind;
+use crate::entry::{EntryKind, FileId};
 
 /// One name a listing reads, before anything is stat-ed: what the folder
 /// itself says of it.
@@ -36,7 +36,7 @@ mod unix {
     use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
     use rustix::fs::{FileType, Mode, OFlags};
 
-    use super::{EntryKind, Listed, OsStr, Path, PathBuf, io};
+    use super::{EntryKind, FileId, Listed, OsStr, Path, PathBuf, io};
 
     pub(crate) fn kind_of(t: FileType) -> EntryKind {
         match t {
@@ -51,8 +51,9 @@ mod unix {
         }
     }
 
-    /// A folder held open by its descriptor.
-    pub struct Dir(OwnedFd);
+    /// A folder held open by its descriptor, and its own identity once
+    /// asked.
+    pub struct Dir(OwnedFd, std::sync::OnceLock<FileId>);
 
     impl Dir {
         /// Open the folder at `path`. I/O: a sleeping disk can hold it.
@@ -65,7 +66,7 @@ mod unix {
                 OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
                 Mode::empty(),
             )?;
-            Ok(Self(fd))
+            Ok(Self(fd, std::sync::OnceLock::new()))
         }
 
         pub(crate) fn fd(&self) -> BorrowedFd<'_> {
@@ -80,6 +81,23 @@ mod unix {
         pub fn device(&self) -> io::Result<u64> {
             let st = rustix::fs::fstat(&self.0)?;
             Ok(crate::fs::stat::device_number(st.st_dev))
+        }
+
+        /// The folder's own file, stat-ed once: what tells its entries'
+        /// names apart (`EntryId::in_folder`).
+        ///
+        /// # Errors
+        /// When the folder cannot be stat-ed.
+        pub fn identity(&self) -> io::Result<FileId> {
+            if let Some(id) = self.1.get() {
+                return Ok(*id);
+            }
+            let st = rustix::fs::fstat(&self.0)?;
+            let id = FileId {
+                dev: crate::fs::stat::device_number(st.st_dev),
+                ino: st.st_ino,
+            };
+            Ok(*self.1.get_or_init(|| id))
         }
 
         /// The names the folder holds now, `.` and `..` left out, read as
@@ -196,7 +214,7 @@ mod windows {
 
     use parking_lot::Mutex;
 
-    use super::{EntryKind, Listed, OsStr, Path, PathBuf, io};
+    use super::{EntryKind, FileId, Listed, OsStr, Path, PathBuf, io};
     use crate::fs::win;
 
     /// A folder held open by a handle, and where it was last known to be:
@@ -204,6 +222,7 @@ mod windows {
     pub struct Dir {
         file: File,
         path: Mutex<PathBuf>,
+        id: std::sync::OnceLock<FileId>,
     }
 
     impl Dir {
@@ -219,6 +238,7 @@ mod windows {
             Ok(Self {
                 file,
                 path: Mutex::new(path.to_path_buf()),
+                id: std::sync::OnceLock::new(),
             })
         }
 
@@ -228,6 +248,19 @@ mod windows {
         /// When the folder cannot be asked.
         pub fn device(&self) -> io::Result<u64> {
             Ok(win::identity(&self.file)?.dev)
+        }
+
+        /// The folder's own file, asked once: what tells its entries'
+        /// names apart (`EntryId::in_folder`).
+        ///
+        /// # Errors
+        /// When the folder cannot be asked.
+        pub fn identity(&self) -> io::Result<FileId> {
+            if let Some(id) = self.id.get() {
+                return Ok(*id);
+            }
+            let id = win::identity(&self.file)?;
+            Ok(*self.id.get_or_init(|| id))
         }
 
         /// The names the folder holds now, `.` and `..` left out, read as

@@ -16,7 +16,7 @@ use bibli_core::document::{
     PageContent, PixelOrder, Rect, SearchHit, TextChar,
 };
 use bibli_core::permissions::Capability;
-use bibli_core::{CancelToken, EntryId};
+use bibli_core::{CancelToken, FileId};
 use bibli_plugin_api::protocol::{OutlineEntry, PageAnswer, PageLink, PageParams, TextRun, method};
 use serde_json::json;
 
@@ -56,7 +56,7 @@ pub(crate) struct Pages {
     runner: Arc<Runner>,
     kept: CacheSlot,
     path: PathBuf,
-    id: EntryId,
+    id: FileId,
     mime: Option<String>,
     info: DocumentInfo,
     /// Why its links are not followed: the plugin may not use the network.
@@ -80,7 +80,7 @@ impl Pages {
         runner: Arc<Runner>,
         kept: CacheSlot,
         path: PathBuf,
-        id: EntryId,
+        id: FileId,
         mime: Option<String>,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Pages>> {

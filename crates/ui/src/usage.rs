@@ -564,7 +564,7 @@ impl Build<'_> {
                 // Colored by identity, so a block keeps its color as the map reflows.
                 None => (
                     child.id,
-                    child.id.map_or(index, |id| (id.ino % 7) as usize),
+                    child.id.map_or(index, |id| (id.file.ino % 7) as usize),
                     child.name.clone(),
                 ),
             };
@@ -1150,7 +1150,10 @@ mod tests {
 
     fn node(path: &str, alloc: u64, is_dir: bool, children: Vec<Node>) -> Node {
         Node {
-            id: Some(EntryId { dev: 1, ino: alloc }),
+            id: Some(EntryId {
+                file: bibli_core::FileId { dev: 1, ino: alloc },
+                at: 0,
+            }),
             name: path.rsplit('/').next().unwrap().to_owned(),
             path: PathBuf::from(path),
             is_dir,
@@ -1235,7 +1238,13 @@ mod tests {
             .unwrap();
         // Named as the pane names the folder, and standing for its outer entry.
         assert_eq!(mkv.path, Path::new("/shown/Videos/a.mkv"));
-        assert_eq!(mkv.entry, Some(EntryId { dev: 1, ino: 500 }));
+        assert_eq!(
+            mkv.entry,
+            Some(EntryId {
+                file: bibli_core::FileId { dev: 1, ino: 500 },
+                at: 0
+            })
+        );
         assert_eq!(
             mkv.hint,
             "Videos › a.mkv · 400 B · 80% of Videos · double-click to go there"

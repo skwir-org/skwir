@@ -415,7 +415,7 @@ mod tests {
     fn fonts_are_known_by_type() {
         let accepts = |name: &str, mime: Option<&str>| {
             Provider.accepts(&PreviewRequest {
-                entry: bibli_core::op::EntryRef::new(bibli_core::EntryId { dev: 1, ino: 1 }, name),
+                entry: bibli_core::op::EntryRef::new(bibli_core::FileId { dev: 1, ino: 1 }, name),
                 mime: mime.map(str::to_owned),
                 page: 1,
                 seconds: None,

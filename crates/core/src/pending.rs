@@ -2,23 +2,44 @@
 //! clipboard publishes it here and any view can show it (cut entries dimmed,
 //! a count in the status bar) without knowing that plugin.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use crate::entry::EntryId;
+use crate::entry::FileId;
 use crate::registry::OwnerGate;
 
-/// Entries held for a paste. Identity, not paths: a cut file is the same
-/// file in every pane and view that lists it.
+/// Entries held for a paste, each by its file and its name, not its path: a
+/// name cut is the one entry in every pane and view that lists it, and the
+/// file's other names (hard links) are not cut (ADR-049). Telling reads
+/// nothing.
 #[derive(Debug, Default)]
 pub struct Pending {
-    pub entries: HashSet<EntryId>,
+    entries: HashMap<FileId, Vec<OsString>>,
     /// A paste will move them (cut) rather than copy them.
     pub cut: bool,
     /// Who published it, so disabling that plugin withdraws it.
     pub owner: String,
+}
+
+impl Pending {
+    /// Whether the entry of `file` named `name` waits for a paste.
+    pub fn holds(&self, file: FileId, name: &OsStr) -> bool {
+        self.entries
+            .get(&file)
+            .is_some_and(|names| names.iter().any(|n| n == name))
+    }
+
+    /// How many entries wait: names, two of one file two.
+    pub fn len(&self) -> usize {
+        self.entries.values().map(Vec::len).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 #[derive(Default)]
@@ -48,13 +69,26 @@ impl PendingTransfer {
     }
 
     /// Refused while `owner` is disabled.
-    pub fn set(&self, owner: &str, entries: impl IntoIterator<Item = EntryId>, cut: bool) {
+    /// What waits: each entry by its file and its name.
+    pub fn set(
+        &self,
+        owner: &str,
+        entries: impl IntoIterator<Item = (FileId, OsString)>,
+        cut: bool,
+    ) {
         let mut now = self.now.write();
         if !self.gate.is_open(owner) {
             return;
         }
+        let mut by_file: HashMap<FileId, Vec<OsString>> = HashMap::new();
+        for (file, name) in entries {
+            let names = by_file.entry(file).or_default();
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
         *now = Arc::new(Pending {
-            entries: entries.into_iter().collect(),
+            entries: by_file,
             cut,
             owner: owner.to_owned(),
         });
@@ -75,21 +109,25 @@ impl PendingTransfer {
 #[cfg(test)]
 mod tests {
     use super::PendingTransfer;
-    use crate::entry::EntryId;
+    use crate::entry::FileId;
 
     #[test]
     fn a_snapshot_outlives_a_change_and_only_the_owner_withdraws_it() {
         let pending = PendingTransfer::default();
-        let id = EntryId { dev: 1, ino: 42 };
-        pending.set("clipboard", [id], true);
+        let file = FileId { dev: 1, ino: 42 };
+        pending.set("clipboard", [(file, "a.txt".into())], true);
         let seen = pending.get();
-        assert!(seen.cut && seen.entries.contains(&id));
-        pending.unregister_owner("another-plugin");
-        assert!(!pending.get().entries.is_empty());
-        pending.unregister_owner("clipboard");
-        assert!(pending.get().entries.is_empty());
+        assert!(seen.cut && seen.holds(file, "a.txt".as_ref()));
         assert!(
-            seen.entries.contains(&id),
+            !seen.holds(file, "b.txt".as_ref()),
+            "the file's other name waits not"
+        );
+        pending.unregister_owner("another-plugin");
+        assert!(!pending.get().is_empty());
+        pending.unregister_owner("clipboard");
+        assert!(pending.get().is_empty());
+        assert!(
+            seen.holds(file, "a.txt".as_ref()),
             "a frame's snapshot does not change under it"
         );
     }

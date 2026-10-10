@@ -8,12 +8,12 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use super::dir::Dir;
-use crate::entry::{Entry, EntryId, EntryKind, LinkTarget, Provenance, Value, keys};
+use crate::entry::{Entry, EntryId, EntryKind, FileId, LinkTarget, Provenance, Value, keys};
 
 /// What a stat says of a file, alike on every system; what only Unix
 /// says (a mode, an owner) is `None` elsewhere.
 struct Stat {
-    id: EntryId,
+    id: FileId,
     kind: EntryKind,
     mode: Option<u32>,
     size: u64,
@@ -41,7 +41,7 @@ fn kind_of(mode: rustix::fs::RawMode) -> EntryKind {
     super::dir::kind_of(rustix::fs::FileType::from_raw_mode(mode))
 }
 
-/// The device number an [`EntryId`] carries, from a stat's `st_dev`.
+/// The device number a [`FileId`] carries, from a stat's `st_dev`.
 #[cfg(unix)]
 pub(crate) fn device_number(dev: rustix::fs::Dev) -> u64 {
     #[cfg(target_os = "linux")]
@@ -96,12 +96,12 @@ pub const BLOCK: u64 = 4096;
 /// metadata `meta` read already: through a link when `meta` says it is
 /// no link (the file a link leads to), the link's own otherwise. Unix
 /// reads it from `meta`; Windows asks the file (`std` does not say it).
-pub fn identity(path: &Path, meta: &std::fs::Metadata) -> Option<EntryId> {
+pub fn identity(path: &Path, meta: &std::fs::Metadata) -> Option<FileId> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         let _ = path;
-        Some(EntryId {
+        Some(FileId {
             dev: meta.dev(),
             ino: meta.ino(),
         })
@@ -127,11 +127,11 @@ mod sys {
     pub(super) use super::read_link_at;
     use rustix::fs::{AtFlags, StatxFlags};
 
-    use super::{Dir, EntryId, OsStr, Path, PathBuf, Stat, kind_of, time};
+    use super::{Dir, FileId, OsStr, Path, PathBuf, Stat, kind_of, time};
 
     fn of(st: &rustix::fs::Statx) -> Stat {
         Stat {
-            id: EntryId {
+            id: FileId {
                 dev: rustix::fs::makedev(st.stx_dev_major, st.stx_dev_minor),
                 ino: st.stx_ino,
             },
@@ -209,7 +209,7 @@ mod sys {
         Ok((st, at))
     }
 
-    pub(super) fn id_of(path: &Path) -> Option<EntryId> {
+    pub(super) fn id_of(path: &Path) -> Option<FileId> {
         let st = rustix::fs::statx(
             rustix::fs::CWD,
             path,
@@ -237,11 +237,11 @@ mod sys {
     pub(super) use super::read_link_at;
     use rustix::fs::AtFlags;
 
-    use super::{Dir, EntryId, OsStr, Path, Stat, device_number, kind_of, time};
+    use super::{Dir, FileId, OsStr, Path, Stat, device_number, kind_of, time};
 
     fn of(st: &rustix::fs::Stat) -> Stat {
         Stat {
-            id: EntryId {
+            id: FileId {
                 dev: device_number(st.st_dev),
                 ino: st.st_ino,
             },
@@ -279,7 +279,7 @@ mod sys {
         Ok(of(&rustix::fs::statat(dir.fd(), name, flags)?))
     }
 
-    pub(super) fn id_of(path: &Path) -> Option<EntryId> {
+    pub(super) fn id_of(path: &Path) -> Option<FileId> {
         Some(of(&rustix::fs::lstat(path).ok()?).id)
     }
 
@@ -290,7 +290,7 @@ mod sys {
 
 #[cfg(windows)]
 mod sys {
-    use super::{Dir, EntryId, OsStr, Path, Stat};
+    use super::{Dir, FileId, OsStr, Path, Stat};
     use crate::fs::win;
 
     pub(super) fn stat_at(
@@ -318,7 +318,7 @@ mod sys {
         })
     }
 
-    pub(super) fn id_of(path: &Path) -> Option<EntryId> {
+    pub(super) fn id_of(path: &Path) -> Option<FileId> {
         win::identity(&win::open(path, false, false).ok()?).ok()
     }
 
@@ -417,7 +417,12 @@ pub fn stat_entry(dir: &Dir, entry: &mut Entry) -> bool {
     let Ok(own) = sys::stat_at(dir, name, false, true) else {
         return false;
     };
-    entry.id = own.id;
+    // Which of the file's names this is: this one, in this folder.
+    let folder = dir.identity().unwrap_or(FileId {
+        dev: own.id.dev,
+        ino: 0,
+    });
+    entry.id = EntryId::in_folder(own.id, folder, name);
     entry.kind = own.kind;
     entry.hidden = own.hidden;
     let followed = (entry.kind == EntryKind::Symlink)
@@ -465,7 +470,7 @@ pub fn stat_path(path: &Path) -> Option<Entry> {
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         // The root has no parent to be stat-ed from: it is its own `.`.
         let root = Dir::open(path).ok()?;
-        let mut e = Entry::new(EntryId { dev: 0, ino: 0 }, ".", EntryKind::Unknown);
+        let mut e = Entry::new(EntryId::UNKNOWN, ".", EntryKind::Unknown);
         if !stat_entry(&root, &mut e) {
             return None;
         }
@@ -474,7 +479,7 @@ pub fn stat_path(path: &Path) -> Option<Entry> {
     };
     let name: &OsStr = name;
     let dir = Dir::open(parent).ok()?;
-    let mut e = Entry::new(EntryId { dev: 0, ino: 0 }, name, EntryKind::Unknown);
+    let mut e = Entry::new(EntryId::UNKNOWN, name, EntryKind::Unknown);
     stat_entry(&dir, &mut e).then_some(e)
 }
 
@@ -497,25 +502,26 @@ impl Statter {
             self.dir = Some((parent.to_path_buf(), Dir::open(parent).ok()?));
         }
         let (_, dir) = self.dir.as_ref()?;
-        let mut e = Entry::new(EntryId { dev: 0, ino: 0 }, name, EntryKind::Unknown);
+        let mut e = Entry::new(EntryId::UNKNOWN, name, EntryKind::Unknown);
         stat_entry(dir, &mut e).then_some(e)
     }
 }
 
-/// The stable id of a path, without building an entry.
+/// The file at a path, without building an entry.
 ///
-/// This is what an [`EntryId`] means everywhere: the device and inode a
+/// This is what a [`FileId`] means everywhere: the device and inode a
 /// stat reports, without following a final symlink. [`stat_entry`] and
-/// [`stat_path`] report the same; a listing's provisional id for a mount
-/// point is replaced by this one when the entry is stat-ed.
-pub fn id_of(path: &Path) -> Option<EntryId> {
+/// [`stat_path`] name their entry by it and the name's folder
+/// (`EntryId::in_folder`); a listing's provisional file for a mount point
+/// is replaced by this one when the entry is stat-ed.
+pub fn id_of(path: &Path) -> Option<FileId> {
     sys::id_of(path)
 }
 
 /// [`id_of`], and whether `path` is its file's one name: a folder always
 /// is (no folder has two), any other file when its link count is one. A
 /// file with several names (hard links) is one file under each.
-pub fn named(path: &Path) -> Option<(EntryId, bool)> {
+pub fn named(path: &Path) -> Option<(FileId, bool)> {
     let st = sys::named(path)?;
     Some((st.id, st.kind == EntryKind::Directory || st.nlink == 1))
 }
@@ -557,13 +563,13 @@ mod tests {
         let root = stat_path(Path::new("/")).expect("the root");
         assert!(root.is_dir());
         assert_eq!(root.name, "/");
-        assert_eq!(Some(root.id), id_of(Path::new("/")));
+        assert_eq!(Some(root.file()), id_of(Path::new("/")));
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("it's a folder");
         std::fs::create_dir(&dir).unwrap();
         let entry = stat_path(&dir).expect("a folder");
         assert!(entry.is_dir());
         assert_eq!(entry.name, "it's a folder");
-        assert_eq!(Some(entry.id), id_of(&dir));
+        assert_eq!(Some(entry.file()), id_of(&dir));
     }
 }

@@ -217,7 +217,7 @@ mod tests {
     fn archives_are_what_the_database_calls_archives() {
         let accepts = |name: &str| {
             Provider.accepts(&PreviewRequest {
-                entry: bibli_core::op::EntryRef::new(bibli_core::EntryId { dev: 1, ino: 1 }, name),
+                entry: bibli_core::op::EntryRef::new(bibli_core::FileId { dev: 1, ino: 1 }, name),
                 mime: None,
                 page: 1,
                 seconds: None,

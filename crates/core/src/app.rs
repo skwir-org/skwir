@@ -1065,7 +1065,7 @@ impl App {
             let p = ws.pane(pane);
             refs.iter()
                 .map(|r| {
-                    let e = p?.entry(r.id)?;
+                    let e = p?.entry_at(r.id, &r.path)?;
                     Some(e.inode_type().is_none().then(|| e.type_name().to_owned()))
                 })
                 .collect()
@@ -1094,7 +1094,7 @@ impl App {
                 .iter()
                 .filter_map(|id| {
                     let only = p.entry(id).is_some_and(Entry::is_only_name);
-                    Some(EntryRef::new(id, p.path_of(id)?).with_only_name(only))
+                    Some(EntryRef::new(id.file, p.path_of(id)?).with_only_name(only))
                 })
                 .collect()
         };
@@ -1135,7 +1135,7 @@ impl App {
                         None => path.file_name().map(std::ffi::OsStr::to_os_string),
                     };
                     let only = entry.is_some_and(Entry::is_only_name);
-                    Some((EntryRef::new(id, path).with_only_name(only), type_name))
+                    Some((EntryRef::new(id.file, path).with_only_name(only), type_name))
                 })
                 .collect()
         };

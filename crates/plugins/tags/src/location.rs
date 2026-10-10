@@ -574,7 +574,8 @@ fn entry_at(path: &Path) -> Option<Entry> {
     } else {
         EntryKind::File
     };
-    let id = bibli_core::fs::stat::identity(path, &meta)?;
+    // A tag's files are from many folders: told apart by their paths.
+    let id = EntryId::at_path(bibli_core::fs::stat::identity(path, &meta)?, path);
     Some(Entry::new(id, path.file_name()?.to_owned(), kind))
 }
 

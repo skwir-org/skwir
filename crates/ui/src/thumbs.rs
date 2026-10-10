@@ -5,11 +5,11 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use bibli_core::EntryId;
 use bibli_core::entry::keys;
 use bibli_core::lru::ByteLru;
 use bibli_core::scheduler::Priority;
 use bibli_core::thumbs::{Image, ThumbRequest, ThumbSize, ThumbState};
+use bibli_core::{EntryId, FileId};
 use gpui::RenderImage;
 use smallvec::SmallVec;
 
@@ -26,7 +26,9 @@ pub enum ThumbView {
 /// An entry's picture at one size, as of one modification time: a file
 /// edited in place gets a new key, so its old picture is never shown again
 /// (it ages out of the cache).
-type Key = (EntryId, ThumbSize, Option<SystemTime>);
+/// A picture is of a file (ADR-049): every name of it, and every link to
+/// it, shows the same one.
+type Key = (FileId, ThumbSize, Option<SystemTime>);
 
 /// Converted pictures, bounded by bytes: the memory the thumbnails setting
 /// gives (`Thumbnails::budget`). What this frame and the one before drew is
@@ -141,7 +143,9 @@ impl Shell {
                 .metadata
                 .value(keys::MODIFIED)
                 .and_then(bibli_core::Value::as_time);
-            let key = (id, size, mtime);
+            // What is shown: a link's target, the entry's own file else.
+            let shown = e.target.as_ref().map_or(e.file(), |t| t.id);
+            let key = (shown, size, mtime);
             if let Some(img) = self.thumbs.get(&key) {
                 return ThumbView::Ready(img);
             }
@@ -254,7 +258,7 @@ mod tests {
     fn an_edited_file_is_a_new_picture_and_the_cache_stays_in_budget() {
         let mut c = ThumbCache::default();
         assert!(c.begin_frame(3 * 64).is_empty());
-        let id = EntryId { dev: 1, ino: 7 };
+        let id = FileId { dev: 1, ino: 7 };
         let then = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
         let now = then + std::time::Duration::from_secs(5);
         c.insert((id, ThumbSize::Normal, Some(then)), img(4), 64);
@@ -267,7 +271,7 @@ mod tests {
         let mut retired = 0;
         for n in 0..10 {
             retired += c.begin_frame(3 * 64).len();
-            let k = (EntryId { dev: 1, ino: n }, ThumbSize::Normal, None);
+            let k = (FileId { dev: 1, ino: n }, ThumbSize::Normal, None);
             c.insert(k, img(4), 64);
             for _ in 0..100 {
                 c.get(&k);
@@ -287,7 +291,7 @@ mod tests {
         c.begin_frame(2 * 64);
         for n in 0..5 {
             c.insert(
-                (EntryId { dev: 1, ino: n }, ThumbSize::Normal, None),
+                (FileId { dev: 1, ino: n }, ThumbSize::Normal, None),
                 img(4),
                 64,
             );
@@ -297,7 +301,7 @@ mod tests {
         assert_eq!(c.bytes(), 5 * 64, "and the next");
         c.begin_frame(2 * 64);
         c.insert(
-            (EntryId { dev: 1, ino: 9 }, ThumbSize::Normal, None),
+            (FileId { dev: 1, ino: 9 }, ThumbSize::Normal, None),
             img(4),
             64,
         );

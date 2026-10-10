@@ -18,9 +18,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::EntryId;
 use bibli_core::cancel::CancelToken;
 use bibli_core::workspace::PaneId;
+use bibli_core::{EntryId, FileId};
 use crossbeam_channel::{Receiver, Sender};
 use notify::{ErrorKind, EventKind, RecursiveMode, Watcher, event::ModifyKind};
 use parking_lot::Mutex;
@@ -81,7 +81,7 @@ fn cost(n: &Node) -> usize {
     std::mem::size_of::<Node>()
         + n.path.as_os_str().len() * 3
         + n.name.len()
-        + n.links.0.len() * 2 * std::mem::size_of::<(EntryId, Linked)>()
+        + n.links.0.len() * 2 * std::mem::size_of::<(FileId, Linked)>()
         + n.kinds.heap()
         + n.children.iter().map(cost).sum::<usize>()
 }
@@ -451,7 +451,7 @@ impl Progress {
 impl Links {
     /// One more link to `id` found under the folder; whether one was found
     /// before, whose bytes the folder already counts.
-    fn found(&mut self, id: EntryId, linked: Linked) -> bool {
+    fn found(&mut self, id: FileId, linked: Linked) -> bool {
         use std::collections::hash_map::Entry;
         match self.0.entry(id) {
             Entry::Occupied(mut known) => {
@@ -494,7 +494,7 @@ impl Links {
 /// is the same whether its folder was counted now or kept from before.
 fn add_contents(total: &mut Node, child: &Node) {
     add_totals(total, child);
-    let forget = |total: &mut Node, id: EntryId, linked: Linked| {
+    let forget = |total: &mut Node, id: FileId, linked: Linked| {
         if Arc::make_mut(&mut total.links).found(id, linked) {
             total.size -= linked.size;
             total.alloc -= linked.alloc;
@@ -515,7 +515,7 @@ fn add_contents(total: &mut Node, child: &Node) {
             alloc: child.alloc,
             kind: child.kind,
         };
-        forget(total, id, linked);
+        forget(total, id.file, linked);
     }
 }
 
@@ -568,16 +568,34 @@ fn replace_pending(tree: &mut Node, mut child: Node) {
     trim(tree);
 }
 
-fn entry_id(metadata: &std::fs::Metadata) -> EntryId {
-    EntryId {
+/// The file `metadata` is of: what a file of several links is counted
+/// once by.
+fn file_of(metadata: &std::fs::Metadata) -> FileId {
+    FileId {
         dev: meta::device(metadata),
         ino: meta::inode(metadata),
     }
 }
 
+/// The entry `name` in the folder `folder` is, as the folder's listing
+/// names it (ADR-049): what the pane's selection is matched with.
+fn entry_id(metadata: &std::fs::Metadata, folder: FileId, name: &std::ffi::OsStr) -> EntryId {
+    EntryId::in_folder(file_of(metadata), folder, name)
+}
+
+/// The entry of the folder at `path` in its parent, `metadata` its own.
+fn folder_entry(path: &Path, metadata: &std::fs::Metadata) -> EntryId {
+    let parent = path
+        .parent()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .map_or(FileId { dev: 0, ino: 0 }, |m| file_of(&m));
+    entry_id(metadata, parent, path.file_name().unwrap_or_default())
+}
+
 /// One stat per entry. Returns whether the entry is a directory to descend into.
 fn entry_node(
     entry: &std::fs::DirEntry,
+    folder: FileId,
     dev: u64,
     types: &mut Types,
 ) -> std::io::Result<(Node, bool)> {
@@ -588,7 +606,7 @@ fn entry_node(
     let name = entry.file_name();
     Ok((
         Node {
-            id: Some(entry_id(&metadata)),
+            id: Some(entry_id(&metadata, folder, &name)),
             path,
             kind: if is_dir { None } else { types.of(&name) },
             name: name.to_string_lossy().into_owned(),
@@ -748,7 +766,7 @@ impl<'a> Scanner<'a> {
         let shown = &self.request.path;
         self.preview = Some(Progress {
             tree: Node {
-                id: Some(entry_id(&metadata)),
+                id: Some(folder_entry(path, &metadata)),
                 path: path.to_path_buf(),
                 name: shown
                     .file_name()
@@ -762,6 +780,7 @@ impl<'a> Scanner<'a> {
             branch: None,
         });
         self.root_modified = meta::modified(&metadata);
+        let root = file_of(&metadata);
         let mut subdirectories = Vec::new();
         let entries = entries(path, &self.request.cancel)?;
         if !covered {
@@ -774,7 +793,7 @@ impl<'a> Scanner<'a> {
                 self.errors += 1;
                 continue;
             };
-            match entry_node(&entry, self.dev, &mut self.types) {
+            match entry_node(&entry, root, self.dev, &mut self.types) {
                 Ok((child, descend)) => {
                     if descend {
                         subdirectories.push((
@@ -898,9 +917,9 @@ impl<'a> Scanner<'a> {
                 self.errors += 1;
                 continue;
             };
-            let child_id = entry_id(&metadata);
-            let modified = meta::modified(&metadata);
             let file_name = entry.file_name();
+            let child_id = entry_id(&metadata, id.file, &file_name);
+            let modified = meta::modified(&metadata);
             let name = file_name.to_string_lossy().into_owned();
             let mut child = if !metadata.is_dir() {
                 if file_name == marks::CACHEDIR_TAG && marks::tags_a_cache(&path) {
@@ -1764,6 +1783,38 @@ pub(super) fn run(
 #[cfg(all(test, unix))]
 mod tests {
 
+    /// Usage names an entry as its folder's listing does (ADR-049), so the
+    /// pane's selection is found among its rows: each of a file's names.
+    #[test]
+    fn its_entries_are_the_listings_each_name_of_a_file_its_own() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("linked");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), b"one file").unwrap();
+        std::fs::hard_link(dir.join("a.txt"), dir.join("b.txt")).unwrap();
+        let folder = super::file_of(&std::fs::metadata(&dir).unwrap());
+        let ids: Vec<_> = ["a.txt", "b.txt"]
+            .iter()
+            .map(|name| {
+                let path = dir.join(name);
+                let usage = super::entry_id(
+                    &std::fs::symlink_metadata(&path).unwrap(),
+                    folder,
+                    name.as_ref(),
+                );
+                let listed = bibli_core::fs::stat::stat_path(&path).unwrap().id;
+                assert_eq!(usage, listed, "{name}");
+                usage
+            })
+            .collect();
+        assert_eq!(ids[0].file, ids[1].file);
+        assert_ne!(ids[0], ids[1]);
+        assert_eq!(
+            super::folder_entry(&dir, &std::fs::metadata(&dir).unwrap()),
+            { bibli_core::fs::stat::stat_path(&dir).unwrap().id }
+        );
+    }
+
     #[test]
     fn invalidation_takes_ancestors_and_descendants_only() {
         let mut cache = Cache::default();
@@ -2489,7 +2540,7 @@ mod tests {
         let request = request(0, tmp.path().into());
         let shared = shared();
         let mut cache = Cache::default();
-        let id = entry_id(&std::fs::metadata(&child).unwrap());
+        let id = folder_entry(&child, &std::fs::metadata(&child).unwrap());
         for pass in 0..2 {
             // On the second pass reuse the nested cache but recalculate its parent.
             let pending = Node {
@@ -2499,7 +2550,7 @@ mod tests {
                 ..Node::default()
             };
             let mut scan = scanner(&mut cache, &request, &shared);
-            scan.dev = id.dev;
+            scan.dev = id.file.dev;
             scan.preview = Some(Progress {
                 tree: Node {
                     dirs: 1,
@@ -2641,7 +2692,7 @@ mod tests {
             ..Scanner::new(&mut cache, &request, &request.path, &shared)
         };
         scanner
-            .directory(&request.path, 0, EntryId { dev: 0, ino: 0 }, 0)
+            .directory(&request.path, 0, EntryId::UNKNOWN, 0)
             .unwrap();
         scanner.progress(started + PROGRESS_INTERVAL / 2);
         assert!(!shared.statuses.lock()[&request.pane].updating);

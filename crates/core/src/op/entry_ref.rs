@@ -4,16 +4,16 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::entry::EntryId;
+use crate::entry::FileId;
 use crate::fs::stat::{id_of, named};
 use crate::os_path::PathArg;
 
-/// A stable reference: the entry's identity plus where we last saw it.
-/// Two references are equal when they name the same file at the same
-/// path, whatever they knew of its names.
+/// A stable reference: a file plus the name we last saw it under. Two
+/// references are equal when they name the same file at the same path,
+/// whatever they knew of its names.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EntryRef {
-    pub id: EntryId,
+    pub id: FileId,
     #[serde(with = "crate::os_path")]
     #[schemars(with = "crate::os_path::PathArg")]
     pub path: PathBuf,
@@ -49,8 +49,8 @@ pub enum ResolveError {
     #[error("“{}” is now another file", name_of(path))]
     Replaced {
         path: PathBuf,
-        expected: EntryId,
-        found: EntryId,
+        expected: FileId,
+        found: FileId,
     },
 }
 
@@ -63,7 +63,7 @@ fn name_of(path: &Path) -> std::path::Display<'_> {
 impl EntryRef {
     /// A reference that knows nothing of the file's other names: it
     /// resolves at `path` alone ([`EntryRef::only_name`]).
-    pub fn new(id: EntryId, path: impl Into<PathBuf>) -> Self {
+    pub fn new(id: FileId, path: impl Into<PathBuf>) -> Self {
         EntryRef {
             id,
             path: path.into(),
@@ -87,6 +87,14 @@ impl EntryRef {
             path,
             only_name,
         })
+    }
+
+    /// The entry this names, as a listing of its folder names it (the
+    /// file, under this name: `EntryId::in_folder`). Reads the folder's
+    /// identity: blocking.
+    pub fn entry(&self) -> Option<crate::entry::EntryId> {
+        let (dir, name) = (self.path.parent()?, self.path.file_name()?);
+        Some(crate::entry::EntryId::in_folder(self.id, id_of(dir)?, name))
     }
 
     /// Where the entry is right now. The hint is trusted only if its
@@ -170,7 +178,7 @@ pub enum EntryArg {
     /// Its identity and absolute path; the identity may be left out.
     Named {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        id: Option<EntryId>,
+        id: Option<FileId>,
         path: PathArg,
     },
 }

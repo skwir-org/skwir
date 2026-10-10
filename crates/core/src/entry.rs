@@ -10,8 +10,35 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-/// Stable identity of a filesystem object: device and inode on Unix, volume
-/// and file index on Windows. Survives renames and moves within a device.
+/// A file: the device and the inode a stat reports on Unix, the volume and
+/// the file index on Windows. The same under every name the file has (hard
+/// links) and through every link to it; it survives renames and moves
+/// within a device. What belongs to the file is kept by it: its bytes,
+/// thumbnails, fields, the notes in its attributes (ADR-049).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+pub struct FileId {
+    /// Device (or volume) number.
+    pub dev: u64,
+    /// Inode (or file index) on that device.
+    pub ino: u64,
+}
+
+/// An entry: a file under one of its names, where a location lists it.
+/// Two names of one file (hard links) are two entries; one name is one
+/// entry, however its folder is reached. What belongs to the name is kept
+/// by the entry: its row, the selection, the cut, its sidecars (ADR-049).
 #[derive(
     Clone,
     Copy,
@@ -26,22 +53,58 @@ use serde::{Deserialize, Serialize};
     schemars::JsonSchema,
 )]
 pub struct EntryId {
-    /// Device (or volume) number.
-    pub dev: u64,
-    /// Inode (or file index) on that device.
-    pub ino: u64,
+    /// The file named.
+    #[serde(flatten)]
+    pub file: FileId,
+    /// Which of its names: a hash of the folder holding the name (that
+    /// folder's own file) and the name, so it stays while a folder above
+    /// is renamed. A place's is 0.
+    #[serde(default)]
+    pub at: u64,
 }
 
 impl EntryId {
     /// The device number no filesystem gives: a place's (ADR-032).
     pub const PLACE_DEV: u64 = u64::MAX;
 
+    /// An entry not stat-ed yet, whose stat says what it is
+    /// (`fs::stat::stat_entry`).
+    pub const UNKNOWN: EntryId = EntryId {
+        file: FileId { dev: 0, ino: 0 },
+        at: 0,
+    };
+
+    /// The entry `name` in the folder `folder` is, of the file `file`.
+    pub fn in_folder(file: FileId, folder: FileId, name: &OsStr) -> EntryId {
+        EntryId {
+            file,
+            at: fnv(&[
+                &folder.dev.to_le_bytes(),
+                &folder.ino.to_le_bytes(),
+                name.as_encoded_bytes(),
+            ]),
+        }
+    }
+
+    /// The entry the name at `path` is, of the file `file`, for a location
+    /// that knows its entries by their paths and may not read their
+    /// folders to name them (what was dropped on the shelf).
+    pub fn at_path(file: FileId, path: &Path) -> EntryId {
+        EntryId {
+            file,
+            at: fnv(&[path.as_os_str().as_encoded_bytes()]),
+        }
+    }
+
     /// A place's identity, from what makes it the place it is (a tag's
     /// name, hashed by its provider): the same each time it is listed.
     pub const fn place(key: u64) -> EntryId {
         EntryId {
-            dev: Self::PLACE_DEV,
-            ino: key,
+            file: FileId {
+                dev: Self::PLACE_DEV,
+                ino: key,
+            },
+            at: 0,
         }
     }
 
@@ -49,8 +112,17 @@ impl EntryId {
     /// of its own, shown as a folder (a tag's in a tag location), which
     /// opens where `OpenLocation::location_of` says and has no path.
     pub const fn is_place(self) -> bool {
-        self.dev == Self::PLACE_DEV
+        self.file.dev == Self::PLACE_DEV
     }
+}
+
+/// FNV-1a of `parts`: a name's hash, the same in every process.
+fn fnv(parts: &[&[u8]]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in parts.iter().flat_map(|p| p.iter()) {
+        h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+    }
+    h
 }
 
 /// Kind as reported by the directory listing (`d_type`), before any stat.
@@ -323,8 +395,8 @@ impl Metadata {
 pub struct LinkTarget {
     /// What is there.
     pub kind: EntryKind,
-    /// Its own identity.
-    pub id: EntryId,
+    /// The file there.
+    pub id: FileId,
     /// Where it is, absolute and through every link of a chain: what is
     /// read to show the link (`Entry::content`), and whose name says its
     /// type (`Entry::type_name`). `None` in the rare case the path could
@@ -385,6 +457,11 @@ impl Entry {
             hidden: false,
             name_key: NameKey::default(),
         }
+    }
+
+    /// The file this entry names (`EntryId::file`).
+    pub fn file(&self) -> FileId {
+        self.id.file
     }
 
     /// Whether the entry is left out while hidden files are: its name
@@ -455,7 +532,7 @@ impl Entry {
                 path: Some(path),
             }) => crate::op::EntryRef::new(*id, path.clone())
                 .with_only_name(*kind == EntryKind::Directory || self.links() == Some(1)),
-            _ => crate::op::EntryRef::new(self.id, own).with_only_name(self.is_only_name()),
+            _ => crate::op::EntryRef::new(self.file(), own).with_only_name(self.is_only_name()),
         })
     }
 

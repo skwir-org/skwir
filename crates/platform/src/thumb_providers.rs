@@ -805,7 +805,7 @@ mod tests {
     #[test]
     fn image_decoder_accepts_by_mime_or_extension_only_for_rasters() {
         let r = |p: &str, mime: Option<&str>| ThumbRequest {
-            entry: EntryRef::new(bibli_core::EntryId { dev: 0, ino: 0 }, p),
+            entry: EntryRef::new(bibli_core::FileId { dev: 0, ino: 0 }, p),
             mime: mime.map(Into::into),
             mtime: None,
             size: CoreSize::Normal,

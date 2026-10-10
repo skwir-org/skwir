@@ -26,7 +26,7 @@ use parking_lot::{Condvar, Mutex};
 
 use bibli_core::app::App;
 use bibli_core::cancel::CancelToken;
-use bibli_core::entry::EntryId;
+use bibli_core::entry::{EntryId, FileId};
 
 use crate::index::{TagIndex, stable_hash};
 
@@ -230,7 +230,7 @@ impl Walk<'_> {
         let (app, covered) = (self.app, self.covered);
         self.folders.fetch_add(1, Ordering::Relaxed);
         // Off Unix a folder is known by its path alone (ADR-035).
-        let id = bibli_core::fs::stat::identity(dir, &meta).unwrap_or(EntryId { dev: 0, ino: 0 });
+        let id = bibli_core::fs::stat::identity(dir, &meta).unwrap_or(FileId { dev: 0, ino: 0 });
         let key = folder_key(id.dev, id.ino, dir);
         self.seen_dirs.lock().push(key);
         // Read whole: on a first count, a folder not seen here before, or
@@ -301,7 +301,9 @@ impl Walk<'_> {
                 .map(|(name, meta)| {
                     (
                         name.as_os_str(),
-                        bibli_core::fs::stat::identity(&dir.join(name), meta),
+                        // As the folder's listing names the entry.
+                        bibli_core::fs::stat::identity(&dir.join(name), meta)
+                            .map(|file| EntryId::in_folder(file, id, name)),
                         meta.is_dir(),
                     )
                 })

@@ -193,7 +193,7 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
     bar = bar.children(crate::player::render_status(shell, &theme, cx));
     // The clipboard is invisible once the pane shows another folder: say
     // what is waiting, and let a click (or Escape) forget it.
-    let waiting = shell.pending.entries.len();
+    let waiting = shell.pending.len();
     if waiting > 0 {
         let font = shell.font.clone();
         let (verb, icon) = if shell.pending.cut {

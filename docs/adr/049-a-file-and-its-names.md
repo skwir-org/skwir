@@ -2,8 +2,8 @@
 
 Status: accepted, 2026-10-10. Revises ADR-000's principle 6 ("entries
 have stable identity: device + inode") and ADR-036's first point: the
-device and the inode are the identity of a file, not of a row. Points 3
-and 7 are built; the others are the plan in Consequences.
+device and the inode are the identity of a file, not of a row. Points 1,
+2, 3 and 7 are built; the others are the plan in Consequences.
 
 ## Context
 
@@ -49,12 +49,17 @@ and offers Copy Anyway since network shares reported 0 free.
 ## Decision
 
 1. **Two identities.** A file is `FileId { dev, ino }`, what a stat says
-   (today's `EntryId`). A row is `EntryId { file, at }`, `at` a hash of
-   where the row is in its location: its name in a folder, its path
-   under the root in a search, its record in the trash, its path on the
-   shelf and in Recent; a place keeps its sentinel (ADR-032). The stat
-   functions return a `FileId`, so a comparison of a stat with a row
-   does not compile until it says which it means. What belongs to the
+   (`EntryId` before). An entry, a row, is `EntryId { file, at }`, `at`
+   a hash of the folder holding its name (that folder's own `FileId`)
+   and the name (`EntryId::in_folder`): the directory entry itself, the
+   same in a folder's listing, a search's, the trash's and Recent's
+   (`stat_entry` names every entry it stats so), kept while a folder
+   above is renamed, and two for the same name in two folders (pnpm's).
+   A location that knows its entries by path alone and may not read
+   their folders (what was dropped on the shelf, a tag's files) hashes
+   the path (`EntryId::at_path`); a place keeps its sentinel (ADR-032).
+   The stat functions return a `FileId`, so a comparison of a stat with
+   a row does not compile until it says which it means. What belongs to the
    file is keyed by the file (thumbnails, with the type they were made
    for; fields; the notes kept in attributes; Usage's links; positions),
    what belongs to the name by the row (rows, selection, cursor, cut,
@@ -121,7 +126,17 @@ sizes mean rather than estimate extents, a filesystem tool's work.
 - Built 2026-10-10: points 3 and 7, with tests of both (ops:
   `entry_ref_never_follows_a_file_to_another_of_its_names`,
   `trashing_or_deleting_a_name_gone_spares_the_files_other_name`; trash:
-  `emptying_the_trash_deletes_every_name_of_a_file_trashed_twice`). Next:
-  points 1 and 2 with the providers that dedup by inode (search's paths,
-  the trash's listing, the shelf, Recent, tag locations, the board's
-  element ids), then 4, then 5 and 6.
+  `emptying_the_trash_deletes_every_name_of_a_file_trashed_twice`). Then
+  points 1 and 2: a folder's listing, a search, the trash, the shelf,
+  Recent and a tag's files list each name; a rename is
+  `ListingEvent::Renamed`, which the folder's watcher and a search's
+  check after a plan send and the pane follows; what waits for a paste
+  is each entry by its file and name, so cutting one name dims it alone;
+  the notes snapshot is a name's; thumbnails, previews' conversions,
+  fields and Usage's hard links are a file's; Usage names its rows as the
+  folder's listing does, so its selection is the pane's. Tested by
+  `two_names_of_one_file_are_two_entries` (listing),
+  `a_file_found_under_several_names_is_a_result_under_each` (query) and
+  the pending paste's test. Left: a thumbnail's key is its file's
+  without the type it was made for, so `x.jpg` and its link `x.bin`
+  share one; points 4, 5 and 6.
