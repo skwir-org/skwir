@@ -80,14 +80,20 @@ fn run() -> Result<(), String> {
     let args = arguments()?;
     let bytes = mesh::read_bounded(&args.path, args.bytes)?;
     let mut mesh = mesh::Mesh::new(args.triangles);
-    match args.format.as_str() {
-        "stl" => mesh::stl(&bytes, &mut mesh)?,
-        "obj" => mesh::obj(&bytes, &mut mesh)?,
-        "off" => mesh::off(&bytes, &mut mesh)?,
-        "ply" => ply::read(&bytes, &mut mesh)?,
-        "gltf" => gltf_mesh::read(&bytes, &args.path, args.bytes, &mut mesh)?,
-        "3mf" => threemf::read(bytes, args.bytes, &mut mesh)?,
-        other => return Err(format!("the format {other:?} is not read here")),
+    if args.format == "3mf" {
+        threemf::read(bytes, args.bytes, &mut mesh)?;
+    } else {
+        match args.format.as_str() {
+            "stl" => mesh::stl(&bytes, &mut mesh)?,
+            "obj" => mesh::obj(&bytes, &mut mesh)?,
+            "off" => mesh::off(&bytes, &mut mesh)?,
+            "ply" => ply::read(&bytes, &mut mesh)?,
+            "gltf" => gltf_mesh::read(&bytes, &args.path, args.bytes, &mut mesh)?,
+            other => return Err(format!("the format {other:?} is not read here")),
+        }
+        // Read: the file's bytes, up to half a gigabyte, are not kept
+        // while the model is measured and drawn.
+        drop(bytes);
     }
     let (lo, hi) = mesh.bounds().ok_or("the model has no triangles")?;
     let size: Vec<f32> = (0..3).map(|axis| hi[axis] - lo[axis]).collect();
@@ -100,8 +106,7 @@ fn run() -> Result<(), String> {
         "closed": volume.is_some(),
         "volume": volume,
     });
-    let picture = draw::draw(&mesh, args.side);
-    drop(mesh);
+    let picture = draw::draw(mesh, args.side);
     let mut png = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut png, picture.width, picture.height);

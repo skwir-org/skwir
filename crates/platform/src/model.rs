@@ -154,16 +154,22 @@ pub fn draw(
         crate::sandbox::Otherwise::Run,
         &[],
     )?;
-    let finished = crate::process::run_to_exit(
+    let side = side.clamp(16, 2048);
+    // A line of what it measured, then the picture: a PNG of the side
+    // asked, at most its pixels and what a PNG adds, past what helpers
+    // that answer in text may say.
+    let output = u64::from(side) * u64::from(side) * 4 + (1 << 16);
+    let finished = crate::process::run_capped(
         run.command
             .arg(&run.input)
             .args(["--format", format.name()])
-            .args(["--side", &side.clamp(16, 2048).to_string()])
+            .args(["--side", &side.to_string()])
             .args(["--triangles", &TRIANGLES.to_string()])
             .args(["--bytes", &BYTES.to_string()]),
         None,
         cancel,
         limits::HELPER_TIMEOUT,
+        output,
     )?;
     anyhow::ensure!(
         finished.status.success(),

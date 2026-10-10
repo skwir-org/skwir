@@ -75,7 +75,7 @@ struct Flat {
 }
 
 /// The mesh drawn at most `side` pixels on its longer side.
-pub fn draw(mesh: &Mesh, side: u32) -> Picture {
+pub fn draw(mesh: Mesh, side: u32) -> Picture {
     let (az, el) = (AZIMUTH.to_radians(), ELEVATION.to_radians());
     // Toward the camera, and the picture's right and up.
     let eye = [az.sin() * el.cos(), -az.cos() * el.cos(), el.sin()];
@@ -134,6 +134,10 @@ pub fn draw(mesh: &Mesh, side: u32) -> Picture {
             })
         })
         .collect();
+    // Each triangle is a flat now: the mesh and its projection, as large
+    // again, are let go of before the picture is drawn.
+    drop(projected);
+    drop(mesh);
     let (big_w, big_h) = (width * SAMPLES, height * SAMPLES);
     let mut colour = vec![[0u8; 4]; big_w * big_h];
     let mut depth = vec![f32::NEG_INFINITY; big_w * big_h];
