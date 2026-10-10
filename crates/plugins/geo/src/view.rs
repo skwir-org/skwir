@@ -286,7 +286,7 @@ impl Scanner {
                 listing.rewritten_version(),
                 listing.is_complete(),
             );
-            let start = match self.scans.lock().get(&pane) {
+            let start = match self.scans.lock().get_mut(&pane) {
                 Some(scans) if scans.latest().cancel.is_cancelled() => Start::Fresh,
                 Some(scans) if scans.latest().source == source => return Ok(()),
                 Some(Scans { shown, .. })
@@ -295,20 +295,16 @@ impl Scanner {
                     if shown.complete {
                         Start::Quiet
                     } else {
-                        // What is still listed of what was looked at.
-                        let placed: Vec<Placed> = shown
-                            .placed
-                            .iter()
-                            .filter(|p| listing.get(p.id).is_some())
-                            .cloned()
-                            .collect();
-                        let kept = (placed.len() == shown.placed.len()).then_some(shown.generation);
-                        let looked = shown
-                            .looked
-                            .iter()
-                            .copied()
-                            .filter(|&id| listing.get(id).is_some())
-                            .collect();
+                        // What is still listed of what was looked at, taken
+                        // from the scan this one replaces below: copied,
+                        // every point found was copied at each slice of a
+                        // folder streaming.
+                        let mut placed = std::mem::take(&mut shown.placed);
+                        let before = placed.len();
+                        placed.retain(|p| listing.get(p.id).is_some());
+                        let kept = (placed.len() == before).then_some(shown.generation);
+                        let mut looked = std::mem::take(&mut shown.looked);
+                        looked.retain(|&id| listing.get(id).is_some());
                         Start::Resume(placed, looked, kept)
                     }
                 }
