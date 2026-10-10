@@ -55,6 +55,9 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 /// After the watch budget is exhausted, registrations are not retried before this.
 const WATCH_BACKOFF: Duration = Duration::from_secs(30);
 const MAX_WATCH_BACKOFF: Duration = Duration::from_secs(600);
+/// How long the watches and the cache are kept once no view shows a
+/// breakdown: what a view shown again soon finds at once, let go of after.
+const RELEASE_IDLE: Duration = Duration::from_secs(120);
 /// Never descended into, even on the request's own device.
 const VIRTUAL_FILESYSTEMS: [&str; 2] = ["/proc", "/sys"];
 
@@ -1165,7 +1168,19 @@ struct Worker {
     types: Types,
     /// Read again as each request comes: a volume mounted since has a trash.
     places: Places,
+    /// The plugin's lifetime, waited for with the messages.
+    stop: Option<bibli_core::cancel::CancelSignal>,
+    /// Since when no view has shown a breakdown.
+    idle_since: Option<Instant>,
 }
+
+/// What the worker's wait ended with.
+enum Received {
+    Message(Message),
+    Timeout,
+    Closed,
+}
+
 impl Worker {
     fn new(
         shared: Arc<Shared>,
@@ -1186,6 +1201,8 @@ impl Worker {
             backoff: Backoff::default(),
             types: Types::default(),
             places: Places::default(),
+            stop: None,
+            idle_since: None,
         }
     }
 
@@ -1194,10 +1211,12 @@ impl Worker {
     fn step(&mut self, rx: &Receiver<Message>) -> bool {
         let mut messages = std::mem::take(&mut self.deferred);
         if messages.is_empty() {
-            match rx.recv_timeout(Duration::from_millis(250)) {
-                Ok(message) => messages.push(message),
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return false,
+            let now = Instant::now();
+            self.let_go_when_idle(now);
+            match self.receive(rx, self.next_wake(now)) {
+                Received::Message(message) => messages.push(message),
+                Received::Timeout => {}
+                Received::Closed => return false,
             }
         }
         // Coalesce a burst without delaying a new visible request.
@@ -1224,6 +1243,74 @@ impl Worker {
         }
         self.update(&dirty, Instant::now());
         true
+    }
+
+    /// Wait for a message, the plugin's end, or `wait` to pass (`None`:
+    /// no time limit).
+    fn receive(&self, rx: &Receiver<Message>, wait: Option<Duration>) -> Received {
+        let never = crossbeam_channel::never::<()>();
+        let stop = self
+            .stop
+            .as_ref()
+            .map_or(&never, bibli_core::cancel::CancelSignal::receiver);
+        let timeout = wait.map_or_else(crossbeam_channel::never, crossbeam_channel::after);
+        crossbeam_channel::select! {
+            recv(rx) -> message => message.map_or(Received::Closed, Received::Message),
+            recv(stop) -> _ => Received::Closed,
+            recv(timeout) -> _ => Received::Timeout,
+        }
+    }
+
+    /// How long the worker may sleep: until a breakdown is due to be
+    /// scanned again, at most `REVALIDATE` while views show one (a request
+    /// cancelled is noticed then), until the watches and the cache are let
+    /// go of once none does, then until a message comes. It woke four
+    /// times a second for as long as the plugin was on.
+    fn next_wake(&self, now: Instant) -> Option<Duration> {
+        if self.active.is_empty() {
+            let holds = !self.roots.is_empty() || self.cache.bytes > 0;
+            return self
+                .idle_since
+                .filter(|_| holds)
+                .map(|since| (since + RELEASE_IDLE).saturating_duration_since(now));
+        }
+        self.active
+            .values()
+            .map(|state| {
+                if state.pending {
+                    return Duration::ZERO;
+                }
+                let covered = self
+                    .roots
+                    .iter()
+                    .any(|root| state.target.path.starts_with(root));
+                if covered && state.coverage == Coverage::Full {
+                    return REVALIDATE;
+                }
+                let interval = REVALIDATE.max(state.last_duration * REVALIDATE_DUTY);
+                (state.last_scan + interval)
+                    .saturating_duration_since(now)
+                    .min(REVALIDATE)
+            })
+            .min()
+    }
+
+    /// With no view showing a breakdown for `RELEASE_IDLE`, let go of the
+    /// watches (whose events woke the worker for a build under a folder
+    /// once shown) and of the cache.
+    fn let_go_when_idle(&mut self, now: Instant) {
+        if !self.active.is_empty() {
+            self.idle_since = None;
+            return;
+        }
+        let since = *self.idle_since.get_or_insert(now);
+        if now.duration_since(since) >= RELEASE_IDLE {
+            for root in std::mem::take(&mut self.roots) {
+                self.release(&root);
+            }
+            self.cache.clear();
+            self.idle_since = None;
+        }
     }
 
     /// A new request replaces the pane's previous one and is scanned at once.
@@ -1664,6 +1751,7 @@ pub(super) fn run(
     .ok()
     .map(|watcher| Box::new(watcher) as Box<dyn Watcher>);
     let mut worker = Worker::new(shared, watcher, Some(rx.clone()), changes);
+    worker.stop = Some(cancel.subscribe());
     while !cancel.is_cancelled() && worker.step(rx) {}
     // Watcher/cache destruction stays on this thread, including plugin disable and app shutdown.
 }

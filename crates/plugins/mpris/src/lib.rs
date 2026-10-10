@@ -12,7 +12,6 @@
 //! headless run) it logs once and ends.
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
-use std::time::Duration;
 
 use bibli_core::media::PlaybackStatus;
 use bibli_core::playing::{NowPlaying, PlayerRequest};
@@ -291,12 +290,11 @@ fn serve(
     let player = connection.object_server().interface::<_, Player>(PATH)?;
     let mut named = false;
     let mut last: Option<Arc<NowPlaying>> = None;
-    while !stop.is_cancelled() {
-        match changes.recv_timeout(Duration::from_millis(250)) {
-            Ok(()) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-        }
+    // Asleep until something changes: the channel ends when the plugin is
+    // turned off (its listener is dropped before `on_disable` waits for
+    // this thread) or the app goes. A timer woke it four times a second,
+    // forever.
+    while changes.recv().is_ok() && !stop.is_cancelled() {
         let Some(app) = app.upgrade() else { break };
         let current = app.player.get();
         drop(app);

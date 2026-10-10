@@ -53,8 +53,6 @@ const PIECE_MAGIC: &[u8; 4] = b"BTI1";
 
 /// How long a piece stays read unused.
 const IDLE: Duration = Duration::from_secs(180);
-/// How often the index's thread looks at what to write and let go of.
-const TICK: Duration = Duration::from_secs(1);
 /// What changed is written at most this often: a count teaches the index
 /// in batches, and each written alone would write every piece again.
 const WRITE_EVERY: Duration = Duration::from_secs(2);
@@ -475,6 +473,11 @@ pub struct TagIndex {
     /// Its thread runs: it writes what changed, a little later, and lets
     /// pieces go once unused.
     working: AtomicBool,
+    /// Wakes that thread when something changed while it slept.
+    nudge: (
+        crossbeam_channel::Sender<()>,
+        crossbeam_channel::Receiver<()>,
+    ),
     /// Itself, for that thread.
     me: Weak<TagIndex>,
 }
@@ -490,6 +493,7 @@ impl TagIndex {
             on_change: Mutex::default(),
             limit: AtomicU64::new(0),
             working: AtomicBool::new(false),
+            nudge: crossbeam_channel::bounded(1),
             me: me.clone(),
         });
         index.set_limit(
@@ -649,24 +653,32 @@ impl TagIndex {
         under
     }
 
-    /// Its thread, if it is not running: every `TICK`, it writes what
-    /// changed (at most every `WRITE_EVERY`) and tells who listens, and lets
-    /// go of the pieces unused; it ends when nothing is left to write or
-    /// read, and writes what is left when the plugin or the app ends.
+    /// Its thread, if it is not running (woken, if it is): it writes what
+    /// changed (at most every `WRITE_EVERY`) and tells who listens, and
+    /// lets go of the pieces unused, asleep until the next of these is
+    /// due (it woke every second for three minutes after any use); it
+    /// ends when nothing is left to write or read, and writes what is left
+    /// when the plugin or the app ends.
     fn work(&self) {
         if self.working.swap(true, Ordering::AcqRel) {
+            let _ = self.nudge.0.try_send(());
             return;
         }
         let this = self.me.clone();
         let signal = self.lifetime.subscribe();
+        let nudged = self.nudge.1.clone();
         let spawned = std::thread::Builder::new()
             .name("bibli-tags-index".into())
             .spawn(move || {
                 loop {
-                    let ended = !matches!(
-                        signal.receiver().recv_timeout(TICK),
-                        Err(crossbeam_channel::RecvTimeoutError::Timeout)
-                    );
+                    let Some(wait) = this.upgrade().map(|index| index.next_wait()) else {
+                        return;
+                    };
+                    let ended = crossbeam_channel::select! {
+                        recv(signal.receiver()) -> _ => true,
+                        recv(nudged) -> _ => false,
+                        recv(crossbeam_channel::after(wait)) -> _ => false,
+                    };
                     let Some(index) = this.upgrade() else { return };
                     let due = index
                         .written
@@ -696,6 +708,30 @@ impl TagIndex {
         if spawned.is_err() {
             self.working.store(false, Ordering::Release);
         }
+    }
+
+    /// How long its thread may sleep: until what changed may be written,
+    /// or the first piece read goes unused long enough to be let go of.
+    fn next_wait(&self) -> Duration {
+        let now = Instant::now();
+        let write = self.pending.load(Ordering::Acquire).then(|| {
+            self.written.lock().map_or(Duration::ZERO, |w| {
+                (w + WRITE_EVERY).saturating_duration_since(now)
+            })
+        });
+        let unload = self
+            .state
+            .lock()
+            .pieces
+            .iter()
+            .filter(|piece| piece.loaded)
+            .map(|piece| {
+                piece.used.map_or(Duration::ZERO, |u| {
+                    (u + IDLE).saturating_duration_since(now)
+                })
+            })
+            .min();
+        write.into_iter().chain(unload).min().unwrap_or(IDLE)
     }
 
     /// Let go of the pieces unused for a while and written: whether some

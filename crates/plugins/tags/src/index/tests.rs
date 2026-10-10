@@ -35,6 +35,7 @@ fn index(slot: Option<CacheSlot>, megabytes: u64) -> Arc<TagIndex> {
         on_change: Mutex::default(),
         limit: AtomicU64::new(megabytes << 20),
         working: AtomicBool::new(false),
+        nudge: crossbeam_channel::bounded(1),
         me: me.clone(),
     })
 }
