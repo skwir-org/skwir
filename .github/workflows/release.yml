@@ -1,0 +1,62 @@
+name: release
+# A tag `v<version>` makes the release's packages and a draft release on
+# GitHub holding them, its notes the changelog's section for the version.
+# Publishing the draft is a person's decision, after reading it.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  # The tag, the crates, the metainfo and the changelog say the same
+  # version, and the changelog dates it.
+  agree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: One version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          crates="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          test "$crates" = "$version" || { echo "Cargo.toml says $crates, the tag $version"; exit 1; }
+          grep -q "<release version=\"$version\" date=\"" tools/package/linux/org.skwir.skwir.metainfo.xml ||
+            { echo "the metainfo has no release $version"; exit 1; }
+          grep -q "^pkgver=$version$" tools/package/aur/PKGBUILD ||
+            { echo "the PKGBUILD is not of $version"; exit 1; }
+          grep -Eq "^## $version \([0-9]{4}-[0-9]{2}-[0-9]{2}\)$" CHANGELOG.md ||
+            { echo "CHANGELOG.md has no dated section for $version"; exit 1; }
+
+  packages:
+    needs: agree
+    uses: ./.github/workflows/packages.yml
+
+  draft:
+    needs: packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v head="## $version " 'index($0, head) == 1 { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > notes.md
+          test -s notes.md
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "skwir ${GITHUB_REF_NAME#v}" --notes-file notes.md dist/*
+      - name: The AUR's checksum
+        # The PKGBUILD's source is the tag's archive: its sum goes in
+        # sha256sums (updpkgsums) before the AUR's repository is pushed.
+        run: |
+          curl -sSfL "https://github.com/$GITHUB_REPOSITORY/archive/$GITHUB_REF_NAME.tar.gz" -o source.tar.gz
+          echo "Source archive sha256: \`$(sha256sum source.tar.gz | cut -d' ' -f1)\`" >> "$GITHUB_STEP_SUMMARY"

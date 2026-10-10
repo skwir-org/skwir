@@ -3,86 +3,82 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # A hosted runner has a fraction of a workstation's disk: no incremental
+  # sessions, and line tables alone in debug builds (a test binary with full
+  # debug info is near a gigabyte).
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
+  # What `just lint-all`, `just test-all`, `just smoke` and the rest check
+  # locally, inside the flake's dev shell, in four jobs that run at once:
+  # each has a runner's disk and cores to itself.
   check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@v16
-      - uses: DeterminateSystems/magic-nix-cache-action@v9
-      - name: Lint
-        run: nix develop --command just lint-all
-      - name: Dependencies
-        run: nix develop --command just deny
-      - name: Test
-        run: nix develop --command just test-all
-      - name: The window, driven by a script
-        # On an X display of its own with software Vulkan (Xvfb and Mesa
-        # from the flake's nixpkgs): no GPU or display needed.
-        run: nix develop --command just smoke
-      - name: Native Poppler reader
-        run: nix develop --command just poppler-check
-      - name: Native MuPDF reader
-        run: nix develop --command just mupdf-check
-      - name: Performance budgets
-        # Hosted runners are slower and noisier than the reference machine;
-        # budgets carry a 3x margin over local measurements for that reason.
-        run: nix develop --command just bench-check
-
-  # The Linux packages (ADR-040), each built in its distribution's own
-  # container and installed there, then checked (`tools/package/try.sh`
-  # does the same from any Linux, installing into a fresh root). Written
-  # in Phase 5a, never run (no remote).
-  linux-packages:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - distribution: debian
-            image: debian:13
-          - distribution: fedora
-            image: fedora:44
-          - distribution: arch
-            image: archlinux:latest
+          - name: lint
+            # The Windows and macOS builds too (check-cross), and the
+            # dependencies' licences and advisories.
+            run: just lint-all && just deny
+          - name: test
+            run: just test-all
+          - name: window
+            # The release window on an X display of its own with software
+            # Vulkan (Xvfb and Mesa from the flake's nixpkgs), driven by a
+            # script and checked on disk; then the performance budgets,
+            # which carry a 3x margin for hosted runners, slower and noisier
+            # than the reference machine.
+            run: just smoke && just bench-check
+          - name: readers
+            # The native Poppler and MuPDF readers (their first build
+            # compiles MuPDF) on synthetic PDFs.
+            run: just poppler-check && just mupdf-check
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
-    container: ${{ matrix.image }}
+    timeout-minutes: 240
     steps:
-      - uses: actions/checkout@v4
-      - name: What the build needs
+      - name: Room to build
+        # Toolchains the runner image carries and skwir never uses (the
+        # flake brings its own).
         run: |
-          tools/package/linux/prepare.sh ${{ matrix.distribution }}
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - name: Package
-        run: |
-          case ${{ matrix.distribution }} in
-          debian) tools/package/deb.sh ;;
-          fedora) tools/package/rpm.sh ;;
-          arch) chown -R builder . && su builder -c tools/package/aur/build.sh ;;
-          esac
-      - name: Installed and checked
-        run: |
-          case ${{ matrix.distribution }} in
-          debian) apt-get install -y --no-install-recommends ./target/debian/skwir_*.deb ;;
-          fedora) dnf -y install --setopt=install_weak_deps=False target/generate-rpm/skwir-*.rpm ;;
-          arch) pacman -U --noconfirm target/aur/skwir-[0-9]*.pkg.tar.zst ;;
-          esac
-          tools/package/linux/check.sh
-      - uses: actions/upload-artifact@v4
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache /usr/local/share/boost \
+            /usr/share/swift /usr/local/share/powershell /usr/local/julia*
+          df -h /
+      - uses: actions/checkout@v7
         with:
-          name: skwir-${{ matrix.distribution }}
-          path: |
-            target/debian/skwir_*.deb
-            target/generate-rpm/skwir-*.rpm
-            target/aur/skwir-*.pkg.tar.zst
-          if-no-files-found: error
+          # Nix reads the flake from git, which a shallow clone confuses.
+          fetch-depth: 0
+      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: ${{ matrix.name }}
+        run: nix develop --command sh -c '${{ matrix.run }}'
 
-  # The other systems, natively (ADR-035): written in Phase 5a, not yet run
-  # (no remote). Their failures are 5b's findings: they do not block
-  # merging until 5b says they pass, so `continue-on-error` until then.
-  # The default members only: the native workers' libraries per system are
-  # step K's, not set up here. Windows builds with the runner's MSVC; which
-  # Windows toolchain ships is 5b's decision.
+  # The Linux packages (ADR-040), each built in its distribution's own
+  # container, installed there and checked (`tools/package/try.sh` does the
+  # same from any Linux, in a fresh root of each).
+  linux-packages:
+    uses: ./.github/workflows/packages.yml
+
+  # The other systems, natively (ADR-035). Their failures are 5b's
+  # findings: they do not block merging until 5b says they pass, so
+  # `continue-on-error` until then. The default members only: the native
+  # workers' libraries per system are step K's, not set up here. Windows
+  # builds with the runner's MSVC; which Windows toolchain ships is 5b's
+  # decision.
   native:
     strategy:
       fail-fast: false
@@ -90,8 +86,9 @@ jobs:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     continue-on-error: true
+    timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt

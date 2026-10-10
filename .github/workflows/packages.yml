@@ -1,0 +1,64 @@
+name: packages
+# The Linux packages (ADR-040), each built in its distribution's own
+# container, installed there and checked; called by ci.yml for every
+# change, and by release.yml for a release's files.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distribution: debian
+            image: debian:13
+            git: apt-get update -q && apt-get install -y -q --no-install-recommends git ca-certificates
+          - distribution: fedora
+            image: fedora:44
+            git: dnf -y -q install git
+          - distribution: arch
+            image: archlinux:latest
+            git: pacman -Syu --noconfirm --needed git
+    name: ${{ matrix.distribution }}
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    timeout-minutes: 180
+    steps:
+      - name: Git
+        # Without it the checkout is no repository: the AUR's tarball is
+        # made of the tracked files, and a release build names its commit.
+        run: ${{ matrix.git }}
+      - uses: actions/checkout@v7
+      - name: What the build needs
+        run: |
+          tools/package/linux/prepare.sh ${{ matrix.distribution }}
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Package
+        run: |
+          case ${{ matrix.distribution }} in
+          debian) tools/package/deb.sh ;;
+          fedora) tools/package/rpm.sh ;;
+          arch) chown -R builder . && su builder -c tools/package/aur/build.sh ;;
+          esac
+      - name: Installed, checked and run
+        run: |
+          case ${{ matrix.distribution }} in
+          debian) apt-get install -y --no-install-recommends ./target/debian/skwir_*.deb ;;
+          fedora) dnf -y install --setopt=install_weak_deps=False target/generate-rpm/skwir-*.rpm ;;
+          arch) pacman -U --noconfirm target/aur/skwir-[0-9]*.pkg.tar.zst ;;
+          esac
+          tools/package/linux/check.sh
+          skwir --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: skwir-${{ matrix.distribution }}
+          path: |
+            target/debian/skwir*.deb
+            target/generate-rpm/skwir*.rpm
+            target/aur/skwir*.pkg.tar.zst
+            !target/aur/*-debug-*
+          if-no-files-found: error
