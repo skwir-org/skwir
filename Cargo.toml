@@ -125,6 +125,9 @@ toml = "0.9"
 rustix = { version = "1", features = ["fs"] }
 rayon = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
+# A JPEG decoded at a reduced scale for its thumbnail (zune-jpeg, image's
+# own, decodes it whole); without rayon, one thread per decode.
+jpeg-decoder = { version = "0.3", default-features = false }
 png = "0.17"
 crossbeam-channel = "0.5"
 parking_lot = "0.12"

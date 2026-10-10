@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, Seek};
 use std::path::Path;
 
 use image::metadata::Orientation;
-use image::{DynamicImage, ImageDecoder, ImageReader, ImageResult};
+use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, ImageResult};
 
 /// A reader over the picture file at `path`, its format guessed from the
 /// bytes. Opened without blocking on a FIFO (`file::open_regular`).
@@ -44,14 +44,78 @@ pub fn decode_fitted<R: BufRead + Seek>(
     reader: ImageReader<R>,
     side: u32,
 ) -> ImageResult<DynamicImage> {
-    let mut decoder = reader.into_decoder()?;
-    let orientation = orientation(&mut decoder);
-    let mut image = encoded(DynamicImage::from_decoder(decoder)?);
+    let (mut image, orientation) = if reader.format() == Some(ImageFormat::Jpeg) {
+        let mut inner = reader.into_inner();
+        match jpeg_reduced(&mut inner, side)? {
+            Some(reduced) => reduced,
+            None => whole(ImageReader::with_format(inner, ImageFormat::Jpeg))?,
+        }
+    } else {
+        whole(reader)?
+    };
     if image.width().max(image.height()) > side {
         image = image.thumbnail(side, side);
     }
     image.apply_orientation(orientation);
     Ok(image)
+}
+
+/// The picture decoded whole, and how to turn it.
+fn whole<R: BufRead + Seek>(reader: ImageReader<R>) -> ImageResult<(DynamicImage, Orientation)> {
+    let mut decoder = reader.into_decoder()?;
+    let orientation = orientation(&mut decoder);
+    Ok((encoded(DynamicImage::from_decoder(decoder)?), orientation))
+}
+
+/// What a JPEG's reduced decode may hold, as `image`'s own limit.
+const REDUCED_BYTES: usize = 512 << 20;
+
+/// A JPEG decoded at the least of its reduced scales (an eighth, a quarter,
+/// a half) still at least `side` on its longer side, and how to turn it:
+/// a photo eight times the side has an eighth of its pixels computed and
+/// held. `None`, `reader` back where it was, when no smaller scale fits, or
+/// for a JPEG this decoder reads otherwise than `image` (CMYK, 16 bits,
+/// arithmetic coding): it is decoded whole.
+fn jpeg_reduced<R: BufRead + Seek>(
+    reader: &mut R,
+    side: u32,
+) -> ImageResult<Option<(DynamicImage, Orientation)>> {
+    let start = reader
+        .stream_position()
+        .map_err(image::ImageError::IoError)?;
+    let reduced = (|| {
+        let mut jpeg = jpeg_decoder::Decoder::new(&mut *reader);
+        jpeg.set_max_decoding_buffer_size(REDUCED_BYTES);
+        jpeg.read_info().ok()?;
+        let full = jpeg.info()?;
+        let asked = u16::try_from(side).unwrap_or(u16::MAX);
+        let (width, height) = jpeg.scale(asked, asked).ok()?;
+        if (width, height) == (full.width, full.height) {
+            return None;
+        }
+        let orientation = jpeg
+            .exif_data()
+            .and_then(Orientation::from_exif_chunk)
+            .unwrap_or(Orientation::NoTransforms);
+        let pixels = jpeg.decode().ok()?;
+        let (width, height) = (u32::from(width), u32::from(height));
+        let image = match full.pixel_format {
+            jpeg_decoder::PixelFormat::L8 => {
+                DynamicImage::ImageLuma8(image::GrayImage::from_raw(width, height, pixels)?)
+            }
+            jpeg_decoder::PixelFormat::RGB24 => {
+                DynamicImage::ImageRgb8(image::RgbImage::from_raw(width, height, pixels)?)
+            }
+            _ => return None,
+        };
+        Some((image, orientation))
+    })();
+    if reduced.is_none() {
+        reader
+            .seek(std::io::SeekFrom::Start(start))
+            .map_err(image::ImageError::IoError)?;
+    }
+    Ok(reduced)
 }
 
 /// Linear light encoded as sRGB, what a screen expects: an `OpenEXR`
@@ -117,8 +181,14 @@ mod tests {
 
     /// A 3 × 2 JPEG, left column red, whose EXIF says `tag`.
     fn jpeg(tag: u16) -> Vec<u8> {
-        let pixels = image::RgbImage::from_fn(3, 2, |x, _| {
-            if x == 0 {
+        jpeg_of(3, 2, tag)
+    }
+
+    /// A `width` × `height` JPEG, its left third red, the rest blue, whose
+    /// EXIF says `tag`.
+    fn jpeg_of(width: u32, height: u32, tag: u16) -> Vec<u8> {
+        let pixels = image::RgbImage::from_fn(width, height, |x, _| {
+            if x < width.div_ceil(3) {
                 image::Rgb([255, 0, 0])
             } else {
                 image::Rgb([0, 0, 255])
@@ -165,6 +235,43 @@ mod tests {
         assert!(r > 200 && b < 60, "top row should be red");
         let [r, _, b] = image.get_pixel(1, 2).0;
         assert!(r < 60 && b > 200, "bottom row should be blue");
+    }
+
+    #[test]
+    fn a_large_jpeg_is_decoded_reduced_and_still_turned() {
+        // An eighth of 1200 × 800 is 150 × 100: what a side of 100 needs.
+        let bytes = jpeg_of(1200, 800, 6);
+        let mut cursor = Cursor::new(bytes.as_slice());
+        let (reduced, orientation) = jpeg_reduced(&mut cursor, 100).unwrap().unwrap();
+        assert_eq!((reduced.width(), reduced.height()), (150, 100));
+        assert_eq!(orientation, Orientation::Rotate90);
+        let fitted = decode_fitted(reader(&bytes), 100).unwrap().to_rgb8();
+        assert_eq!(fitted.dimensions(), (67, 100));
+        // The red left third is now the top.
+        let [r, _, b] = fitted.get_pixel(33, 5).0;
+        assert!(r > 200 && b < 60, "top should be red");
+        let [r, _, b] = fitted.get_pixel(33, 95).0;
+        assert!(r < 60 && b > 200, "bottom should be blue");
+        // As the whole decode shrunk would have it.
+        let whole = decode(reader(&bytes))
+            .unwrap()
+            .thumbnail(100, 100)
+            .to_rgb8();
+        assert_eq!(whole.dimensions(), fitted.dimensions());
+        let differ = whole
+            .as_raw()
+            .iter()
+            .zip(fitted.as_raw())
+            .filter(|(a, b)| a.abs_diff(**b) > 40)
+            .count();
+        assert!(differ * 50 < whole.as_raw().len(), "{differ} bytes differ");
+        // A small one has no smaller scale: decoded whole, from where it was.
+        let small = jpeg(6);
+        let mut cursor = Cursor::new(small.as_slice());
+        assert!(jpeg_reduced(&mut cursor, 128).unwrap().is_none());
+        assert_eq!(cursor.position(), 0);
+        let fitted = decode_fitted(reader(&small), 128).unwrap();
+        assert_eq!((fitted.width(), fitted.height()), (2, 3));
     }
 
     #[test]
