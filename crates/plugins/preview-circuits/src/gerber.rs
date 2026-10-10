@@ -432,6 +432,10 @@ fn macro_shapes(body: &[String], parameters: &[f64], scale: f64) -> Vec<(bool, S
 /// The picture being drawn, in the file's order.
 struct Image {
     out: String,
+    /// What the blocks defined hold (`Aperture::Block`), counted with
+    /// `out` against `OUT_BYTES`: a block of blocks is a copy of them, and
+    /// a chain of such held a picture's worth each, uncounted.
+    kept: usize,
     bounds: Bounds,
     color: [u8; 3],
     objects: usize,
@@ -445,7 +449,7 @@ impl Image {
 
     fn room(&mut self) -> bool {
         self.objects += 1;
-        if self.objects > OBJECTS || self.out.len() > OUT_BYTES {
+        if self.objects > OBJECTS || self.out.len() + self.kept > OUT_BYTES {
             self.left_out = true;
         }
         !self.left_out
@@ -546,7 +550,7 @@ impl Image {
                 return;
             }
             Aperture::Block(content, _) => {
-                if self.out.len() + content.len() > OUT_BYTES {
+                if self.out.len() + self.kept + content.len() > OUT_BYTES {
                     self.left_out = true;
                     return;
                 }
@@ -747,7 +751,7 @@ impl Repeat {
         'grid: for row in 0..self.rows {
             for column in 0..self.columns {
                 // As many copies as the picture has room for.
-                if image.out.len() + content.len() > OUT_BYTES {
+                if image.out.len() + image.kept + content.len() > OUT_BYTES {
                     image.left_out = true;
                     break 'grid;
                 }
@@ -805,6 +809,7 @@ pub fn draw(text: &str, name: &str, cancel: &bibli_core::CancelToken) -> anyhow:
     let mut blocks: Vec<(u32, usize, Bounds)> = Vec::new();
     let mut image = Image {
         out: String::new(),
+        kept: 0,
         bounds: Bounds::new(),
         color: function_by_name(name).map_or(OTHER, |layer| layer.color),
         objects: 0,
@@ -1113,7 +1118,20 @@ fn extended(
             let content = image.out.split_off(start);
             let inner = image.bounds;
             image.bounds = outer;
-            apertures.insert(code, Aperture::Block(content, inner));
+            // Kept within the picture's bytes: past them, the block is
+            // left empty.
+            let content = if image.out.len() + image.kept + content.len() > OUT_BYTES {
+                image.left_out = true;
+                String::new()
+            } else {
+                content
+            };
+            image.kept += content.len();
+            if let Some(Aperture::Block(old, _)) =
+                apertures.insert(code, Aperture::Block(content, inner))
+            {
+                image.kept -= old.len();
+            }
         }
     } else if let Some(spec) = statement.strip_prefix("SR") {
         // Close a repeat that was open.
@@ -1306,6 +1324,24 @@ G36*\nX0Y10000000D02*\nX10000000Y10000000D01*\nX10000000Y20000000D01*\nX0Y200000
         assert!(function_by_name("notes.gbr").is_none());
         assert!(looks_like("G04 made by hand*\n%FSLAX24Y24*%"));
         assert!(!looks_like("GIMP brush"));
+    }
+
+    #[test]
+    fn blocks_of_blocks_are_held_within_the_pictures_bytes() {
+        // Each block flashes the one before twice: a few hundred bytes
+        // that would double into a picture's worth held by every block.
+        let mut text = String::from(
+            "%FSLAX24Y24*%\n%MOIN*%\n%ADD10C,0.01*%\n%ABD11*%\nD10*\nX0Y0D03*\n%AB*%\n",
+        );
+        for code in 12..48 {
+            let before = code - 1;
+            text += &["%ABD", &code.to_string(), "*%\nD", &before.to_string()].concat();
+            text += "*\nX0Y0D03*\nX100Y0D03*\n%AB*%\n";
+        }
+        text.push_str("D47*\nX0Y0D03*\nM02*\n");
+        let drawn = draw(&text, "chain.gbr", &CancelToken::new()).unwrap();
+        assert!(drawn.left_out, "said to be cut short");
+        assert!(drawn.svg.map_or(0, |svg| svg.len()) <= OUT_BYTES + (1 << 20));
     }
 
     #[test]
