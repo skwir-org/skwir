@@ -40,7 +40,7 @@ use bibli_platform::mime::Kind;
 use gpui::{Global, Hsla, WindowAppearance, rgb};
 
 /// The color tokens every module renders with.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
     pub bg: Hsla,
     pub surface: Hsla,

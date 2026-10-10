@@ -698,6 +698,31 @@ pub struct UsageView {
     /// each key: what the arrows move among.
     laid: Laidout,
     entries: Vec<Option<EntryId>>,
+    /// The map's blocks as last built, and what from: built again only
+    /// when that changes, not at each frame (a pointer moving over the
+    /// map draws one).
+    built: Option<Built>,
+}
+
+/// The blocks of the map, built from `from`.
+struct Built {
+    from: BuiltFrom,
+    items: Rc<Vec<TreemapItem>>,
+    blocks: Rc<Vec<Block>>,
+}
+
+/// What the blocks depend on: the plugin's answer, how it is shown, what
+/// is selected, the minute (a file's age) and the colors.
+#[derive(PartialEq)]
+struct BuiltFrom {
+    root: Option<PathBuf>,
+    revision: Option<u64>,
+    mode: Mode,
+    levels: u32,
+    show_hidden: bool,
+    selection: Option<u64>,
+    minute: i64,
+    theme: Theme,
 }
 
 impl PaneView for UsageView {
@@ -836,34 +861,61 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
         .enabled(state.root.is_some())
         .render(shell, cx),
     );
+    // Read before the lock below: a second read waits behind a writer.
+    let show_hidden = shell.sort_spec().show_hidden;
+    let zoned = jiff::Zoned::now();
     let state = &shell.ui().usage;
-    let status = state.status.as_ref();
-    let mut items = Vec::new();
-    let mut blocks = Vec::new();
-    if let (Some(node), Some(root)) = (status.and_then(|s| s.tree.as_ref()), state.root.as_deref())
-    {
-        // Read before the lock below: a second read waits behind a writer.
-        let show_hidden = shell.sort_spec().show_hidden;
-        let zoned = jiff::Zoned::now();
-        let ws = shell.app.workspace.read();
-        let p = ws.pane(pane);
-        let selected = |id| p.is_some_and(|p| p.selection.contains(id));
-        let mut build = Build {
-            theme: &theme,
-            show_hidden,
-            levels: shell.levels as usize,
-            scanning: status.is_some_and(|s| s.scanning),
-            mode,
-            now: zoned.timestamp().as_second(),
-            zoned: &zoned,
-            root,
-            tree: &node.path,
-            selected: &selected,
-            blocks: Vec::new(),
-        };
-        items = build.level(node, 0, None);
-        blocks = build.blocks;
+    let from = BuiltFrom {
+        root: state.root.clone(),
+        revision: state.revision,
+        mode,
+        levels: shell.levels,
+        show_hidden,
+        selection: shell
+            .app
+            .workspace
+            .read()
+            .pane(pane)
+            .map(|p| p.selection.revision()),
+        minute: zoned.timestamp().as_second().div_euclid(60),
+        theme: theme.clone(),
+    };
+    if view.built.as_ref().is_none_or(|built| built.from != from) {
+        let status = state.status.as_ref();
+        let mut items = Vec::new();
+        let mut blocks = Vec::new();
+        if let (Some(node), Some(root)) =
+            (status.and_then(|s| s.tree.as_ref()), state.root.as_deref())
+        {
+            let ws = shell.app.workspace.read();
+            let p = ws.pane(pane);
+            let selected = |id| p.is_some_and(|p| p.selection.contains(id));
+            let mut build = Build {
+                theme: &theme,
+                show_hidden,
+                levels: shell.levels as usize,
+                scanning: status.is_some_and(|s| s.scanning),
+                mode,
+                now: zoned.timestamp().as_second(),
+                zoned: &zoned,
+                root,
+                tree: &node.path,
+                selected: &selected,
+                blocks: Vec::new(),
+            };
+            items = build.level(node, 0, None);
+            blocks = build.blocks;
+        }
+        view.built = Some(Built {
+            from,
+            items: Rc::new(items),
+            blocks: Rc::new(blocks),
+        });
     }
+    let (items, blocks) = view.built.as_ref().map_or_else(
+        || (Rc::default(), Rc::default()),
+        |built| (Rc::clone(&built.items), Rc::clone(&built.blocks)),
+    );
     view.entries = blocks
         .iter()
         .map(|b| {
@@ -895,7 +947,6 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
         },
         |b| b.hint.clone(),
     );
-    let blocks = Rc::new(blocks);
     let hovered = Rc::clone(&blocks);
     let entity = cx.entity();
     let entity2 = entity.clone();

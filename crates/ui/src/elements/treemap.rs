@@ -63,7 +63,9 @@ pub type Laidout = Rc<RefCell<Vec<(usize, Rect)>>>;
 
 pub struct Treemap {
     id: ElementId,
-    items: Vec<TreemapItem>,
+    /// Shared: a view keeps what it built while nothing it was built from
+    /// changed, and hands it again at each frame.
+    items: Rc<Vec<TreemapItem>>,
     style: TreemapStyle,
     /// The key currently reported as hovered, so the callback fires on change only.
     hovered: Option<usize>,
@@ -74,7 +76,7 @@ pub struct Treemap {
 
 pub fn treemap(
     id: impl Into<ElementId>,
-    items: Vec<TreemapItem>,
+    items: Rc<Vec<TreemapItem>>,
     style: TreemapStyle,
     on_hover: impl Fn(Option<usize>, &mut Window, &mut App) + 'static,
     on_click: impl Fn(usize, &MouseDownEvent, &mut Window, &mut App) + 'static,
