@@ -53,6 +53,8 @@ const PIECE_MAGIC: &[u8; 4] = b"BTI1";
 
 /// How long a piece stays read unused.
 const IDLE: Duration = Duration::from_secs(180);
+/// How long the first write after the thread starts waits.
+const FIRST_WRITE: Duration = Duration::from_secs(1);
 /// What changed is written at most this often: a count teaches the index
 /// in batches, and each written alone would write every piece again.
 const WRITE_EVERY: Duration = Duration::from_secs(2);
@@ -667,11 +669,13 @@ impl TagIndex {
         let this = self.me.clone();
         let signal = self.lifetime.subscribe();
         let nudged = self.nudge.1.clone();
+        // A first write waits a moment too, for what comes with the change.
+        let first = Instant::now() + FIRST_WRITE;
         let spawned = std::thread::Builder::new()
             .name("bibli-tags-index".into())
             .spawn(move || {
                 loop {
-                    let Some(wait) = this.upgrade().map(|index| index.next_wait()) else {
+                    let Some(wait) = this.upgrade().map(|index| index.next_wait(first)) else {
                         return;
                     };
                     let ended = crossbeam_channel::select! {
@@ -683,7 +687,7 @@ impl TagIndex {
                     let due = index
                         .written
                         .lock()
-                        .is_none_or(|w| w.elapsed() >= WRITE_EVERY);
+                        .map_or(Instant::now() >= first, |w| w.elapsed() >= WRITE_EVERY);
                     if index.pending.load(Ordering::Acquire) && (due || ended) {
                         index.pending.store(false, Ordering::Release);
                         index.write();
@@ -713,14 +717,16 @@ impl TagIndex {
         }
     }
 
-    /// How long its thread may sleep: until what changed may be written,
-    /// or the first piece read goes unused long enough to be let go of.
-    fn next_wait(&self) -> Duration {
+    /// How long its thread may sleep: until what changed may be written
+    /// (the thread's first write at `first`), or the first piece read goes
+    /// unused long enough to be let go of.
+    fn next_wait(&self, first: Instant) -> Duration {
         let now = Instant::now();
         let write = self.pending.load(Ordering::Acquire).then(|| {
-            self.written.lock().map_or(Duration::ZERO, |w| {
-                (w + WRITE_EVERY).saturating_duration_since(now)
-            })
+            self.written
+                .lock()
+                .map_or(first, |w| w + WRITE_EVERY)
+                .saturating_duration_since(now)
         });
         let unload = self
             .state
