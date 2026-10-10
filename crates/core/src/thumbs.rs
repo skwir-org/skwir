@@ -83,9 +83,9 @@ pub struct ThumbRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage {
     /// Reads what exists (the desktop's cache) and stores what later
-    /// providers make (`ThumbnailProvider::store`): asked only of a file
-    /// one of them takes, so what a folder shows does not depend on which
-    /// application saw it first.
+    /// providers make (`ThumbnailProvider::store`). Asked of every file:
+    /// another application may have left a picture of a type none here
+    /// makes (`Thumbnails::only_in_cache`).
     Cache,
     /// Makes a thumbnail: in-process decoders, the desktop's thumbnailers.
     Generate,
@@ -198,6 +198,9 @@ struct Flight {
     /// The best priority it was asked with.
     priority: Priority,
     cancel: CancelToken,
+    /// A provider that makes thumbnails takes it: else only a cache is
+    /// looked in (`Thumbnails::only_in_cache`).
+    made: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -399,15 +402,17 @@ impl Thumbnails {
                 return ThumbState::Pending;
             }
         }
-        // Plugin code runs outside the state lock. A cache holds what a
-        // thumbnailer made: a file none takes is no picture at once, not a
-        // worker's look in the cache for each one drawn, the window drawing
-        // a placeholder until it answers.
-        let accepted = {
+        // Plugin code runs outside the state lock. A cache may hold a
+        // picture another application made of a type none here makes.
+        let (accepted, made) = {
             let providers = self.providers.read();
-            providers
-                .iter()
-                .any(|(_, stage, p)| *stage != Stage::Cache && p.accepts(&req))
+            let takes = |cache: bool| {
+                providers
+                    .iter()
+                    .any(|(_, stage, p)| (*stage == Stage::Cache) == cache && p.accepts(&req))
+            };
+            let made = takes(false);
+            (made || takes(true), made)
         };
         let mut s = self.state.lock();
         if !accepted {
@@ -425,6 +430,7 @@ impl Thumbnails {
                 asked: frame,
                 priority,
                 cancel: self.lifetime.child(),
+                made,
             },
         );
         s.seq += 1;
@@ -438,6 +444,40 @@ impl Thumbnails {
         drop(s);
         self.spawn_worker(priority);
         ThumbState::Pending
+    }
+
+    /// Whether a provider that makes thumbnails takes `req`: else only a
+    /// cache could hold a picture of it, one another application left.
+    /// Plugin code, by the request's name and type: asked of a file not
+    /// stat-ed yet, whose picture is asked for once it is.
+    pub fn makes(&self, req: &ThumbRequest) -> bool {
+        self.providers
+            .read()
+            .iter()
+            .any(|(_, stage, p)| *stage != Stage::Cache && p.accepts(req))
+    }
+
+    /// Whether the pending request for `entry`'s picture at `size`, as of
+    /// `mtime`, is only a look in a cache: no provider that makes thumbnails
+    /// takes the file, so a picture comes only if another application left
+    /// one there, seldom. A window draws such a file as one without a
+    /// picture meanwhile, not as one whose picture is on its way, and shows
+    /// the picture if one is found. A look in a cache misses in
+    /// microseconds: one that ended since it was asked, finding nothing,
+    /// is said so too, or the window would draw a picture on its way for
+    /// a frame.
+    pub fn only_in_cache(
+        &self,
+        entry: EntryId,
+        size: ThumbSize,
+        mtime: Option<SystemTime>,
+    ) -> bool {
+        let key = (entry, size, mtime);
+        let s = self.state.lock();
+        match s.in_flight.get(&key) {
+            Some(flight) => !flight.made,
+            None => s.unavailable.contains(&key),
+        }
     }
 
     /// (decoded, skipped as stale, cached bytes)
@@ -766,6 +806,44 @@ mod tests {
             ThumbState::Ready(_)
         ));
         assert_eq!(decoder.calls.load(Ordering::Relaxed), 1);
+    }
+
+    /// A file no provider that makes thumbnails takes is still looked for
+    /// in a cache, where another application may have left a picture of
+    /// it; while it is, the request says it is only that look.
+    #[test]
+    fn a_file_only_a_cache_may_hold_is_looked_for_there() {
+        let t = Thumbnails::new(Scheduler::new(2));
+        let cache = Fake::new("cache", Stage::Cache, true);
+        // Holds the look in the cache until the test has asked.
+        let (release, held) = crossbeam_channel::bounded::<()>(0);
+        *cache.during.lock() = Some(Box::new(move || {
+            let _ = held.recv_timeout(Duration::from_secs(5));
+        }));
+        t.register("desktop", cache.clone());
+        let r = req(1);
+        assert!(matches!(
+            t.get(r.clone(), Priority::Visible),
+            ThumbState::Pending
+        ));
+        assert!(
+            t.only_in_cache(r.entry.id, r.size, r.mtime),
+            "only a look in a cache"
+        );
+        release.send(()).unwrap();
+        assert!(
+            matches!(wait_ready(&t, &r), ThumbState::Ready(_)),
+            "another application's picture"
+        );
+        assert_eq!(cache.calls.load(Ordering::Relaxed), 1);
+        // One a thumbnailer makes is not only that.
+        t.register("core", Fake::new("decoder", Stage::Generate, true));
+        let other = req(2);
+        assert!(matches!(
+            t.get(other.clone(), Priority::Visible),
+            ThumbState::Pending | ThumbState::Ready(_)
+        ));
+        assert!(!t.only_in_cache(other.entry.id, other.size, other.mtime));
     }
 
     /// A caller that keeps what it draws takes the picture out: it is not

@@ -120,10 +120,11 @@ fn bgra_render_image(width: u32, height: u32, buf: Vec<u8>) -> Option<Arc<Render
 
 impl Shell {
     /// The thumbnail for `id`, requesting it at visible priority if needed.
-    /// Entries without metadata get a hydrate request first (mtime is needed
-    /// for cache freshness) and report `Pending`.
+    /// Entries without metadata are asked for once they have it (mtime is
+    /// needed for cache freshness): meanwhile `Pending`, or `Unavailable`
+    /// for one no thumbnailer makes, drawn as its icon.
     pub fn thumb(&mut self, id: EntryId, size: ThumbSize) -> ThumbView {
-        let (key, req) = {
+        let (key, req, hydrated) = {
             let ws = self.app.workspace.read();
             let Some(pane) = ws.pane(self.pane) else {
                 return ThumbView::Unavailable;
@@ -144,9 +145,6 @@ impl Shell {
             if let Some(img) = self.thumbs.get(&key) {
                 return ThumbView::Ready(img);
             }
-            if !e.metadata.is_hydrated() {
-                return ThumbView::Pending;
-            }
             let Some(path) = pane.path_of(id) else {
                 return ThumbView::Unavailable;
             };
@@ -160,8 +158,18 @@ impl Shell {
                 mtime,
                 size,
             };
-            (key, req)
+            (key, req, e.metadata.is_hydrated())
         };
+        // Asked once stat-ed, its time keying the cache. Meanwhile one no
+        // thumbnailer makes is drawn as its icon, as while a cache alone is
+        // looked in for it, not as a picture on its way.
+        if !hydrated {
+            return if self.app.thumbnails.makes(&req) {
+                ThumbView::Pending
+            } else {
+                ThumbView::Unavailable
+            };
+        }
         self.thumb_asked(key, req)
     }
 
@@ -193,7 +201,10 @@ impl Shell {
     }
 
     /// `req` asked of the thumbnails, kept under `key` once ready: taken
-    /// from the core's, which keeps it no longer.
+    /// from the core's, which keeps it no longer. While only a cache is
+    /// looked in for it (no thumbnailer makes its type), it is drawn as a
+    /// file without a picture, its icon, not a placeholder: a picture
+    /// seldom comes, and is shown if one does.
     fn thumb_asked(&mut self, key: Key, req: ThumbRequest) -> ThumbView {
         match self.app.thumbnails.take(req, Priority::Visible) {
             ThumbState::Ready(img) => {
@@ -202,6 +213,9 @@ impl Shell {
                 };
                 self.thumbs.insert(key, Arc::clone(&ri), img.bytes());
                 ThumbView::Ready(ri)
+            }
+            ThumbState::Pending if self.app.thumbnails.only_in_cache(key.0, key.1, key.2) => {
+                ThumbView::Unavailable
             }
             ThumbState::Pending => ThumbView::Pending,
             ThumbState::Unavailable => ThumbView::Unavailable,
