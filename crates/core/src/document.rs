@@ -223,6 +223,10 @@ pub const MAX_HITS: usize = 500;
 /// without selectable text; its pixels are not lost for it.
 pub const MAX_PAGE_CHARS: usize = 200_000;
 pub const PIXELS_FILE: &str = "page.rgba";
+/// The argument that starts a worker for its first page alone (a
+/// thumbnail): it reads how many pages there are, never the outline nor
+/// the pages' labels, which a PDF's Poppler reads by loading every page.
+pub const FIRST_PAGE: &str = "--first-page";
 
 /// The worker's side of the protocol, the same for every engine: a worker
 /// greets once, then `serve` answers each request in order.

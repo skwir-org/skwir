@@ -99,6 +99,22 @@ def main():
                 assert info["labels"] == (["i", "1", "2"] if labelled else []), info["labels"]
                 hits = send(process, {"Search": {"query": "needle"}})["Matches"]
                 assert [hit["page"] for hit in hits] == [1, 2, 3]
+                process.stdin.close()
+                assert process.wait(timeout=5) == 0
+            # For a thumbnail, its first page alone: its pages counted, no
+            # outline nor labels read, the page drawn all the same.
+            with subprocess.Popen(command + ["--first-page"], env=environment,
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  text=True) as process:
+                info = reply(process, 0)["Ready"]
+                assert (info["pages"], info["outlines"], info["labels"]) == (3, [], []), info
+                first = send(process, {"Render": {"page": 1, "side": 300}})["Page"]
+                assert max(first["width"], first["height"]) == 300
+                process.stdin.close()
+                assert process.wait(timeout=5) == 0
+            with subprocess.Popen(command, env=environment, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, text=True) as process:
+                assert reply(process, 0)["Ready"]["pages"] == 3
                 assert [hit["page"] for hit in send(process, {"Search": {"query": "NEEDLE"}})["Matches"]] == [1, 2, 3]
                 assert send(process, {"Search": {"query": ""}}) == {"Matches": []}
                 assert send(process, {"Search": {"query": "absent"}}) == {"Matches": []}
@@ -161,7 +177,7 @@ def main():
         pdf.write_bytes(b"not a PDF")
         assert "Error" in json.loads(subprocess.check_output(command, env=environment, text=True))["body"]
     extra = ", book layout and locate" if args.engine == "mupdf" else ""
-    print(f"PASS ({args.engine}): pages, rotation/crop, text geometry, links, outlines, search, limits, corrupt PDF{extra}")
+    print(f"PASS ({args.engine}): pages, first page alone, rotation/crop, text geometry, links, outlines, search, limits, corrupt PDF{extra}")
 
 
 if __name__ == "__main__":

@@ -103,6 +103,9 @@ struct Launch {
 pub(crate) struct Setup {
     pub library: Option<PathBuf>,
     pub layout: Option<Layout>,
+    /// Only its first page is drawn (a thumbnail): the engine reads no
+    /// outline nor labels (`document::FIRST_PAGE`).
+    pub first_page: bool,
 }
 
 /// The pages a reflowable document (a book) is laid out into: their size
@@ -136,6 +139,7 @@ pub fn open_book(
     let setup = Setup {
         library: None,
         layout: Some(Layout::book(text_size)),
+        first_page: false,
     };
     WorkerSession::open(
         Engine::Mupdf,
@@ -175,6 +179,7 @@ pub fn first_page(
                 .filter(|_| matches!(engine, Engine::Pdfium))
                 .map(Path::to_owned),
             layout: None,
+            first_page: true,
         };
         let Some(session) = WorkerSession::open(
             engine,
@@ -572,6 +577,9 @@ impl Worker {
         command.arg(&input).arg(&run.work);
         if let Some(Layout { width, height, em }) = launch.setup.layout {
             command.arg(format!("--layout={width},{height},{em}"));
+        }
+        if launch.setup.first_page {
+            command.arg(bibli_core::document::FIRST_PAGE);
         }
         if let Some(library) = &launch.setup.library {
             command.env("BIBLI_PDFIUM_LIBRARY", library);

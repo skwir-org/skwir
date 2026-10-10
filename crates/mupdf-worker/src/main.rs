@@ -17,9 +17,9 @@ use std::path::Path;
 
 use anyhow::Context;
 use bibli_core::document::{
-    CSS_PER_POINT, Destination, DocumentInfo, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE, Outline,
-    PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest,
-    page_labels, worker,
+    CSS_PER_POINT, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE,
+    Outline, PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, TextChar, WorkerReply,
+    WorkerRequest, page_labels, worker,
 };
 use mupdf::{Colorspace, Device, Document, Matrix, Page, Pixmap, Quad, TextPageFlags};
 
@@ -47,14 +47,20 @@ fn main() {
 
 fn run() -> anyhow::Result<()> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    let first_page = args.iter().skip(2).any(|arg| arg == FIRST_PAGE);
+    let options: Vec<_> = args
+        .iter()
+        .skip(2)
+        .filter(|arg| *arg != FIRST_PAGE)
+        .collect();
     anyhow::ensure!(
-        matches!(args.len(), 2 | 3),
-        "expected document path, scratch directory and an optional layout"
+        args.len() >= 2 && options.len() <= 1,
+        "expected document path, scratch directory, an optional layout and maybe {FIRST_PAGE}"
     );
     let path = args[0]
         .to_str()
         .context("document path is not valid UTF-8")?;
-    let layout = match args.get(2) {
+    let layout = match options.first() {
         Some(arg) => Some(layout(arg.to_str().context("invalid layout")?)?),
         None => None,
     };
@@ -81,15 +87,21 @@ fn run() -> anyhow::Result<()> {
         Opened::Other(document)
     };
     let (document, labels): (&Document, _) = match &opened {
-        Opened::Pdf(pdf) => (
+        Opened::Pdf(pdf) if !first_page => (
             pdf,
             page_labels((0..pages as usize).map(|index| pdf.page_label(index).unwrap_or_default())),
         ),
+        Opened::Pdf(pdf) => (pdf, Vec::new()),
         Opened::Other(document) => (document, Vec::new()),
     };
     worker::greet(&WorkerReply::Ready(DocumentInfo {
         pages,
-        outlines: outlines(document),
+        // Its first page alone (a thumbnail): no outline.
+        outlines: if first_page {
+            Vec::new()
+        } else {
+            outlines(document)
+        },
         reflowable,
         labels,
     }))?;

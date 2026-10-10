@@ -586,6 +586,7 @@ impl PreviewProvider for DocumentPreviews {
             let setup = crate::document::Setup {
                 library: self.library.clone(),
                 layout: None,
+                first_page: false,
             };
             if let Some(session) = WorkerSession::open(
                 engine,

@@ -4,8 +4,8 @@ use std::path::Path;
 
 use anyhow::Context;
 use bibli_core::document::{
-    CSS_PER_POINT, DocumentInfo, MAX_HITS, MAX_SIDE, PIXELS_FILE, PageContent, PixelOrder, Rect,
-    SearchHit, WorkerReply, WorkerRequest, page_labels, worker,
+    CSS_PER_POINT, DocumentInfo, FIRST_PAGE, MAX_HITS, MAX_SIDE, PIXELS_FILE, PageContent,
+    PixelOrder, Rect, SearchHit, WorkerReply, WorkerRequest, page_labels, worker,
 };
 use cairo::{Context as CairoContext, Format, ImageSurface};
 use poppler::{Document, Page};
@@ -29,23 +29,37 @@ fn main() {
 
 fn run() -> anyhow::Result<()> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
-    anyhow::ensure!(args.len() == 2, "expected PDF path and scratch directory");
+    let first_page = args.get(2).is_some_and(|arg| arg == FIRST_PAGE);
+    anyhow::ensure!(
+        args.len() == 2 || (args.len() == 3 && first_page),
+        "expected PDF path, scratch directory and maybe {FIRST_PAGE}"
+    );
     let uri = glib::filename_to_uri(bibli_core::os_path::canonical(&args[0])?, None)?;
     let document = Document::from_file(&uri, None)
         .context("open PDF (encrypted files require an external reader)")?;
     let pages = u32::try_from(document.n_pages())?;
     anyhow::ensure!(pages > 0, "document has no pages");
+    // Its first page alone (a thumbnail): no outline, and no labels, which
+    // Poppler reads by loading every page.
     worker::greet(&WorkerReply::Ready(DocumentInfo {
         pages,
-        outlines: navigation::outlines(&document),
+        outlines: if first_page {
+            Vec::new()
+        } else {
+            navigation::outlines(&document)
+        },
         reflowable: false,
-        labels: page_labels((0..document.n_pages()).map(|index| {
-            document
-                .page(index)
-                .and_then(|page| page.label())
-                .map(|label| label.to_string())
-                .unwrap_or_default()
-        })),
+        labels: if first_page {
+            Vec::new()
+        } else {
+            page_labels((0..document.n_pages()).map(|index| {
+                document
+                    .page(index)
+                    .and_then(|page| page.label())
+                    .map(|label| label.to_string())
+                    .unwrap_or_default()
+            }))
+        },
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {

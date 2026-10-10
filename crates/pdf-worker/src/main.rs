@@ -6,9 +6,9 @@ use std::path::Path;
 
 use anyhow::Context;
 use bibli_core::document::{
-    CSS_PER_POINT, Destination, DocumentInfo, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE, Outline,
-    PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest,
-    page_labels, worker,
+    CSS_PER_POINT, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE,
+    Outline, PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, TextChar, WorkerReply,
+    WorkerRequest, page_labels, worker,
 };
 use pdfium_render::prelude::*;
 
@@ -63,7 +63,11 @@ fn carried(folder: &Path, library: &std::ffi::OsStr) -> [std::path::PathBuf; 2] 
 
 fn run() -> anyhow::Result<()> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
-    anyhow::ensure!(args.len() == 2, "expected PDF path and scratch directory");
+    let first_page = args.get(2).is_some_and(|arg| arg == FIRST_PAGE);
+    anyhow::ensure!(
+        args.len() == 2 || (args.len() == 3 && first_page),
+        "expected PDF path, scratch directory and maybe {FIRST_PAGE}"
+    );
     let bindings = match bindings() {
         Ok(bindings) => bindings,
         Err(error) => {
@@ -76,7 +80,7 @@ fn run() -> anyhow::Result<()> {
     let document = pdfium
         .load_pdf_from_file(Path::new(&args[0]), None)
         .context("open PDF (encrypted files require an external reader)")?;
-    let info = document_info(&document);
+    let info = document_info(&document, first_page);
     anyhow::ensure!(info.pages > 0, "document has no pages");
     worker::greet(&WorkerReply::Ready(info))?;
     let scratch = Path::new(&args[1]);
@@ -92,7 +96,17 @@ fn run() -> anyhow::Result<()> {
     })
 }
 
-fn document_info(document: &PdfDocument<'_>) -> DocumentInfo {
+/// What the document is: its pages, and unless only its first page is
+/// drawn (`first_page`), its outline and its pages' labels.
+fn document_info(document: &PdfDocument<'_>, first_page: bool) -> DocumentInfo {
+    if first_page {
+        return DocumentInfo {
+            pages: u32::from(document.pages().len()),
+            outlines: Vec::new(),
+            reflowable: false,
+            labels: Vec::new(),
+        };
+    }
     let outlines = document
         .bookmarks()
         .iter()
