@@ -995,7 +995,20 @@ fn register_commands(app: &App, trashes: &Trashes) {
                         }) as Box<dyn Operation>
                     })
                     .collect();
-                Ok(Outcome::Plan(Plan::with_steps("empty the trash", steps)))
+                let plan = Plan::with_steps("empty the trash", steps);
+                // What stays on the disk (names of its files elsewhere),
+                // said where the items are read whole: while a listing of
+                // the trash shows them, as when its button is pressed.
+                let kept = (s.read && s.items.len() == held.len())
+                    .then(|| {
+                        bibli_core::entry::kept_by_other_names(s.items.iter().map(|i| &i.entry))
+                    })
+                    .flatten()
+                    .and_then(|kept| kept.said());
+                Ok(Outcome::Plan(match kept {
+                    Some(note) => plan.with_note(note),
+                    None => plan,
+                }))
             },
         )
         .plans();

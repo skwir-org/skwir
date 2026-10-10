@@ -128,6 +128,60 @@ pub fn weight<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> u64 {
         .fold(0, |sum, (_, size)| sum.saturating_add(size))
 }
 
+/// What deleting some entries leaves on the disk (`kept_by_other_names`):
+/// their files with names among them not all their names.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Kept {
+    pub files: usize,
+    pub bytes: u64,
+}
+
+impl Kept {
+    /// What a deletion's question says of it: "2 files have names
+    /// elsewhere: 1.2 GB stays on the disk". `None` when nothing stays.
+    pub fn said(&self) -> Option<String> {
+        (self.files > 0).then(|| {
+            let (files, have) = match self.files {
+                1 => ("1 file".to_owned(), "has"),
+                n => (format!("{n} files"), "have"),
+            };
+            format!(
+                "{files} {have} names elsewhere: {} stays on the disk",
+                crate::fs::size_said(self.bytes)
+            )
+        })
+    }
+}
+
+/// What deleting `entries` leaves on the disk because their files have
+/// names besides those among them (ADR-049): each file once, its link
+/// count saying how many names it has. A link deletes itself, not what it
+/// leads to; a folder's files are not counted (what it holds is not
+/// listed here). `None` while a file's count is not known (not stat-ed
+/// yet): nothing is said rather than guessed.
+pub fn kept_by_other_names<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> Option<Kept> {
+    let mut files: std::collections::HashMap<FileId, (u64, u64, u64)> =
+        std::collections::HashMap::new();
+    for e in entries {
+        if e.is_dir() || e.is_link() || e.kind.is_special() {
+            continue;
+        }
+        let (links, size) = (
+            e.links()?,
+            e.metadata.value(keys::SIZE).and_then(Value::as_u64)?,
+        );
+        files.entry(e.file()).or_insert((links, size, 0)).2 += 1;
+    }
+    let mut kept = Kept::default();
+    for (links, size, here) in files.into_values() {
+        if here < links {
+            kept.files += 1;
+            kept.bytes = kept.bytes.saturating_add(size);
+        }
+    }
+    Some(kept)
+}
+
 /// FNV-1a of `parts`: a name's hash, the same in every process.
 fn fnv(parts: &[&[u8]]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -624,5 +678,45 @@ mod tests {
         });
         assert_eq!(weight([&a, &b, &other, &folder, &link]), 150);
         assert_eq!(weight([&other]), 50);
+    }
+
+    /// Deleting a name of a file frees nothing while another name of it
+    /// is kept: told from the link counts the listing has (ADR-049).
+    #[test]
+    fn what_a_deletion_keeps_is_told_by_link_counts() {
+        let linked = |at: u64| {
+            let mut e = sized(1, at, 100, EntryKind::File);
+            e.metadata
+                .set(keys::NLINK, Value::UInt(2), Provenance::Filesystem);
+            e
+        };
+        let (a, b) = (linked(1), linked(2));
+        let mut alone = sized(2, 1, 50, EntryKind::File);
+        alone
+            .metadata
+            .set(keys::NLINK, Value::UInt(1), Provenance::Filesystem);
+        let kept = kept_by_other_names([&a, &alone]).unwrap();
+        assert_eq!(
+            kept,
+            Kept {
+                files: 1,
+                bytes: 100
+            }
+        );
+        assert_eq!(
+            kept.said().as_deref(),
+            Some("1 file has names elsewhere: 100 B stays on the disk")
+        );
+        assert_eq!(
+            kept_by_other_names([&a, &b, &alone]).unwrap().said(),
+            None,
+            "every name goes"
+        );
+        let unknown = sized(3, 1, 10, EntryKind::File);
+        assert_eq!(
+            kept_by_other_names([&a, &unknown]),
+            None,
+            "a count not known"
+        );
     }
 }

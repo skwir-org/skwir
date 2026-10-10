@@ -5,11 +5,11 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use bibli_core::EntryId;
 use bibli_core::entry::keys;
 use bibli_core::lru::ByteLru;
 use bibli_core::scheduler::Priority;
 use bibli_core::thumbs::{Image, ThumbRequest, ThumbSize, ThumbState};
-use bibli_core::{EntryId, FileId};
 use gpui::RenderImage;
 use smallvec::SmallVec;
 
@@ -26,9 +26,9 @@ pub enum ThumbView {
 /// An entry's picture at one size, as of one modification time: a file
 /// edited in place gets a new key, so its old picture is never shown again
 /// (it ages out of the cache).
-/// A picture is of a file (ADR-049): every name of it, and every link to
-/// it, shows the same one.
-type Key = (FileId, ThumbSize, Option<SystemTime>);
+/// A picture is of a file as a type (`thumbs::key`, ADR-049): every name
+/// of it that says that type, and every link to it, shows the same one.
+type Key = bibli_core::thumbs::Key;
 
 /// Converted pictures, bounded by bytes: the memory the thumbnails setting
 /// gives (`Thumbnails::budget`). What this frame and the one before drew is
@@ -143,9 +143,16 @@ impl Shell {
                 .metadata
                 .value(keys::MODIFIED)
                 .and_then(bibli_core::Value::as_time);
-            // What is shown: a link's target, the entry's own file else.
+            // What is shown: a link's target, the entry's own file else,
+            // as the type its name says.
             let shown = e.target.as_ref().map_or(e.file(), |t| t.id);
-            let key = (shown, size, mtime);
+            let typed = bibli_platform::mime::of_entry(e);
+            let key = bibli_core::thumbs::key(
+                shown,
+                typed.as_ref().map(bibli_platform::mime::Mime::as_str),
+                size,
+                mtime,
+            );
             if let Some(img) = self.thumbs.get(&key) {
                 return ThumbView::Ready(img);
             }
@@ -158,7 +165,7 @@ impl Shell {
             };
             let req = ThumbRequest {
                 entry: content,
-                mime: bibli_platform::mime::of_entry(e).map(|m| Arc::from(m.as_str())),
+                mime: typed.map(|m| Arc::from(m.as_str())),
                 mtime,
                 size,
             };
@@ -186,10 +193,6 @@ impl Shell {
         mtime: Option<SystemTime>,
         size: ThumbSize,
     ) -> ThumbView {
-        let key = (entry.id, size, mtime);
-        if let Some(img) = self.thumbs.get(&key) {
-            return ThumbView::Ready(img);
-        }
         let type_named = entry
             .path
             .file_name()
@@ -201,6 +204,10 @@ impl Shell {
             mtime,
             size,
         };
+        let key = req.key();
+        if let Some(img) = self.thumbs.get(&key) {
+            return ThumbView::Ready(img);
+        }
         self.thumb_asked(key, req)
     }
 
@@ -218,9 +225,7 @@ impl Shell {
                 self.thumbs.insert(key, Arc::clone(&ri), img.bytes());
                 ThumbView::Ready(ri)
             }
-            ThumbState::Pending if self.app.thumbnails.only_in_cache(key.0, key.1, key.2) => {
-                ThumbView::Unavailable
-            }
+            ThumbState::Pending if self.app.thumbnails.only_in_cache(key) => ThumbView::Unavailable,
             ThumbState::Pending => ThumbView::Pending,
             ThumbState::Unavailable => ThumbView::Unavailable,
         }
@@ -230,6 +235,7 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bibli_core::FileId;
 
     fn img(px: u32) -> Arc<RenderImage> {
         to_render_image(&Image {
@@ -254,6 +260,11 @@ mod tests {
         );
     }
 
+    /// A picture of a PNG file, as the tests keep them.
+    fn key(file: FileId, mtime: Option<SystemTime>) -> Key {
+        bibli_core::thumbs::key(file, Some("image/png"), ThumbSize::Normal, mtime)
+    }
+
     #[test]
     fn an_edited_file_is_a_new_picture_and_the_cache_stays_in_budget() {
         let mut c = ThumbCache::default();
@@ -261,17 +272,17 @@ mod tests {
         let id = FileId { dev: 1, ino: 7 };
         let then = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
         let now = then + std::time::Duration::from_secs(5);
-        c.insert((id, ThumbSize::Normal, Some(then)), img(4), 64);
-        assert!(c.get(&(id, ThumbSize::Normal, Some(then))).is_some());
+        c.insert(key(id, Some(then)), img(4), 64);
+        assert!(c.get(&key(id, Some(then))).is_some());
         assert!(
-            c.get(&(id, ThumbSize::Normal, Some(now))).is_none(),
+            c.get(&key(id, Some(now))).is_none(),
             "edited since: not the old picture"
         );
         // Each in a frame of its own: once two frames old, a picture can go.
         let mut retired = 0;
         for n in 0..10 {
             retired += c.begin_frame(3 * 64).len();
-            let k = (FileId { dev: 1, ino: n }, ThumbSize::Normal, None);
+            let k = key(FileId { dev: 1, ino: n }, None);
             c.insert(k, img(4), 64);
             for _ in 0..100 {
                 c.get(&k);
@@ -290,21 +301,13 @@ mod tests {
         c.begin_frame(2 * 64);
         c.begin_frame(2 * 64);
         for n in 0..5 {
-            c.insert(
-                (FileId { dev: 1, ino: n }, ThumbSize::Normal, None),
-                img(4),
-                64,
-            );
+            c.insert(key(FileId { dev: 1, ino: n }, None), img(4), 64);
         }
         assert_eq!(c.bytes(), 5 * 64, "all drawn this frame: kept");
         c.begin_frame(2 * 64);
         assert_eq!(c.bytes(), 5 * 64, "and the next");
         c.begin_frame(2 * 64);
-        c.insert(
-            (FileId { dev: 1, ino: 9 }, ThumbSize::Normal, None),
-            img(4),
-            64,
-        );
+        c.insert(key(FileId { dev: 1, ino: 9 }, None), img(4), 64);
         assert_eq!(c.bytes(), 2 * 64, "drawn two frames ago: gone");
     }
 }

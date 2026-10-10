@@ -540,6 +540,58 @@ fn a_copy_short_of_room_asks_whether_to_go_on() {
     assert_eq!(std::fs::read(root.join("dest/a.bin")).unwrap().len(), 1000);
 }
 
+/// Deleting a name of a file for good says that its file stays on the
+/// disk while another of its names is not deleted with it (ADR-049): what
+/// the confirmation shows, told from the listing's link counts.
+#[cfg(unix)]
+#[test]
+fn deleting_one_name_of_a_file_says_it_stays_on_the_disk() {
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.txt"), b"one file").unwrap();
+    std::fs::hard_link(root.join("a.txt"), root.join("b.txt")).unwrap();
+    std::fs::write(root.join("c.txt"), b"other").unwrap();
+    let app = app(tmp.path());
+    navigate(&app, &root);
+    let pane = active(&app);
+    let ids: Vec<_> = {
+        let ws = app.workspace.read();
+        ws.pane(pane).unwrap().listing.ids().collect()
+    };
+    app.dispatch(&bibli_core::command::Invocation::with_args(
+        "hydrate",
+        &serde_json::json!({ "ids": ids }),
+    ))
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app
+        .workspace
+        .read()
+        .pane(pane)
+        .unwrap()
+        .listing
+        .iter()
+        .any(|e| e.metadata.value(bibli_core::entry::keys::NLINK).is_none())
+    {
+        assert!(std::time::Instant::now() < deadline, "never stat-ed");
+        app.pump();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    select(&app, &["a.txt", "c.txt"]);
+    let one = plan(&app, "delete", serde_json::json!({}));
+    assert_eq!(
+        one.note.as_deref(),
+        Some("1 file has names elsewhere: 8 B stays on the disk")
+    );
+    select(&app, &["a.txt", "b.txt", "c.txt"]);
+    assert_eq!(
+        plan(&app, "delete", serde_json::json!({})).note,
+        None,
+        "every name goes"
+    );
+}
+
 /// A step that cancels or pauses its own plan while it runs, so the test
 /// needs no timing.
 #[derive(Debug, Clone)]

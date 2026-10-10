@@ -235,7 +235,9 @@ fn emptying_the_trash_deletes_its_files_and_what_it_said_of_them() {
 }
 
 /// Two records whose files are one (names of one file, hard links,
-/// trashed apart) are two items, and emptying the trash deletes both.
+/// trashed apart) are two items, and emptying the trash deletes both;
+/// one whose file has a name outside the trash stays on the disk, which
+/// emptying says, its items read while the trash is listed (ADR-049).
 #[cfg(unix)]
 #[test]
 fn emptying_the_trash_deletes_every_name_of_a_file_trashed_twice() {
@@ -245,7 +247,10 @@ fn emptying_the_trash_deletes_every_name_of_a_file_trashed_twice() {
     std::fs::create_dir_all(trash.join("info")).unwrap();
     std::fs::write(trash.join("files/a.txt"), "one file").unwrap();
     std::fs::hard_link(trash.join("files/a.txt"), trash.join("files/b.txt")).unwrap();
-    for name in ["a.txt", "b.txt"] {
+    let outside = tmp.path().join("volume/kept.txt");
+    std::fs::write(&outside, "kept").unwrap();
+    std::fs::hard_link(&outside, trash.join("files/kept.txt")).unwrap();
+    for name in ["a.txt", "b.txt", "kept.txt"] {
         std::fs::write(
             trash.join(format!("info/{name}.trashinfo")),
             format!("[Trash Info]\nPath=docs/{name}\nDeletionDate=2026-10-04T09:30:00\n"),
@@ -257,9 +262,16 @@ fn emptying_the_trash_deletes_every_name_of_a_file_trashed_twice() {
         Arc::new(TrashPlugin::with_trashes(vec![trash.clone()])),
         &app,
     );
-    eventually("both are listed", || listed(&app).len() == 2);
+    eventually("all are listed", || listed(&app).len() == 3);
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::parse("trash:")).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
     let empty = plan(&app, "trash.empty", &serde_json::json!({}));
-    assert_eq!(empty.len(), 2);
+    assert_eq!(empty.len(), 3);
+    assert_eq!(
+        empty.note.as_deref(),
+        Some("1 file has names elsewhere: 4 B stays on the disk")
+    );
     let r = app.executor.execute_blocking(&empty, app.lifetime());
     assert!(r.error.is_none(), "{:?}", r.error);
     for kept in ["files", "info"] {
@@ -269,6 +281,11 @@ fn emptying_the_trash_deletes_every_name_of_a_file_trashed_twice() {
             "{kept} is empty"
         );
     }
+    assert_eq!(
+        std::fs::read(&outside).unwrap(),
+        b"kept",
+        "its other name stays"
+    );
 }
 
 /// What the trash holds is known by its files alone (the place's icon,

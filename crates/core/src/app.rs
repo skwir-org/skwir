@@ -1121,6 +1121,15 @@ impl App {
             .collect())
     }
 
+    /// What deleting the selection of `pane` would leave on the disk,
+    /// its files having names elsewhere (`entry::kept_by_other_names`),
+    /// from what its listings know: `None` while one is not stat-ed.
+    pub fn selection_kept(&self, pane: PaneId) -> Option<crate::entry::Kept> {
+        let ws = self.workspace.read();
+        let p = ws.pane(pane)?;
+        crate::entry::kept_by_other_names(p.selection.iter().filter_map(|id| p.entry(id)))
+    }
+
     /// Entry references for the current selection of a pane, in selection order.
     pub fn selected_refs(&self, pane: PaneId) -> Vec<EntryRef> {
         let refs = {
@@ -2245,8 +2254,19 @@ mod builtin {
             "Delete permanently",
             "Delete the selection, or the entries given, without trash (plan, irreversible)",
             |a, app| {
-                targets_plan(app, a.pane, a.entries, "delete permanently", |e| {
+                // What stays on the disk, said where the listing knows it:
+                // of the selection, whose rows it holds.
+                let kept = a
+                    .entries
+                    .is_empty()
+                    .then(|| app.selection_kept(app.pane_or_active(a.pane)))
+                    .flatten();
+                let plan = targets_plan(app, a.pane, a.entries, "delete permanently", |e| {
                     Box::new(op::Delete { entry: e })
+                })?;
+                Ok(match (plan, kept.and_then(|k| k.said())) {
+                    (Outcome::Plan(plan), Some(note)) => Outcome::Plan(plan.with_note(note)),
+                    (plan, _) => plan,
                 })
             },
         )

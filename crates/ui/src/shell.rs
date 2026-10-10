@@ -1495,8 +1495,13 @@ impl Shell {
         if !plan.undoable() && !plan.is_empty() {
             let n = plan.len();
             let noun = if n == 1 { "item" } else { "items" };
+            // What stays on the disk, where its maker could tell (ADR-049).
+            let note = plan
+                .note
+                .as_ref()
+                .map_or(String::new(), |n| format!(" {n}."));
             self.open_confirm(
-                format!("Delete {n} {noun} permanently? This cannot be undone."),
+                format!("Delete {n} {noun} permanently? This cannot be undone.{note}"),
                 Confirmed::Apply(plan),
                 window,
                 cx,

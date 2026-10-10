@@ -3,7 +3,7 @@
 Status: accepted, 2026-10-10. Revises ADR-000's principle 6 ("entries
 have stable identity: device + inode") and ADR-036's first point: the
 device and the inode are the identity of a file, not of a row. Every
-point is built, 4 but where a deletion asks (Consequences).
+point is built (Consequences).
 
 ## Context
 
@@ -143,12 +143,9 @@ sizes mean rather than estimate extents, a filesystem tool's work.
   selected files count each file once (`entry::weight`); Usage keeps,
   for each folder, what its files with names outside it take on disk
   (`Node::shared`), and says what deleting a folder frees where that is
-  less, and of a file that it is one of several names. Left: a
-  thumbnail's key is its file's without the type it was made for, so
-  `x.jpg` and its link `x.bin` share one; what a deletion frees, said in
-  its question (Delete for good, Empty Trash), which needs each file's
-  names counted off the window's thread; two folders selected in Usage
-  that share a file each count it (a row keeps no table of its links).
+  less, and of a file that it is one of several names. Left, as rare
+  and costly to tell: two folders selected in Usage that share a file
+  each count it (a row keeps no table of its links).
   Then point 5: a copy, and a move to another filesystem, link a later
   name of a file to the copy the plan made of it (`StepContext::
   link_copied`, its table forgetting a file once all its names are
@@ -167,3 +164,13 @@ sizes mean rather than estimate extents, a filesystem tool's work.
   and `room`'s own. Its cost: a copy's sources are walked once more
   before it starts, to size them. Not asked of a trash onto another
   volume (a volume without a trash of its own, rare).
+- Then what a deletion keeps: Delete for good of the selection, and
+  Empty Trash while its listing shows its items, note in their question
+  what stays on the disk, its files having names elsewhere
+  (`entry::kept_by_other_names`, from the link counts the listing has:
+  nothing is said while one is not known); and a thumbnail is of a file
+  as a type (`thumbs::key`, its MIME type hashed in), so `x.jpg` and its
+  link `x.bin` are two pictures. Tested by
+  `deleting_one_name_of_a_file_says_it_stays_on_the_disk`,
+  `emptying_the_trash_deletes_every_name_of_a_file_trashed_twice` and
+  `a_picture_is_of_a_file_as_a_type`.

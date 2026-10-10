@@ -173,8 +173,27 @@ pub enum ThumbState {
     Unavailable,
 }
 
-/// An entry's picture at one size, as of one modification time.
-type Key = (FileId, ThumbSize, Option<SystemTime>);
+/// A picture: of a file, as the type it was made for (its MIME type,
+/// hashed: two names of one file may say two types, `x.jpg` and its hard
+/// link `x.bin`, ADR-049), at one size, as of one modification time.
+pub type Key = (FileId, u64, ThumbSize, Option<SystemTime>);
+
+/// The picture of `file` of the MIME type `typed`, at `size`, as of
+/// `mtime`: what a request asks for ([`ThumbRequest::key`]), and what a
+/// window that keeps pictures keeps them by.
+pub fn key(file: FileId, typed: Option<&str>, size: ThumbSize, mtime: Option<SystemTime>) -> Key {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    typed.hash(&mut h);
+    (file, h.finish(), size, mtime)
+}
+
+impl ThumbRequest {
+    /// The picture this asks for ([`key`]).
+    pub fn key(&self) -> Key {
+        key(self.entry.id, self.mime.as_deref(), self.size, self.mtime)
+    }
+}
 
 /// What waits for a worker: how much it is wanted is its [`Flight`]'s,
 /// which a frame asking again updates in place.
@@ -337,7 +356,7 @@ impl Thumbnails {
         let forgotten = {
             let mut s = self.state.lock();
             let before = s.unavailable.len();
-            s.unavailable.retain(|(entry, _, _)| *entry != id);
+            s.unavailable.retain(|(entry, ..)| *entry != id);
             s.unavailable.len() != before
         };
         if forgotten {
@@ -381,7 +400,7 @@ impl Thumbnails {
     }
 
     fn ask(self: &Arc<Self>, req: ThumbRequest, priority: Priority, take: bool) -> ThumbState {
-        let key = (req.entry.id, req.size, req.mtime);
+        let key = req.key();
         {
             let mut s = self.state.lock();
             let ready = if take {
@@ -466,8 +485,7 @@ impl Thumbnails {
     /// microseconds: one that ended since it was asked, finding nothing,
     /// is said so too, or the window would draw a picture on its way for
     /// a frame.
-    pub fn only_in_cache(&self, entry: FileId, size: ThumbSize, mtime: Option<SystemTime>) -> bool {
-        let key = (entry, size, mtime);
+    pub fn only_in_cache(&self, key: Key) -> bool {
         let s = self.state.lock();
         match s.in_flight.get(&key) {
             Some(flight) => !flight.made,
@@ -691,6 +709,16 @@ impl Thumbnails {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two names of one file that say two types are two pictures; two
+    /// that say one are one (ADR-049).
+    #[test]
+    fn a_picture_is_of_a_file_as_a_type() {
+        let file = FileId { dev: 1, ino: 1 };
+        let as_type = |mime| key(file, Some(mime), ThumbSize::Normal, None);
+        assert_eq!(as_type("image/jpeg"), as_type("image/jpeg"));
+        assert_ne!(as_type("image/jpeg"), as_type("application/octet-stream"));
+    }
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
 
@@ -821,10 +849,7 @@ mod tests {
             t.get(r.clone(), Priority::Visible),
             ThumbState::Pending
         ));
-        assert!(
-            t.only_in_cache(r.entry.id, r.size, r.mtime),
-            "only a look in a cache"
-        );
+        assert!(t.only_in_cache(r.key()), "only a look in a cache");
         release.send(()).unwrap();
         assert!(
             matches!(wait_ready(&t, &r), ThumbState::Ready(_)),
@@ -838,7 +863,7 @@ mod tests {
             t.get(other.clone(), Priority::Visible),
             ThumbState::Pending | ThumbState::Ready(_)
         ));
-        assert!(!t.only_in_cache(other.entry.id, other.size, other.mtime));
+        assert!(!t.only_in_cache(other.key()));
     }
 
     /// A caller that keeps what it draws takes the picture out: it is not
