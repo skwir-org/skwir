@@ -126,8 +126,20 @@ struct Laid {
 }
 
 pub struct TreemapPrepaint {
-    blocks: Vec<Laid>,
+    blocks: Rc<Vec<Laid>>,
+    /// Where each block is, for the pointer.
+    hits: Rc<Vec<Block>>,
     hitbox: Hitbox,
+}
+
+/// What a treemap laid out, kept between frames by what it was laid out
+/// from (its items, as shared, its bounds, the font and the scale): a
+/// frame drawn as the pointer moves over the map (its hover) squarifies
+/// nothing, and cuts no label to its block, again.
+struct Kept {
+    from: (usize, Bounds<Pixels>, SharedString, u32),
+    blocks: Rc<Vec<Laid>>,
+    hits: Rc<Vec<Block>>,
 }
 
 /// Inside an open block: the margin around its children, and the band
@@ -319,32 +331,55 @@ impl Element for Treemap {
 
     fn prepaint(
         &mut self,
-        _: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        // Squarify against the real bounds: nothing here was guessed in
-        // render. A line inside them, so a block at the edge has the gap
-        // a ring is drawn over.
-        let area = Rect::new(
-            f64::from(f32::from(bounds.origin.x)) + 1.,
-            f64::from(f32::from(bounds.origin.y)) + 1.,
-            f64::from(f32::from(bounds.size.width)) - 2.,
-            f64::from(f32::from(bounds.size.height)) - 2.,
-        );
         let font = window.text_style().font();
-        let mut blocks = Vec::new();
-        {
+        let from = (
+            Rc::as_ptr(&self.items) as usize,
+            bounds,
+            font.family.clone(),
+            window.scale_factor().to_bits(),
+        );
+        let lay_out = |window: &mut Window, cx: &mut App| {
+            // Squarify against the real bounds: nothing here was guessed
+            // in render. A line inside them, so a block at the edge has
+            // the gap a ring is drawn over.
+            let area = Rect::new(
+                f64::from(f32::from(bounds.origin.x)) + 1.,
+                f64::from(f32::from(bounds.origin.y)) + 1.,
+                f64::from(f32::from(bounds.size.width)) - 2.,
+                f64::from(f32::from(bounds.size.height)) - 2.,
+            );
+            let mut blocks = Vec::new();
             let mut labels = Labels {
                 window,
                 wrapper: cx.text_system().line_wrapper(font.clone(), px(FONT)),
-                font,
+                font: font.clone(),
             };
             layout_level(&self.items, area, 0, &mut labels, &mut blocks);
-        }
+            let hits = Rc::new(blocks.iter().map(|b| b.block).collect());
+            (Rc::new(blocks), hits)
+        };
+        let (blocks, hits) = match id {
+            Some(id) => window.with_element_state(id, |kept: Option<Kept>, window| {
+                let (blocks, hits) = match kept.filter(|kept| kept.from == from) {
+                    Some(kept) => (kept.blocks, kept.hits),
+                    None => lay_out(window, cx),
+                };
+                let kept = Kept {
+                    from,
+                    blocks: Rc::clone(&blocks),
+                    hits: Rc::clone(&hits),
+                };
+                ((blocks, hits), kept)
+            }),
+            None => lay_out(window, cx),
+        };
         if let Some(record) = &self.record {
             *record.borrow_mut() = blocks
                 .iter()
@@ -363,7 +398,11 @@ impl Element for Treemap {
                 .collect();
         }
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-        TreemapPrepaint { blocks, hitbox }
+        TreemapPrepaint {
+            blocks,
+            hits,
+            hitbox,
+        }
     }
 
     fn paint(
@@ -378,7 +417,7 @@ impl Element for Treemap {
     ) {
         let style = self.style;
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            for b in &prepaint.blocks {
+            for b in prepaint.blocks.iter() {
                 let bounds = b.block.bounds;
                 window.paint_quad(quad(
                     bounds,
@@ -492,7 +531,7 @@ impl Element for Treemap {
 
         // Hover and click: hit-test the prepaint's rectangles.
         let hitbox = prepaint.hitbox.clone();
-        let blocks: Rc<Vec<Block>> = Rc::new(prepaint.blocks.iter().map(|b| b.block).collect());
+        let blocks = Rc::clone(&prepaint.hits);
         let hit_blocks = Rc::clone(&blocks);
         let hit_key = move |p: gpui::Point<Pixels>| hit(&hit_blocks, p);
         let hit_move = move |p: gpui::Point<Pixels>| hit(&blocks, p);
