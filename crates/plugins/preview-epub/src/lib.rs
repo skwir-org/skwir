@@ -109,6 +109,13 @@ impl ThumbnailProvider for Cover {
         }))
     }
 }
+/// A part of the book's XML, parsed once it is known not to nest deeper
+/// than the parser's recursion can go (`inspection::xml_depth`).
+fn parse_xml(text: &str) -> anyhow::Result<roxmltree::Document<'_>> {
+    inspection::xml_depth(text.as_bytes())?;
+    Ok(roxmltree::Document::parse(text)?)
+}
+
 /// The member a book names as its cover picture: the EPUB 3 manifest item
 /// whose properties say `cover-image`, else the item the EPUB 2
 /// `<meta name="cover">` names (by id, or by href as some tools write it).
@@ -117,7 +124,7 @@ fn cover(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<Opti
     let (_, opf_path, opf) = package_document(container, cancel)?;
     let opf_dir = opf_path.rsplit_once('/').map_or("", |(dir, _)| dir);
     let text = inspection::decode(&opf).0;
-    let doc = roxmltree::Document::parse(&text)?;
+    let doc = parse_xml(&text)?;
     let items: Vec<_> = doc
         .descendants()
         .filter(|n| n.has_tag_name("item"))
@@ -538,7 +545,7 @@ impl Container {
         };
         if let Ok(xml) = container.read("META-INF/encryption.xml", "EPUB encryption", cancel) {
             let text = inspection::decode(&xml).0;
-            if let Ok(doc) = roxmltree::Document::parse(&text) {
+            if let Ok(doc) = parse_xml(&text) {
                 for data in doc
                     .descendants()
                     .filter(|n| n.has_tag_name("EncryptedData"))
@@ -610,7 +617,7 @@ fn package_document(
     let container_xml = container.read(CONTAINER, "EPUB container", cancel)?;
     let opf_path = {
         let text = inspection::decode(&container_xml).0;
-        let doc = roxmltree::Document::parse(&text)?;
+        let doc = parse_xml(&text)?;
         doc.descendants()
             .find(|n| n.has_tag_name("rootfile"))
             .and_then(|n| n.attribute("full-path"))
@@ -632,7 +639,7 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<(r
     let fixed;
     {
         let text = inspection::decode(&opf).0;
-        let doc = roxmltree::Document::parse(&text)?;
+        let doc = parse_xml(&text)?;
         fixed = doc.descendants().any(|n| {
             n.has_tag_name("meta")
                 && n.attribute("property") == Some("rendition:layout")
@@ -684,8 +691,11 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<(r
         if !written.insert(name.clone()) {
             continue;
         }
-        // A contents document the container lacks is rbook's error to report.
-        if let Ok(bytes) = container.read(&href, "EPUB contents", cancel) {
+        // A contents document the container lacks is rbook's error to report;
+        // one nested deeper than a parser's recursion can go is left out.
+        if let Ok(bytes) = container.read(&href, "EPUB contents", cancel)
+            && inspection::xml_depth(&bytes).is_ok()
+        {
             zip.start_file(&name, stored)?;
             zip.write_all(&bytes)?;
         }
@@ -702,7 +712,7 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<(r
 fn table_of_contents(book: &rbook::Epub) -> Vec<Row> {
     let mut rows = Vec::new();
     if let Some(root) = book.toc().contents() {
-        contents(root, 0, &mut rows);
+        contents(root, 0, 0, &mut rows);
     }
     rows
 }
@@ -748,8 +758,16 @@ fn printed_pages(book: &rbook::Epub, keys: &[Option<String>]) -> Vec<PrintedPage
 
 /// Flatten a contents tree. Wrapper entries without a target (such as the
 /// root nav element) contribute no row and no indentation.
-fn contents(entry: rbook::epub::toc::EpubTocEntry<'_>, depth: usize, rows: &mut Vec<Row>) {
-    if depth > limits::NESTING || rows.len() >= limits::BLOCKS {
+fn contents(
+    entry: rbook::epub::toc::EpubTocEntry<'_>,
+    depth: usize,
+    level: usize,
+    rows: &mut Vec<Row>,
+) {
+    // `depth` counts the entries shown; `level` every one walked, those
+    // without a target too, so a contents nested deep in entries without
+    // one is not walked as deep as it goes.
+    if depth > limits::NESTING || level > limits::XML_DEPTH || rows.len() >= limits::BLOCKS {
         return;
     }
     let mut child_depth = depth;
@@ -763,7 +781,7 @@ fn contents(entry: rbook::epub::toc::EpubTocEntry<'_>, depth: usize, rows: &mut 
         child_depth += 1;
     }
     for child in entry {
-        contents(child, child_depth, rows);
+        contents(child, child_depth, level + 1, rows);
     }
 }
 

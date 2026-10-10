@@ -204,6 +204,23 @@ fn a_word_document_reads_as_its_structure() {
     assert!(read.details.contains(&("Author", "A. Writer".into())));
 }
 
+/// Alternate content nested as deep as a file says is walked within the
+/// depth every walk keeps: a few kilobytes of it overflowed the stack.
+#[test]
+fn deeply_nested_alternate_content_is_read_within_bounds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("nested.docx");
+    let depth = 20_000;
+    let body = format!(
+        "<w:p><w:r>{}<w:t>deep</w:t>{}</w:r><w:p><w:r><w:t>after</w:t></w:r></w:p></w:p>",
+        "<mc:AlternateContent><mc:Choice Requires=\"wps\">".repeat(depth),
+        "</mc:Choice></mc:AlternateContent>".repeat(depth),
+    );
+    word(&path, &body, &[], false);
+    // Read, or refused as a file too deep: never a crash.
+    let _ = docx::read(&path, 0, &CancelToken::new());
+}
+
 #[test]
 fn a_style_based_on_the_title_is_not_a_title() {
     let dir = tempfile::tempdir().unwrap();

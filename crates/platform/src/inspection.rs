@@ -54,8 +54,15 @@ pub mod limits {
     /// Element depth a walk of a document's XML follows (Word's,
     /// `OpenDocument`'s), wrappers included: what a file nests deeper is
     /// left out, rather than the walk's stack overflowing, which aborts
-    /// the whole process. The parser itself does not recurse.
+    /// the whole process.
     pub const XML_DEPTH: usize = 128;
+    /// Element depth of an XML text that is parsed at all (`xml_depth`):
+    /// the parser (roxmltree's, usvg's too) recurses once for each level,
+    /// so a few kilobytes nested twenty thousand deep overflowed the stack
+    /// and aborted the whole process. A worker's stack
+    /// (`scheduler::WORKER_STACK`) holds four times this in a release
+    /// build, twice in a debug one; no document a person made comes near.
+    pub const XML_PARSED_DEPTH: usize = 512;
     /// Style rules kept for one page, the built-in ones included; its
     /// stylesheets together are bounded by `TEXT_INPUT`.
     pub const STYLE_RULES: usize = 4000;
@@ -93,6 +100,104 @@ pub mod limits {
             format!("{bytes} bytes")
         }
     }
+}
+
+/// Refuse an XML text whose elements nest deeper than
+/// `limits::XML_PARSED_DEPTH`, before it is parsed: read as the parser
+/// reads it, without building anything, comments, character data,
+/// processing instructions and a document type passed over, and quoted
+/// attribute values within a tag.
+///
+/// # Errors
+/// When it nests too deep.
+pub fn xml_depth(text: &[u8]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        nesting(text, limits::XML_PARSED_DEPTH) <= limits::XML_PARSED_DEPTH,
+        "it nests its elements deeper than {} levels",
+        limits::XML_PARSED_DEPTH
+    );
+    Ok(())
+}
+
+/// How deep `text` nests its elements, counted up to just past `most`.
+fn nesting(text: &[u8], most: usize) -> usize {
+    let find = |from: usize, what: &[u8]| {
+        text.get(from..)
+            .and_then(|rest| rest.windows(what.len()).position(|w| w == what))
+            .map(|at| from + at + what.len())
+    };
+    let (mut depth, mut deepest, mut i) = (0usize, 0usize, 0usize);
+    while let Some(at) = text
+        .get(i..)
+        .and_then(|rest| rest.iter().position(|&b| b == b'<'))
+    {
+        i += at;
+        let rest = &text[i..];
+        let next = if rest.starts_with(b"<!--") {
+            find(i + 4, b"-->")
+        } else if rest.starts_with(b"<![CDATA[") {
+            find(i + 9, b"]]>")
+        } else if rest.starts_with(b"<?") {
+            find(i + 2, b"?>")
+        } else if rest.starts_with(b"<!") {
+            // A document type, its internal subset in brackets.
+            let mut brackets = 0usize;
+            rest.iter()
+                .enumerate()
+                .skip(2)
+                .find(|&(_, &b)| match b {
+                    b'[' => {
+                        brackets += 1;
+                        false
+                    }
+                    b']' => {
+                        brackets = brackets.saturating_sub(1);
+                        false
+                    }
+                    b'>' => brackets == 0,
+                    _ => false,
+                })
+                .map(|(n, _)| i + n + 1)
+        } else {
+            // A tag, its attributes' values quoted.
+            let mut quote = None;
+            let end = rest
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find(|&(_, &b)| match quote {
+                    Some(q) => {
+                        if b == q {
+                            quote = None;
+                        }
+                        false
+                    }
+                    None if b == b'"' || b == b'\'' => {
+                        quote = Some(b);
+                        false
+                    }
+                    None => b == b'>',
+                });
+            let Some((n, _)) = end else {
+                break;
+            };
+            if rest.get(1) == Some(&b'/') {
+                depth = depth.saturating_sub(1);
+            } else if rest[n - 1] != b'/' {
+                depth += 1;
+                deepest = deepest.max(depth);
+                if deepest > most {
+                    break;
+                }
+            }
+            Some(i + n + 1)
+        };
+        let Some(next) = next else {
+            break;
+        };
+        i = next;
+    }
+    deepest
 }
 
 pub fn check(cancel: &CancelToken) -> anyhow::Result<()> {
@@ -586,12 +691,33 @@ pub(crate) fn system_fonts() -> &'static std::sync::Arc<resvg::usvg::fontdb::Dat
 /// text set in the system's fonts. Reading those is costly the first time:
 /// a drawing without text never does.
 fn svg_tree(bytes: &[u8]) -> anyhow::Result<resvg::usvg::Tree> {
+    // Compressed (SVGZ), as usvg would read it, within the input's bound.
+    let unpacked;
+    let text = if bytes.starts_with(&[0x1f, 0x8b]) {
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(
+            &mut std::io::Read::take(
+                flate2::read::GzDecoder::new(bytes),
+                limits::BINARY_INPUT as u64 + 1,
+            ),
+            &mut out,
+        )?;
+        anyhow::ensure!(
+            out.len() <= limits::BINARY_INPUT,
+            "The drawing is too large to read"
+        );
+        unpacked = out;
+        unpacked.as_slice()
+    } else {
+        bytes
+    };
+    xml_depth(text)?;
     let mut options = resvg::usvg::Options::default();
     if bytes.windows(5).any(|window| window == b"<text") {
         options.fontdb = std::sync::Arc::clone(system_fonts());
     }
     options.image_href_resolver.resolve_string = Box::new(|_, _| None);
-    Ok(resvg::usvg::Tree::from_data(bytes, &options)?)
+    Ok(resvg::usvg::Tree::from_data(text, &options)?)
 }
 /// How a list or its notes count: `1.`, `01`, `b)`, `xiv`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -855,6 +981,47 @@ pub fn hex_page(title: String, page: &[u8], len: u64, offset: u64, position: u64
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xml_nested_past_the_parsers_reach_is_refused_before_parsing() {
+        let deep = |n: usize| format!("{}x{}", "<a>".repeat(n), "</a>".repeat(n));
+        assert!(xml_depth(deep(limits::XML_PARSED_DEPTH).as_bytes()).is_ok());
+        assert!(xml_depth(deep(limits::XML_PARSED_DEPTH + 1).as_bytes()).is_err());
+        // Twenty thousand deep: refused, where parsing it overflowed the stack.
+        assert!(xml_depth(deep(20_000).as_bytes()).is_err());
+        // Siblings, closed and self-closed elements count once.
+        let wide = "<a/><b x='>'/><c></c>".repeat(5000);
+        assert!(xml_depth(format!("<r>{wide}</r>").as_bytes()).is_ok());
+        // What is no element is not counted: comments, character data,
+        // instructions, a document type, `>` in a quoted value.
+        let text = format!(
+            "<?xml version=\"1.0\"?><!DOCTYPE r [<!ENTITY e \"<a>\">]><r a=\"<b>\" b='/>'>{}{}{}</r>",
+            "<!-- <a><a><a> -->".repeat(2000),
+            "<![CDATA[<a><a>]]>".repeat(2000),
+            "<?pi <a> ?>".repeat(2000),
+        );
+        assert_eq!(nesting(text.as_bytes(), usize::MAX), 1);
+        assert_eq!(nesting(b"<a><b/><c><d></d></c></a>", usize::MAX), 3);
+        // As deep as is let through parses on a worker's stack: XML, and
+        // an SVG of groups in groups.
+        let parsed = std::thread::Builder::new()
+            .stack_size(bibli_core::scheduler::WORKER_STACK)
+            .spawn(move || {
+                let most = deep(limits::XML_PARSED_DEPTH);
+                assert!(roxmltree::Document::parse(&most).is_ok());
+                let groups = format!(
+                    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\">{}<rect width=\"4\" height=\"4\"/>{}</svg>",
+                    "<g>".repeat(limits::XML_PARSED_DEPTH - 1),
+                    "</g>".repeat(limits::XML_PARSED_DEPTH - 1),
+                );
+                assert!(svg_tree(groups.as_bytes()).is_ok());
+                let too_deep = groups.replacen("<g>", "<g><g>", 1).replacen("</g>", "</g></g>", 1);
+                assert!(svg_tree(too_deep.as_bytes()).is_err());
+            })
+            .unwrap()
+            .join();
+        assert!(parsed.is_ok());
+    }
 
     #[test]
     fn a_picture_is_decoded_at_the_side_asked_within_bounds() {

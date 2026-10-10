@@ -28,6 +28,7 @@ const OPS: &str = "http://www.idpf.org/2007/ops";
 /// The document, or `None` when it is not well-formed XML.
 pub fn parse(source: &str) -> Option<Html> {
     let source = entities(source);
+    crate::inspection::xml_depth(source.as_bytes()).ok()?;
     let options = roxmltree::ParsingOptions {
         allow_dtd: true,
         nodes_limit: NODES,

@@ -1362,6 +1362,7 @@ fn render(
                     width = drawn.width,
                     height = drawn.height,
                 );
+                crate::inspection::xml_depth(document.as_bytes())?;
                 let tree = usvg::Tree::from_str(&document, &options)?;
                 resvg::render(&tree, view, &mut pixmap.as_mut());
             }

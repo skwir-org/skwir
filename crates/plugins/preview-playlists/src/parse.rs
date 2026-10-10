@@ -75,6 +75,7 @@ pub fn pls(source: &str) -> Vec<Track> {
 }
 
 pub fn xspf(source: &str) -> anyhow::Result<Vec<Track>> {
+    bibli_platform::inspection::xml_depth(source.as_bytes())?;
     let document = roxmltree::Document::parse(source)?;
     let text = |node: roxmltree::Node<'_, '_>, name: &str| {
         node.children()

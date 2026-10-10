@@ -84,6 +84,7 @@ pub(crate) fn resolve(base: &str, target: &str) -> Option<String> {
 
 /// The XML of a part, parsed within the node limit every document shares.
 pub(crate) fn xml(text: &str) -> anyhow::Result<roxmltree::Document<'_>> {
+    inspection::xml_depth(text.as_bytes())?;
     let options = roxmltree::ParsingOptions {
         allow_dtd: false,
         nodes_limit: NODES,

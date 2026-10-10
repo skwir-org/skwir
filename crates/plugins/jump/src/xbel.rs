@@ -20,6 +20,10 @@ pub fn default_path() -> Option<PathBuf> {
 
 /// Parse the document. Entries are returned most recently visited first.
 pub fn parse(xml: &str) -> Vec<Recent> {
+    // Nested no deeper than the parser's recursion can go.
+    if bibli_platform::inspection::xml_depth(xml.as_bytes()).is_err() {
+        return Vec::new();
+    }
     let Ok(doc) = roxmltree::Document::parse(xml) else {
         return Vec::new();
     };

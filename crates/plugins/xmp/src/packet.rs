@@ -140,9 +140,16 @@ fn simple(descriptions: &[Node<'_, '_>], ns: &str, name: &str) -> Option<String>
         .filter(|t| !t.is_empty())
 }
 
+/// The XMP document `text`, unless it is none, or nests deeper than the
+/// parser's recursion can go (a sidecar is a file like any other).
+fn parse(text: &str) -> Option<roxmltree::Document<'_>> {
+    bibli_platform::inspection::xml_depth(text.as_bytes()).ok()?;
+    roxmltree::Document::parse(text).ok()
+}
+
 /// What XMP says of a file, from a document or a packet.
 pub fn notes_of(text: &str) -> Option<Notes> {
-    let doc = roxmltree::Document::parse(text).ok()?;
+    let doc = parse(text)?;
     let descriptions = descriptions(&doc);
     if descriptions.is_empty() {
         return None;
@@ -193,7 +200,7 @@ pub fn notes_of(text: &str) -> Option<Notes> {
 
 /// The extension a sidecar says it is for (`photoshop:SidecarForExtension`).
 pub fn sidecar_for(text: &str) -> Option<String> {
-    let doc = roxmltree::Document::parse(text).ok()?;
+    let doc = parse(text)?;
     simple(&descriptions(&doc), PHOTOSHOP, "SidecarForExtension")
 }
 
@@ -245,7 +252,7 @@ enum Value {
 /// rating, description and label changed where they differ, everything
 /// else as it was. `None` when it is not XMP bibli can edit.
 pub fn edit(text: &str, notes: &Notes) -> Option<String> {
-    let doc = roxmltree::Document::parse(text).ok()?;
+    let doc = parse(text)?;
     let descriptions = descriptions(&doc);
     let first = *descriptions.first()?;
     let before = notes_of(text).unwrap_or_default();

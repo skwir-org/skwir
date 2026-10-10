@@ -26,6 +26,12 @@ pub enum Priority {
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
+/// A worker's stack, as large as the window thread's: what a worker reads
+/// recurses as deep as a file nests, within `limits::XML_PARSED_DEPTH`
+/// for XML (the parser recurses once a level), and a debug build's frames
+/// are ten times a release's. Only what is used is ever committed.
+pub const WORKER_STACK: usize = 8 << 20;
+
 struct Task {
     priority: Priority,
     seq: u64,
@@ -134,6 +140,7 @@ impl Scheduler {
             let inner = Arc::clone(&inner);
             std::thread::Builder::new()
                 .name(format!("bibli-worker-{i}"))
+                .stack_size(WORKER_STACK)
                 .spawn(move || worker(&inner))
                 .expect("spawn worker");
         }

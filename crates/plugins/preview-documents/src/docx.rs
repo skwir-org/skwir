@@ -848,8 +848,9 @@ impl Walk<'_> {
             let name = if item.tag_name().namespace().is_some_and(|n| W.contains(&n)) {
                 item.tag_name().name()
             } else if is(item, &MC, "AlternateContent") {
+                // Nested as deep as a file says: bounded as every walk is.
                 if let Some(choice) = child(item, &MC, "Choice") {
-                    self.run_content(choice, part, look, link, boxes)?;
+                    self.nested(|this| this.run_content(choice, part, look, link, boxes))?;
                 }
                 continue;
             } else {
