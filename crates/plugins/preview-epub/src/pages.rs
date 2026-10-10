@@ -19,7 +19,9 @@ use bibli_platform::{
     rich_preview::{self, Drawing, Markup},
 };
 
-use crate::{Chapter, Container, base, member_key, package, printed_pages, table_of_contents};
+use crate::{
+    Chapter, Container, Sheets, base, member_key, package, printed_pages, table_of_contents,
+};
 
 /// Pages read to find the size a page stating none is drawn at.
 const SIZE_PAGES: usize = 8;
@@ -135,11 +137,12 @@ impl FixedBook {
         };
         let source = inspection::decode(&bytes).0;
         let base = base(&page.href);
+        let mut sheets = Sheets::new();
         if let Some(drawing) = rich_preview::page(
             &source,
             markup,
             cancel,
-            chapter(&mut container, base, cancel),
+            chapter(&mut container, base, cancel, &mut sheets),
             side,
             None,
         )? {
@@ -149,7 +152,7 @@ impl FixedBook {
             &source,
             markup,
             cancel,
-            chapter(&mut container, base, cancel),
+            chapter(&mut container, base, cancel, &mut sheets),
         )?;
         if let [only] = read.blocks.as_slice()
             && let Some(Picture::Later { key, .. }) = &only.picture
@@ -161,7 +164,7 @@ impl FixedBook {
             &source,
             markup,
             cancel,
-            chapter(&mut container, base, cancel),
+            chapter(&mut container, base, cancel, &mut sheets),
             side,
             Some(self.size),
         )?
@@ -173,12 +176,14 @@ fn chapter<'a>(
     container: &'a mut Container,
     base: &'a str,
     cancel: &'a CancelToken,
+    sheets: &'a mut Sheets,
 ) -> Chapter<'a> {
     Chapter {
         container,
         base,
         cancel,
         images: true,
+        sheets,
     }
 }
 
@@ -227,6 +232,7 @@ impl DocumentSession for FixedBook {
         }
         let mut container = Container::open(&self.path, cancel)?;
         let mut hits = Vec::new();
+        let mut sheets = Sheets::new();
         for (index, page) in self.pages.iter().enumerate() {
             inspection::check(cancel)?;
             let Some(markup) = page.markup else {
@@ -241,6 +247,7 @@ impl DocumentSession for FixedBook {
                 base: base(&page.href),
                 cancel,
                 images: false,
+                sheets: &mut sheets,
             };
             let found =
                 rich_preview::html(&inspection::decode(&bytes).0, markup, cancel, resources)

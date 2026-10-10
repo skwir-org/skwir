@@ -240,6 +240,7 @@ impl PreviewProvider for Provider {
         // it (`Text/../Text/ch2.xhtml`, escaped, with a fragment).
         let keys: Vec<_> = chapters.iter().map(|href| member_key(href)).collect();
         let mut index = view.offset.min(chapters.len().saturating_sub(1) as u64) as usize;
+        let mut sheets = Sheets::new();
         let mut notice = vec![String::from(
             "Reading mode · the book's fonts, colours and page layout are not applied",
         )];
@@ -261,6 +262,7 @@ impl PreviewProvider for Provider {
                                 base: base(&chapters[candidate]),
                                 cancel,
                                 images: false,
+                                sheets: &mut sheets,
                             };
                             rich_preview::html(
                                 &inspection::decode(&bytes).0,
@@ -361,6 +363,7 @@ impl PreviewProvider for Provider {
             base,
             cancel,
             images: true,
+            sheets: &mut sheets,
         };
         let page = rich_preview::html(&source, markups[index], cancel, resources)?;
         if page.truncated {
@@ -398,7 +401,13 @@ struct Chapter<'a> {
     base: &'a str,
     cancel: &'a CancelToken,
     images: bool,
+    /// The book's stylesheets parsed, by member and the folder their URLs
+    /// are found at: a search parses each once, not once a chapter.
+    sheets: &'a mut Sheets,
 }
+
+/// The parsed stylesheets of the chapters read for one preview.
+type Sheets = HashMap<(String, String), Option<Arc<rich_preview::Parsed>>>;
 impl rich_preview::Resources for Chapter<'_> {
     /// Named by its member for the view to decode when it shows it, with
     /// the size it will be shown at, read from its header.
@@ -425,6 +434,23 @@ impl rich_preview::Resources for Chapter<'_> {
             return None;
         }
         self.container.file(&resolve(self.base, href), self.cancel)
+    }
+    fn parsed_stylesheet(&mut self, href: &str, base: &str) -> Option<Arc<rich_preview::Parsed>> {
+        if href.contains(':') {
+            return None;
+        }
+        let key = (resolve(self.base, href), base.to_owned());
+        if let Some(parsed) = self.sheets.get(&key) {
+            return parsed.clone();
+        }
+        let parsed = self
+            .stylesheet(href)
+            .map(|css| Arc::new(rich_preview::Parsed::new(&css, base)));
+        // A sheet unread for a cancel is not one the book lacks.
+        if !self.cancel.is_cancelled() {
+            self.sheets.insert(key, parsed.clone());
+        }
+        parsed
     }
     fn stylesheet(&mut self, href: &str) -> Option<String> {
         if href.contains(':') {

@@ -184,6 +184,44 @@ pub struct Sheets {
     pub faces: Vec<FontFace>,
 }
 
+/// One of a document's stylesheets, parsed: what reads several pages
+/// that link it (an EPUB's chapters, searched) parses it once.
+pub struct Parsed {
+    rules: Vec<Rule>,
+    faces: Vec<FontFace>,
+    /// Its text's length, against `limits::TEXT_INPUT`.
+    bytes: usize,
+}
+
+impl Parsed {
+    /// The stylesheet `css`, found at `base` (see [`Sheets::add`]).
+    pub fn new(css: &str, base: &str) -> Self {
+        let (rules, faces) = parse(css, Origin::Author, base, 0);
+        Parsed {
+            rules,
+            faces,
+            bytes: css.len(),
+        }
+    }
+}
+
+/// The rules of `css` (of `origin`, found at `base`) and the fonts it
+/// brings, at most what `limits::STYLE_RULES` leaves beside `held`.
+fn parse(css: &str, origin: Origin, base: &str, held: usize) -> (Vec<Rule>, Vec<FontFace>) {
+    let mut input = ParserInput::new(css);
+    let mut parser = Parser::new(&mut input);
+    let mut rules = Rules {
+        origin,
+        out: Vec::new(),
+        budget: limits::STYLE_RULES.saturating_sub(held),
+        depth: 0,
+        base: base.to_owned(),
+        faces: Vec::new(),
+    };
+    rules.sheet(&mut parser);
+    (rules.out, rules.faces)
+}
+
 /// A font a stylesheet brings: its CSS family and where the files are,
 /// relative to the page (a stylesheet's own URLs are relative to it).
 #[derive(Clone, Debug, Default)]
@@ -223,25 +261,31 @@ impl Sheets {
         if self.bytes + css.len() > limits::TEXT_INPUT {
             return;
         }
-        self.bytes += css.len();
-        self.parse(css, Origin::Author, base);
+        self.add_parsed(&Parsed::new(css, base));
     }
+
+    /// Add a stylesheet parsed already ([`Parsed::new`]), as [`add`]
+    /// would its text.
+    ///
+    /// [`add`]: Sheets::add
+    pub fn add_parsed(&mut self, sheet: &Parsed) {
+        if self.bytes + sheet.bytes > limits::TEXT_INPUT {
+            return;
+        }
+        self.bytes += sheet.bytes;
+        let room = limits::STYLE_RULES.saturating_sub(self.rules.len());
+        for rule in sheet.rules.iter().take(room) {
+            self.insert(rule.clone());
+        }
+        self.faces.extend(sheet.faces.iter().cloned());
+    }
+
     fn parse(&mut self, css: &str, origin: Origin, base: &str) {
-        let mut input = ParserInput::new(css);
-        let mut parser = Parser::new(&mut input);
-        let mut rules = Rules {
-            origin,
-            out: Vec::new(),
-            budget: limits::STYLE_RULES.saturating_sub(self.rules.len()),
-            depth: 0,
-            base: base.to_owned(),
-            faces: Vec::new(),
-        };
-        rules.sheet(&mut parser);
-        for rule in rules.out {
+        let (rules, mut faces) = parse(css, origin, base, self.rules.len());
+        for rule in rules {
             self.insert(rule);
         }
-        self.faces.append(&mut rules.faces);
+        self.faces.append(&mut faces);
     }
     fn insert(&mut self, rule: Rule) {
         let index = self.rules.len();

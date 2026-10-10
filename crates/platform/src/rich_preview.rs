@@ -18,6 +18,8 @@ pub(crate) mod xml;
 
 pub use page::{Drawing, page, stated_size};
 
+use std::sync::Arc;
+
 use crate::inspection::{check, limits, read_bounded};
 use bibli_core::{
     CancelToken,
@@ -30,6 +32,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Write,
 };
+pub use style::Parsed;
 use style::{Display, Sheets, Style};
 
 /// A page read for its structure.
@@ -60,6 +63,13 @@ pub trait Resources {
     /// A linked stylesheet's text.
     fn stylesheet(&mut self, _href: &str) -> Option<String> {
         None
+    }
+    /// A linked stylesheet parsed, its URLs found at `base`: what reads
+    /// several pages linking the same sheets keeps them parsed (an EPUB's
+    /// chapters); otherwise `stylesheet`'s text, parsed now.
+    fn parsed_stylesheet(&mut self, href: &str, base: &str) -> Option<Arc<Parsed>> {
+        let css = self.stylesheet(href)?;
+        (css.len() <= limits::TEXT_INPUT).then(|| Arc::new(Parsed::new(&css, base)))
     }
     /// A file the page names, as it is (a font, a picture a fixed page
     /// draws), within the same bounds.
@@ -245,10 +255,12 @@ fn stylesheets(doc: &Html, resources: &mut impl Resources) -> Sheets {
                 if let Some(href) = e.attr("href")
                     && !sheets.full()
                     && linked.insert(href.to_owned())
-                    && let Some(css) = resources.stylesheet(href)
                 {
                     let base = href.split(['#', '?']).next().unwrap_or(href);
-                    sheets.add(&css, base.rsplit_once('/').map_or("", |(base, _)| base));
+                    let base = base.rsplit_once('/').map_or("", |(base, _)| base);
+                    if let Some(sheet) = resources.parsed_stylesheet(href, base) {
+                        sheets.add_parsed(&sheet);
+                    }
                 }
             }
             _ => {}
