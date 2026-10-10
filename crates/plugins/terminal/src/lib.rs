@@ -32,9 +32,13 @@ const SCROLLBACK_KEY: &str = "terminal.scrollback";
 const FOLLOW_KEY: &str = "terminal.follow";
 /// Lines of history by default: what `less` of a long build log needs.
 /// A cell takes 24 bytes (alacritty's own test holds it to that), so
-/// 10,000 lines of a 120-column terminal take about 29 MB once full, and
-/// the most the setting allows, 100,000, some 290 MB.
+/// 10,000 lines of a 120-column terminal take about 29 MB once full.
 const SCROLLBACK: i64 = 10_000;
+/// The most lines of history the setting allows: about 86 MB once full at
+/// 120 columns, 145 MB at 200. A hundred thousand held 290 to 480 MB for
+/// a terminal beside a file manager, a terminal of its own's to keep.
+/// A value saved before above it is read as it.
+const SCROLLBACK_MOST: i64 = 30_000;
 
 struct Provider {
     options: Mutex<session::Options>,
@@ -78,7 +82,7 @@ fn read_options(app: &App, follow: Arc<AtomicBool>) -> session::Options {
             .settings
             .get::<i64>(SCROLLBACK_KEY)
             .unwrap_or(SCROLLBACK)
-            .clamp(0, 100_000)
+            .clamp(0, SCROLLBACK_MOST)
             .try_into()
             .unwrap_or(0),
         follow,
@@ -118,9 +122,9 @@ impl Plugin for TerminalPlugin {
             SettingSpec::integer(
                 SCROLLBACK_KEY,
                 "History",
-                "How many lines you can scroll back to, for terminals opened from now on. Once full, every 10,000 lines of a wide terminal take about 30 MB",
+                "How many lines you can scroll back to, for terminals opened from now on, at most 30,000. Once full, every 10,000 lines of a wide terminal take about 30 MB",
                 SCROLLBACK,
-                (0, 100_000),
+                (0, SCROLLBACK_MOST),
             )
             .unit("lines")
             .step(1000),
@@ -159,5 +163,26 @@ impl Plugin for TerminalPlugin {
         if let Some(provider) = self.provider.lock().take() {
             provider.stop_all();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// History is read as set, up to the most the setting allows: a
+    /// value saved when more was allowed is read as that most.
+    #[test]
+    fn history_is_capped_whatever_was_saved() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(bibli_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let follow = Arc::new(AtomicBool::new(true));
+        assert_eq!(read_options(&app, Arc::clone(&follow)).scrollback, 10_000);
+        app.settings
+            .set(SCROLLBACK_KEY, toml::Value::Integer(20_000));
+        assert_eq!(read_options(&app, Arc::clone(&follow)).scrollback, 20_000);
+        app.settings
+            .set(SCROLLBACK_KEY, toml::Value::Integer(100_000));
+        assert_eq!(read_options(&app, follow).scrollback, 30_000);
     }
 }
