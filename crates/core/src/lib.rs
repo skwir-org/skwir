@@ -76,4 +76,10 @@ pub use location::{
 };
 pub use op::{Operation, Plan};
 
+/// The application id, from the project's domain (skwir.org): the window's
+/// `app_id` and X11 class, the desktop entry's name (`org.skwir.skwir.desktop`),
+/// which the media controls name, and the metainfo's id. The packages'
+/// files (`tools/package`) spell it too.
+pub const APP_ID: &str = "org.skwir.skwir";
+
 pub mod inspection;

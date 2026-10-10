@@ -270,7 +270,7 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
                             title: Some("skwir".into()),
                             ..Default::default()
                         }),
-                        app_id: Some("org.skwir.skwir".into()),
+                        app_id: Some(skwir_core::APP_ID.into()),
                         ..Default::default()
                     },
                     |window, cx| {

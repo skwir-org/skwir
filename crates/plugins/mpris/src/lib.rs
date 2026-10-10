@@ -102,9 +102,10 @@ impl Root {
     fn identity(&self) -> &'static str {
         "skwir"
     }
+    /// The desktop entry's name, without `.desktop`: the application id.
     #[zbus(property)]
     fn desktop_entry(&self) -> &'static str {
-        "skwir"
+        skwir_core::APP_ID
     }
     #[zbus(property)]
     fn supported_uri_schemes(&self) -> Vec<&'static str> {
