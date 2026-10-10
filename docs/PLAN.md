@@ -15,6 +15,18 @@ Principles (non-negotiable, every phase is checked against them):
 Durations are relative sizes for one developer working with an AI assistant, not commitments.
 Each phase has a **Done when** gate. Do not start the next phase before the gate passes.
 
+Status (2026-10-10): the project is named skwir (skwir.org, application
+id `org.skwir.skwir`, repository `github.com/skwir-org/skwir`), version
+0.1.0, and Release 0.1's steps are done but the last: the history to
+rewrite and scan, the first push, CI green, the tag. Since 2026-10-07:
+drops that ask, plans that pause, Quit that waits for them, copies at a
+USB drive's pace and asking for room, hard links as entries of their own
+(ADR-049), archives extracted, Usage redrawn, code in bat's themes;
+then, on 2026-10-10, a pass of some eighty commits over what woke or
+worked while nothing changed (idle threads, startup, work per frame and
+per batch of metadata, memory given back). ADR-050 plans skwird, a name
+index of its own, after the release.
+
 Status (2026-10-07): Phases 0 to 4 and 6 pass their gates, and so does
 5a; 5b waits for a Mac and a Windows machine. Phase 6's gate passes:
 the hexadecimal preview again as a WebAssembly module, the same to the
@@ -2406,8 +2418,8 @@ Steps, each with what was found and what is left:
    `diff` lines, both fixed in the tree (the patch's recipe now says to
    drop those lines). Both stay in history until it is rewritten: the
    user chose (2026-10-07) one rewrite just before the first push,
-   which also gives every commit the author's GitHub address that
-   hides their own (`users.noreply.github.com`); the scan runs again
+   which also gives every commit the address the author chose for the
+   project (2026-10-10, in place of GitHub's hidden one); the scan runs again
    after it.
 2. **Panics.** Production code, by clippy's restriction lints with
    tests left out (2026-10-07): 4 `unwrap`, 77 `expect`, 5
@@ -2450,7 +2462,12 @@ Steps, each with what was found and what is left:
    declaring no points but holding bytes after its instructions is read
    past its flags. The specimen catches it per glyph and leaves that
    glyph out, as the MuPDF worker does its binding's fault with links
-   (a test builds that glyph); to report upstream. Not covered: what
+   (a test builds that glyph). Not to report: it was reported
+   (fontations#1962) and fixed in read-fonts 0.42 (skrifa 0.45) in July;
+   "its latest release" above was wrong, checked 2026-10-10 by drawing
+   that glyph with skrifa 0.44 (panics), 0.45 and 0.48 (draw it). skrifa
+   stays at 0.44 while the newest swash, gpui's rasterizer (0.2.10),
+   takes none later, and the guard with it. Not covered: what
    runs in a helper of its own (PDF, media, archives, 3D models,
    Mermaid), where a crash ends the helper, not skwir.
 4. **Files under failure.** A plan interrupted (skwir killed between
@@ -2541,7 +2558,31 @@ Steps, each with what was found and what is left:
    tests), Empty Trash and a move out of the trash across volumes (the
    test window lists the machine's own volumes' trashes), a drive's
    trail, plocate (not installed here), a drop from another
-   application.
+   application. Checked 2026-10-10, after the rename, the release
+   window on Xvfb in a user and mount namespace of its own (the
+   machine's drives covered by an empty tmpfs, so their trashes out of
+   reach; a btrfs subvolume bind-mounted at `/mnt/stick` as a second
+   volume): a file trashed on the stick cut from the Trash and pasted
+   at home (taken out with its `.trashinfo`, "Moved “stale.txt” to
+   inbox"), and Undo putting it back in the stick's trash as it was; a
+   file dropped on a trashed folder trashed as an item of its own, as
+   ADR-034 says; Empty Trash over the home trash and the stick's ("Delete
+   2 items permanently?", both emptied); the stick's folders read
+   `stick › Photos`; plocate (a database of the stick, through
+   `-d`) answering a name search of `/`, a file made after its
+   database not found, as ADR-050 says; files dragged from another X11
+   application (dragon-drop) asking, Copy Here highlighted, and copied.
+   Found: Empty Trash crashed the window (two sorted entries removed in
+   one event left the kept order's count one too high), fixed with a
+   property test of the kept order over any events. `just smoke`,
+   `poppler-check` and `mupdf-check` pass under the new name, and so
+   does `just bench-check` (all 42 budgets, load average 4.6; a first
+   run under a load of 8 to 20 missed three of images10k's, which the
+   build before the rename missed as much, alternated with it).
+   `idle-pss` on Xvfb with software Vulkan (the session's display is
+   the user's): own share 76.0 MiB (median of three, budget 100), idle
+   CPU 0.0 %; the first frame on the session's display, on a quiet
+   machine, is still to measure.
 7. **Clean**: every `#[allow]` given its reason or removed (18 of
    `dead_code`), unused dependencies, `proc-macro-error2` (which a
    future Rust refuses), the largest files split where it helps the
@@ -2566,7 +2607,7 @@ Steps, each with what was found and what is left:
    link with each one's licence and text (copyright lines included),
    made by `tools/package/notices.py` with cargo-about, offline, from
    what the build fetched, which `linux/check.sh` now checks is installed
-   (not yet run in the distributions' roots: step 10);
+   (checked in the distributions' roots 2026-10-10: step 10);
    `deny.toml` holds the dependencies to the licences shipped, RustSec's
    advisories and crates.io (`just deny`, a CI step). Found by it:
    Wasmtime 38.0.4, which runs plugins' modules, had seventeen
@@ -2606,11 +2647,33 @@ Steps, each with what was found and what is left:
    `--help`, which a report asks for.
 10. **The release**: the name, which the user is reconsidering
     (2026-10-07), settled before anything is published, and with it the
-    repository's address and the application id (now
-    `org.skwir.skwir`, hard to change once installed); version
-    0.1.0 everywhere (the crates, the packages, the AUR's source); a
-    tag, the release notes; then the history rewritten (step 1), the
-    repository published and CI green.
+    repository's address and the application id (hard to change once
+    installed); version 0.1.0 everywhere (the crates, the packages, the
+    AUR's source); a tag, the release notes; then the history rewritten
+    (step 1), the repository published and CI green. Named 2026-10-10:
+    **skwir**, at skwir.org, its repository
+    `https://github.com/skwir-org/skwir`, its application id
+    `org.skwir.skwir` (the metainfo, the desktop entry named after it,
+    the window's app_id and WM_CLASS, macOS' bundle identifier); bibli
+    became skwir everywhere, nothing reading the old names since no
+    release used them. Version 0.1.0 everywhere. CI for GitHub
+    (`.github/workflows`): the checks as four jobs at once, sized for
+    hosted runners; the packages built, installed, checked and run in
+    Debian's, Fedora's and Arch's containers for every change; a tag
+    `v<version>` drafting a release that holds them, its notes the
+    changelog's section, once the crates, the metainfo, the PKGBUILD and
+    a dated changelog agree on the version. The packages, built by
+    `tools/package/try.sh` in fresh Debian 13, Fedora 44 and Arch roots
+    (2026-10-10): each installs alone and with the others, every helper
+    answers `--probe`, the licences and the crates' notices are where
+    each distribution keeps them. Found on the way: cargo-about builds
+    its program only with `--features cli` since 0.9 (the roots tried on
+    2026-10-06 predated it, so CI's containers would have stopped there);
+    Ubuntu's runners refuse bubblewrap its namespaces until told not to;
+    the media controls named the desktop entry by the old name (the
+    application id is now one constant, `skwir_core::APP_ID`). Left: the
+    history rewritten and scanned, the first push, CI green, then the
+    tag.
 
 **Done when:** every step above is done or says why not, the packages
 built by CI install and run on Debian, Fedora and Arch, and the
