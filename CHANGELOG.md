@@ -18,11 +18,22 @@ The first release, for Linux.
 - **Changes as plans**: every operation undoable; bulk renames, an edit
   of a folder as text, and what agents and plugins propose reviewed
   before they run.
+- **Copies you can trust**: a long copy or move pauses and cancels, and
+  Quit asks while one runs, then takes back what it left half done; a
+  copy onto a USB drive goes at the drive's pace, its progress the
+  drive's; a copy short of room asks before it starts; hard links stay
+  links, and each name of a file is listed as its own.
+- **Drag and drop** asks whether to move, copy or link (or hold Shift,
+  Ctrl, Ctrl+Shift), and offers to extract an archive where it is
+  dropped.
 - **Previews**: text and code, Markdown, tables, structured files, PDFs
   in skwir's reader, office documents, books, comics, e-mails,
   notebooks, pictures, audio and video, fonts, 3D models, circuit boards,
-  maps and tracks, archives, and any file's bytes.
-- **Views of data**: disk usage, a timeline, a map.
+  maps and tracks, archives, and any file's bytes; code in bat's themes
+  or your own; a player pinned to keep playing while you move on.
+- **Views of data**: disk usage, folders inside folders, sized by room
+  or files, colored by age or kind, saying what deleting frees; a
+  timeline; a map.
 - **A terminal** that follows the folder shown.
 - **Agents and scripts** (off by default): `skwir cmd` and `skwir mcp`,
   with the permission layer between them and your files; private

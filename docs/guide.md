@@ -16,7 +16,7 @@ keys that work where the keyboard is.
 - **Panes and tabs.** Each pane has its own row: Back and Forward, the
   address, and how the pane shows its folder. `F3` splits the window into
   two panes (`Shift+F3` the other way round), `Tab` goes to the other
-  one. `Ctrl+T` opens a tab, `Ctrl+W` closes it, `Ctrl+Shift+T` brings
+  one; General says which pane closing the split closes. `Ctrl+T` opens a tab, `Ctrl+W` closes it, `Ctrl+Shift+T` brings
   back the last one closed, `Alt+1`…`Alt+9` go to a tab.
 - **More** (the sidebar's button, or the pane's row when the sidebar is
   hidden) holds what has no button of its own, and Layout: where the
@@ -27,13 +27,17 @@ keys that work where the keyboard is.
   selected and what it weighs. The last pane's footer also shows Undo,
   what waits for a paste, plans waiting for your review, and the player.
 - **Toasts** say what was done ("Moved “a.txt” to Trash"), with Undo; a
-  long plan shows its progress and a Cancel button.
+  long plan shows its progress with Pause and Cancel. Quit asks first
+  while one runs, then takes back what it left half done.
 
 ## Moving around
 
 - **The address** shows where you are as a trail. Each `›` lists the
   folders inside what is before it; a click on a segment goes there.
-  Click beside the trail, or press `Ctrl+L`, to type a path. `Alt+Up` (or
+  The trail starts at the deepest place of the sidebar that holds the
+  folder, under the sidebar's name; Appearance's Show the full path
+  starts it at `/`. Click beside the trail, or press `Ctrl+L`, to type a
+  path. `Alt+Up` (or
   `Backspace`) goes to the parent, `Alt+Left` and `Alt+Right` back and
   forward; a right-click on Back or Forward lists the history.
 - **Jump** (`Ctrl+J`) goes to a folder you used before, from zoxide's
@@ -68,8 +72,9 @@ or `Ctrl+wheel`).
   room they take or the files they hold, or color them by when they
   last changed or the kinds of files that fill them. A dashed line
   marks a cache or a trash: room you can have back without losing what
-  you keep. Moving files to the Trash frees nothing until it is
-  emptied.
+  you keep. Where some of a folder's files have names elsewhere (hard
+  links), it says what deleting the folder would free. Moving files to
+  the Trash frees nothing until it is emptied.
 - **Map** (`Ctrl+5`) places pictures, tracks and plans where they were
   taken or go. Its background is drawn from data skwir carries; a
   background that downloads tiles is used only once you choose one.
@@ -84,9 +89,18 @@ or `Ctrl+wheel`).
   the menu, as a right-click does.
 - **Copy, cut, paste**: `Ctrl+C`, `Ctrl+X`, `Ctrl+V`. What waits for a
   paste is dimmed, and the footer says how many; `Escape` forgets it.
-  Dragging moves or copies as the desktop does, and on Wayland into
-  other applications too. `Shift+F5` copies the selection to the other pane, `Shift+F6`
-  moves it there.
+  `Shift+F5` copies the selection to the other pane, `Shift+F6` moves it
+  there.
+- **Drag and drop.** Files dropped on a folder ask whether to move, copy
+  or link them there; hold `Shift` to move, `Ctrl` to copy or
+  `Ctrl+Shift` to link without being asked (General can turn the
+  question off). An archive dropped can be extracted there instead. On
+  Wayland, files drag into other applications too.
+- **Copies.** A copy onto a USB drive goes at the drive's pace, so its
+  bar says what is written, and it ends once the files are on the drive.
+  A copy that needs more room than its destination has asks before it
+  starts. Hard links stay links in a copy; each name of a file is a row
+  of its own, and the footer counts the file once.
 - **The shelf** (`Ctrl+Shift+B` adds to it) gathers files from anywhere
   to move or copy them together later.
 - **Rename** with `F2`; with several files selected, `F2` (or `Ctrl+F2`)
@@ -96,7 +110,8 @@ or `Ctrl+wheel`).
 - **New folder**: `Ctrl+Shift+N`. **Open with** another application:
   `Shift+Enter`. **Copy paths**: `Ctrl+Shift+C`.
 - **Delete** moves to the Trash; `Shift+Delete` deletes for good, after
-  asking, since that cannot be undone. The Trash is a place in the
+  asking, since that cannot be undone (and saying what stays on the disk
+  when a file has other names). The Trash is a place in the
   sidebar: Restore puts a file back where it was, a file dragged out of
   it is restored where you drop it.
 - **Undo and Redo**: `Ctrl+Z`, `Ctrl+Shift+Z` (or `Ctrl+Y`), for every
@@ -128,7 +143,8 @@ and its text can be typed as is:
 
 `Alt+Enter` searches the home folder instead. `Ctrl+D` keeps a search in
 the sidebar. Over a search with tags, a bar offers what it can narrow to
-(the tags within, the files' kinds and years), each with how many files.
+(the tags within, the files' kinds and years), each with how many files;
+over a folder, the View menu's Narrow by shows the same bar.
 A search uses the desktop's indexes where they run (Baloo, plocate) to
 go faster, and always checks the files themselves.
 
@@ -149,8 +165,8 @@ go faster, and always checks the files themselves.
   category can hold one tag at a time (Status: Draft, Done).
 - **Tags are places.** `tags:/` lists every tag in your home folder, each
   a folder of the files it holds; drop files on a tag to tag them, and
-  pin the tags you use in the sidebar. `Alt+G` shows the tags of the
-  folder you are in (also first in the menu of the trail's last chevron,
+  pin the tags you use in the sidebar. `Alt+G`, or the Tags button at
+  the end of the address, shows the tags of the folder you are in (also first in the menu of the trail's last chevron,
   and All Tags with `Alt`).
 - **Copies keep them.** A copy keeps the tags, the rating, the comment
   and where a download came from, onto a drive that keeps no attributes
@@ -162,7 +178,8 @@ go faster, and always checks the files themselves.
 panel, which follows the selection. Each kind of file has its tools in
 the panel's bar:
 
-- **Text and code**, with its language's colours; **Markdown**, laid
+- **Text and code**, with its language's colours, in skwir's theme or
+  one of bat's (Reading › Code), light or dark whatever skwir is; **Markdown**, laid
   out, its source a click away; **tables** (CSV, TSV, JSON lines);
   structured files (JSON, YAML, TOML, XML) folded and unfolded.
 - **Documents**: PDFs in skwir's reader (continuous or a page at a time,
@@ -170,7 +187,7 @@ the panel's bar:
   through LibreOffice, converted in isolation; EPUB books, comics,
   e-mails, Jupyter notebooks.
 - **Pictures, audio and video** with the player (pinned, it keeps
-  playing while you move on); fonts with a sample; 3D models; circuit
+  playing while you move on, in a dock with Fullscreen and More); fonts with a sample; 3D models; circuit
   boards; maps and tracks; the files inside an archive.
 - **Bytes** of any file (View as hex).
 
@@ -210,9 +227,10 @@ starts with its defaults, keeps the file aside as
 - **Nothing else.** No database, no daemon: tags and notes are on the
   files, bookmarks are the desktop's, thumbnails the desktop's cache.
 
-If skwir stops during a copy, the part already copied stays in a hidden
-folder named `.skwir-copy-…` in the destination, never under the file's
-own name; delete it, and copy again.
+If skwir stops during a copy (a crash, a power cut), what it had copied
+waits in a hidden folder named `.skwir-copy-…` in the destination, never
+under the file's own name. skwir removes it when it next starts, or
+next copies there; on a network share, delete it yourself.
 
 ## Agents, scripts and plugins
 
