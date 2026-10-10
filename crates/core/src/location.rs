@@ -880,14 +880,27 @@ impl Default for Listing {
     }
 }
 
+/// A listing let go of on the window's thread (a pane showing another
+/// folder, a tab going to sleep, a column closed) is freed on a worker.
+impl Drop for Listing {
+    fn drop(&mut self) {
+        if self.entries.is_empty() {
+            return;
+        }
+        let entries = std::mem::take(&mut self.entries);
+        let order = self.sort_cache.get_mut().take();
+        let owners = std::mem::take(&mut self.owners);
+        crate::scheduler::let_go((entries, order, owners));
+    }
+}
+
 impl Listing {
     /// A listing that hides the files beside a file `companions` names,
     /// while their file is listed (ADR-028).
     pub fn with_companions(companions: Arc<crate::companions::Companions>) -> Self {
-        Listing {
-            companions: Some(companions),
-            ..Listing::default()
-        }
+        let mut listing = Listing::default();
+        listing.companions = Some(companions);
+        listing
     }
 
     fn slot(&mut self, e: Entry) -> Slot {

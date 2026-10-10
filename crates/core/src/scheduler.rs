@@ -204,6 +204,10 @@ impl Scheduler {
 
 thread_local! {
     static WINDOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The workers the window's thread hands what it lets go of
+    /// ([`let_go`]).
+    static LET_GO: std::cell::RefCell<Option<std::sync::Weak<Inner>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Whether a window marked its thread: else bibli runs without one (a
@@ -212,10 +216,41 @@ thread_local! {
 static HAS_WINDOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Mark the calling thread as the window's: the one thread nothing may
-/// keep waiting (ADR-000). The window marks its own at startup.
-pub fn mark_window_thread() {
+/// keep waiting (ADR-000), which hands `scheduler` what it lets go of.
+/// The window marks its own at startup.
+pub fn mark_window_thread(scheduler: &Scheduler) {
     WINDOW.with(|window| window.set(true));
+    LET_GO.with(|workers| *workers.borrow_mut() = Some(Arc::downgrade(&scheduler.inner)));
     HAS_WINDOW.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Free `value` on a worker when the calling thread is the window's, here
+/// anywhere else: a listing of a hundred thousand entries takes
+/// milliseconds to free, and the window's thread lets go of one under the
+/// workspace's lock each time a pane shows another folder.
+pub fn let_go<T: Send + 'static>(value: T) {
+    let workers = LET_GO
+        .try_with(|workers| workers.borrow().as_ref().and_then(std::sync::Weak::upgrade))
+        .ok()
+        .flatten();
+    let Some(inner) = workers else {
+        return drop(value);
+    };
+    let mut q = inner.queue.lock();
+    if q.shutdown {
+        drop(q);
+        return drop(value);
+    }
+    let seq = inner.seq.fetch_add(1, AtomicOrdering::Relaxed);
+    q.heap.push(Task {
+        priority: Priority::Background,
+        seq,
+        label: "let_go",
+        cancel: CancelToken::new(),
+        job: Box::new(move || drop(value)),
+    });
+    drop(q);
+    inner.cv.notify_one();
 }
 
 /// Whether bibli has a window, whose thread applies what listings send.
@@ -429,5 +464,29 @@ mod tests {
         assert_eq!(released(), 1);
         run();
         until(2);
+    }
+
+    #[test]
+    fn the_window_lets_go_on_a_worker() {
+        struct Noted(crossbeam_channel::Sender<Option<String>>);
+        impl Drop for Noted {
+            fn drop(&mut self) {
+                let name = std::thread::current().name().map(str::to_owned);
+                self.0.send(name).unwrap();
+            }
+        }
+        let scheduler = Scheduler::new(1);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let_go(Noted(tx.clone()));
+        let here = std::thread::current().name().map(str::to_owned);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), here);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                mark_window_thread(&scheduler);
+                let_go(Noted(tx));
+            });
+        });
+        let dropped_on = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(dropped_on.as_deref(), Some("bibli-worker-0"));
     }
 }
