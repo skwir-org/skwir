@@ -113,3 +113,31 @@ a requirement", in the deletable cache, and says the system's indexes
   rewritten before). `tags_index_learn_us`, `tags_index_tally_us` and
   `tags_index_change_us` keep it so. Past its room it learns no new file,
   covers no folder, and the Tags view says so with a way to the setting.
+- Amended (2026-10-10, ADR-050): **an index that proves its coverage
+  answers.** The decision's last point (the walk is not skipped when an
+  index claims to be complete) still holds for a claim. It no longer
+  holds for a proof.
+  - **What may be proven.** A provider may say, for a root and for the
+    facts a search's terms need, that it covers them:
+    - **live**: every change on that root delivered with nothing
+      dropped since its last full read, and applied up to a barrier set
+      when the search began (skwird's sync);
+    - **checked**: every folder's change time compared for equality
+      with the provider's own record, on a filesystem whose change times
+      tell (`filesystem::change_times_tell`). This proves names and
+      kinds, never sizes or times.
+  - **Under a covered root** the search considers the files the
+    provider names, each as any other (a stat, the providers, every
+    term), and does not walk there. It walks what the provider does not
+    cover: a mount below the root, a folder denied, a filesystem whose
+    change times do not tell.
+  - **The provider must reach what the walk reaches:** hidden names
+    (the search filters them), no link followed, and every mount below
+    the root reported. Its answer may name more files than match, never
+    fewer where it says it covers.
+  - **plocate proves nothing.** A search of `/` it answers keeps
+    skipping the walk, as before, but says its answer is as of the
+    database's last update.
+  - **Not built.** `HintProvider` gains coverage, and skwird is its
+    first provider (ADR-050). The tags index's count (`count.rs`) proves
+    folders checked the same way and could become a second.

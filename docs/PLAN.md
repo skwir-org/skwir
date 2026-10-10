@@ -2618,6 +2618,32 @@ history scan finds nothing personal.
 
 ---
 
+## Names indexed by skwird (planned, ADR-050)
+
+Goal: name searches that answer from an index where it proves it is
+current, and walk only where it does not. skwird is a project of its
+own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are bibli's steps,
+after Release 0.1 and after skwird's phase 1.
+
+- **A. Coverage in the hints** (ADR-026, amended). `HintProvider` says,
+  for a root and the facts a search needs, whether it covers them (live,
+  checked, as of a time, not covered and why). A search under a covered
+  root considers what the provider names and does not walk there. It is
+  tested with a fake provider that covers some roots and not others:
+  the answer equals the walk's.
+- **B. A skwird provider** in the query plugin. It speaks protocol 0
+  through skwird's client crate. It finds a system service, then a
+  user's, then starts skwird on demand where it is installed. Tests use
+  a fake skwird on a socket of the test's own, plus one with the real
+  engine where it is installed.
+- **C. plocate as of its time.** A search of `/` that plocate answers
+  says when its database was last updated.
+- **D. Then, each decided on its own:** the address field searching as
+  one types, Usage of a tree from skwird's folder totals, "recently
+  changed", the tags index's checks.
+
+---
+
 ## Phase 7 — AI (~10 weeks)
 
 Goal: agents that organize, rename, clean, tag, and summarize, always ending in a plan the user reviews.

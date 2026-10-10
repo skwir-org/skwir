@@ -42,3 +42,6 @@ memory budget.
   fallback and the correctness reference in tests.
 - Index size and build time become measured quantities in `bibli-bench`
   when the plugin lands.
+- Amended (2026-10-10, ADR-050): bibli may start one system index,
+  skwird, for the session, where skwird is installed: a helper that ends
+  with bibli, not a daemon. It still installs and enables none.
