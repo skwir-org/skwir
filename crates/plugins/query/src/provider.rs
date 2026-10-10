@@ -969,11 +969,14 @@ mod tests {
         assert_eq!(until_complete(&open), (2, 2), "removed, then found again");
 
         // A refresh ends the walk the rollover belonged to: it never fires.
+        // Due ahead still, whatever the first wait took: one already due
+        // would list again before the refresh began.
+        let later = SystemTime::now() + Duration::from_millis(150);
         let walk = open.shared.walk.lock().clone();
-        Shared::roll_over_at(&open.shared, &location, soon, walk);
+        Shared::roll_over_at(&open.shared, &location, later, walk);
         open.refresh();
         assert_eq!(until_complete(&open), (2, 2));
-        let quiet = open.rx.recv_timeout(Duration::from_millis(300));
+        let quiet = open.rx.recv_timeout(Duration::from_millis(400));
         assert!(quiet.is_err(), "nothing after: {quiet:?}");
     }
 }
