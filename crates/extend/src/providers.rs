@@ -179,15 +179,27 @@ impl ThumbnailProvider for Thumbnails {
         if private(&self.app, &path) {
             return Ok(None);
         }
+        // The plugin answers one call at a time: a thumbnail asked while it
+        // works is set aside, holding no worker, and asked again once the
+        // turn is free.
+        let Some(turn) = self.runner.turn.try_take() else {
+            let runner = Arc::clone(&self.runner);
+            return Err(
+                bibli_core::thumbs::Busy::new(move |then| runner.turn.when_free(then)).into(),
+            );
+        };
         let call = Call::new(vec![path], self.runner.granted, cancel.clone());
         let side = req.size.pixels();
         let params = ThumbnailParams {
             file: call.describe(0, req.mime.as_deref().map(str::to_owned)),
             size: side,
         };
-        let answer = self
-            .runner
-            .call(method::THUMBNAIL, serde_json::to_value(params)?, &call)?;
+        let answer = self.runner.call_in(
+            &turn,
+            method::THUMBNAIL,
+            serde_json::to_value(params)?,
+            &call,
+        )?;
         let answer: ThumbnailAnswer = serde_json::from_value(answer)?;
         let Some(png) = answer.png else {
             return Ok(None);
@@ -485,5 +497,70 @@ pub(crate) fn inspection_of(answer: protocol::Inspection) -> inspection::Inspect
             })
             .collect(),
         ..inspection::Inspection::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A plugin that draws a thumbnail of one pixel, counting its calls.
+    struct Pixel(std::sync::atomic::AtomicUsize);
+
+    /// A PNG of one transparent pixel.
+    const PIXEL: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x06\0\0\0\x1f\x15\xc4\x89\0\0\0\nIDATx\x9cc\0\x01\0\0\x05\0\x01\r\n-\xb4\0\0\0\0IEND\xaeB`\x82";
+
+    impl crate::call::Transport for Pixel {
+        fn call(
+            &self,
+            method: &str,
+            _: serde_json::Value,
+            _: &Call,
+        ) -> anyhow::Result<serde_json::Value> {
+            assert_eq!(method, method::THUMBNAIL);
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(serde_json::to_value(ThumbnailAnswer {
+                png: Some(bibli_plugin_api::base64::encode(PIXEL)),
+            })?)
+        }
+        fn stop(&self) {}
+    }
+
+    /// The plugin answers one call at a time: a thumbnail asked while it
+    /// works is set aside (`Busy`), holding no worker, and drawn once the
+    /// turn is free.
+    #[test]
+    fn a_thumbnail_asked_while_its_plugin_works_is_set_aside() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(bibli_core::app::AppConfig::ephemeral(
+            tmp.path().join("state"),
+        ))
+        .unwrap();
+        let file = tmp.path().join("it's a picture.ppm");
+        std::fs::write(&file, "P1 1 1 0").unwrap();
+        let module = tmp.path().join("plugin.wasm");
+        std::fs::write(&module, "module").unwrap();
+        let pixel = Arc::new(Pixel(std::sync::atomic::AtomicUsize::new(0)));
+        let runner = Arc::new(Runner::answered_by(&module, pixel.clone()));
+        let thumbnails = Thumbnails {
+            runner: Arc::clone(&runner),
+            app: Arc::downgrade(&app),
+            types: types(&["image/x-portable-pixmap".to_owned()]),
+        };
+        let req = ThumbRequest {
+            entry: bibli_core::op::EntryRef::from_path(&file).unwrap(),
+            mime: Some("image/x-portable-pixmap".into()),
+            mtime: None,
+            size: bibli_core::thumbs::ThumbSize::Normal,
+        };
+        let cancel = CancelToken::new();
+        let working = runner.turn.try_take().unwrap();
+        let error = thumbnails.thumbnail(&req, &cancel).unwrap_err();
+        assert!(error.is::<bibli_core::thumbs::Busy>(), "{error:#}");
+        assert_eq!(pixel.0.load(std::sync::atomic::Ordering::Relaxed), 0);
+        drop(working);
+        let drawn = thumbnails.thumbnail(&req, &cancel).unwrap().unwrap();
+        assert_eq!((drawn.width, drawn.height), (1, 1));
+        assert_eq!(pixel.0.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
 }

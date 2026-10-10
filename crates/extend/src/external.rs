@@ -84,6 +84,7 @@ impl External {
                 compiled: Mutex::new(None),
                 live: Mutex::new(None),
                 watch: Mutex::new(Watch::default()),
+                turn: bibli_platform::process::Turns::new(1),
             }),
             manifest,
             folder,
@@ -173,6 +174,10 @@ pub(crate) struct Runner {
     compiled: Mutex<Option<PathBuf>>,
     live: Mutex<Option<Arc<dyn Transport>>>,
     watch: Mutex<Watch>,
+    /// Its one turn: the plugin answers one call at a time, so a
+    /// thumbnail asked meanwhile is set aside rather than holding a
+    /// worker while it waits (`providers::Thumbnails`).
+    pub turn: bibli_platform::process::Turns,
 }
 
 /// How many times in a row its program broke (`process::Broken`: no
@@ -204,6 +209,7 @@ impl Runner {
             compiled: Mutex::new(None),
             live: Mutex::new(Some(transport)),
             watch: Mutex::new(Watch::default()),
+            turn: bibli_platform::process::Turns::new(1),
         }
     }
 
@@ -218,7 +224,23 @@ impl Runner {
 
     /// Ask the plugin `method`; it reads through `call`. Its program
     /// breaking `BROKEN_AT_MOST` times in a row turns the plugin off.
+    /// Waits for the plugin's turn, given up with the call.
     pub fn call(&self, method: &str, params: Value, call: &Call) -> anyhow::Result<Value> {
+        let Some(turn) = self.turn.take(call.token()) else {
+            anyhow::bail!("cancelled");
+        };
+        self.call_in(&turn, method, params, call)
+    }
+
+    /// [`Runner::call`], the plugin's turn taken already
+    /// (`turn.try_take`).
+    pub fn call_in(
+        &self,
+        _turn: &bibli_platform::process::Turn<'_>,
+        method: &str,
+        params: Value,
+        call: &Call,
+    ) -> anyhow::Result<Value> {
         let transport = {
             let mut live = self.live.lock();
             if self.watch.lock().off {

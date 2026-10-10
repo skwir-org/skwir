@@ -57,6 +57,11 @@ impl Call {
         self.files.get(n).map(PathBuf::as_path)
     }
 
+    /// What gives the call up.
+    pub fn token(&self) -> &CancelToken {
+        &self.cancel
+    }
+
     pub fn cancelled(&self) -> bool {
         self.cancel.is_cancelled()
     }
