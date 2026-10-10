@@ -3,7 +3,7 @@
 //! (and always once for their identity when they match).
 
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant, SystemTime};
@@ -234,6 +234,13 @@ struct Deferred<'a> {
     query: &'a Query,
     batcher: &'a Batcher<'a>,
     shards: Vec<Mutex<Shard>>,
+    /// The names of the folders whose groups were decided last
+    /// (`Deferred::names_of`): read once for every batch of a folder and
+    /// handed to every provider (`fill_listed`), so the stores that look
+    /// for files beside a file (an XMP sidecar, a Mac's `._` file, a
+    /// `TagSpaces` folder) do not each read the folder, and stat it again
+    /// for each batch.
+    names: Mutex<std::collections::VecDeque<(PathBuf, Arc<HashSet<OsString>>)>>,
 }
 
 #[derive(Default)]
@@ -275,7 +282,31 @@ impl Deferred<'_> {
             query,
             batcher,
             shards: (0..Self::SHARDS).map(|_| Mutex::default()).collect(),
+            names: Mutex::default(),
         }
+    }
+
+    /// Folders whose names are kept at once: the walk's threads decide
+    /// the groups of a few folders at a time.
+    const NAMED: usize = 32;
+
+    /// Every name in `dir`, hidden ones included, read once for the
+    /// batches of its group. On a walk's thread.
+    fn names_of(&self, dir: &Path) -> Arc<HashSet<OsString>> {
+        if let Some((_, names)) = self.names.lock().iter().find(|(d, _)| d == dir) {
+            return Arc::clone(names);
+        }
+        let names: Arc<HashSet<OsString>> = Arc::new(
+            std::fs::read_dir(dir)
+                .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
+                .unwrap_or_default(),
+        );
+        let mut kept = self.names.lock();
+        if kept.len() >= Self::NAMED {
+            kept.pop_front();
+        }
+        kept.push_back((dir.to_path_buf(), Arc::clone(&names)));
+        names
     }
 
     fn shard(&self, dir: &Path) -> &Mutex<Shard> {
@@ -335,7 +366,12 @@ impl Deferred<'_> {
         if self.batcher.cancel.is_cancelled() {
             return;
         }
-        self.shared.ctx.metadata.fill(dir, &mut entries);
+        let names = self.names_of(dir);
+        let listed = |name: &OsStr| names.contains(name);
+        self.shared
+            .ctx
+            .metadata
+            .fill_listed(dir, &listed, &mut entries);
         for entry in entries {
             let path = dir.join(&entry.name);
             if full_match(self.query, &entry, &path, self.batcher.late()) {

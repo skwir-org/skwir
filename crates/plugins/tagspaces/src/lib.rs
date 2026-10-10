@@ -233,8 +233,9 @@ impl NotesStore for TagSpacesStore {
         files: &[Probe<'_>],
         listed: Option<&Listed<'_>>,
     ) -> Vec<Option<Notes>> {
-        let has_ts = listed.map_or_else(|| dir.join(FOLDER).is_dir(), |l| l(OsStr::new(FOLDER)));
-        let names = if has_ts {
+        // Without a listing, the names of `.ts` say whether it is there:
+        // none when it is not, a stat either way.
+        let names = if listed.is_none_or(|l| l(OsStr::new(FOLDER))) {
             self.names.of(&dir.join(FOLDER))
         } else {
             Arc::default()
