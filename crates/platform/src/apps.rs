@@ -452,7 +452,7 @@ pub(crate) fn parse_entry(
     }
     if let Some(try_exec) = values.get("TryExec").map(|v| keyfile::unescape(v))
         && !try_exec.is_empty()
-        && bibli_core::os_path::find_program(&try_exec).is_none()
+        && skwir_core::os_path::find_program(&try_exec).is_none()
     {
         return None;
     }
@@ -596,7 +596,7 @@ impl Application {
                     .and_then(|f| f.parent())
                     .map(Path::to_path_buf)
             })
-            .or_else(bibli_core::os_path::home)
+            .or_else(skwir_core::os_path::home)
             .unwrap_or_else(|| PathBuf::from("/"));
         for argv in self.command_lines(files) {
             let Some((program, args)) = argv.split_first() else {
@@ -634,7 +634,7 @@ fn file_arg(path: &Path, uri: bool) -> OsString {
 /// says of what it opens (a link's target, by the target's name), and
 /// `application/octet-stream` when nothing does. Reads the head of the
 /// file: call from a worker.
-pub fn type_of(entry: &bibli_core::Entry, path: &Path) -> Mime {
+pub fn type_of(entry: &skwir_core::Entry, path: &Path) -> Mime {
     if let Some(mime) = entry.inode_type() {
         return Mime(mime.to_owned());
     }

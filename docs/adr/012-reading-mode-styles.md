@@ -5,7 +5,7 @@ not apply publisher CSS.
 
 ## Context
 
-Reading mode (`bibli_platform::rich_preview`, shared by EPUB, HTML files,
+Reading mode (`skwir_platform::rich_preview`, shared by EPUB, HTML files,
 Markdown's raw HTML and mail) read a page for its tags alone. What books
 actually contain made that lose a lot:
 

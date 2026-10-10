@@ -1,4 +1,4 @@
-//! bibli plugin: tags in file names (ADR-027). Two conventions are known:
+//! skwir plugin: tags in file names (ADR-027). Two conventions are known:
 //! `TagSpaces`' (`IMG-2653[vacation alps].jpg`, tags in brackets before the
 //! extension) and filetags' (`2021-01-01 notes -- work draft.txt`, after
 //! ` -- `). Each is a store read with the others; neither is written by
@@ -15,15 +15,15 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::Arc;
 
-use bibli_core::app::App;
-use bibli_core::command::Outcome;
-use bibli_core::metadata::{Listed, same_tag};
-use bibli_core::notes::raw::RawKey;
-use bibli_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote};
-use bibli_core::op::{Plan, Rename, RenameOrderError, RenameRequest, order_renames};
-use bibli_core::plugin::{Category, Plugin};
-use bibli_core::registry::MenuItem;
-use bibli_core::workspace::PaneId;
+use skwir_core::app::App;
+use skwir_core::command::Outcome;
+use skwir_core::metadata::{Listed, same_tag};
+use skwir_core::notes::raw::RawKey;
+use skwir_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote};
+use skwir_core::op::{Plan, Rename, RenameOrderError, RenameRequest, order_renames};
+use skwir_core::plugin::{Category, Plugin};
+use skwir_core::registry::MenuItem;
+use skwir_core::workspace::PaneId;
 
 pub(crate) const ID: &str = "name-tags";
 
@@ -112,14 +112,14 @@ pub struct NameStore {
     convention: Convention,
     /// Whether a `TagSpaces` location covers a folder: a `.ts` folder
     /// there or above it.
-    tagspaces: bibli_core::companions::MarkedAbove,
+    tagspaces: skwir_core::companions::MarkedAbove,
 }
 
 impl NameStore {
     pub fn new(convention: Convention) -> Self {
         NameStore {
             convention,
-            tagspaces: bibli_core::companions::MarkedAbove::new(".ts"),
+            tagspaces: skwir_core::companions::MarkedAbove::new(".ts"),
         }
     }
 }
@@ -205,7 +205,7 @@ struct NameArgs {
     /// The entries to rename, by absolute path; the pane's selection when
     /// omitted.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
     /// `tagspaces` (`name[a b].ext`, the default) or `filetags`
@@ -219,14 +219,14 @@ fn store_id(convention: Convention) -> &'static str {
 }
 
 /// A listed entry's tags (`keys::TAGS`), every store's.
-fn listed_tags(e: &bibli_core::Entry) -> Vec<String> {
-    match e.metadata.value(bibli_core::entry::keys::TAGS) {
-        Some(bibli_core::Value::List(items)) => items
+fn listed_tags(e: &skwir_core::Entry) -> Vec<String> {
+    match e.metadata.value(skwir_core::entry::keys::TAGS) {
+        Some(skwir_core::Value::List(items)) => items
             .iter()
-            .filter_map(bibli_core::Value::as_str)
+            .filter_map(skwir_core::Value::as_str)
             .map(str::to_owned)
             .collect(),
-        Some(bibli_core::Value::Text(t)) => vec![t.to_string()],
+        Some(skwir_core::Value::Text(t)) => vec![t.to_string()],
         _ => Vec::new(),
     }
 }
@@ -307,7 +307,7 @@ fn untag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
         let mut keep = app
             .notes
             .edit(r.clone())
-            .change_tags(bibli_core::notes::TagChange {
+            .change_tags(skwir_core::notes::TagChange {
                 add: tags.clone(),
                 ..Default::default()
             });
@@ -350,7 +350,7 @@ fn menu_item(title: &str, command: &str, order: i32, icon: &str) -> MenuItem {
     MenuItem {
         menu: "context".into(),
         title: title.into(),
-        command: bibli_core::command::Invocation::new(command),
+        command: skwir_core::command::Invocation::new(command),
         // Files' names, never a place's (a tag's has none).
         when: Some("selection !place".into()),
         order,
@@ -376,9 +376,9 @@ impl Plugin for NameTagsPlugin {
     fn category(&self) -> Category {
         Category::Files
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Write])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Write])
     }
     fn register(&self, app: &App) {
         app.register_notes_store(ID, Arc::new(NameStore::new(Convention::Tagspaces)));

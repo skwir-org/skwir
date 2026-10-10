@@ -1,6 +1,6 @@
 [package]
-name = "bibli-plugin-ops-basic"
-description = "bibli plugin: ops-basic"
+name = "skwir-plugin-ops-basic"
+description = "skwir plugin: ops-basic"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
+skwir-core.workspace = true
 anyhow.workspace = true
 parking_lot.workspace = true
 serde_json.workspace = true

@@ -17,7 +17,6 @@
 //! screens without conditions; `@import`, `@font-face` and `@page` are not
 //! followed. Every stylesheet and the number of rules are bounded.
 use crate::inspection::limits;
-use bibli_core::inspection::{Align, Script};
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, Token,
@@ -30,6 +29,7 @@ use selectors::{
     },
     parser::{Component, ParseRelative, Selector, SelectorList, SelectorParseErrorKind},
 };
+use skwir_core::inspection::{Align, Script};
 use std::{collections::HashMap, sync::Arc};
 
 /// What the tags mean before a document says anything: which elements make

@@ -320,7 +320,7 @@ impl Volume {
         let n = std::mem::take(&mut self.pending);
         let volume = Arc::clone(drive);
         let thread = std::thread::Builder::new()
-            .name("bibli-write-out".into())
+            .name("skwir-write-out".into())
             .spawn(move || volume.sync_volume());
         if let Ok(running) = thread {
             self.running = Some((n, running));

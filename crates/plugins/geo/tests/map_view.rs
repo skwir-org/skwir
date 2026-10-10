@@ -7,12 +7,12 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::location::Location;
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
 use serde_json::{Value, json};
+use skwir_core::app::{App, AppConfig};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::location::Location;
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
 
 /// A TIFF whose first directory points at a GPS directory: latitude and
 /// longitude in whole degrees, and an optional status (`V`: the receiver
@@ -96,7 +96,7 @@ fn a_folder_s_pictures_and_tracks_are_placed_once_each() {
 
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_geo::GeoPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_geo::GeoPlugin::default()), &app);
     let pane = app.workspace.read().active_id();
     app.navigate(pane, &Location::from_path(&dir)).unwrap();
     // The view asks before the folder has arrived: that scan is not the

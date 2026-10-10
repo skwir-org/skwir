@@ -8,14 +8,14 @@ ADR-005 subsequently upgrades Poppler to the same reader protocol and features.
 
 Image-only page previews cannot provide text selection, search, link navigation
 or outlines. Repeated command startup and document parsing also cost time on
-new pages. A complete reader needs a document session, while bibli must retain
+new pages. A complete reader needs a document session, while skwir must retain
 its small startup footprint and responsive UI. Prefer a permissively licensed
 engine over MuPDF's AGPL/commercial distribution choices.
 
 ## Decision
 
 Use the installed PDFium shared library through `pdfium-render`, in a separate
-`bibli-pdf-worker` executable. Do not statically link a PDF engine into bibli.
+`skwir-pdf-worker` executable. Do not statically link a PDF engine into skwir.
 The worker is a workspace member built by the normal recipes; the native
 library is optional. `nix develop .#pdf` supplies the pinned Nix runtime.
 The binding is pinned to 0.8.35 with the `pdfium_6721` ABI surface, exercised

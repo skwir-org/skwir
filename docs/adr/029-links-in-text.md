@@ -23,8 +23,8 @@ follows the pane (ADR-019).
 
 ### What is found
 
-Addresses are found by their scheme, and only the schemes bibli follows:
-`http`, `https`, `mailto`, `file` (`bibli_platform::links::urls`). A name
+Addresses are found by their scheme, and only the schemes skwir follows:
+`http`, `https`, `mailto`, `file` (`skwir_platform::links::urls`). A name
 with a dot is never taken for a domain: `main.rs`, `setup.py` and
 `README.md` are files, though `.rs`, `.py` and `.md` are countries'
 domains. In the terminal the words of a line may also be paths, with the
@@ -48,8 +48,8 @@ tab), as foot's and kitty's hints do.
 
 An address goes to the desktop's browser or mail client through one gate
 (`ui.open_url`, `open::open_address`, on a worker): nothing else a file
-names reaches the desktop's handlers. bibli fetches nothing (ADR-020).
-A file or a folder is shown in bibli (`ui.reveal`): a folder is entered,
+names reaches the desktop's handlers. skwir fetches nothing (ADR-020).
+A file or a folder is shown in skwir (`ui.reveal`): a folder is entered,
 a file is selected in its folder, and a line number shows that line in
 the preview, opening the panel if it is closed. A link is never opened
 with an application: printing a hostile file to the terminal cannot make
@@ -75,7 +75,7 @@ full-screen programs only.
 
 - `Screen` carries `links` (core data, no engine type); the UI hit-tests
   them with the frame's geometry and draws the one under the pointer.
-- The terminal plugin depends on `bibli-platform` for the finder. Its
+- The terminal plugin depends on `skwir-platform` for the finder. Its
   stamps are bounded (4096), and the paths waiting for the filesystem too
   (1024): in a flood of output, what does not fit waits for a later screen.
   A stamp is one allocation its cells share, as a program's link is; a

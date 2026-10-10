@@ -5,7 +5,7 @@ day by its fifth point. Amends ADR-043: an agent's call goes through it.
 
 ## Context
 
-Phase 6 opens bibli to code it does not ship: agents driving the window
+Phase 6 opens skwir to code it does not ship: agents driving the window
 (ADR-043), plugins from outside as programs (ADR-045) and WebAssembly
 modules (ADR-046). The plan asks for a permission layer before any model
 provider exists: capabilities per plugin (read contents, write, network,
@@ -15,12 +15,12 @@ machine" for `~/.ssh` or anything under a `.private` marker.
 Three kinds of code act for the user here, and the layer can hold each
 of them to a different degree:
 
-- A plugin built into bibli is native code in bibli's process. Nothing
+- A plugin built into skwir is native code in skwir's process. Nothing
   can confine it; what it does can only be said.
 - A plugin from outside reaches nothing but what its host hands it (a
-  program runs isolated, a module has bibli's imports alone), so what it
+  program runs isolated, a module has skwir's imports alone), so what it
   declares can be enforced.
-- An agent reaches bibli only through the window's channel, one command
+- An agent reaches skwir only through the window's channel, one command
   at a time, so every call can be checked before it runs and every
   answer before it leaves.
 
@@ -46,7 +46,7 @@ of them to a different degree:
    every object whose `path` is private and every string that names one,
    `Checker::redact`), and a plugin from outside is never handed one
    (its provider answers nothing, its command is refused). A built-in
-   plugin is bibli: the folders are its to show the user.
+   plugin is skwir: the folders are its to show the user.
 3. **What a command does** (`command::Effect`, declared at registration
    with `register(..).reads()` and so on): it `reads`, `shows` (changes
    only what the window shows), `plans` (changes files only through a
@@ -61,7 +61,7 @@ of them to a different degree:
    review, as before); one that acts runs once the user allows it, in
    the window, in the review's queue ("An agent asks to run …", Allow or
    Refuse: `App::ask`); one that is user only is refused and not listed
-   among its tools. A script (`bibli cmd`) is the user's own: it is held
+   among its tools. A script (`skwir cmd`) is the user's own: it is held
    to none of this.
 
 5. **What an agent counts** (amended 2026-10-07, after an agent's first

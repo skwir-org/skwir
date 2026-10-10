@@ -10,9 +10,9 @@
 
 use std::path::Path;
 
-use bibli_core::metadata::TAGS_XATTR;
-use bibli_core::notes::raw::RawKey;
-use bibli_core::notes::{
+use skwir_core::metadata::TAGS_XATTR;
+use skwir_core::notes::raw::RawKey;
+use skwir_core::notes::{
     Holds, Kept, Notes, NotesStore, Probe, RATING_MAX, Tag, Write, Wrote, parse_tags,
 };
 
@@ -38,7 +38,7 @@ pub fn parse_rating(s: &str) -> Option<u64> {
 /// One attribute of `path` as text. Missing, unsupported or unreadable is
 /// nothing: none of these attributes is worth an error when read.
 pub fn get(path: &Path, name: &str) -> Option<String> {
-    let value = bibli_core::fs::xattr::get_deref(path, name)
+    let value = skwir_core::fs::xattr::get_deref(path, name)
         .ok()
         .flatten()?;
     let text = String::from_utf8_lossy(&value).trim().to_owned();
@@ -46,19 +46,19 @@ pub fn get(path: &Path, name: &str) -> Option<String> {
 }
 
 fn refused(e: &std::io::Error) -> bool {
-    bibli_core::fs::xattr::refused(e)
+    skwir_core::fs::xattr::refused(e)
 }
 
 fn missing(e: &std::io::Error) -> bool {
-    e.kind() == std::io::ErrorKind::NotFound || bibli_core::fs::xattr::missing(e)
+    e.kind() == std::io::ErrorKind::NotFound || skwir_core::fs::xattr::missing(e)
 }
 
 /// Write `value` to attribute `name` of `path`; `None` removes it, and
 /// removing one that is not there succeeds.
 pub fn write(path: &Path, name: &str, value: Option<&str>) -> std::io::Result<()> {
     match value {
-        Some(value) => bibli_core::fs::xattr::set_deref(path, name, value.as_bytes()),
-        None => match bibli_core::fs::xattr::remove_deref(path, name) {
+        Some(value) => skwir_core::fs::xattr::set_deref(path, name, value.as_bytes()),
+        None => match skwir_core::fs::xattr::remove_deref(path, name) {
             Err(e) if missing(&e) => Ok(()),
             r => r,
         },
@@ -141,7 +141,7 @@ impl NotesStore for XdgStore {
         &self,
         _dir: &Path,
         files: &[Probe<'_>],
-        _: Option<&bibli_core::metadata::Listed<'_>>,
+        _: Option<&skwir_core::metadata::Listed<'_>>,
     ) -> Vec<Option<Notes>> {
         files
             .iter()

@@ -14,24 +14,24 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bibli_core::app::{App, PaneArg};
-use bibli_core::cancel::CancelToken;
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::location::Location;
-use bibli_core::os_path::PathArg;
-use bibli_core::plugin::Plugin;
-use bibli_core::registry::ViewSpec;
-use bibli_core::workspace::PaneId;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use skwir_core::app::{App, PaneArg};
+use skwir_core::cancel::CancelToken;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::location::Location;
+use skwir_core::os_path::PathArg;
+use skwir_core::plugin::Plugin;
+use skwir_core::registry::ViewSpec;
+use skwir_core::workspace::PaneId;
 
 const ID: &str = "usage";
 
 /// One directory breakdown. Children are shallow; their own breakdowns are cached separately.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Node {
-    pub id: Option<bibli_core::EntryId>,
+    pub id: Option<skwir_core::EntryId>,
     pub name: String,
     pub path: PathBuf,
     pub is_dir: bool,
@@ -50,7 +50,7 @@ pub struct Node {
     /// A file's kind, as its name says (`marks::Types`).
     #[serde(default)]
     #[schemars(with = "Option<String>")]
-    pub kind: Option<bibli_platform::mime::Kind>,
+    pub kind: Option<skwir_platform::mime::Kind>,
     /// A folder's allocated bytes by the kinds of the files in it.
     #[serde(default)]
     #[schemars(with = "std::collections::BTreeMap<String, u64>")]
@@ -91,7 +91,7 @@ pub struct Node {
 /// were found and what it weighs. A file whose links were all found is
 /// dropped: no folder above can find it again.
 #[derive(Clone, Debug, Default)]
-pub struct Links(pub(crate) HashMap<bibli_core::FileId, Linked>);
+pub struct Links(pub(crate) HashMap<skwir_core::FileId, Linked>);
 
 impl Links {
     /// What the files held take on disk: their names found are not all
@@ -107,7 +107,7 @@ pub(crate) struct Linked {
     pub(crate) nlink: u64,
     pub(crate) size: u64,
     pub(crate) alloc: u64,
-    pub(crate) kind: Option<bibli_platform::mime::Kind>,
+    pub(crate) kind: Option<skwir_platform::mime::Kind>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -220,7 +220,7 @@ impl UsagePlugin {
             let worker_cancel = cancel.clone();
             let worker_tx = tx.clone();
             std::thread::Builder::new()
-                .name("bibli-usage".into())
+                .name("skwir-usage".into())
                 .spawn(move || {
                     worker::run(&rx, worker_tx, worker_shared, &worker_cancel);
                 })?;
@@ -277,8 +277,8 @@ impl Plugin for UsagePlugin {
     fn description(&self) -> &'static str {
         "Browse folder sizes in a treemap with live updates"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Browsing
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Browsing
     }
     fn register(&self, app: &App) {
         app.registry.views.add(
@@ -363,7 +363,7 @@ impl Plugin for UsagePlugin {
         }
         app.registry.keymap.add(
             ID,
-            bibli_core::registry::KeyBinding {
+            skwir_core::registry::KeyBinding {
                 // Beside the built-in views' Ctrl+1, 2 and 3. Not Ctrl+Shift+U:
                 // GTK and IBus take it for typing a character by its code.
                 keys: "ctrl-4".into(),
@@ -373,7 +373,7 @@ impl Plugin for UsagePlugin {
         );
         app.registry.keymap.add(
             ID,
-            bibli_core::registry::KeyBinding {
+            skwir_core::registry::KeyBinding {
                 keys: "ctrl-r".into(),
                 command: Invocation::new("ui.usage_refresh"),
                 when: Some("pane usage".into()),
@@ -383,7 +383,7 @@ impl Plugin for UsagePlugin {
         // deeper than the window's, so this one wins in the Usage view.
         app.registry.keymap.add(
             ID,
-            bibli_core::registry::KeyBinding {
+            skwir_core::registry::KeyBinding {
                 keys: "f5".into(),
                 command: Invocation::new("ui.usage_refresh"),
                 when: Some("pane usage".into()),
@@ -391,7 +391,7 @@ impl Plugin for UsagePlugin {
         );
         app.registry.menus.add(
             ID,
-            bibli_core::registry::MenuItem {
+            skwir_core::registry::MenuItem {
                 menu: "context".into(),
                 title: "Usage view".into(),
                 command: Invocation::with_args("ui.view", &serde_json::json!({"id": ID})),
@@ -413,7 +413,7 @@ impl Plugin for UsagePlugin {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use bibli_core::app::AppConfig;
+    use skwir_core::app::AppConfig;
     use std::path::Path;
     use std::time::{Duration, Instant};
 

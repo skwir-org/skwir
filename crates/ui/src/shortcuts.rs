@@ -148,7 +148,7 @@ impl Shell {
     pub fn save_settings_later(&self) {
         let weak = self.app.weak();
         self.app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Background,
+            skwir_core::scheduler::Priority::Background,
             "ui-data-save",
             self.app.lifetime().child(),
             move || {

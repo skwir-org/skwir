@@ -4,12 +4,12 @@
 //! keyboard stop can be brought into view by its child index. Cards are drawn
 //! by giving the first and last row of a group their rounded corners.
 
-use bibli_core::plugin::{Category, PluginInfo};
-use bibli_core::settings::{SettingKind, SettingSpec};
 use gpui::{
     AnyElement, ClickEvent, Context, Entity, Focusable, MouseButton, SharedString, Window, div,
     prelude::*, px, relative,
 };
+use skwir_core::plugin::{Category, PluginInfo};
+use skwir_core::settings::{SettingKind, SettingSpec};
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::popover::PopoverAnchor;
@@ -736,7 +736,7 @@ impl SettingsView {
             "Enabled".to_owned()
         };
         let mut texts = Self::texts(title, plugin.description.clone(), theme);
-        // What it may do (ADR-044), and where one from outside bibli is.
+        // What it may do (ADR-044), and where one from outside skwir is.
         let may = plugin
             .capabilities
             .words()
@@ -869,7 +869,7 @@ impl SettingsView {
         let location = self.app.settings.path().map_or_else(
             || "Settings are kept in memory for this session.".to_owned(),
             |path| {
-                let shown = bibli_core::os_path::home()
+                let shown = skwir_core::os_path::home()
                     .and_then(|home| {
                         path.strip_prefix(home)
                             .ok()
@@ -1199,7 +1199,7 @@ impl Render for SettingsView {
                     }
                 }
                 Page::Keyboard => {
-                    self.owner_rows(bibli_core::keymap::OWNER, &mut items, &theme, window, cx);
+                    self.owner_rows(skwir_core::keymap::OWNER, &mut items, &theme, window, cx);
                     items.push(self.keyboard_list(cx));
                 }
                 Page::Plugin(id) => self.page_plugin(id, &mut items, &theme, window, cx),

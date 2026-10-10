@@ -2,9 +2,9 @@
 //! test's sample mutated, and bytes at random. A reader may refuse the
 //! file or say it is damaged; it never panics.
 
-use bibli_core::cancel::CancelToken;
-use bibli_core::testing::{bytes, mutated, mutated_text};
 use proptest::prelude::*;
+use skwir_core::cancel::CancelToken;
+use skwir_core::testing::{bytes, mutated, mutated_text};
 
 use crate::collect::Collector;
 
@@ -75,7 +75,7 @@ proptest! {
         let _ = crate::geojson::read(
             text.as_bytes(),
             &mut Collector::new(),
-            &bibli_core::CancelToken::new(),
+            &skwir_core::CancelToken::new(),
         );
     }
 

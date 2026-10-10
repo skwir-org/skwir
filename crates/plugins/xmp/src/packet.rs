@@ -22,8 +22,8 @@
 use std::fmt::Write as _;
 use std::ops::Range;
 
-use bibli_core::metadata::{TAG_SEPARATOR, clean_tag, same_tag, tag_leaf};
-use bibli_core::notes::{Notes, Tag};
+use skwir_core::metadata::{TAG_SEPARATOR, clean_tag, same_tag, tag_leaf};
+use skwir_core::notes::{Notes, Tag};
 
 const RDF: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 const DC: &str = "http://purl.org/dc/elements/1.1/";
@@ -143,7 +143,7 @@ fn simple(descriptions: &[Node<'_, '_>], ns: &str, name: &str) -> Option<String>
 /// The XMP document `text`, unless it is none, or nests deeper than the
 /// parser's recursion can go (a sidecar is a file like any other).
 fn parse(text: &str) -> Option<roxmltree::Document<'_>> {
-    bibli_platform::inspection::xml_depth(text.as_bytes()).ok()?;
+    skwir_platform::inspection::xml_depth(text.as_bytes()).ok()?;
     roxmltree::Document::parse(text).ok()
 }
 
@@ -250,7 +250,7 @@ enum Value {
 
 /// The text of the document with `notes` written into it: keywords,
 /// rating, description and label changed where they differ, everything
-/// else as it was. `None` when it is not XMP bibli can edit.
+/// else as it was. `None` when it is not XMP skwir can edit.
 pub fn edit(text: &str, notes: &Notes) -> Option<String> {
     let doc = parse(text)?;
     let descriptions = descriptions(&doc);
@@ -458,7 +458,7 @@ pub(crate) mod tests {
     use super::*;
 
     /// A sidecar as darktable writes one: attributes, a keyword bag, and a
-    /// history bibli knows nothing of.
+    /// history skwir knows nothing of.
     pub(crate) const DARKTABLE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 4.4.0-Exiv2">
  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">

@@ -1,6 +1,6 @@
 [package]
-name = "bibli-plugin-timeline"
-description = "bibli plugin: timeline (Phase 4)"
+name = "skwir-plugin-timeline"
+description = "skwir plugin: timeline (Phase 4)"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -8,8 +8,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
-bibli-platform.workspace = true
+skwir-core.workspace = true
+skwir-platform.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

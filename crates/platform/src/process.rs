@@ -15,8 +15,8 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use bibli_core::CancelToken;
-use bibli_core::os_path::find_program;
+use skwir_core::CancelToken;
+use skwir_core::os_path::find_program;
 
 /// One of our optional worker executables: its name, and the variable
 /// that says where it is instead.
@@ -28,7 +28,7 @@ pub struct Worker {
 
 impl Worker {
     /// Where it is, if it can run there: the variable's choice, else
-    /// where bibli's own helpers are (`helper_folders`), else on `PATH`. A
+    /// where skwir's own helpers are (`helper_folders`), else on `PATH`. A
     /// choice naming nothing that runs is no worker: a probe says it is
     /// missing rather than installed, and an engine chosen automatically
     /// goes on to the next.
@@ -47,7 +47,7 @@ impl Worker {
     }
 
     /// [`Worker::find`], or what to do without it, in one wording for
-    /// every worker: "Install bibli-archive-worker to open archives".
+    /// every worker: "Install skwir-archive-worker to open archives".
     pub fn require(&self, purpose: &str) -> anyhow::Result<PathBuf> {
         self.find()
             .with_context(|| format!("Install {} to {purpose}", self.executable))
@@ -68,8 +68,8 @@ impl Worker {
     /// What a plugin needing it lists (`Plugin::requirements`), probed as
     /// the settings show it: installed only where it works (`works`), not
     /// where its program is and its libraries are not.
-    pub fn requirement(self, purpose: &str) -> bibli_core::plugin::Requirement {
-        bibli_core::plugin::Requirement::new(self.executable, purpose, move || self.works())
+    pub fn requirement(self, purpose: &str) -> skwir_core::plugin::Requirement {
+        skwir_core::plugin::Requirement::new(self.executable, purpose, move || self.works())
     }
 }
 
@@ -78,7 +78,7 @@ impl Worker {
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Whether the helper at `path` can work here: run with `--probe`, the
-/// one argument every helper of bibli's answers before any other, it
+/// one argument every helper of skwir's answers before any other, it
 /// checks what it needs beside the libraries it links (`PDFium`'s, which
 /// it opens; `GStreamer`'s playback plugins) and exits 0 when it has it,
 /// else non-zero, saying why. One whose library is missing is refused by
@@ -97,13 +97,13 @@ pub fn probe(path: &Path, envs: &[(&str, &std::ffi::OsStr)]) -> bool {
     }
 }
 
-/// Which build of bibli this program is (`BIBLI_BUILD`, which its build
+/// Which build of skwir this program is (`SKWIR_BUILD`, which its build
 /// script sets, `tools/build/identity.rs`), told by the binary as it
 /// starts (`set_build`) so that this crate is not built again for each
 /// commit. Untold (a test), no failure is explained (`explain`).
 static BUILD: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
 
-/// Say which build of bibli this program is: once, as it starts.
+/// Say which build of skwir this program is: once, as it starts.
 pub fn set_build(build: &'static str) {
     let _ = BUILD.set(build);
 }
@@ -114,7 +114,7 @@ pub fn set_build(build: &'static str) {
 const BUILD_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// `error`, from a call of the helper at `helper`, and after it what may
-/// explain it: the helper is of another build of bibli than this one, as
+/// explain it: the helper is of another build of skwir than this one, as
 /// it says when asked with `--build`, or older than the question, saying
 /// nothing. A helper is never refused for it, since most calls work all
 /// the same: only a failure says so. A call `cancel`led, a helper of this
@@ -141,8 +141,8 @@ fn explain_as(
     let build = match build_of(helper) {
         Said::Build(theirs) if theirs == ours => return error,
         Said::Unknown => return error,
-        Said::Build(theirs) => format!("another build of bibli ({theirs}; bibli is {ours})"),
-        Said::Nothing => "an older build of bibli".to_owned(),
+        Said::Build(theirs) => format!("another build of skwir ({theirs}; skwir is {ours})"),
+        Said::Nothing => "an older build of skwir".to_owned(),
     };
     let name = helper
         .file_name()
@@ -217,16 +217,16 @@ fn ask_build(path: &Path) -> Said {
     }
 }
 
-/// Where bibli's helpers are, from the folder its program is in: beside
+/// Where skwir's helpers are, from the folder its program is in: beside
 /// it (a build, `just dist`, a Mac's bundle, Windows' installer, the Nix
 /// package), else where a Linux package keeps a program's private
-/// helpers, `/usr/bin/bibli` beside `/usr/lib/bibli/` (Debian, Arch) or
-/// `/usr/libexec/bibli/` (Fedora) (ADR-040).
+/// helpers, `/usr/bin/skwir` beside `/usr/lib/skwir/` (Debian, Arch) or
+/// `/usr/libexec/skwir/` (Fedora) (ADR-040).
 fn helper_folders(bin: &Path) -> Vec<PathBuf> {
     let mut folders = vec![bin.to_owned()];
     if let Some(prefix) = bin.parent() {
-        folders.push(prefix.join("lib").join("bibli"));
-        folders.push(prefix.join("libexec").join("bibli"));
+        folders.push(prefix.join("lib").join("skwir"));
+        folders.push(prefix.join("libexec").join("skwir"));
     }
     folders
 }
@@ -236,12 +236,12 @@ fn helper_folders(bin: &Path) -> Vec<PathBuf> {
 pub fn required(program: &str) -> anyhow::Result<PathBuf> {
     find_program(program)
         .or_else(|| application(program))
-        .and_then(|path| bibli_core::os_path::canonical(path).ok())
+        .and_then(|path| skwir_core::os_path::canonical(path).ok())
         .with_context(|| format!("{program} is not installed"))
 }
 
 /// Where an application that puts no program on any path keeps the one
-/// bibli runs as `program`: `LibreOffice`'s `soffice`, in its bundle on
+/// skwir runs as `program`: `LibreOffice`'s `soffice`, in its bundle on
 /// macOS (in `/Applications` or the user's own) and in its folder under
 /// Program Files on Windows. Linux's packages put it on `PATH`.
 fn application(program: &str) -> Option<PathBuf> {
@@ -251,7 +251,7 @@ fn application(program: &str) -> Option<PathBuf> {
     let places: Vec<PathBuf> = if cfg!(target_os = "macos") {
         [
             Some(PathBuf::from("/Applications")),
-            bibli_core::os_path::home().map(|home| home.join("Applications")),
+            skwir_core::os_path::home().map(|home| home.join("Applications")),
         ]
         .into_iter()
         .flatten()
@@ -712,7 +712,7 @@ pub fn runs(pid: u32) -> Option<bool> {
 }
 
 /// Start `command` and let it run on its own: in a process group of its own
-/// (a Ctrl+C in the terminal bibli was started from does not reach it), its
+/// (a Ctrl+C in the terminal skwir was started from does not reach it), its
 /// exit collected by the reaper. Standard streams are the caller's to set.
 ///
 /// # Errors
@@ -753,7 +753,7 @@ fn report(on_exit: OnExit, status: io::Result<ExitStatus>) {
 /// available.
 fn wait_on_thread(mut child: Child, on_exit: OnExit) {
     let spawned = std::thread::Builder::new()
-        .name("bibli-wait".into())
+        .name("skwir-wait".into())
         .spawn(move || {
             let status = child.wait();
             report(on_exit, status);
@@ -797,7 +797,7 @@ mod reaper {
                 wake,
             }));
             std::thread::Builder::new()
-                .name("bibli-reaper".into())
+                .name("skwir-reaper".into())
                 .spawn(move || run(reaper))
                 .ok()?;
             Some(reaper)
@@ -933,11 +933,11 @@ mod tests {
         let lacking = helper("lacking", "echo 'PDFium library unavailable' >&2; exit 1");
         assert!(!probe(&lacking, &[]));
         // What it would be launched with reaches it.
-        let told = helper("told", r#"[ -n "$BIBLI_TEST_TOLD" ] && exit 0; exit 1"#);
+        let told = helper("told", r#"[ -n "$SKWIR_TEST_TOLD" ] && exit 0; exit 1"#);
         assert!(!probe(&told, &[]));
         assert!(probe(
             &told,
-            &[("BIBLI_TEST_TOLD", std::ffi::OsStr::new("/x/libpdfium.so"))]
+            &[("SKWIR_TEST_TOLD", std::ffi::OsStr::new("/x/libpdfium.so"))]
         ));
         assert!(!probe(&dir.path().join("absent"), &[]));
     }
@@ -963,39 +963,39 @@ mod tests {
             format!("{:#}", explain_as(ours, path, cancel, failure))
         };
         let live = CancelToken::new();
-        let same = helper("bibli-same-worker", &says("0.1.0+d264e57ab367"));
+        let same = helper("skwir-same-worker", &says("0.1.0+d264e57ab367"));
         assert_eq!(
             explained(Some("0.1.0+d264e57ab367"), &same, &live),
             "bwrap failed: invalid digit found in string"
         );
-        let other = helper("bibli-other-worker", &says("0.1.0+a5d0b7a1c2d3"));
+        let other = helper("skwir-other-worker", &says("0.1.0+a5d0b7a1c2d3"));
         assert_eq!(
             explained(Some("0.1.0+d264e57ab367"), &other, &live),
-            "bwrap failed: invalid digit found in string. bibli-other-worker is from \
-             another build of bibli (0.1.0+a5d0b7a1c2d3; bibli is 0.1.0+d264e57ab367), \
+            "bwrap failed: invalid digit found in string. skwir-other-worker is from \
+             another build of skwir (0.1.0+a5d0b7a1c2d3; skwir is 0.1.0+d264e57ab367), \
              which may be why: rebuild or reinstall it"
         );
         // An older helper takes the question for its input, and fails or
         // answers something else.
         let older = helper(
-            "bibli-older-worker",
+            "skwir-older-worker",
             "echo 'missing --members bounds' >&2; exit 1",
         );
         let chatty = helper(
-            "bibli-chatty-worker",
+            "skwir-chatty-worker",
             r#"echo '{"id":0,"body":{"Error":"x"}}'"#,
         );
         for path in [&older, &chatty] {
             assert!(
                 explained(Some("0.1.0"), path, &live).ends_with(
-                    "is from an older build of bibli, which may be why: rebuild or reinstall it"
+                    "is from an older build of skwir, which may be why: rebuild or reinstall it"
                 ),
                 "{}",
                 path.display()
             );
         }
         // Its libraries missing, it could not answer at all.
-        let unloadable = helper("bibli-unloadable-worker", "exit 127");
+        let unloadable = helper("skwir-unloadable-worker", "exit 127");
         let alone = "bwrap failed: invalid digit found in string";
         assert_eq!(explained(Some("0.1.0"), &unloadable, &live), alone);
         assert_eq!(
@@ -1024,14 +1024,14 @@ mod tests {
     }
 
     #[test]
-    fn helpers_are_beside_bibli_or_where_a_package_keeps_them() {
+    fn helpers_are_beside_skwir_or_where_a_package_keeps_them() {
         let bin = Path::new("/usr/bin");
         assert_eq!(
             helper_folders(bin),
             [
                 PathBuf::from("/usr/bin"),
-                PathBuf::from("/usr/lib/bibli"),
-                PathBuf::from("/usr/libexec/bibli"),
+                PathBuf::from("/usr/lib/skwir"),
+                PathBuf::from("/usr/libexec/skwir"),
             ]
         );
         assert_eq!(helper_folders(Path::new("/")), [PathBuf::from("/")]);

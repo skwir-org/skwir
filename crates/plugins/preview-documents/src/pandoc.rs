@@ -1,4 +1,4 @@
-//! Pandoc, when installed, reads text documents bibli does not (RTF), or
+//! Pandoc, when installed, reads text documents skwir does not (RTF), or
 //! all of them when asked (ADR-030). It runs in its own sandbox
 //! (`--sandbox`: it reads the file it is named and nothing else, and
 //! fetches nothing), and in the converters' where the system has one; a
@@ -6,11 +6,11 @@
 //! writes HTML, which the reading mode reads like any page; the pictures
 //! it extracts are kept in the cache, so they can be shown when scrolled
 //! to, after its folder is gone.
-use bibli_core::CancelToken;
-use bibli_core::inspection::Picture;
-use bibli_platform::inspection::{self, limits};
-use bibli_platform::{process, rich_preview, sandbox};
 use parking_lot::Mutex;
+use skwir_core::CancelToken;
+use skwir_core::inspection::Picture;
+use skwir_platform::inspection::{self, limits};
+use skwir_platform::{process, rich_preview, sandbox};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -134,7 +134,7 @@ impl Pandoc {
         process::run(
             &mut run.command,
             cancel,
-            bibli_platform::preview::CONVERT_TIMEOUT,
+            skwir_platform::preview::CONVERT_TIMEOUT,
         )?;
         Ok(())
     }

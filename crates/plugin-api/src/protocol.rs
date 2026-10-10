@@ -1,13 +1,13 @@
-//! The methods bibli and a plugin from outside call, and their JSON
+//! The methods skwir and a plugin from outside call, and their JSON
 //! (ADR-045). A program speaks them as JSON-RPC 2.0, one message per line
 //! on its standard input and output ([`Message`]); a WebAssembly module
-//! answers them through its one `call` export, and calls bibli through
+//! answers them through its one `call` export, and calls skwir through
 //! its imports, `read` and `log` (`wit/plugin.wit`).
 //!
-//! bibli asks ([`method`]): `initialize` (a program, first), `field`,
+//! skwir asks ([`method`]): `initialize` (a program, first), `field`,
 //! `thumbnail`, `inspect`, `convert`, `page`, `command`. A plugin asks
 //! back, while it
-//! answers: `read` (a file of the call, by its handle), `log`. bibli
+//! answers: `read` (a file of the call, by its handle), `log`. skwir
 //! sends a program `$/cancel` when it stops waiting for an answer, and
 //! closes its standard input when it is no longer needed.
 
@@ -20,7 +20,7 @@ use serde_json::Value;
 /// and [`OLDEST`] then follows it.
 pub const VERSION: u32 = 1;
 
-/// The oldest version bibli still speaks: a plugin written for it runs
+/// The oldest version skwir still speaks: a plugin written for it runs
 /// unchanged.
 pub const OLDEST: u32 = 1;
 
@@ -33,34 +33,34 @@ pub const READ_LIMIT: u32 = 4 * 1024 * 1024;
 
 /// The methods' names.
 pub mod method {
-    /// bibli → a program, first: [`InitializeParams`](super::InitializeParams).
+    /// skwir → a program, first: [`InitializeParams`](super::InitializeParams).
     pub const INITIALIZE: &str = "initialize";
-    /// bibli → plugin: [`FieldParams`](super::FieldParams) → [`FieldAnswer`](super::FieldAnswer).
+    /// skwir → plugin: [`FieldParams`](super::FieldParams) → [`FieldAnswer`](super::FieldAnswer).
     pub const FIELD: &str = "field";
-    /// bibli → plugin: [`ThumbnailParams`](super::ThumbnailParams) →
+    /// skwir → plugin: [`ThumbnailParams`](super::ThumbnailParams) →
     /// [`ThumbnailAnswer`](super::ThumbnailAnswer).
     pub const THUMBNAIL: &str = "thumbnail";
-    /// bibli → plugin: [`InspectParams`](super::InspectParams) → an
+    /// skwir → plugin: [`InspectParams`](super::InspectParams) → an
     /// [`Inspection`](super::Inspection) or null.
     pub const INSPECT: &str = "inspect";
-    /// bibli → plugin: [`ConvertParams`](super::ConvertParams)
+    /// skwir → plugin: [`ConvertParams`](super::ConvertParams)
     /// → a [`ConvertAnswer`](super::ConvertAnswer) or null.
     pub const CONVERT: &str = "convert";
-    /// bibli → plugin: [`PageParams`](super::PageParams) →
+    /// skwir → plugin: [`PageParams`](super::PageParams) →
     /// a [`PageAnswer`](super::PageAnswer) or null.
     pub const PAGE: &str = "page";
-    /// bibli → plugin: [`CommandParams`](super::CommandParams) →
+    /// skwir → plugin: [`CommandParams`](super::CommandParams) →
     /// [`CommandAnswer`](super::CommandAnswer).
     pub const COMMAND: &str = "command";
-    /// bibli → a program, a notification: stop answering `{ "id" }`.
+    /// skwir → a program, a notification: stop answering `{ "id" }`.
     pub const CANCEL: &str = "$/cancel";
-    /// plugin → bibli: [`ReadParams`](super::ReadParams) → [`ReadAnswer`](super::ReadAnswer).
+    /// plugin → skwir: [`ReadParams`](super::ReadParams) → [`ReadAnswer`](super::ReadAnswer).
     pub const READ: &str = "read";
-    /// plugin → bibli, a notification: [`LogParams`](super::LogParams).
+    /// plugin → skwir, a notification: [`LogParams`](super::LogParams).
     pub const LOG: &str = "log";
 }
 
-/// A file a call is about. Its bytes are read through bibli by `handle`,
+/// A file a call is about. Its bytes are read through skwir by `handle`,
 /// valid while the call is answered; its path and name are for showing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct File {
@@ -79,7 +79,7 @@ pub struct File {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InitializeParams {
-    /// The protocol's version bibli speaks.
+    /// The protocol's version skwir speaks.
     pub api: u32,
     /// What the plugin may do, as granted.
     pub capabilities: Vec<crate::manifest::Capability>,
@@ -143,8 +143,8 @@ pub struct ConvertParams {
     pub file: File,
 }
 
-/// A preview that is another file: one of a format bibli shows (a PDF, a
-/// PNG, Markdown, CSV, GPX…), which bibli previews as it would that file,
+/// A preview that is another file: one of a format skwir shows (a PDF, a
+/// PNG, Markdown, CSV, GPX…), which skwir previews as it would that file,
 /// typed by its name and bytes. Null: the plugin shows nothing for this
 /// one.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,7 +190,7 @@ pub struct PageAnswer {
     /// leads.
     #[serde(default)]
     pub links: Vec<PageLink>,
-    /// The file's outline, the same whichever page is asked: bibli reads
+    /// The file's outline, the same whichever page is asked: skwir reads
     /// it once, with how many pages there are.
     #[serde(default)]
     pub outline: Vec<OutlineEntry>,
@@ -227,7 +227,7 @@ pub struct OutlineEntry {
 
 /// A run of a page's text (a word, a line) and the box it lies in on the
 /// page, as fractions of the page's width and height from its top left.
-/// bibli puts a space between two runs on one line, a line break between
+/// skwir puts a space between two runs on one line, a line break between
 /// lines.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TextRun {

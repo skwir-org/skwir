@@ -1,4 +1,4 @@
-//! bibli plugin: geo. GPS tracks, routes and waypoints (GPX, KML, KMZ,
+//! skwir plugin: geo. GPS tracks, routes and waypoints (GPX, KML, KMZ,
 //! `GeoJSON`) previewed on a map, with what a hiker or a cyclist asks of
 //! them: distance, time, climb (ADR-020). Files are read, not obeyed:
 //! nothing they link to is fetched.
@@ -42,19 +42,19 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use bibli_core::command::Outcome;
-use bibli_core::geo::{Datum, LineKind};
-use bibli_core::registry::{KeyBinding, ViewSpec};
-use bibli_core::workspace::PaneId;
-use bibli_core::{
+use collect::{Collector, Plan, PlanKind, Totals};
+use skwir_core::command::Outcome;
+use skwir_core::geo::{Datum, LineKind};
+use skwir_core::registry::{KeyBinding, ViewSpec};
+use skwir_core::workspace::PaneId;
+use skwir_core::{
     App, CancelToken,
     geo::GeoDoc,
     inspection::{Detail, InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use bibli_platform::inspection::{self, limits};
-use collect::{Collector, Plan, PlanKind, Totals};
+use skwir_platform::inspection::{self, limits};
 
 const ID: &str = "geo";
 /// What is read of a file, streamed: more than a year of GPS logging.
@@ -69,7 +69,7 @@ pub struct GeoPlugin {
     scanner: parking_lot::Mutex<Option<Arc<view::Scanner>>>,
     /// What its work outlives no further than: cancelled when it is
     /// turned off, so a geotag under way proposes nothing after.
-    lifetime: parking_lot::Mutex<bibli_core::CancelToken>,
+    lifetime: parking_lot::Mutex<skwir_core::CancelToken>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -123,15 +123,15 @@ impl Plugin for GeoPlugin {
     fn description(&self) -> &'static str {
         "Show GPS tracks and routes (GPX, KML, KMZ, GeoJSON, TCX, FIT, IGC, NMEA), flight plans (Garmin, Flight Simulator, X-Plane, Little Navmap) and drone missions (QGroundControl, MAVLink, Litchi, DJI) on a map, with their distance, time and climb, and the pictures and videos of a folder in the Map view. Nothing a file links to is fetched"
     }
-    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+    fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![geotag::requirement()]
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[
             Capability::Read,
             Capability::Write,
             Capability::Programs,
@@ -153,7 +153,7 @@ impl Plugin for GeoPlugin {
             KeyBinding {
                 // After Usage's Ctrl+4.
                 keys: "ctrl-5".into(),
-                command: bibli_core::command::Invocation::with_args(
+                command: skwir_core::command::Invocation::with_args(
                     "ui.view",
                     &serde_json::json!({ "id": VIEW }),
                 ),
@@ -180,7 +180,7 @@ impl Plugin for GeoPlugin {
         // agents ask `geo.points` for the same batch.
         app.maps.register(
             ID,
-            Arc::clone(&scanner) as Arc<dyn bibli_core::map_points::MapSource>,
+            Arc::clone(&scanner) as Arc<dyn skwir_core::map_points::MapSource>,
         );
         let points = Arc::clone(&scanner);
         app.commands.register::<PointsArgs, _>(
@@ -212,7 +212,7 @@ impl Plugin for GeoPlugin {
             ID,
             "geo.locate",
             "Where is a place",
-            "The places of that name bibli knows offline, biggest first, with their positions: for scripts and agents",
+            "The places of that name skwir knows offline, biggest first, with their positions: for scripts and agents",
             |args, _| {
                 let places: Vec<serde_json::Value> = places::find(&args.name)
                     .into_iter()
@@ -243,7 +243,7 @@ impl Plugin for GeoPlugin {
                     let text = format!("{value:.5}");
                     text.trim_end_matches('0').trim_end_matches('.').to_owned()
                 };
-                app.dispatch(&bibli_core::command::Invocation::with_args(
+                app.dispatch(&skwir_core::command::Invocation::with_args(
                     "query.search",
                     &serde_json::json!({
                         "expr": format!(
@@ -266,7 +266,7 @@ impl Plugin for GeoPlugin {
                 "Search subfolders for places",
                 "Show the pictures and tracks of the folder and all its subfolders",
                 |args, app| {
-                    app.dispatch(&bibli_core::command::Invocation::with_args(
+                    app.dispatch(&skwir_core::command::Invocation::with_args(
                         "query.search",
                         &serde_json::json!({
                             "expr": placeable_query(),
@@ -480,7 +480,7 @@ fn read(
         Format::Kmz => {
             drop(file);
             let mut package =
-                bibli_platform::package::Package::open(path, "This KMZ", false, cancel)?;
+                skwir_platform::package::Package::open(path, "This KMZ", false, cancel)?;
             // A DJI mission (WPML) is a KMZ of its own kind.
             if let Some(name) = wpml::MEMBERS.iter().find(|name| package.has(name)) {
                 let member = package
@@ -712,7 +712,7 @@ fn facts(doc: &GeoDoc, c: &Collector) -> Vec<Detail> {
         ]);
         return inspection::details(facts);
     }
-    let zone = bibli_platform::calendar::Calendar::system()
+    let zone = skwir_platform::calendar::Calendar::system()
         .time_zone()
         .clone();
     let main = if c.tracks.lines > 0 {

@@ -7,7 +7,7 @@
 //! (which `json!` unwraps). Both forms deserialize.
 //!
 //! Use [`PathArg`] as a command argument type, or `#[serde(with =
-//! "bibli_core::os_path")]` on a `PathBuf` field, and never pass
+//! "skwir_core::os_path")]` on a `PathBuf` field, and never pass
 //! `to_string_lossy()` where a path is expected.
 //!
 //! [`find_program`] is the one `PATH` lookup: plugins, platform adapters and
@@ -306,7 +306,7 @@ impl schemars::JsonSchema for PathArg {
 }
 
 /// `path`, refused unless absolute: a path a command is given may come
-/// from another process (`bibli cmd`, an agent, ADR-043), whose working
+/// from another process (`skwir cmd`, an agent, ADR-043), whose working
 /// folder is not the window's.
 ///
 /// # Errors
@@ -505,7 +505,7 @@ mod tests {
     fn find_program_needs_an_executable_file() {
         assert!(find_program("").is_none());
         assert!(find_program("/").is_none());
-        assert!(find_program("definitely-not-a-bibli-program").is_none());
+        assert!(find_program("definitely-not-a-skwir-program").is_none());
     }
 
     #[test]

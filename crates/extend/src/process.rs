@@ -1,7 +1,7 @@
 //! A plugin that runs as a program (Level 2, ADR-045): started isolated
 //! when first asked (`sandbox::plugin`), the protocol on its pipes, one
 //! call at a time, its `read`s answered from the call's files; ended once
-//! idle for [`IDLE`], when it is turned off, and with bibli (`bwrap`'s
+//! idle for [`IDLE`], when it is turned off, and with skwir (`bwrap`'s
 //! `--die-with-parent`). A program that stops, or that stops answering
 //! (`Broken`), is ended and started again at the next call, not before
 //! [`AGAIN`] after one that could not start; turned off, it is never
@@ -14,15 +14,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
-use bibli_core::permissions::{Capabilities, Capability};
-use bibli_plugin_api::manifest::Capability as Granted;
-use bibli_plugin_api::protocol::{
-    InitializeAnswer, InitializeParams, LogParams, MESSAGE_LIMIT, Message, OLDEST, ReadAnswer,
-    ReadParams, VERSION, method,
-};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
+use skwir_core::permissions::{Capabilities, Capability};
+use skwir_plugin_api::manifest::Capability as Granted;
+use skwir_plugin_api::protocol::{
+    InitializeAnswer, InitializeParams, LogParams, MESSAGE_LIMIT, Message, OLDEST, ReadAnswer,
+    ReadParams, VERSION, method,
+};
 
 use crate::call::{Call, Transport};
 
@@ -60,8 +60,8 @@ impl std::error::Error for Broken {}
 pub(crate) enum Isolation {
     /// Never: a plugin's own program reaches what its process reaches.
     Required,
-    /// Isolated where the system can, plainly where not: bibli's helper
-    /// running a module, which reaches only bibli's imports anyway.
+    /// Isolated where the system can, plainly where not: skwir's helper
+    /// running a module, which reaches only skwir's imports anyway.
     WhereAvailable,
 }
 
@@ -159,9 +159,9 @@ impl Program {
                 std::fs::create_dir_all(folder)?;
                 Work::Kept(folder.clone())
             }
-            None => Work::Fresh(tempfile::Builder::new().prefix("bibli-plugin-").tempdir()?),
+            None => Work::Fresh(tempfile::Builder::new().prefix("skwir-plugin-").tempdir()?),
         };
-        let isolated = bibli_platform::sandbox::plugin(
+        let isolated = skwir_platform::sandbox::plugin(
             &self.path,
             &self.folder,
             work.path(),
@@ -208,7 +208,7 @@ impl Program {
                 .spawn(move || {
                     let mut reader = BufReader::new(stdout);
                     while let Some(Ok(message)) =
-                        bibli_core::jsonl::read::<Message>(&mut reader, MESSAGE_LIMIT)
+                        skwir_core::jsonl::read::<Message>(&mut reader, MESSAGE_LIMIT)
                     {
                         if tx.send(message).is_err() {
                             break;
@@ -269,7 +269,7 @@ impl Program {
             &Call::new(
                 Vec::new(),
                 Capabilities::NONE,
-                bibli_core::CancelToken::new(),
+                skwir_core::CancelToken::new(),
             ),
             START,
         );
@@ -285,7 +285,7 @@ impl Program {
         if !(OLDEST..=VERSION).contains(&answer.api) {
             running.end();
             anyhow::bail!(
-                "the plugin speaks version {} of the protocol; bibli speaks {OLDEST} to {VERSION}",
+                "the plugin speaks version {} of the protocol; skwir speaks {OLDEST} to {VERSION}",
                 answer.api
             );
         }
@@ -396,14 +396,14 @@ impl Running {
                     .and_then(|p| call.read(p.file, p.offset, p.length))
                     .map(|bytes| {
                         json!(ReadAnswer {
-                            data: bibli_plugin_api::base64::encode(&bytes),
+                            data: skwir_plugin_api::base64::encode(&bytes),
                         })
                     });
                 self.send(&Message::answer(id, answer))
             }
             (Some(id), Some(other)) => self.send(&Message::answer(
                 id,
-                Err(format!("bibli answers no `{other}`")),
+                Err(format!("skwir answers no `{other}`")),
             )),
             (None, Some(method::LOG)) => {
                 if let Some(Ok(log)) = message.params.map(serde_json::from_value::<LogParams>) {
@@ -524,7 +524,7 @@ mod tests {
         Call::new(
             Vec::new(),
             Capabilities::NONE,
-            bibli_core::CancelToken::new(),
+            skwir_core::CancelToken::new(),
         )
     }
 

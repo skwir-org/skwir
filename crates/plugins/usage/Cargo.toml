@@ -1,6 +1,6 @@
 [package]
-name = "bibli-plugin-usage"
-description = "bibli plugin: usage (Phase 4)"
+name = "skwir-plugin-usage"
+description = "skwir plugin: usage (Phase 4)"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -8,8 +8,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
-bibli-platform.workspace = true
+skwir-core.workspace = true
+skwir-platform.workspace = true
 notify.workspace = true
 crossbeam-channel.workspace = true
 serde.workspace = true

@@ -292,7 +292,7 @@ pub enum CommandError {
         name: Arc<str>,
         reason: serde_json::Error,
     },
-    /// Its handler panicked: a fault of bibli's or of a plugin's, never the
+    /// Its handler panicked: a fault of skwir's or of a plugin's, never the
     /// caller's. What it said is in the log.
     #[error("“{0}” stopped on a fault of its own (the log says where)")]
     Panicked(Arc<str>),
@@ -366,7 +366,7 @@ impl CommandRegistry {
     }
 
     /// Register a command whose arguments `schema` describes, handled as
-    /// JSON: a plugin's from outside bibli (ADR-045), whose arguments are
+    /// JSON: a plugin's from outside skwir (ADR-045), whose arguments are
     /// data, not a Rust type. They are an object; a name the schema's
     /// `properties` do not hold is refused, as is one its `required` lists
     /// missing.

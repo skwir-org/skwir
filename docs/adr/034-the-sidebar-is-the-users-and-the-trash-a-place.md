@@ -21,7 +21,7 @@ trash, which every file manager shows, was nowhere.
 
 Three questions closed doors: who keeps the arrangement of a place no one
 keeps (Home, a volume), what names a volume across mounts, and how much
-of the trash bibli reads itself.
+of the trash skwir reads itself.
 
 ## Decision
 
@@ -66,7 +66,7 @@ or not, whatever device name the kernel gives it this time.
 Whether a volume is shown when the user has not said is udisks's word:
 `UDISKS_IGNORE`, which its rules set for EFI, BIOS boot, recovery and
 reserved partitions, read from udev's database (files in `/run`, so the
-quick scan reads it without waiting for a drive, and bibli needs no
+quick scan reads it without waiting for a drive, and skwir needs no
 D-Bus). Such a volume is offered hidden (`Place::hidden`), listed
 unchecked in its group's menu; the size guess applies only where udev
 has no record. The user's choice wins either way.
@@ -82,7 +82,7 @@ A click on a place never takes the keyboard from the files.
 
 The trash plugin provides `trash:`: what every trash of the user's
 holds, each file under the name it had, from the folder it had. It reads
-the trashes itself (`bibli_platform::trash`: the home trash and those of
+the trashes itself (`skwir_platform::trash`: the home trash and those of
 the volumes the sidebar shows, network and FUSE ones aside), rather than
 the trash crate's listing, which asks every mount point, network ones
 included, and which tests could not keep to a trash of their own. The
@@ -102,8 +102,8 @@ Delete, Delete in the trash, Empty Trash.
 
 ## Consequences
 
-- An arrangement is bibli's: Nautilus does not see Home moved below
-  Downloads, nor bibli a sidebar arranged in Nautilus.
+- An arrangement is skwir's: Nautilus does not see Home moved below
+  Downloads, nor skwir a sidebar arranged in Nautilus.
 - A group whose places are all hidden keeps its header, whose menu shows
   them again.
 - The trash listed no Deleted column and did not sort by it: Details

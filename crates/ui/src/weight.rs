@@ -20,8 +20,8 @@
 
 use std::path::{Path, PathBuf};
 
-use bibli_core::CancelToken;
 use gpui::{Context, Window};
+use skwir_core::CancelToken;
 
 use crate::shell::Shell;
 
@@ -91,7 +91,7 @@ impl Shell {
             let Some(p) = ws.pane(pane) else { return };
             (
                 p.location()
-                    .and_then(bibli_core::Location::path)
+                    .and_then(skwir_core::Location::path)
                     .map(|dir| (dir, p.filter().map(str::to_owned), p.location_lifetime())),
                 key.from_listing.then(|| listed_bytes(p, unknown_at)),
             )
@@ -131,7 +131,7 @@ impl Shell {
         let (tx, rx) = flume::bounded(1);
         let token = cancel.clone();
         self.app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Background,
+            skwir_core::scheduler::Priority::Background,
             "folder-weight",
             cancel,
             move || {
@@ -173,11 +173,11 @@ enum Listed {
 /// What the files the pane shows weigh, once each has its metadata,
 /// looking for one without from `unknown_at` on: each file once, its
 /// names (hard links) one file (`entry::weight`).
-fn listed_bytes(p: &bibli_core::workspace::Pane, unknown_at: usize) -> Listed {
+fn listed_bytes(p: &skwir_core::workspace::Pane, unknown_at: usize) -> Listed {
     if let Some(at) = p.file_unknown_from(unknown_at) {
         return Listed::Unknown(at);
     }
-    Listed::Bytes(bibli_core::entry::weight(
+    Listed::Bytes(skwir_core::entry::weight(
         p.order().iter().filter_map(|id| p.entry(*id)),
     ))
 }
@@ -191,14 +191,14 @@ fn listed_bytes(p: &bibli_core::workspace::Pane, unknown_at: usize) -> Listed {
 fn weigh(dir: &Path, hidden: bool, filter: Option<&str>, cancel: &CancelToken) -> Option<u64> {
     let mut bytes = 0u64;
     let mut linked = std::collections::HashSet::new();
-    let filter = filter.map(bibli_core::workspace::NameFilter::new);
+    let filter = filter.map(skwir_core::workspace::NameFilter::new);
     for entry in std::fs::read_dir(dir).ok()? {
         if cancel.is_cancelled() {
             return None;
         }
         let Ok(entry) = entry else { continue };
         let name = entry.file_name();
-        if !hidden && bibli_core::fs::is_hidden(&entry) {
+        if !hidden && skwir_core::fs::is_hidden(&entry) {
             continue;
         }
         if filter.as_ref().is_some_and(|f| !f.holds(&name)) {
@@ -234,7 +234,7 @@ fn once(meta: &std::fs::Metadata, linked: &mut std::collections::HashSet<(u64, u
 #[cfg(test)]
 mod tests {
     use super::weigh;
-    use bibli_core::CancelToken;
+    use skwir_core::CancelToken;
 
     #[test]
     fn a_folder_weighs_the_files_it_shows() {

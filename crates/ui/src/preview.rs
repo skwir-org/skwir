@@ -6,18 +6,18 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use bibli_core::op::EntryRef;
-use bibli_core::preview::{PreviewInfo, PreviewRequest};
-use bibli_core::workspace::PaneId;
+use skwir_core::op::EntryRef;
+use skwir_core::preview::{PreviewInfo, PreviewRequest};
+use skwir_core::workspace::PaneId;
 use std::sync::Arc;
 
-use bibli_core::entry::keys;
-use bibli_core::scheduler::Priority;
-use bibli_core::{CancelToken, EntryId};
 use gpui::{
     AnyElement, Context, DragMoveEvent, FocusHandle, MouseButton, ObjectFit, RenderImage, Window,
     div, img, prelude::*, px,
 };
+use skwir_core::entry::keys;
+use skwir_core::scheduler::Priority;
+use skwir_core::{CancelToken, EntryId};
 
 use crate::format;
 use crate::icons;
@@ -45,10 +45,10 @@ pub enum PreviewContent {
         width: u32,
         height: u32,
         detail: Option<PreviewInfo>,
-        document: Option<Arc<bibli_core::document::PageContent>>,
+        document: Option<Arc<skwir_core::document::PageContent>>,
         /// What the file says about the picture (EXIF), read on the worker
         /// that decoded it, for the panel's Details.
-        facts: Vec<bibli_core::inspection::Detail>,
+        facts: Vec<skwir_core::inspection::Detail>,
         /// How many pixels it can have, which bounds a zoom's sharpening.
         pixels: Pixels,
     },
@@ -67,7 +67,7 @@ pub enum Pixels {
     Own,
     /// A drawing (SVG): as many as it is asked for, past its own size.
     Any,
-    /// What another program drew (a thumbnailer, for a format bibli does
+    /// What another program drew (a thumbnailer, for a format skwir does
     /// not decode): what it gave is all there is.
     Drawn,
 }
@@ -75,7 +75,7 @@ pub enum Pixels {
 /// The player a preview result brings.
 enum Media {
     /// A session of its own, just opened.
-    Opened(Arc<dyn bibli_core::media::MediaSession>),
+    Opened(Arc<dyn skwir_core::media::MediaSession>),
     /// The file is the pinned track: the panel shows the session that plays
     /// it rather than open a second one.
     Pinned,
@@ -85,7 +85,7 @@ struct PreviewResult {
     generation: u64,
     content: PreviewContent,
     complete: bool,
-    session: Option<Arc<dyn bibli_core::document::DocumentSession>>,
+    session: Option<Arc<dyn skwir_core::document::DocumentSession>>,
     media: Option<Media>,
     /// The type the worker read from the bytes when the name did not settle
     /// it (`mime::identify`): the header shows it and the next request of
@@ -221,7 +221,7 @@ type FieldRows = (
 /// file at `path`, or, for a companion whose file is gone, what it was.
 /// Looks at the disk: call on a worker.
 fn beside_rows(
-    companions: &bibli_core::companions::Companions,
+    companions: &skwir_core::companions::Companions,
     path: &std::path::Path,
 ) -> Vec<crate::details::Row> {
     let mut rows = Vec::new();
@@ -340,7 +340,7 @@ pub struct PreviewState {
     nested_tx: flume::Sender<(u64, Arc<Nested>)>,
     nested_rx: flume::Receiver<(u64, Arc<Nested>)>,
     /// Fields read on demand that Details shows (a picture's place,
-    /// `bibli_core::fields`), for the entry of `details_at`: read on a
+    /// `skwir_core::fields`), for the entry of `details_at`: read on a
     /// worker, arriving with the generation they were asked at.
     pub fields: Vec<crate::details::Row>,
     fields_generation: u64,
@@ -364,7 +364,7 @@ pub struct PreviewState {
     fields_cancel: Option<CancelToken>,
     /// The entry Details was collected for: collected again when it
     /// changes, whatever else the listing does.
-    details_entry: Option<bibli_core::entry::Entry>,
+    details_entry: Option<skwir_core::entry::Entry>,
     /// What the entry says about itself, collected when it or its listing
     /// changes (`details_at`), never while painting.
     pub details: Vec<crate::details::Group>,
@@ -398,36 +398,36 @@ struct Here {
     /// again from each, not only when the stamp moves (until the answer,
     /// the entry is the one kept from before).
     answers: u64,
-    entry: Option<bibli_core::entry::Entry>,
+    entry: Option<skwir_core::entry::Entry>,
     volume: Option<crate::details::Group>,
 }
 
 /// What the worker learns of the volume holding a folder: the mount it is
 /// under, and its free and total bytes.
 struct VolumeFacts {
-    mount: Option<bibli_platform::places::Mount>,
+    mount: Option<skwir_platform::places::Mount>,
     space: Option<(u64, u64)>,
 }
 
 impl VolumeFacts {
     /// Read on a worker: the mount table and the filesystem's counts.
     fn of(path: &Path) -> Self {
-        let mount = bibli_platform::places::mounts()
+        let mount = skwir_platform::places::mounts()
             .into_iter()
             .filter(|m| path.starts_with(&m.path))
             .max_by_key(|m| m.path.as_os_str().len());
         VolumeFacts {
             mount,
-            space: bibli_platform::places::space(path),
+            space: skwir_platform::places::space(path),
         }
     }
 
     /// Details' Volume group, the volume named as the sidebar names it.
-    fn group(self, app: &bibli_core::App) -> Option<crate::details::Group> {
+    fn group(self, app: &skwir_core::App) -> Option<crate::details::Group> {
         use crate::details::Row;
         let mut rows = Vec::new();
         if let Some(mount) = &self.mount {
-            let name = app.location_title(&bibli_core::Location::from_path(&mount.path));
+            let name = app.location_title(&skwir_core::Location::from_path(&mount.path));
             rows.push(Row::new("Volume", name));
             if !mount.source.is_empty() {
                 rows.push(Row::new("Device", mount.source.clone()));
@@ -541,7 +541,7 @@ impl PreviewState {
     }
 
     /// The pane whose entry the panel is showing.
-    pub fn pane(&self) -> Option<bibli_core::workspace::PaneId> {
+    pub fn pane(&self) -> Option<skwir_core::workspace::PaneId> {
         self.key.as_ref().map(|key| key.pane)
     }
 
@@ -655,7 +655,7 @@ fn opens_as_pages(shell: &Shell) -> bool {
         .preview
         .key
         .as_ref()
-        .map(|key| bibli_platform::inspection::extension(&key.path))
+        .map(|key| skwir_platform::inspection::extension(&key.path))
         .unwrap_or_default();
     mime == "application/pdf"
         || mime.contains("comicbook")
@@ -665,11 +665,11 @@ fn opens_as_pages(shell: &Shell) -> bool {
 /// An image's own size, from its header, turned as it is shown; a
 /// drawing's, from its document.
 fn image_size(path: &Path, mime: &str, cancel: &CancelToken) -> Option<(u32, u32)> {
-    use bibli_platform::inspection;
+    use skwir_platform::inspection;
     if matches!(mime, "image/svg+xml" | "image/svg+xml-compressed") {
         return inspection::drawing_size(&inspection::read_drawing(path, cancel).ok()?).ok();
     }
-    bibli_platform::picture::size(bibli_platform::picture::open(path).ok()?).ok()
+    skwir_platform::picture::size(skwir_platform::picture::open(path).ok()?).ok()
 }
 
 /// An image decoded at most `side` pixels on its longer side (at least the
@@ -678,10 +678,10 @@ fn image_size(path: &Path, mime: &str, cancel: &CancelToken) -> Option<(u32, u32
 fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<PreviewContent> {
     let side = side.clamp(
         IMAGE_MAX_SIDE,
-        bibli_platform::inspection::limits::PICTURE_SIDE,
+        skwir_platform::inspection::limits::PICTURE_SIDE,
     );
-    let reader = || bibli_platform::picture::open(path);
-    let (w, h) = bibli_platform::picture::size(reader()?)?;
+    let reader = || skwir_platform::picture::open(path);
+    let (w, h) = skwir_platform::picture::size(reader()?)?;
     anyhow::ensure!(
         u64::from(w) * u64::from(h) <= 64 * 1024 * 1024,
         "image is too large to preview"
@@ -693,7 +693,7 @@ fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
-    let img = bibli_platform::picture::decode(reader()?)?;
+    let img = skwir_platform::picture::decode(reader()?)?;
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
@@ -711,7 +711,7 @@ fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
         height: h,
         detail: None,
         document: None,
-        facts: bibli_platform::exif::details(path),
+        facts: skwir_platform::exif::details(path),
         pixels: Pixels::Own,
     })
 }
@@ -720,7 +720,7 @@ fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
 /// for `side` pixels (a zoom, a high-density panel), at that; its own size
 /// is what 100% is.
 fn decode_drawing(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<PreviewContent> {
-    use bibli_platform::inspection;
+    use skwir_platform::inspection;
     let bytes = inspection::read_drawing(path, cancel)?;
     let decoded = inspection::drawing(&bytes, (side > 0).then_some(side))?;
     if cancel.is_cancelled() {
@@ -766,7 +766,7 @@ fn sweep(directory: &Path) {
             .file_name()
             .to_str()
             .and_then(|pid| pid.parse::<u32>().ok())
-            .is_none_or(|pid| bibli_platform::process::runs(pid) == Some(false));
+            .is_none_or(|pid| skwir_platform::process::runs(pid) == Some(false));
         if gone {
             let _ = std::fs::remove_dir_all(entry.path());
         }
@@ -776,7 +776,7 @@ fn sweep(directory: &Path) {
 /// Have the container write `target` out as a file of its own, in a private
 /// directory that lives as long as the panel shows it.
 fn extract_member(
-    previews: &bibli_core::preview::Previews,
+    previews: &skwir_core::preview::Previews,
     request: &PreviewRequest,
     target: &str,
     members: &Path,
@@ -799,7 +799,7 @@ fn extract_member(
         target: target.to_owned(),
         // Resolved once, here on the worker: by name, and by the bytes
         // where the name is not enough.
-        mime: bibli_platform::mime::identify(std::ffi::OsStr::new(&member.name), &member.path)
+        mime: skwir_platform::mime::identify(std::ffi::OsStr::new(&member.name), &member.path)
             .map(|mime| mime.to_string()),
         name: member.name,
         entry,
@@ -855,10 +855,10 @@ fn compute(
     // names an unknown file's bytes (`mime::by_content`): a `.txt` holding
     // NULs is not text, and a PEM key named like a Keynote file is, as is
     // one written in a legacy code page or UTF-16, which `plain` decodes.
-    if bibli_platform::inspection::is_text(&head) {
+    if skwir_platform::inspection::is_text(&head) {
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
-        return match bibli_platform::inspection::plain(path, offset, cancel) {
+        return match skwir_platform::inspection::plain(path, offset, cancel) {
             Ok(data) => PreviewContent::Inspection(crate::inspector::Display::new(data, code)),
             Err(error) => PreviewContent::Error(format!("{error:#}")),
         };
@@ -869,7 +869,7 @@ fn compute(
 fn read_head(path: &Path) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
     // Never a pipe's open, which waits for a writer.
-    let mut f = bibli_platform::file::open_regular(path)?;
+    let mut f = skwir_platform::file::open_regular(path)?;
     let mut buf = vec![0u8; TEXT_LIMIT];
     let mut n = 0;
     while n < TEXT_LIMIT {
@@ -1019,7 +1019,7 @@ impl Shell {
                     .wrapping_mul(31)
                     .wrapping_add(pane.selection.revision())
                     .wrapping_mul(2)
-                    .wrapping_add(u64::from(bibli_platform::users::loaded()));
+                    .wrapping_add(u64::from(skwir_platform::users::loaded()));
                 Some((
                     seen,
                     PreviewKey {
@@ -1033,11 +1033,11 @@ impl Shell {
                         modified: e
                             .metadata
                             .value(keys::MODIFIED)
-                            .and_then(bibli_core::Value::as_time),
+                            .and_then(skwir_core::Value::as_time),
                         size: e
                             .metadata
                             .value(keys::SIZE)
-                            .and_then(bibli_core::Value::as_u64),
+                            .and_then(skwir_core::Value::as_u64),
                         code: code.clone(),
                     },
                     e.clone(),
@@ -1078,7 +1078,7 @@ impl Shell {
             self.cancel_preview(window, cx);
             self.preview.key = Some(key.clone());
             self.preview.phase = PreviewPhase::Queued;
-            let mime = bibli_platform::mime::of_entry(&entry).map(|m| {
+            let mime = skwir_platform::mime::of_entry(&entry).map(|m| {
                 // Ask for the type's name now; the header reads it later.
                 self.type_names.get(&m);
                 m.to_string()
@@ -1087,7 +1087,7 @@ impl Shell {
             let app = Arc::clone(&self.app);
             self.type_names.request(&app);
             let identified = entry.inode_type().is_some()
-                || (mime.is_some() && !bibli_platform::mime::ambiguous(entry.type_name()));
+                || (mime.is_some() && !skwir_platform::mime::ambiguous(entry.type_name()));
             self.preview.info = Info {
                 name: entry.name_str().into_owned(),
                 type_fallback: crate::typenames::fallback_of(&entry),
@@ -1103,7 +1103,7 @@ impl Shell {
             if here {
                 self.preview.info.name = self
                     .app
-                    .location_title(&bibli_core::Location::from_path(&key.path));
+                    .location_title(&skwir_core::Location::from_path(&key.path));
             }
             // Play on selection is the wish a step makes, made by the
             // selection: the track plays once shown, and the dock of what
@@ -1217,7 +1217,7 @@ impl Shell {
         code: crate::code_preview::CodeTheme,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<(u64, PreviewKey, Version, bibli_core::entry::Entry)> {
+    ) -> Option<(u64, PreviewKey, Version, skwir_core::entry::Entry)> {
         let pane = self.pane;
         let (location, path, stamp_version, listing_version, itself) = {
             let ws = self.app.workspace.read();
@@ -1261,7 +1261,7 @@ impl Shell {
                 "preview-here",
                 move || {
                     (
-                        bibli_core::fs::hydrate_path(&asked, &app.metadata),
+                        skwir_core::fs::hydrate_path(&asked, &app.metadata),
                         VolumeFacts::of(&asked),
                     )
                 },
@@ -1286,7 +1286,7 @@ impl Shell {
             .wrapping_mul(31)
             .wrapping_add(u64::from(here.volume.is_some()))
             .wrapping_mul(2)
-            .wrapping_add(u64::from(bibli_platform::users::loaded()));
+            .wrapping_add(u64::from(skwir_platform::users::loaded()));
         Some((
             seen,
             PreviewKey {
@@ -1300,7 +1300,7 @@ impl Shell {
                 modified: entry
                     .metadata
                     .value(keys::MODIFIED)
-                    .and_then(bibli_core::Value::as_time),
+                    .and_then(skwir_core::Value::as_time),
                 size: None,
                 code,
             },
@@ -1380,7 +1380,7 @@ impl Shell {
             && !self.preview.info.identified
             && self.preview.nested.is_empty()
         {
-            let mime = bibli_platform::mime::Mime(sniffed);
+            let mime = skwir_platform::mime::Mime(sniffed);
             self.type_names.get(&mime);
             self.type_names.request(&Arc::clone(&self.app));
             self.preview.info.mime = Some(mime.0);
@@ -1497,7 +1497,7 @@ impl Shell {
     /// A player opened for the shown file.
     fn show_media(
         &mut self,
-        session: Arc<dyn bibli_core::media::MediaSession>,
+        session: Arc<dyn skwir_core::media::MediaSession>,
         play: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1515,7 +1515,7 @@ impl Shell {
         }
         self.preview.media.focus = Some(focus);
         if play {
-            self.media_send(bibli_core::media::Control::Play(true), cx);
+            self.media_send(skwir_core::media::Control::Play(true), cx);
         }
     }
 
@@ -1571,7 +1571,7 @@ impl Shell {
     }
 
     /// Ask a worker for the preview of what the panel shows now.
-    fn preview_request(&mut self, key: &PreviewKey, version: &Version, entry: &bibli_core::Entry) {
+    fn preview_request(&mut self, key: &PreviewKey, version: &Version, entry: &skwir_core::Entry) {
         let cancel = self.app.lifetime().child();
         self.preview.cancel = Some(cancel.clone());
         self.preview.phase = PreviewPhase::Loading;
@@ -1658,7 +1658,7 @@ impl Shell {
                 // the UI woken after each.
                 let send = |content: PreviewContent,
                             complete: bool,
-                            session: Option<Arc<dyn bibli_core::document::DocumentSession>>,
+                            session: Option<Arc<dyn skwir_core::document::DocumentSession>>,
                             media: Option<Media>| {
                     if !cancel.is_cancelled() {
                         let _ = tx.send(PreviewResult {
@@ -1714,8 +1714,8 @@ impl Shell {
                 // member went down into was identified when extracted.
                 if !is_dir && (request.mime.is_none() || (own && unsettled.is_some())) {
                     request.mime = match unsettled.as_deref().filter(|_| own) {
-                        Some(name) => bibli_platform::mime::identify(name, &path),
-                        None => bibli_platform::mime::by_content(&path),
+                        Some(name) => skwir_platform::mime::identify(name, &path),
+                        None => skwir_platform::mime::by_content(&path),
                     }
                     .map(|m| m.to_string());
                     sniffed.replace(request.mime.clone());
@@ -1745,7 +1745,7 @@ impl Shell {
                             .inspect(&request, &inspection, &cancel)
                             .and_then(|result| {
                                 if result.is_none() && inspection.source {
-                                    bibli_platform::inspection::source(
+                                    skwir_platform::inspection::source(
                                         &path,
                                         inspection.offset,
                                         &cancel,
@@ -1768,8 +1768,8 @@ impl Shell {
                 }
                 // Reuse only an already cached desktop thumbnail as initial feedback.
                 if show_thumbnail {
-                    use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
-                    let cached = bibli_platform::thumb_providers::FreedesktopCache::desktop(false);
+                    use skwir_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
+                    let cached = skwir_platform::thumb_providers::FreedesktopCache::desktop(false);
                     let thumb = ThumbRequest {
                         entry: request.entry.clone(),
                         mime: request.mime.clone().map(Into::into),
@@ -1849,7 +1849,7 @@ impl Shell {
                                 document: None,
                                 // Where it was recorded, which Details
                                 // shows beside what the player says.
-                                facts: bibli_platform::mp4::details(&path),
+                                facts: skwir_platform::mp4::details(&path),
                                 pixels: Pixels::Own,
                             };
                             send(content, true, None, None);
@@ -1914,7 +1914,7 @@ impl Shell {
                                 height,
                                 detail: None,
                                 document: None,
-                                facts: bibli_platform::exif::details(&path),
+                                facts: skwir_platform::exif::details(&path),
                                 pixels: Pixels::Drawn,
                             },
                             info => PreviewContent::Image {
@@ -2050,10 +2050,10 @@ impl Shell {
     }
 
     /// The fields Details shows for `entry` at `path` (a picture's place,
-    /// `bibli_core::fields`) and what the system adds to its mode
-    /// (`bibli_platform::access`), read on a worker; what was shown for
+    /// `skwir_core::fields`) and what the system adds to its mode
+    /// (`skwir_platform::access`), read on a worker; what was shown for
     /// another entry goes at once, and a late answer for it is dropped.
-    fn read_fields(&mut self, entry: &bibli_core::entry::Entry, path: &std::path::Path) {
+    fn read_fields(&mut self, entry: &skwir_core::entry::Entry, path: &std::path::Path) {
         self.preview.fields_generation += 1;
         self.preview.fields.clear();
         self.preview.access.clear();
@@ -2079,11 +2079,11 @@ impl Shell {
         self.preview.fields_cancel = Some(cancel.clone());
         let companions = Arc::clone(&self.app.companions);
         self.app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Visible,
+            skwir_core::scheduler::Priority::Visible,
             "detail-fields",
             cancel.clone(),
             move || {
-                let access: Vec<crate::details::Row> = bibli_platform::access::facts(&path)
+                let access: Vec<crate::details::Row> = skwir_platform::access::facts(&path)
                     .into_iter()
                     .map(|(label, value)| crate::details::Row::new(label, value))
                     .collect();
@@ -2091,7 +2091,7 @@ impl Shell {
                     .into_iter()
                     .filter_map(|(key, label)| {
                         let text = match fields.get(key, &path, &cancel)? {
-                            bibli_core::entry::Value::Text(text) => text.to_string(),
+                            skwir_core::entry::Value::Text(text) => text.to_string(),
                             _ => return None,
                         };
                         Some(crate::details::Row {
@@ -2272,7 +2272,7 @@ impl Shell {
             // Same gate as the seek bar: a non-seekable stream ignores keys.
             if self.preview.media.state.seekable {
                 self.media_send(
-                    bibli_core::media::Control::Seek(
+                    skwir_core::media::Control::Seek(
                         (self.preview.media.state.position + delta).max(0.),
                     ),
                     cx,
@@ -2310,9 +2310,9 @@ impl Shell {
                 if let Err(error) = entry
                     .resolve()
                     .map_err(anyhow::Error::from)
-                    .and_then(|p| bibli_platform::open::open_path(&p))
+                    .and_then(|p| skwir_platform::open::open_path(&p))
                 {
-                    app.notify(bibli_core::app::NotifyLevel::Error, error.to_string());
+                    app.notify(skwir_core::app::NotifyLevel::Error, error.to_string());
                 }
             },
         );
@@ -2667,7 +2667,7 @@ impl Shell {
     pub fn close_peek(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.media_exit_fullscreen(window, cx);
         if let Some(session) = &self.preview.media.session {
-            let _ = session.control(bibli_core::media::Control::Play(false));
+            let _ = session.control(skwir_core::media::Control::Play(false));
         }
         self.preview.menu = None;
         self.preview.peek = false;
@@ -2676,8 +2676,8 @@ impl Shell {
         cx.notify();
     }
 
-    pub fn video_thumbnail(&self) -> bibli_core::thumbs::ThumbState {
-        use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
+    pub fn video_thumbnail(&self) -> skwir_core::thumbs::ThumbState {
+        use skwir_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
         let Some(content) = self
             .preview
             .key
@@ -3110,7 +3110,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                         asked: p.picture_side,
                         most: match pixels {
                             Pixels::Own => (*width).max(*height),
-                            Pixels::Any => bibli_platform::inspection::limits::PICTURE_SIDE,
+                            Pixels::Any => skwir_platform::inspection::limits::PICTURE_SIDE,
                             Pixels::Drawn => 0,
                         },
                     }),
@@ -3589,7 +3589,7 @@ impl Sharpen {
 /// picture can have) and `limits::PICTURE_SIDE`, and above what was already
 /// `asked`. `None` while its pixels suffice or can be no more.
 pub(crate) fn sharper(covered: f32, raster: u32, asked: u32, most: u32) -> Option<u32> {
-    use bibli_platform::inspection::limits::PICTURE_SIDE;
+    use skwir_platform::inspection::limits::PICTURE_SIDE;
     let most = most.min(PICTURE_SIDE);
     if !covered.is_finite() || covered <= raster as f32 * 1.05 || raster >= most {
         return None;
@@ -3789,7 +3789,7 @@ mod tests {
 
     #[test]
     fn a_picture_is_drawn_sharper_in_steps_up_to_what_it_can_have() {
-        use bibli_platform::inspection::limits::PICTURE_SIDE;
+        use skwir_platform::inspection::limits::PICTURE_SIDE;
         // Its pixels suffice, or nearly.
         assert_eq!(sharper(1500., 1600, 0, u32::MAX), None);
         assert_eq!(sharper(1650., 1600, 0, u32::MAX), None);
@@ -3814,7 +3814,7 @@ mod tests {
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20"/></svg>"#,
         )
         .unwrap();
-        let cancel = bibli_core::CancelToken::new();
+        let cancel = skwir_core::CancelToken::new();
         for (side, drawn) in [(0, 40), (1024, 1024)] {
             let content = compute(
                 &path,
@@ -3843,8 +3843,8 @@ mod tests {
     #[test]
     fn a_text_in_a_legacy_code_page_or_utf16_is_read_in_a_folder_and_in_an_archive() {
         use super::{PreviewContent, compute, extract_member};
-        use bibli_core::CancelToken;
-        use bibli_core::preview::{Member, PreviewProvider, PreviewRequest, Previews};
+        use skwir_core::CancelToken;
+        use skwir_core::preview::{Member, PreviewProvider, PreviewRequest, Previews};
         use std::path::Path;
         fn bytes(which: &str) -> Vec<u8> {
             match which {
@@ -3888,7 +3888,7 @@ mod tests {
         let pack = dir.path().join("pack.zip");
         std::fs::write(&pack, b"").unwrap();
         let request = PreviewRequest {
-            entry: bibli_core::op::EntryRef::from_path(&pack).unwrap(),
+            entry: skwir_core::op::EntryRef::from_path(&pack).unwrap(),
             mime: Some("application/zip".into()),
             page: 1,
             seconds: None,

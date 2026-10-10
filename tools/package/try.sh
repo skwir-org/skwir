@@ -5,7 +5,7 @@
 #
 # The distribution's root filesystem (images.linuxcontainers.org, checked
 # against the sums published beside it) is unpacked under
-# ~/.cache/bibli-tests/roots and entered as its root user in a user
+# ~/.cache/skwir-tests/roots and entered as its root user in a user
 # namespace. The build's needs are installed there once
 # (tools/package/linux/prepare.sh); the tree's files are built into the
 # package (deb.sh, rpm.sh, aur/build.sh); then a fresh root installs the
@@ -27,7 +27,7 @@ arch) image=archlinux/current/amd64/default ;;
     ;;
 esac
 tree="$(cd "$(dirname "$0")/../.." && pwd)"
-roots="$HOME/.cache/bibli-tests/roots"
+roots="$HOME/.cache/skwir-tests/roots"
 out="$tree/target/package/linux"
 mkdir -p "$roots" "$out"
 
@@ -61,7 +61,7 @@ unpack() {
     cp -L /etc/resolv.conf "$1/etc/resolv.conf"
     case "$distribution" in
     debian)
-        echo 'APT::Sandbox::User "root";' > "$1/etc/apt/apt.conf.d/99bibli-sandbox"
+        echo 'APT::Sandbox::User "root";' > "$1/etc/apt/apt.conf.d/99skwir-sandbox"
         ;;
     arch)
         sed -i 's/^CheckSpace/#CheckSpace/; s/^DownloadUser/#DownloadUser/; s/^#\(DisableSandbox\)/\1/' "$1/etc/pacman.conf"
@@ -95,13 +95,13 @@ enter() {
 
 # The build root, prepared once and kept: what the build needs.
 builder="$roots/$distribution-build"
-if [ ! -f "$builder/.bibli-prepared" ]; then
+if [ ! -f "$builder/.skwir-prepared" ]; then
     unpack "$builder"
     if [ "$distribution" = arch ]; then
         enter "$builder" 0 sh -c 'pacman-key --init && pacman-key --populate archlinux' >/dev/null
     fi
     enter "$builder" 0 /tools/package/linux/prepare.sh "$distribution"
-    touch "$builder/.bibli-prepared"
+    touch "$builder/.skwir-prepared"
 fi
 
 # The tree's files, fresh; the build's target kept between tries.
@@ -111,33 +111,33 @@ if [ -d "$builder/src" ]; then
 fi
 mkdir -p "$builder/src"
 (cd "$tree" && git ls-files -co --exclude-standard -z | tar --null -T - -cf -) | tar -xf - -C "$builder/src"
-# The packages made: bibli, and those of its own a package of its own
-# holds (bibli-media, bibli-poppler… on Debian and Fedora; bibli-mermaid
-# and bibli-mupdf on Arch), by names of the tools' own making.
+# The packages made: skwir, and those of its own a package of its own
+# holds (skwir-media, skwir-poppler… on Debian and Fedora; skwir-mermaid
+# and skwir-mupdf on Arch), by names of the tools' own making.
 case "$distribution" in
 debian)
     enter "$builder" 0 env CARGO_TARGET_DIR=/build/target sh -c 'cd /src && tools/package/deb.sh'
     made="$builder/build/target/debian"
-    main='bibli_*.deb'
-    extra='bibli-*_*.deb'
+    main='skwir_*.deb'
+    extra='skwir-*_*.deb'
     ;;
 fedora)
     enter "$builder" 0 env CARGO_TARGET_DIR=/build/target sh -c 'cd /src && tools/package/rpm.sh'
     made="$builder/build/target/generate-rpm"
-    main='bibli-[0-9]*.rpm'
-    extra='bibli-[a-z]*.rpm'
+    main='skwir-[0-9]*.rpm'
+    extra='skwir-[a-z]*.rpm'
     ;;
 arch)
     enter "$builder" 1000 sh -c 'cd /src && tools/package/aur/build.sh'
     made="$builder/src/target/aur"
-    main='bibli-[0-9]*.pkg.tar.zst'
-    extra='bibli-[a-z]*.pkg.tar.zst'
+    main='skwir-[0-9]*.pkg.tar.zst'
+    extra='skwir-[a-z]*.pkg.tar.zst'
     ;;
 esac
 
-# A fresh root installs bibli alone, without what it only recommends,
+# A fresh root installs skwir alone, without what it only recommends,
 # and checks it; then the others, with what they recommend (and on Arch
-# the libraries bibli's helpers may go without), and checks them all.
+# the libraries skwir's helpers may go without), and checks them all.
 fresh="$roots/$distribution-try"
 unpack "$fresh"
 mkdir -p "$fresh/package/main" "$fresh/package/extra"
@@ -167,7 +167,7 @@ arch)
     enter "$fresh" 0 sh -c 'pacman-key --init && pacman-key --populate archlinux && pacman -Syu --noconfirm && pacman -U --noconfirm /package/main/*.pkg.tar.zst' >/dev/null
     ;;
 esac
-echo "== $distribution: bibli alone"
+echo "== $distribution: skwir alone"
 enter "$fresh" 0 /tools/package/linux/check.sh minimal
 case "$distribution" in
 debian)

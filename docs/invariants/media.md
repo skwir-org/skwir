@@ -2,7 +2,7 @@
 
 Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`, `crates/ui/src/media.rs` or the vendored Blade atlas. It is binding, like `AGENTS.md`.
 
-- GStreamer loads only in `bibli-media-worker`. The media provider owns the
+- GStreamer loads only in `skwir-media-worker`. The media provider owns the
   runtime setting; the shared session interface stays independent of GPUI.
 - One plugin, `preview-media` ("Preview: audio and video"), registers the
   audio and the video provider and declares every preference of playback:
@@ -59,7 +59,7 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   Keep playbin flags intact and test actual subtitle pixels, not only metadata.
   The manager bounds glibc arenas in the child to limit frame-buffer retention;
   native benchmarks must use the same policy (as `tools/media/check.py` does).
-- The decoder is GStreamer's choice, by its feature ranks; bibli does not
+- The decoder is GStreamer's choice, by its feature ranks; skwir does not
   pick one per machine. Where GStreamer ranks a hardware decoder first, the
   worker carries that driver's stack: with NVIDIA's `nvcodec` decoders
   (ranked above `avdec_*`) about 150 MB of CUDA mappings per video worker,
@@ -88,7 +88,7 @@ Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
   a streaming thread.
 - GPUI `drop_image` calls run in update/render code, never in prepaint or
   paint: the Blade atlas patch frees retired textures after waiting for the
-  previous submission only (see `vendor/gpui/README.bibli.md`).
+  previous submission only (see `vendor/gpui/README.skwir.md`).
 - The audio picture is `elements/halo.rs`: the cover in a disc, the spectrum
   as rays of dots round it (bass under the cover, treble above, mirrored), a
   glow that swells with the level, in the cover's own colour running to the

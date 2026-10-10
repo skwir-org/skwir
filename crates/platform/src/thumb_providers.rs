@@ -1,4 +1,4 @@
-//! Thumbnail providers for `bibli_core::thumbs`: the freedesktop cache
+//! Thumbnail providers for `skwir_core::thumbs`: the freedesktop cache
 //! (read, and write-back of what later providers make), an in-process image
 //! decoder, the desktop's installed `*.thumbnailer` programs, and fallbacks
 //! for what the desktop has no thumbnailer for: PDF first pages, Office
@@ -11,9 +11,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bibli_core::cancel::CancelToken;
-use bibli_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
 use image::DynamicImage;
+use skwir_core::cancel::CancelToken;
+use skwir_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
 
 use crate::thumbnails::{ThumbCache, ThumbSize};
 
@@ -173,9 +173,9 @@ impl ThumbnailProvider for FreedesktopCache {
     }
 }
 
-/// What could draw thumbnails here, stamped: bibli's version, the
+/// What could draw thumbnails here, stamped: skwir's version, the
 /// desktop's thumbnailers (each by its name and when it was changed), and
-/// the programs bibli asks itself. A failure remembered with another
+/// the programs skwir asks itself. A failure remembered with another
 /// stamp is tried again: a tool installed since may draw the file. Read
 /// once a process.
 pub fn tools_stamp() -> &'static str {
@@ -205,7 +205,7 @@ pub fn tools_stamp() -> &'static str {
             "soffice",
             "libreoffice",
         ] {
-            if bibli_core::os_path::find_program(program).is_some() {
+            if skwir_core::os_path::find_program(program).is_some() {
                 parts.push(program.to_owned());
             }
         }
@@ -240,7 +240,7 @@ static RASTERS: crate::mime::Types = crate::mime::Types::new(&[
     "image/x-dds",
 ]);
 
-/// Whether bibli decodes pictures of type `mime` itself: a raster the
+/// Whether skwir decodes pictures of type `mime` itself: a raster the
 /// `image` crate reads, or a drawing (`inspection::drawing`).
 pub fn decodes(mime: &str) -> bool {
     raster(mime) || matches!(mime, "image/svg+xml" | "image/svg+xml-compressed")
@@ -359,7 +359,7 @@ pub fn discover(dirs: &[PathBuf]) -> Vec<ThumbnailerEntry> {
             if entry
                 .try_exec
                 .as_deref()
-                .is_some_and(|t| bibli_core::os_path::find_program(t).is_none())
+                .is_some_and(|t| skwir_core::os_path::find_program(t).is_none())
             {
                 continue;
             }
@@ -483,7 +483,7 @@ impl Thumbnailers {
 
     /// The file at `path`, of type `mime`, drawn by the thumbnailer that
     /// claims it, at most `pixels` on its longer side: a thumbnail, or, for
-    /// a picture bibli does not decode, its preview. `None` when none
+    /// a picture skwir does not decode, its preview. `None` when none
     /// claims it or the request was cancelled.
     pub fn draw(
         &self,
@@ -540,9 +540,9 @@ impl ThumbnailProvider for Thumbnailers {
 // ------------------------------------------------------------- PDF pages
 
 /// A PDF's first page, drawn as the reader draws it (`document::first_page`:
-/// `PDFium`, which bibli's packages carry, then Poppler), else by Poppler's
+/// `PDFium`, which skwir's packages carry, then Poppler), else by Poppler's
 /// `pdftoppm`. A fallback: a thumbnailer the desktop installed for PDFs
-/// runs first, so bibli draws what other applications draw, and the cache
+/// runs first, so skwir draws what other applications draw, and the cache
 /// stores what this makes for them.
 #[derive(Debug, Clone, Default)]
 pub struct PdfPages {
@@ -622,13 +622,13 @@ impl ThumbnailProvider for PdfPages {
 #[derive(Debug, Clone)]
 pub struct OfficePages {
     /// The document preview's cache, where its conversions are.
-    cache: bibli_core::cache::CacheSlot,
+    cache: skwir_core::cache::CacheSlot,
     /// `PDFium`'s library as the settings name it.
     pdfium: crate::document::PdfiumChoice,
 }
 
 impl OfficePages {
-    pub fn new(cache: bibli_core::cache::CacheSlot, pdfium: crate::document::PdfiumChoice) -> Self {
+    pub fn new(cache: skwir_core::cache::CacheSlot, pdfium: crate::document::PdfiumChoice) -> Self {
         Self { cache, pdfium }
     }
 }
@@ -733,8 +733,8 @@ impl ThumbnailProvider for AudioCovers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::op::EntryRef;
-    use bibli_core::thumbs::ThumbSize as CoreSize;
+    use skwir_core::op::EntryRef;
+    use skwir_core::thumbs::ThumbSize as CoreSize;
 
     const SAMPLE: &str = "[Thumbnailer Entry]\nTryExec=totem-video-thumbnailer\nExec=totem-video-thumbnailer -s %s %u %o\nMimeType=video/mp4;video/x-matroska;\n";
 
@@ -805,7 +805,7 @@ mod tests {
     #[test]
     fn image_decoder_accepts_by_mime_or_extension_only_for_rasters() {
         let r = |p: &str, mime: Option<&str>| ThumbRequest {
-            entry: EntryRef::new(bibli_core::FileId { dev: 0, ino: 0 }, p),
+            entry: EntryRef::new(skwir_core::FileId { dev: 0, ino: 0 }, p),
             mime: mime.map(Into::into),
             mtime: None,
             size: CoreSize::Normal,

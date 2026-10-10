@@ -6,7 +6,7 @@ ADR-040's packages; builds on ADR-004 (the PDFium reader), ADR-005
 
 ## Context
 
-bibli reads PDFs through a helper of one of three engines: PDFium,
+skwir reads PDFs through a helper of one of three engines: PDFium,
 Poppler or MuPDF. `auto` prefers PDFium, then Poppler; MuPDF only when
 chosen. Each has the same reader features: pages, text selection and
 copy, search, links, the outline. No distribution packages PDFium, so
@@ -29,28 +29,28 @@ Windows shell's thumbnail handlers, AVFoundation, Media Foundation).
 
 ## Decision
 
-1. **bibli's packages carry PDFium**, the release pinned in
+1. **skwir's packages carry PDFium**, the release pinned in
    `tools/package/pdfium.lock` (one tag, each archive's SHA-256), fetched
    and checked by `tools/package/pdfium.sh` (the PKGBUILD names the same,
    which its build checks), its notices installed beside it. The PDFium
    helper looks for it beside itself, and in a Mac bundle's
    `Frameworks`, after the library the settings name and before the
-   system's. So a PDF opens, with selection and search, wherever bibli is
+   system's. So a PDF opens, with selection and search, wherever skwir is
    installed.
-2. **A PDF is drawn by the reader's engine first**, everywhere bibli
+2. **A PDF is drawn by the reader's engine first**, everywhere skwir
    draws one: its thumbnail and an office document's (`document::
    first_page`, `auto`'s order), `pdftoppm` only where no engine is.
 3. **Linux packages bring only what the distribution lacks** (PDFium),
    and depend on, recommend or suggest the rest. What each program links
    is found by the packaging tools, never listed by hand:
-   - Debian and Fedora: `bibli` (the app, PDFium and its helper, the
+   - Debian and Fedora: `skwir` (the app, PDFium and its helper, the
      archive and 3D model helpers), and packages of their own,
-     `bibli-media` (recommended: GStreamer's libraries and its plugins),
-     `bibli-poppler`, `bibli-mermaid` and `bibli-mupdf` (suggested).
-   - Arch: one `bibli` with the Poppler reader and the player, their
-     libraries optional (Arch's way), and `bibli-mermaid` and
-     `bibli-mupdf` of their own.
-   A helper whose libraries are absent says so (`--probe`), and bibli
+     `skwir-media` (recommended: GStreamer's libraries and its plugins),
+     `skwir-poppler`, `skwir-mermaid` and `skwir-mupdf` (suggested).
+   - Arch: one `skwir` with the Poppler reader and the player, their
+     libraries optional (Arch's way), and `skwir-mermaid` and
+     `skwir-mupdf` of their own.
+   A helper whose libraries are absent says so (`--probe`), and skwir
    shows its engine as not installed.
 4. **macOS and Windows bring what is needed, the system's frameworks
    first.** Their packages carry PDFium (in the bundle's `Frameworks`,
@@ -63,8 +63,8 @@ Windows shell's thumbnail handlers, AVFoundation, Media Foundation).
      on macOS, the shell's system image list on Windows, by a file's
      extension, by its path where the icon is the file's own (an
      application, a shortcut), the trash and drives as the system's
-     stock icons; bibli reads no icon theme there;
-   - the programs bibli uses when installed (LibreOffice, Pandoc,
+     stock icons; skwir reads no icon theme there;
+   - the programs skwir uses when installed (LibreOffice, Pandoc,
      ImageMagick, ffmpeg, exiftool) are found where they are installed:
      Homebrew's and MacPorts' folders searched on macOS (an application
      started from the Finder has the system's folders alone), and
@@ -76,7 +76,7 @@ Windows shell's thumbnail handlers, AVFoundation, Media Foundation).
    - archives: the archive helper built with libarchive linked in
      statically, on the machines (5b).
 5. **We answer for the PDFium we carry**: a newer release is taken with
-   each bibli release, or sooner for a security fix (its tag and sums in
+   each skwir release, or sooner for a security fix (its tag and sums in
    `pdfium.lock` and the PKGBUILD).
 
 ## Consequences
@@ -84,7 +84,7 @@ Windows shell's thumbnail handlers, AVFoundation, Media Foundation).
 - PDFs work out of the box on every system; Poppler becomes an
   alternative engine, suggested.
 - The Linux packages carry 7.9 MB more and depend on less: on a minimal
-  Debian 13, Poppler's libraries no longer come with bibli.
+  Debian 13, Poppler's libraries no longer come with skwir.
 - PDFium's security updates are ours to ship. Its helper, and the other
   readers', run in the sandbox where the system has one (since the same
   day, `docs/invariants/reader.md`): a malformed PDF that takes over the

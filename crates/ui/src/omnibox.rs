@@ -22,9 +22,9 @@
 
 use std::path::{Path, PathBuf};
 
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::os_path::PathArg;
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::os_path::PathArg;
 
 use crate::elements::popover::PopoverAnchor;
 use crate::shell::Shell;
@@ -79,13 +79,13 @@ fn scheme_of(text: &str) -> Option<&str> {
 }
 
 fn home() -> Option<PathBuf> {
-    bibli_core::os_path::home()
+    skwir_core::os_path::home()
 }
 
 /// A folder as the pill and the rows say it: as everything names it
 /// (`App::location_title`), the sidebar's name for one it shows.
-fn folder_name(app: &bibli_core::App, path: &Path) -> String {
-    app.location_title(&bibli_core::Location::from_path(path))
+fn folder_name(app: &skwir_core::App, path: &Path) -> String {
+    app.location_title(&skwir_core::Location::from_path(path))
 }
 
 impl Shell {

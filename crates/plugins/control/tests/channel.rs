@@ -8,15 +8,15 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::app::AppConfig;
-use bibli_core::command::{NoArgs, Outcome};
-use bibli_core::op::Mkdir;
-use bibli_core::{App, Plan};
-use bibli_plugin_control::channel::Address;
-use bibli_plugin_control::client;
-use bibli_plugin_control::{PlanMode, serve};
 use rmcp::ServiceExt as _;
 use serde_json::{Value, json};
+use skwir_core::app::AppConfig;
+use skwir_core::command::{NoArgs, Outcome};
+use skwir_core::op::Mkdir;
+use skwir_core::{App, Plan};
+use skwir_plugin_control::channel::Address;
+use skwir_plugin_control::client;
+use skwir_plugin_control::{PlanMode, serve};
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct Make {
@@ -92,7 +92,7 @@ fn keys_private(app: &App, root: &Path) {
         toml::Value::String(root.join("keys").display().to_string()),
     );
     app.settings.set(
-        bibli_core::permissions::FOLDERS_KEY,
+        skwir_core::permissions::FOLDERS_KEY,
         toml::Value::Array(vec![toml::Value::Table(record)]),
     );
 }
@@ -113,7 +113,7 @@ fn arguments(value: Value) -> serde_json::Map<String, Value> {
 }
 
 /// A server at a fresh address in `root`, listening.
-fn listening(app: &Arc<App>, root: &Path) -> (bibli_plugin_control::Server, Address) {
+fn listening(app: &Arc<App>, root: &Path) -> (skwir_plugin_control::Server, Address) {
     let address = Address(root.join("channel").join("control.sock"));
     let server = serve(app, address.clone());
     wait_until("listening", || address.0.exists());
@@ -130,7 +130,7 @@ fn an_agent_lists_the_commands_and_reads_a_value() {
         .build()
         .unwrap();
     let tools = runtime.block_on(async {
-        let stream = bibli_plugin_control::channel::connect(&address)
+        let stream = skwir_plugin_control::channel::connect(&address)
             .await
             .unwrap();
         let agent = ().serve(stream).await.unwrap();
@@ -245,7 +245,7 @@ fn an_agent_asks_before_a_command_that_acts_and_never_answers_for_the_user() {
         .build()
         .unwrap();
     let tools = runtime.block_on(async {
-        let stream = bibli_plugin_control::channel::connect(&address)
+        let stream = skwir_plugin_control::channel::connect(&address)
             .await
             .unwrap();
         let agent = ().serve(stream).await.unwrap();
@@ -430,7 +430,7 @@ fn a_socket_left_by_a_crash_is_replaced_and_one_in_use_is_not_taken() {
             .unwrap();
     }
     let address = Address(folder.join("control.sock"));
-    // A bibli that ended without removing its socket.
+    // A skwir that ended without removing its socket.
     drop(std::os::unix::net::UnixListener::bind(&address.0).unwrap());
     assert!(address.0.exists());
     let first = serve(&app, address.clone());
@@ -443,7 +443,7 @@ fn a_socket_left_by_a_crash_is_replaced_and_one_in_use_is_not_taken() {
         )
         .is_ok()
     });
-    // A second bibli finds it taken and leaves it to the first.
+    // A second skwir finds it taken and leaves it to the first.
     let second = serve(&app, address.clone());
     drop(second);
     let answer = client::call(
@@ -459,7 +459,7 @@ fn a_socket_left_by_a_crash_is_replaced_and_one_in_use_is_not_taken() {
 
 #[test]
 fn what_an_agent_counts_leaves_private_files_out() {
-    use bibli_core::Location;
+    use skwir_core::Location;
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("home");
     std::fs::create_dir_all(root.join("keys")).unwrap();

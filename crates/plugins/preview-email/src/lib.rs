@@ -1,16 +1,16 @@
 //! EML headers, inert HTML/text body and bounded attachment previews.
-use bibli_core::{
+use mail_parser::MimeHeaders;
+use skwir_core::{
     App, CancelToken,
     inspection::{Block, InspectRequest, Inspection, Row},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use bibli_platform::{
+use skwir_platform::{
     archive,
     inspection::{self, limits},
     rich_preview,
 };
-use mail_parser::MimeHeaders;
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -23,12 +23,12 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Read EML messages: headers, body and attachments, with remote content blocked"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read])
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
@@ -49,7 +49,7 @@ impl PreviewProvider for Provider {
         target: &str,
         into: &std::path::Path,
         cancel: &CancelToken,
-    ) -> anyhow::Result<Option<bibli_core::preview::Member>> {
+    ) -> anyhow::Result<Option<skwir_core::preview::Member>> {
         let bytes = read(req, cancel)?;
         let message = parse(&bytes, cancel)?;
         let attachment = message
@@ -58,7 +58,7 @@ impl PreviewProvider for Provider {
         let name = attachment.attachment_name().unwrap_or("Attachment");
         let file = archive::member_file(into, name);
         std::fs::write(&file, attachment.contents())?;
-        Ok(Some(bibli_core::preview::Member {
+        Ok(Some(skwir_core::preview::Member {
             own_file: false,
             name: name.to_owned(),
             path: file,
@@ -116,7 +116,7 @@ impl PreviewProvider for Provider {
                 .is_some_and(|part| matches!(part.body, mail_parser::PartType::Html(_)));
             if !written {
                 for block in page.blocks.iter_mut().filter(|block| !block.code) {
-                    bibli_platform::links::link_block(block, false);
+                    skwir_platform::links::link_block(block, false);
                 }
             }
             blocks.extend(page.blocks);
@@ -125,7 +125,7 @@ impl PreviewProvider for Provider {
                 text: text.into_owned(),
                 ..Block::default()
             };
-            bibli_platform::links::link_block(&mut body, false);
+            skwir_platform::links::link_block(&mut body, false);
             blocks.push(body);
         }
         let attachments = message.attachments().count();
@@ -167,7 +167,7 @@ impl PreviewProvider for Provider {
         .join(" · ");
         Ok(Some(Inspection {
             details,
-            kind: bibli_core::inspection::InspectionKind::Mail,
+            kind: skwir_core::inspection::InspectionKind::Mail,
             title: "Email".into(),
             blocks,
             rows,
@@ -216,7 +216,7 @@ mod tests {
         let path = dir.path().join("Synthetic message.eml");
         std::fs::write(&path, message).unwrap();
         let request = PreviewRequest {
-            entry: bibli_core::op::EntryRef::from_path(&path).unwrap(),
+            entry: skwir_core::op::EntryRef::from_path(&path).unwrap(),
             mime: Some("message/rfc822".into()),
             page: 1,
             seconds: None,

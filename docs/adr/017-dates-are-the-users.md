@@ -30,7 +30,7 @@ writes.
   civil period of the user's calendar, turned into instants each time the
   query is parsed: floating time, as a calendar's all-day events are. A
   saved "today" follows the user across zones and clock changes.
-- The calendar is `bibli_platform::calendar::Calendar`: the system's time
+- The calendar is `skwir_platform::calendar::Calendar`: the system's time
   zone (`TZ`, else `/etc/localtime`, through jiff and the system's tz
   database) and the locale's first weekday (`LC_TIME`, from
   `locale week-1stday first_weekday`, asked once on a worker; Monday until

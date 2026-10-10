@@ -1,6 +1,6 @@
 //! Where the window listens, and how one reaches it (ADR-043): a Unix
 //! socket in a folder of the user's alone, or on Windows a named pipe in
-//! the user's name. One bibli listens; a second finds it taken.
+//! the user's name. One skwir listens; a second finds it taken.
 
 use std::path::PathBuf;
 
@@ -8,17 +8,17 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Address(pub PathBuf);
 
-/// Where the user's bibli listens: `$XDG_RUNTIME_DIR/bibli/control.sock`
+/// Where the user's skwir listens: `$XDG_RUNTIME_DIR/skwir/control.sock`
 /// (Linux), the user's own `$TMPDIR` on macOS, else a folder of the user's
-/// in the temporary folder; `\\.\pipe\bibli-control-<user>` on Windows.
+/// in the temporary folder; `\\.\pipe\skwir-control-<user>` on Windows.
 pub fn address() -> Option<Address> {
     #[cfg(unix)]
     {
-        let folder = match bibli_core::xdg::runtime_dir() {
-            Some(runtime) => runtime.join("bibli"),
-            None if cfg!(target_os = "macos") => std::env::temp_dir().join("bibli"),
+        let folder = match skwir_core::xdg::runtime_dir() {
+            Some(runtime) => runtime.join("skwir"),
+            None if cfg!(target_os = "macos") => std::env::temp_dir().join("skwir"),
             None => {
-                std::env::temp_dir().join(format!("bibli-{}", rustix::process::getuid().as_raw()))
+                std::env::temp_dir().join(format!("skwir-{}", rustix::process::getuid().as_raw()))
             }
         };
         Some(Address(folder.join("control.sock")))
@@ -31,7 +31,7 @@ pub fn address() -> Option<Address> {
             .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
             .collect();
         Some(Address(PathBuf::from(format!(
-            r"\\.\pipe\bibli-control-{user}"
+            r"\\.\pipe\skwir-control-{user}"
         ))))
     }
 }
@@ -43,7 +43,7 @@ pub struct NotListening;
 impl std::fmt::Display for NotListening {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(
-            "bibli is not open, or Agents and scripts is off: open bibli and turn it on in Settings, Plugins",
+            "skwir is not open, or Agents and scripts is off: open skwir and turn it on in Settings, Plugins",
         )
     }
 }
@@ -80,7 +80,7 @@ mod imp {
     }
 
     /// Listen at `address`, in a folder that is the user's alone. `None`
-    /// when another bibli listens there already. A socket left by a bibli
+    /// when another skwir listens there already. A socket left by a skwir
     /// that ended without removing it is replaced.
     pub fn listen(address: &Address) -> anyhow::Result<Option<Listener>> {
         let path = &address.0;
@@ -155,7 +155,7 @@ mod imp {
         }
     }
 
-    /// Listen at `address`. `None` when another bibli has the pipe.
+    /// Listen at `address`. `None` when another skwir has the pipe.
     pub fn listen(address: &Address) -> anyhow::Result<Option<Listener>> {
         let name = address.0.clone().into_os_string();
         match ServerOptions::new()

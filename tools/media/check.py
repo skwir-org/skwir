@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Synthetic GStreamer protocol checks and worker-only playback measurements.
 
-Run in the dev shell after building bibli-media-worker. No personal media used.
+Run in the dev shell after building skwir-media-worker. No personal media used.
 Audio uses a clocked fakesink by default; --audio exercises the real audio sink.
 """
 import argparse
@@ -37,7 +37,7 @@ def generate(root, size="1920x1080"):
 
 class Worker:
     def __init__(self, executable, clip, audio=False):
-        self.scratch = tempfile.TemporaryDirectory(prefix="bibli-media-check-", dir="/dev/shm")
+        self.scratch = tempfile.TemporaryDirectory(prefix="skwir-media-check-", dir="/dev/shm")
         self.slot = Path(self.scratch.name) / "video.bgra"
         with self.slot.open("wb") as out:
             out.truncate(1920 * 1920 * 4)
@@ -45,9 +45,9 @@ class Worker:
         # Match the session manager's glibc allocation policy.
         env["MALLOC_ARENA_MAX"] = "2"
         if audio:
-            env.pop("BIBLI_MEDIA_TEST_AUDIO", None)
+            env.pop("SKWIR_MEDIA_TEST_AUDIO", None)
         else:
-            env["BIBLI_MEDIA_TEST_AUDIO"] = "1"
+            env["SKWIR_MEDIA_TEST_AUDIO"] = "1"
         self.process = subprocess.Popen([executable, str(clip), self.scratch.name],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=None if os.environ.get("GST_DEBUG") else subprocess.DEVNULL, text=True, env=env)
@@ -242,13 +242,13 @@ def check(executable, clip, audio=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--worker", default="target/debug/bibli-media-worker")
+    parser.add_argument("--worker", default="target/debug/skwir-media-worker")
     parser.add_argument("--fixtures", type=Path)
     parser.add_argument("--size", default="1920x1080")
     parser.add_argument("--audio", action="store_true")
     parser.add_argument("--generate-only", action="store_true")
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="bibli-synthetic-video-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="skwir-synthetic-video-") as temporary:
         clip = generate(args.fixtures or Path(temporary), args.size)
         if not args.generate_only:
             check(args.worker, clip, args.audio)

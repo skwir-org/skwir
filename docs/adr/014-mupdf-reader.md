@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-09-24. Amends ADR-004, which preferred PDFium partly
 to keep MuPDF's AGPL out of the reader integration. Amended 2026-10-06 by
-ADR-042: bibli's own code, the worker's included, is under Apache-2.0
+ADR-042: skwir's own code, the worker's included, is under Apache-2.0
 alone; the worker is still distributed under the AGPL.
 
 ## Context
@@ -15,7 +15,7 @@ EPUB. It is licensed under the AGPL-3.0 or commercially.
 
 ## Decision
 
-Add `bibli-mupdf-worker`, a third implementation of the shared document
+Add `skwir-mupdf-worker`, a third implementation of the shared document
 protocol (ADR-004/005), in its own process like the others. It links
 MuPDF 1.27.2 through the `mupdf` crate 0.8 (AGPL-3.0), pinned exactly, with
 default features off: the 14 standard PDF fonts only, no JavaScript, no OCR,
@@ -35,14 +35,14 @@ Poppler): MuPDF is used only when chosen, until measurements say otherwise.
 
 ## Licensing
 
-Our worker source stays MIT OR Apache-2.0 like the rest of bibli. The worker
+Our worker source stays MIT OR Apache-2.0 like the rest of skwir. The worker
 executable links MuPDF, so whoever distributes it distributes it under the
 AGPL-3.0, with MuPDF's source; as with the GPL Poppler worker, the main
 binary never links it and talks to it only over the worker protocol, and no
 other crate depends on it. Packagers who do not want the AGPL omit this one
 executable; the plugin reports the requirement as missing and the other
 engines work as before. The AGPL's network clause concerns software offered
-over a network; bibli is a desktop application.
+over a network; skwir is a desktop application.
 
 ## Consequences
 

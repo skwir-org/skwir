@@ -47,7 +47,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.focus_pane", "{}", "Focus file list"),
     ("ui.palette", "{}", "Command palette"),
     ("ui.settings", "{}", "Settings…"),
-    ("ui.about", "{}", "About bibli"),
+    ("ui.about", "{}", "About skwir"),
     ("ui.rename_prompt", "{}", "Rename…"),
     ("ui.mkdir_prompt", "{}", "New folder…"),
     ("ui.new_file_prompt", "{}", "New file…"),

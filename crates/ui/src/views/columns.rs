@@ -11,12 +11,12 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bibli_core::location::Trail;
-use bibli_core::{EntryId, Location, SortSpec};
 use gpui::{
     AnyElement, Context, MouseButton, ScrollStrategy, UniformListScrollHandle, Window, div,
     prelude::*, px, uniform_list,
 };
+use skwir_core::location::Trail;
+use skwir_core::{EntryId, Location, SortSpec};
 
 use crate::dnd;
 use crate::icons;
@@ -132,7 +132,7 @@ fn ancestor_column(
     view: &ColumnsView,
     k: usize,
     ids: Arc<[EntryId]>,
-    pane: bibli_core::workspace::PaneId,
+    pane: skwir_core::workspace::PaneId,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -171,8 +171,8 @@ fn ancestor_column(
                             .map(|leads| {
                                 let tag = e
                                     .metadata
-                                    .value(bibli_core::entry::keys::PLACE_TAG)
-                                    .and_then(bibli_core::Value::as_str);
+                                    .value(skwir_core::entry::keys::PLACE_TAG)
+                                    .and_then(skwir_core::Value::as_str);
                                 (leads, tag.map(|tag| this.tag_colors.of(tag)))
                             }),
                     })
@@ -195,7 +195,7 @@ fn ancestor_column(
                 let leads = match (&row.place, &target) {
                     (Some((place, _)), _) => Some(serde_json::json!(place.arg())),
                     (None, Some(target)) if row.is_dir => Some(serde_json::json!(
-                        bibli_core::os_path::PathArg::from(target.as_path())
+                        skwir_core::os_path::PathArg::from(target.as_path())
                     )),
                     _ => None,
                 };
@@ -259,7 +259,7 @@ fn ancestor_column(
                 {
                     el = dnd::takes_gift_for(
                         el,
-                        bibli_core::op::EntryRef::new(row.id.file, target.clone()),
+                        skwir_core::op::EntryRef::new(row.id.file, target.clone()),
                         cx,
                     );
                 }
@@ -462,7 +462,7 @@ impl PaneView for ColumnsView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::location::Crumb;
+    use skwir_core::location::Crumb;
 
     #[test]
     fn a_trail_is_walked_in_columns_and_a_folder_by_its_parents() {

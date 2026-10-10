@@ -1,8 +1,8 @@
-//! Thumbnails bibli makes when the desktop cannot (PDF and Office pages,
+//! Thumbnails skwir makes when the desktop cannot (PDF and Office pages,
 //! the pictures Office documents keep, audio, book and comic covers): tried only after the desktop's cache and
 //! thumbnailers, whichever plugin registers first, and shared through the
 //! desktop's cache.
-use bibli_core::{
+use skwir_core::{
     App, CancelToken,
     app::AppConfig,
     op::EntryRef,
@@ -28,11 +28,11 @@ const FALLBACK_PLUGINS: [&str; 4] = [
 fn app(root: &Path) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(root.join("state"))).unwrap();
     for plugin in [
-        Arc::new(bibli_plugin_preview_documents::PreviewPlugin::default()) as Arc<dyn Plugin>,
-        Arc::new(bibli_plugin_preview_media::PreviewPlugin::default()),
-        Arc::new(bibli_plugin_preview_epub::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_comics::PreviewPlugin),
-        Arc::new(bibli_plugin_thumbnails::ThumbnailsPlugin::default()),
+        Arc::new(skwir_plugin_preview_documents::PreviewPlugin::default()) as Arc<dyn Plugin>,
+        Arc::new(skwir_plugin_preview_media::PreviewPlugin::default()),
+        Arc::new(skwir_plugin_preview_epub::PreviewPlugin),
+        Arc::new(skwir_plugin_preview_comics::PreviewPlugin),
+        Arc::new(skwir_plugin_thumbnails::ThumbnailsPlugin::default()),
     ] {
         app.plugins.add(plugin, &app);
     }
@@ -127,7 +127,7 @@ fn wait_ready(app: &App, req: &ThumbRequest) -> Arc<Image> {
 fn request(path: &Path) -> ThumbRequest {
     ThumbRequest {
         entry: EntryRef::from_path(path).unwrap(),
-        mime: bibli_platform::mime::by_name(path.file_name().unwrap()).map(|m| m.0.into()),
+        mime: skwir_platform::mime::by_name(path.file_name().unwrap()).map(|m| m.0.into()),
         mtime: Some(std::fs::metadata(path).unwrap().modified().unwrap()),
         size: ThumbSize::Normal,
     }
@@ -144,7 +144,7 @@ fn middle(image: &Image) -> [u8; 4] {
 fn an_office_document_has_a_thumbnail_once_previewed() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
-    let path = bibli_core::os_path::canonical(tmp.path())
+    let path = skwir_core::os_path::canonical(tmp.path())
         .unwrap()
         .join("Synthetic minutes \u{2019}24.fodt");
     std::fs::write(
@@ -185,7 +185,7 @@ fn an_office_document_has_a_thumbnail_once_previewed() {
 fn a_recording_shows_its_cover() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
-    let dir = bibli_core::os_path::canonical(tmp.path()).unwrap();
+    let dir = skwir_core::os_path::canonical(tmp.path()).unwrap();
     let path = dir.join("Synthetic track n\u{b0} 1.flac");
     let bare = dir.join("Synthetic track n\u{b0} 2.flac");
     let ffmpeg = |args: &[&str], out: &Path| {
@@ -234,7 +234,7 @@ fn a_new_pdf_gets_a_thumbnail_that_other_applications_reuse() {
     let app = app(tmp.path());
     let dir = tmp.path().join("Papers \u{2019}24");
     std::fs::create_dir(&dir).unwrap();
-    let path = bibli_core::os_path::canonical(&dir)
+    let path = skwir_core::os_path::canonical(&dir)
         .unwrap()
         .join("Synthetic \u{201c}report\u{201d}.pdf");
     red_page_pdf(&path);
@@ -243,13 +243,13 @@ fn a_new_pdf_gets_a_thumbnail_that_other_applications_reuse() {
     assert_eq!(middle(&img), [255, 0, 0, 255]);
 
     // Written back where every other application looks, for this version.
-    let cache = bibli_platform::thumbnails::ThumbCache::desktop().unwrap();
+    let cache = skwir_platform::thumbnails::ThumbCache::desktop().unwrap();
     let cached = cache
-        .lookup(&path, bibli_platform::thumbnails::ThumbSize::Normal)
+        .lookup(&path, skwir_platform::thumbnails::ThumbSize::Normal)
         .expect("the thumbnail was shared through the desktop's cache");
     assert_eq!(
-        bibli_platform::thumbnails::png_text_chunk(&cached, "Software").as_deref(),
-        Some("bibli")
+        skwir_platform::thumbnails::png_text_chunk(&cached, "Software").as_deref(),
+        Some("skwir")
     );
     std::fs::remove_file(cached).unwrap();
 }

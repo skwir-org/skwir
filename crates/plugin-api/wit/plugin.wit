@@ -1,17 +1,17 @@
-// The interface between bibli and a plugin that runs as a WebAssembly
+// The interface between skwir and a plugin that runs as a WebAssembly
 // module (ADR-046). Everything a plugin reaches outside itself goes
 // through `host`; what it answers goes through `guest`. The methods and
 // their JSON are the protocol's (docs/plugins/protocol.md), as a plugin
 // that runs as a program speaks them over its standard input and output.
-package bibli:plugin@0.1.0;
+package skwir:plugin@0.1.0;
 
-/// What bibli does for a plugin.
+/// What skwir does for a plugin.
 interface host {
     /// Bytes of a file the call being answered names, by its handle: from
     /// `offset`, at most `length`. Refused for a handle of no file of the
     /// call, and for a plugin that may not read what files hold.
     read: func(file: u32, offset: u64, length: u32) -> result<list<u8>, string>;
-    /// A line for bibli's log, at `level`: error, warn, info or debug.
+    /// A line for skwir's log, at `level`: error, warn, info or debug.
     log: func(level: string, message: string);
 }
 

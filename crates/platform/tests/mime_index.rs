@@ -34,7 +34,7 @@ fn names_from(glob: &str) -> Vec<String> {
 
 #[test]
 fn the_index_answers_as_every_pattern_tried_does() {
-    let dirs = bibli_platform::xdg::data_search();
+    let dirs = skwir_platform::xdg::data_search();
     let db = xdg_mime::SharedMimeInfo::new_for_directories(&dirs);
     let mut names: BTreeSet<String> = [
         "",

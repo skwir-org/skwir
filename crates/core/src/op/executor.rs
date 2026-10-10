@@ -180,7 +180,7 @@ struct Journal {
 pub const JOURNAL_ENTRIES: usize = 200;
 /// What the journal's entries may hold together (`JournalEntry::weight`):
 /// tagging ten thousand photos with XMP sidecars kept every sidecar's text
-/// twice, some 600 MB, for as long as bibli ran.
+/// twice, some 600 MB, for as long as skwir ran.
 pub const JOURNAL_BYTES: usize = 64 << 20;
 
 impl Journal {
@@ -678,7 +678,7 @@ impl Executor {
         // each job checks its own token.
         let this = Arc::clone(self);
         let thread = std::thread::Builder::new()
-            .name("bibli-plans".into())
+            .name("skwir-plans".into())
             .spawn(move || this.drain());
         if let Err(error) = thread {
             tracing::warn!("no thread for the plans ({error}); a worker applies them");

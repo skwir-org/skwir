@@ -1,4 +1,4 @@
-//! What the tests run: a plugin from outside bibli built as a module or a
+//! What the tests run: a plugin from outside skwir built as a module or a
 //! program by the cargo that builds the tests, then laid out in a folder
 //! of plugins as an installed one is.
 #![allow(dead_code)]
@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
-use bibli_core::App;
-use bibli_core::app::AppConfig;
+use skwir_core::App;
+use skwir_core::app::AppConfig;
 
 /// The workspace's root.
 pub fn root() -> PathBuf {
@@ -96,7 +96,7 @@ pub fn home_tempdir() -> tempfile::TempDir {
         .map(PathBuf::from)
         .expect("home")
         .join(".cache")
-        .join("bibli-tests");
+        .join("skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
         .prefix("extend-")
@@ -104,15 +104,15 @@ pub fn home_tempdir() -> tempfile::TempDir {
         .unwrap()
 }
 
-/// The helper that runs modules, built, and named where bibli looks for
-/// it first (`BIBLI_MODULE_WORKER`): a test's program is not beside it.
+/// The helper that runs modules, built, and named where skwir looks for
+/// it first (`SKWIR_MODULE_WORKER`): a test's program is not beside it.
 pub fn module_worker() {
-    let worker = program("bibli-module-worker");
+    let worker = program("skwir-module-worker");
     // SAFETY: nextest runs each test in a process of its own, and this
     // runs before any thread of the test's reads the environment.
     #[allow(unsafe_code)]
     unsafe {
-        std::env::set_var(bibli_extend::MODULE_WORKER.variable, worker);
+        std::env::set_var(skwir_extend::MODULE_WORKER.variable, worker);
     }
 }
 
@@ -120,8 +120,8 @@ pub fn module_worker() {
 pub fn app_with(state: &Path, plugins: &Path, taken: &[&str]) -> Arc<App> {
     module_worker();
     let app = App::new(AppConfig::ephemeral(state)).unwrap();
-    for plugin in bibli_extend::discover(&[plugins.to_owned()], taken) {
-        let id = bibli_core::plugin::Plugin::id(&*plugin);
+    for plugin in skwir_extend::discover(&[plugins.to_owned()], taken) {
+        let id = skwir_core::plugin::Plugin::id(&*plugin);
         app.plugins.add(plugin, &app);
         assert!(app.plugins.set_enabled(id, true, &app), "{id} turned on");
     }

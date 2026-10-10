@@ -1,7 +1,7 @@
-//! bibli plugin: circuit boards and schematics drawn from their files.
+//! skwir plugin: circuit boards and schematics drawn from their files.
 //! `KiCad`'s boards, footprints, schematics and symbol libraries, and the
 //! Gerber and Excellon drill files any design program sends to the board
-//! maker, are text, read here and written as SVG, which bibli's inert
+//! maker, are text, read here and written as SVG, which skwir's inert
 //! rasterizer draws (`inspection::drawing`): in the preview panel, with
 //! what the file holds in Details and its text one toggle away, and as
 //! the grid's thumbnails. Nothing outside the file is read.
@@ -12,14 +12,14 @@ mod schematic;
 mod sexpr;
 mod svg;
 
-use bibli_core::{
+use skwir_core::{
     App, CancelToken,
     inspection::{Detail, InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
-use bibli_platform::inspection;
+use skwir_platform::inspection;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -43,12 +43,12 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Draw KiCad boards, footprints, schematics and symbol libraries, and Gerber and drill files; board size, layers, footprints, nets, symbols and holes in Details"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read])
     }
     fn register(&self, app: &App) {
         app.previews.register(ID, Arc::new(Provider));
@@ -129,7 +129,7 @@ impl Format {
     }
 
     fn read(self, path: &Path, cancel: &CancelToken) -> anyhow::Result<Found> {
-        bibli_platform::thumb_providers::ensure_file(path)?;
+        skwir_platform::thumb_providers::ensure_file(path)?;
         let bytes = inspection::read_bounded(path, INPUT, "The file", cancel)?;
         let text = String::from_utf8_lossy(&bytes);
         match self {
@@ -280,7 +280,7 @@ impl ThumbnailProvider for Pictures {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::op::EntryRef;
+    use skwir_core::op::EntryRef;
 
     fn request(path: &Path) -> PreviewRequest {
         PreviewRequest {
@@ -346,7 +346,7 @@ mod tests {
                     entry: request.entry.clone(),
                     mime: None,
                     mtime: None,
-                    size: bibli_core::thumbs::ThumbSize::Normal,
+                    size: skwir_core::thumbs::ThumbSize::Normal,
                 },
                 &CancelToken::new(),
             )

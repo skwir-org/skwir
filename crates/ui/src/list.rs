@@ -6,13 +6,13 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use bibli_core::command::Invocation;
-use bibli_core::workspace::PaneId;
-use bibli_core::{EntryId, SortKey, SortSpec};
 use gpui::{
     AnyElement, Context, ExternalPaths, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent,
     Window, div, prelude::*,
 };
+use skwir_core::command::Invocation;
+use skwir_core::workspace::PaneId;
+use skwir_core::{EntryId, SortKey, SortSpec};
 
 use crate::dnd::DragPayload;
 use crate::keymap;
@@ -66,7 +66,7 @@ fn nav_of(to: &str) -> Option<Nav> {
 /// Whether `name` matches what `/` looks for: anywhere in the name, case
 /// ignored unless the pattern has a capital (yazi's smart case).
 pub fn find_matches(name: &str, pattern: &str) -> bool {
-    bibli_core::workspace::NameFilter::new(pattern).holds(std::ffi::OsStr::new(name))
+    skwir_core::workspace::NameFilter::new(pattern).holds(std::ffi::OsStr::new(name))
 }
 
 /// How long a pause ends a name being typed.
@@ -203,7 +203,7 @@ impl ListState {
     /// Adopt the pane's order (`Pane::order`: the listing sorted, and the
     /// folders opened in place) when the listing's version, the opened
     /// folders or the spec changed.
-    pub fn sync(&mut self, pane: &bibli_core::workspace::Pane) -> bool {
+    pub fn sync(&mut self, pane: &skwir_core::workspace::Pane) -> bool {
         let listing = &pane.listing;
         if self.listing != Some(listing.id()) {
             self.reset();
@@ -274,7 +274,7 @@ impl ListState {
 
 /// What the selection of `pane` amounts to, but for what it weighs
 /// (`selection_bytes`). Walks the whole selection.
-fn summarize(pane: &bibli_core::workspace::Pane) -> SelectionCtx {
+fn summarize(pane: &skwir_core::workspace::Pane) -> SelectionCtx {
     let mut ctx = SelectionCtx {
         count: pane.selection.len(),
         all_dirs: true,
@@ -299,7 +299,7 @@ fn summarize(pane: &bibli_core::workspace::Pane) -> SelectionCtx {
 /// (`Pane::selected_unknown_from`), and only a selection all known is
 /// added up, so hydrating a big selection is not a walk of it per batch.
 fn selection_bytes(
-    pane: &bibli_core::workspace::Pane,
+    pane: &skwir_core::workspace::Pane,
     key: (u64, u64, u64),
     last: &Cell<Option<SelectionBytes>>,
 ) -> Option<u64> {
@@ -317,7 +317,7 @@ fn selection_bytes(
     } else {
         // Each file once: its names selected (hard links) are one file.
         let bytes =
-            bibli_core::entry::weight(pane.selection.iter().filter_map(|id| pane.entry(id)));
+            skwir_core::entry::weight(pane.selection.iter().filter_map(|id| pane.entry(id)));
         (Some(bytes), 0)
     };
     last.set(Some(SelectionBytes {
@@ -343,7 +343,7 @@ impl Shell {
         };
         // Where the pane is, read every time: navigating replaces the
         // listing, whose version can then repeat the cached one.
-        let folder = pane.location().is_some_and(bibli_core::Location::is_path);
+        let folder = pane.location().is_some_and(skwir_core::Location::is_path);
         let verbs = &self.ui().place.verbs;
         let here = |ctx: SelectionCtx| SelectionCtx {
             folder,
@@ -426,7 +426,7 @@ impl Shell {
     }
 
     fn dispatch_core(&mut self, name: &str, args: serde_json::Value, cx: &mut Context<Self>) {
-        let inv = bibli_core::command::Invocation {
+        let inv = skwir_core::command::Invocation {
             name: name.into(),
             args,
         };
@@ -715,7 +715,7 @@ impl Shell {
             .and_then(|c| sorted.iter().position(|id| *id == c));
         // The pattern folded once, and a name compared without a copy of
         // its own: lowercasing both for each entry at each keystroke.
-        let filter = bibli_core::workspace::NameFilter::new(pattern);
+        let filter = skwir_core::workspace::NameFilter::new(pattern);
         (1..=len)
             .map(|step| match (start, backward) {
                 (Some(s), false) => (s + step) % len,

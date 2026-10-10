@@ -4,9 +4,9 @@
 //! there, so candidates are asked for on a worker, and only the answer to
 //! the latest query is shown.
 
-use bibli_core::command::{Invocation, Outcome};
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
 use serde::Deserialize;
+use skwir_core::command::{Invocation, Outcome};
 
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
@@ -16,7 +16,7 @@ use crate::theme::Theme;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Candidate {
-    #[serde(with = "bibli_core::os_path")]
+    #[serde(with = "skwir_core::os_path")]
     pub path: std::path::PathBuf,
     #[serde(default)]
     pub kind: String,

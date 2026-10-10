@@ -8,7 +8,7 @@ the function named.
 
 Since step A everything compiles for Windows and macOS (`just
 check-cross`, part of `just lint-all`). What has no code for a system
-yet either errors with the system's name (`bibli_core::system::not_yet`)
+yet either errors with the system's name (`skwir_core::system::not_yet`)
 or answers as "unknown" where a predicate has no error to give; each
 item below says which. Marks: **(n)** errors with "not available on
 <system> yet" there; **(u)** answers unknown or nothing there; **(c)**
@@ -195,7 +195,7 @@ Linux (`dirs`: Windows' known folders, a Mac's), run under Wine. Left:
 
 ## 7. Types, icons, applications (step E)
 
-Done: bibli's own folders per system (`core/src/folders.rs`: settings
+Done: skwir's own folders per system (`core/src/folders.rs`: settings
 and cache in `~/Library/…` on macOS, `%APPDATA%`/`%LOCALAPPDATA%` on
 Windows, the XDG ones on Linux as before); the keyring (Windows'
 Credential Manager, run under Wine's; macOS's Keychain, compiled only);
@@ -236,7 +236,7 @@ macOS (compiled only). Left:
 - `platform/thumbnails.rs`: the freedesktop cache (c; private
   elsewhere). `thumb_providers.rs` `.thumbnailer` files (c).
 - `platform/sandbox.rs` (ADR-039): bubblewrap on Linux, `sandbox-exec`
-  with bibli's profile on macOS (compiled, never run: whether
+  with skwir's profile on macOS (compiled, never run: whether
   LibreOffice, Pandoc, ImageMagick and the decoders start under it,
   and what the profile must let through, is for a Mac **(5b)**);
   nothing on Windows, where an AppContainer is to be built and tried
@@ -248,7 +248,7 @@ macOS (compiled only). Left:
 - The system's thumbnails (ADR-041, `platform/system_thumbs.rs`): Quick
   Look's on macOS (compiled, never run **(5b)**), the shell's
   `IShellItemImageFactory` on Windows (run under Wine, whose shell
-  draws none **(5b)**), at the Generate stage after bibli's decoder.
+  draws none **(5b)**), at the Generate stage after skwir's decoder.
 - PDFs (ADR-041): the packages carry PDFium, which its helper finds
   beside itself or in a Mac bundle's `Frameworks` (the Windows helper
   loaded the pinned `pdfium.dll` so under Wine); PDF thumbnails and
@@ -291,7 +291,7 @@ Linux). Left:
 
 - Media keys (step I): `plugins/mpris` is registered on the free
   desktops only now; a Mac's Now Playing and Windows' media controls
-  (SMTC) are not written (`bibli_core::playing` is the seam).
+  (SMTC) are not written (`skwir_core::playing` is the seam).
 - Hints (step I): Spotlight answers a tag search on a Mac (`mdfind`,
   Finder's tags; compiled only); Windows Search is not asked;
   `query/plocate.rs` (c), `tags/hints.rs` Baloo (c).
@@ -299,7 +299,7 @@ Linux). Left:
   thumbnails, trash, apps, mime, thumbnailers, icons, places; jump,
   tags, vim, geo, edit-as-buffer. Absent elsewhere, so read as nothing.
 - Fonts: `mupdf-worker/fonts.rs` `fc-match` (c).
-- `alloc/lib.rs` ELF constructor (Linux); `bibli/gpu.rs` sysfs (c).
+- `alloc/lib.rs` ELF constructor (Linux); `skwir/gpu.rs` sysfs (c).
 - `archive-worker/main.rs`: `LC_CTYPE` value and `C.UTF-8` (c).
 - Keys (step J, done): the standard shortcuts are `secondary` (Cmd on
   a Mac, Ctrl elsewhere, the same keys on Linux as before), bindings
@@ -309,7 +309,7 @@ Linux). Left:
   reserves or means otherwise (Cmd+H hides an app, Cmd+Space is
   Spotlight, Ctrl+arrows switch Spaces), the terminal's keys, Ctrl+Tab,
   word moves (a Mac's are Option+arrows: not done). Compiled for
-  Windows, never for a Mac (bibli-ui).
+  Windows, never for a Mac (skwir-ui).
 - Fonts (step J, done): each system's own after Inter (Helvetica Neue
   and Menlo on a Mac, Segoe UI and Cascadia Mono or Consolas on
   Windows), never run.
@@ -320,12 +320,12 @@ Linux). Left:
   tried under Wine (`tests/pipe.rs`), which keeps no accounts apart.
   Left for Phase 5b's gate: the pipe has Windows' default
   security, which lets every account open it to read, and a pipe
-  another account made first under that name is taken for bibli's
-  (the window does not listen, and `bibli mcp` would talk to it). The
+  another account made first under that name is taken for skwir's
+  (the window does not listen, and `skwir mcp` would talk to it). The
   pipe needs a DACL of the user alone, and the client a check of the
   server's account (`GetNamedPipeServerProcessId`). On macOS the
   socket is in the user's own `$TMPDIR`, compiled only.
-- Plugins from outside bibli (ADR-045, ADR-046): a module runs the same
+- Plugins from outside skwir (ADR-045, ADR-046): a module runs the same
   everywhere (Wasmtime, compiled for Windows and macOS, run on Linux
   only); a program is isolated by bubblewrap on Linux, by
   `sandbox-exec` on macOS (`sandbox::plugin`, compiled only), and does

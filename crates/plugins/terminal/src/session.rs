@@ -25,11 +25,11 @@ use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config, Osc52, Term, TermMode};
 use alacritty_terminal::tty;
-use bibli_core::location::Waker;
-use bibli_core::terminal::{
+use parking_lot::{Condvar, Mutex, RwLock};
+use skwir_core::location::Waker;
+use skwir_core::terminal::{
     At, Input, Key, KeyCode, Mods, Palette, Screen, Size, Spawn, TerminalSession, Unit,
 };
-use parking_lot::{Condvar, Mutex, RwLock};
 
 use crate::follow::{self, Follow};
 use crate::{keys, links, screen};
@@ -218,7 +218,7 @@ pub(crate) fn open(
     let env = HashMap::from([
         ("TERM".to_owned(), "xterm-256color".to_owned()),
         ("COLORTERM".to_owned(), "truecolor".to_owned()),
-        ("TERM_PROGRAM".to_owned(), "bibli".to_owned()),
+        ("TERM_PROGRAM".to_owned(), "skwir".to_owned()),
     ]);
     let pty = tty::new(
         &tty::Options {
@@ -279,7 +279,7 @@ pub(crate) fn open(
         selected: None,
     };
     std::thread::Builder::new()
-        .name("bibli-terminal".into())
+        .name("skwir-terminal".into())
         .spawn(move || worker.run())?;
     Ok((
         Arc::new(Session {
@@ -402,7 +402,7 @@ impl Worker {
     /// Where the shell is now, as the system says
     /// (`process::working_dir`: not on Windows yet, ADR-035).
     fn shell_dir(&self) -> Option<PathBuf> {
-        bibli_platform::process::working_dir(self.pid)
+        skwir_platform::process::working_dir(self.pid)
     }
 
     fn type_cd(&self, dir: &std::path::Path) {

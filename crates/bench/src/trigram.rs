@@ -1,8 +1,8 @@
 //! A trigram index for `content:`, built and timed against the scan it
 //! would stand in for: the question of ADR-003 (Tantivy or trigrams).
-//! Nothing in bibli uses it.
+//! Nothing in skwir uses it.
 //!
-//! It holds what the scan searches (`bibli_plugin_query::lang::
+//! It holds what the scan searches (`skwir_plugin_query::lang::
 //! content_matches`): every file a search under the root walks to (hidden
 //! entries left out, links to folders not followed, a link to a file read
 //! as that file), at most `CONTENT_LIMIT` long, read as the searcher reads
@@ -11,7 +11,7 @@
 //! folded. A pattern is planned into a query on trigrams that every match
 //! satisfies, from the HIR grep-regex builds of it, Unicode case classes
 //! included, so the index names every file that can match; each is then
-//! matched by `content_matches` itself. `bibli-bench trigram` checks query
+//! matched by `content_matches` itself. `skwir-bench trigram` checks query
 //! by query that the answer is the scan's.
 //!
 //! Folders the user keeps private (`permissions::Privacy`) are left out
@@ -26,11 +26,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, bail};
-use bibli_core::location::ListingEvent;
-use bibli_plugin_query::lang::{self, CONTENT_LIMIT, ContentPat, Expr, Term};
 use rayon::prelude::*;
 use regex_syntax::hir::{Class, Hir, HirKind};
 use serde_json::json;
+use skwir_core::location::ListingEvent;
+use skwir_plugin_query::lang::{self, CONTENT_LIMIT, ContentPat, Expr, Term};
 
 /// The queries measured when none is given: common and rare words, case
 /// either way, a word with accents, one found nowhere, one too short for
@@ -84,7 +84,7 @@ struct Private {
 impl Private {
     fn holds(&self, dir: &Path) -> bool {
         self.listed.iter().any(|f| dir.starts_with(f))
-            || std::fs::symlink_metadata(dir.join(bibli_core::permissions::MARKER)).is_ok()
+            || std::fs::symlink_metadata(dir.join(skwir_core::permissions::MARKER)).is_ok()
     }
 }
 
@@ -131,7 +131,7 @@ fn walk(root: &Path, private: &Arc<Private>) -> Vec<Walked> {
             if let Ok(meta) = std::fs::metadata(&path)
                 && meta.is_file()
             {
-                let changed = bibli_core::fs::stat::changed(&path, &meta);
+                let changed = skwir_core::fs::stat::changed(&path, &meta);
                 let _ = tx.send(Walked {
                     path,
                     size: meta.len(),
@@ -162,7 +162,7 @@ fn readers() -> rayon::ThreadPool {
 /// whether the file was UTF-16, decoded as the searcher decodes it.
 fn read_searched(path: &Path, buf: &mut Vec<u8>) -> Option<bool> {
     buf.clear();
-    let mut file = bibli_platform::file::open_regular(path).ok()?;
+    let mut file = skwir_platform::file::open_regular(path).ok()?;
     if file.metadata().ok()?.len() > CONTENT_LIMIT {
         return None;
     }
@@ -822,9 +822,9 @@ fn answer(index: &Index, pat: &ContentPat, pool: &rayon::ThreadPool) -> Result<A
 
 /// What the query plugin's search of `expr` under `root` answers, and
 /// how long it took to complete.
-fn scan(app: &bibli_core::App, expr: &str, root: &Path) -> Result<(Duration, HashSet<PathBuf>)> {
+fn scan(app: &skwir_core::App, expr: &str, root: &Path) -> Result<(Duration, HashSet<PathBuf>)> {
     let t = Instant::now();
-    let location = bibli_plugin_query::location_for(expr, Some(root));
+    let location = skwir_plugin_query::location_for(expr, Some(root));
     let open = app.open_location(&location)?;
     let mut found = HashSet::new();
     loop {
@@ -868,7 +868,7 @@ fn evict(files: &[Walked]) -> Option<usize> {
         files
             .par_iter()
             .filter(|w| {
-                bibli_platform::file::open_regular(&w.path).is_ok_and(|f| {
+                skwir_platform::file::open_regular(&w.path).is_ok_and(|f| {
                     rustix::fs::fadvise(&f, 0, None, rustix::fs::Advice::DontNeed).is_ok()
                 })
             })
@@ -925,7 +925,7 @@ fn describe_file(path: &Path, since: SystemTime, index: &Index) -> serde_json::V
     let meta = std::fs::metadata(path).ok();
     let changed = meta
         .as_ref()
-        .and_then(|m| bibli_core::fs::stat::changed(path, m))
+        .and_then(|m| skwir_core::fs::stat::changed(path, m))
         .is_some_and(|c| c >= since);
     let doc = index.docs.iter().find(|d| d.path == path);
     json!({
@@ -964,7 +964,7 @@ fn runs_into(line: &mut serde_json::Value, name: &str, runs: &[(Duration, Option
 /// Build the index of `dir`, cold then warm, time a check of it, and
 /// answer each query from it and by the scan, comparing the two.
 pub fn run(dir: &Path, opts: &Options) -> Result<()> {
-    let dir = bibli_core::os_path::canonical(dir)?;
+    let dir = skwir_core::os_path::canonical(dir)?;
     let app = crate::measure::tags_app();
     let privacy = app.privacy();
     if privacy.holds(&dir) {

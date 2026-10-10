@@ -28,9 +28,9 @@ which the Video engine's Still frames choice already gives.
   and declares every preference of playback, in sections: Playback
   (`keep_playing`, `autoplay`, `continue`), Audio (`replay_gain`), Video
   (`backend`). `preview-audio` is removed.
-- The shell's player reads the Playback keys (`bibli_ui::settings`
+- The shell's player reads the Playback keys (`skwir_ui::settings`
   constants, held to the plugin's names and choices by
-  `crates/bibli/tests/settings.rs`). With the plugin off there is no
+  `crates/skwir/tests/settings.rs`). With the plugin off there is no
   player, so nothing follows a withdrawn preference.
 - A changed engine re-registers the video provider alone
   (`PreviewRegistry::unregister(owner, id)`, new in core): audio playing,

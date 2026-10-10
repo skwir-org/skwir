@@ -1,6 +1,6 @@
 [package]
-name = "bibli-plugin-tags"
-description = "bibli plugin: tags, ratings and comments stored as xattrs, no database"
+name = "skwir-plugin-tags"
+description = "skwir plugin: tags, ratings and comments stored as xattrs, no database"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -8,8 +8,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
-bibli-platform.workspace = true
+skwir-core.workspace = true
+skwir-platform.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -23,7 +23,7 @@ crossbeam-channel.workspace = true
 
 [dev-dependencies]
 dirs.workspace = true
-bibli-core = { workspace = true, features = ["testing"] }
+skwir-core = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]

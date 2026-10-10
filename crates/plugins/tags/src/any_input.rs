@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use bibli_core::testing::{bytes, mutated, mutated_text};
 use proptest::prelude::*;
+use skwir_core::testing::{bytes, mutated, mutated_text};
 
 use crate::appledouble::AppleDouble;
 use crate::finder::{self, Framing, Tag};

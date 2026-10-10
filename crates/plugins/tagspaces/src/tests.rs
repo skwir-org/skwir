@@ -1,9 +1,9 @@
 use super::*;
-use bibli_core::app::AppConfig;
-use bibli_core::op::{EntryRef, Plan, Rename};
+use skwir_core::app::AppConfig;
+use skwir_core::op::{EntryRef, Plan, Rename};
 
 fn home_tempdir() -> tempfile::TempDir {
-    let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+    let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
         .prefix("tagspaces-")
@@ -17,7 +17,7 @@ fn app(tmp: &Path) -> Arc<App> {
     app
 }
 
-fn run(app: &App, op: Box<dyn bibli_core::op::Operation>) -> Option<String> {
+fn run(app: &App, op: Box<dyn skwir_core::op::Operation>) -> Option<String> {
     let mut plan = Plan::new("op");
     plan.steps.push(op);
     app.executor.execute_blocking(&plan, app.lifetime()).error

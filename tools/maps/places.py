@@ -11,15 +11,15 @@ Two sources, one format:
 
 - GeoNames' `cities1000` (CC BY 4.0, https://www.geonames.org), about
   150 000 places of more than 1 000 people, for those who want names at the
-  scale of a walk. bibli does not ship it and makes no request for it: the
+  scale of a walk. skwir does not ship it and makes no request for it: the
   user downloads `cities1000.zip` from https://download.geonames.org/export/dump/
   (or lets this script do it with --download) and packs it with --geonames.
-  Its licence requires attribution: bibli shows "GeoNames (CC BY 4.0)" beside
+  Its licence requires attribution: skwir shows "GeoNames (CC BY 4.0)" beside
   the names it gives while the file is in use.
 
-  bibli looks for the packed file at $XDG_DATA_HOME/bibli/places/geonames.bin
-  (~/.local/share/bibli/places/geonames.bin by default), then at
-  <dir>/bibli/places/geonames.bin for each directory of $XDG_DATA_DIRS
+  skwir looks for the packed file at $XDG_DATA_HOME/skwir/places/geonames.bin
+  (~/.local/share/skwir/places/geonames.bin by default), then at
+  <dir>/skwir/places/geonames.bin for each directory of $XDG_DATA_DIRS
   (/usr/local/share:/usr/share by default). When it finds one it can read,
   it uses it instead of the embedded Natural Earth places, of which it is a
   finer superset; a damaged file is ignored and the embedded places used.
@@ -55,7 +55,7 @@ Usage:
   tools/maps/places.py --geonames cities1000.zip [--out PATH]
   tools/maps/places.py --geonames --download [--out PATH]
 --geonames takes the .zip or the .txt inside it; --out defaults to the first
-place bibli looks, under $XDG_DATA_HOME.
+place skwir looks, under $XDG_DATA_HOME.
 """
 import argparse
 import io
@@ -200,7 +200,7 @@ def geonames(path, download):
 
 def default_out():
     home = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
-    return os.path.join(home, "bibli", "places", "geonames.bin")
+    return os.path.join(home, "skwir", "places", "geonames.bin")
 
 
 def main():

@@ -2,7 +2,7 @@
 //! up left.
 //!
 //! A copy, and a move across drives, is made in a folder in its
-//! destination (`.bibli-copy-…`, one a plan's copies there share,
+//! destination (`.skwir-copy-…`, one a plan's copies there share,
 //! `StepContext::staging_for`) and renamed into place once whole
 //! (`builtin::copy_staged`), so a partial copy never looks finished. Any
 //! step that makes something in a destination does the same through
@@ -10,11 +10,11 @@
 //! Stopped or failed, a copy removes what it made there, and the plan the
 //! folder when it ends; a process that ends mid-copy
 //! (a crash, a kill, a logout) cannot. So the folder holds a `lock` its
-//! copy keeps locked while it runs, and a later bibli removes the folders
+//! copy keeps locked while it runs, and a later skwir removes the folders
 //! whose lock nobody holds ([`sweep`]): a copy into a folder sweeps it
 //! before it stages there, and a run sweeps at its start the folders an
 //! earlier one was copying into when it ended ([`UnderWay`]). A folder
-//! whose copy still runs, in this bibli or another, keeps its lock; one
+//! whose copy still runs, in this skwir or another, keeps its lock; one
 //! without a lock (being made, or made before locks) is left. Only where
 //! this machine alone writes (`fs::volume::only_here`): a lock taken by
 //! another machine on a shared drive is not seen here.
@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use super::sys;
 
 /// What every staging folder's name begins with.
-const PREFIX: &str = ".bibli-copy-";
+const PREFIX: &str = ".skwir-copy-";
 /// The file a staging folder's copy keeps locked.
 const LOCK: &str = "lock";
 
@@ -144,7 +144,7 @@ pub fn sweep(dir: &Path) {
     }
 }
 
-/// The folders copies are under way in, noted in bibli's cache for the
+/// The folders copies are under way in, noted in skwir's cache for the
 /// next run to [`sweep`] should this one end mid-copy: a file per folder
 /// and plan, holding the folder's path, locked while the plan runs and
 /// removed when it ends. The cache may go at any time: what it held is
@@ -179,7 +179,7 @@ impl UnderWay {
 
     /// Sweep the folders an earlier run was copying into when it ended,
     /// and forget them; one on a drive not there now is kept for a later
-    /// run. A note still locked is a running bibli's. On a worker.
+    /// run. A note still locked is a running skwir's. On a worker.
     pub fn sweep_left(&self) {
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return;
@@ -218,7 +218,7 @@ mod tests {
     /// A folder on the disk the tests run on (never tmpfs: it has no
     /// device, so nothing there is swept).
     fn scratch() -> tempfile::TempDir {
-        let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         tempfile::tempdir_in(base).unwrap()
     }
@@ -246,10 +246,10 @@ mod tests {
         let left = cut_short(dest);
         let running = Staging::new(dest).unwrap();
         // Being made, or made before locks: nothing tells it is over.
-        let unlocked = dest.join(".bibli-copy-made-before");
+        let unlocked = dest.join(".skwir-copy-made-before");
         std::fs::create_dir(&unlocked).unwrap();
         // The user's own, named alike.
-        let theirs = dest.join(".bibli-copy-notes.txt");
+        let theirs = dest.join(".skwir-copy-notes.txt");
         std::fs::write(&theirs, b"mine").unwrap();
 
         sweep(dest);

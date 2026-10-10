@@ -13,9 +13,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bibli_core::Location;
-use bibli_core::registry::{Factory, ViewSpec};
 use gpui::{AnyElement, Context, Window};
+use skwir_core::Location;
+use skwir_core::registry::{Factory, ViewSpec};
 
 use crate::shell::Shell;
 
@@ -128,7 +128,7 @@ pub trait PaneView {
     fn kept_locations(
         &self,
         _shown: Option<&Location>,
-        _trail: Option<&bibli_core::location::Trail>,
+        _trail: Option<&skwir_core::location::Trail>,
     ) -> Vec<Location> {
         Vec::new()
     }
@@ -165,7 +165,7 @@ pub fn spec(
         order,
         revision: Arc::default(),
         factory,
-        role: bibli_core::registry::ViewRole::Listing,
+        role: skwir_core::registry::ViewRole::Listing,
     }
 }
 
@@ -176,7 +176,7 @@ pub fn instantiate(spec: &ViewSpec) -> Option<Box<dyn PaneView>> {
     }
     let renderer = spec
         .factory
-        .downcast_ref::<bibli_core::registry::ViewRenderer>()?;
+        .downcast_ref::<skwir_core::registry::ViewRenderer>()?;
     crate::views::named_renderer(renderer.0)
 }
 

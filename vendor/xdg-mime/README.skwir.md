@@ -1,12 +1,12 @@
 # Vendored xdg-mime 0.4.0
 
 This directory is the `xdg-mime` 0.4.0 crate as published on crates.io
-(Apache-2.0, `LICENSE.txt`), plus bibli's patch, wired in through
+(Apache-2.0, `LICENSE.txt`), plus skwir's patch, wired in through
 `[patch.crates-io]` in the root `Cargo.toml`. Remove both once the patch
 is upstream (ebassi/xdg-mime-rs).
 
 Left out: `test_files/`, the crate's own tests' data, which holds a copy of
-shared-mime-info's database (GPL-2.0-or-later); bibli does not run this
+shared-mime-info's database (GPL-2.0-or-later); skwir does not run this
 crate's tests.
 
 ## Patch
@@ -16,7 +16,7 @@ layout, so it applies there with `git apply -p1`.
 
 - `0001-every-system.patch`: the crate no longer compiles to nothing off
   Unix. It reads the database's files by name and holds nothing of Unix's;
-  on Windows bibli reads the database it ships beside the program, as the
+  on Windows skwir reads the database it ships beside the program, as the
   fallback of the system's own types (ADR-037).
 - `0002-one-lowercasing-per-lookup.patch`: a name is looked up without
   an allocation per glob. `Glob::compare` lowercased the name again for
@@ -34,5 +34,5 @@ layout, so it applies there with `git apply -p1`.
   the first directory to name one deciding it as before. A subclass
   cycle in a database ends instead of overflowing the stack. And
   `new_for_directories` reads the database from the directories its
-  caller found: bibli reads the XDG variables in one place
-  (`bibli_core::xdg`).
+  caller found: skwir reads the XDG variables in one place
+  (`skwir_core::xdg`).

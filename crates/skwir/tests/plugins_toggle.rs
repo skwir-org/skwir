@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::plugin::Plugin;
+use skwir_core::app::{App, AppConfig};
+use skwir_core::plugin::Plugin;
 
 /// Everything a plugin could have contributed, as comparable sets.
 #[derive(Debug, PartialEq, Eq)]
@@ -110,7 +110,7 @@ fn snapshot(app: &App) -> Snapshot {
 
 /// The binary's own list: a plugin it registers is a plugin tested here.
 fn all_plugins() -> Vec<Arc<dyn Plugin>> {
-    bibli::plugins()
+    skwir::plugins()
 }
 
 #[test]

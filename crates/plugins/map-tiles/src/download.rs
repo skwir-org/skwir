@@ -1,7 +1,7 @@
 //! Tiles from a server: OpenStreetMap's once the user chose it, or one the
 //! user named. Only when asked, only the tiles in view, as the
 //! OpenStreetMap Foundation's tile policy says (ADR-020): a User-Agent that
-//! names bibli, tiles kept as long as their headers say (a week when they
+//! names skwir, tiles kept as long as their headers say (a week when they
 //! say nothing) in the one deletable cache, a conditional request for a
 //! tile kept too long, and no offline download.
 //!
@@ -14,11 +14,11 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use bibli_core::CancelToken;
-use bibli_core::cache::CacheSlot;
-use bibli_core::tiles::{TileDone, TileRequest};
-use bibli_platform::secrets::{SecretRef, SecretText};
 use parking_lot::Mutex;
+use skwir_core::CancelToken;
+use skwir_core::cache::CacheSlot;
+use skwir_core::tiles::{TileDone, TileRequest};
+use skwir_platform::secrets::{SecretRef, SecretText};
 
 use crate::http;
 use crate::server::{Server, redact};
@@ -105,7 +105,7 @@ fn httpdate(text: &str) -> Option<u64> {
     .position(|m| m == month)? as u32
         + 1;
     let days =
-        bibli_platform::calendar::days_from_civil(year.parse().ok()?, month, day.parse().ok()?);
+        skwir_platform::calendar::days_from_civil(year.parse().ok()?, month, day.parse().ok()?);
     let mut hms = time.split(':').map(str::parse::<u64>);
     let (h, m, s) = (hms.next()?.ok()?, hms.next()?.ok()?, hms.next()?.ok()?);
     u64::try_from(days)
@@ -182,7 +182,7 @@ impl Downloads {
             keys: Arc::default(),
             tickets: std::sync::atomic::AtomicU64::new(0),
             user_agent: format!(
-                "bibli/{} (+{})",
+                "skwir/{} (+{})",
                 env!("CARGO_PKG_VERSION"),
                 env!("CARGO_PKG_REPOSITORY")
             ),
@@ -296,7 +296,7 @@ fn key_of(server: &Server, keys: &Keys) -> anyhow::Result<Option<Arc<SecretText>
     if let Some(key) = keys.lock().get(&server.id) {
         return Ok(key.clone());
     }
-    let key = bibli_platform::secrets::lookup(SecretRef {
+    let key = skwir_platform::secrets::lookup(SecretRef {
         setting: crate::SERVERS_KEY,
         record: &server.id,
         field: crate::KEY_FIELD,
@@ -488,8 +488,8 @@ async fn fetch(
     }
 }
 
-fn decode(body: &[u8]) -> anyhow::Result<bibli_core::thumbs::Image> {
-    bibli_platform::inspection::image(body)
+fn decode(body: &[u8]) -> anyhow::Result<skwir_core::thumbs::Image> {
+    skwir_platform::inspection::image(body)
 }
 
 #[cfg(test)]

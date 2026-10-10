@@ -1,14 +1,14 @@
 // Helpers of the tests that run on Unix alone (ADR-035).
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))]
 use super::*;
-use bibli_core::app::AppConfig;
-use bibli_core::command::Invocation;
-use bibli_core::location::Location;
-use bibli_core::op::EntryRef;
+use skwir_core::app::AppConfig;
+use skwir_core::command::Invocation;
+use skwir_core::location::Location;
+use skwir_core::op::EntryRef;
 use std::time::Duration;
 
 fn home_tempdir() -> tempfile::TempDir {
-    let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+    let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
         .prefix("name-tags-")
@@ -87,7 +87,7 @@ impl NotesStore for Attributes {
         files
             .iter()
             .map(|f| {
-                let v = bibli_core::fs::xattr::get(f.path, "user.test.tags").ok()??;
+                let v = skwir_core::fs::xattr::get(f.path, "user.test.tags").ok()??;
                 let text = String::from_utf8(v).ok()?;
                 Some(Notes {
                     tags: text.split(',').map(Tag::named).collect(),
@@ -103,9 +103,9 @@ impl NotesStore for Attributes {
     }
     fn write(&self, f: &Probe<'_>, notes: &Notes, _: bool) -> std::io::Result<Wrote> {
         if notes.tags.is_empty() {
-            let _ = bibli_core::fs::xattr::remove(f.path, "user.test.tags");
+            let _ = skwir_core::fs::xattr::remove(f.path, "user.test.tags");
         } else {
-            bibli_core::fs::xattr::set(
+            skwir_core::fs::xattr::set(
                 f.path,
                 "user.test.tags",
                 notes.tag_names().join(",").as_bytes(),
@@ -168,13 +168,13 @@ fn tagspaces_names_are_read_where_it_is_used_and_moved_in_and_out_of_names() {
     app.executor.undo_blocking(app.lifetime()).unwrap();
     assert!(tagged.exists());
     assert!(
-        bibli_core::fs::xattr::get(&tagged, "user.test.tags")
+        skwir_core::fs::xattr::get(&tagged, "user.test.tags")
             .unwrap()
             .is_none()
     );
 
     // Into the name: those it can hold, the rest said to be left out.
-    bibli_core::fs::xattr::set(&tagged, "user.test.tags", b"alps,new,two words").unwrap();
+    skwir_core::fs::xattr::set(&tagged, "user.test.tags", b"alps,new,two words").unwrap();
     let entries = serde_json::json!([EntryRef::from_path(&tagged).unwrap()]);
     let into = plan(
         &app,

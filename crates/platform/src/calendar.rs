@@ -277,7 +277,7 @@ fn system_week_start() -> Option<Weekday> {
         .stdin(std::process::Stdio::null());
     let out = crate::process::run(
         &mut locale,
-        &bibli_core::CancelToken::new(),
+        &skwir_core::CancelToken::new(),
         Duration::from_secs(2),
     )
     .ok()?;

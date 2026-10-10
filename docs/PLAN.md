@@ -1,4 +1,4 @@
-# bibli — Implementation Plan
+# skwir — Implementation Plan
 
 Experimental file manager in Rust. GPU-accelerated UI, tiny core, everything else a plugin,
 designed from the first commit to be driven by humans, scripts, and AI agents alike.
@@ -18,7 +18,7 @@ Each phase has a **Done when** gate. Do not start the next phase before the gate
 Status (2026-10-07): Phases 0 to 4 and 6 pass their gates, and so does
 5a; 5b waits for a Mac and a Windows machine. Phase 6's gate passes:
 the hexadecimal preview again as a WebAssembly module, the same to the
-pixel, and an agent driven by a model (Claude Code over `bibli mcp`)
+pixel, and an agent driven by a model (Claude Code over `skwir mcp`)
 renaming and moving files through plans reviewed in the window. Phase
 7 waits, as the user chose: release 0.1, for Linux alone, comes first
 ("Release 0.1", after Phase 6).
@@ -26,7 +26,7 @@ renaming and moving files through plans reviewed in the window. Phase
 Status (2026-10-04): Phases 0 to 4 are built and their gates pass. Phase 2's gate, one
 week of daily use as the only file manager, passed, followed by two weeks of improvements
 from it. Phase 4's gate holds: every plugin (now 36, 14 of them previews) is proven by
-`crates/bibli/tests/plugins_toggle.rs` to disable at runtime with no trace and to
+`crates/skwir/tests/plugins_toggle.rs` to disable at runtime with no trace and to
 re-enable. Beyond the plan, the tree now has: a settings dialog
 (ADR-010: category column, search, controls chosen by the schema, changes applied
 immediately through the atomic save, plugin toggles with tool requirements, a read-only
@@ -36,12 +36,12 @@ a GStreamer worker (ADR-008) with a vendored atlas fix (patch 0003); ten structu
 plugins (ADR-009); tag-preserving copies (ADR-006); and Usage as a persistent plugin pane
 view with cached, watched, progressive sizes (ADR-007). Recorded deviations: `search` is
 folded into `query`; `view-dual` is per-pane shell state rather than a crate; the review
-modal, prompts, treemap and timeline strip live in `bibli-ui`; `edit-as-buffer` uses
+modal, prompts, treemap and timeline strip live in `skwir-ui`; `edit-as-buffer` uses
 `$VISUAL`/`$EDITOR` in a terminal; AccessKit is unavailable in gpui 0.2.2 (ADR-001); the native
 workers are workspace members outside `default-members`, so the default build needs no
 Poppler, GStreamer or libarchive. The idle memory gate, open since ADR-002's addendum at
 118 to 120 MB of PSS against 100, is closed by ADR-033 (2026-10-04): the budget counts
-bibli's own share of PSS, without the GPU driver's code, whose share depends on the GPU
+skwir's own share of PSS, without the GPU driver's code, whose share depends on the GPU
 vendor and on the other programs mapping it. Measured by `just idle-pss`: 89.2 MiB own
 share against 100 (133.7 MiB in all, 44.6 of them the driver's). Two findings of that
 measurement, fixed the same day: an idle Wayland window woke at the display's rate (gpui
@@ -51,7 +51,7 @@ asked for a frame callback in every one; vendored patch 0012: it draws when aske
 114.5 ms back to back, ADR-002's addendum). Found with them: the places plugin rescanned and
 woke the window about twice a second for as long as the GTK bookmarks file existed, once
 anything had opened it (notify reports opens; it now drops access events, with a test).
-`bibli-platform`'s `the_bytes_decide_for_a_name_that_says_nothing` expected shell scripts'
+`skwir-platform`'s `the_bytes_decide_for_a_name_that_says_nothing` expected shell scripts'
 old MIME name; shared-mime-info 2.5.1 names them `text/x-shellscript`, so it now asks the
 database for the name (`unalias`). The per-change validation history that used to sit here
 is in `docs/STATUS-LOG.md`.
@@ -62,8 +62,8 @@ every system's code, compiled and linted from here (`just
 check-cross`: the GNU Windows target and macOS, Zig compiling their
 C), tested where Linux or Wine can. 5b, later, on the machines: the
 original gate. Measured the same day: for Windows every C dependency
-and gpui's backend build, and only bibli's code fails; for macOS
-gpui's backend needs Apple's SDK, so `bibli-ui` and `bibli` are not
+and gpui's backend build, and only skwir's code fails; for macOS
+gpui's backend needs Apple's SDK, so `skwir-ui` and `skwir` are not
 checked there, and core fails first on its manifest (ordinary
 dependencies listed as Linux-only). The dev shell gained the two
 targets, Zig and cargo-zigbuild; `nix develop .#windows` adds Wine.
@@ -71,7 +71,7 @@ targets, Zig and cargo-zigbuild; `nix develop .#windows` adds Wine.
 Phase 5, step A: it compiles everywhere (2026-10-05). `just
 check-cross` is green and part of `just lint-all`: clippy with warnings
 as errors over the default members and their tests for
-`x86_64-pc-windows-gnu`, and over the workspace but `bibli-ui`, `bibli`
+`x86_64-pc-windows-gnu`, and over the workspace but `skwir-ui`, `skwir`
 and the native workers for `aarch64-apple-darwin`. Compiled only:
 nothing of it ran on Windows or macOS. The system is reached through
 seams core owns: `fs::Dir` (a folder held open, listed and stat-ed:
@@ -143,7 +143,7 @@ trashed with `trashItemAtURL`, whose resulting path the undo keeps
 no record of where a file came from, so `trash:` lists nothing there
 and only an undo restores. Compiled only.
 
-Phase 5, step E: the environment (2026-10-05), in part. bibli's own
+Phase 5, step E: the environment (2026-10-05), in part. skwir's own
 settings and cache go where each system keeps an application's
 (`core::folders`; Linux's XDG folders unchanged). The keyring is the
 Credential Manager on Windows (run under Wine's, in its scratch
@@ -159,7 +159,7 @@ Wine, in its scratch prefix); the database only says a system's answer
 more precisely, reads the bytes and holds aliases and hierarchy. Its
 reader, `xdg-mime`, is vendored with its Unix-only gate lifted, and
 reads on Windows (run under Wine, from beside the test programs); the
-macOS and Windows packages carry its compiled files beside bibli,
+macOS and Windows packages carry its compiled files beside skwir,
 with its licence and a note of where the source is, compiled from the
 source vendored in `vendor/shared-mime-info` (2.5.1) by
 `tools/package/mime-database.sh` (run on Linux; the package scripts
@@ -174,14 +174,14 @@ checked by `pdfium.sh`), which its helper finds beside itself or in a
 Mac bundle's `Frameworks`: PDFs open everywhere. PDF thumbnails and
 converted office pages are drawn by the engine (`document::first_page`;
 tested with no Poppler tool to be found), `pdftoppm` only where none is.
-Linux's packages split: on Debian and Fedora `bibli` (the app, PDFium,
-archives, 3D models), `bibli-media` recommended, `bibli-poppler`,
-`bibli-mermaid` and `bibli-mupdf` suggested, every dependency found by
-the tools; on Arch one `bibli` whose Poppler and GStreamer libraries are
-optional, and `bibli-mermaid` and `bibli-mupdf`. The main Debian package
+Linux's packages split: on Debian and Fedora `skwir` (the app, PDFium,
+archives, 3D models), `skwir-media` recommended, `skwir-poppler`,
+`skwir-mermaid` and `skwir-mupdf` suggested, every dependency found by
+the tools; on Arch one `skwir` whose Poppler and GStreamer libraries are
+optional, and `skwir-mermaid` and `skwir-mupdf`. The main Debian package
 went from 26 MB (85 MB installed) to 20 MB (67 MB), depending on what
-bibli links alone. `try.sh` checks each system's packages twice in a
-fresh root: `bibli` alone (PDFium working, the rest absent or saying it
+skwir links alone. `try.sh` checks each system's packages twice in a
+fresh root: `skwir` alone (PDFium working, the rest absent or saying it
 lacks its libraries), then with the others and what they recommend
 (every helper working). macOS and Windows: their packages carry PDFium
 and leave Mermaid and MuPDF out; the system's thumbnails
@@ -198,8 +198,8 @@ distribution it is for: a `.deb` (cargo-deb, `tools/package/deb.sh`),
 an `.rpm` (cargo-generate-rpm, `rpm.sh`), and a PKGBUILD with its
 `.SRCINFO` (`tools/package/aur`), from one list of the programs
 shipped (`tools/package/programs`, which `just dist` and the flake
-read too). `bibli` goes to `/usr/bin`, its helpers to `/usr/lib/bibli`
-(`/usr/libexec/bibli` on Fedora), where bibli now looks
+read too). `skwir` goes to `/usr/bin`, its helpers to `/usr/lib/skwir`
+(`/usr/libexec/skwir` on Fedora), where skwir now looks
 (`process::helper_folders`); a desktop entry and AppStream metainfo
 (both pass `desktop-file-validate` and `appstreamcli validate`) and
 the licence texts, now in the repository, go with them. Tried from
@@ -208,7 +208,7 @@ filesystem entered as its root user through bubblewrap): each package
 built on Debian 13, Fedora 44 and Arch, installed in a fresh root by
 apt, dnf or pacman with what it depends on and nothing it recommends,
 every program found with its libraries there (`linux/check.sh`); on
-Debian and Fedora bibli then drew its window on a virtual display
+Debian and Fedora skwir then drew its window on a virtual display
 through the distribution's own Mesa (software Vulkan). namcap finds
 nothing in the PKGBUILD. CI builds the three in their containers
 (`linux-packages`), never run (no remote). Not done: publishing (the
@@ -220,17 +220,17 @@ plugins, and one whose linked libraries are missing is refused by the
 system before it starts (tested on a Poppler reader whose library was
 out of reach), so a package may leave a helper's libraries optional.
 
-bibli is under the Apache License 2.0 alone (2026-10-06, ADR-042, as
+skwir is under the Apache License 2.0 alone (2026-10-06, ADR-042, as
 the user chose), no longer MIT or Apache-2.0: `LICENSE`, every crate's
-field, and every package's. Every dependency built into bibli allows it
+field, and every package's. Every dependency built into skwir allows it
 (checked over the lockfile). The Poppler reader, linking Poppler whose
 core is under the GPL version 2 or 3, is distributed under the GPL
 version 3 (it said version 2 or later); the MuPDF reader stays under
-the AGPL. Arch's `bibli`, which holds the Poppler reader, now says so.
+the AGPL. Arch's `skwir`, which holds the Poppler reader, now says so.
 
 Phase 5, step G: isolation (2026-10-06), in part (ADR-039, as the
 user chose). macOS isolates converters and decoders with
-`sandbox-exec` under bibli's profile, the contract bubblewrap has on
+`sandbox-exec` under skwir's profile, the contract bubblewrap has on
 Linux (compiled, never run). `sandbox::command` returns the paths a
 program is given, which only bubblewrap moves (`/input`, `/work`), so
 no caller assumes them (ImageMagick, LibreOffice). Pandoc runs in its
@@ -248,7 +248,7 @@ macOS its root and the volumes under `/Volumes` the Finder shows
 (`getmntinfo`, compiled only) and its user folders. Not done: eject
 and mount off Linux, Finder's favorites and Quick Access, hearing a
 drive plugged in on Windows. Windows writes removable drives through
-itself by default (quick removal); bibli's own write-through there and
+itself by default (quick removal); skwir's own write-through there and
 on a Mac flushes once per plan, never per file (PORTING.md, section 3).
 
 Phase 5, steps G and H (2026-10-05), in part. A running instance's
@@ -272,7 +272,7 @@ Ctrl+wheel and a kept band are Cmd there. What a Mac reserves (Cmd+H,
 Cmd+Space, Ctrl+arrows) keeps Ctrl. The fonts tried are each system's
 own after Inter. Not done: an outgoing drag on macOS and Windows (a
 gpui patch each), Option as a Mac's copy modifier in a drag, Option+
-arrows for words. Nothing of it ran on a Mac, where bibli-ui is not
+arrows for words. Nothing of it ran on a Mac, where skwir-ui is not
 even compiled here.
 
 Phase 5, step I (2026-10-05), in part: MPRIS is registered on the
@@ -280,13 +280,13 @@ free desktops alone (it is D-Bus's); Spotlight answers a tag search on
 a Mac (`mdfind` over Finder's tags, compiled only). Not written: a
 Mac's Now Playing, Windows' media controls, Windows Search.
 
-Phase 5, steps K and L (2026-10-05). Written: a Nix package of bibli
+Phase 5, steps K and L (2026-10-05). Written: a Nix package of skwir
 and its helpers (`packages.default`, `just package-nix`), which
 evaluates and is not built yet (a flake builds from git's tracked
 files, and Phase 5's new files are not tracked until committed); an
 AppImage of it (`just package-appimage`, nix-appimage), not built
 either; the macOS `.app` and `.dmg` (`tools/package/macos.sh`) and the
-Windows `.msi` (`tools/package/windows/bibli.wxs`,
+Windows `.msi` (`tools/package/windows/skwir.wxs`,
 `tools/package/windows.ps1`), never run, unsigned, without the native
 workers' libraries; a CI matrix for macOS and Windows (`ci.yml`'s
 `native` job, natively built, not blocking until 5b), never run (no
@@ -296,7 +296,7 @@ until 5b measures; `just idle-pss` says it measures nothing off Linux.
 
 Phase 5a's checks on Linux (2026-10-06): `just lint-all` green (the
 workspace, then Windows and macOS); `just test-all` 1176 passed.
-Under Wine (`just test-windows`, all but bibli-ui, bibli and the
+Under Wine (`just test-windows`, all but skwir-ui, skwir and the
 native workers, whose gpui imports Windows' own ICU, which Wine lacks):
 766 passed, 15 ignored, those needing what Wine lacks passing with a
 word on why. The tests that run Pandoc, ImageMagick and LibreOffice
@@ -314,7 +314,7 @@ idle-pss` was not run (it opens a window in the session).
 Phase 5a's gate passes (2026-10-06). `just check-cross` is part of
 `just lint-all` and green. Every step above has its code or says what
 is not done (G, I and K brought up to date). The Linux packages build
-and install on Debian 13, Fedora 44 and Arch, `bibli` alone and then
+and install on Debian 13, Fedora 44 and Arch, `skwir` alone and then
 with the others: every program found and working, and the licences in
 place (a new check of `linux/check.sh`, which found Fedora's dropped on
 a system installed without documents; fixed). Linux's tests pass
@@ -342,7 +342,7 @@ something the place shows `user-trash-full`, which Adwaita has as a
 128 px SVG with filters, and `img()` drew every full-color SVG icon at
 twice the size its file declares, 256 by 256 for a 16 px row. Icons are
 now rasterized for the pixels they cover, rounded up to a few sides and
-at most 256 (`icons::element`, `bibli_platform::icons::rasterize`). With
+at most 256 (`icons::element`, `skwir_platform::icons::rasterize`). With
 them: a scheduler worker idle a second after its jobs gives back what
 they freed (ADR-011's addendum), and a name is typed without an
 allocation per pattern of the type database (the vendored xdg-mime's
@@ -354,7 +354,7 @@ reads the same day (91.5). The icons draw as before in a window (Xvfb,
 scale 1 and 2: the list, the sidebar, the grid zoomed in).
 
 Icons are the system's own off Linux (2026-10-06, ADR-041's point 4,
-`bibli_platform::system_icons`): a file's by its extension, its own
+`skwir_platform::system_icons`): a file's by its extension, its own
 where the system draws such files each theirs (Windows' `.exe`, `.lnk`,
 `.ico`; a Mac's `.app`), a folder's, a user folder's and a volume's by
 path, the trash and drives as the system's stock icons; `NSWorkspace`
@@ -389,7 +389,7 @@ three engines through the reader's session, sandboxed against not
 13), its pages no slower; a page of text in a font it does not embed
 drawn to the same pixels.
 
-The icon theme is a setting of bibli's own (2026-10-07, as the user
+The icon theme is a setting of skwir's own (2026-10-07, as the user
 asked): Appearance's Icon theme, Automatic (the desktop's, as before)
 or any icon theme installed, listed by its name when the settings open
 (on a worker: it reads the icon folders), stored by its folder's
@@ -399,12 +399,12 @@ forgotten and asked again (`IconCache::set_theme`, the platform's cache
 by generation, so a lookup begun before a change keeps its answer to
 itself). The free desktops' only: macOS and Windows draw the system's
 icons. Checked in a window (Xvfb): with GNOME's setting saying Breeze
-and bibli's Adwaita, Adwaita's icons; the list of themes by name, no
+and skwir's Adwaita, Adwaita's icons; the list of themes by name, no
 cursor theme nor hicolor; Papirus chosen, every icon redrawn in it.
 
 Calendar periods, one reading (2026-10-05): the deviation "the query language's date
 parser and the timeline's calendar math are duplicated" is closed. Weeks, months and years
-are `bibli_platform::calendar::Period` (the first day of the one holding a day, the next,
+are `skwir_platform::calendar::Period` (the first day of the one holding a day, the next,
 the one before, how many between), which the query's dates (`2026-05`) and named periods
 (`last-month`) and the timeline's bars all read; a date typed is `civil_day`, which refuses
 `2026-02-31`; the year of an instant (the Narrow by bar, a tag location's `year`) is
@@ -490,7 +490,7 @@ default of `dc:description`, and Lightroom's `xmp:Label` a tag of its
 name and color, written back there while kept. An edit splices the
 changed properties into the text as it is (attribute or element,
 declaring a namespace where needed), so darktable's history and every
-property bibli does not know stay; a text it cannot edit is left alone.
+property skwir does not know stay; a text it cannot edit is left alone.
 Sidecars are updated where present and created only when asked (Notes
 page). XMP inside pictures, videos and PDFs is read on demand for
 Details ("XMP in the file"), never written. Checked by the plugin's tests
@@ -522,7 +522,7 @@ row gone), "Beside it" and an orphan's "Beside … which is gone"; idle CPU
 platform's own first.
 
 Notes stores, step C (2026-09-30, ADR-028): files beside a file are
-declared by name rules (`bibli_core::companions`), the tags plugin's `._`
+declared by name rules (`skwir_core::companions`), the tags plugin's `._`
 file the first, which also holds attributes. Listings mark them and hide
 one whose file is listed unless hidden files and `core.show_companions`
 (General, and the View menu under Hidden files) are both on; an orphan
@@ -541,7 +541,7 @@ orphan belonged to. A batch of a folder whose listing is complete gets
 its names (`MetadataProvider::fill_listed`), so the `._` store asks the
 listing instead of reading the folder. Checked: the core's and the tags
 plugin's tests, and an ignored test run against a `bindfs --xattr-none`
-mount (`BIBLI_NO_XATTR_DIR`): a copy onto it keeps tags and rating in a
+mount (`SKWIR_NO_XATTR_DIR`): a copy onto it keeps tags and rating in a
 `._` file, a copy back makes them attributes, and tagging a file there
 starts its `._` file, which undo removes. Deviations: a batch hydrated
 before its folder's listing completes still reads the folder once for
@@ -549,7 +549,7 @@ before its folder's listing completes still reads the folder once for
 not in a window yet.
 
 Notes stores, step B (2026-09-30): when the stores disagree about a
-file, the notes are merged against what bibli last wrote, kept in the
+file, the notes are merged against what skwir last wrote, kept in the
 cache (`notes` namespace, by the file's identity) with what each store
 read back: a store that changed since was edited by another application
 and its edit wins (tags added and taken away, a rating or a comment
@@ -566,7 +566,7 @@ hold). Undo forgets the snapshot. Deviation: the Details rows were
 checked by tests, not yet in a window.
 
 Notes stores, step A (2026-09-30, ADR-027): the core holds the model
-of a file's notes (`bibli_core::notes`: tags with the color a file gives
+of a file's notes (`skwir_core::notes`: tags with the color a file gives
 them, rating, comment, origin), the `NotesStore` trait and its registry
 (`App::notes`, owner-tagged), and the edit, a `set_notes` step that
 captures the stores' policy when the plan is made, writes every store
@@ -597,13 +597,13 @@ the plugin's operations write. A tag's row renames it or takes it from
 every file (`tags.rename`, merging with a tag of the new name;
 `tags.delete`): the files come from the search, walk included, never
 from the index, and the plan is proposed for review, then undone as
-one. Open searches now follow what bibli changes: after each plan the
+one. Open searches now follow what skwir changes: after each plan the
 query plugin checks again the files it touched under each search's root
 and adds, updates or removes rows (before, a search stayed as walked
 until refreshed). A Mac's notes on a volume without attributes are read
 from the `._` files beside the files (`appledouble.rs`, the layout of
 Apple's `copyfile.c`), on FAT, exFAT, NTFS, network and FUSE volumes
-(`bibli_platform::filesystem`): tags with their colors, the Finder
+(`skwir_platform::filesystem`): tags with their colors, the Finder
 comment and where a download came from (also read from a Mac's
 attributes under `user.`/`osx.`), a folder's `._` names read once per
 listing (a per-file lookup measured at a third of a `listxattr`). A tag
@@ -641,7 +641,7 @@ access list, a default one, file capabilities, an SELinux label) under
 Permissions, read with the fields on a worker. `ui.open_url` goes through
 the platform's one link filter (`open::is_web_uri`), which refuses what
 is not an `http(s)` link with a host and says so. Measured
-(`bibli-bench`, new `tags_fill_us`, `tag_search_us` and a `search`
+(`skwir-bench`, new `tags_fill_us`, `tag_search_us` and a `search`
 command that prints each run): a search stat-ed every file by opening
 its folder again; through a folder kept open (`fs::Statter`) a stat-only
 search of a million files went from 2.2–2.8 s to 0.64–0.9 s. `tag:`
@@ -756,7 +756,7 @@ listing of the volume it had opened. Between the unlock and the mount,
 udev's announcement of the new device rescans, and `lsblk` lists the
 container as its cleartext volume, which showed "Not mounted" until the
 next `lsblk` after the mount; that volume now carries its container's
-busy state and goes with it (`Volume::container`). A volume can be unmounted while bibli
+busy state and goes with it (`Volume::container`). A volume can be unmounted while skwir
 shows it: `App::release` sends the panes showing it home and closes the
 folders kept there (an open listing holds its folder), and the unmount
 waits up to 3 s for helpers to let go before saying another program uses
@@ -795,8 +795,8 @@ letters are bound in the file list. A key that begins a sequence waits
 for the next (vendored patch 0010) under a strip listing what can
 follow. New for everyone: `new_file` (New File in the folder's menu; a
 name ending in `/` is a folder), `ui.find`. Deviations from yazi: no line
-modes, links, tasks or trash place; Left, Right and Tab keep bibli's
-meaning; `f` and `s` both search, as bibli has no filter apart from
+modes, links, tasks or trash place; Left, Right and Tab keep skwir's
+meaning; `f` and `s` both search, as skwir has no filter apart from
 search; `u` undoes (vim's, not yazi's). 874 default tests pass; checked
 on an isolated X display: picking, sweeping, `g` sequences, find, new
 file and folder, undo, a user shortcut saved, restarted and run, and
@@ -804,7 +804,7 @@ type-ahead back once the plugin is off.
 More previews (2026-09-28): SVG drawings are drawn by resvg (inert, sharper
 as they are zoomed; `Pixels` says how far a picture may sharpen); OpenEXR and
 DDS decode in the process, floating-point light encoded as sRGB in
-`picture::decode`; a picture bibli does not decode (HEIC, AVIF, JPEG XL, raw)
+`picture::decode`; a picture skwir does not decode (HEIC, AVIF, JPEG XL, raw)
 is drawn by the desktop's thumbnailer at 1024 px (`thumbnails` plugin,
 `PreviewInfo::Picture`). Code is highlighted with bat's 213 grammars
 (two-face), about 1.2 MB more once code is first shown. Fonts read WOFF and
@@ -815,8 +815,8 @@ libsqlite3, read-only and immutable) are tables; Jupyter notebooks read as
 documents. Radiance HDR and farbfeld stay out: the MIME database names
 neither.
 Mermaid (2026-09-28): fenced `mermaid` blocks in Markdown and notebooks are
-drawn by merman, Zed's Rust Mermaid, in `bibli-mermaid-worker`: linked into
-bibli it added 14.7 MB of code (51.9 to 66.6 MB of text), so it is a helper
+drawn by merman, Zed's Rust Mermaid, in `skwir-mermaid-worker`: linked into
+skwir it added 14.7 MB of code (51.9 to 66.6 MB of text), so it is a helper
 of its own (16.3 MB), a default member since it needs no native library.
 Its SVG is made for resvg and drawn on white like a drawing in HTML
 (decoded with the page, `EMBEDDED_IMAGES` of them); without the helper a
@@ -829,8 +829,8 @@ documents, DWG and DXF drawings and G-code (text or Prusa's binary) by the
 picture stored in them, read only as far as it (a compressed Blender file
 is decoded as a stream that far), with a print's time, filament and
 printer, a Blender file's version and scenes, in Details; about 120 KB of
-bibli's code. Meshes that store no picture (STL, OBJ, PLY, OFF, glTF, a
-3MF left unpictured) are drawn by `bibli-model-worker`, pure Rust (1 MB
+skwir's code. Meshes that store no picture (STL, OBJ, PLY, OFF, glTF, a
+3MF left unpictured) are drawn by `skwir-model-worker`, pure Rust (1 MB
 of code), a default member: a z-buffered view from the front, right and
 above, drawn at twice the size and averaged down, and measured (size,
 volume when watertight, triangles). 3DBenchy (225 706 triangles) takes
@@ -912,7 +912,7 @@ reason. Edits keep the lines they do not touch, remote bookmarks included.
 Open With (2026-09-25): the `open-with` plugin lets the user choose the
 application that opens the selection (Open With…, Shift+Enter) or the folder
 shown (Open Folder With… on the background). The applications come from the
-desktop's entries and `mimeapps.list` files (`bibli_platform::apps`): the
+desktop's entries and `mimeapps.list` files (`skwir_platform::apps`): the
 default first, then those that declare the type, then those that open a
 parent type (plain text for a C source), then every other application, read
 on a worker and read again when an install or a changed default moves the
@@ -920,13 +920,13 @@ stamp. The list is the shell's `ui.choose`, a filterable picker a plugin
 fills with choices or with a command that lists them, as `ui.ask` asks for a
 line of text. The picker's switch, "Always use for PNG image files" (Alt+A,
 offered when the selection is one type), also makes the chosen application
-the type's default: `bibli_platform::apps::AssociationEdit` rewrites the
+the type's default: `skwir_platform::apps::AssociationEdit` rewrites the
 user's `mimeapps.list` (the one that already decides, a desktop's own list
 first), keeping the lines others wrote, and returns the edit that reverts it,
 which the toast offers as Undo, then Redo, as bookmark edits do; both files
 go through `file::rewrite`, which follows links and refuses a read-only one.
 Saved searches (2026-09-25): kept like bookmarks, under their own Searches
-heading below Bookmarks. They stay in bibli's settings (`query.saved`), not
+heading below Bookmarks. They stay in skwir's settings (`query.saved`), not
 in the GTK file, which every GTK file chooser reads and would show as broken
 rows; one list mixing both would need an order file of our own over two
 stores. What is shared is the gesture: Ctrl+D and the pane's button run the
@@ -962,14 +962,14 @@ that needs no syntax: `kind:` (`kind:image,video`, `kind:documents`,
 `kind:music`) groups files as the desktop's MIME database does, from each
 type's generic icon (`x-office-document` covers PDF, EPUB, Markdown and word
 processor files; `package-x-generic` archives) and from descent from
-`text/plain` for text and code (`bibli_platform::mime::Kind`, cached per
+`text/plain` for text and code (`skwir_platform::mime::Kind`, cached per
 type); and named periods (`modified:today`, `this-week`, `last-month`,
 `this-year`, with `<`, `>=` and ranges as for dates) are calendar periods in
 UTC like the dates, weeks starting on Monday. The search prompt's example
 uses both.
 Dates are the user's (2026-09-25, ADR-017): the query text records no zone;
 dates, named periods and the timeline's bars are days of
-`bibli_platform::calendar::Calendar`, the system's time zone with its clock
+`skwir_platform::calendar::Calendar`, the system's time zone with its clock
 changes (a day of 23 or 25 hours, a midnight that does not exist) and the
 locale's first weekday, asked of `locale` once on a worker. Durations are
 counted on the calendar (`7d` across a clock change is seven days; `1mo`
@@ -1001,7 +1001,7 @@ key went down on (vendored patch 0007): a picker closed with Enter gave the
 focus back to the chip that opened it and the key's release reopened it.
 Tabs (2026-09-26, ADR-018): a tab is an arrangement of panes, one or two
 when that tab is split, and the core workspace owns them (`Workspace::tabs`,
-`bibli_core::tabs`, the `tab.*` commands, so scripts and agents list, open,
+`skwir_core::tabs`, the `tab.*` commands, so scripts and agents list, open,
 show, move and close them). A tab not shown is dormant: its panes keep
 history, sort and selection and let go of listing, watchers and kept
 columns; showing it lists again and gives the selection back once the
@@ -1286,14 +1286,14 @@ Text documents (2026-10-03, ADR-030): Word (`.docx`, `.docm`, `.dotx`,
 `.dotm`), OpenDocument text (`.odt`, `.ott`) and RTF follow a Text
 documents setting: Reading (the default), Pages (LibreOffice, as before)
 or Pandoc, each giving way to the next when its program is missing.
-bibli reads Word and OpenDocument itself into reading-mode blocks
+skwir reads Word and OpenDocument itself into reading-mode blocks
 (`preview-documents`: headings, emphasis, lists with the numbers their
 document gives them, tables with merged cells, footnotes and endnotes
 under their reference, links, pictures named for later, text boxes,
 fields, accepted changes, Details from the package's properties), a
 long document in parts of `PART_BLOCKS` with numbers counted from its
 start. Pandoc reads RTF, or everything when chosen, in the converters'
-sandbox (`bibli_platform::sandbox`, extracted from the LibreOffice
+sandbox (`skwir_platform::sandbox`, extracted from the LibreOffice
 path), its extracted pictures kept in the plugin's cache. The grid shows
 the picture of its first page an Office or OpenDocument file keeps
 (`stored.rs`, a fallback before converted pages). Along the way the
@@ -1489,14 +1489,14 @@ any edit took a search's or a filter's words for a path; the address's
 places were stat-ed in render; Open With typed a file by its name, so a
 pipe named `x.png` went to the image viewer (`apps::type_of` takes the
 entry, and a pipe, a socket or a device is never handed to the
-desktop); bibli's own `ffprobe`, `pdfinfo`, `pdftoppm`, `ffmpeg` and the
+desktop); skwir's own `ffprobe`, `pdfinfo`, `pdftoppm`, `ffmpeg` and the
 archive and model helpers read files outside the sandbox
 (`sandbox::untrusted`, the one way, with `Otherwise::Refuse` or `Run`);
-files dropped from another application applied in part; `bibli trash:`
+files dropped from another application applied in part; `skwir trash:`
 opened `./trash:`; the View menu offered Zoom where nothing zooms
 (`PaneView::zooms`); a preview's menu opened again on its own button's
 second click, and a folder read late could replace the history menu.
-Checked on Xvfb with a synthetic home: `bibli trash:`, F1 with a file
+Checked on Xvfb with a synthetic home: `skwir trash:`, F1 with a file
 selected, the View menu in Board, Shift+F3 and the previous match in a
 JSON preview, Enter on a filter's pill and on a search unedited, a
 preview menu's button clicked twice. Not checked in a window: the
@@ -1689,7 +1689,7 @@ question that the tables and the documents ask (`shown_as_pages`);
 playlists one table the player refuses and the playlist preview reads.
 `LibreOffice`'s desktop entries were tried as the list and dropped: they
 claim plain text, CSV and PDF. The XDG directories are read in the core
-(`bibli_core::xdg`), the cache and settings paths included, and the
+(`skwir_core::xdg`), the cache and settings paths included, and the
 thumbnailers' NixOS folders beside `XDG_DATA_DIRS` are gone. The
 settings dialog's pages are one table (`ui.settings` with `page: core`
 reaches General). Checked on Xvfb with a synthetic home: a `.mkd` as
@@ -1879,7 +1879,7 @@ only network code). Each step below ships on its own.
   a waypoint has a kind (fix, airport, takeoff, home, rally) and an altitude
   with its reference (above sea level, above ground, above takeoff), so the
   plan formats of step D fit without changing a core type) and
-  `InspectionKind::Map` with `Inspection::geo`. `bibli-ui`: `elements/map.rs`
+  `InspectionKind::Map` with `Inspection::geo`. `skwir-ui`: `elements/map.rs`
   (Web Mercator, pan and zoom, placement in prepaint, lines through
   `PathBuilder`) and a map preview kind in the shared frame with its slots (Fit,
   Zoom, Tracks, Open in Maps through a `geo:` URI). `geo` parses GPX (tracks,
@@ -1916,7 +1916,7 @@ only network code). Each step below ships on its own.
   setting. Verified in the real app against a local tile server (never
   OpenStreetMap's): each tile asked once, from the cache after a restart,
   conditionally (`If-None-Match`, answered 304) once expired, the
-  User-Agent naming bibli and its repository; a stale kept-alive connection
+  User-Agent naming skwir and its repository; a stale kept-alive connection
   is retried once. The outline was looked at in both themes. Not verified:
   OpenStreetMap's own server.
 - **B′. Tile servers.** *Built 2026-09-27* (ADR-020 and ADR-010 addenda): a
@@ -1939,7 +1939,7 @@ only network code). Each step below ships on its own.
   completes in about 1 s (was 1.9). Found after step C: a tile's outline
   showed as a darker line at some fractional zooms, gpui filtering a
   magnified image's edge with the empty atlas slot beside it; fixed in
-  the vendored gpui (patch 0008, `vendor/gpui/README.bibli.md`).
+  the vendored gpui (patch 0008, `vendor/gpui/README.skwir.md`).
 - **C. The Map view.** A `ViewRole::Lens` in the View menu. `geo` scans the
   location shown (a folder, or with "Include subfolders" its subtree; a search or
   a timeline bucket as it is) for EXIF positions and track files, visible
@@ -1995,7 +1995,7 @@ only network code). Each step below ships on its own.
   scale (tiny-skia, a fallback after the desktop's thumbnailers); the
   profile sits under the map, its pointer marking the place on the map;
   videos give their position from `moov/udta/©xyz` or QuickTime's keys
-  (`bibli_platform::mp4`), placed in the Map view and in Details beside
+  (`skwir_platform::mp4`), placed in the Map view and in Details beside
   the player; a Details row can carry a command (`Detail::action`, core),
   and a picture's or a video's position runs `ui.view` to the Map view,
   which opens on the one file selected. Found with it: the Map view, hidden
@@ -2042,7 +2042,7 @@ only network code). Each step below ships on its own.
   contract. Local PMTiles/MBTiles files preview as their maps (built
   2026-10-05, ADR-022's part 4); backgrounds from them remain proposed.
 
-Tests and fixtures use invented coordinates only. `bibli-bench gen` gains
+Tests and fixtures use invented coordinates only. `skwir-bench gen` gains
 geotagged pictures and a 100 000-point GPX; `budgets.toml` gains the GPX parse
 and the EXIF position scan per 1 000 files.
 
@@ -2050,7 +2050,7 @@ and the EXIF position scan per 1 000 files.
 preview with their facts; a folder
 of geotagged pictures shows on the Map view with shared selection; both plugins
 disable with no trace (`plugins_toggle.rs`), cancelling tile requests in flight;
-no request leaves bibli until a network source is chosen; idle CPU returns to
+no request leaves skwir until a network source is chosen; idle CPU returns to
 0% after panning on `images10k`.
 
 ---
@@ -2058,7 +2058,7 @@ no request leaves bibli until a network source is chosen; idle CPU returns to
 ## Notes everywhere (planned, ADR-027, ADR-028)
 
 Goal: a file's tags, rating and comment on any system (Linux, macOS,
-Windows, USB drives) with nothing lost going back and forth; bibli reads
+Windows, USB drives) with nothing lost going back and forth; skwir reads
 every store it knows by default and writes the ones the user chooses. Each
 step ships on its own.
 
@@ -2069,7 +2069,7 @@ step ships on its own.
   read). The tags plugin's XDG, Finder and AppleDouble code becomes three
   stores; the provider, index, vocabulary, sidebar and editor read the
   merged notes. AppleDouble also keeps the XDG attributes.
-- **B. Merge against what bibli wrote.** The cache's snapshot per file;
+- **B. Merge against what skwir wrote.** The cache's snapshot per file;
   another application's edit in one store wins; union without one. Details
   lists where the notes are and offers to make disagreeing stores agree.
 - **C. Companions.** The core registry of name rules; the listing pairs,
@@ -2098,10 +2098,10 @@ Tests use synthetic files built from each format's specification (not our
 own encoders) and, where an application can run headless, its output.
 Property tests of the operations cover trees with companions.
 
-**Done when:** a file tagged in bibli keeps its notes copied to an exFAT
+**Done when:** a file tagged in skwir keeps its notes copied to an exFAT
 stick, read by a Mac's Finder there (checked on a Mac or with a `._` file a
 Mac wrote), and copied back to a Linux disk; an edit made in another
-application's store wins over bibli's older one; undo restores every
+application's store wins over skwir's older one; undo restores every
 store byte for byte; `tags_fill_us` holds its budget.
 
 ---
@@ -2126,7 +2126,7 @@ what it touched.
 
 - **A. It compiles everywhere.** Done 2026-10-05 (status above). The targets and Zig in the dev shell,
   `just check-cross` (Windows: the default members; macOS: all but
-  `bibli-ui` and `bibli`, whose gpui backend needs Apple's SDK). Core's
+  `skwir-ui` and `skwir`, whose gpui backend needs Apple's SDK). Core's
   manifest lists its ordinary dependencies for every system (only
   `inotify` is Linux's); `xattr`, rustix's `fs` and `std::os::unix`
   move behind `cfg(unix)`; what has no implementation yet on a system
@@ -2159,11 +2159,11 @@ what it touched.
   (a documented record, parsed and written as `.trashinfo` is, tested
   on fixtures); macOS `~/.Trash` and each volume's `.Trashes/<uid>`
   through `trashItemAtURL` (the resulting path kept for undo), where
-  the place a file came from is known only for what bibli trashed.
+  the place a file came from is known only for what skwir trashed.
 - **E. The environment.** In part 2026-10-05 (status above): types and the system's icons done 2026-10-06 (ADR-037, `system_icons`); Open With and owners not done. Folders (macOS `~/Library/…`, Windows
-  `%APPDATA%`/`%LOCALAPPDATA%`) behind `bibli_core::xdg`'s callers; the
+  `%APPDATA%`/`%LOCALAPPDATA%`) behind `skwir_core::xdg`'s callers; the
   MIME database off Linux (an ADR: shared-mime-info is GPL data and
-  bibli is Apache-2.0, so it is installed beside bibli or replaced by
+  skwir is Apache-2.0, so it is installed beside skwir or replaced by
   the system's types, UTType and the registry); icons, opening and
   Open With (NSWorkspace and Launch Services; `ShellExecuteExW` and the
   association handlers); the terminal to open (Terminal or iTerm,
@@ -2220,8 +2220,8 @@ neither. Its first step is the command line and the MCP server
 
 That step is built (2026-10-07). The window listens, while Control is
 on, on a Unix socket in a folder of the user's alone (a named pipe on
-Windows); `bibli mcp` carries an agent's MCP there through `rmcp`, and
-`bibli cmd` runs one command and prints JSON, in a bibli of its own
+Windows); `skwir mcp` carries an agent's MCP there through `rmcp`, and
+`skwir cmd` runs one command and prints JSON, in a skwir of its own
 without a window when none listens. An agent's plan is proposed and
 its tool answers once the user has applied or discarded it
 (`App::propose_awaiting`, from the executor's `Finished`). Added on
@@ -2231,14 +2231,14 @@ it, so it cannot skip a review. The gate's second half was played on
 Xvfb with the release binary and a scripted MCP client: it read the
 window (`tab.list`, `entries`), proposed a rename and then a move of
 two files, each applied with Enter in the review, and a trash
-discarded with Escape, each answered as the user did; `bibli cmd`
+discarded with Escape, each answered as the user did; `skwir cmd`
 printed a plan, applied one with `--apply`, opened Settings in the
 window and turned Control off through itself. Then every command that
 acted on the selection alone takes `entries` (`App::targets`): files
 named by absolute path, so a script runs them with no window and an
 agent's call cannot act on what the user selected meanwhile; a
 relative path, an entry's or a destination's, is refused. Not done: an agent
-driven by a model (Claude Code over `bibli mcp`) has not run it; the
+driven by a model (Claude Code over `skwir mcp`) has not run it; the
 Windows pipe is tried under Wine only and keeps the system's default
 security (`docs/PORTING.md`); a command answering a value does
 nothing from the palette (`entries`, `tab.list`, `control.status`
@@ -2265,26 +2265,26 @@ then asked again and was refused with Escape; a `.ssh` and a folder
 marked `.private` were refused by name; the home folder an agent listed
 had `files` alone where the user saw `.ssh`, `diary` and `files`.
 
-Plugins from outside (ADR-045, `bibli-plugin-api`, `bibli-extend`): a
-folder with a `plugin.toml`, found in the data folders' `bibli/plugins`
-or `BIBLI_PLUGIN_PATH`, listed on the Plugins page, off until turned
+Plugins from outside (ADR-045, `skwir-plugin-api`, `skwir-extend`): a
+folder with a `plugin.toml`, found in the data folders' `skwir/plugins`
+or `SKWIR_PLUGIN_PATH`, listed on the Plugins page, off until turned
 on. It provides fields, thumbnails, previews and commands through one
-protocol of JSON methods; files go to it by handle, read through bibli
+protocol of JSON methods; files go to it by handle, read through skwir
 for the call's own files only and with `read` only; a plan it answers
 needs `write` and is reviewed when run from the window. Level 2 runs it
 as a program speaking JSON-RPC lines, isolated by bubblewrap (no
 network unless declared; on Windows it does not run), started when
 first asked, ended idle. Checked by `crates/extend/tests/programs.rs`:
-the template as a program answers a field and a command through bibli,
+the template as a program answers a field and a command through skwir,
 is refused its reads without `read`, never gets a private file; and
 the first thumbnailer from outside (`crates/plugins-outside/netpbm`,
 PPM and PGM pictures, its PNG written by the module itself) draws
 through the thumbnail service as the built-in ones do.
 
 Level 1 runs it as a WebAssembly module (ADR-046): Wasmtime 38, no
-WASI, bibli's two imports alone, bounded work and memory, in a helper
-of bibli's (`bibli-module-worker`) that bibli starts and speaks to as
-it does a program plugin, so Wasmtime never enters bibli's process:
+WASI, skwir's two imports alone, bounded work and memory, in a helper
+of skwir's (`skwir-module-worker`) that skwir starts and speaks to as
+it does a program plugin, so Wasmtime never enters skwir's process:
 linked in, it cost 1.6 MiB of idle memory (`just idle-pss` back to
 back, own share 94.8 against 93.2 MiB, within the 100 MiB budget). The gate's
 first half: the hexadecimal preview again as a module
@@ -2305,7 +2305,7 @@ user's choice, now with the permission layer between an agent and
 their files.
 
 Then (2026-10-07) an agent driven by a model ran it: Claude Code, given
-`bibli mcp` as a server, against a bibli of its own on Xvfb with
+`skwir mcp` as a server, against a skwir of its own on Xvfb with
 synthetic files, from the tools' descriptions alone. Claude Code took
 every tool and schema; plans and questions waited for the window's
 Enter or Escape; private folders were refused by name, in a query's
@@ -2319,7 +2319,7 @@ moment, off the window's thread); reading a folder meant moving the
 user's view (`entries` takes a `location`); `mkdir` made only in the
 folder shown (`in`); a review did not say an agent proposed it ("An
 agent proposes", `Plan::by`); `undo` did not say what it took back;
-search's syntax and some descriptions were written for bibli's
+search's syntax and some descriptions were written for skwir's
 developers. Checked again by a scripted agent on Xvfb with the release
 build.
 
@@ -2330,10 +2330,10 @@ compiling (release, outside the sandbox, median of 7); a call that
 restarts the word count's helper, sandboxed, took 23 ms in the window
 against 231 ms the first time.
 
-Previews from outside reach every kind bibli shows (ADR-047, protocol
-version 2): a plugin may answer a preview with a file of a format bibli
+Previews from outside reach every kind skwir shows (ADR-047, protocol
+version 2): a plugin may answer a preview with a file of a format skwir
 shows, which the panel previews by its own viewer (the reader, the
-player, a picture, an inspection); bibli keeps it in the cache under
+player, a picture, an inspection); skwir keeps it in the cache under
 the file's version and the plugin's, and follows its links only when
 the plugin may use the network. The Netpbm plugin previews its
 pictures (every Netpbm kind) as the PNG it makes. A long document is
@@ -2341,15 +2341,15 @@ not converted whole: a plugin may show a file a page at a time
 (protocol version 3, `page`), each page a picture it draws within the
 side asked when the page is shown, with its text and links where they
 lie (each character where the plugin says it starts) and the file's
-outline, read by bibli's reader as a PDF is (scrolled, zoomed, the text
-selected, copied and searched by bibli, links followed, an address only
+outline, read by skwir's reader as a PDF is (scrolled, zoomed, the text
+selected, copied and searched by skwir, links followed, an address only
 when the plugin may use the network), all of it kept in the cache; the
 Netpbm
 plugin shows a file of several pictures a picture a page. Checked in
 the window
 on Xvfb with the release build: a PPM shown as the picture Netpbm made,
 zoomed and fitted as any; a `.log` made Markdown by a plugin written in
-Python as a program (outside the repository), drawn by bibli's own
+Python as a program (outside the repository), drawn by skwir's own
 Markdown view, its link refused with the plugin's reason, its source
 the log's own text; a log shown in pages by a plugin in Python, in the
 reader, its lines selected over where they lie and "token" found on
@@ -2361,7 +2361,7 @@ both pages it is on. Not done: a typed WIT world.
 - **Level 2, external processes.** Small line-delimited protocol (LSP-style) for provider processes.
   Used first for thumbnailers and external tools we already call.
 - **Level 1, WASM plugins.** wasmtime + component model for providers, commands, metadata. Not views.
-- **CLI and MCP server.** Both are thin consumers of the command registry: `bibli cmd rename ...`,
+- **CLI and MCP server.** Both are thin consumers of the command registry: `skwir cmd rename ...`,
   and an MCP server exposing commands and plans so an external agent (e.g. Claude Code) can drive the app.
 - Plugin authoring docs and a template crate.
 
@@ -2422,7 +2422,7 @@ Steps, each with what was found and what is left:
    preview's HTML, a Gerber region) hold by construction: each follows
    a match on the node's type or a list made with one item and only
    ever pushed to.
-3. **Fuzzing** what reads files bibli did not write: the query
+3. **Fuzzing** what reads files skwir did not write: the query
    language, XMP, AppleDouble, Finder's plists, `.trashinfo`, the
    tracks and plans of the geo plugin, the 3D and circuit formats,
    EPUB, mail, ODF, Netpbm, mountinfo, desktop entries. A crash found
@@ -2430,15 +2430,15 @@ Steps, each with what was found and what is left:
    (proptest; not coverage-guided fuzzing, which needs a nightly
    compiler): each reader is given its own test's sample mutated
    (bytes changed, characters of several bytes put where ASCII is
-   expected, cut short; `bibli_core::testing`, a feature tests ask
+   expected, cut short; `skwir_core::testing`, a feature tests ask
    for) and bytes or text at random, and must not panic. In each
    crate's `any_input` (geo's thirteen formats, the tags plugin's `._`
    files, Finder attributes and its own index, XMP, the query
    language, names, jump's lists, the platform's links, volumes,
    entries, users, XHTML, encodings and packages, EXIF and MP4, the
    trash's records, an edited buffer, tile archives), and
-   `crates/bibli/tests/any_file.rs`: thirty-three samples of thirty-two
-   types, mutated, shown every way bibli shows a file in its own
+   `crates/skwir/tests/any_file.rs`: thirty-three samples of thirty-two
+   types, mutated, shown every way skwir shows a file in its own
    process (render, inspect, its source, a search, a document's page,
    a thumbnail), with no job of the scheduler panicking. Each ran
    20,000 cases once, but those that write a file a case (MP4,
@@ -2452,8 +2452,8 @@ Steps, each with what was found and what is left:
    glyph out, as the MuPDF worker does its binding's fault with links
    (a test builds that glyph); to report upstream. Not covered: what
    runs in a helper of its own (PDF, media, archives, 3D models,
-   Mermaid), where a crash ends the helper, not bibli.
-4. **Files under failure.** A plan interrupted (bibli killed between
+   Mermaid), where a crash ends the helper, not skwir.
+4. **Files under failure.** A plan interrupted (skwir killed between
    steps), a full disk, a read-only folder, a permission refused, a
    name too long, a drive pulled during a copy: what is on disk after,
    and whether Undo still takes it back. Done 2026-10-07
@@ -2471,11 +2471,11 @@ Steps, each with what was found and what is left:
    now said in the user's words (`op::said`: the system's reason by its
    kind, "the drive is full", "the file is too large for that drive",
    its number left out; every context and conflict names entries by
-   their names), its whole chain in the log. Left: bibli killed during
-   a copy leaves the hidden `.bibli-copy-…` folder it was copying into
+   their names), its whole chain in the log. Left: skwir killed during
+   a copy leaves the hidden `.skwir-copy-…` folder it was copying into
    in the destination (never a part copy under the file's name; the
    user guide says so); the journal is memory, so Undo does not outlive
-   bibli (by design: no database). Found 2026-10-10 (ADR-049): two
+   skwir (by design: no database). Found 2026-10-10 (ADR-049): two
    names of one file (hard links) were one row, a plan whose name had
    gone could trash or delete another name of its file, and Empty
    Trash left one of two names trashed apart. The last two are fixed
@@ -2493,23 +2493,23 @@ Steps, each with what was found and what is left:
    defaults for what is missing and nothing refused for what is
    unknown (the session included); a key renamed follows with
    `Settings::rename`. Found: a settings file that is no TOML (edited
-   by hand) or no text stopped bibli from starting at all; it is now
+   by hand) or no text stopped skwir from starting at all; it is now
    set aside under a name of its own (`settings.toml.unreadable-…`),
-   never written over, bibli starts with its defaults and says so, and
+   never written over, skwir starts with its defaults and says so, and
    one it cannot set aside leaves the settings unsaved rather than
    overwritten. The cache is kept in a folder its layout names
    (`<cache>/1`, `cache::LAYOUT`): a release that would misread what an
    older one cached raises it, and what older layouts left, today's
-   unnamed one included, is deleted on a thread when bibli starts.
+   unnamed one included, is deleted on a thread when skwir starts.
 6. **In the window**: the "Not checked in a window" items of the phases
-   above; a scripted smoke test through `bibli mcp` on Xvfb (navigate,
+   above; a scripted smoke test through `skwir mcp` on Xvfb (navigate,
    search, tag, rename, move, trash, undo); a run of hours (memory
    flat, idle CPU back to ~0); `just idle-pss`, `just bench-check` and
    the first frame on a quiet machine. In part 2026-10-07. `just smoke`
    (`tools/test/smoke.py`): the release window on an X display of its
    own (Xvfb and Mesa's software Vulkan from the flake's nixpkgs, from
    :90 up, never one the desktop may use), a home of synthetic files,
-   driven by `bibli cmd` (a folder listed, a search, a tag, a rename
+   driven by `skwir cmd` (a folder listed, a search, a tag, a rename
    carrying it, a folder made, a move, the Trash, five undos bringing
    the folder back as it was), each checked on disk; it passed four
    runs in a row. In the window on Xvfb with the release build: the
@@ -2531,7 +2531,7 @@ Steps, each with what was found and what is left:
    budgets. A run of 109 minutes (the release window on Xvfb moved every
    ten seconds between a folder of 100,000 files, a grid of 10,000
    pictures and a deep tree, with a search now and then, through
-   `bibli cmd`): no command failed, PSS flat (157 MiB on average over
+   `skwir cmd`): no command failed, PSS flat (157 MiB on average over
    the first ten minutes, 140 over the last ten, software Vulkan's
    share included), CPU under 2 % a minute while moved, 0.0 % over the
    last minute left alone. `just idle-pss`: own share 91.1 MiB (median
@@ -2557,7 +2557,7 @@ Steps, each with what was found and what is left:
    Left: no file was split, none of the next changes needing it.
 8. **Licences.** The dependencies' licences (listed 2026-10-07) are
    permissive, MPL-2.0 for ten crates, and the AGPL for MuPDF's worker
-   alone (ADR-014). The packages carry bibli's licence and PDFium's
+   alone (ADR-014). The packages carry skwir's licence and PDFium's
    notices, not those of the thousand crates linked in, which MIT,
    BSD, ISC and Zlib ask for in a binary: a notices file in every
    package. A `deny.toml` (licences, advisories, sources), run by CI.
@@ -2587,8 +2587,8 @@ Steps, each with what was found and what is left:
    fonts' metrics from `skrifa`; `ttf-parser` now comes only with the
    text of gpui and of resvg (`fontdb`, `rustybuzz`), which still read
    a book's fonts and system fonts through it, and its advisory no
-   longer concerns a crate of bibli's: the ignore is gone. The
-   toolbar's icons were made for bibli
+   longer concerns a crate of skwir's: the ignore is gone. The
+   toolbar's icons were made for skwir
    (`crates/ui/assets/toolbar/README.md`). Left for the macOS and
    Windows packages: their notices.
 9. **Documents**: the README (Linux, the packages, what works), a user
@@ -2596,18 +2596,18 @@ Steps, each with what was found and what is left:
    wanted for macOS and Windows (from `docs/PORTING.md`: each task and
    how to check it), SECURITY (how to report), issue templates that warn
    of personal data in paths and screenshots, a changelog. Done
-   2026-10-07: the README is a front page (what bibli is, installing,
+   2026-10-07: the README is a front page (what skwir is, installing,
    first keys, agents, plugins, the documents), what it said of
    previews, tags and Usage, much of it no longer true, now in
    `docs/guide.md`; `CONTRIBUTING.md`, `SECURITY.md`,
    `docs/HELP-WANTED.md` (macOS and Windows, step by step, marked
-   **try** where running bibli and saying what happened is enough),
-   `.github/ISSUE_TEMPLATE/`, `CHANGELOG.md`; `bibli --version` and
+   **try** where running skwir and saying what happened is enough),
+   `.github/ISSUE_TEMPLATE/`, `CHANGELOG.md`; `skwir --version` and
    `--help`, which a report asks for.
 10. **The release**: the name, which the user is reconsidering
     (2026-10-07), settled before anything is published, and with it the
     repository's address and the application id (now
-    `io.github.venator.bibli`, hard to change once installed); version
+    `org.skwir.skwir`, hard to change once installed); version
     0.1.0 everywhere (the crates, the packages, the AUR's source); a
     tag, the release notes; then the history rewritten (step 1), the
     repository published and CI green.
@@ -2622,7 +2622,7 @@ history scan finds nothing personal.
 
 Goal: name searches that answer from an index where it proves it is
 current, and walk only where it does not. skwird is a project of its
-own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are bibli's steps,
+own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are skwir's steps,
 after Release 0.1 and after skwird's phase 1.
 
 - **A. Coverage in the hints** (ADR-026, amended). `HintProvider` says,

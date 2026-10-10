@@ -63,18 +63,18 @@ jobs:
       - name: Installed and checked
         run: |
           case ${{ matrix.distribution }} in
-          debian) apt-get install -y --no-install-recommends ./target/debian/bibli_*.deb ;;
-          fedora) dnf -y install --setopt=install_weak_deps=False target/generate-rpm/bibli-*.rpm ;;
-          arch) pacman -U --noconfirm target/aur/bibli-[0-9]*.pkg.tar.zst ;;
+          debian) apt-get install -y --no-install-recommends ./target/debian/skwir_*.deb ;;
+          fedora) dnf -y install --setopt=install_weak_deps=False target/generate-rpm/skwir-*.rpm ;;
+          arch) pacman -U --noconfirm target/aur/skwir-[0-9]*.pkg.tar.zst ;;
           esac
           tools/package/linux/check.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: bibli-${{ matrix.distribution }}
+          name: skwir-${{ matrix.distribution }}
           path: |
-            target/debian/bibli_*.deb
-            target/generate-rpm/bibli-*.rpm
-            target/aur/bibli-*.pkg.tar.zst
+            target/debian/skwir_*.deb
+            target/generate-rpm/skwir-*.rpm
+            target/aur/skwir-*.pkg.tar.zst
           if-no-files-found: error
 
   # The other systems, natively (ADR-035): written in Phase 5a, not yet run

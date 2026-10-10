@@ -32,13 +32,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use bibli_core::CancelToken;
-use bibli_core::app::App;
-use bibli_core::entry::EntryId;
-use bibli_core::metadata::{same_tag, tag_leaf, tag_under, tag_within};
-use bibli_core::workspace::PaneId;
-use bibli_platform::mime::Kind;
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
+use skwir_core::CancelToken;
+use skwir_core::app::App;
+use skwir_core::entry::EntryId;
+use skwir_core::metadata::{same_tag, tag_leaf, tag_under, tag_within};
+use skwir_core::workspace::PaneId;
+use skwir_platform::mime::Kind;
 
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -88,7 +88,7 @@ pub struct Narrow {
     key: Option<Key>,
     counted: Option<Instant>,
     pub offer: Offer,
-    command: Option<bibli_core::command::Invocation>,
+    command: Option<skwir_core::command::Invocation>,
     /// A count put off (`EVERY`), done by a wake of its own.
     recount: Option<gpui::Task<()>>,
     /// The count a worker is doing.
@@ -308,7 +308,7 @@ impl Shell {
         narrow.asked.ask(
             &app,
             &lifetime,
-            bibli_core::scheduler::Priority::Visible,
+            skwir_core::scheduler::Priority::Visible,
             "narrow-count",
             move |cancel| count(&worker, &ask, cancel),
         );
@@ -358,7 +358,7 @@ fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
         }));
     }
     let complete = ask.complete && counted.unknown.is_empty();
-    let calendar = bibli_platform::calendar::Calendar::system();
+    let calendar = skwir_platform::calendar::Calendar::system();
     let mut files: Vec<File> = Vec::with_capacity(order.len());
     for slice in order.chunks(SLICE) {
         if cancel.is_cancelled() {
@@ -380,8 +380,8 @@ fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
                     typed: complete.then(|| (e.inode_type(), e.type_name().to_owned())),
                     modified: e
                         .metadata
-                        .value(bibli_core::entry::keys::MODIFIED)
-                        .and_then(bibli_core::Value::as_time),
+                        .value(skwir_core::entry::keys::MODIFIED)
+                        .and_then(skwir_core::Value::as_time),
                 })
                 .collect()
         };
@@ -390,8 +390,8 @@ fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
                 tags: r.tags,
                 kinds: r
                     .typed
-                    .and_then(|(inode, name)| bibli_platform::mime::of_parts(inode, &name))
-                    .map(|m| bibli_platform::mime::kinds(&m))
+                    .and_then(|(inode, name)| skwir_platform::mime::of_parts(inode, &name))
+                    .map(|m| skwir_platform::mime::kinds(&m))
                     .unwrap_or_default(),
                 year: r.modified.map(|t| calendar.year_of(t)),
             }
@@ -423,7 +423,7 @@ impl Shell {
     /// How the folder the pane being rendered shows is narrowed, when it
     /// is or the bar is asked for over folders, and the query plugin is
     /// there to do it.
-    fn folder_narrowing(&self) -> Option<bibli_core::Narrowing> {
+    fn folder_narrowing(&self) -> Option<skwir_core::Narrowing> {
         if !self.ui().place.folder || self.app.commands.get("query.narrow").is_none() {
             return None;
         }
@@ -433,8 +433,8 @@ impl Shell {
             p.location()?.path()?;
             p.narrowed().map(|n| n.set.clone())
         };
-        (self.prefs.narrow_folders || set.is_some()).then(|| bibli_core::Narrowing {
-            command: bibli_core::command::Invocation::new("query.narrow"),
+        (self.prefs.narrow_folders || set.is_some()).then(|| skwir_core::Narrowing {
+            command: skwir_core::command::Invocation::new("query.narrow"),
             tags: Vec::new(),
             set: set.unwrap_or_default(),
         })
@@ -459,7 +459,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .narrow
         .command
         .clone()
-        .unwrap_or_else(|| bibli_core::command::Invocation::new("query.refine"));
+        .unwrap_or_else(|| skwir_core::command::Invocation::new("query.refine"));
     let label = |text: String| {
         div()
             .flex_none()

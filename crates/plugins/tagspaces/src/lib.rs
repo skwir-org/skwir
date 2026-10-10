@@ -1,4 +1,4 @@
-//! bibli plugin: `TagSpaces`' sidecars (ADR-027). `TagSpaces` keeps a file's
+//! skwir plugin: `TagSpaces`' sidecars (ADR-027). `TagSpaces` keeps a file's
 //! tags and description in a hidden `.ts` folder beside it, `.ts/x.json`,
 //! and a folder's own in the folder, `.ts/tsm.json`: plain JSON, a tag an
 //! object with its `title` and its `color` (hex). They are a notes store,
@@ -14,17 +14,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use bibli_core::app::App;
-use bibli_core::cancel::CancelToken;
-use bibli_core::companions::Companion;
-use bibli_core::entry::keys;
-use bibli_core::hints::HintProvider;
-use bibli_core::metadata::{Listed, same_tag};
-use bibli_core::notes::raw::{self, RawKey};
-use bibli_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote};
-use bibli_core::plugin::{Category, Plugin};
 use parking_lot::Mutex;
 use serde_json::{Map, Value};
+use skwir_core::app::App;
+use skwir_core::cancel::CancelToken;
+use skwir_core::companions::Companion;
+use skwir_core::entry::keys;
+use skwir_core::hints::HintProvider;
+use skwir_core::metadata::{Listed, same_tag};
+use skwir_core::notes::raw::{self, RawKey};
+use skwir_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote};
+use skwir_core::plugin::{Category, Plugin};
 
 pub(crate) const ID: &str = "tagspaces";
 /// The folder `TagSpaces` keeps its sidecars in.
@@ -177,26 +177,26 @@ fn sidecar(name: &OsStr, folder: bool) -> PathBuf {
 /// A sidecar's JSON, read as a regular file of a sidecar's size at most.
 fn read_json(path: &Path) -> Option<Value> {
     let bytes =
-        bibli_core::fs::file::read_regular(path, bibli_core::fs::file::SIDE_FILE_LIMIT).ok()?;
+        skwir_core::fs::file::read_regular(path, skwir_core::fs::file::SIDE_FILE_LIMIT).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
 
 /// `TagSpaces`' sidecars as a notes store.
 pub struct TagSpacesStore {
     /// The names in a folder's `.ts` folder.
-    names: bibli_core::companions::FolderNames,
+    names: skwir_core::companions::FolderNames,
     /// Whether a `TagSpaces` location covers a folder (a `.ts` there or
     /// above): only there are its folders' own sidecars looked for, a
     /// `stat` inside each folder listed elsewhere, which a sleeping disk
     /// or a network volume answers slowly.
-    used: bibli_core::companions::MarkedAbove,
+    used: skwir_core::companions::MarkedAbove,
 }
 
 impl Default for TagSpacesStore {
     fn default() -> Self {
         TagSpacesStore {
-            names: bibli_core::companions::FolderNames::new(|name| Some(name.to_owned())),
-            used: bibli_core::companions::MarkedAbove::new(FOLDER),
+            names: skwir_core::companions::FolderNames::new(|name| Some(name.to_owned())),
+            used: skwir_core::companions::MarkedAbove::new(FOLDER),
         }
     }
 }
@@ -455,9 +455,9 @@ impl Plugin for TagSpacesPlugin {
     fn category(&self) -> Category {
         Category::Files
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Write])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Write])
     }
     fn register(&self, app: &App) {
         app.register_notes_store(ID, Arc::new(TagSpacesStore::default()));

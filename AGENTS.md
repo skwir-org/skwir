@@ -1,6 +1,6 @@
-# Working on bibli
+# Working on skwir
 
-bibli is an experimental file manager: Rust, GPU-accelerated UI (gpui), a tiny
+skwir is an experimental file manager: Rust, GPU-accelerated UI (gpui), a tiny
 core, everything else a plugin, designed from the first commit to be driven by
 humans, scripts, and AI agents alike. This file is the context every agent
 (human or model) needs before touching the code. Read it fully once.
@@ -31,15 +31,15 @@ current source before assuming a planned crate, command, or API exists.
    has priority. The UI sleeps until the core wakes it (`App::set_waker`); never
    run a `request_animation_frame` loop.
 2. **Light.** Idle memory and startup are budgeted (ADR-000, revised in ADR-002
-   and ADR-033: PSS, counting bibli's own share, not the GPU driver's code).
+   and ADR-033: PSS, counting skwir's own share, not the GPU driver's code).
    `just bench-check` and `just idle-pss` must stay green. Budgets are tightened
    when the reference improves and never loosened without an ADR.
 3. **Stateless and idempotent.** No daemon, no database. One deletable cache
-   (`bibli_core::cache`). Re-applying an applied plan is a no-op.
+   (`skwir_core::cache`). Re-applying an applied plan is a no-op.
 4. **Harness the environment.** Reuse OS thumbnails, icon themes, the MIME
    database, bookmarks, zoxide, recently-used, installed tools (`ffmpeg`,
    `plocate`, `$EDITOR`, `$TERMINAL`) before building our own.
-5. **Small core.** Only what two plugins must agree on lives in `bibli-core`.
+5. **Small core.** Only what two plugins must agree on lives in `skwir-core`.
    Everything else is a plugin with a runtime toggle.
 6. **Agent-ready.** Commands are serializable data with JSON schemas. Mutations
    are plans reviewed before apply. Files have stable identity (device +
@@ -59,7 +59,7 @@ current source before assuming a planned crate, command, or API exists.
 - **No tuning for the machine it was measured on.** The reference machine
   measures budgets and regressions; it is not the target. Do not choose
   behaviour for its hardware (its GPU vendor or driver, a hardware decoder,
-  its core count, its memory) unless the gain holds on the machines bibli
+  its core count, its memory) unless the gain holds on the machines skwir
   runs on (other GPU vendors, no GPU, fewer cores, less memory) with
   certainty, by a mechanism that does not depend on that hardware. When one
   machine is all the evidence, record what was measured and keep the
@@ -259,7 +259,7 @@ current source before assuming a planned crate, command, or API exists.
   `Shell::run`): a position shows the file on the map. The row itself
   still copies its value; the link is the only thing that acts.
 - **Links** (ADR-029). A link written in a document answers a click; one
-  found in raw text (`bibli_platform::links`: addresses by their scheme,
+  found in raw text (`skwir_platform::links`: addresses by their scheme,
   never a bare domain; in the terminal, paths) answers Ctrl+click and is
   drawn as one only while Ctrl is held over it (`Run::found`,
   `Shell::armed_link`), Shift added for a tab of its own. An address goes
@@ -271,7 +271,7 @@ current source before assuming a planned crate, command, or API exists.
   new kind of found link is stamped there too, never resolved at click.
 - **Notes live on the file.** Tags, a rating and a comment are kept where
   the desktop and other applications keep them, never in a database of
-  ours (ADR-027): each place is a store (`bibli_core::notes::NotesStore`,
+  ours (ADR-027): each place is a store (`skwir_core::notes::NotesStore`,
   registered in `App::notes` by the plugin that knows it), and the one
   model every store and surface share is `notes::Notes`, where a color
   belongs to its tag. The tags plugin's stores: the desktop's `user.*`
@@ -280,7 +280,7 @@ current source before assuming a planned crate, command, or API exists.
   Mac writes on volumes without attributes (`appledouble.rs`, which also
   keeps the desktop's attributes, as `xdg.tags`); the xmp plugin's,
   XMP sidecars (`x.jpg.xmp`, and Adobe's `x.xmp` while its stem is its
-  file's alone), edited in the text as it is so what bibli does not know
+  file's alone), edited in the text as it is so what skwir does not know
   stays, and XMP inside a file read for Details only; the tagspaces
   plugin's, `.ts/x.json` sidecars and a folder's `.ts/tsm.json` (a tag
   kept keeps its exact color, read as the nearest of the palette), and
@@ -300,7 +300,7 @@ current source before assuming a planned crate, command, or API exists.
   own attributes are refused the store its folder already uses, else
   AppleDouble), and its inverse (`restore_notes`) puts back each store's
   bytes exactly, refusing if another application changed them since.
-  Stores that disagree are merged against what bibli last wrote (a
+  Stores that disagree are merged against what skwir last wrote (a
   snapshot in the cache): another application's later edit wins, and a
   store emptied is not an edit; Details says where notes are kept and
   which stores differ, and `notes.agree` makes them agree. A
@@ -329,9 +329,9 @@ current source before assuming a planned crate, command, or API exists.
   (`metadata::with_exclusive`, in every edit), the tag editor takes one
   of its tags, Details shows it as a row of its own (`Status: Draft`),
   and the mark follows the category renamed. This is what `key:value`
-  is in bibli: no syntax of its own, a category of tags.
+  is in skwir: no syntax of its own, a category of tags.
   A folder listing reads `x` again when `._x` changes. A search by tag
-  asks the indexes first (`bibli_core::hints`, ADR-026: Baloo when it
+  asks the indexes first (`skwir_core::hints`, ADR-026: Baloo when it
   runs, the tags plugin's own (`index.rs`: in pieces by folder, read when
   needed, as much room as `tags.index_mb` gives it), learned as the
   provider reads files and from each applied change, `Executor::observe`), checks every file they
@@ -352,14 +352,14 @@ current source before assuming a planned crate, command, or API exists.
   there (by device, inode and path: new or moved in) and those on a
   filesystem whose change times do not tell (`filesystem::
   change_times_tell`: network, FUSE). A folder counted or checked once
-  since bibli started is not checked again until F5. Between, the index
-  follows what panes list and what bibli applies (tags, moves, trash),
+  since skwir started is not checked again until F5. Between, the index
+  follows what panes list and what skwir applies (tags, moves, trash),
   and the tag locations open list again at once. `tags.counted` says
   whether a folder's tags are being counted, and since when a count
   covers them.
 - **Files beside a file go where it goes** (ADR-028). A companion (a
   Mac's `._x`, an XMP sidecar, TagSpaces' `.ts/x.json`) is declared by
-  name rules (`bibli_core::companions::Companion`, registered in
+  name rules (`skwir_core::companions::Companion`, registered in
   `App::companions` by the plugin that uses it); the core agrees on them
   in three places. The listing marks them (`Listing::with_companions`)
   and hides one whose file is listed unless hidden files and
@@ -376,7 +376,7 @@ current source before assuming a planned crate, command, or API exists.
   to. A batch of a folder whose names are all known is filled with them
   (`MetadataProvider::fill_listed`), so a store looks for companions in
   the listing, not the folder. Tests that need a volume refusing
-  attributes run against one named by `BIBLI_NO_XATTR_DIR` (a
+  attributes run against one named by `SKWIR_NO_XATTR_DIR` (a
   `bindfs --xattr-none` mount).
 - **Places, trails and verbs** (ADR-032). A location that is no folder
   can list places, entries that are no files but locations of their own
@@ -495,7 +495,7 @@ current source before assuming a planned crate, command, or API exists.
   worker measures again, so nothing blinks. A row is a drop target like any
   folder; a folder dropped beside the rows is bookmarked through
   `places.bookmark`, which writes the desktop's shared GTK bookmarks.
-  Bookmarks are edited only through `BookmarkEdit` (`bibli_platform::places`):
+  Bookmarks are edited only through `BookmarkEdit` (`skwir_platform::places`):
   each edit returns its inverse, which the notification offers as Undo
   (then Redo, `App::notify_undoable`, as every edit made outside a plan), and lines other applications
   wrote are kept. The plugin watches the file, so other file managers'
@@ -559,7 +559,7 @@ current source before assuming a planned crate, command, or API exists.
   command that lists them on a worker (`choose.rs`), not a picker of its own
   (an `option` switch adds a flag to the chosen command: "Always use for…").
   Files the desktop shares (bookmarks, `mimeapps.list`) are rewritten only
-  through `bibli_platform::file::rewrite`, by an edit that returns its inverse.
+  through `skwir_platform::file::rewrite`, by an edit that returns its inverse.
 - **Learning the keys.** F1 (`shortcuts.rs`) lists the bindings that apply
   to the focused element, read from its key contexts, so a new context needs
   only a name in `keymap::context_label`. A command run three times with the
@@ -809,7 +809,7 @@ current source before assuming a planned crate, command, or API exists.
   nothing. Test this with fake `lsblk`/`udisksctl` scripts first on PATH,
   never on a real drive.
 - **The trash is a place** (ADR-034): the trash plugin's `trash:` lists
-  what every trash holds (`bibli_platform::trash`: the home trash and
+  what every trash holds (`skwir_platform::trash`: the home trash and
   the volumes' the sidebar shows), each file under the name it had,
   where it came from in `keys::TRASHED_FROM` (the Folder column) and
   when in `keys::TRASHED` (the Deleted column, and a sort by it, newest
@@ -883,7 +883,7 @@ current source before assuming a planned crate, command, or API exists.
   named in words by its provider (`LocationProvider::title`: a search as
   what it looks for and where, the folder as the sidebar names it,
   `report in Papers`), for tabs and menus. A search does not
-  watch the folders it walked, but what bibli changes it sees at once:
+  watch the folders it walked, but what skwir changes it sees at once:
   after each plan the query plugin (an executor observer,
   `provider::Searches`) checks again the files the plan touched under
   each open search's root, as the walk would, and adds, updates or
@@ -936,7 +936,7 @@ current source before assuming a planned crate, command, or API exists.
   the panes below a window width computed in `Shell::render`; the window's
   width is known before layout, an element's is not.
 - **Commands are the one surface.** Every user action is a command
-  (`bibli_core::command`), so the keymap, palette, CLI, MCP server, and agents
+  (`skwir_core::command`), so the keymap, palette, CLI, MCP server, and agents
   all share it. The shell's own (`ui.*`) are declared in the registry like
   the rest (`commands.rs`, owner `ui`: a title, what it does, the schema of
   its arguments), checked before they run (`CommandRegistry::check`: a
@@ -959,11 +959,11 @@ current source before assuming a planned crate, command, or API exists.
   dialog or presses for the user's hand must never be an agent's.
 - **Agents and scripts drive the window** (ADR-043). The `control`
   plugin, off by default, listens on a channel only the user reaches
-  (`channel::address`); `bibli mcp` carries an agent's MCP there and
-  `bibli cmd` one command (`crates/bibli/src/cli.rs`). Every command is
+  (`channel::address`); `skwir mcp` carries an agent's MCP there and
+  `skwir cmd` one command (`crates/skwir/src/cli.rs`). Every command is
   a tool, its dots written `__`: a new command is one with nothing more.
   An agent's plan is proposed and its tool answers with the verdict
-  (`App::propose_awaiting`); `bibli cmd` prints a plan, or applies it
+  (`App::propose_awaiting`); `skwir cmd` prints a plan, or applies it
   with `--apply` as the user's own action. No command applies a plan it
   makes or is given (`apply_plan` hands it back): the caller decides.
   What an agent needs to see is a command answering a value (`entries`,
@@ -991,7 +991,7 @@ current source before assuming a planned crate, command, or API exists.
   command that answers what it counted or gathered of a pane's entries
   (how many, their tags, their dates, their places) leaves out
   `App::withheld(pane)`, asked before taking the workspace's lock. A
-  script (`bibli cmd`) is the user's own.
+  script (`skwir cmd`) is the user's own.
 - **What leaves this machine** (ADR-044). Every plugin says what it may
   do (`Plugin::capabilities`: read what files hold, write, network,
   programs), truthfully for a built-in one, which the Plugins page shows;
@@ -1000,15 +1000,15 @@ current source before assuming a planned crate, command, or API exists.
   `.private` file) never reach an agent nor a plugin from outside: check
   with `App::privacy()` (it reads markers: off the window's thread)
   wherever such code is handed a file.
-- **Plugins from outside** (ADR-045, ADR-046). `bibli-plugin-api` is the
+- **Plugins from outside** (ADR-045, ADR-046). `skwir-plugin-api` is the
   contract (the manifest, the protocol, the WIT world, the guest's
-  `Plugin` trait); it depends on nothing of bibli's and builds for
-  WebAssembly. `bibli-extend` is the host: it finds plugin folders
-  (`folders()`, `BIBLI_PLUGIN_PATH`), makes each an `External` plugin
+  `Plugin` trait); it depends on nothing of skwir's and builds for
+  WebAssembly. `skwir-extend` is the host: it finds plugin folders
+  (`folders()`, `SKWIR_PLUGIN_PATH`), makes each an `External` plugin
   (off until turned on), and runs it as a program (isolated,
-  `sandbox::plugin`) or a module, which the helper `bibli-module-worker`
-  runs and serves as such a program (Wasmtime, no WASI, bibli's two
-  imports alone): Wasmtime never enters bibli's own process. The helper
+  `sandbox::plugin`) or a module, which the helper `skwir-module-worker`
+  runs and serves as such a program (Wasmtime, no WASI, skwir's two
+  imports alone): Wasmtime never enters skwir's own process. The helper
   works in the plugin's folder of the cache and keeps the module
   compiled there (`--keep`), the one folder it writes. A plugin reads only the files of the call it answers, by
   handle (`call::Call`), and only with `read`; its plan needs `write` and
@@ -1018,13 +1018,13 @@ current source before assuming a planned crate, command, or API exists.
   at once, and `docs/plugins/protocol.md` says it. The protocol is
   experimental (ADR-047): a version may change what an older one said
   until it is declared stable, `OLDEST` following it, and the release
-  notes say so; once stable, bibli keeps speaking the older ones. A
+  notes say so; once stable, skwir keeps speaking the older ones. A
   preview from outside is an inspection
-  (text, code, hex, a table), a file bibli shows, made of the file
+  (text, code, hex, a table), a file skwir shows, made of the file
   (`convert`, ADR-047, `PreviewProvider::converted`, swapped in once in
   the panel's worker), or pages with their text, links and outline,
   drawn as they are read (`page`, a `DocumentSession` in `pages.rs`
-  that bibli's reader reads): never bibli's own preview model on the
+  that skwir's reader reads): never skwir's own preview model on the
   wire, and
   the links of what a plugin made close unless it may use the network. `just plugins` builds
   the workspace's modules (`crates/plugins-outside/*`) into
@@ -1039,10 +1039,10 @@ current source before assuming a planned crate, command, or API exists.
   `Entry::is_only_name`, and carried into inverses with
   `with_only_name`), never to another name of a file with several
   (hard links, ADR-049): not known, it resolves at its path.
-- **Plugins depend only on `bibli-core` (and `bibli-platform`), never on each
+- **Plugins depend only on `skwir-core` (and `skwir-platform`), never on each
   other.** They talk through core-owned data (entries, metadata fields,
   selection, locations). Every contribution is tagged with the plugin id and
-  withdrawn on disable; `crates/bibli/tests/plugins_toggle.rs` proves each
+  withdrawn on disable; `crates/skwir/tests/plugins_toggle.rs` proves each
   plugin disables without a trace. Plugins register settings under their own
   `plugin_id.*` namespace and keep state in their own struct.
 - **No plugin hook runs per frame or per row.** Providers (metadata,
@@ -1060,13 +1060,13 @@ current source before assuming a planned crate, command, or API exists.
 - **Provenance.** Metadata fields record where they came from
   (`Provenance::{Filesystem, User, Plugin, Model}`); model output is a
   suggestion until promoted to `User`.
-- **Toolkit isolation.** gpui appears only in `bibli-ui` (and the binary).
-  Views implement `PaneView` in `bibli-ui`; a toolkit-dependent `ui-api`
+- **Toolkit isolation.** gpui appears only in `skwir-ui` (and the binary).
+  Views implement `PaneView` in `skwir-ui`; a toolkit-dependent `ui-api`
   crate is deferred until a third-party view exists.
 - **Vendored gpui.** `vendor/gpui` is gpui 0.2.2 from crates.io plus our
   patches, wired through `[patch.crates-io]`; each change is a diff in
   `vendor/patches/` in Zed's layout, ready to upstream. Read
-  `vendor/gpui/README.bibli.md` before touching it. gpui's API moves between
+  `vendor/gpui/README.skwir.md` before touching it. gpui's API moves between
   releases: read the vendored source, not memory. Always set an explicit font
   family (the default stack costs 35-50 ms per frame when it fails to resolve).
 - **Conventions.** Key bindings use gpui notation (`ctrl-shift-n`, `G` for
@@ -1090,14 +1090,14 @@ current source before assuming a planned crate, command, or API exists.
   is Ctrl+arrows then Ctrl+Space.
 - **Network.** Only the `map-tiles` plugin makes requests (ADR-020), and
   only once the user chose a background that downloads; nothing a file
-  names is fetched. The core has no network layer and bibli speaks no
+  names is fetched. The core has no network layer and skwir speaks no
   file-system protocol (ADR-021). A new use of the network is a decision
   with an ADR of its own.
-- **Every system** (ADR-035). bibli is built for Linux, macOS and
+- **Every system** (ADR-035). skwir is built for Linux, macOS and
   Windows, and `just lint-all` compiles all three (`check-cross`), so
   code only one system has sits behind `cfg` where it is used, with the
   others' answer beside it: their own code, or an error naming the
-  system (`bibli_core::system::not_yet`: "Listing a folder is not
+  system (`skwir_core::system::not_yet`: "Listing a folder is not
   available on Windows yet"), never Linux's behaviour where it would be
   wrong there. The filesystem is reached through core's seams, not
   `std::os::unix` or rustix's `fs`: a folder held open, listed and
@@ -1111,14 +1111,14 @@ current source before assuming a planned crate, command, or API exists.
   `mknodat`, the freedesktop trash, `/proc`) says
   `#[cfg(target_os = "linux")]`; one that needs what Windows has and
   Wine lacks (its shell's trash, alternate streams) asks
-  `bibli_core::system::under_wine` and says why it passes there. Code
+  `skwir_core::system::under_wine` and says why it passes there. Code
   for Windows is tried under Wine (`just test-windows`, a prefix and
   XDG folders of its own, no display); what Wine cannot answer and
   everything for macOS is compiled only, and says so where it is
   recorded. `docs/PORTING.md` lists what is still Linux's alone.
 - **Unsafe.** The workspace sets `unsafe_code = "warn"`; `just lint` promotes
   warnings to errors. Any exception needs a narrowly scoped `#[allow]` with a
-  justification, as in `crates/bibli/src/gpu.rs` (setting an environment
+  justification, as in `crates/skwir/src/gpu.rs` (setting an environment
   variable before threads exist). Do not weaken the workspace lint.
 - **Decisions.** Anything that closes a door gets an ADR in `docs/adr/`.
   Every phase updates the status paragraph in `docs/PLAN.md`, including
@@ -1127,11 +1127,11 @@ current source before assuming a planned crate, command, or API exists.
 ## Layout
 
 ```
-crates/core        bibli-core: entries, locations, commands, ops/plans, registries,
+crates/core        skwir-core: entries, locations, commands, ops/plans, registries,
                    plugin host, scheduler, cache, settings, thumbs, metadata
 crates/platform    per-OS adapters: MIME, icons, thumbnails, places, open, terminal
 crates/ui          the gpui shell: views, panels, prompts, keymap, elements
-crates/bibli       the binary: wires plugins and starts the UI
+crates/skwir       the binary: wires plugins and starts the UI
 crates/pdf-worker  optional native PDF reader process (runtime-loaded PDFium)
 crates/poppler-worker optional native PDF reader process (linked poppler-glib)
 crates/mupdf-worker optional native PDF reader process (linked MuPDF, AGPL; ADR-014)
@@ -1141,13 +1141,13 @@ crates/mermaid-worker optional Mermaid diagram layout process (pure Rust, merman
 crates/model-worker optional 3D mesh reader and renderer process (pure Rust)
 crates/module-worker a plugin's WebAssembly module, run in a process of its own (Wasmtime)
 crates/plugins/*   one crate per plugin (see docs/PLAN.md Phase 2 and 4)
-crates/plugin-api  what a plugin from outside bibli is and speaks (ADR-045, ADR-046)
+crates/plugin-api  what a plugin from outside skwir is and speaks (ADR-045, ADR-046)
 crates/extend      the host of plugins from outside: programs and WebAssembly modules
 crates/plugins-outside/*  plugins from outside built here: the template, the hex view as a
                    module, a Netpbm thumbnailer
 crates/bench       synthetic trees and the performance regression check
-vendor/gpui        patched gpui 0.2.2 (see vendor/gpui/README.bibli.md)
-vendor/xdg-mime    xdg-mime 0.4.0, built on every system (ADR-037; its README.bibli.md)
+vendor/gpui        patched gpui 0.2.2 (see vendor/gpui/README.skwir.md)
+vendor/xdg-mime    xdg-mime 0.4.0, built on every system (ADR-037; its README.skwir.md)
 vendor/shared-mime-info  the type database's source the macOS and Windows packages compile
 spikes/            the Phase 0 toolkit spikes, kept runnable
 docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
@@ -1156,11 +1156,11 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
 
 ## Implementation entry points
 
-- `crates/bibli/src/main.rs` wires plugins; `crates/ui/src/shell.rs` routes
+- `crates/skwir/src/main.rs` wires plugins; `crates/ui/src/shell.rs` routes
   commands and maintains pane UI state. Built-in list/grid/columns views are
   in `crates/ui/src/views/`, not separate plugin crates.
 - Plugin views register owner-tagged `ViewSpec::named` descriptors; their GPUI
-  renderers implement `PaneView` in `bibli-ui` and are resolved in
+  renderers implement `PaneView` in `skwir-ui` and are resolved in
   `views::named_renderer`. A view shows the pane's entries: what is no
   file is a place among them (ADR-032), never a selection of the view's
   own. Do not hard-code plugin views into the toolbar or
@@ -1169,14 +1169,14 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   advance the descriptor revision, then wake the app; never query plugin data
   on every frame. See ADR-007 for the Usage cache and watcher lifecycle.
 - New plugins need the workspace dependency alias, the binary dependency and
-  registration, and an entry in `crates/bibli/tests/plugins_toggle.rs`.
+  registration, and an entry in `crates/skwir/tests/plugins_toggle.rs`.
   Extend that test's snapshot when adding a provider scheme or a new kind of
   contribution; its provider-scheme list is explicit.
 - `Plugin::register(&App)` runs again on re-enable. `App::unregister_owner`
   withdraws registered contributions; `Plugin::on_disable` must cancel work
   and release resources held outside registries. Test disable and re-enable,
   including in-flight work when the plugin starts background tasks.
-- Integration tests involving several plugins belong in `crates/bibli/tests/`
+- Integration tests involving several plugins belong in `crates/skwir/tests/`
   (see `timeline_query.rs`), keeping plugin crates independent of each other.
 
 ## Background work and streamed state
@@ -1319,7 +1319,7 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   as saved queries, which stay application data managed by their commands).
   What only the owner can check goes in `validate_with`. A secret is a
   record's `secret` field: it goes to the desktop's keyring
-  (`bibli_platform::secrets`, on a worker) and the settings file only says
+  (`skwir_platform::secrets`, on a worker) and the settings file only says
   it is there; never put a secret in any other kind of setting, and test
   the keyring only through `tools/test/private-keyring.sh`, never against
   the user's.
@@ -1337,7 +1337,7 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   core's: each store's Read and Write, declared by
   `App::register_notes_store`) is shared by the stores of several
   plugins. `ui.*` is only how
-  bibli looks (Appearance), `core.*` what it does with files (General).
+  skwir looks (Appearance), `core.*` what it does with files (General).
 - Renaming or moving a key: call `Settings::rename(old, new)` before
   declaring it, so the value the user chose follows.
 - A row's title and description keep `TEXTS_MIN` of width whatever the
@@ -1361,16 +1361,16 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   on a worker and persists the choice.
 - `Plugin::requirements` lists external tools with a probe. Probes touch the
   filesystem: the dialog runs them on a worker when it opens, never during
-  registration or rendering. One of bibli's own helpers is probed by
+  registration or rendering. One of skwir's own helpers is probed by
   starting it with `--probe` (`process::Worker::requirement`, `probe`),
   the first thing every helper answers: it checks what it opens itself
   (PDFium's library, GStreamer's playback plugins) and exits 0 when it
   can work, and one whose linked libraries are missing never starts, so
   it is not installed where only its program is. A new helper answers
   `--probe` too (each has a test of it), and `--build` with the build of
-  bibli it is (`BIBLI_BUILD`: the version, and in a release build the
+  skwir it is (`SKWIR_BUILD`: the version, and in a release build the
   commit, from `tools/build/identity.rs`, which its build script
-  includes). bibli asks that only when a call of the helper failed
+  includes). skwir asks that only when a call of the helper failed
   (`process::explain`) and then says, after the failure, that a helper of
   another build may be why: never refused for it, since most calls work
   all the same. A new kind of call of a helper explains its failures so,
@@ -1409,7 +1409,7 @@ are about to touch, in full:
   Copy tags before restoring read-only permissions and publish the staged
   copy only after metadata succeeds; failed copies must not look complete.
 
-- The XDG directories come from `bibli_core::xdg` (`bibli_platform::xdg`
+- The XDG directories come from `skwir_core::xdg` (`skwir_platform::xdg`
   re-exports it: an empty variable takes its default, relative paths are
   ignored); do not read the variables again elsewhere, nor add a
   distribution's folders beside them (NixOS names its own in
@@ -1426,7 +1426,7 @@ are about to touch, in full:
   `[start, end)` needs `modified>=start modified<end`. Dates are the
   user's (ADR-017): the query text records no zone, and every calendar
   boundary (dates, `today`, `this-week`, the timeline's bars) is a day of
-  `bibli_platform::calendar::Calendar`, the system's time zone with its
+  `skwir_platform::calendar::Calendar`, the system's time zone with its
   clock changes and the locale's first weekday. Count days as civil day
   numbers and make instants only with `Calendar::day_start`; a day is not
   86 400 seconds. A week, a month or a year is a `calendar::Period`
@@ -1435,13 +1435,13 @@ are about to touch, in full:
   refuses one that does not exist. Test boundary instants explicitly, with an explicit
   calendar (`lang::parse_in`), when changing date behavior.
 - Types are the system's own registry's first, the desktop's database
-  behind it (ADR-037, `bibli_platform::mime`): on Linux they are one;
+  behind it (ADR-037, `skwir_platform::mime`): on Linux they are one;
   on macOS (UTType) and Windows (the registry's classes) the system
   names a file by its extension and the database may only say it more
   precisely, reads the bytes and holds the aliases and the hierarchy.
   Read types only through `mime`, never a system's registry beside it.
   `kind:` groups files as the desktop's MIME database does
-  (`bibli_platform::mime::Kind`, from each type's generic icon and its
+  (`skwir_platform::mime::Kind`, from each type's generic icon and its
   descent from `text/plain`, and on macOS what the type conforms to);
   do not keep lists of types beside it.
   A provider takes files by type, never by an extension list: the
@@ -1478,13 +1478,13 @@ just deny           the dependencies' licences, advisories and sources (deny.tom
 just notices        each package's third-party notices (cargo-about), into target/notices
 just plugins        build the plugins from outside as WebAssembly modules (target/plugins)
 just run [dir]      run the release binary
-just dist           build bibli and every helper without debug info (target/dist)
+just dist           build skwir and every helper without debug info (target/dist)
 just flame [dir]    profile with samply
 ```
 
 A new helper program is listed in `tools/package/programs` (and in
 `tools/package/optional` when a package of its own holds it), in the
-packages' file lists (`crates/bibli/Cargo.toml`'s metadata, the
+packages' file lists (`crates/skwir/Cargo.toml`'s metadata, the
 PKGBUILD) and the macOS and Windows scripts where it ships, and answers
 `--probe` (ADR-040, ADR-041) and `--build` (its `build.rs` includes
 `tools/build/identity.rs`).
@@ -1500,12 +1500,12 @@ run the `-all` recipes (inside `nix develop`) before committing worker changes. 
 `Cargo.toml`; do not add allowances in code without a reason in a comment.
 
 Tests that need a real filesystem feature (trash, xattrs) use a temp dir under
-`~/.cache/bibli-tests/`, never `/tmp` (tmpfs) and never real user files.
+`~/.cache/skwir-tests/`, never `/tmp` (tmpfs) and never real user files.
 nextest runs `tools/test/isolate-xdg.sh` before every test (`.config/nextest.toml`):
 each test process gets `XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME`
-under `~/.cache/bibli-tests/xdg`, so a trashed fixture never lands in the
+under `~/.cache/skwir-tests/xdg`, so a trashed fixture never lands in the
 user's Trash. Run tests through nextest (`just test`), not `cargo test`.
-`bench-data/` is generated by `bibli-bench gen` and is git-ignored.
+`bench-data/` is generated by `skwir-bench gen` and is git-ignored.
 
 - Use `AppConfig::ephemeral` for headless tests so settings and cache writes
   stay isolated. Await listing completion or events with a deadline rather
@@ -1526,9 +1526,9 @@ user's Trash. Run tests through nextest (`just test`), not `cargo test`.
 ## Verifying UI changes
 
 - Run the real app on `bench-data/images10k` (grid) and `bench-data/flat100k`
-  (list); scroll; check idle CPU returns to ~0% (`top -p $(pgrep -x bibli)`).
+  (list); scroll; check idle CPU returns to ~0% (`top -p $(pgrep -x skwir)`).
 - Drive it without touching the user's session: Hyprland
-  `hyprctl dispatch 'hl.dsp.send_shortcut({mods="CTRL", key="2", window="class:bibli"})'`
+  `hyprctl dispatch 'hl.dsp.send_shortcut({mods="CTRL", key="2", window="class:org.skwir.skwir"})'`
   sends keys to the window; `grim` captures a screenshot (`-s 0.5` for the whole
   layout). For drags, a virtual pointer on the wlr protocol is the only way
   (the dragtool used in Phase 3 lives in the session scratchpad; recreate it
@@ -1545,7 +1545,7 @@ user's Trash. Run tests through nextest (`just test`), not `cargo test`.
   fixture otherwise puts it in the user's real Trash.
 - Measure: first frame from the shell's log line, idle memory with
   `just idle-pss` (own share, driver and total by mapping), other memory from
-  `/proc/<pid>/smaps_rollup` (PSS), corrections/traces from `RUST_LOG=bibli_ui=trace`.
+  `/proc/<pid>/smaps_rollup` (PSS), corrections/traces from `RUST_LOG=skwir_ui=trace`.
   The binaries use a tuned mimalloc (`crates/alloc`, ADR-011); heaptrack sees
   only glibc's malloc, so profile a build made with `--no-default-features`.
   Compare memory between builds back to back under the same conditions:
@@ -1571,7 +1571,7 @@ user's Trash. Run tests through nextest (`just test`), not `cargo test`.
 - Scaffold crates and register workspace dependencies/aliases before parallel
   work starts, so nobody edits the root `Cargo.toml` concurrently.
 - Each agent owns its crates only. Plugin agents never edit `crates/core`,
-  `crates/platform`, `crates/ui`, or `crates/bibli`; they work around gaps
+  `crates/platform`, `crates/ui`, or `crates/skwir`; they work around gaps
   locally and report the exact signature they wished for. The integrator
   applies core changes.
 - Do not commit from a subagent; the integrator verifies (lint, tests,

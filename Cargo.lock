@@ -537,898 +537,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
-name = "bibli"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-alloc",
- "bibli-core",
- "bibli-extend",
- "bibli-platform",
- "bibli-plugin-control",
- "bibli-plugin-edit-as-buffer",
- "bibli-plugin-geo",
- "bibli-plugin-jump",
- "bibli-plugin-map-tiles",
- "bibli-plugin-mpris",
- "bibli-plugin-name-tags",
- "bibli-plugin-open-with",
- "bibli-plugin-ops-basic",
- "bibli-plugin-places",
- "bibli-plugin-preview-archives",
- "bibli-plugin-preview-circuits",
- "bibli-plugin-preview-comics",
- "bibli-plugin-preview-documents",
- "bibli-plugin-preview-email",
- "bibli-plugin-preview-epub",
- "bibli-plugin-preview-fonts",
- "bibli-plugin-preview-hex",
- "bibli-plugin-preview-markdown",
- "bibli-plugin-preview-media",
- "bibli-plugin-preview-models",
- "bibli-plugin-preview-playlists",
- "bibli-plugin-preview-structured",
- "bibli-plugin-preview-tables",
- "bibli-plugin-query",
- "bibli-plugin-rename-bulk",
- "bibli-plugin-shelf",
- "bibli-plugin-shell",
- "bibli-plugin-tags",
- "bibli-plugin-tagspaces",
- "bibli-plugin-terminal",
- "bibli-plugin-thumbnails",
- "bibli-plugin-timeline",
- "bibli-plugin-trash",
- "bibli-plugin-usage",
- "bibli-plugin-vim",
- "bibli-plugin-xmp",
- "bibli-ui",
- "dirs 7.0.0",
- "flate2",
- "proptest",
- "serde_json",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
- "tracing-subscriber",
- "zip",
-]
-
-[[package]]
-name = "bibli-alloc"
-version = "0.0.1"
-dependencies = [
- "libmimalloc-sys",
- "mimalloc",
-]
-
-[[package]]
-name = "bibli-archive-worker"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "serde_json",
-]
-
-[[package]]
-name = "bibli-bench"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-alloc",
- "bibli-core",
- "bibli-platform",
- "bibli-plugin-name-tags",
- "bibli-plugin-query",
- "bibli-plugin-tags",
- "bibli-plugin-tagspaces",
- "bibli-plugin-usage",
- "bibli-plugin-xmp",
- "clap",
- "ignore",
- "image",
- "memchr",
- "rayon",
- "regex-syntax",
- "rustix 1.1.5",
- "serde",
- "serde_json",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
-name = "bibli-core"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "blake3",
- "chrono",
- "crossbeam-channel",
- "dirs 7.0.0",
- "indexmap",
- "inotify",
- "libc",
- "notify",
- "objc2",
- "objc2-foundation",
- "parking_lot",
- "proptest",
- "rustix 1.1.5",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
- "trash",
- "windows-sys 0.61.2",
- "xattr 1.6.1",
-]
-
-[[package]]
-name = "bibli-extend"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "bibli-plugin-api",
- "bibli-plugin-preview-hex",
- "blake3",
- "crossbeam-channel",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
-name = "bibli-media-worker"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "gstreamer",
- "gstreamer-app",
- "gstreamer-video",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-mermaid-worker"
-version = "0.0.1"
-dependencies = [
- "merman",
-]
-
-[[package]]
-name = "bibli-model-worker"
-version = "0.0.1"
-dependencies = [
- "base64 0.22.1",
- "gltf",
- "png 0.17.16",
- "quick-xml 0.42.0",
- "serde_json",
- "stl_io",
- "tempfile",
- "tobj",
- "zip",
-]
-
-[[package]]
-name = "bibli-module-worker"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-plugin-api",
- "blake3",
- "serde_json",
- "tempfile",
- "wasmtime",
- "wit-component 0.239.0",
-]
-
-[[package]]
-name = "bibli-mupdf-worker"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "mupdf",
- "mupdf-sys",
-]
-
-[[package]]
-name = "bibli-outside-netpbm"
-version = "0.0.1"
-dependencies = [
- "bibli-plugin-api",
-]
-
-[[package]]
-name = "bibli-outside-preview-hex"
-version = "0.0.1"
-dependencies = [
- "bibli-plugin-api",
-]
-
-[[package]]
-name = "bibli-outside-template"
-version = "0.0.1"
-dependencies = [
- "bibli-plugin-api",
- "serde_json",
-]
-
-[[package]]
-name = "bibli-pdf-worker"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "pdfium-render",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-platform"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "block2",
- "crossbeam-channel",
- "cssparser 0.35.0",
- "dirs 7.0.0",
- "ego-tree",
- "encoding_rs",
- "flate2",
- "futures-lite 2.6.1",
- "image",
- "jiff",
- "jpeg-decoder",
- "kamadak-exif",
- "libc",
- "markup5ever",
- "md5",
- "mime",
- "objc2",
- "objc2-app-kit",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation",
- "objc2-quick-look-thumbnailing",
- "objc2-uniform-type-identifiers",
- "oo7",
- "open",
- "parking_lot",
- "percent-encoding",
- "png 0.17.16",
- "proptest",
- "resvg",
- "roxmltree 0.21.1",
- "rustix 1.1.5",
- "scraper",
- "security-framework",
- "selectors 0.31.0",
- "serde",
- "serde_json",
- "skrifa",
- "tempfile",
- "tracing",
- "windows 0.61.3",
- "windows-sys 0.61.2",
- "xdg-mime",
- "zip",
-]
-
-[[package]]
-name = "bibli-plugin-api"
-version = "0.0.1"
-dependencies = [
- "serde",
- "serde_json",
- "toml 0.9.12+spec-1.1.0",
- "wit-bindgen",
-]
-
-[[package]]
-name = "bibli-plugin-control"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "crossbeam-channel",
- "parking_lot",
- "rmcp",
- "rustix 1.1.5",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
-name = "bibli-plugin-edit-as-buffer"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "parking_lot",
- "proptest",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "bibli-plugin-geo"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "jiff",
- "parking_lot",
- "proptest",
- "quick-xml 0.42.0",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "tiny-skia",
- "tracing",
- "zip",
-]
-
-[[package]]
-name = "bibli-plugin-jump"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "crossbeam-channel",
- "dirs 7.0.0",
- "humantime",
- "nucleo-matcher",
- "parking_lot",
- "proptest",
- "roxmltree 0.21.1",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "tracing",
-]
-
-[[package]]
-name = "bibli-plugin-map-tiles"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "bytes",
- "flate2",
- "http-body-util",
- "hyper",
- "hyper-rustls",
- "hyper-util",
- "image",
- "parking_lot",
- "proptest",
- "rusqlite",
- "rustls",
- "rustls-platform-verifier",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "tiny-skia",
- "tokio",
- "tokio-rustls",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
-name = "bibli-plugin-mpris"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "parking_lot",
- "tracing",
- "zbus",
-]
-
-[[package]]
-name = "bibli-plugin-name-tags"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "dirs 7.0.0",
- "proptest",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-open-with"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "parking_lot",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-ops-basic"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "parking_lot",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-places"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "parking_lot",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-preview-archives"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "dirs 7.0.0",
- "flate2",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "tracing",
- "zip",
-]
-
-[[package]]
-name = "bibli-plugin-preview-circuits"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-preview-comics"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-preview-documents"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "parking_lot",
- "roxmltree 0.21.1",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
- "zip",
-]
-
-[[package]]
-name = "bibli-plugin-preview-email"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "mail-parser",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-preview-epub"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "percent-encoding",
- "rbook",
- "roxmltree 0.21.1",
- "sha1_smol",
- "tempfile",
- "zip",
-]
-
-[[package]]
-name = "bibli-plugin-preview-fonts"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "flate2",
- "proptest",
- "skrifa",
- "tempfile",
- "wuff",
- "zeno",
-]
-
-[[package]]
-name = "bibli-plugin-preview-hex"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "memchr",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-preview-markdown"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "bibli-core",
- "bibli-platform",
- "pulldown-cmark",
- "serde_json",
- "tempfile",
- "tracing",
-]
-
-[[package]]
-name = "bibli-plugin-preview-media"
-version = "0.0.1"
-dependencies = [
- "bibli-core",
- "bibli-platform",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
-name = "bibli-plugin-preview-models"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "bibli-core",
- "bibli-platform",
- "flate2",
- "image",
- "quick-xml 0.42.0",
- "ruzstd",
- "tempfile",
- "tiny-skia",
- "zip",
-]
-
-[[package]]
-name = "bibli-plugin-preview-playlists"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "percent-encoding",
- "roxmltree 0.21.1",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-preview-structured"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "serde_json",
- "tempfile",
- "toml_edit 0.25.15+spec-1.1.0",
- "yaml-rust2",
-]
-
-[[package]]
-name = "bibli-plugin-preview-tables"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "calamine",
- "csv",
- "indexmap",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "zip",
-]
-
-[[package]]
-name = "bibli-plugin-query"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "crossbeam-channel",
- "globset",
- "grep-regex",
- "grep-searcher",
- "humantime",
- "ignore",
- "parking_lot",
- "proptest",
- "rustix 1.1.5",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
-name = "bibli-plugin-rename-bulk"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "jiff",
- "regex",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "bibli-plugin-shelf"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "crossbeam-channel",
- "parking_lot",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-shell"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
-name = "bibli-plugin-tags"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "crossbeam-channel",
- "dirs 7.0.0",
- "parking_lot",
- "plist",
- "proptest",
- "rustix 1.1.5",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
-name = "bibli-plugin-tagspaces"
-version = "0.0.1"
-dependencies = [
- "bibli-core",
- "dirs 7.0.0",
- "parking_lot",
- "serde_json",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
-name = "bibli-plugin-terminal"
-version = "0.0.1"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "parking_lot",
- "rustix 1.1.5",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
-name = "bibli-plugin-thumbnails"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "image",
- "parking_lot",
- "tempfile",
- "tracing",
-]
-
-[[package]]
-name = "bibli-plugin-timeline"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "parking_lot",
- "rayon",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-trash"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "crossbeam-channel",
- "parking_lot",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-usage"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "crossbeam-channel",
- "notify",
- "parking_lot",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-vim"
-version = "0.0.1"
-dependencies = [
- "bibli-core",
- "bibli-platform",
- "parking_lot",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "bibli-plugin-xmp"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "dirs 7.0.0",
- "proptest",
- "roxmltree 0.21.1",
- "serde_json",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
-name = "bibli-poppler-worker"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "cairo-rs",
- "glib",
- "poppler-rs",
-]
-
-[[package]]
-name = "bibli-ui"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bibli-core",
- "bibli-platform",
- "flume 0.12.0",
- "gpui",
- "image",
- "jiff",
- "nucleo-matcher",
- "schemars",
- "serde",
- "serde_json",
- "smallvec",
- "syntect",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
- "two-face",
- "unicode-segmentation",
-]
-
-[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7940,6 +7048,898 @@ checksum = "819ab7d62b1d3e72d9d9dea5650bac30424f9111364bb94928dbf5ecad1baa68"
 dependencies = [
  "bytemuck",
  "read-fonts",
+]
+
+[[package]]
+name = "skwir"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs 7.0.0",
+ "flate2",
+ "proptest",
+ "serde_json",
+ "skwir-alloc",
+ "skwir-core",
+ "skwir-extend",
+ "skwir-platform",
+ "skwir-plugin-control",
+ "skwir-plugin-edit-as-buffer",
+ "skwir-plugin-geo",
+ "skwir-plugin-jump",
+ "skwir-plugin-map-tiles",
+ "skwir-plugin-mpris",
+ "skwir-plugin-name-tags",
+ "skwir-plugin-open-with",
+ "skwir-plugin-ops-basic",
+ "skwir-plugin-places",
+ "skwir-plugin-preview-archives",
+ "skwir-plugin-preview-circuits",
+ "skwir-plugin-preview-comics",
+ "skwir-plugin-preview-documents",
+ "skwir-plugin-preview-email",
+ "skwir-plugin-preview-epub",
+ "skwir-plugin-preview-fonts",
+ "skwir-plugin-preview-hex",
+ "skwir-plugin-preview-markdown",
+ "skwir-plugin-preview-media",
+ "skwir-plugin-preview-models",
+ "skwir-plugin-preview-playlists",
+ "skwir-plugin-preview-structured",
+ "skwir-plugin-preview-tables",
+ "skwir-plugin-query",
+ "skwir-plugin-rename-bulk",
+ "skwir-plugin-shelf",
+ "skwir-plugin-shell",
+ "skwir-plugin-tags",
+ "skwir-plugin-tagspaces",
+ "skwir-plugin-terminal",
+ "skwir-plugin-thumbnails",
+ "skwir-plugin-timeline",
+ "skwir-plugin-trash",
+ "skwir-plugin-usage",
+ "skwir-plugin-vim",
+ "skwir-plugin-xmp",
+ "skwir-ui",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
+ "zip",
+]
+
+[[package]]
+name = "skwir-alloc"
+version = "0.1.0"
+dependencies = [
+ "libmimalloc-sys",
+ "mimalloc",
+]
+
+[[package]]
+name = "skwir-archive-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+]
+
+[[package]]
+name = "skwir-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ignore",
+ "image",
+ "memchr",
+ "rayon",
+ "regex-syntax",
+ "rustix 1.1.5",
+ "serde",
+ "serde_json",
+ "skwir-alloc",
+ "skwir-core",
+ "skwir-platform",
+ "skwir-plugin-name-tags",
+ "skwir-plugin-query",
+ "skwir-plugin-tags",
+ "skwir-plugin-tagspaces",
+ "skwir-plugin-usage",
+ "skwir-plugin-xmp",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "skwir-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "chrono",
+ "crossbeam-channel",
+ "dirs 7.0.0",
+ "indexmap",
+ "inotify",
+ "libc",
+ "notify",
+ "objc2",
+ "objc2-foundation",
+ "parking_lot",
+ "proptest",
+ "rustix 1.1.5",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "trash",
+ "windows-sys 0.61.2",
+ "xattr 1.6.1",
+]
+
+[[package]]
+name = "skwir-extend"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "crossbeam-channel",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "skwir-plugin-api",
+ "skwir-plugin-preview-hex",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-media-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gstreamer",
+ "gstreamer-app",
+ "gstreamer-video",
+ "skwir-core",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-mermaid-worker"
+version = "0.1.0"
+dependencies = [
+ "merman",
+]
+
+[[package]]
+name = "skwir-model-worker"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "gltf",
+ "png 0.17.16",
+ "quick-xml 0.42.0",
+ "serde_json",
+ "stl_io",
+ "tempfile",
+ "tobj",
+ "zip",
+]
+
+[[package]]
+name = "skwir-module-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "serde_json",
+ "skwir-plugin-api",
+ "tempfile",
+ "wasmtime",
+ "wit-component 0.239.0",
+]
+
+[[package]]
+name = "skwir-mupdf-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mupdf",
+ "mupdf-sys",
+ "skwir-core",
+]
+
+[[package]]
+name = "skwir-outside-netpbm"
+version = "0.1.0"
+dependencies = [
+ "skwir-plugin-api",
+]
+
+[[package]]
+name = "skwir-outside-preview-hex"
+version = "0.1.0"
+dependencies = [
+ "skwir-plugin-api",
+]
+
+[[package]]
+name = "skwir-outside-template"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "skwir-plugin-api",
+]
+
+[[package]]
+name = "skwir-pdf-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pdfium-render",
+ "skwir-core",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-platform"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "block2",
+ "crossbeam-channel",
+ "cssparser 0.35.0",
+ "dirs 7.0.0",
+ "ego-tree",
+ "encoding_rs",
+ "flate2",
+ "futures-lite 2.6.1",
+ "image",
+ "jiff",
+ "jpeg-decoder",
+ "kamadak-exif",
+ "libc",
+ "markup5ever",
+ "md5",
+ "mime",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "objc2-quick-look-thumbnailing",
+ "objc2-uniform-type-identifiers",
+ "oo7",
+ "open",
+ "parking_lot",
+ "percent-encoding",
+ "png 0.17.16",
+ "proptest",
+ "resvg",
+ "roxmltree 0.21.1",
+ "rustix 1.1.5",
+ "scraper",
+ "security-framework",
+ "selectors 0.31.0",
+ "serde",
+ "serde_json",
+ "skrifa",
+ "skwir-core",
+ "tempfile",
+ "tracing",
+ "windows 0.61.3",
+ "windows-sys 0.61.2",
+ "xdg-mime",
+ "zip",
+]
+
+[[package]]
+name = "skwir-plugin-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml 0.9.12+spec-1.1.0",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "skwir-plugin-control"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "parking_lot",
+ "rmcp",
+ "rustix 1.1.5",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "tempfile",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-edit-as-buffer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "proptest",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "skwir-plugin-geo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "jiff",
+ "parking_lot",
+ "proptest",
+ "quick-xml 0.42.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tiny-skia",
+ "tracing",
+ "zip",
+]
+
+[[package]]
+name = "skwir-plugin-jump"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "dirs 7.0.0",
+ "humantime",
+ "nucleo-matcher",
+ "parking_lot",
+ "proptest",
+ "roxmltree 0.21.1",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-map-tiles"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "flate2",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "image",
+ "parking_lot",
+ "proptest",
+ "rusqlite",
+ "rustls",
+ "rustls-platform-verifier",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tiny-skia",
+ "tokio",
+ "tokio-rustls",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-mpris"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "skwir-core",
+ "skwir-platform",
+ "tracing",
+ "zbus",
+]
+
+[[package]]
+name = "skwir-plugin-name-tags"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs 7.0.0",
+ "proptest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-open-with"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-ops-basic"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "serde_json",
+ "skwir-core",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-places"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-preview-archives"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs 7.0.0",
+ "flate2",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tracing",
+ "zip",
+]
+
+[[package]]
+name = "skwir-plugin-preview-circuits"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-preview-comics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-preview-documents"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "roxmltree 0.21.1",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "zip",
+]
+
+[[package]]
+name = "skwir-plugin-preview-email"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mail-parser",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-preview-epub"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "percent-encoding",
+ "rbook",
+ "roxmltree 0.21.1",
+ "sha1_smol",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "zip",
+]
+
+[[package]]
+name = "skwir-plugin-preview-fonts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "proptest",
+ "skrifa",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "wuff",
+ "zeno",
+]
+
+[[package]]
+name = "skwir-plugin-preview-hex"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "memchr",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-preview-markdown"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "pulldown-cmark",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-preview-media"
+version = "0.1.0"
+dependencies = [
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "skwir-plugin-preview-models"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "flate2",
+ "image",
+ "quick-xml 0.42.0",
+ "ruzstd",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tiny-skia",
+ "zip",
+]
+
+[[package]]
+name = "skwir-plugin-preview-playlists"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "percent-encoding",
+ "roxmltree 0.21.1",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-preview-structured"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "toml_edit 0.25.15+spec-1.1.0",
+ "yaml-rust2",
+]
+
+[[package]]
+name = "skwir-plugin-preview-tables"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "calamine",
+ "csv",
+ "indexmap",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "zip",
+]
+
+[[package]]
+name = "skwir-plugin-query"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "globset",
+ "grep-regex",
+ "grep-searcher",
+ "humantime",
+ "ignore",
+ "parking_lot",
+ "proptest",
+ "rustix 1.1.5",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-rename-bulk"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "jiff",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "skwir-plugin-shelf"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-shell"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "skwir-plugin-tags"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "dirs 7.0.0",
+ "parking_lot",
+ "plist",
+ "proptest",
+ "rustix 1.1.5",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-tagspaces"
+version = "0.1.0"
+dependencies = [
+ "dirs 7.0.0",
+ "parking_lot",
+ "serde_json",
+ "skwir-core",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-terminal"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "parking_lot",
+ "rustix 1.1.5",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-thumbnails"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "parking_lot",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-timeline"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "rayon",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-trash"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-usage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "notify",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-vim"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-xmp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs 7.0.0",
+ "proptest",
+ "roxmltree 0.21.1",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-poppler-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cairo-rs",
+ "glib",
+ "poppler-rs",
+ "skwir-core",
+]
+
+[[package]]
+name = "skwir-ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flume 0.12.0",
+ "gpui",
+ "image",
+ "jiff",
+ "nucleo-matcher",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "smallvec",
+ "syntect",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "two-face",
+ "unicode-segmentation",
 ]
 
 [[package]]

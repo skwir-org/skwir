@@ -3,9 +3,9 @@
 
 mod common;
 
-use bibli_core::App;
-use bibli_core::command::Invocation;
 use common::*;
+use skwir_core::App;
+use skwir_core::command::Invocation;
 
 fn selected(app: &App) -> Vec<String> {
     let ws = app.workspace.read();

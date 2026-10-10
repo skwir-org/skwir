@@ -1,11 +1,11 @@
 //! Virtual document scrolling and bounded, demand-driven page rendering.
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc};
 
-use bibli_core::{CancelToken, document::PageContent, scheduler::Priority};
 use gpui::{
     AnyElement, Context, ListAlignment, ListOffset, ListState, RenderImage, ScrollHandle,
     ScrollWheelEvent, Window, div, point, prelude::*, px,
 };
+use skwir_core::{CancelToken, document::PageContent, scheduler::Priority};
 
 use crate::{preview::PreviewContent, shell::Shell, theme::Theme};
 
@@ -31,7 +31,7 @@ pub(crate) fn page_side(covered: f32) -> u32 {
     } else {
         1.
     };
-    ((steps * SIDE_STEP) as u32).min(bibli_core::document::MAX_SIDE)
+    ((steps * SIDE_STEP) as u32).min(skwir_core::document::MAX_SIDE)
 }
 
 /// Hand what the pages covered this frame to the shell, when it changes the
@@ -238,7 +238,7 @@ impl Shell {
                         image: page.image,
                         width: size.width.0 as u32,
                         height: size.height.0 as u32,
-                        detail: Some(bibli_core::preview::PreviewInfo::Document {
+                        detail: Some(skwir_core::preview::PreviewInfo::Document {
                             page: self.preview.page,
                             pages: count as u32,
                         }),
@@ -262,7 +262,7 @@ impl Shell {
     /// new number of pages, at the same place.
     pub(crate) fn reader_opened(
         &mut self,
-        session: Arc<dyn bibli_core::document::DocumentSession>,
+        session: Arc<dyn skwir_core::document::DocumentSession>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -800,7 +800,7 @@ mod tests {
 
     #[test]
     fn pages_are_rendered_at_the_step_they_cover() {
-        use bibli_core::document::MAX_SIDE;
+        use skwir_core::document::MAX_SIDE;
         // A little short of a step is that step; past it, the next.
         assert_eq!(page_side(426.), 512);
         assert_eq!(page_side(1067.), 1024);

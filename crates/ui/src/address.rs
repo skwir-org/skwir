@@ -8,11 +8,11 @@ use crate::{
     theme::Theme,
     toolbar::{self, Button},
 };
-use bibli_core::command::Invocation;
-use bibli_core::location::{Crumb, Location, Tool, ToolPane};
-use bibli_core::registry::{ViewRole, ViewSpec};
-use bibli_core::workspace::{PaneId, Pill};
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
+use skwir_core::command::Invocation;
+use skwir_core::location::{Crumb, Location, Tool, ToolPane};
+use skwir_core::registry::{ViewRole, ViewSpec};
+use skwir_core::workspace::{PaneId, Pill};
 use std::path::PathBuf;
 
 /// What the address field keeps before the view buttons fold into one.
@@ -150,7 +150,7 @@ fn menu_item(button: Button, label: impl Into<gpui::SharedString>) -> Button {
 /// Layout). It starts with every view, the lenses the pane row leaves out
 /// included: a narrow pane row has only the button that opens it.
 fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
-    use bibli_core::SortKey;
+    use skwir_core::SortKey;
     let views = shell
         .available_views()
         .into_iter()
@@ -241,7 +241,7 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
                 "settings.apply",
             )
             .args(serde_json::json!({
-                "changes": { bibli_core::companions::SHOW: (!shown).to_string() }
+                "changes": { skwir_core::companions::SHOW: (!shown).to_string() }
             }))
             .active(shown),
             "Companion files",
@@ -464,7 +464,7 @@ fn more_panel(
     let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx);
     let mut groups = layout_groups(shell);
     groups.push((
-        "bibli",
+        "skwir",
         [
             (
                 Button::new("menu-new-tab", "tab-new", "New tab", "tab.new"),
@@ -488,8 +488,8 @@ fn more_panel(
                 "Settings…",
             ),
             (
-                Button::new("menu-about", "info", "About bibli", "ui.about"),
-                "About bibli",
+                Button::new("menu-about", "info", "About skwir", "ui.about"),
+                "About skwir",
             ),
         ]
         .into_iter()
@@ -632,7 +632,7 @@ struct PaneRow {
     address: Address,
     /// The field's edge: focused, the active pane's, or none.
     edge: gpui::Hsla,
-    location: Option<bibli_core::Location>,
+    location: Option<skwir_core::Location>,
     /// What the names shown must hold, typed in the field (`omnibox.rs`).
     filter: Option<String>,
     menu_open: bool,
@@ -867,7 +867,7 @@ fn taking_off(filter: &Pill) -> String {
     match &filter.tag {
         Some(tag) if tag.lacks => format!(
             "Show the files tagged “{}” too",
-            bibli_core::metadata::tag_leaf(&tag.name)
+            skwir_core::metadata::tag_leaf(&tag.name)
         ),
         _ => format!("Not only {}: show the rest too", filter.label),
     }
@@ -1436,7 +1436,7 @@ fn breadcrumbs(
                     crate::nav_menu::NavWhat::Parents {
                         of: Location::from_path(path),
                     },
-                    serde_json::json!({ "location": bibli_core::os_path::PathArg::from(path.as_path()) }),
+                    serde_json::json!({ "location": skwir_core::os_path::PathArg::from(path.as_path()) }),
                     format!("Folders above {label}").into(),
                     None,
                     cx,
@@ -1461,8 +1461,8 @@ fn breadcrumbs(
 mod tests {
     use super::{ViewSpec, crumbs, taking_off, tool_pane, toolbar_views};
     use crate::sidebar::Root;
-    use bibli_core::location::{Location, ToolPane};
-    use bibli_core::workspace::PaneId;
+    use skwir_core::location::{Location, ToolPane};
+    use skwir_core::workspace::PaneId;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
@@ -1470,9 +1470,9 @@ mod tests {
     /// out lets the files tagged so back in, without saying "not" twice.
     #[test]
     fn taking_a_narrowing_off_says_what_comes_back() {
-        use bibli_core::command::Invocation;
-        use bibli_core::metadata::TagRef;
-        use bibli_core::workspace::Pill;
+        use skwir_core::command::Invocation;
+        use skwir_core::metadata::TagRef;
+        use skwir_core::workspace::Pill;
         let pill = |label: &str, tag| Pill {
             label: label.into(),
             remove: Invocation::new("query.narrow"),

@@ -1,4 +1,4 @@
-//! bibli plugin: query as location.
+//! skwir plugin: query as location.
 //!
 //! A query (`*.pdf modified<7d size>10M in:~/docs`) is a location. Results
 //! stream in as a virtual listing, so every view, selection, and operation
@@ -20,17 +20,17 @@ pub mod similar;
 
 use std::sync::Arc;
 
-use bibli_core::app::{App, NotifyLevel};
-use bibli_core::cancel::CancelToken;
-use bibli_core::command::{Invocation, NoArgs, Outcome};
-use bibli_core::location::Location;
-use bibli_core::os_path::PathArg;
-use bibli_core::plugin::Plugin;
-use bibli_core::registry::{Keeper, KeyBinding, MenuItem, Place, Reorder};
-use bibli_core::scheduler::Priority;
-use bibli_core::settings::SettingSpec;
-use bibli_core::workspace::PaneId;
 use parking_lot::Mutex;
+use skwir_core::app::{App, NotifyLevel};
+use skwir_core::cancel::CancelToken;
+use skwir_core::command::{Invocation, NoArgs, Outcome};
+use skwir_core::location::Location;
+use skwir_core::os_path::PathArg;
+use skwir_core::plugin::Plugin;
+use skwir_core::registry::{Keeper, KeyBinding, MenuItem, Place, Reorder};
+use skwir_core::scheduler::Priority;
+use skwir_core::settings::SettingSpec;
+use skwir_core::workspace::PaneId;
 
 pub use provider::{QueryProvider, SCHEME};
 use saved::Edit;
@@ -141,7 +141,7 @@ struct SimilarArgs {
     /// The file to find others like, by absolute path; the pane's
     /// selection when omitted.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
@@ -229,7 +229,7 @@ pub fn place_name(app: Option<&App>, root: &std::path::Path) -> String {
     if let Some(title) = app.and_then(|app| app.registry.place_title(&Location::from_path(root))) {
         return title;
     }
-    let home = bibli_core::os_path::home();
+    let home = skwir_core::os_path::home();
     if home.as_deref() == Some(root) {
         "Home".to_owned()
     } else {
@@ -460,12 +460,12 @@ impl Plugin for QueryPlugin {
         "Search as a location: name, size, date, tag, MIME, and content queries; saved searches in the sidebar"
     }
 
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Browsing
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Browsing
     }
 
-    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
-        vec![bibli_core::plugin::Requirement::program(
+    fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
+        vec![skwir_core::plugin::Requirement::program(
             "plocate",
             "Instant name searches over whole disks (a directory walk is used otherwise)",
         )]
@@ -482,9 +482,9 @@ impl Plugin for QueryPlugin {
         app.wake();
     }
 
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
     }
     fn register(&self, app: &App) {
         let lifetime = app.lifetime().child();
@@ -500,7 +500,7 @@ impl Plugin for QueryPlugin {
                 app.weak(),
             )),
         );
-        // What bibli changed, an open search sees at once.
+        // What skwir changed, an open search sees at once.
         app.executor
             .observe(ID, Arc::new(move |changes| searches.changed(changes)));
         // The locale's first weekday is a process away: asked once, on a
@@ -509,7 +509,7 @@ impl Plugin for QueryPlugin {
             Priority::Background,
             "calendar.week",
             lifetime.child(),
-            bibli_platform::calendar::prewarm,
+            skwir_platform::calendar::prewarm,
         );
 
         app.settings.declare(SettingSpec::data(
@@ -835,8 +835,8 @@ impl Plugin for QueryPlugin {
 #[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
-    use bibli_core::app::AppConfig;
-    use bibli_core::location::ListingEvent;
+    use skwir_core::app::AppConfig;
+    use skwir_core::location::ListingEvent;
     use std::collections::BTreeSet;
     use std::path::Path;
     use std::time::{Duration, SystemTime};
@@ -1150,7 +1150,7 @@ mod tests {
         let open = app
             .open_location(&location_for("*.png", Some(&root)))
             .unwrap();
-        let mut listing = bibli_core::Listing::default();
+        let mut listing = skwir_core::Listing::default();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while !listing.is_complete() {
             listing.apply(open.events().recv_deadline(deadline).unwrap());
@@ -1162,7 +1162,7 @@ mod tests {
             "matches are stat-ed for identity"
         );
         std::fs::remove_file(root.join("pics/cat.png")).unwrap();
-        open.hydrate(&[id], bibli_core::scheduler::Priority::Visible);
+        open.hydrate(&[id], skwir_core::scheduler::Priority::Visible);
         loop {
             let ev = open.events().recv_deadline(deadline).unwrap();
             let removed = matches!(ev, ListingEvent::Removed(_));
@@ -1176,7 +1176,7 @@ mod tests {
 
     /// The notification the last edit ended with: edits run on a worker,
     /// so each test step waits for it before the next.
-    fn note(app: &App) -> bibli_core::app::Notification {
+    fn note(app: &App) -> skwir_core::app::Notification {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             let mut notes = app.take_notifications();
@@ -1443,7 +1443,7 @@ mod tests {
         );
         // Not stat-ed yet: when they were modified is not known.
         assert_eq!(shown(), BTreeSet::new());
-        let ids: Vec<bibli_core::EntryId> = {
+        let ids: Vec<skwir_core::EntryId> = {
             let ws = app.workspace.read();
             ws.pane(pane)
                 .unwrap()
@@ -1551,7 +1551,7 @@ mod tests {
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
         app.plugins.add(Arc::new(QueryPlugin::default()), &app);
         let docs = Location::from_path(Path::new("/data/Documents"));
-        let place = bibli_core::registry::Place::new("places", "Documents", "folder", docs);
+        let place = skwir_core::registry::Place::new("places", "Documents", "folder", docs);
         app.registry.places.add("test", place.clone());
         let expr = "ext:pdf in:/data/Documents";
         let search = location_for(expr, None);
@@ -1626,7 +1626,7 @@ mod tests {
         std::fs::set_permissions(bin.join("plocate"), std::fs::Permissions::from_mode(0o755))
             .unwrap();
         let q = lang::parse("report in:/").unwrap();
-        let never = bibli_core::cancel::CancelToken::new();
+        let never = skwir_core::cancel::CancelToken::new();
         let paths = plocate::locate_with(
             &bin.join("plocate"),
             &q.name_substrings().unwrap(),
@@ -1758,8 +1758,8 @@ mod tests {
 
     #[test]
     fn tags_are_matched_in_batches_per_folder() {
-        use bibli_core::entry::{Entry, Provenance, Value, keys};
-        use bibli_core::metadata::MetadataProvider;
+        use skwir_core::entry::{Entry, Provenance, Value, keys};
+        use skwir_core::metadata::MetadataProvider;
         /// Tags every `*.tagged` file, counting calls and entries.
         #[derive(Default)]
         struct Fake(parking_lot::Mutex<(usize, usize)>);
@@ -1785,7 +1785,7 @@ mod tests {
         // Each stat opens a file under Wine: slow enough that the walk's
         // threads share a folder's files and batch them apart. Whether
         // Windows does too is for 5b (docs/PORTING.md).
-        if bibli_core::system::under_wine("stats as fast as Windows'") {
+        if skwir_core::system::under_wine("stats as fast as Windows'") {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();

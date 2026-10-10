@@ -11,8 +11,8 @@
 //! request is made.
 use std::hash::{Hash, Hasher};
 
-use bibli_core::settings::SECRET_STORED;
-use bibli_core::tiles::TileRequest;
+use skwir_core::settings::SECRET_STORED;
+use skwir_core::tiles::TileRequest;
 
 pub const OSM_ID: &str = "openstreetmap";
 const OSM_URL: &str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
@@ -232,7 +232,7 @@ fn is_token(name: &str) -> bool {
 }
 
 /// The owner's check of `map-tiles.servers`, after the fields' own: what
-/// makes a record a server bibli can ask.
+/// makes a record a server skwir can ask.
 pub fn check_servers(value: &toml::Value) -> anyhow::Result<()> {
     for record in value.as_array().into_iter().flatten() {
         let Some(table) = record.as_table() else {
@@ -281,7 +281,7 @@ pub fn check_servers(value: &toml::Value) -> anyhow::Result<()> {
             anyhow::ensure!(is_token(header), "{name}: “{header}” is not a header name");
             anyhow::ensure!(
                 !RESERVED.contains(&header.to_ascii_lowercase().as_str()),
-                "{name}: bibli sets the {header} header itself"
+                "{name}: skwir sets the {header} header itself"
             );
             anyhow::ensure!(
                 !value.contains(['\r', '\n']),
@@ -300,7 +300,7 @@ pub fn check_servers(value: &toml::Value) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::tiles::Palette;
+    use skwir_core::tiles::Palette;
 
     fn tile(z: u8, x: u32, y: u32, scale: u8) -> TileRequest {
         TileRequest {

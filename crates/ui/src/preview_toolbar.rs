@@ -6,8 +6,8 @@ use crate::{
     theme::Theme,
     toolbar::{self, Button},
 };
-use bibli_core::preview::PreviewInfo;
 use gpui::{AnyElement, Context, Div, div, prelude::*};
+use skwir_core::preview::PreviewInfo;
 
 pub fn zoom_label(shell: &Shell) -> String {
     shell.preview.zoom.map_or_else(

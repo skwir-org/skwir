@@ -1,7 +1,7 @@
 //! Tabs (ADR-018): the strip above the panes, and the shell following the
 //! workspace's tabs.
 //!
-//! The core owns the tabs (`bibli_core::tabs`): which panes each groups,
+//! The core owns the tabs (`skwir_core::tabs`): which panes each groups,
 //! which is shown, which of its panes is active. The shell holds a `PaneUi`
 //! per pane and reconciles them with the workspace whenever its revision
 //! moves (`Shell::sync_tabs`): the panes of the tab shown are
@@ -25,12 +25,12 @@
 
 use std::collections::HashMap;
 
-use bibli_core::Location;
-use bibli_core::command::Invocation;
-use bibli_core::workspace::{PaneId, TabId};
 use gpui::{
     AnyElement, Context, IntoElement, MouseButton, SharedString, Window, div, prelude::*, px, svg,
 };
+use skwir_core::Location;
+use skwir_core::command::Invocation;
+use skwir_core::workspace::{PaneId, TabId};
 
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -330,7 +330,7 @@ impl Shell {
             };
             let sorted = std::sync::Arc::clone(&self.ui().list.sorted);
             let first = &sorted[lo.min(sorted.len())..hi.min(sorted.len())];
-            let warm: Vec<bibli_core::EntryId> = {
+            let warm: Vec<skwir_core::EntryId> = {
                 let ws = app.workspace.read();
                 ws.pane(self.pane).map_or_else(Vec::new, |p| {
                     first

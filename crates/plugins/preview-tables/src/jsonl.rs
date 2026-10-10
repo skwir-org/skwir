@@ -1,13 +1,13 @@
 //! JSON Lines (`.jsonl`, `.ndjson`): a value per line, a row each. An
 //! object's keys are the columns, in the order the page first meets them;
 //! any other value, and a line that is not JSON, stands in `value`.
-use bibli_core::{
+use indexmap::IndexMap;
+use serde_json::Value;
+use skwir_core::{
     CancelToken,
     inspection::{Inspection, Row},
 };
-use bibli_platform::inspection::{self, limits};
-use indexmap::IndexMap;
-use serde_json::Value;
+use skwir_platform::inspection::{self, limits};
 use std::io::{BufRead, BufReader, Read};
 
 /// The column for what is not an object.
@@ -128,7 +128,7 @@ pub fn table(
     ]);
     Ok(Inspection {
         details,
-        kind: bibli_core::inspection::InspectionKind::Table,
+        kind: skwir_core::inspection::InspectionKind::Table,
         title: if rows.is_empty() {
             "JSON Lines".into()
         } else {

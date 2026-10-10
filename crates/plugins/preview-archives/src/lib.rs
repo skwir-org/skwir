@@ -1,12 +1,12 @@
 //! Archive directory tree backed by the optional libarchive process, and
 //! archives extracted (`extract`, ADR-048).
-use bibli_core::{
+use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Row},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use bibli_platform::{
+use skwir_platform::{
     archive,
     inspection::{self, limits},
     mime,
@@ -27,20 +27,20 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "List the contents of ZIP, tar, 7z and other archives, preview their members without extracting, and extract them (Extract Here, in an archive's menu and a drop's)"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+    fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![
             archive::WORKER
                 .requirement("Listing, reading and extracting archives")
                 .required(),
         ]
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
         // It writes what it extracts.
-        bibli_core::permissions::Capabilities::of(&[
+        skwir_core::permissions::Capabilities::of(&[
             Capability::Read,
             Capability::Write,
             Capability::Programs,
@@ -73,7 +73,7 @@ impl PreviewProvider for Provider {
         target: &str,
         into: &std::path::Path,
         cancel: &CancelToken,
-    ) -> anyhow::Result<Option<bibli_core::preview::Member>> {
+    ) -> anyhow::Result<Option<skwir_core::preview::Member>> {
         let path = req.entry.resolve()?;
         let index = target.parse::<u64>()?;
         let listing = archive::list(&path, cancel)?;
@@ -86,7 +86,7 @@ impl PreviewProvider for Provider {
             member.regular && !member.encrypted,
             "This member cannot be previewed (directory, link or encrypted file)"
         );
-        Ok(Some(bibli_core::preview::Member {
+        Ok(Some(skwir_core::preview::Member {
             own_file: false,
             name: member.file_name().to_owned(),
             path: archive::extract(&path, member, into, cancel)?,
@@ -116,7 +116,7 @@ impl PreviewProvider for Provider {
         };
         Ok(Some(Inspection {
             details,
-            kind: bibli_core::inspection::InspectionKind::Archive,
+            kind: skwir_core::inspection::InspectionKind::Archive,
             title: format!("Archive · {} members", members.len()),
             notice,
             rows,
@@ -127,7 +127,7 @@ impl PreviewProvider for Provider {
 }
 
 /// What the listing says about the archive, for the panel's Details.
-fn facts(members: &[archive::Member], rows: &[Row]) -> Vec<bibli_core::inspection::Detail> {
+fn facts(members: &[archive::Member], rows: &[Row]) -> Vec<skwir_core::inspection::Detail> {
     let folders = rows.iter().filter(|r| r.branch).count();
     // Declared sizes are the archive's word: a hostile one must not
     // overflow the total.
@@ -217,7 +217,7 @@ mod tests {
     fn archives_are_what_the_database_calls_archives() {
         let accepts = |name: &str| {
             Provider.accepts(&PreviewRequest {
-                entry: bibli_core::op::EntryRef::new(bibli_core::FileId { dev: 1, ino: 1 }, name),
+                entry: skwir_core::op::EntryRef::new(skwir_core::FileId { dev: 1, ino: 1 }, name),
                 mime: None,
                 page: 1,
                 seconds: None,
@@ -301,7 +301,7 @@ mod tests {
         let facts = facts(&members, &rows);
         let unpacked = facts.iter().find(|f| f.label == "Unpacked").unwrap();
         assert_eq!(unpacked.value, inspection::size(u64::MAX));
-        assert_eq!(facts[0], bibli_core::inspection::Detail::new("Files", "3"));
+        assert_eq!(facts[0], skwir_core::inspection::Detail::new("Files", "3"));
         assert!(facts.iter().all(|f| f.label != "Folders"));
     }
 }

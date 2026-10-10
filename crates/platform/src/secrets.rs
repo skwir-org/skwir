@@ -2,7 +2,7 @@
 //! `KeePassXC`, `KWallet`), or the portal's file keyring in a sandbox, through
 //! oo7, the client gpui already links. A secret a setting needs (a tile
 //! server's API key) is stored here and never in the settings file, which
-//! only says it is here (`bibli_core::settings::SECRET_STORED`).
+//! only says it is here (`skwir_core::settings::SECRET_STORED`).
 //!
 //! Every call blocks until the keyring answers, which may be after the user
 //! unlocked it in the keyring's own prompt: call from a worker, never from
@@ -38,7 +38,7 @@ fn attributes<'a>(
     field: Option<&'a str>,
 ) -> HashMap<&'a str, &'a str> {
     let mut attributes = HashMap::from([
-        ("application", "bibli"),
+        ("application", "skwir"),
         ("setting", setting),
         ("record", record),
     ]);
@@ -104,14 +104,14 @@ mod backend {
 }
 
 /// Windows: the Credential Manager's generic credentials, one per field,
-/// named `bibli/<setting>/<record>/<field>` (run under Wine's).
+/// named `skwir/<setting>/<record>/<field>` (run under Wine's).
 #[cfg(windows)]
 mod backend {
     use super::{SecretRef, SecretText};
     use crate::windows::credentials;
 
     fn name(setting: &str, record: &str, field: &str) -> String {
-        format!("bibli/{setting}/{record}/{field}")
+        format!("skwir/{setting}/{record}/{field}")
     }
 
     pub fn store(at: SecretRef<'_>, label: &str, secret: &str) -> anyhow::Result<()> {
@@ -138,7 +138,7 @@ mod backend {
     }
 }
 
-/// macOS: the Keychain's generic passwords, service `bibli`, one per
+/// macOS: the Keychain's generic passwords, service `skwir`, one per
 /// field, its account `<setting>/<record>/<field>`. Compiled, never run.
 #[cfg(target_os = "macos")]
 mod backend {
@@ -147,7 +147,7 @@ mod backend {
 
     use super::{SecretRef, SecretText};
 
-    const SERVICE: &str = "bibli";
+    const SERVICE: &str = "skwir";
     /// `errSecItemNotFound`.
     const NOT_FOUND: i32 = -25300;
 
@@ -235,7 +235,7 @@ mod backend {
 }
 
 /// Keep `secret` for `at`, replacing what was kept; `label` is what the
-/// keyring's own window shows ("bibli: Topo tiles").
+/// keyring's own window shows ("skwir: Topo tiles").
 pub fn store(at: SecretRef<'_>, label: &str, secret: &str) -> anyhow::Result<()> {
     backend::store(at, label, secret)
 }
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn a_secret_is_found_by_its_setting_record_and_field() {
         let one = attributes("map-tiles.servers", "a1", Some("key"));
-        assert_eq!(one.get("application"), Some(&"bibli"));
+        assert_eq!(one.get("application"), Some(&"skwir"));
         assert_eq!(one.get("field"), Some(&"key"));
         // A whole record's secrets: the same attributes, any field.
         let all = attributes("map-tiles.servers", "a1", None);
@@ -277,7 +277,7 @@ mod tests {
     #[ignore = "needs a private Secret Service (tools/test/private-keyring.sh)"]
     fn a_secret_goes_in_and_comes_out_of_a_keyring() {
         assert_eq!(
-            std::env::var("BIBLI_PRIVATE_KEYRING").as_deref(),
+            std::env::var("SKWIR_PRIVATE_KEYRING").as_deref(),
             Ok("1"),
             "refusing to touch a keyring that is not the test's own"
         );
@@ -286,9 +286,9 @@ mod tests {
             record: "r1",
             field: "key",
         };
-        store(at, "bibli test", "s3cret with spaces").unwrap();
+        store(at, "skwir test", "s3cret with spaces").unwrap();
         assert_eq!(lookup(at).unwrap().unwrap().expose(), "s3cret with spaces");
-        store(at, "bibli test", "replaced").unwrap();
+        store(at, "skwir test", "replaced").unwrap();
         assert_eq!(lookup(at).unwrap().unwrap().expose(), "replaced");
         delete_record("test.servers", "r1").unwrap();
         assert!(lookup(at).unwrap().is_none());

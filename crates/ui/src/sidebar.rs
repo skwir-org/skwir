@@ -22,10 +22,10 @@ use std::collections::{BTreeMap, HashMap};
 
 use gpui::{AnyElement, Context, ExternalPaths, MouseButton, SharedString, div, prelude::*, px};
 
-use bibli_core::Location;
-use bibli_core::command::Invocation;
-use bibli_core::os_path::PathArg;
-use bibli_core::registry::{Place, Reorder};
+use skwir_core::Location;
+use skwir_core::command::Invocation;
+use skwir_core::os_path::PathArg;
+use skwir_core::registry::{Place, Reorder};
 
 use crate::controls;
 use crate::dnd::DragPayload;
@@ -402,7 +402,7 @@ impl Shell {
             })
             .collect();
         self.app.registry.set_place_titles(titles);
-        let home = bibli_core::os_path::home();
+        let home = skwir_core::os_path::home();
         self.roots = Roots {
             roots: if full {
                 Vec::new()
@@ -711,7 +711,7 @@ pub fn render(
         let menu_here = marked.as_ref() == Some(&item);
         let is_current = place.location.to_string() == current;
         let color = place.color.as_deref().and_then(|c| {
-            bibli_core::metadata::TAG_COLORS
+            skwir_core::metadata::TAG_COLORS
                 .iter()
                 .position(|x| *x == c)
         });
@@ -986,10 +986,10 @@ pub fn render(
 /// here with Alt, All Tags with Alt the tags of the folder shown), given
 /// the pane; else opening it.
 fn clicked(
-    clicks: &[bibli_core::registry::Click],
+    clicks: &[skwir_core::registry::Click],
     open: &Invocation,
     modifiers: gpui::Modifiers,
-    pane: bibli_core::workspace::PaneId,
+    pane: skwir_core::workspace::PaneId,
 ) -> Invocation {
     let held = if modifiers.shift {
         "shift"
@@ -1169,7 +1169,7 @@ fn pill(
     let open = open_invocation(place);
     let tab = open_in_tab(place);
     // A tag in a category says its own name; the tooltip says where it is.
-    let title: SharedString = bibli_core::metadata::tag_leaf(&place.title)
+    let title: SharedString = skwir_core::metadata::tag_leaf(&place.title)
         .to_owned()
         .into();
     let tip: SharedString = format!(
@@ -1855,7 +1855,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let item = |title: String, args: serde_json::Value, order: i32, icon: Option<&str>| {
-            bibli_core::registry::MenuItem {
+            skwir_core::registry::MenuItem {
                 menu: "sidebar".into(),
                 title,
                 command: Invocation::with_args("ui.sidebar_section", &args),
@@ -1907,7 +1907,7 @@ impl Shell {
             // Its places the user can hide, checked while shown: those
             // hidden come back from here.
             let place_item = |title: String, args: serde_json::Value, order, icon: Option<&str>| {
-                bibli_core::registry::MenuItem {
+                skwir_core::registry::MenuItem {
                     command: Invocation::with_args(PLACE_COMMAND, &args),
                     ..item(title, serde_json::Value::Null, order, icon)
                 }
@@ -1984,7 +1984,7 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{Role, Sections, arrange, drop_target, group_title, used_fraction};
-    use bibli_core::Location;
+    use skwir_core::Location;
     use std::path::PathBuf;
 
     #[test]
@@ -2042,8 +2042,8 @@ mod tests {
         assert_eq!(toml.try_into::<Sections>().unwrap(), sections);
     }
 
-    fn place(group: &str, location: &str) -> bibli_core::registry::Place {
-        bibli_core::registry::Place::new(
+    fn place(group: &str, location: &str) -> skwir_core::registry::Place {
+        skwir_core::registry::Place::new(
             group,
             location.trim_start_matches('/').to_owned(),
             "",
@@ -2065,7 +2065,7 @@ mod tests {
     #[test]
     fn offered_places_go_where_the_user_put_them_under_their_names() {
         let mut bookmark = place("places", "/bookmarked");
-        bookmark.forget = Some(bibli_core::command::Invocation::new("places.unbookmark"));
+        bookmark.forget = Some(skwir_core::command::Invocation::new("places.unbookmark"));
         let recent = place("places", "recent:");
         let mut efi = place("devices", "/dev/sda1");
         efi.title = "EFI".into();
@@ -2145,10 +2145,10 @@ mod tests {
     #[test]
     fn a_volume_to_mount_opens_in_a_tab_once_mounted() {
         let place = |location: &str| {
-            bibli_core::registry::Place::new("devices", "Backup", "", Location::parse(location))
+            skwir_core::registry::Place::new("devices", "Backup", "", Location::parse(location))
         };
         let mut locked = place("device:/dev/sdz");
-        locked.activate = Some(bibli_core::command::Invocation::with_args(
+        locked.activate = Some(skwir_core::command::Invocation::with_args(
             "ui.unlock_prompt",
             &serde_json::json!({ "device": "/dev/sdz", "title": "Backup" }),
         ));
@@ -2164,7 +2164,7 @@ mod tests {
             "a click opens it in the pane"
         );
         let mut plain = place("device:/dev/sdy1");
-        plain.activate = Some(bibli_core::command::Invocation::new("places.mount"));
+        plain.activate = Some(skwir_core::command::Invocation::new("places.mount"));
         assert_eq!(
             super::open_in_tab(&plain).args,
             serde_json::json!({ "tab": true })

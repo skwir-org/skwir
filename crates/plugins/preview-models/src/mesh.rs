@@ -1,10 +1,10 @@
 //! Meshes that carry no picture of their own (STL, OBJ, PLY, OFF, glTF, a
 //! 3MF its slicer did not picture), drawn and measured by
-//! `bibli-model-worker` (`bibli_platform::model`). Details says what a
+//! `skwir-model-worker` (`skwir_platform::model`). Details says what a
 //! print needs: its size, whether it is watertight and what it holds.
 use crate::Found;
-use bibli_core::CancelToken;
-use bibli_platform::model::{self, Asked, Measures, MeshFormat};
+use skwir_core::CancelToken;
+use skwir_platform::model::{self, Asked, Measures, MeshFormat};
 use std::path::Path;
 
 /// The unit's volume as it is usually said, from a length unit cubed.

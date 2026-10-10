@@ -18,7 +18,7 @@ pub use stat::{Statter, content_path, stat_entry, stat_path};
 pub use watch::Settled;
 
 /// A size the way the file list shows one: `512 B`, `1.5 KB`, `3.2 GB`, in
-/// binary multiples (the platform's `inspection::size`, which bibli's
+/// binary multiples (the platform's `inspection::size`, which skwir's
 /// words of sizes all are).
 pub fn size_said(bytes: u64) -> String {
     const UNITS: [&str; 6] = ["B", "KB", "MB", "GB", "TB", "PB"];

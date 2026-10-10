@@ -9,8 +9,8 @@ mod common;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use bibli_core::op::{Copy, Delete, EntryRef, Move, Operation, Plan, Rename};
 use common::*;
+use skwir_core::op::{Copy, Delete, EntryRef, Move, Operation, Plan, Rename};
 
 fn set_mode(path: &Path, mode: u32) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("chmod");
@@ -171,9 +171,9 @@ fn a_folder_copy_that_fails_partway_leaves_no_part_of_itself() {
 /// A folder on another filesystem than `reference`, if the machine has
 /// one (as `ops.rs` finds it).
 fn other_device(reference: &Path) -> Option<tempfile::TempDir> {
-    let here = bibli_core::fs::stat::id_of(reference)?.dev;
+    let here = skwir_core::fs::stat::id_of(reference)?.dev;
     ["/dev/shm", "/tmp"].into_iter().find_map(|candidate| {
-        let there = bibli_core::fs::stat::id_of(Path::new(candidate))?.dev;
+        let there = skwir_core::fs::stat::id_of(Path::new(candidate))?.dev;
         (there != here)
             .then(|| tempfile::tempdir_in(candidate).ok())
             .flatten()

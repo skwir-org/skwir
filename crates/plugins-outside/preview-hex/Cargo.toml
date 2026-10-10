@@ -1,5 +1,5 @@
 [package]
-name = "bibli-outside-preview-hex"
+name = "skwir-outside-preview-hex"
 description = "The hexadecimal preview, again as a WebAssembly module (Phase 6's gate): no difference to the user"
 version.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-bibli-plugin-api.workspace = true
+skwir-plugin-api.workspace = true
 
 [lints]
 workspace = true

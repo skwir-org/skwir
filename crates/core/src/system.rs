@@ -1,6 +1,6 @@
-//! The system bibli runs on, by name, and what is not written for it yet.
+//! The system skwir runs on, by name, and what is not written for it yet.
 //!
-//! bibli is built for Linux, macOS and Windows (ADR-035). Code that has no
+//! skwir is built for Linux, macOS and Windows (ADR-035). Code that has no
 //! implementation on a system yet answers with [`not_yet`], an error that
 //! names the system, never with Linux's behaviour where it would be wrong.
 
@@ -29,7 +29,7 @@ pub fn not_yet(what: &str) -> std::io::Error {
 /// that needs it then says so and passes; it runs whole on Windows.
 #[doc(hidden)]
 pub fn under_wine(what: &str) -> bool {
-    let wine = std::env::var_os("BIBLI_TEST_UNDER_WINE").is_some();
+    let wine = std::env::var_os("SKWIR_TEST_UNDER_WINE").is_some();
     if wine {
         eprintln!("skipped under Wine, which lacks {what}");
     }

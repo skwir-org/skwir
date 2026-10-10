@@ -1,25 +1,25 @@
-//! `bibli mcp` and `bibli cmd` (ADR-043): the command line's ways to the
-//! running window. Both run before anything logs: `bibli mcp` speaks the
-//! protocol on its standard output, and `bibli cmd` prints JSON there.
+//! `skwir mcp` and `skwir cmd` (ADR-043): the command line's ways to the
+//! running window. Both run before anything logs: `skwir mcp` speaks the
+//! protocol on its standard output, and `skwir cmd` prints JSON there.
 
 use std::ffi::OsString;
 
-use bibli_core::App;
-use bibli_core::app::AppConfig;
-use bibli_core::command::Invocation;
-use bibli_plugin_control::{Answer, PlanMode, channel, client};
 use serde_json::{Map, Value};
+use skwir_core::App;
+use skwir_core::app::AppConfig;
+use skwir_core::command::Invocation;
+use skwir_plugin_control::{Answer, PlanMode, channel, client};
 
-const USAGE: &str = "usage: bibli cmd [--apply] <command> [<arguments, a JSON object>]";
+const USAGE: &str = "usage: skwir cmd [--apply] <command> [<arguments, a JSON object>]";
 
 const HELP: &str = "\
-bibli, a file manager
+skwir, a file manager
 
-usage: bibli [<folder>]        open a window on the folder (the last one, or home)
-       bibli cmd [--apply] <command> [<arguments, a JSON object>]
+usage: skwir [<folder>]        open a window on the folder (the last one, or home)
+       skwir cmd [--apply] <command> [<arguments, a JSON object>]
                                run a command in the open window, print its result
-       bibli mcp               serve an agent's MCP to the open window
-       bibli --version         say which version this is
+       skwir mcp               serve an agent's MCP to the open window
+       skwir --version         say which version this is
 
 Agents and scripts reach the window once Settings › Plugins › Agents and
 scripts is on. The palette (Ctrl+Shift+P) lists every command.";
@@ -31,7 +31,7 @@ pub fn run(args: &[OsString]) -> Option<i32> {
         "mcp" => Some(mcp()),
         "cmd" => Some(cmd(&args[1..])),
         "--version" | "-V" => {
-            println!("bibli {}", env!("CARGO_PKG_VERSION"));
+            println!("skwir {}", env!("CARGO_PKG_VERSION"));
             Some(0)
         }
         "--help" | "-h" => {
@@ -42,25 +42,25 @@ pub fn run(args: &[OsString]) -> Option<i32> {
     }
 }
 
-/// `bibli mcp`: what an agent's configuration starts. It carries the
+/// `skwir mcp`: what an agent's configuration starts. It carries the
 /// agent's standard input and output to the window's channel, and with no
 /// window listening says so and starts nothing.
 fn mcp() -> i32 {
     let Some(address) = channel::address() else {
-        eprintln!("bibli: no channel for agents on this system");
+        eprintln!("skwir: no channel for agents on this system");
         return 1;
     };
     match client::bridge(&address) {
         Ok(()) => 0,
         Err(error) => {
-            eprintln!("bibli: {error:#}");
+            eprintln!("skwir: {error:#}");
             1
         }
     }
 }
 
-/// `bibli cmd [--apply] <command> [<arguments>]`: one command, in the
-/// window when it listens, else in a bibli of its own without a window. Its
+/// `skwir cmd [--apply] <command> [<arguments>]`: one command, in the
+/// window when it listens, else in a skwir of its own without a window. Its
 /// result as JSON on standard output; a plan printed, or applied with
 /// `--apply`. Exit code 0, 1 when the command failed, 2 for a wrong usage.
 fn cmd(args: &[OsString]) -> i32 {
@@ -75,7 +75,7 @@ fn cmd(args: &[OsString]) -> i32 {
     if let Some(text) = rest.get(1) {
         let Ok(Value::Object(given)) = serde_json::from_str::<Value>(&text.to_string_lossy())
         else {
-            eprintln!("bibli: the arguments are a JSON object\n{USAGE}");
+            eprintln!("skwir: the arguments are a JSON object\n{USAGE}");
             return 2;
         };
         arguments = given;
@@ -93,7 +93,7 @@ fn cmd(args: &[OsString]) -> i32 {
         _ => without_window(&name, arguments, mode),
     };
     // A command refused says why on standard error, whether the window or
-    // a bibli of its own refused it.
+    // a skwir of its own refused it.
     let answer = answer.and_then(|answer| match &answer.value {
         Value::Object(object) if answer.failed && object.len() == 1 => match object.get("error") {
             Some(Value::String(error)) => Err(anyhow::anyhow!("{error}")),
@@ -110,13 +110,13 @@ fn cmd(args: &[OsString]) -> i32 {
             i32::from(answer.failed)
         }
         Err(error) => {
-            eprintln!("bibli: {error:#}");
+            eprintln!("skwir: {error:#}");
             1
         }
     }
 }
 
-/// No window listens: `name` runs in a bibli of its own without a window,
+/// No window listens: `name` runs in a skwir of its own without a window,
 /// its plugins but those that would answer the desktop or listen
 /// themselves (agents and scripts, media controls).
 fn without_window(
@@ -126,11 +126,11 @@ fn without_window(
 ) -> anyhow::Result<Answer> {
     anyhow::ensure!(
         !name.starts_with("ui."),
-        "{name} acts on bibli's window: open bibli and turn on Agents and scripts in Settings, Plugins"
+        "{name} acts on skwir's window: open skwir and turn on Agents and scripts in Settings, Plugins"
     );
     let app = App::new(AppConfig::default())?;
     for plugin in crate::plugins() {
-        if !matches!(plugin.id(), bibli_plugin_control::ID | "mpris") {
+        if !matches!(plugin.id(), skwir_plugin_control::ID | "mpris") {
             app.plugins.add(plugin, &app);
         }
     }
@@ -138,5 +138,5 @@ fn without_window(
         name: name.into(),
         args: Value::Object(arguments),
     };
-    bibli_plugin_control::run(&app, &invocation, mode, &|| false)
+    skwir_plugin_control::run(&app, &invocation, mode, &|| false)
 }

@@ -1,4 +1,4 @@
-//! bibli plugin: XMP (ISO 16684-1), the one standard for a file's metadata
+//! skwir plugin: XMP (ISO 16684-1), the one standard for a file's metadata
 //! beside it or inside it (ADR-027). A sidecar is a notes store: read with
 //! the others, updated where it is, created only when the user asks
 //! (Notes page); it is a companion of its file (ADR-028), which it follows.
@@ -21,15 +21,15 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bibli_core::app::App;
-use bibli_core::cancel::CancelToken;
-use bibli_core::companions::Companion;
-use bibli_core::entry::Value;
-use bibli_core::fields::FieldProvider;
-use bibli_core::metadata::Listed;
-use bibli_core::notes::raw::{self, RawKey};
-use bibli_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote};
-use bibli_core::plugin::{Category, Plugin};
+use skwir_core::app::App;
+use skwir_core::cancel::CancelToken;
+use skwir_core::companions::Companion;
+use skwir_core::entry::Value;
+use skwir_core::fields::FieldProvider;
+use skwir_core::metadata::Listed;
+use skwir_core::notes::raw::{self, RawKey};
+use skwir_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote};
+use skwir_core::plugin::{Category, Plugin};
 
 pub(crate) const ID: &str = "xmp";
 
@@ -42,7 +42,7 @@ fn with_suffix(name: &OsStr, suffix: &str) -> OsString {
 /// A sidecar's text: a regular file of a sidecar's size at most, so a pipe
 /// or a giant named `x.xmp` holds nothing up.
 fn read(path: &Path) -> std::io::Result<String> {
-    bibli_platform::file::read_regular_text(path, bibli_platform::file::SIDE_FILE_LIMIT)
+    skwir_platform::file::read_regular_text(path, skwir_platform::file::SIDE_FILE_LIMIT)
 }
 
 /// `x.jpg.xmp`, the name everyone but Adobe gives a sidecar.
@@ -83,13 +83,13 @@ fn stem_shared(path: &Path) -> bool {
 /// XMP sidecars as a notes store.
 pub struct XmpStore {
     /// The `.xmp` files of a folder.
-    names: bibli_core::companions::FolderNames,
+    names: skwir_core::companions::FolderNames,
 }
 
 impl Default for XmpStore {
     fn default() -> Self {
         XmpStore {
-            names: bibli_core::companions::FolderNames::new(|name| {
+            names: skwir_core::companions::FolderNames::new(|name| {
                 is_sidecar(name).then(|| name.to_owned())
             }),
         }
@@ -209,7 +209,7 @@ impl NotesStore for XmpStore {
             Some(path) => {
                 let text = read(&path)?;
                 let Some(edited) = packet::edit(&text, notes) else {
-                    // Not XMP bibli can edit: left alone, the others kept.
+                    // Not XMP skwir can edit: left alone, the others kept.
                     tracing::debug!(path = %path.display(), "xmp: a sidecar left as it is");
                     return Ok(Wrote::NotHere);
                 };
@@ -292,7 +292,7 @@ impl FieldProvider for Embedded {
             .is_some_and(|e| EMBEDDING.iter().any(|x| x.eq_ignore_ascii_case(e)))
     }
     fn read(&self, _key: &str, path: &Path, cancel: &CancelToken) -> anyhow::Result<Option<Value>> {
-        let file = bibli_platform::file::open_regular(path)?;
+        let file = skwir_platform::file::open_regular(path)?;
         let mut bytes = Vec::new();
         file.take(SCANNED).read_to_end(&mut bytes)?;
         if cancel.is_cancelled() {
@@ -312,7 +312,7 @@ pub fn summary(notes: &Notes) -> Option<String> {
         parts.push(format!("Keywords {}", notes.tag_names().join(", ")));
     }
     if let Some(r) = notes.rating {
-        parts.push(bibli_core::notes::stars(r));
+        parts.push(skwir_core::notes::stars(r));
     }
     if let Some(c) = &notes.comment {
         parts.push(format!("“{c}”"));
@@ -337,9 +337,9 @@ impl Plugin for XmpPlugin {
     fn category(&self) -> Category {
         Category::Files
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Write])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Write])
     }
     fn register(&self, app: &App) {
         app.register_notes_store(ID, Arc::new(XmpStore::default()));

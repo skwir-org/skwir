@@ -1,6 +1,6 @@
 [package]
-name = "bibli-plugin-terminal"
-description = "bibli plugin: a terminal panel that follows the folder shown"
+name = "skwir-plugin-terminal"
+description = "skwir plugin: a terminal panel that follows the folder shown"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -8,8 +8,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
-bibli-platform.workspace = true
+skwir-core.workspace = true
+skwir-platform.workspace = true
 anyhow.workspace = true
 parking_lot.workspace = true
 rustix = { workspace = true, features = ["termios", "process"] }

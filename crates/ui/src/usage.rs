@@ -20,10 +20,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bibli_core::{EntryId, command::Invocation, os_path::PathArg};
-use bibli_platform::mime::Kind;
 use gpui::{AnyElement, Context, MouseButton, Window, div, prelude::*, px};
 use serde::{Deserialize, Serialize};
+use skwir_core::{EntryId, command::Invocation, os_path::PathArg};
+use skwir_platform::mime::Kind;
 
 use crate::elements::treemap::{Laidout, TreemapItem, TreemapStyle, treemap};
 use crate::treemap::{Toward, neighbour};
@@ -188,7 +188,7 @@ pub struct UsageState {
     /// it as the map reflows.
     hover: Option<Part>,
     root: Option<PathBuf>,
-    location_lifetime: Option<bibli_core::CancelToken>,
+    location_lifetime: Option<skwir_core::CancelToken>,
     /// The plugin's descriptor revision, captured once per registration so
     /// frames read one atomic instead of querying the registry.
     source: Option<Arc<AtomicU64>>,
@@ -212,21 +212,21 @@ impl Shell {
             .workspace
             .read()
             .pane(self.pane)
-            .and_then(|p| p.location().and_then(bibli_core::Location::path));
+            .and_then(|p| p.location().and_then(skwir_core::Location::path));
         if self.ui().usage.root != dir
             || self
                 .ui()
                 .usage
                 .location_lifetime
                 .as_ref()
-                .is_some_and(bibli_core::CancelToken::is_cancelled)
+                .is_some_and(skwir_core::CancelToken::is_cancelled)
         {
             let location_lifetime = self
                 .app
                 .workspace
                 .read()
                 .pane(self.pane)
-                .map(bibli_core::workspace::Pane::location_lifetime);
+                .map(skwir_core::workspace::Pane::location_lifetime);
             self.ui_mut().usage = UsageState {
                 root: dir.clone(),
                 location_lifetime,
@@ -1189,7 +1189,7 @@ mod tests {
     fn node(path: &str, alloc: u64, is_dir: bool, children: Vec<Node>) -> Node {
         Node {
             id: Some(EntryId {
-                file: bibli_core::FileId { dev: 1, ino: alloc },
+                file: skwir_core::FileId { dev: 1, ino: alloc },
                 at: 0,
             }),
             name: path.rsplit('/').next().unwrap().to_owned(),
@@ -1279,7 +1279,7 @@ mod tests {
         assert_eq!(
             mkv.entry,
             Some(EntryId {
-                file: bibli_core::FileId { dev: 1, ino: 500 },
+                file: skwir_core::FileId { dev: 1, ino: 500 },
                 at: 0
             })
         );

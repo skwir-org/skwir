@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn a_name_taken_in_the_trash_is_followed_by_a_number() {
-        let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         let tmp = tempfile::tempdir_in(base).unwrap();
         let trash = tmp.path().join("Trash");

@@ -1,0 +1,277 @@
+[package]
+name = "skwir"
+# What the packages say of it (ADR-040): the binary wires core, the
+# plugins and the UI shell.
+description = "An experimental file manager, GPU-drawn, for people, scripts and agents"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "skwir"
+path = "src/main.rs"
+
+[features]
+default = ["mimalloc"]
+# The tuned mimalloc of ADR-011; build without it to profile with heaptrack.
+mimalloc = ["skwir-alloc/mimalloc"]
+
+[dependencies]
+skwir-alloc.workspace = true
+skwir-core.workspace = true
+skwir-platform.workspace = true
+skwir-plugin-places.workspace = true
+skwir-plugin-open-with.workspace = true
+skwir-plugin-ops-basic.workspace = true
+skwir-plugin-thumbnails.workspace = true
+skwir-plugin-timeline.workspace = true
+skwir-plugin-usage.workspace = true
+skwir-plugin-shell.workspace = true
+skwir-plugin-tags.workspace = true
+skwir-plugin-xmp.workspace = true
+skwir-plugin-tagspaces.workspace = true
+skwir-plugin-name-tags.workspace = true
+skwir-plugin-jump.workspace = true
+skwir-plugin-edit-as-buffer.workspace = true
+skwir-plugin-rename-bulk.workspace = true
+skwir-plugin-shelf.workspace = true
+skwir-plugin-trash.workspace = true
+skwir-plugin-query.workspace = true
+skwir-plugin-preview-media.workspace = true
+skwir-plugin-preview-hex.workspace = true
+skwir-plugin-preview-markdown.workspace = true
+skwir-plugin-preview-archives.workspace = true
+skwir-plugin-preview-epub.workspace = true
+skwir-plugin-preview-tables.workspace = true
+skwir-plugin-preview-playlists.workspace = true
+skwir-plugin-mpris.workspace = true
+skwir-plugin-control.workspace = true
+skwir-extend.workspace = true
+skwir-plugin-preview-structured.workspace = true
+skwir-plugin-preview-fonts.workspace = true
+skwir-plugin-preview-models.workspace = true
+skwir-plugin-preview-circuits.workspace = true
+skwir-plugin-preview-email.workspace = true
+skwir-plugin-preview-comics.workspace = true
+skwir-plugin-preview-documents.workspace = true
+skwir-plugin-terminal.workspace = true
+skwir-plugin-geo.workspace = true
+skwir-plugin-map-tiles.workspace = true
+skwir-plugin-vim.workspace = true
+skwir-ui.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+toml.workspace = true
+skwir-core = { workspace = true, features = ["testing"] }
+proptest.workspace = true
+tempfile.workspace = true
+dirs.workspace = true
+serde_json.workspace = true
+
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+
+# The Linux packages (ADR-040, ADR-041): skwir in /usr/bin, its helpers
+# where a distribution keeps a program's own (`process::helper_folders`),
+# PDFium beside its helper, the desktop entry and the metainfo. Built on
+# the distribution each is for, whose libraries they depend on:
+# tools/package/deb.sh, rpm.sh, and the AUR's tools/package/aur/PKGBUILD,
+# which lists the same files. A helper whose libraries most systems do
+# not need (GStreamer, Poppler), or that few want (Mermaid, MuPDF), is a
+# package of its own, recommended or suggested: the tools find what each
+# program links, so no list of library packages is kept by hand.
+
+# Debian and Ubuntu (cargo-deb). Beside what the programs link ($auto),
+# what skwir opens at run time: the Vulkan loader and fontconfig.
+[package.metadata.deb]
+maintainer = "The skwir authors"
+copyright = "The skwir authors"
+profile = "dist"
+section = "utils"
+priority = "optional"
+extended-description = """\
+An experimental file manager, drawn by the GPU, built to be driven by \
+people, scripts and agents alike: lists, grids and columns that stay \
+responsive on very large folders, previews of documents, pictures, \
+music, films, archives and maps, tags kept on the files themselves, \
+and every change undoable."""
+depends = "$auto, libvulkan1, libfontconfig1"
+recommends = "skwir-media, mesa-vulkan-drivers, bubblewrap, udisks2"
+suggests = "skwir-poppler, skwir-mermaid, skwir-mupdf, poppler-utils, libreoffice-writer, libreoffice-calc, libreoffice-impress, pandoc, imagemagick, ffmpeg, libimage-exiftool-perl, plocate"
+assets = [
+    ["target/release/skwir", "usr/bin/", "755"],
+    ["target/release/skwir-pdf-worker", "usr/lib/skwir/", "755"],
+    ["target/release/skwir-archive-worker", "usr/lib/skwir/", "755"],
+    ["target/release/skwir-model-worker", "usr/lib/skwir/", "755"],
+    ["target/release/skwir-module-worker", "usr/lib/skwir/", "755"],
+    ["../../target/pdfium/libpdfium.so", "usr/lib/skwir/", "644"],
+    ["../../target/pdfium/licenses/pdfium/*", "usr/share/doc/skwir/pdfium/", "644"],
+    ["../../tools/package/linux/org.skwir.skwir.desktop", "usr/share/applications/", "644"],
+    ["../../tools/package/linux/org.skwir.skwir.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["../../tools/package/linux/copyright", "usr/share/doc/skwir/copyright", "644"],
+    ["../../target/notices/skwir/THIRD-PARTY-NOTICES", "usr/share/doc/skwir/", "644"],
+    ["../../README.md", "usr/share/doc/skwir/", "644"],
+]
+
+[package.metadata.deb.variants.media]
+name = "skwir-media"
+extended-description = "skwir's audio and video player, through GStreamer."
+depends = "$auto, skwir"
+recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good"
+suggests = "gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav"
+assets = [
+    ["target/release/skwir-media-worker", "usr/lib/skwir/", "755"],
+    ["../../target/notices/skwir-media/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-media/", "644"],
+]
+
+[package.metadata.deb.variants.poppler]
+name = "skwir-poppler"
+extended-description = "skwir's PDF reader through Poppler, beside the PDFium one skwir carries."
+depends = "$auto, skwir"
+recommends = ""
+suggests = ""
+assets = [
+    ["target/release/skwir-poppler-worker", "usr/lib/skwir/", "755"],
+    ["../../tools/package/linux/copyright-poppler", "usr/share/doc/skwir-poppler/copyright", "644"],
+    ["../../target/notices/skwir-poppler/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-poppler/", "644"],
+]
+
+[package.metadata.deb.variants.mermaid]
+name = "skwir-mermaid"
+extended-description = "Mermaid diagrams drawn in skwir's Markdown previews."
+depends = "$auto, skwir"
+recommends = ""
+suggests = ""
+assets = [
+    ["target/release/skwir-mermaid-worker", "usr/lib/skwir/", "755"],
+    ["../../target/notices/skwir-mermaid/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-mermaid/", "644"],
+]
+
+[package.metadata.deb.variants.mupdf]
+name = "skwir-mupdf"
+extended-description = "skwir's MuPDF engine: PDFs, and books laid out into pages."
+depends = "$auto, skwir"
+recommends = ""
+suggests = ""
+assets = [
+    ["target/release/skwir-mupdf-worker", "usr/lib/skwir/", "755"],
+    ["../../tools/package/linux/copyright-mupdf", "usr/share/doc/skwir-mupdf/copyright", "644"],
+    ["../../target/notices/skwir-mupdf/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-mupdf/", "644"],
+]
+
+# Fedora, openSUSE and the others that install RPMs (cargo-generate-rpm):
+# helpers, and PDFium beside its own, in /usr/libexec/skwir. Beside what
+# the programs link (auto-req), what skwir opens at run time: the Vulkan
+# loader and fontconfig.
+[package.metadata.generate-rpm]
+# skwir's own, and PDFium's (its parts' notices in
+# /usr/share/licenses/skwir/pdfium). The licences are plain files, not
+# documents, so a system installed without documents (`tsflags=nodocs`,
+# as container images are) keeps them: cargo-generate-rpm cannot mark a
+# file %license. Fedora keeps no common licence texts, so each package
+# holds its own: skwir's, and the GPL's or the AGPL's for the readers
+# that link Poppler or MuPDF (the FSF's texts, tools/package/licenses).
+license = "Apache-2.0 AND BSD-3-Clause"
+url = "https://skwir.org"
+auto-req = "auto"
+assets = [
+    { source = "target/release/skwir", dest = "/usr/bin/skwir", mode = "755" },
+    { source = "target/release/skwir-pdf-worker", dest = "/usr/libexec/skwir/skwir-pdf-worker", mode = "755" },
+    { source = "target/release/skwir-archive-worker", dest = "/usr/libexec/skwir/skwir-archive-worker", mode = "755" },
+    { source = "target/release/skwir-model-worker", dest = "/usr/libexec/skwir/skwir-model-worker", mode = "755" },
+    { source = "target/release/skwir-module-worker", dest = "/usr/libexec/skwir/skwir-module-worker", mode = "755" },
+    { source = "../../target/pdfium/libpdfium.so", dest = "/usr/libexec/skwir/libpdfium.so", mode = "755" },
+    { source = "../../target/pdfium/licenses/pdfium/*", dest = "/usr/share/licenses/skwir/pdfium/", mode = "644" },
+    { source = "../../tools/package/linux/org.skwir.skwir.desktop", dest = "/usr/share/applications/org.skwir.skwir.desktop", mode = "644" },
+    { source = "../../tools/package/linux/org.skwir.skwir.metainfo.xml", dest = "/usr/share/metainfo/org.skwir.skwir.metainfo.xml", mode = "644" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/skwir/LICENSE", mode = "644" },
+    { source = "../../target/notices/skwir/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir/THIRD-PARTY-NOTICES", mode = "644" },
+    { source = "../../README.md", dest = "/usr/share/doc/skwir/README.md", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+vulkan-loader = "*"
+fontconfig = "*"
+
+[package.metadata.generate-rpm.recommends]
+skwir-media = "*"
+mesa-vulkan-drivers = "*"
+bubblewrap = "*"
+udisks2 = "*"
+
+[package.metadata.generate-rpm.suggests]
+skwir-poppler = "*"
+skwir-mermaid = "*"
+skwir-mupdf = "*"
+poppler-utils = "*"
+libreoffice-writer = "*"
+libreoffice-calc = "*"
+libreoffice-impress = "*"
+pandoc = "*"
+ImageMagick = "*"
+ffmpeg-free = "*"
+perl-Image-ExifTool = "*"
+plocate = "*"
+
+[package.metadata.generate-rpm.variants.media]
+name = "skwir-media"
+license = "Apache-2.0"
+summary = "skwir's audio and video player, through GStreamer"
+assets = [
+    { source = "target/release/skwir-media-worker", dest = "/usr/libexec/skwir/skwir-media-worker", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-media/LICENSE", mode = "644" },
+    { source = "../../target/notices/skwir-media/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-media/THIRD-PARTY-NOTICES", mode = "644" },
+]
+requires = { skwir = "*" }
+recommends = { gstreamer1-plugins-base = "*", gstreamer1-plugins-good = "*" }
+suggests = { gstreamer1-plugins-bad-free = "*", gstreamer1-plugins-ugly-free = "*", gstreamer1-plugin-libav = "*" }
+
+[package.metadata.generate-rpm.variants.poppler]
+name = "skwir-poppler"
+summary = "skwir's PDF reader through Poppler"
+license = "GPL-3.0-only"
+assets = [
+    { source = "target/release/skwir-poppler-worker", dest = "/usr/libexec/skwir/skwir-poppler-worker", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-poppler/LICENSE", mode = "644" },
+    { source = "../../target/notices/skwir-poppler/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-poppler/THIRD-PARTY-NOTICES", mode = "644" },
+    { source = "../../tools/package/licenses/GPL-3.0", dest = "/usr/share/licenses/skwir-poppler/GPL-3.0", mode = "644" },
+]
+requires = { skwir = "*" }
+recommends = {}
+suggests = {}
+
+[package.metadata.generate-rpm.variants.mermaid]
+name = "skwir-mermaid"
+license = "Apache-2.0"
+summary = "Mermaid diagrams drawn in skwir's Markdown previews"
+assets = [
+    { source = "target/release/skwir-mermaid-worker", dest = "/usr/libexec/skwir/skwir-mermaid-worker", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-mermaid/LICENSE", mode = "644" },
+    { source = "../../target/notices/skwir-mermaid/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-mermaid/THIRD-PARTY-NOTICES", mode = "644" },
+]
+requires = { skwir = "*" }
+recommends = {}
+suggests = {}
+
+[package.metadata.generate-rpm.variants.mupdf]
+name = "skwir-mupdf"
+summary = "skwir's MuPDF engine: PDFs, and books laid out into pages"
+license = "AGPL-3.0-or-later"
+assets = [
+    { source = "target/release/skwir-mupdf-worker", dest = "/usr/libexec/skwir/skwir-mupdf-worker", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-mupdf/LICENSE", mode = "644" },
+    { source = "../../target/notices/skwir-mupdf/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-mupdf/THIRD-PARTY-NOTICES", mode = "644" },
+    { source = "../../tools/package/licenses/AGPL-3.0", dest = "/usr/share/licenses/skwir-mupdf/AGPL-3.0", mode = "644" },
+]
+requires = { skwir = "*" }
+recommends = {}
+suggests = {}

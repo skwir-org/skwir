@@ -1,4 +1,4 @@
-//! bibli plugin: open-with. Opens entries with the default application,
+//! skwir plugin: open-with. Opens entries with the default application,
 //! enters directories, opens a terminal in the current directory, and opens
 //! files or folders with an application the user chooses.
 //!
@@ -12,25 +12,25 @@
 //! the applications for the selection, each choice an `open_with` that
 //! names its application, pane and entries. The desktop's catalog of
 //! applications is read on a worker and kept until an install or a changed
-//! default makes it stale (`bibli_platform::apps::Stamp`).
+//! default makes it stale (`skwir_platform::apps::Stamp`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use bibli_core::app::{App, NotifyLevel, PaneArg};
-use bibli_core::cancel::CancelToken;
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::{EntryId, EntryKind};
-use bibli_core::location::Location;
-use bibli_core::os_path::PathArg;
-use bibli_core::plugin::Plugin;
-use bibli_core::registry::{KeyBinding, MenuItem, MenuSource};
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
-use bibli_platform::apps::{Application, AssociationEdit, Catalog, Stamp};
-use bibli_platform::mime::{self, Mime};
 use parking_lot::Mutex;
+use skwir_core::app::{App, NotifyLevel, PaneArg};
+use skwir_core::cancel::CancelToken;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::entry::{EntryId, EntryKind};
+use skwir_core::location::Location;
+use skwir_core::os_path::PathArg;
+use skwir_core::plugin::Plugin;
+use skwir_core::registry::{KeyBinding, MenuItem, MenuSource};
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
+use skwir_platform::apps::{Application, AssociationEdit, Catalog, Stamp};
+use skwir_platform::mime::{self, Mime};
 
 const ID: &str = "open-with";
 
@@ -79,7 +79,7 @@ impl CatalogCache {
     fn user_lists(&self) -> Vec<PathBuf> {
         match &self.sources {
             Some((_, lists)) => lists.clone(),
-            None => bibli_platform::apps::user_lists(),
+            None => skwir_platform::apps::user_lists(),
         }
     }
 }
@@ -99,7 +99,7 @@ struct OpenArgs {
     ids: Vec<EntryId>,
     /// Files to open, by absolute path, instead of a pane's entries.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
 }
 
 fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
@@ -224,7 +224,7 @@ fn launch_defaults(app: &App, cache: &Cached, targets: Vec<Target>) {
                 .to_string_lossy();
             app.notify(
                 NotifyLevel::Info,
-                format!("“{name}” is not a file: bibli does not open it"),
+                format!("“{name}” is not a file: skwir does not open it"),
             );
             continue;
         }
@@ -242,7 +242,7 @@ fn launch_defaults(app: &App, cache: &Cached, targets: Vec<Target>) {
         .map(|(application, paths)| application.launch(paths))
         .chain(
             rest.iter()
-                .map(|path| bibli_platform::open::open_path(path)),
+                .map(|path| skwir_platform::open::open_path(path)),
         );
     for e in started.filter_map(Result::err) {
         app.notify(NotifyLevel::Error, format!("{e:#}"));
@@ -271,7 +271,7 @@ fn target_dir(pane: PaneId, app: &App) -> anyhow::Result<std::path::PathBuf> {
 
 fn open_terminal(pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
     let dir = target_dir(app.pane_or_active(pane), app)?;
-    bibli_platform::open::open_terminal(&dir)?;
+    skwir_platform::open::open_terminal(&dir)?;
     Ok(Outcome::Done)
 }
 
@@ -391,7 +391,7 @@ struct TargetArgs {
     ids: Vec<EntryId>,
     /// Files to open, by absolute path, instead of a pane's entries.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     /// The pane's folder itself, not entries in it.
     #[serde(default)]
     here: bool,
@@ -439,7 +439,7 @@ struct EditArgs {
 struct Target {
     path: PathBuf,
     kind: EntryKind,
-    entry: Option<bibli_core::Entry>,
+    entry: Option<skwir_core::Entry>,
 }
 
 /// The pane the targets are in, the entries named (for the command a
@@ -489,11 +489,11 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
 
 /// Files named by path (a script's, an agent's), as a listing would show
 /// them: read now, on the thread of whoever named them.
-fn named_targets(entries: Vec<bibli_core::op::EntryArg>) -> anyhow::Result<Vec<Target>> {
-    bibli_core::op::EntryArg::refs(entries)?
+fn named_targets(entries: Vec<skwir_core::op::EntryArg>) -> anyhow::Result<Vec<Target>> {
+    skwir_core::op::EntryArg::refs(entries)?
         .into_iter()
         .map(|r| {
-            let entry = bibli_core::fs::stat_path(&r.path)
+            let entry = skwir_core::fs::stat_path(&r.path)
                 .ok_or_else(|| anyhow::anyhow!("{} does not exist", r.path.display()))?;
             Ok(Target {
                 path: r.path,
@@ -509,7 +509,7 @@ impl Target {
     /// it opens says; reads the head of a file: call from a worker.
     fn mime(&self) -> Mime {
         match &self.entry {
-            Some(entry) => bibli_platform::apps::type_of(entry, &self.path),
+            Some(entry) => skwir_platform::apps::type_of(entry, &self.path),
             None => Mime("inode/directory".into()),
         }
     }
@@ -758,7 +758,7 @@ fn make_default(app: &App, cache: &Cached, mime: &str, id: &str) {
 /// or Redo when this was an undo. On a worker.
 fn apply_edit(app: &App, cache: &Cached, edit: &AssociationEdit, undo: bool) {
     let files = files_of(&edit.mime);
-    match bibli_platform::apps::edit_associations(edit) {
+    match skwir_platform::apps::edit_associations(edit) {
         Ok(changed) => {
             let catalog = catalog(cache);
             // What opens the type now, named or not: an undo may leave
@@ -821,13 +821,13 @@ impl Plugin for OpenWithPlugin {
         "Open files with their default application or one you choose, and open a terminal here"
     }
 
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Desktop
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Desktop
     }
 
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Programs])
     }
     fn register(&self, app: &App) {
         let cache = Arc::clone(&self.catalog);
@@ -985,7 +985,7 @@ impl Plugin for OpenWithPlugin {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
-    use bibli_core::app::AppConfig;
+    use skwir_core::app::AppConfig;
     use std::time::Duration;
 
     #[test]
@@ -1045,7 +1045,7 @@ mod tests {
         let args = TargetArgs {
             pane: None,
             ids: Vec::new(),
-            entries: vec![bibli_core::op::EntryArg::Path(root.join("x.png").into())],
+            entries: vec![skwir_core::op::EntryArg::Path(root.join("x.png").into())],
             here: false,
         };
         let (_, _, named) = targets(args, &app).unwrap();
@@ -1504,7 +1504,7 @@ mod tests {
     }
 
     /// The next notification, waiting for a worker to send it.
-    fn next_notification(app: &App) -> bibli_core::app::Notification {
+    fn next_notification(app: &App) -> skwir_core::app::Notification {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(n) = app.take_notifications().into_iter().next() {

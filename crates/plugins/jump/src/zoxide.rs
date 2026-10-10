@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-use bibli_core::CancelToken;
+use skwir_core::CancelToken;
 
 /// A directory zoxide knows, with its score.
 #[derive(Clone, Debug, PartialEq)]
@@ -25,7 +25,7 @@ pub fn parse(output: &[u8]) -> Vec<ZEntry> {
             let path = line[space..].trim_ascii_start();
             (!path.is_empty()).then(|| ZEntry {
                 score,
-                path: PathBuf::from(bibli_core::os_path::from_bytes(path.to_vec())),
+                path: PathBuf::from(skwir_core::os_path::from_bytes(path.to_vec())),
             })
         })
         .collect()
@@ -34,12 +34,12 @@ pub fn parse(output: &[u8]) -> Vec<ZEntry> {
 /// Ask zoxide, if it is installed. Worker-only: this runs a process. A
 /// missing binary, a failure or a timeout yields an empty list.
 pub fn query(cancel: &CancelToken) -> Vec<ZEntry> {
-    let Some(zoxide) = bibli_core::os_path::find_program("zoxide") else {
+    let Some(zoxide) = skwir_core::os_path::find_program("zoxide") else {
         return Vec::new();
     };
     let mut command = Command::new(zoxide);
     command.args(["query", "--list", "--score"]);
-    match bibli_platform::process::run(&mut command, cancel, Duration::from_secs(5)) {
+    match skwir_platform::process::run(&mut command, cancel, Duration::from_secs(5)) {
         Ok(out) => parse(&out),
         Err(e) => {
             tracing::debug!("zoxide: {e:#}");

@@ -33,9 +33,9 @@
 
 use std::path::Path;
 
-use bibli_core::metadata::same_tag;
-use bibli_core::notes::raw::RawKey;
-use bibli_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag as NoteTag, Write, Wrote};
+use skwir_core::metadata::same_tag;
+use skwir_core::notes::raw::RawKey;
+use skwir_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag as NoteTag, Write, Wrote};
 
 /// The attributes' names on a Mac.
 pub const TAGS: &str = "com.apple.metadata:_kMDItemUserTags";
@@ -156,7 +156,7 @@ pub fn encode(tags: &[Tag], framing: Framing) -> Vec<u8> {
     out
 }
 
-/// The palette index (`bibli_core::metadata::TAG_COLORS`) of a Finder
+/// The palette index (`skwir_core::metadata::TAG_COLORS`) of a Finder
 /// color digit: 1 gray, 2 green, 3 purple, 4 blue, 5 yellow, 6 red,
 /// 7 orange. Gray has no counterpart and draws as the name's color.
 pub fn palette(digit: u8) -> Option<usize> {
@@ -169,7 +169,7 @@ pub fn palette(digit: u8) -> Option<usize> {
         7 => "orange",
         _ => return None,
     };
-    bibli_core::metadata::TAG_COLORS
+    skwir_core::metadata::TAG_COLORS
         .iter()
         .position(|c| *c == name)
 }
@@ -181,7 +181,7 @@ pub fn read(path: &Path, names: &[String]) -> Vec<(String, Framing, Vec<Tag>)> {
         .iter()
         .filter_map(|name| {
             let framing = framing(name)?;
-            let value = bibli_core::fs::xattr::get_deref(path, name)
+            let value = skwir_core::fs::xattr::get_deref(path, name)
                 .ok()
                 .flatten()?;
             Some((name.clone(), framing, parse(&value, framing)?))
@@ -191,14 +191,14 @@ pub fn read(path: &Path, names: &[String]) -> Vec<(String, Framing, Vec<Tag>)> {
 
 /// The Finder digit of a palette color: the one [`palette`] maps to it.
 pub fn digit(color: &str) -> Option<u8> {
-    (2..=7).find(|d| palette(*d).map(|i| bibli_core::metadata::TAG_COLORS[i]) == Some(color))
+    (2..=7).find(|d| palette(*d).map(|i| skwir_core::metadata::TAG_COLORS[i]) == Some(color))
 }
 
 /// A Finder list of tags as the model's: a digit becomes a palette color.
 pub fn to_notes(tags: Vec<Tag>) -> Vec<NoteTag> {
     tags.into_iter()
         .map(|t| NoteTag {
-            color: palette(t.color).map(|i| bibli_core::metadata::TAG_COLORS[i].to_owned()),
+            color: palette(t.color).map(|i| skwir_core::metadata::TAG_COLORS[i].to_owned()),
             name: t.name,
         })
         .collect()
@@ -326,7 +326,7 @@ impl NotesStore for FinderStore {
         &self,
         _dir: &Path,
         files: &[Probe<'_>],
-        _: Option<&bibli_core::metadata::Listed<'_>>,
+        _: Option<&skwir_core::metadata::Listed<'_>>,
     ) -> Vec<Option<Notes>> {
         files
             .iter()
@@ -340,7 +340,7 @@ impl NotesStore for FinderStore {
                     .filter_map(|(linux, mac, framing)| {
                         Some((
                             mac,
-                            bibli_core::fs::xattr::get_deref(f.path, &linux).ok()??,
+                            skwir_core::fs::xattr::get_deref(f.path, &linux).ok()??,
                             framing,
                         ))
                     })
@@ -373,16 +373,16 @@ impl NotesStore for FinderStore {
         let mut changed = false;
         let mut kept = false;
         let mut set = |name: &str, value: Option<Vec<u8>>| -> std::io::Result<()> {
-            let now = bibli_core::fs::xattr::get_deref(file.path, name)
+            let now = skwir_core::fs::xattr::get_deref(file.path, name)
                 .ok()
                 .flatten();
             if now == value {
                 return Ok(());
             }
             match value {
-                Some(value) => bibli_core::fs::xattr::set_deref(file.path, name, &value)?,
-                None => match bibli_core::fs::xattr::remove_deref(file.path, name) {
-                    Err(e) if bibli_core::fs::xattr::missing(&e) => {}
+                Some(value) => skwir_core::fs::xattr::set_deref(file.path, name, &value)?,
+                None => match skwir_core::fs::xattr::remove_deref(file.path, name) {
+                    Err(e) if skwir_core::fs::xattr::missing(&e) => {}
                     r => r?,
                 },
             }
@@ -395,7 +395,7 @@ impl NotesStore for FinderStore {
             match mac.as_str() {
                 TAGS => {
                     has_tags = true;
-                    let theirs = bibli_core::fs::xattr::get_deref(file.path, linux)
+                    let theirs = skwir_core::fs::xattr::get_deref(file.path, linux)
                         .ok()
                         .flatten()
                         .and_then(|v| parse(&v, *framing))
@@ -420,7 +420,7 @@ impl NotesStore for FinderStore {
                 Some(encode(&from_notes(notes, &[]), Framing::Plain)),
             ) {
                 Ok(()) => kept = true,
-                Err(e) if bibli_core::fs::xattr::refused(&e) => {}
+                Err(e) if skwir_core::fs::xattr::refused(&e) => {}
                 Err(e) => return Err(e),
             }
         }
@@ -527,7 +527,7 @@ mod tests {
             assert_eq!(parse(&bytes, framing).as_ref(), Some(&tags));
         }
         assert_eq!(
-            palette(6).map(|i| bibli_core::metadata::TAG_COLORS[i]),
+            palette(6).map(|i| skwir_core::metadata::TAG_COLORS[i]),
             Some("red")
         );
         assert_eq!(palette(1), None, "gray has no counterpart");

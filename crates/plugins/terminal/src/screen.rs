@@ -6,7 +6,7 @@ use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::{Flags, Hyperlink};
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{self, CursorShape as Shape, NamedColor};
-use bibli_core::terminal::{
+use skwir_core::terminal::{
     Attrs, Color, Cursor, CursorShape, Link, Palette, Rgb, Run, Screen, Selection, Style,
 };
 

@@ -1,10 +1,10 @@
 //! `GeoJSON` (RFC 7946): features and bare geometries. Lines are routes
 //! unless their feature gives each point a time (`coordTimes`, which
 //! converters from GPX and KML write), and then they are tracks.
-use bibli_core::CancelToken;
-use bibli_core::geo::{Area, Datum, LatLon, LineKind, Point, Waypoint, WaypointKind};
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value};
+use skwir_core::CancelToken;
+use skwir_core::geo::{Area, Datum, LatLon, LineKind, Point, Waypoint, WaypointKind};
 
 use crate::collect::{self, Collector};
 
@@ -77,7 +77,7 @@ pub fn read(bytes: &[u8], into: &mut Collector, cancel: &CancelToken) -> anyhow:
     let rest = match rest {
         Ok(rest) => rest,
         Err(_) if reading.cancelled => {
-            bibli_platform::inspection::check(cancel)?;
+            skwir_platform::inspection::check(cancel)?;
             anyhow::bail!("preview cancelled")
         }
         Err(error) => anyhow::bail!("Not valid GeoJSON: {error}"),

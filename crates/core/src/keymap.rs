@@ -37,7 +37,7 @@ pub fn declare(settings: &Settings, app: std::sync::Weak<crate::App>) {
         SettingSpec::records(
             BINDINGS_KEY,
             "Your shortcuts",
-            "Keys you bind, over the ones bibli and its plugins set. Leave the command empty to free a key.",
+            "Keys you bind, over the ones skwir and its plugins set. Leave the command empty to free a key.",
             "shortcut",
             vec![
                 RecordField::text(

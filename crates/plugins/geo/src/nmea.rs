@@ -13,9 +13,9 @@
 use std::io::BufRead;
 use std::time::{Duration, SystemTime};
 
-use bibli_core::CancelToken;
-use bibli_core::geo::{Datum, LatLon, LineKind, Point};
 use jiff::civil::Date;
+use skwir_core::CancelToken;
+use skwir_core::geo::{Datum, LatLon, LineKind, Point};
 
 use crate::collect::{self, Collector};
 use crate::xml::Damaged;

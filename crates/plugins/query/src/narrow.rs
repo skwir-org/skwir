@@ -9,9 +9,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bibli_core::command::Invocation;
-use bibli_core::entry::Entry;
-use bibli_core::workspace::{Narrowed, Pill};
+use skwir_core::command::Invocation;
+use skwir_core::entry::Entry;
+use skwir_core::workspace::{Narrowed, Pill};
 
 use crate::facets;
 use crate::lang::{self, Candidate, Expr, Verdict};

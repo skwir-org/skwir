@@ -76,14 +76,14 @@ def check_book(worker, root, environment):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--worker", type=Path, default=Path("target/release/bibli-pdf-worker"))
+    parser.add_argument("--worker", type=Path, default=Path("target/release/skwir-pdf-worker"))
     parser.add_argument("--library", type=Path)
     parser.add_argument("--engine", choices=["pdfium", "poppler", "mupdf"], default="pdfium")
     args = parser.parse_args()
     environment = dict(os.environ)
     if args.library:
-        environment["BIBLI_PDFIUM_LIBRARY"] = str(args.library.resolve())
-    with tempfile.TemporaryDirectory(prefix="bibli-reader-check-") as directory:
+        environment["SKWIR_PDFIUM_LIBRARY"] = str(args.library.resolve())
+    with tempfile.TemporaryDirectory(prefix="skwir-reader-check-") as directory:
         root = Path(directory)
         pdf = root / "Synthetic reader's document.pdf"
         for angle in (0, 90, 180, 270):
@@ -170,7 +170,7 @@ def main():
             process.stdin.close()
             assert process.wait(timeout=5) == 0
         if args.engine == "pdfium":
-            missing = dict(environment, BIBLI_PDFIUM_LIBRARY=str(root / "missing-library"))
+            missing = dict(environment, SKWIR_PDFIUM_LIBRARY=str(root / "missing-library"))
             assert "Unavailable" in json.loads(subprocess.check_output(command, env=missing, text=True))["body"]
         if args.engine == "mupdf":
             check_book(args.worker.resolve(), root, environment)

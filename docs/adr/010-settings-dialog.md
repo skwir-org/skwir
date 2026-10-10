@@ -80,7 +80,7 @@ and video play. A preference now goes where its subject is:
   `printed_pages`) is the Reading page: the reader and reading mode serve
   the documents, EPUB, comics and Markdown plugins, and none of them
   switched off may take the others' preferences with it.
-- `ui.*` is Appearance, only how bibli looks; `core.*` is General.
+- `ui.*` is Appearance, only how skwir looks; `core.*` is General.
 
 A moved key keeps the user's value: its owner calls
 `Settings::rename(old, new)` before declaring it, which moves a stored
@@ -112,7 +112,7 @@ dialog must not learn a key's meaning to draw it.
   only the owner knows (a tile address needs `{z}`, `{x}` and `{y}`).
 - **A secret never reaches the settings file.** A secret field holds only
   `SECRET_STORED` or nothing, and the save refuses anything else. The
-  secret itself goes to the desktop's keyring (`bibli_platform::secrets`,
+  secret itself goes to the desktop's keyring (`skwir_platform::secrets`,
   oo7, the client gpui already links; on a worker, since the keyring may
   ask to be unlocked), found by the setting, the record's id and the
   field. The dialog validates the whole list first, then stores a new

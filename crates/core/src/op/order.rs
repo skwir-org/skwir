@@ -155,7 +155,7 @@ pub fn order_renames(
             .to_path_buf();
         let parked = loop {
             serial += 1;
-            let candidate = dir.join(format!(".bibli-rename-{serial}"));
+            let candidate = dir.join(format!(".skwir-rename-{serial}"));
             if !taken.contains(&candidate) && !exists(&candidate) {
                 break candidate;
             }
@@ -234,9 +234,9 @@ mod tests {
             request(5, "/d/y", "x"),
         ];
         // The first temporary name is taken by an unrelated file.
-        let steps = order_renames(&requests, |p| p == Path::new("/d/.bibli-rename-1")).unwrap();
+        let steps = order_renames(&requests, |p| p == Path::new("/d/.skwir-rename-1")).unwrap();
         assert_eq!(steps.len(), 7, "one parking step per cycle");
-        assert!(steps.iter().all(|s| s.new_name != ".bibli-rename-1"));
+        assert!(steps.iter().all(|s| s.new_name != ".skwir-rename-1"));
         expect_final(&requests, &simulate(&requests, &steps));
     }
 

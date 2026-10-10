@@ -7,12 +7,12 @@ mod common;
 use std::path::Path;
 use std::time::Duration;
 
-use bibli_core::App;
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::location::Location;
-use bibli_core::tabs::{LAST_TABS, SavedTabs};
-use bibli_core::workspace::{PaneId, TabId};
 use common::{active, app, home_tempdir, navigate, select};
+use skwir_core::App;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::location::Location;
+use skwir_core::tabs::{LAST_TABS, SavedTabs};
+use skwir_core::workspace::{PaneId, TabId};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -264,7 +264,7 @@ fn folders_open_behind_the_shown_tab_in_the_order_they_were_opened() {
     let error = app
         .dispatch(&Invocation::new("tab.open"))
         .expect_err("no folder selected");
-    assert!(bibli_core::command::is_nothing_selected(&error));
+    assert!(skwir_core::command::is_nothing_selected(&error));
 }
 
 #[test]
@@ -321,12 +321,12 @@ fn the_window_tabs_come_back_dormant_but_the_one_shown() {
     // Only a window that comes back to where it was restores its tabs.
     let settings = &app.settings;
     settings.set(LAST_TABS, value);
-    assert!(bibli_core::tabs::last_tabs(settings).is_none());
+    assert!(skwir_core::tabs::last_tabs(settings).is_none());
     settings.set(
-        bibli_core::settings::STARTUP,
+        skwir_core::settings::STARTUP,
         toml::Value::String("last".into()),
     );
-    let saved = bibli_core::tabs::last_tabs(settings).expect("tabs to restore");
+    let saved = skwir_core::tabs::last_tabs(settings).expect("tabs to restore");
 
     let next = common::app(dir.path());
     assert!(next.restore_tabs(&saved));
@@ -342,7 +342,7 @@ fn the_window_tabs_come_back_dormant_but_the_one_shown() {
             .read()
             .panes()
             .iter()
-            .all(bibli_core::workspace::Pane::is_dormant)
+            .all(skwir_core::workspace::Pane::is_dormant)
     );
     next.resume_shown().unwrap();
     assert!(next.pump_until_complete(shown_pane, WAIT));
@@ -428,7 +428,7 @@ fn with_sleep_off_every_tab_stays_listed() {
     let app = app(dir.path());
     let set = |on: bool| {
         app.settings
-            .set(bibli_core::tabs::SLEEP_KEY, toml::Value::Boolean(on));
+            .set(skwir_core::tabs::SLEEP_KEY, toml::Value::Boolean(on));
         app.apply_tabs_sleep();
     };
     set(false);
@@ -474,7 +474,7 @@ fn the_settings_dialog_path_applies_the_change() {
     run(
         &app,
         "settings.apply",
-        serde_json::json!({ "changes": { bibli_core::tabs::SLEEP_KEY: "false" } }),
+        serde_json::json!({ "changes": { skwir_core::tabs::SLEEP_KEY: "false" } }),
     );
     // The save runs on a worker; the tab left is listed again after it.
     let deadline = std::time::Instant::now() + WAIT;

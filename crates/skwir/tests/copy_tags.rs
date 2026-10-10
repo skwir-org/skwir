@@ -6,16 +6,16 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::location::Location;
-use bibli_core::op::{Copy, EntryRef, Operation, Plan, StepContext};
-use bibli_core::settings::{PRESERVE_ATTRIBUTES_ON_COPY, SaveState};
-use bibli_plugin_tags::{read_tags, write_tags};
 use serde_json::{Value, json};
+use skwir_core::app::{App, AppConfig};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::location::Location;
+use skwir_core::op::{Copy, EntryRef, Operation, Plan, StepContext};
+use skwir_core::settings::{PRESERVE_ATTRIBUTES_ON_COPY, SaveState};
+use skwir_plugin_tags::{read_tags, write_tags};
 
 fn tempdir() -> tempfile::TempDir {
-    let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+    let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
         .prefix("copy-tags-")
@@ -72,7 +72,7 @@ fn copy_commands_preserve_attributes_and_capture_the_live_preference() {
                 ("user.xdg.comment", "from “the trip”".as_bytes()),
                 ("user.xdg.origin.url", b"https://example.org/photo.txt"),
             ] {
-                bibli_core::fs::xattr::set(source.join("nested/photo.txt"), name, value).unwrap();
+                skwir_core::fs::xattr::set(source.join("nested/photo.txt"), name, value).unwrap();
             }
             std::fs::set_permissions(
                 source.join("nested/photo.txt"),
@@ -84,11 +84,11 @@ fn copy_commands_preserve_attributes_and_capture_the_live_preference() {
 
             let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
             app.plugins.add(
-                Arc::new(bibli_plugin_ops_basic::OpsBasicPlugin::default()),
+                Arc::new(skwir_plugin_ops_basic::OpsBasicPlugin::default()),
                 &app,
             );
             app.plugins
-                .add(Arc::new(bibli_plugin_shelf::ShelfPlugin::default()), &app);
+                .add(Arc::new(skwir_plugin_shelf::ShelfPlugin::default()), &app);
             assert_eq!(
                 app.settings.get::<bool>(PRESERVE_ATTRIBUTES_ON_COPY),
                 Some(true)
@@ -149,12 +149,12 @@ fn copy_commands_preserve_attributes_and_capture_the_live_preference() {
                 0o444
             );
             assert_eq!(
-                bibli_core::fs::xattr::get(copied.join("nested/photo.txt"), "user.xdg.comment")
+                skwir_core::fs::xattr::get(copied.join("nested/photo.txt"), "user.xdg.comment")
                     .unwrap(),
                 preserve.then(|| "from “the trip”".as_bytes().to_vec())
             );
             assert_eq!(
-                bibli_core::fs::xattr::get(copied.join("nested/photo.txt"), "user.baloo.rating")
+                skwir_core::fs::xattr::get(copied.join("nested/photo.txt"), "user.baloo.rating")
                     .unwrap(),
                 preserve.then(|| b"8".to_vec())
             );
@@ -251,14 +251,14 @@ fn other_device(reference: &Path) -> Option<std::path::PathBuf> {
             continue;
         }
         let Ok(dir) = tempfile::Builder::new()
-            .prefix("bibli-xdev-")
+            .prefix("skwir-xdev-")
             .tempdir_in(candidate)
         else {
             continue;
         };
         let probe = dir.path().join("probe");
         std::fs::write(&probe, b"x").unwrap();
-        if bibli_core::fs::xattr::set(&probe, "user.bibli-probe", b"1").is_ok() {
+        if skwir_core::fs::xattr::set(&probe, "user.skwir-probe", b"1").is_ok() {
             return Some(dir.keep());
         }
     }
@@ -278,11 +278,11 @@ fn cross_device_move_keeps_attributes_regardless_of_the_copy_preference() {
     for path in [&source, &source.join("nested/track.txt")] {
         write_tags(path, &["keep".into()]).unwrap();
     }
-    bibli_core::fs::xattr::set(source.join("nested/track.txt"), "user.xdg.comment", b"kept")
+    skwir_core::fs::xattr::set(source.join("nested/track.txt"), "user.xdg.comment", b"kept")
         .unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins.add(
-        Arc::new(bibli_plugin_ops_basic::OpsBasicPlugin::default()),
+        Arc::new(skwir_plugin_ops_basic::OpsBasicPlugin::default()),
         &app,
     );
     // The copy preference is off: a move must still carry the tags across.
@@ -304,7 +304,7 @@ fn cross_device_move_keeps_attributes_regardless_of_the_copy_preference() {
     assert_eq!(read_tags(&moved), ["keep"]);
     assert_eq!(read_tags(&moved.join("nested/track.txt")), ["keep"]);
     assert_eq!(
-        bibli_core::fs::xattr::get(moved.join("nested/track.txt"), "user.xdg.comment").unwrap(),
+        skwir_core::fs::xattr::get(moved.join("nested/track.txt"), "user.xdg.comment").unwrap(),
         Some(b"kept".to_vec())
     );
     assert_eq!(

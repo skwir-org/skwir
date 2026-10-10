@@ -5,8 +5,8 @@
 //! found by its signature. A `LayOut` document is a plain zip with
 //! `doc_thumbnail.png` and its properties.
 use crate::Found;
-use bibli_core::CancelToken;
-use bibli_platform::inspection::{self, limits};
+use skwir_core::CancelToken;
+use skwir_platform::inspection::{self, limits};
 use std::io::Read;
 use std::path::Path;
 

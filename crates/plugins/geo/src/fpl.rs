@@ -12,8 +12,8 @@
 use std::collections::HashMap;
 use std::io::BufRead;
 
-use bibli_core::CancelToken;
-use bibli_core::geo::{Datum, LatLon, Waypoint, WaypointKind};
+use skwir_core::CancelToken;
+use skwir_core::geo::{Datum, LatLon, Waypoint, WaypointKind};
 
 use crate::collect::{self, Collector};
 use crate::flight::{Ends, Route, Stop, stop_name};
@@ -256,7 +256,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::collect::{Plan, PlanKind};
     use crate::flight::feet;
-    use bibli_core::geo::LineKind;
+    use skwir_core::geo::LineKind;
 
     pub(crate) const PLAN: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <flight-plan xmlns="http://www8.garmin.com/xmlschemas/FlightPlan/v1">
@@ -340,7 +340,7 @@ pub(crate) mod tests {
   </route>
 </flight-plan>"#;
 
-    fn read_str(text: &str) -> (bibli_core::geo::GeoDoc, Collector, Option<Damaged>) {
+    fn read_str(text: &str) -> (skwir_core::geo::GeoDoc, Collector, Option<Damaged>) {
         let mut c = Collector::new();
         let damaged = read(text.as_bytes(), &mut c, &CancelToken::new()).unwrap();
         let (doc, c) = c.finish();

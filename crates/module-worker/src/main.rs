@@ -1,31 +1,31 @@
 //! A plugin's WebAssembly module, run in a process of its own (ADR-046):
-//! bibli starts this helper as it starts a plugin that is a program
+//! skwir starts this helper as it starts a plugin that is a program
 //! (ADR-045), isolated where it can be, and speaks the same protocol on
 //! its standard input and output. The helper compiles the module (a core
 //! module built with the plugin world's bindings is made a component
-//! first), gives it bibli's two imports and nothing else (no files, no
+//! first), gives it skwir's two imports and nothing else (no files, no
 //! clock, no network, nothing of the system's), and answers each call by
 //! the module's `call` export; the module's `read` and `log` become the
-//! protocol's, asked of bibli on the same pipes. A call has bounded work
+//! protocol's, asked of skwir on the same pipes. A call has bounded work
 //! ([`FUEL`]) and memory ([`MEMORY`]); a module that traps is instantiated
 //! again for the next. Wasmtime and Cranelift live here, never in
-//! bibli's own process.
+//! skwir's own process.
 //!
 //! The module is compiled when the helper starts. With `--keep <folder>`
-//! (the plugin's folder of bibli's cache, its working folder), it keeps
+//! (the plugin's folder of skwir's cache, its working folder), it keeps
 //! the module compiled there and loads it on the next start instead
 //! ([`load`]): starting takes a few milliseconds where compiling took a
 //! good part of a second.
 //!
-//! `bibli-module-worker <module> [--keep <folder>]`; `--probe` answers
+//! `skwir-module-worker <module> [--keep <folder>]`; `--probe` answers
 //! whether it runs.
 
 use std::io::{BufRead, BufReader, Write};
 
-use bibli_plugin_api::protocol::{
+use serde_json::json;
+use skwir_plugin_api::protocol::{
     InitializeAnswer, LogParams, MESSAGE_LIMIT, Message, ReadAnswer, ReadParams, VERSION, method,
 };
-use serde_json::json;
 use wasmtime::component::{Component, Linker, TypedFunc};
 use wasmtime::{Config, Engine, Store, StoreContextMut, StoreLimits, StoreLimitsBuilder};
 
@@ -36,31 +36,31 @@ const FUEL: u64 = 20_000_000_000;
 const MEMORY: usize = 256 * 1024 * 1024;
 
 /// The interfaces of the plugin world (`crates/plugin-api/wit`).
-const HOST: &str = "bibli:plugin/host@0.1.0";
-const GUEST: &str = "bibli:plugin/guest@0.1.0";
+const HOST: &str = "skwir:plugin/host@0.1.0";
+const GUEST: &str = "skwir:plugin/guest@0.1.0";
 
 fn main() {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-    // `--build`, bibli asking which build of it this helper is, when a
+    // `--build`, skwir asking which build of it this helper is, when a
     // call of it failed (`platform::process::explain`).
     if args.first().is_some_and(|arg| arg == "--build") {
-        println!("{}", env!("BIBLI_BUILD"));
+        println!("{}", env!("SKWIR_BUILD"));
         return;
     }
-    // `--probe`, bibli's settings asking whether this helper works here:
+    // `--probe`, skwir's settings asking whether this helper works here:
     // being started at all says its libraries are there.
     if args.first().is_some_and(|arg| arg == "--probe") {
         return;
     }
     let (Some(module), keep) = (args.first(), args.get(1..)) else {
-        eprintln!("usage: bibli-module-worker <module> [--keep <folder>]");
+        eprintln!("usage: skwir-module-worker <module> [--keep <folder>]");
         std::process::exit(2);
     };
     let keep = match keep {
         Some([]) | None => None,
         Some([flag, folder]) if flag == "--keep" => Some(std::path::Path::new(folder)),
         Some(_) => {
-            eprintln!("usage: bibli-module-worker <module> [--keep <folder>]");
+            eprintln!("usage: skwir-module-worker <module> [--keep <folder>]");
             std::process::exit(2);
         }
     };
@@ -70,12 +70,12 @@ fn main() {
     }
 }
 
-/// The pipes to bibli: messages read from standard input, written to
+/// The pipes to skwir: messages read from standard input, written to
 /// standard output, one per line.
 struct Wire {
     input: BufReader<std::io::Stdin>,
     next: u64,
-    /// bibli stopped waiting for the call being answered.
+    /// skwir stopped waiting for the call being answered.
     cancelled: bool,
 }
 
@@ -96,7 +96,7 @@ impl Wire {
         out.flush()
     }
 
-    /// Ask bibli for bytes of a file of the call, as the module asks.
+    /// Ask skwir for bytes of a file of the call, as the module asks.
     fn read(&mut self, file: u32, offset: u64, length: u32) -> Result<Vec<u8>, String> {
         if self.cancelled {
             return Err("cancelled".into());
@@ -114,11 +114,11 @@ impl Wire {
             let message = self
                 .next_message()
                 .map_err(|e| e.to_string())?
-                .ok_or("bibli closed the channel")?;
+                .ok_or("skwir closed the channel")?;
             if message.is_response() && message.id == Some(id) {
                 let answer: ReadAnswer =
                     serde_json::from_value(message.outcome()?).map_err(|e| e.to_string())?;
-                return bibli_plugin_api::base64::decode(&answer.data)
+                return skwir_plugin_api::base64::decode(&answer.data)
                     .ok_or_else(|| "bytes that are no base64".to_owned());
             }
             if message.method.as_deref() == Some(method::CANCEL) {
@@ -137,7 +137,7 @@ struct State {
 
 type Answer = TypedFunc<(String, String), (Result<String, String>,)>;
 
-/// Compile `path` (or load it compiled from `keep`), then answer bibli's
+/// Compile `path` (or load it compiled from `keep`), then answer skwir's
 /// calls until it closes standard input.
 fn serve(path: &std::path::Path, keep: Option<&std::path::Path>) -> anyhow::Result<()> {
     let engine = engine()?;

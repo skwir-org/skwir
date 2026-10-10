@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use bibli_core::cancel::CancelToken;
+use skwir_core::cancel::CancelToken;
 
 use crate::lang::Query;
 
@@ -28,7 +28,7 @@ pub fn try_locate(q: &Query, cancel: &CancelToken) -> Option<Vec<PathBuf>> {
         return None;
     }
     let patterns = q.name_substrings()?;
-    let bin = bibli_core::os_path::find_program("plocate")?;
+    let bin = skwir_core::os_path::find_program("plocate")?;
     let paths = locate_with(&bin, &patterns, q.case_sensitive, cancel)?;
     Some(
         paths
@@ -72,7 +72,7 @@ pub fn locate_with(
         cmd.arg("--ignore-case");
     }
     cmd.arg("--").args(patterns);
-    let out = bibli_platform::process::run_capped(&mut cmd, None, cancel, TIMEOUT, ANSWER).ok()?;
+    let out = skwir_platform::process::run_capped(&mut cmd, None, cancel, TIMEOUT, ANSWER).ok()?;
     if !out.status.success() {
         // plocate exits 1, silently, when nothing matched. A message (a
         // missing or unreadable database) means it could not answer.
@@ -83,7 +83,7 @@ pub fn locate_with(
         out.stdout
             .split(|b| *b == 0)
             .filter(|s| !s.is_empty())
-            .map(|s| PathBuf::from(bibli_core::os_path::from_bytes(s.to_vec())))
+            .map(|s| PathBuf::from(skwir_core::os_path::from_bytes(s.to_vec())))
             .collect(),
     )
 }

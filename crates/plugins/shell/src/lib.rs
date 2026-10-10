@@ -1,16 +1,16 @@
-//! bibli plugin: shell. Hands the selection to a shell: copy the paths as a
+//! skwir plugin: shell. Hands the selection to a shell: copy the paths as a
 //! quoted string, or run a command in a terminal with the selection as its
 //! arguments (`"$@"` in a POSIX shell, `$argv` in fish).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use bibli_core::app::{App, TargetsArgs};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::plugin::Plugin;
-use bibli_core::registry::{KeyBinding, MenuItem};
-use bibli_core::settings::SettingSpec;
-use bibli_core::workspace::PaneId;
+use skwir_core::app::{App, TargetsArgs};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::plugin::Plugin;
+use skwir_core::registry::{KeyBinding, MenuItem};
+use skwir_core::settings::SettingSpec;
+use skwir_core::workspace::PaneId;
 
 use std::fmt::Write as _;
 
@@ -88,14 +88,14 @@ pub fn run_argv(program: &str, command: &str, paths: &[PathBuf]) -> Vec<OsString
         "/bin/sh".into(),
         "-c".into(),
         "\"$@\"; exec \"${SHELL:-/bin/sh}\"".into(),
-        "bibli".into(),
+        "skwir".into(),
         program.into(),
         "-c".into(),
     ];
     match family(program).unwrap_or(Family::Posix) {
         Family::Posix => {
             argv.push(format!("{command} \"$@\"").into());
-            argv.push("bibli".into());
+            argv.push("skwir".into());
         }
         Family::Fish => argv.push(format!("{command} $argv").into()),
     }
@@ -119,7 +119,7 @@ struct RunArgs {
     /// The entries whose paths are its arguments, by absolute path; the
     /// pane's selection when omitted. It runs in the folder holding them.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
@@ -138,7 +138,7 @@ fn run(
     app: &App,
     command: &str,
     pane: Option<PaneId>,
-    on: Option<Vec<bibli_core::op::EntryArg>>,
+    on: Option<Vec<skwir_core::op::EntryArg>>,
 ) -> anyhow::Result<Outcome> {
     let (dir, paths) = match on {
         Some(entries) => {
@@ -151,7 +151,7 @@ fn run(
             // Where the entries named are; for the selection, the folder
             // shown, or the one holding it in a search.
             let dir = if named {
-                bibli_core::app::common_parent(paths.iter().map(PathBuf::as_path))
+                skwir_core::app::common_parent(paths.iter().map(PathBuf::as_path))
                     .ok_or_else(|| anyhow::anyhow!("the entries are in no folder"))?
             } else {
                 app.work_dir(app.pane_or_active(pane))?
@@ -166,7 +166,7 @@ fn run(
         .unwrap_or_else(default_program);
     let argv = run_argv(&program, command, &paths);
     // The terminal outlives the command; the platform's reaper collects it.
-    bibli_platform::open::open_terminal_watched(&dir, &argv, |_| {})?;
+    skwir_platform::open::open_terminal_watched(&dir, &argv, |_| {})?;
     Ok(Outcome::Done)
 }
 
@@ -184,12 +184,12 @@ impl Plugin for ShellPlugin {
     fn description(&self) -> &'static str {
         "Copy selected paths for a shell; run a command on the selection in a terminal"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Desktop
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Desktop
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Programs])
     }
     fn register(&self, app: &App) {
         app.settings.declare(SettingSpec::command(
@@ -280,9 +280,9 @@ impl Plugin for ShellPlugin {
 mod tests {
     use super::*;
     #[cfg(unix)]
-    use bibli_core::app::AppConfig;
+    use skwir_core::app::AppConfig;
     #[cfg(unix)]
-    use bibli_core::location::Location;
+    use skwir_core::location::Location;
     #[cfg(unix)]
     use std::sync::Arc;
     #[cfg(unix)]
@@ -312,11 +312,11 @@ mod tests {
                 "/bin/sh",
                 "-c",
                 "\"$@\"; exec \"${SHELL:-/bin/sh}\"",
-                "bibli",
+                "skwir",
                 "/bin/sh",
                 "-c",
                 "ls -l \"$@\"",
-                "bibli",
+                "skwir",
                 "/x"
             ]
         );
@@ -333,7 +333,7 @@ mod tests {
         let argv = run_argv(program, "printf '<%s>'", paths);
         let out = std::process::Command::new(&argv[0])
             .args(&argv[1..])
-            .env("SHELL", bibli_core::os_path::find_program("true").unwrap())
+            .env("SHELL", skwir_core::os_path::find_program("true").unwrap())
             .output()
             .unwrap();
         assert!(out.status.success());
@@ -345,7 +345,7 @@ mod tests {
     fn the_command_sees_each_path_as_one_argument() {
         let paths = [PathBuf::from("/x/a b"), PathBuf::from("/x/it's $HOME")];
         assert_eq!(output_of("/bin/sh", &paths), "</x/a b></x/it's $HOME>");
-        if let Some(fish) = bibli_core::os_path::find_program("fish") {
+        if let Some(fish) = skwir_core::os_path::find_program("fish") {
             assert_eq!(
                 output_of(&fish.to_string_lossy(), &paths),
                 "</x/a b></x/it's $HOME>"
@@ -431,10 +431,10 @@ mod tests {
                 "/bin/sh",
                 "-c",
                 "\"$@\"; exec \"${SHELL:-/bin/sh}\"",
-                "bibli"
+                "skwir"
             ]
         );
-        assert_eq!(lines[5..9], ["/bin/sh", "-c", "ls -l \"$@\"", "bibli"]);
+        assert_eq!(lines[5..9], ["/bin/sh", "-c", "ls -l \"$@\"", "skwir"]);
         assert_eq!(lines[9], dir.join("a b.txt").to_string_lossy());
         assert_eq!(
             lines[10],

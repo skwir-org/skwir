@@ -7,43 +7,43 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::op::{Plan, StepStatus};
 use serde_json::json;
+use skwir_core::app::{App, AppConfig};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::op::{Plan, StepStatus};
 
-/// The libarchive helper: `BIBLI_ARCHIVE_WORKER`, else the one built into
+/// The libarchive helper: `SKWIR_ARCHIVE_WORKER`, else the one built into
 /// the target folder this test runs from (its binary sits in `deps`).
-/// Without it the test says so and passes, unless `BIBLI_REQUIRE_WORKERS`
+/// Without it the test says so and passes, unless `SKWIR_REQUIRE_WORKERS`
 /// says the workers are built.
 fn with_archive_worker() -> bool {
-    let worker = std::env::var_os("BIBLI_ARCHIVE_WORKER")
+    let worker = std::env::var_os("SKWIR_ARCHIVE_WORKER")
         .map(PathBuf::from)
         .or_else(|| {
             let exe = std::env::current_exe().ok()?;
-            let built = exe.parent()?.parent()?.join("bibli-archive-worker");
+            let built = exe.parent()?.parent()?.join("skwir-archive-worker");
             built.is_file().then_some(built)
         });
     let Some(worker) = worker else {
         assert!(
-            std::env::var_os("BIBLI_REQUIRE_WORKERS").is_none(),
-            "bibli-archive-worker is not built"
+            std::env::var_os("SKWIR_REQUIRE_WORKERS").is_none(),
+            "skwir-archive-worker is not built"
         );
-        eprintln!("skipped: bibli-archive-worker is not built");
+        eprintln!("skipped: skwir-archive-worker is not built");
         return false;
     };
     // nextest runs each test in a process of its own.
     // SAFETY: no other thread of this test process reads the environment.
     #[allow(unsafe_code)]
     unsafe {
-        std::env::set_var("BIBLI_ARCHIVE_WORKER", &worker);
+        std::env::set_var("SKWIR_ARCHIVE_WORKER", &worker);
     }
     true
 }
 
 /// A folder on the home disk, where the trash works (never tmpfs).
 fn scratch() -> tempfile::TempDir {
-    let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+    let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
         .prefix("extract-")
@@ -54,7 +54,7 @@ fn scratch() -> tempfile::TempDir {
 fn app(root: &Path) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(root.join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_preview_archives::PreviewPlugin), &app);
+        .add(Arc::new(skwir_plugin_preview_archives::PreviewPlugin), &app);
     app
 }
 
@@ -118,7 +118,7 @@ fn staged_in(dest: &Path) -> Vec<String> {
     std::fs::read_dir(dest)
         .unwrap()
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
-        .filter(|name| name.starts_with(".bibli-"))
+        .filter(|name| name.starts_with(".skwir-"))
         .collect()
 }
 
@@ -325,8 +325,8 @@ fn a_paused_extraction_stops_and_goes_on_and_a_cancelled_one_ends() {
         pause.store(false, Ordering::SeqCst);
         made
     });
-    let cancel = bibli_core::CancelToken::new();
-    bibli_platform::archive::extract_all(
+    let cancel = skwir_core::CancelToken::new();
+    skwir_platform::archive::extract_all(
         &archive,
         &into,
         &cancel,
@@ -345,12 +345,12 @@ fn a_paused_extraction_stops_and_goes_on_and_a_cancelled_one_ends() {
     );
     assert_eq!(std::fs::read_dir(&into).unwrap().count(), 200);
 
-    let cancelled = bibli_core::CancelToken::new();
+    let cancelled = skwir_core::CancelToken::new();
     cancelled.cancel();
     let again = tmp.path().join("again");
     std::fs::create_dir(&again).unwrap();
     let error =
-        bibli_platform::archive::extract_all(&archive, &again, &cancelled, |_| {}, || false)
+        skwir_platform::archive::extract_all(&archive, &again, &cancelled, |_| {}, || false)
             .unwrap_err();
     assert!(error.to_string().contains("cancelled"), "{error}");
 }

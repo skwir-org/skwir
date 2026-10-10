@@ -8,15 +8,15 @@
 //! handed to the shared reading-mode HTML reader rather than dropped. Its
 //! images go through the same document-local loader, which names each
 //! picture for the view to decode when it shows it.
-use bibli_core::{
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use skwir_core::{
     CancelToken,
     inspection::{Block, BlockKind, Picture, Run},
 };
-use bibli_platform::{
+use skwir_platform::{
     inspection::{check, limits},
     rich_preview,
 };
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 /// Bullet glyphs by nesting depth, cycling when the list goes deeper.
 const BULLETS: [&str; 5] = ["•", "◦", "▪", "‣", "⁃"];
@@ -67,7 +67,7 @@ fn flush(blocks: &mut Vec<Block>, current: &mut Block, marker: &mut Option<Strin
     }
     // An address written bare is a link, as GitHub reads Markdown.
     if !current.code {
-        bibli_platform::links::link_block(current, false);
+        skwir_platform::links::link_block(current, false);
     }
     blocks.push(std::mem::take(current));
 }
@@ -246,7 +246,7 @@ pub fn parse(
                     cells: std::mem::take(cells),
                     header,
                 };
-                bibli_platform::links::link_block(current, false);
+                skwir_platform::links::link_block(current, false);
                 blocks.push(std::mem::take(current));
             };
             match event {
@@ -507,30 +507,30 @@ mod tests {
         );
     }
 
-    /// Point `BIBLI_MERMAID_WORKER` at `worker`. Tests run in processes of
+    /// Point `SKWIR_MERMAID_WORKER` at `worker`. Tests run in processes of
     /// their own under nextest, so the variable reaches no other test.
     fn use_worker(worker: &std::path::Path) {
         // SAFETY: no other thread of this test process reads the environment.
         #[allow(unsafe_code)]
         unsafe {
-            std::env::set_var("BIBLI_MERMAID_WORKER", worker);
+            std::env::set_var("SKWIR_MERMAID_WORKER", worker);
         }
     }
 
     /// The helper built into the target directory this test runs from
     /// (the test binary sits in its `deps`). Without it the test says so
-    /// and passes, unless `BIBLI_REQUIRE_WORKERS` is set.
+    /// and passes, unless `SKWIR_REQUIRE_WORKERS` is set.
     fn with_mermaid_worker() -> bool {
         let built = std::env::current_exe()
             .ok()
-            .and_then(|exe| Some(exe.parent()?.parent()?.join("bibli-mermaid-worker")))
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-mermaid-worker")))
             .filter(|path| path.is_file());
         let Some(worker) = built else {
             assert!(
-                std::env::var_os("BIBLI_REQUIRE_WORKERS").is_none(),
-                "bibli-mermaid-worker is not built"
+                std::env::var_os("SKWIR_REQUIRE_WORKERS").is_none(),
+                "skwir-mermaid-worker is not built"
             );
-            eprintln!("skipped: bibli-mermaid-worker is not built");
+            eprintln!("skipped: skwir-mermaid-worker is not built");
             return false;
         };
         use_worker(&worker);
@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn without_its_helper_a_mermaid_block_stays_code() {
-        use_worker(std::path::Path::new("/nonexistent/bibli-mermaid-worker"));
+        use_worker(std::path::Path::new("/nonexistent/skwir-mermaid-worker"));
         let blocks = parse(DIAGRAMS);
         assert!(
             blocks

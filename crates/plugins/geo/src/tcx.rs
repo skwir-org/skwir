@@ -8,8 +8,8 @@
 //! indoors, or while the signal was lost. It is no place, and no error.
 use std::io::BufRead;
 
-use bibli_core::CancelToken;
-use bibli_core::geo::{Datum, LineKind, Point, Waypoint, WaypointKind};
+use skwir_core::CancelToken;
+use skwir_core::geo::{Datum, LineKind, Point, Waypoint, WaypointKind};
 
 use crate::collect::{self, Collector};
 use crate::xml::{self, Damaged, Tag};

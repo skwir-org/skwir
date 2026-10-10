@@ -354,7 +354,7 @@ impl GlobMap {
     }
 
     /// [`Self::lookup_mime_type_for_file_name`] by trying every glob: what
-    /// the index must answer the same as (bibli's tests compare them).
+    /// the index must answer the same as (skwir's tests compare them).
     #[doc(hidden)]
     pub fn lookup_linear(&self, file_name: &str) -> Option<Vec<Mime>> {
         let lowercase = file_name.to_lowercase();

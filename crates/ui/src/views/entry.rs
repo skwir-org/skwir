@@ -10,9 +10,9 @@
 
 use std::path::PathBuf;
 
-use bibli_core::workspace::Pane;
-use bibli_core::{EntryId, Location};
 use gpui::{AnyElement, Context, Div, Stateful, prelude::*};
+use skwir_core::workspace::Pane;
+use skwir_core::{EntryId, Location};
 
 use crate::dnd;
 use crate::icons;
@@ -61,8 +61,8 @@ impl Shell {
         let place = pane.location_of(id).map(|place| {
             let tag = e
                 .metadata
-                .value(bibli_core::entry::keys::PLACE_TAG)
-                .and_then(bibli_core::Value::as_str);
+                .value(skwir_core::entry::keys::PLACE_TAG)
+                .and_then(skwir_core::Value::as_str);
             (place, tag.map(|tag| self.tag_colors.of(tag)))
         });
         Some(Look {

@@ -4,8 +4,8 @@
 //! Blender 3.0, Zstandard since) is decoded as a stream, and only as far as
 //! that picture: the blocks before it are a few scenes' names.
 use crate::Found;
-use bibli_core::{CancelToken, thumbs::Image};
-use bibli_platform::inspection;
+use skwir_core::{CancelToken, thumbs::Image};
+use skwir_platform::inspection;
 use std::io::Read;
 use std::path::Path;
 

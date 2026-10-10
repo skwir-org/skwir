@@ -3,10 +3,10 @@
 //! agent asks before a command that acts without a plan (ADR-044) waits
 //! in the same queue and is answered the same way: Allow or Refuse.
 
-use bibli_core::Plan;
-use bibli_core::app::{Asker, Question};
-use bibli_core::op::{PlanDiff, StepStatus};
 use gpui::{AnyElement, Context, FocusHandle, Window, div, prelude::*, px};
+use skwir_core::Plan;
+use skwir_core::app::{Asker, Question};
+use skwir_core::op::{PlanDiff, StepStatus};
 
 use crate::controls::{self, ButtonStyle};
 use crate::keymap;
@@ -388,7 +388,7 @@ fn plan_lines(
 mod tests {
     use std::path::PathBuf;
 
-    use bibli_core::op::{Change, PlanDiff, StepStatus};
+    use skwir_core::op::{Change, PlanDiff, StepStatus};
 
     use super::{LineKind, lines};
 

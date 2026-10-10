@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Weak;
 
-use bibli_core::app::App;
-use bibli_core::metadata::{TAG_COLOR_SETTING, same_tag, tag_under};
-use bibli_core::op::{Change, Operation, StepContext, StepStatus, Words};
+use skwir_core::app::App;
+use skwir_core::metadata::{TAG_COLOR_SETTING, same_tag, tag_under};
+use skwir_core::op::{Change, Operation, StepContext, StepStatus, Words};
 
 use crate::Sidebar;
 use crate::sidebar::{self, PINNED};
@@ -163,7 +163,7 @@ fn write(app: &App, ctx: &Ctx, to: &Settings) -> anyhow::Result<Settings> {
     );
     if let Some(fields) = &to.exclusive {
         app.settings.set(
-            bibli_core::metadata::TAG_EXCLUSIVE_SETTING,
+            skwir_core::metadata::TAG_EXCLUSIVE_SETTING,
             toml::Value::Array(fields.iter().cloned().map(toml::Value::String).collect()),
         );
     }
@@ -197,7 +197,7 @@ pub struct Follow {
     pub from: Vec<String>,
     pub to: Option<String>,
     /// The home folder, where the plan acts.
-    #[serde(with = "bibli_core::os_path")]
+    #[serde(with = "skwir_core::os_path")]
     pub root: PathBuf,
     /// Whether the pins and the colors move, as the plan was made: its
     /// words stay what the review said once it is applied.
@@ -327,7 +327,7 @@ impl Operation for Follow {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Restore {
     pub settings: Settings,
-    #[serde(with = "bibli_core::os_path")]
+    #[serde(with = "skwir_core::os_path")]
     pub root: PathBuf,
     #[serde(skip)]
     ctx: Option<Ctx>,
@@ -410,8 +410,8 @@ pub fn everywhere(root: Option<&std::path::Path>) -> Option<PathBuf> {
         None => Some(home),
         Some(r)
             if r == home
-                || bibli_core::os_path::canonical(r).ok()
-                    == bibli_core::os_path::canonical(&home).ok() =>
+                || skwir_core::os_path::canonical(r).ok()
+                    == skwir_core::os_path::canonical(&home).ok() =>
         {
             Some(home)
         }

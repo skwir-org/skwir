@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 /// How the cache is laid out, which names the folder it is kept in under
-/// bibli's cache folder. Raised by a release that would misread what an
+/// skwir's cache folder. Raised by a release that would misread what an
 /// older one cached (a value's encoding changed, not its key): the app
 /// then starts with an empty cache, which is always safe, and the release
 /// notes say so (`Cache::open`).
@@ -17,10 +17,10 @@ pub struct Cache {
 }
 
 impl Cache {
-    /// The system's cache folder of bibli's (`$XDG_CACHE_HOME/bibli` on
+    /// The system's cache folder of skwir's (`$XDG_CACHE_HOME/skwir` on
     /// Linux): `crate::folders::cache`.
     pub fn default_root() -> PathBuf {
-        crate::folders::cache().unwrap_or_else(|| std::env::temp_dir().join("bibli"))
+        crate::folders::cache().unwrap_or_else(|| std::env::temp_dir().join("skwir"))
     }
 
     pub fn new(root: impl Into<PathBuf>) -> Self {
@@ -38,7 +38,7 @@ impl Cache {
         }
     }
 
-    /// The cache the app uses in `base`, bibli's cache folder: the folder
+    /// The cache the app uses in `base`, skwir's cache folder: the folder
     /// [`LAYOUT`] names in it, made when something is first cached. What
     /// else `base` holds, an older layout's or a cache from before layouts
     /// were named, is deleted on a thread of its own, so starting never
@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn what_older_layouts_left_goes_and_this_one_stays() {
         let tmp = tempfile::tempdir().unwrap();
-        let base = tmp.path().join("bibli");
+        let base = tmp.path().join("skwir");
         std::fs::create_dir_all(base.join("tags/ab")).unwrap();
         std::fs::write(base.join("tags/ab/cd"), b"of no layout").unwrap();
         std::fs::write(base.join("stray"), b"").unwrap();

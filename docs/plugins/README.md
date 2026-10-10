@@ -1,23 +1,23 @@
-# Writing a plugin for bibli
+# Writing a plugin for skwir
 
-A plugin from outside bibli is a folder: a `plugin.toml` that says what
+A plugin from outside skwir is a folder: a `plugin.toml` that says what
 the plugin is, and what runs it, a **WebAssembly module** (ADR-046) or a
-**program** (ADR-045). bibli finds it in a folder of plugins, lists it on
+**program** (ADR-045). skwir finds it in a folder of plugins, lists it on
 Settings › Plugins with what it may do, and runs it once the user turns
 it on. It provides any of:
 
 - **fields** shown in Details (a text's word count, a format's version);
 - **thumbnails** of the files of some types;
 - **previews**: text, code, hexadecimal rows or a table, a page at a
-  time; any file bibli shows (a PDF, a picture, Markdown, audio,
-  video…), made of the file and shown by bibli's own preview of it; or
+  time; any file skwir shows (a PDF, a picture, Markdown, audio,
+  video…), made of the file and shown by skwir's own preview of it; or
   pages, each a picture drawn when it is shown with its text and links
-  where they lie, read in bibli's reader (selected, copied, searched,
+  where they lie, read in skwir's reader (selected, copied, searched,
   followed, its outline listed);
 - **commands**, in the palette and for scripts and agents, answering a
   value, a text for the clipboard, or a plan of changes to files.
 
-Views stay bibli's: a plugin provides data, bibli draws it.
+Views stay skwir's: a plugin provides data, skwir draws it.
 
 ## Start from the template
 
@@ -26,8 +26,8 @@ field and a command) that builds both ways. Copy it, rename the package
 and the `id`, and change `src/lib.rs`:
 
 ```rust
-use bibli_plugin_api::guest::{Host, Plugin};
-use bibli_plugin_api::protocol::FieldParams;
+use skwir_plugin_api::guest::{Host, Plugin};
+use skwir_plugin_api::protocol::FieldParams;
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -40,7 +40,7 @@ impl Plugin for Mine {
     }
 }
 
-bibli_plugin_api::export!(Mine);
+skwir_plugin_api::export!(Mine);
 ```
 
 `Plugin` has one method per kind of thing a plugin provides (`field`,
@@ -57,7 +57,7 @@ Build the workspace's plugins with `just plugins`: each lands in
 `target/plugins/<id>` as an installed plugin is laid out. Try them with
 
 ```
-BIBLI_PLUGIN_PATH=$PWD/target/plugins just run
+SKWIR_PLUGIN_PATH=$PWD/target/plugins just run
 ```
 
 then Settings › Plugins, and turn it on.
@@ -87,7 +87,7 @@ types = ["image/x-portable-anymap"]
 types = ["application/octet-stream"]
 priority = -100              # higher is tried first
 shows_bytes = false          # true: the view every file offers (View as hex)
-converts = false             # true: answers `convert`, a file bibli shows
+converts = false             # true: answers `convert`, a file skwir shows
 pages = false                # true: answers `page`, a picture and its text a page
 
 [[commands]]
@@ -99,7 +99,7 @@ arguments = { type = "object", properties = { minimum = { type = "integer" } } }
 ```
 
 A command also takes `entries` (absolute paths) and `pane`: the files it
-acts on, which bibli resolves and hands it as `File`s, the pane's
+acts on, which skwir resolves and hands it as `File`s, the pane's
 selection when none is named.
 
 ## What a plugin may do
@@ -111,7 +111,7 @@ Nothing it does not declare (ADR-044):
   capabilities: a module has no files at all, a program runs isolated.
 - **`write`**: answer a command with a plan. A plan is steps on the
   call's files by handle (`rename`, `trash`, `move` and `copy` into an
-  absolute folder) or `mkdir` an absolute folder. bibli shows it for
+  absolute folder) or `mkdir` an absolute folder. skwir shows it for
   review before anything changes; a plan from a plugin run from the
   window is always reviewed.
 - **`network`**: a program may use the network. A module cannot.
@@ -125,26 +125,26 @@ private, its commands are refused.
 ## A module or a program
 
 A **module** (`[run] module`) is the safest and the simplest to ship:
-built for `wasm32-unknown-unknown` with `bibli_plugin_api::export!`, it
-reaches nothing but `read` and `log`, on every system. bibli runs it in
-a helper of its own (`bibli-module-worker`, installed with bibli), and
+built for `wasm32-unknown-unknown` with `skwir_plugin_api::export!`, it
+reaches nothing but `read` and `log`, on every system. skwir runs it in
+a helper of its own (`skwir-module-worker`, installed with skwir), and
 each call has a bound on its work and memory. The helper compiles the
-module the first time and keeps it compiled in bibli's cache
-(`~/.cache/bibli/<id>/module`), so a new version of the module is
+module the first time and keeps it compiled in skwir's cache
+(`~/.cache/skwir/<id>/module`), so a new version of the module is
 compiled again on its own.
 
 A **program** (`[run] program`) can be written in any language that
 reads and writes lines of JSON on its standard input and output: the
 protocol is in `protocol.md`. A Rust program serves its `Plugin` with
-`bibli_plugin_api::guest::stdio::serve` (the template's `main.rs`).
-bibli starts it isolated (bubblewrap on Linux; it does not run where
+`skwir_plugin_api::guest::stdio::serve` (the template's `main.rs`).
+skwir starts it isolated (bubblewrap on Linux; it does not run where
 nothing can isolate it, as on Windows today), one call at a time, and
 ends it once idle.
 
 ## Installing
 
-Put the folder in `~/.local/share/bibli/plugins/` (or the system's data
-folder's `bibli/plugins/`), restart bibli, and turn the plugin on in
+Put the folder in `~/.local/share/skwir/plugins/` (or the system's data
+folder's `skwir/plugins/`), restart skwir, and turn the plugin on in
 Settings › Plugins, where its line says what it may do and where it is.
 An id another plugin has, or a manifest that does not hold together, is
 left out; the log says why.

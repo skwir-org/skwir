@@ -156,7 +156,7 @@ mod tests {
     use super::*;
 
     fn home_tempdir() -> tempfile::TempDir {
-        let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         tempfile::Builder::new()
             .prefix("notes-raw-")

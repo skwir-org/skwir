@@ -1,4 +1,4 @@
-# ADR-030: Text documents read as text, by bibli or by Pandoc
+# ADR-030: Text documents read as text, by skwir or by Pandoc
 
 Status: accepted, 2026-10-03.
 
@@ -15,7 +15,7 @@ every file. Without LibreOffice there is no preview at all, and outside
 Linux there is none either: the sandbox is bubblewrap.
 
 What a file manager's preview is for is mostly reading: what does this
-document say, is it the right one. bibli already reads documents that way:
+document say, is it the right one. skwir already reads documents that way:
 Markdown, HTML, EPUB and mail are semantic blocks (headings, paragraphs,
 lists, tables, notes, pictures) in the reading mode the preview frame
 draws (ADR-009, ADR-012). A Word or OpenDocument text file is a zip of XML
@@ -35,14 +35,14 @@ LibreOffice's pages when asked).
 (`.docx`, `.docm`, `.dotx`, `.dotm`), OpenDocument text (`.odt`, `.ott`)
 and RTF files are shown:
 
-- **Reading** (the default): bibli reads Word and OpenDocument files
+- **Reading** (the default): skwir reads Word and OpenDocument files
   itself; what it does not read (RTF) goes to Pandoc.
 - **Pages**: LibreOffice lays them out, as before.
 - **Pandoc**: every format Pandoc reads goes to Pandoc.
 
 What is installed is detected, never assumed: a choice whose program is
-missing falls back to the next that can show the file (Pages to bibli's
-reader then Pandoc; Reading to Pandoc then Pages; Pandoc to bibli's
+missing falls back to the next that can show the file (Pages to skwir's
+reader then Pandoc; Reading to Pandoc then Pages; Pandoc to skwir's
 reader then Pages). Which formats Pandoc reads is its own answer
 (`pandoc --list-input-formats`, asked once per installed version), not a
 list kept beside it. A file that is not a zip where a zip is expected (an
@@ -54,7 +54,7 @@ The reading provider sits before the document reader (priority 10, as
 `preview-tables`) and decides in `accepts`, on the worker, from the
 setting, the file's first bytes and the programs found.
 
-### bibli's reader builds blocks, not HTML
+### skwir's reader builds blocks, not HTML
 
 The built-in reader (`preview-documents`: `docx.rs`, `odt.rs`) walks the
 document's XML into `inspection::Block`s directly, as Markdown's parser
@@ -91,7 +91,7 @@ from the start, so a part says what the whole says.
 
 ### Pandoc's HTML is read as any HTML
 
-Pandoc runs in the same sandbox as LibreOffice (`bibli_platform::sandbox`:
+Pandoc runs in the same sandbox as LibreOffice (`skwir_platform::sandbox`:
 no network, the input read-only, a private writable folder), its output
 an HTML file that `rich_preview::html` reads like any page: notes, tables
 and links included. Pandoc numbers lists with `<ol type>` and lays its

@@ -1,4 +1,4 @@
-# ADR-033: The idle memory budget counts bibli's own share
+# ADR-033: The idle memory budget counts skwir's own share
 
 Status: accepted, 2026-10-04. Amends ADR-002 (decision 1, and its
 addendum's open gate) and ADR-000's idle memory row.
@@ -11,7 +11,7 @@ shrunk or budgeted in a new record with its reason. Phase 2's other gate,
 a week of daily use, has passed. The build is budgeted as it stands rather
 than holding the phase open on this number.
 
-The same addendum found that the total does not measure bibli alone: the
+The same addendum found that the total does not measure skwir alone: the
 same binary read 120 MB with several GPU clients alive and 162 MB on a
 quiet desktop, its heap and code identical. The difference is the GPU
 driver's code, whose pages PSS divides among every process that maps
@@ -27,7 +27,7 @@ with the caches filled by a first start, 15 s idle, three starts, by
 | PSS, MiB                         | run 1 | run 2 | run 3 |
 | -------------------------------- | ----: | ----: | ----: |
 | anonymous (heap, stacks)         |  25.6 |  25.7 |  25.6 |
-| bibli's binary                   |  37.3 |  37.5 |  37.3 |
+| skwir's binary                   |  37.3 |  37.5 |  37.3 |
 | GPU buffers (textures, swapchain)|  19.6 |  19.6 |  19.6 |
 | other files and libraries        |   6.6 |   6.6 |   6.6 |
 | **own share**                    |  89.2 |  89.4 |  89.1 |
@@ -50,12 +50,12 @@ with the caches filled by a first start, 15 s idle, three starts, by
 
 ## Decision
 
-1. **The budget counts bibli's own share:** PSS without the pages of the
+1. **The budget counts skwir's own share:** PSS without the pages of the
    GPU driver's code (the user-space driver libraries, the Vulkan ICDs
    and the LLVM they load). Their share depends on the GPU vendor and on
-   how many other programs map them, which no change to bibli moves: a
+   how many other programs map them, which no change to skwir moves: a
    budget on them measured the reference machine's hardware and the
-   desktop of the day. GPU buffers stay counted: they are bibli's.
+   desktop of the day. GPU buffers stay counted: they are skwir's.
 2. **The budget is 100 MiB of own share,** idle, the default plugins, the
    caches filled. The build above reads 89.2 MiB (median). Counted as
    ADR-002 counted it, the same build reads 134 MiB: this loosens that

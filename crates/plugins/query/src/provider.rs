@@ -8,17 +8,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
-use bibli_core::app::App;
-use bibli_core::cancel::CancelToken;
-use bibli_core::entry::{Entry, EntryId, EntryKind};
-use bibli_core::fs::Statter;
-use bibli_core::location::{
-    EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
-};
-use bibli_core::op::Change;
-use bibli_core::scheduler::Priority;
 use crossbeam_channel::Receiver;
 use parking_lot::Mutex;
+use skwir_core::app::App;
+use skwir_core::cancel::CancelToken;
+use skwir_core::entry::{Entry, EntryId, EntryKind};
+use skwir_core::fs::Statter;
+use skwir_core::location::{
+    EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
+};
+use skwir_core::op::Change;
+use skwir_core::scheduler::Priority;
 
 use crate::lang::{self, Candidate, Late, Query, Verdict};
 
@@ -49,7 +49,7 @@ impl Searches {
     /// What a finished plan changed (`Executor::observe`): each open
     /// search checks again, on a worker, the files it changed under its
     /// root, as the walk would have. A search does not watch the folders
-    /// it walked, but what bibli did it sees at once.
+    /// it walked, but what skwir did it sees at once.
     pub fn changed(&self, changes: &[Change]) {
         let open: Vec<(Location, Arc<Shared>)> = {
             let mut open = self.0.lock();
@@ -98,11 +98,11 @@ impl LocationProvider for QueryProvider {
     }
 
     /// A search is in the folder it looks in: Up goes there.
-    fn trail(&self, location: &Location) -> Option<bibli_core::location::Trail> {
+    fn trail(&self, location: &Location) -> Option<skwir_core::location::Trail> {
         let query = lang::parse(&location.rest).ok()?;
-        Some(bibli_core::location::Trail {
+        Some(skwir_core::location::Trail {
             base: Some(query.root),
-            crumbs: vec![bibli_core::location::Crumb::new(
+            crumbs: vec![skwir_core::location::Crumb::new(
                 crate::suggested_name(self.app.upgrade().as_deref(), &location.rest),
                 location.clone(),
             )],
@@ -459,7 +459,7 @@ impl Shared {
     fn roll_over_at(this: &Arc<Self>, location: &Location, when: SystemTime, cancel: CancelToken) {
         let (shared, location) = (Arc::downgrade(this), location.clone());
         let spawned = std::thread::Builder::new()
-            .name("bibli-query-rollover".into())
+            .name("skwir-query-rollover".into())
             .spawn(move || {
                 let signal = cancel.subscribe();
                 while let Ok(left) = when.duration_since(SystemTime::now()) {
@@ -597,7 +597,7 @@ impl Reached {
             return known;
         }
         let real = self.real_root.join(relative);
-        let reached = bibli_core::os_path::canonical(dir).is_ok_and(|c| c == real);
+        let reached = skwir_core::os_path::canonical(dir).is_ok_and(|c| c == real);
         self.folders.insert(dir.to_path_buf(), reached);
         reached
     }
@@ -734,13 +734,13 @@ impl Shared {
             return hinted;
         };
         // Indexes know real paths; the walk goes through the root as typed.
-        let Ok(real_root) = bibli_core::os_path::canonical(&q.root) else {
+        let Ok(real_root) = skwir_core::os_path::canonical(&q.root) else {
             return hinted;
         };
         let Some(paths) =
             self.ctx
                 .hints
-                .candidates(bibli_core::entry::keys::TAGS, tag, &real_root, cancel)
+                .candidates(skwir_core::entry::keys::TAGS, tag, &real_root, cancel)
         else {
             return hinted;
         };
@@ -762,7 +762,7 @@ impl Shared {
             // one.
             let through_link = real.parent().is_none_or(|parent| {
                 *linked.entry(parent.to_path_buf()).or_insert_with(|| {
-                    bibli_core::os_path::canonical(parent).ok().as_deref() != Some(parent)
+                    skwir_core::os_path::canonical(parent).ok().as_deref() != Some(parent)
                 })
             });
             let Some(name) = real.file_name() else {
@@ -806,7 +806,7 @@ impl Shared {
             .iter()
             .map(|(id, path)| (*id, path.clone()))
             .collect();
-        let follow = bibli_core::op::Follow::new(changes);
+        let follow = skwir_core::op::Follow::new(changes);
         for (id, path) in results {
             let through = follow.through(&path);
             match through.at {
@@ -843,7 +843,7 @@ impl Shared {
             fields: &self.ctx.fields,
             cancel,
         };
-        let Ok(real_root) = bibli_core::os_path::canonical(&q.root) else {
+        let Ok(real_root) = skwir_core::os_path::canonical(&q.root) else {
             return;
         };
         let mut reached = Reached {
@@ -935,7 +935,7 @@ impl Shared {
                 .filter_map(|id| paths.get(id).map(|p| (*id, p.clone())))
                 .collect()
         };
-        let gone = bibli_core::fs::hydrate_paths(&items, &self.ctx.metadata, &self.tx, cancel);
+        let gone = skwir_core::fs::hydrate_paths(&items, &self.ctx.metadata, &self.tx, cancel);
         if !gone.is_empty() {
             let mut paths = self.paths.lock();
             for id in &gone {
@@ -959,7 +959,7 @@ impl OpenLocation for QueryLocation {
             return;
         }
         // A job for each slice, side by side on the workers.
-        for ids in ids.chunks(bibli_core::fs::HYDRATE_JOB) {
+        for ids in ids.chunks(skwir_core::fs::HYDRATE_JOB) {
             let s = Arc::clone(&self.shared);
             let ids = ids.to_vec();
             let cancel = s.lifetime.child();
@@ -998,7 +998,7 @@ mod tests {
     fn open(root: &Path) -> (Arc<QueryLocation>, Location) {
         let location = crate::location_for("ext:txt", Some(root));
         let ctx = OpenContext {
-            scheduler: bibli_core::scheduler::Scheduler::new(2),
+            scheduler: skwir_core::scheduler::Scheduler::new(2),
             cancel: CancelToken::new(),
             batch_size: 64,
             waker: None,

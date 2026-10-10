@@ -1,4 +1,4 @@
-//! JSON lines, the one framing between bibli and its workers: a message is
+//! JSON lines, the one framing between skwir and its workers: a message is
 //! one line of JSON, written in one buffer (never left half written), read
 //! within a bound (a line longer, cut short or not parsing ends the
 //! stream). The manager's side is the platform's `LineChannel`; a worker's

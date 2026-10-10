@@ -4,12 +4,12 @@
 use crate::{
     latest::Latest, preview::PreviewContent, preview_bar::Field, shell::Shell, theme::Theme,
 };
-use bibli_core::{
+use gpui::{AnyElement, ClipboardItem, Context, FocusHandle, RenderImage, Window, div, prelude::*};
+use skwir_core::{
     CancelToken,
     document::{Destination, DocumentSession, PageContent, Rect, SearchHit},
     scheduler::Priority,
 };
-use gpui::{AnyElement, ClipboardItem, Context, FocusHandle, RenderImage, Window, div, prelude::*};
 use std::{rc::Rc, sync::Arc};
 
 /// Where a book laid out again should open: what was read, as the first
@@ -164,7 +164,7 @@ impl Shell {
         if !matches!(
             self.preview.content,
             Some(PreviewContent::Image {
-                detail: Some(bibli_core::preview::PreviewInfo::Document { .. }),
+                detail: Some(skwir_core::preview::PreviewInfo::Document { .. }),
                 ..
             })
         ) {
@@ -739,7 +739,7 @@ pub(crate) fn pages(shell: &Shell) -> Option<u32> {
         || matches!(
             &shell.preview.content,
             Some(PreviewContent::Image {
-                detail: Some(bibli_core::preview::PreviewInfo::Document { .. }),
+                detail: Some(skwir_core::preview::PreviewInfo::Document { .. }),
                 ..
             })
         );
@@ -755,7 +755,7 @@ fn document_pages(shell: &Shell) -> u32 {
         .map(|s| s.info().pages)
         .or({
             if let Some(PreviewContent::Image {
-                detail: Some(bibli_core::preview::PreviewInfo::Document { pages, .. }),
+                detail: Some(skwir_core::preview::PreviewInfo::Document { pages, .. }),
                 ..
             }) = &shell.preview.content
             {
@@ -892,7 +892,7 @@ fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
             "{} / {}{}",
             reader.active_hit.map_or(0, |i| i + 1),
             reader.hits.len(),
-            if reader.hits.len() == bibli_core::document::MAX_HITS {
+            if reader.hits.len() == skwir_core::document::MAX_HITS {
                 "+"
             } else {
                 ""
@@ -956,7 +956,7 @@ pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::document::TextChar;
+    use skwir_core::document::TextChar;
     #[test]
     fn reverse_selection_copies_unicode_in_document_order() {
         let page = PageContent {

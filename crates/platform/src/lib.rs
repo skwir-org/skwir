@@ -1,11 +1,11 @@
-//! bibli platform adapters.
+//! skwir platform adapters.
 //!
 //! Every module exposes one cross-platform API. Linux has real
 //! implementations; other targets get stubs that return nothing, so the crate
 //! builds everywhere and Phase 5 fills them in.
 //!
 //! - [`mime`]: type detection by name (no I/O) or by content.
-//! - [`about`]: the system's name for itself, and where bibli's licences are installed.
+//! - [`about`]: the system's name for itself, and where skwir's licences are installed.
 //! - [`access`]: what the system adds to a file's mode (access lists, capabilities, a security label).
 //! - [`bat`]: where bat, the pager, keeps the themes its user added.
 //! - [`calendar`]: the user's time zone and first weekday, for dates people read.
@@ -60,7 +60,7 @@ pub mod uri;
 pub mod users;
 #[cfg(windows)]
 pub mod windows;
-pub use bibli_core::xdg;
+pub use skwir_core::xdg;
 
 pub mod inspection;
 /// Every preview bound in one place (see `inspection::limits`).

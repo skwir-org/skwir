@@ -1,8 +1,8 @@
-# PDFium as bibli's packages carry it (ADR-041): one release of
+# PDFium as skwir's packages carry it (ADR-041): one release of
 # bblanchon/pdfium-binaries, and each archive's SHA-256 as the release
 # publishes it. tools/package/pdfium.sh fetches and checks them; the AUR's
 # PKGBUILD names the same release and sums. To update: a newer release's
-# tag and sums here and in the PKGBUILD, with a bibli release.
+# tag and sums here and in the PKGBUILD, with a skwir release.
 release chromium/8086
 pdfium-linux-x64.tgz 588577cf52dabc1a444988bac841920df54cc2f141801424de97ab04f4fbb935
 pdfium-linux-arm64.tgz e7e2fe4686925618330103cb167950aca5a84bb00fd977a41b86be59dd1480a2

@@ -2,8 +2,8 @@
 //! (`rte`) and waypoints (`wpt`), with elevations and times.
 use std::io::BufRead;
 
-use bibli_core::CancelToken;
-use bibli_core::geo::{Datum, LineKind, Point, Waypoint, WaypointKind};
+use skwir_core::CancelToken;
+use skwir_core::geo::{Datum, LineKind, Point, Waypoint, WaypointKind};
 
 use crate::collect::{self, Collector};
 use crate::xml::{self, Damaged, Tag};

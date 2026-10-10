@@ -1,6 +1,6 @@
 //! A file's notes (ADR-027): its tags, a rating, a comment, where a
 //! download came from, as one model every store and every surface agree
-//! on, read from every store bibli knows and written to those the user
+//! on, read from every store skwir knows and written to those the user
 //! chooses.
 //!
 //! A [`NotesStore`] is one place notes are kept (the desktop's extended
@@ -354,7 +354,7 @@ pub fn same(a: &Notes, b: &Notes) -> bool {
         && a.comment == b.comment
 }
 
-/// What bibli wrote for a file last (kept in the cache by its identity):
+/// What skwir wrote for a file last (kept in the cache by its identity):
 /// the notes, and what each store read back right after.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -362,7 +362,7 @@ pub struct Snapshot {
     pub each: Vec<(String, Notes)>,
 }
 
-/// The merge of each store's notes against what bibli last wrote
+/// The merge of each store's notes against what skwir last wrote
 /// (ADR-027): a store that changed since was edited by another
 /// application, and its edit wins, added and removed tags alike, a rating
 /// or a comment changed; a store that holds nothing now (a `._` file
@@ -421,7 +421,7 @@ pub struct Read {
     pub differ: Vec<&'static str>,
 }
 
-/// A file of a batch: its name, its identity when known (what bibli last
+/// A file of a batch: its name, its identity when known (what skwir last
 /// wrote for it is kept by it), and whether it is a folder.
 pub type Named<'a> = (&'a OsStr, Option<EntryId>, bool);
 
@@ -435,7 +435,7 @@ pub struct NoteStores {
     /// The user's choices, `None` until the settings are read: then each
     /// store's default.
     chosen: RwLock<Option<Policy>>,
-    /// What bibli wrote last for each file it edited.
+    /// What skwir wrote last for each file it edited.
     snapshots: RwLock<Option<CacheSlot>>,
     /// The settings declared for each owner's stores, withdrawn with them.
     declared: RwLock<Vec<(Arc<str>, String)>>,
@@ -479,7 +479,7 @@ impl NoteStores {
         *self.held.write() = Self::together(&list);
     }
 
-    /// What the stores registered hold together: whether bibli keeps a
+    /// What the stores registered hold together: whether skwir keeps a
     /// rating or a comment anywhere, for the surfaces that show one. From
     /// memory, cheap enough to ask as they are drawn.
     pub fn held(&self) -> Holds {
@@ -533,7 +533,7 @@ impl NoteStores {
             .map(|(_, s)| Arc::clone(s))
     }
 
-    /// Where the snapshots of what bibli wrote are kept.
+    /// Where the snapshots of what skwir wrote are kept.
     pub fn keep_snapshots(&self, slot: CacheSlot) {
         *self.snapshots.write() = Some(slot);
     }
@@ -543,10 +543,10 @@ impl NoteStores {
         serde_json::from_slice(&bytes).ok()
     }
 
-    /// Remember what bibli just wrote for the file `id`.
+    /// Remember what skwir just wrote for the file `id`.
     /// Kept within `SNAPSHOT_BYTES`, the oldest let go of first: a file
     /// was kept for every file ever edited. One let go of says nothing of
-    /// which store bibli wrote last: the stores' notes are merged as when
+    /// which store skwir wrote last: the stores' notes are merged as when
     /// none was kept.
     pub(crate) fn remember(&self, id: EntryId, snapshot: &Snapshot) {
         let slot = self.snapshots.read().clone();
@@ -558,7 +558,7 @@ impl NoteStores {
         }
     }
 
-    /// Forget what bibli wrote for the file `id` (an undo put back what
+    /// Forget what skwir wrote for the file `id` (an undo put back what
     /// was there before).
     pub(crate) fn forget(&self, id: EntryId) {
         if let Some(slot) = self.snapshots.read().as_ref() {
@@ -647,7 +647,7 @@ impl NoteStores {
     }
 
     /// Merge what each store says of one file: all together when they agree
-    /// (each saying what it can of the union), else against what bibli
+    /// (each saying what it can of the union), else against what skwir
     /// wrote last, when it remembers.
     fn merge(&self, each: Vec<(&'static str, Notes)>, id: Option<EntryId>) -> Read {
         let mut union = Notes::default();
@@ -756,7 +756,7 @@ mod tests {
     }
 
     #[test]
-    fn another_applications_edit_wins_over_what_bibli_wrote() {
+    fn another_applications_edit_wins_over_what_skwir_wrote() {
         let snapshot = Snapshot {
             written: notes(&["a", "b", "x"], Some(6)),
             each: vec![
@@ -766,7 +766,7 @@ mod tests {
             ],
         };
         // The Mac took `b` and `x` away and added `mac`; the `._` file was
-        // deleted; the desktop's attributes are as bibli left them.
+        // deleted; the desktop's attributes are as skwir left them.
         let each = [
             ("xdg", notes(&["a", "b", "x"], Some(6))),
             ("finder", notes(&["a", "mac"], None)),
@@ -784,7 +784,7 @@ mod tests {
             ("aside", notes(&["a", "b", "x"], Some(2))),
         ];
         assert_eq!(merged_since(&snapshot, &each).rating, Some(10));
-        // A store bibli never wrote says what it has as new.
+        // A store skwir never wrote says what it has as new.
         let each = [("tagspaces", notes(&["ts"], None))];
         assert_eq!(
             merged_since(&snapshot, &each).tag_names(),

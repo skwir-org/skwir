@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.venator.bibli</id>
+  <id>org.skwir.skwir</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>Apache-2.0</project_license>
-  <name>bibli</name>
-  <developer id="io.github.venator">
-    <name>The bibli authors</name>
+  <name>skwir</name>
+  <developer id="org.skwir">
+    <name>The skwir authors</name>
   </developer>
   <summary>Browse, find and organize your files</summary>
   <description>
     <p>
-      bibli is an experimental file manager, drawn by the GPU, built to be
+      skwir is an experimental file manager, drawn by the GPU, built to be
       driven by people, scripts and agents alike.
     </p>
     <ul>
@@ -20,13 +20,15 @@
       <li>Every change undoable, and planned for review before it is applied</li>
     </ul>
   </description>
-  <launchable type="desktop-id">bibli.desktop</launchable>
-  <url type="homepage">https://github.com/venator/bibli</url>
+  <launchable type="desktop-id">org.skwir.skwir.desktop</launchable>
+  <url type="homepage">https://skwir.org</url>
+  <url type="bugtracker">https://github.com/skwir-org/skwir/issues</url>
+  <url type="vcs-browser">https://github.com/skwir-org/skwir</url>
   <provides>
-    <binary>bibli</binary>
+    <binary>skwir</binary>
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="0.0.1" date="2026-10-06"/>
+    <release version="0.1.0" date="2026-10-10"/>
   </releases>
 </component>

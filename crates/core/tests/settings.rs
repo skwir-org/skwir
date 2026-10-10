@@ -5,7 +5,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use bibli_core::{
+use skwir_core::{
     App,
     app::AppConfig,
     command::{Invocation, Outcome},
@@ -21,8 +21,8 @@ impl Plugin for Preferences {
     fn title(&self) -> &'static str {
         "Sample"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Files
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Files
     }
     fn register(&self, app: &App) {
         for spec in [
@@ -40,11 +40,11 @@ impl Plugin for Preferences {
             app.settings.declare(spec);
         }
     }
-    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
-        use bibli_core::plugin::Requirement;
+    fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
+        use skwir_core::plugin::Requirement;
         vec![
             Requirement::new("present", "always there", || true).required(),
-            Requirement::program("bibli-test-no-such-tool", "never installed"),
+            Requirement::program("skwir-test-no-such-tool", "never installed"),
         ]
     }
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
@@ -202,7 +202,7 @@ fn disabled_plugins_cannot_be_edited_or_resurrected_by_a_settings_hook() {
     );
     assert_eq!(
         app.settings
-            .get::<bool>(bibli_core::settings::PRESERVE_ATTRIBUTES_ON_COPY),
+            .get::<bool>(skwir_core::settings::PRESERVE_ATTRIBUTES_ON_COPY),
         Some(true)
     );
 }
@@ -218,7 +218,7 @@ fn queued_save_is_exclusive_and_revalidates_after_plugin_disable() {
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
     app.scheduler.spawn(
-        bibli_core::scheduler::Priority::Visible,
+        skwir_core::scheduler::Priority::Visible,
         "test-blocker",
         app.lifetime().child(),
         move || {
@@ -253,7 +253,7 @@ fn queued_save_is_exclusive_and_revalidates_after_plugin_disable() {
     );
     assert_eq!(
         app.settings
-            .get::<bool>(bibli_core::settings::PRESERVE_ATTRIBUTES_ON_COPY),
+            .get::<bool>(skwir_core::settings::PRESERVE_ATTRIBUTES_ON_COPY),
         Some(true)
     );
     assert_eq!(app.settings.get::<String>("sample.engine"), None);
@@ -265,7 +265,7 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
         .unit("MB")
         .step(16)
         .section("Memory");
-    assert_eq!(budget.kind, bibli_core::settings::SettingKind::Integer);
+    assert_eq!(budget.kind, skwir_core::settings::SettingKind::Integer);
     assert_eq!(budget.owner(), "sample");
     assert_eq!((budget.unit.as_str(), budget.constraints.step), ("MB", 16));
     let engine = SettingSpec::choice(
@@ -373,10 +373,10 @@ fn requirements_are_probed_on_demand_and_notifications_can_name_a_setting() {
     assert!(
         found
             .iter()
-            .any(|r| r.name == "bibli-test-no-such-tool" && !r.found)
+            .any(|r| r.name == "skwir-test-no-such-tool" && !r.found)
     );
     app.notify_about_setting(
-        bibli_core::app::NotifyLevel::Warning,
+        skwir_core::app::NotifyLevel::Warning,
         "needs a tool",
         "sample.engine",
     );
@@ -386,7 +386,7 @@ fn requirements_are_probed_on_demand_and_notifications_can_name_a_setting() {
 
 #[test]
 fn startup_opens_the_chosen_folder_or_the_last_one_and_falls_back_to_home() {
-    use bibli_core::settings::{
+    use skwir_core::settings::{
         LAST_LOCATION, STARTUP, STARTUP_FOLDER, remember_location, startup_folder,
     };
     let dir = tempfile::tempdir().unwrap();
@@ -465,7 +465,7 @@ fn a_renamed_preference_keeps_its_value_and_the_file_forgets_the_old_name() {
 
 #[test]
 fn records_are_checked_field_by_field_and_never_hold_a_secret() {
-    use bibli_core::settings::{RecordField, SettingSpec};
+    use skwir_core::settings::{RecordField, SettingSpec};
     let spec = SettingSpec::records(
         "sample.servers",
         "Servers",
@@ -503,7 +503,7 @@ fn records_are_checked_field_by_field_and_never_hold_a_secret() {
 
 #[test]
 fn an_owner_check_runs_after_the_kind() {
-    use bibli_core::settings::SettingSpec;
+    use skwir_core::settings::SettingSpec;
     let spec = SettingSpec::text("sample.url", "Address", "", "").validate_with(|value| {
         anyhow::ensure!(
             value
@@ -518,7 +518,7 @@ fn an_owner_check_runs_after_the_kind() {
 }
 
 #[test]
-fn a_settings_file_that_cannot_be_read_is_kept_aside_and_bibli_starts() {
+fn a_settings_file_that_cannot_be_read_is_kept_aside_and_skwir_starts() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.toml");
     std::fs::write(&path, "[ui]\nview = \"grid\"\nzoom = = 2\n").unwrap();

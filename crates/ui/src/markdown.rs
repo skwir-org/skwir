@@ -12,12 +12,12 @@
 //! differs between text, a code box and a table row. Nothing may return early
 //! and skip the frame, or code inside a quote loses its border.
 use crate::{inspector_text, theme::Theme};
-use bibli_core::{
-    inspection::{Align, Block, BlockKind},
-    workspace::PaneId,
-};
 use gpui::{
     AnyElement, FontWeight, Hsla, RenderImage, SharedString, WeakEntity, div, prelude::*, px,
+};
+use skwir_core::{
+    inspection::{Align, Block, BlockKind},
+    workspace::PaneId,
 };
 use std::sync::Arc;
 

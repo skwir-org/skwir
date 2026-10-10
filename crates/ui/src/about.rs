@@ -1,10 +1,10 @@
-//! About bibli (`ui.about`, in More and the palette): its name, version
+//! About skwir (`ui.about`, in More and the palette): its name, version
 //! and licence, the way to its website and to the licences its package
 //! installed, and what a report of a problem asks of the system it runs
 //! on (`.github/ISSUE_TEMPLATE/problem.yml`), copied in one click.
 //!
 //! The system's own name and where the licences are installed are read on
-//! a worker (`bibli_platform::about`) and the dialog opens with them, so
+//! a worker (`skwir_platform::about`) and the dialog opens with them, so
 //! nothing in it changes once drawn. It is something to read, as F1's
 //! overview is: a key meant for the window behind it closes it
 //! (`Shell::run`), and Tab walks its buttons.
@@ -22,12 +22,12 @@ use crate::modal::{self, FocusReturn};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-/// What its package says of it (`crates/bibli/Cargo.toml`).
+/// What its package says of it (`crates/skwir/Cargo.toml`).
 const SUMMARY: &str = "An experimental file manager, GPU-drawn, for people, scripts and agents.";
 const LICENCE: &str = env!("CARGO_PKG_LICENSE");
 const WEBSITE: &str = env!("CARGO_PKG_REPOSITORY");
 
-/// The version as `bibli --version` says it, and whether it is a build
+/// The version as `skwir --version` says it, and whether it is a build
 /// for development, slower than a release.
 fn version() -> String {
     let version = env!("CARGO_PKG_VERSION");
@@ -45,7 +45,7 @@ pub struct About {
     website: FocusHandle,
     licences_button: FocusHandle,
     previous: FocusReturn,
-    /// What a report says of where bibli runs: a label and its value.
+    /// What a report says of where skwir runs: a label and its value.
     facts: Vec<(&'static str, String)>,
     /// What shows the licences this installation keeps, if it keeps any.
     licences: Option<PathBuf>,
@@ -79,10 +79,10 @@ fn graphics(specs: &gpui::GpuSpecs) -> String {
     }
 }
 
-/// What Copy details puts on the clipboard: the version as `bibli
+/// What Copy details puts on the clipboard: the version as `skwir
 /// --version` says it, then each fact on a line.
 fn details(facts: &[(&str, String)]) -> String {
-    std::iter::once(format!("bibli {}", version()))
+    std::iter::once(format!("skwir {}", version()))
         .chain(
             facts
                 .iter()
@@ -104,8 +104,8 @@ impl Shell {
             "about",
             || {
                 (
-                    bibli_platform::about::system_name(),
-                    bibli_platform::about::licences(),
+                    skwir_platform::about::system_name(),
+                    skwir_platform::about::licences(),
                 )
             },
             |this, (system, licences), window, cx| {
@@ -114,7 +114,7 @@ impl Shell {
                     return;
                 }
                 let arch = std::env::consts::ARCH;
-                let system = system.unwrap_or_else(|| bibli_core::system::NAME.to_owned());
+                let system = system.unwrap_or_else(|| skwir_core::system::NAME.to_owned());
                 let mut facts = vec![("System", format!("{system} ({arch})"))];
                 let display = cx.compositor_name();
                 if !display.is_empty() {
@@ -159,7 +159,7 @@ impl Shell {
     fn copy_about(&mut self, cx: &mut Context<Self>) {
         let Some(about) = &self.about else { return };
         cx.write_to_clipboard(ClipboardItem::new_string(details(&about.facts)));
-        self.set_status("Copied bibli’s version and what it runs on", false, cx);
+        self.set_status("Copied skwir’s version and what it runs on", false, cx);
     }
 
     /// The licences in a tab of their own, the third-party notices
@@ -265,7 +265,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             div()
                 .flex()
                 .flex_col()
-                .child(div().text_xl().child("bibli"))
+                .child(div().text_xl().child("skwir"))
                 .child(
                     div()
                         .text_color(theme.text_muted)
@@ -330,7 +330,7 @@ mod tests {
             lines
                 .next()
                 .unwrap()
-                .starts_with(&format!("bibli {}", env!("CARGO_PKG_VERSION")))
+                .starts_with(&format!("skwir {}", env!("CARGO_PKG_VERSION")))
         );
         assert_eq!(lines.next(), Some("System: Fedora Linux 42 (x86_64)"));
         assert_eq!(lines.next(), Some("Display: Wayland"));

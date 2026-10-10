@@ -1,4 +1,4 @@
-//! The icons the system draws itself, where bibli reads no icon theme
+//! The icons the system draws itself, where skwir reads no icon theme
 //! (`icons` is the free desktops'): macOS's through `NSWorkspace`, by a
 //! file's type or its path, and Windows' shell's, by extension or path,
 //! from the system image list. What an icon is drawn of is a [`SystemIcon`]:
@@ -11,7 +11,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use bibli_core::thumbs::Image;
+use skwir_core::thumbs::Image;
 
 /// Whether this system draws icons of its own to ask for.
 pub const AVAILABLE: bool = cfg!(any(target_os = "macos", windows));
@@ -484,10 +484,10 @@ mod tests {
             (SystemIcon::Stock(Stock::Trash), 32),
         ] {
             let found = picture(&icon, side).unwrap();
-            // Without an icon bibli draws its own mark instead.
+            // Without an icon skwir draws its own mark instead.
             if found.is_none()
                 && matches!(icon, SystemIcon::Stock(_))
-                && bibli_core::system::under_wine(
+                && skwir_core::system::under_wine(
                     "the shell's stock icons (its SHGetStockIconInfo names no icon)",
                 )
             {

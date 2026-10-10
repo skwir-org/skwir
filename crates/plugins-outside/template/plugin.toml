@@ -1,4 +1,4 @@
-# A plugin from outside bibli (docs/plugins/README.md): copy this folder,
+# A plugin from outside skwir (docs/plugins/README.md): copy this folder,
 # give it your own id, and build it with `just plugins`.
 id = "word-count"
 title = "Word count"

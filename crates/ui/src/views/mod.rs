@@ -6,8 +6,8 @@ pub mod entry;
 pub mod grid;
 pub mod list;
 
-use bibli_core::registry::ViewSpec;
 use gpui::{Context, ScrollWheelEvent, prelude::*};
+use skwir_core::registry::ViewSpec;
 
 use crate::shell::Shell;
 use crate::view::{self, spec};

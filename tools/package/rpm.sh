@@ -3,12 +3,12 @@
 # for (Fedora, openSUSE…), whose libraries they depend on: the programs
 # shipped (tools/package/programs) built for shipping, PDFium fetched
 # (tools/package/pdfium.sh), then cargo-generate-rpm, from
-# crates/bibli/Cargo.toml's [package.metadata.generate-rpm]: bibli, and
-# bibli-media, bibli-poppler, bibli-mermaid and bibli-mupdf (its variants).
+# crates/skwir/Cargo.toml's [package.metadata.generate-rpm]: skwir, and
+# skwir-media, skwir-poppler, skwir-mermaid and skwir-mupdf (its variants).
 #
 #     tools/package/rpm.sh        # into target/generate-rpm/
 #
-# Needs rustup's Rust (a distribution's may be older than bibli needs),
+# Needs rustup's Rust (a distribution's may be older than skwir needs),
 # cargo-generate-rpm (`cargo install cargo-generate-rpm`), cargo-about
 # (`cargo install --locked cargo-about`, for each package's notices) and what
 # tools/package/linux/build-deps.fedora lists (named as Fedora names them).
@@ -31,7 +31,7 @@ esac
 cargo build --locked --profile dist $(sed 's/^/-p /' tools/package/programs)
 tools/package/notices.py
 tools/package/pdfium.sh "$platform" target/pdfium
-cargo generate-rpm -p crates/bibli --profile dist
+cargo generate-rpm -p crates/skwir --profile dist
 for variant in media poppler mermaid mupdf; do
-    cargo generate-rpm -p crates/bibli --profile dist --variant "$variant"
+    cargo generate-rpm -p crates/skwir --profile dist --variant "$variant"
 done

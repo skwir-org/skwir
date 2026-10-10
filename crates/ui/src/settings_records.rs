@@ -4,15 +4,15 @@
 //! kept apart from the rows, which are rebuilt whenever a setting changes.
 //!
 //! A secret field's value goes to the desktop's keyring and never to the
-//! settings (`bibli_platform::secrets`): saving a draft that holds a new
+//! settings (`skwir_platform::secrets`): saving a draft that holds a new
 //! one stores it on a worker first, and only then saves the list, which
 //! says the keyring has it. Removing a record forgets its secrets. The
 //! whole list is validated before anything is kept, so a record the owner
 //! refuses leaves nothing in the keyring.
 use std::sync::Arc;
 
-use bibli_core::settings::{FieldKind, RecordField, SECRET_STORED, SettingKind};
 use gpui::{AnyElement, Context, Entity, Focusable, Subscription, Window, div, prelude::*, px};
+use skwir_core::settings::{FieldKind, RecordField, SECRET_STORED, SettingKind};
 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
@@ -396,14 +396,14 @@ impl SettingsView {
             draft.busy = true;
         }
         let (slot, weak, owner) = (Arc::clone(&self.keyring), self.app.weak(), key.to_owned());
-        let label = format!("bibli: {name} ({})", spec.title);
+        let label = format!("skwir: {name} ({})", spec.title);
         self.app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Visible,
+            skwir_core::scheduler::Priority::Visible,
             "settings-keyring",
             self.app.lifetime().child(),
             move || {
                 let result = (|| {
-                    use bibli_platform::secrets::{SecretRef, delete, store};
+                    use skwir_platform::secrets::{SecretRef, delete, store};
                     for (field, secret) in &secrets {
                         let at = SecretRef {
                             setting: &owner,
@@ -460,15 +460,15 @@ impl SettingsView {
         if had_secret {
             let (owner, id, weak) = (key.to_owned(), id.to_owned(), self.app.weak());
             self.app.scheduler.spawn(
-                bibli_core::scheduler::Priority::Normal,
+                skwir_core::scheduler::Priority::Normal,
                 "settings-keyring",
                 self.app.lifetime().child(),
                 move || {
-                    if let Err(error) = bibli_platform::secrets::delete_record(&owner, &id)
+                    if let Err(error) = skwir_platform::secrets::delete_record(&owner, &id)
                         && let Some(app) = weak.upgrade()
                     {
                         app.notify(
-                            bibli_core::app::NotifyLevel::Error,
+                            skwir_core::app::NotifyLevel::Error,
                             format!("The keyring kept a secret of the record removed: {error:#}"),
                         );
                     }
@@ -602,7 +602,7 @@ impl SettingsView {
     fn record_row(
         &mut self,
         key: &str,
-        spec: &bibli_core::settings::SettingSpec,
+        spec: &skwir_core::settings::SettingSpec,
         record: &Record,
         (id, index): (&str, usize),
         edge: crate::settings_view::Edge,
@@ -642,10 +642,10 @@ impl SettingsView {
                 )
                 .on_click(cx.listener(move |this, _, _, _| {
                     let invocation =
-                        bibli_core::command::Invocation::with_args(action.command.as_str(), &args);
+                        skwir_core::command::Invocation::with_args(action.command.as_str(), &args);
                     if let Err(error) = this.app.dispatch(&invocation) {
                         this.app
-                            .notify(bibli_core::app::NotifyLevel::Error, format!("{error:#}"));
+                            .notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}"));
                     }
                 })),
             );

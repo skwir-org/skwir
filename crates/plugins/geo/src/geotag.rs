@@ -23,22 +23,22 @@ use std::process::Command;
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime};
 
-use bibli_core::app::{App, NotifyLevel};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::keys;
-use bibli_core::geo::{Datum, GeoDoc, LatLon, LineKind};
-use bibli_core::lru::ByteLru;
-use bibli_core::op::{Change, EntryRef, Operation, Plan, ResolveError, StepContext, StepStatus};
-use bibli_core::plugin::Requirement;
-use bibli_core::registry::MenuItem;
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
-use bibli_core::{CancelToken, os_path};
-use bibli_platform::calendar::Calendar;
-use bibli_platform::mime::{self, Kind};
 use jiff::civil::DateTime;
 use jiff::tz::{Offset, TimeZone};
 use parking_lot::Mutex;
+use skwir_core::app::{App, NotifyLevel};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::entry::keys;
+use skwir_core::geo::{Datum, GeoDoc, LatLon, LineKind};
+use skwir_core::lru::ByteLru;
+use skwir_core::op::{Change, EntryRef, Operation, Plan, ResolveError, StepContext, StepStatus};
+use skwir_core::plugin::Requirement;
+use skwir_core::registry::MenuItem;
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
+use skwir_core::{CancelToken, os_path};
+use skwir_platform::calendar::Calendar;
+use skwir_platform::mime::{self, Kind};
 
 use crate::{Format, ID};
 
@@ -48,7 +48,7 @@ const PROGRAM: &str = "exiftool";
 const MISSING: &str = "Install ExifTool to write pictures' locations";
 
 /// The operation kind, the commands and their menu items (owner `geo`).
-pub(crate) fn register(app: &App, lifetime: bibli_core::CancelToken) {
+pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
     app.ops.register::<SetPosition>(ID);
     app.commands.register::<GeotagArgs, _>(
         ID,
@@ -413,7 +413,7 @@ pub(crate) fn read_many(
         let before: Vec<Option<Seen>> = chunk.iter().map(|p| seen_now(p)).collect();
         let mut command = exiftool(program);
         command.args(read_args()).arg("--").args(chunk);
-        let Ok(finished) = bibli_platform::process::run_to_exit(
+        let Ok(finished) = skwir_platform::process::run_to_exit(
             &mut command,
             None,
             cancel,
@@ -470,7 +470,7 @@ fn read_args() -> impl Iterator<Item = String> {
 fn read_one(program: &Path, path: &Path, cancel: &CancelToken) -> Result<Read, String> {
     let mut command = exiftool(program);
     command.args(read_args()).arg("--").arg(path);
-    let finished = bibli_platform::process::run_to_exit(&mut command, None, cancel, READ_TIMEOUT)
+    let finished = skwir_platform::process::run_to_exit(&mut command, None, cancel, READ_TIMEOUT)
         .map_err(|e| format!("{e:#}"))?;
     match parse(&finished.stdout).first() {
         Some(object) => found(object),
@@ -546,7 +546,7 @@ fn read_tags(program: &Path, path: &Path, cancel: &CancelToken) -> anyhow::Resul
 /// (Windows, not read yet: ADR-035), and nothing is remembered.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Seen {
-    id: bibli_core::FileId,
+    id: skwir_core::FileId,
     size: u64,
     modified: SystemTime,
     changed: SystemTime,
@@ -555,10 +555,10 @@ struct Seen {
 fn seen_now(path: &Path) -> Option<Seen> {
     let m = std::fs::metadata(path).ok()?;
     Some(Seen {
-        id: bibli_core::fs::stat::identity(path, &m)?,
+        id: skwir_core::fs::stat::identity(path, &m)?,
         size: m.len(),
         modified: m.modified().ok()?,
-        changed: bibli_core::fs::stat::changed(path, &m)?,
+        changed: skwir_core::fs::stat::changed(path, &m)?,
     })
 }
 
@@ -586,7 +586,7 @@ fn recall(seen: &Seen) -> Option<Tags> {
 fn writable_extensions(program: &Path, cancel: &CancelToken) -> anyhow::Result<Vec<String>> {
     let mut command = exiftool(program);
     command.arg("-listwf");
-    let out = bibli_platform::process::run(&mut command, cancel, READ_TIMEOUT)?;
+    let out = skwir_platform::process::run(&mut command, cancel, READ_TIMEOUT)?;
     let text = String::from_utf8_lossy(&out);
     Ok(text
         .lines()
@@ -618,7 +618,7 @@ fn write(program: &Path, path: &Path, to: &Location, cancel: &CancelToken) -> an
         command.arg("--").arg(path);
         let input = import.and_then(Import::input);
         let finished =
-            bibli_platform::process::run_to_exit(&mut command, input, cancel, WRITE_TIMEOUT)?;
+            skwir_platform::process::run_to_exit(&mut command, input, cancel, WRITE_TIMEOUT)?;
         let stdout = String::from_utf8_lossy(&finished.stdout);
         let updated = stdout.lines().any(|line| {
             line.trim()
@@ -677,7 +677,7 @@ impl Import {
         object.insert("SourceFile".into(), "*".into());
         object.extend(tags.iter().map(|(k, v)| (k.clone(), v.clone())));
         let json = serde_json::to_vec(&[object])?;
-        let file = if json.len() > bibli_platform::process::MAX_INPUT {
+        let file = if json.len() > skwir_platform::process::MAX_INPUT {
             Some(PrivateFile::new(&json)?)
         } else {
             None
@@ -731,7 +731,7 @@ impl PrivateFile {
             .as_nanos();
         loop {
             let dir = std::env::temp_dir().join(format!(
-                "bibli-geotag-{}-{stamp}-{}",
+                "skwir-geotag-{}-{stamp}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
@@ -932,11 +932,11 @@ impl SetPosition {
     }
 }
 
-impl bibli_core::op::Kind for SetPosition {
+impl skwir_core::op::Kind for SetPosition {
     const KIND: &'static str = KIND;
 }
 
-impl bibli_core::op::Effect for SetPosition {
+impl skwir_core::op::Effect for SetPosition {
     fn describe(&self) -> Change {
         let name = display_name(&self.entry.path);
         let (will, did) = match &self.to {
@@ -956,7 +956,7 @@ impl bibli_core::op::Effect for SetPosition {
         Change::Metadata {
             path: self.entry.path.clone(),
             field: keys::POSITION.into(),
-            words: Some(bibli_core::op::Words { will, did }),
+            words: Some(skwir_core::op::Words { will, did }),
         }
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
@@ -1024,7 +1024,7 @@ struct GeotagArgs {
     /// The track and the pictures, by absolute path; the pane's selection
     /// when omitted.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     /// The pane; the active one when left out.
     #[serde(default)]
     pane: Option<PaneId>,
@@ -1038,7 +1038,7 @@ struct GeotagArgs {
 struct RemoveArgs {
     /// The pictures, by absolute path; the pane's selection when omitted.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     /// The pane; the active one when left out.
     #[serde(default)]
     pane: Option<PaneId>,
@@ -1049,10 +1049,10 @@ struct RemoveArgs {
 fn typed(
     app: &App,
     pane: Option<PaneId>,
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
 ) -> anyhow::Result<Vec<(EntryRef, Option<std::ffi::OsString>)>> {
     match app.targets_typed(pane, entries) {
-        Err(error) if bibli_core::command::is_nothing_selected(&error) => Ok(Vec::new()),
+        Err(error) if skwir_core::command::is_nothing_selected(&error) => Ok(Vec::new()),
         typed => typed,
     }
 }
@@ -1060,7 +1060,7 @@ fn typed(
 fn geotag(
     app: &App,
     args: GeotagArgs,
-    lifetime: &bibli_core::CancelToken,
+    lifetime: &skwir_core::CancelToken,
 ) -> anyhow::Result<Outcome> {
     let typed = typed(app, args.pane, args.entries)?;
     // By name only here (a link's target's): which one is a track is read
@@ -1205,7 +1205,7 @@ pub(crate) fn plan_geotag(
         anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
         // A link is read, and typed, as what it leads to; a pipe or a
         // device is never read.
-        let Some(path) = bibli_core::fs::content_path(&r.path) else {
+        let Some(path) = skwir_core::fs::content_path(&r.path) else {
             left.others += 1;
             continue;
         };
@@ -1236,7 +1236,7 @@ pub(crate) fn plan_geotag(
     );
     let writable = writable_extensions(&program, cancel)?;
     candidates.retain(|r| {
-        let ok = writable.contains(&bibli_platform::inspection::extension(&r.path));
+        let ok = writable.contains(&skwir_platform::inspection::extension(&r.path));
         if !ok {
             left.unwritable += 1;
         }
@@ -1357,9 +1357,9 @@ fn remove_location(app: &App, args: RemoveArgs) -> anyhow::Result<Outcome> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::app::AppConfig;
-    use bibli_core::geo::{Line, Point};
-    use bibli_core::location::Location as Place;
+    use skwir_core::app::AppConfig;
+    use skwir_core::geo::{Line, Point};
+    use skwir_core::location::Location as Place;
 
     fn utc(text: &str) -> SystemTime {
         SystemTime::from(text.parse::<jiff::Timestamp>().unwrap())
@@ -1689,10 +1689,10 @@ mod tests {
         found
     }
 
-    /// Under `~/.cache/bibli-tests`: a real filesystem, with nanosecond
+    /// Under `~/.cache/skwir-tests`: a real filesystem, with nanosecond
     /// times and extended attributes.
     fn scratch() -> tempfile::TempDir {
-        let base = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".cache/bibli-tests");
+        let base = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".cache/skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         tempfile::Builder::new()
             .prefix("geotag-")
@@ -1708,7 +1708,7 @@ mod tests {
             .args(assignments)
             .arg("--")
             .arg(path);
-        bibli_platform::process::run(&mut command, &CancelToken::new(), WRITE_TIMEOUT).unwrap();
+        skwir_platform::process::run(&mut command, &CancelToken::new(), WRITE_TIMEOUT).unwrap();
     }
 
     fn picture(dir: &Path, name: &str) -> PathBuf {
@@ -1766,7 +1766,7 @@ mod tests {
             entry.id,
             "rewritten in place"
         );
-        let taken = bibli_platform::exif::taken(&path).at.unwrap();
+        let taken = skwir_platform::exif::taken(&path).at.unwrap();
         assert!((taken.lat - 10.123_456).abs() < 1e-6, "{taken:?}");
         assert!((taken.lon - 20.654_321).abs() < 1e-6, "{taken:?}");
         let read = read_tags(&program, &path, &CancelToken::new()).unwrap();
@@ -1790,7 +1790,7 @@ mod tests {
         // Undo: no location again, the time still kept.
         assert_eq!(undo.check(&ctx), StepStatus::Pending { reversible: true });
         let redo = undo.apply(&ctx).unwrap().unwrap();
-        assert_eq!(bibli_platform::exif::taken(&path).at, None);
+        assert_eq!(skwir_platform::exif::taken(&path).at, None);
         assert!(
             read_tags(&program, &path, &CancelToken::new())
                 .unwrap()
@@ -1841,7 +1841,7 @@ mod tests {
         assert_eq!(remove.check(&ctx), StepStatus::Pending { reversible: true });
         let undo = remove.apply(&ctx).unwrap().unwrap();
         assert!(read_tags(&program, &path, &cancel).unwrap().is_empty());
-        assert_eq!(bibli_platform::exif::taken(&path).at, None);
+        assert_eq!(skwir_platform::exif::taken(&path).at, None);
         assert_eq!(remove.check(&ctx), StepStatus::AlreadyDone);
 
         undo.apply(&ctx).unwrap().unwrap();
@@ -1858,7 +1858,7 @@ mod tests {
             .arg("--")
             .arg(path);
         let out =
-            bibli_platform::process::run(&mut command, &CancelToken::new(), READ_TIMEOUT).unwrap();
+            skwir_platform::process::run(&mut command, &CancelToken::new(), READ_TIMEOUT).unwrap();
         parse(&out)
             .into_iter()
             .flat_map(|object| object.into_iter().map(|(key, _)| key))
@@ -1920,7 +1920,7 @@ mod tests {
             .arg("--")
             .arg(path);
         let out =
-            bibli_platform::process::run(&mut command, &CancelToken::new(), READ_TIMEOUT).unwrap();
+            skwir_platform::process::run(&mut command, &CancelToken::new(), READ_TIMEOUT).unwrap();
         parse(&out).pop().unwrap()
     }
 
@@ -2056,7 +2056,7 @@ mod tests {
         undo.apply(&ctx).unwrap().unwrap();
         assert_eq!(read_tags(&program, &path, &cancel).unwrap(), before);
         // Its directory went with it.
-        let ours = format!("bibli-geotag-{}-", std::process::id());
+        let ours = format!("skwir-geotag-{}-", std::process::id());
         let leftover = std::fs::read_dir(std::env::temp_dir())
             .unwrap()
             .filter_map(Result::ok)
@@ -2094,7 +2094,7 @@ mod tests {
             plan.note.as_deref(),
             Some("1 picture already placed, left as it is")
         );
-        let result = bibli_core::op::Executor::new(bibli_core::scheduler::Scheduler::new(1))
+        let result = skwir_core::op::Executor::new(skwir_core::scheduler::Scheduler::new(1))
             .execute_blocking(&plan, &CancelToken::new());
         assert_eq!((result.applied, result.error), (1, None));
         let named = listing(&program, &dir.path().join("Named.jpg"));
@@ -2227,7 +2227,7 @@ mod tests {
 
     fn app(dir: &Path) -> std::sync::Arc<App> {
         let app = App::new(AppConfig::ephemeral(dir.join(".state"))).unwrap();
-        register(&app, bibli_core::CancelToken::new());
+        register(&app, skwir_core::CancelToken::new());
         app
     }
 
@@ -2282,7 +2282,7 @@ mod tests {
         let result = app.executor.execute_blocking(&rebuilt, &CancelToken::new());
         assert_eq!((result.applied, result.error), (1, None));
         assert!(
-            bibli_platform::exif::taken(&dir.path().join("During.jpg"))
+            skwir_platform::exif::taken(&dir.path().join("During.jpg"))
                 .at
                 .is_some()
         );
@@ -2322,7 +2322,7 @@ mod tests {
         );
         // Each step says what it will do and what it did.
         let first = plan.diff(&std::sync::Arc::default()).steps[0].0.clone();
-        let bibli_core::op::Change::Metadata {
+        let skwir_core::op::Change::Metadata {
             words: Some(words), ..
         } = first
         else {
@@ -2342,12 +2342,12 @@ mod tests {
         assert_eq!((result.applied, result.skipped, result.error), (1, 1, None));
         assert!(result.undoable);
         assert_eq!(
-            bibli_platform::exif::taken(&dir.path().join("Placed.jpg")).at,
+            skwir_platform::exif::taken(&dir.path().join("Placed.jpg")).at,
             None
         );
         // Undo puts it back.
         app.executor.undo_blocking(&CancelToken::new()).unwrap();
-        let back = bibli_platform::exif::taken(&dir.path().join("Placed.jpg"))
+        let back = skwir_platform::exif::taken(&dir.path().join("Placed.jpg"))
             .at
             .unwrap();
         assert!((back.lat - 10.5).abs() < 1e-9 && (back.lon - 20.5).abs() < 1e-9);

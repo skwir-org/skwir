@@ -4,12 +4,12 @@
 
 mod common;
 
-use bibli_core::command::{Invocation, is_nothing_selected};
-use bibli_core::op::{EntryArg, EntryRef};
 use common::*;
 use serde_json::json;
+use skwir_core::command::{Invocation, is_nothing_selected};
+use skwir_core::op::{EntryArg, EntryRef};
 
-fn refused(app: &bibli_core::App, name: &str, args: &serde_json::Value) -> anyhow::Error {
+fn refused(app: &skwir_core::App, name: &str, args: &serde_json::Value) -> anyhow::Error {
     match app.dispatch(&Invocation::with_args(name, args)) {
         Ok(outcome) => panic!("{name} {args}: expected a refusal, got {outcome:?}"),
         Err(error) => error,
@@ -182,14 +182,14 @@ fn an_undo_asked_from_outside_the_window_says_what_it_took_back() {
         &plan(&app, "mkdir", json!({ "name": "kept", "in": dir })),
     );
     let undone = match app.dispatch(&Invocation::new("undo")).unwrap() {
-        bibli_core::command::Outcome::Value(value) => value,
+        skwir_core::command::Outcome::Value(value) => value,
         other => panic!("expected what it undid, got {other:?}"),
     };
     assert_eq!(undone["undone"], "new folder kept");
     assert_eq!(undone["applied"], 1);
     assert!(!dir.join("kept").exists());
     let redone = match app.dispatch(&Invocation::new("redo")).unwrap() {
-        bibli_core::command::Outcome::Value(value) => value,
+        skwir_core::command::Outcome::Value(value) => value,
         other => panic!("expected what it redid, got {other:?}"),
     };
     assert_eq!(redone["redone"], "new folder kept");
@@ -225,7 +225,7 @@ fn a_location_is_listed_without_showing_it() {
         ))
         .unwrap()
     {
-        bibli_core::command::Outcome::Value(value) => value,
+        skwir_core::command::Outcome::Value(value) => value,
         other => panic!("expected a listing, got {other:?}"),
     };
     assert_eq!(listed["complete"], true);
@@ -250,7 +250,7 @@ fn a_location_is_listed_without_showing_it() {
             &json!({ "location": dir, "hidden": true }),
         ))
         .unwrap();
-    let bibli_core::command::Outcome::Value(all) = all else {
+    let skwir_core::command::Outcome::Value(all) = all else {
         panic!("expected a listing")
     };
     assert_eq!(all["total"], 4);
@@ -272,7 +272,7 @@ fn a_location_is_listed_without_showing_it() {
 #[cfg(unix)]
 #[test]
 fn a_link_is_made_to_what_is_named_and_its_undo_takes_only_the_link() {
-    use bibli_core::op::StepStatus;
+    use skwir_core::op::StepStatus;
 
     let tmp = home_tempdir();
     let dir = tmp.path().join("work");

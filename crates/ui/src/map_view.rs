@@ -20,10 +20,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bibli_core::EntryId;
-use bibli_core::geo::LatLon;
-use bibli_core::thumbs::ThumbSize;
 use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*};
+use skwir_core::EntryId;
+use skwir_core::geo::LatLon;
+use skwir_core::thumbs::ThumbSize;
 
 use crate::elements::map::{self, Handles, Pick, Picking, Place, Shapes, View};
 use crate::shell::Shell;
@@ -73,7 +73,7 @@ pub struct MapView {
     /// folders opened). Another order of the same key holds the same
     /// files, but where a narrowing shows files as their metadata tells.
     shown_of: Option<(u64, u64, bool, u64, u64)>,
-    bounds: bibli_core::geo::BoundsBuilder,
+    bounds: skwir_core::geo::BoundsBuilder,
     counts: (usize, usize, usize, bool),
     selection: (u64, Arc<HashSet<EntryId>>),
     /// The file the map opens on, once it is placed: the one selected
@@ -203,7 +203,7 @@ impl MapView {
             .iter()
             .filter(|place| self.shown_set.contains(&place.entry))
             .collect();
-        self.bounds = bibli_core::geo::BoundsBuilder::default();
+        self.bounds = skwir_core::geo::BoundsBuilder::default();
         for place in &places {
             self.bounds.add(place.at);
         }
@@ -329,7 +329,7 @@ impl PaneView for MapView {
             );
             let selection = (self.selection.0 != p.selection.revision())
                 .then(|| (p.selection.revision(), p.selection.iter().collect()));
-            let folder = p.location().and_then(bibli_core::Location::path).is_some();
+            let folder = p.location().and_then(skwir_core::Location::path).is_some();
             (source, selection, folder)
         };
         if let Some((revision, ids)) = selection {
@@ -366,7 +366,7 @@ impl PaneView for MapView {
             self.requested = Some(source);
             if let Err(error) = shell
                 .app
-                .dispatch(&bibli_core::command::Invocation::with_args(
+                .dispatch(&skwir_core::command::Invocation::with_args(
                     "geo.scan",
                     &serde_json::json!({ "pane": pane }),
                 ))
@@ -666,7 +666,7 @@ impl Shell {
             self.map_views.remove(&pane);
             let _ = self
                 .app
-                .dispatch(&bibli_core::command::Invocation::with_args(
+                .dispatch(&skwir_core::command::Invocation::with_args(
                     "geo.release",
                     &serde_json::json!({ "pane": pane }),
                 ));

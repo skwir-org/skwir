@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""A smoke test of the real window: bibli started on an X display of its
+"""A smoke test of the real window: skwir started on an X display of its
 own (Xvfb, software Vulkan), with a home of synthetic files, driven through
-`bibli cmd` as a script drives it, every step checked on disk.
+`skwir cmd` as a script drives it, every step checked on disk.
 
     just smoke                                  # finds Xvfb and Mesa through Nix
-    tools/test/smoke.py --xvfb X --icd I [--bibli B] [--keep]
+    tools/test/smoke.py --xvfb X --icd I [--skwir B] [--keep]
 
 Each step goes through the open window: list a folder, search it, tag a
 file, rename it, make a folder and move the file into it, trash it, then
 undo each in order and check the folder is as it began. It never touches
 the user's display, files, settings or Trash: everything lives under
-~/.cache/bibli-tests/smoke-*, with XDG folders and a runtime folder of
+~/.cache/skwir-tests/smoke-*, with XDG folders and a runtime folder of
 its own. `--keep` leaves the window and its folder for a look.
 """
 
@@ -41,7 +41,7 @@ def tags_of(path):
 
 class Window:
     def __init__(self, args):
-        base = pathlib.Path.home() / ".cache" / "bibli-tests"
+        base = pathlib.Path.home() / ".cache" / "skwir-tests"
         base.mkdir(parents=True, exist_ok=True)
         # Short: a Unix socket's path has room for 108 bytes.
         self.root = pathlib.Path(tempfile.mkdtemp(prefix="smoke-", dir=base))
@@ -73,21 +73,21 @@ class Window:
         (self.files / "notes" / "report 2026.txt").write_text("needle in a report\n")
         (self.files / "photos" / "sea.txt").write_text("not a picture\n")
         self.runtime.mkdir(mode=0o700)
-        config = self.root / "config" / "bibli"
+        config = self.root / "config" / "skwir"
         config.mkdir(parents=True)
         (config / "settings.toml").write_text("[plugins.control]\nenabled = true\n")
         self.display = self.start_display()
-        log = open(self.root / "bibli.log", "w")
+        log = open(self.root / "skwir.log", "w")
         window = subprocess.Popen(
-            [self.args.bibli, str(self.files)], env=self.env(),
+            [self.args.skwir, str(self.files)], env=self.env(),
             stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
         )
         self.procs.append(window)
-        sock = self.runtime / "bibli" / "control.sock"
+        sock = self.runtime / "skwir" / "control.sock"
         deadline = time.time() + 60
         while not sock.exists():
             if window.poll() is not None or time.time() > deadline:
-                fail(f"the window did not start; see {self.root / 'bibli.log'}")
+                fail(f"the window did not start; see {self.root / 'skwir.log'}")
             time.sleep(0.2)
 
     def start_display(self):
@@ -115,12 +115,12 @@ class Window:
         fail("no display free from :90 to :199")
 
     def cmd(self, command, args=None, apply=False):
-        argv = [self.args.bibli, "cmd"] + (["--apply"] if apply else []) + [command]
+        argv = [self.args.skwir, "cmd"] + (["--apply"] if apply else []) + [command]
         if args is not None:
             argv.append(json.dumps(args))
         run = subprocess.run(argv, env=self.env(), capture_output=True, text=True, timeout=60)
         if run.returncode != 0:
-            fail(f"`bibli cmd {command}`: {run.stderr.strip() or run.stdout.strip()}")
+            fail(f"`skwir cmd {command}`: {run.stderr.strip() or run.stdout.strip()}")
         return json.loads(run.stdout) if run.stdout.strip() else None
 
     def stop(self):
@@ -196,11 +196,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--xvfb", required=True, help="the Xvfb program")
     parser.add_argument("--icd", required=True, help="a Vulkan ICD file (lavapipe's)")
-    parser.add_argument("--bibli", default=str(REPO / "target/release/bibli"))
+    parser.add_argument("--skwir", default=str(REPO / "target/release/skwir"))
     parser.add_argument("--keep", action="store_true", help="leave the window running")
     args = parser.parse_args()
-    if not pathlib.Path(args.bibli).exists():
-        fail(f"no bibli at {args.bibli}: `cargo build --release -p bibli`")
+    if not pathlib.Path(args.skwir).exists():
+        fail(f"no skwir at {args.skwir}: `cargo build --release -p skwir`")
     w = Window(args)
     try:
         w.start()

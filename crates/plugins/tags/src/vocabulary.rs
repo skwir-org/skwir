@@ -10,11 +10,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bibli_core::app::App;
-use bibli_core::cache::CacheSlot;
-use bibli_core::cancel::CancelToken;
-use bibli_core::scheduler::Priority;
 use parking_lot::Mutex;
+use skwir_core::app::App;
+use skwir_core::cache::CacheSlot;
+use skwir_core::cancel::CancelToken;
+use skwir_core::scheduler::Priority;
 
 /// Tags remembered at most; past this, the one least recently used or seen
 /// is forgotten.

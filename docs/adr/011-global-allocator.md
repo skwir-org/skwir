@@ -1,4 +1,4 @@
-# ADR-011: mimalloc, tuned, is the allocator of the bibli binaries
+# ADR-011: mimalloc, tuned, is the allocator of the skwir binaries
 
 Status: accepted, 2026-09-24; addendum 2026-10-06 (idle workers give back
 what they freed).
@@ -38,7 +38,7 @@ with the preview open, the allocator the only difference:
 | jemalloc, background purge | 56 MB | 260 MB | within 1 s | 28 ms |
 
 "100k listing streamed" is `flat100k.stream_complete_us` from
-`bibli-bench check`, two rounds each; the other benchmarks moved within their
+`skwir-bench check`, two rounds each; the other benchmarks moved within their
 noise. First-frame times did not differ beyond run-to-run noise. The stripped
 binary grows by 0.13 MB with mimalloc and 0.67 MB with jemalloc; a clean
 release build takes 50 s more with mimalloc, 4 minutes more with jemalloc
@@ -46,8 +46,8 @@ release build takes 50 s more with mimalloc, 4 minutes more with jemalloc
 
 ## Decision
 
-1. **mimalloc is the global allocator of `bibli` and `bibli-bench`**, declared
-   once in `crates/alloc` (`bibli-alloc`) and enabled by each binary's default
+1. **mimalloc is the global allocator of `skwir` and `skwir-bench`**, declared
+   once in `crates/alloc` (`skwir-alloc`) and enabled by each binary's default
    `mimalloc` feature, so the benchmarks measure what ships.
 2. **Tuned:** purge delay 0 (freed memory goes back to the OS at once; the v3
    default waits a second, and never purges an idle process) and arena eager
@@ -74,9 +74,9 @@ listing path.
   budget of ADR-002 is not changed: it stays 100 MB PSS and stays open; this
   record is the reason for those 4 MB.
 - heaptrack sees only glibc's malloc. Profile the heap with a build without
-  the allocator: `cargo build --release -p bibli --no-default-features`.
+  the allocator: `cargo build --release -p skwir --no-default-features`.
 - Upgrading `mimalloc` / `libmimalloc-sys` is deliberate: check the option
-  enum and run `bibli-alloc`'s test.
+  enum and run `skwir-alloc`'s test.
 - The worker processes (PDF, media, archives) keep the system allocator.
   They were not measured here; the media worker lives as long as a track
   plays and may deserve the same look.
@@ -89,9 +89,9 @@ metadata, a trash read) and then waits for the next one, possibly for
 hours, kept them: forcing a collection on idle workers measured 1 MiB less
 anonymous memory at idle, with or without the plugins that caused the
 burst. So each worker, once idle for a second after running a job, calls
-`bibli_alloc::collect` (`mi_collect(true)`, which also gives back what the
+`skwir_alloc::collect` (`mi_collect(true)`, which also gives back what the
 arenas keep free), once until it runs another
-(`bibli_core::scheduler::release_when_idle`, wired by the binary beside
+(`skwir_core::scheduler::release_when_idle`, wired by the binary beside
 `tune`). A burst never pays for it: a worker that gets another job within
 the second does not collect. `just idle-pss`, alternated back to back with
 the build before: own share 92.8–93.0 MiB to 91.5–91.6.

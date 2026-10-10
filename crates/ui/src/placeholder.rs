@@ -3,9 +3,9 @@
 //! with the reason and the way out. Shown in place of the view, inside the
 //! pane container, so drops and the folder's menu keep working on it.
 
-use bibli_core::location::EmptyState;
-use bibli_core::workspace::PaneId;
 use gpui::{AnyElement, Context, div, prelude::*, px};
+use skwir_core::location::EmptyState;
+use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
 use crate::shell::Shell;
@@ -33,7 +33,7 @@ pub fn failure(error: &str) -> Placeholder {
             Some(("Go to the parent folder", "up")),
         )
     } else if lower.contains("no provider") {
-        ("bibli cannot open this kind of location", None)
+        ("skwir cannot open this kind of location", None)
     } else {
         (
             "This location could not be opened",

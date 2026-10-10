@@ -48,14 +48,14 @@ pub fn synthetic_png(width: u32, height: u32) -> Vec<u8> {
     out
 }
 
-/// A temporary folder under `~/.cache/bibli-tests`: a real filesystem,
+/// A temporary folder under `~/.cache/skwir-tests`: a real filesystem,
 /// never the user's files.
 #[allow(dead_code, reason = "each test crate uses some of what is here")]
 pub fn home_tempdir() -> tempfile::TempDir {
     let base = dirs::home_dir()
         .expect("home")
         .join(".cache")
-        .join("bibli-tests");
+        .join("skwir-tests");
     std::fs::create_dir_all(&base).expect("test base");
     tempfile::Builder::new()
         .prefix("any-file-")

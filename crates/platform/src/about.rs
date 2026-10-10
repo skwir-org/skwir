@@ -1,6 +1,6 @@
-//! What the About dialog says of the system bibli runs on and of where
+//! What the About dialog says of the system skwir runs on and of where
 //! it is installed: the system's own name for itself, and the folder its
-//! package keeps bibli's licences in. Both read files: call from a worker.
+//! package keeps skwir's licences in. Both read files: call from a worker.
 
 use std::path::{Path, PathBuf};
 
@@ -55,7 +55,7 @@ fn unquote(value: &str) -> String {
     out
 }
 
-/// What shows bibli's licences where this installation keeps them: the
+/// What shows skwir's licences where this installation keeps them: the
 /// crates' third-party notices when there, else their folder. `None` for
 /// a build that was not packaged.
 pub fn licences() -> Option<PathBuf> {
@@ -72,8 +72,8 @@ fn licences_beside(bin: &Path) -> Option<PathBuf> {
     let folders = [
         Some(bin.join("licenses")),
         prefix.map(|p| p.join("Resources").join("licenses")),
-        prefix.map(|p| p.join("share").join("licenses").join("bibli")),
-        prefix.map(|p| p.join("share").join("doc").join("bibli")),
+        prefix.map(|p| p.join("share").join("licenses").join("skwir")),
+        prefix.map(|p| p.join("share").join("doc").join("skwir")),
     ];
     let folder = folders
         .into_iter()
@@ -123,7 +123,7 @@ mod tests {
         let bin = tmp.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         assert_eq!(licences_beside(&bin), None, "a build not packaged");
-        let debian = tmp.path().join("share/doc/bibli");
+        let debian = tmp.path().join("share/doc/skwir");
         std::fs::create_dir_all(&debian).unwrap();
         assert_eq!(licences_beside(&bin), Some(debian.clone()));
         std::fs::write(debian.join("THIRD-PARTY-NOTICES"), "notices").unwrap();
@@ -131,7 +131,7 @@ mod tests {
             licences_beside(&bin),
             Some(debian.join("THIRD-PARTY-NOTICES"))
         );
-        let fedora = tmp.path().join("share/licenses/bibli");
+        let fedora = tmp.path().join("share/licenses/skwir");
         std::fs::create_dir_all(&fedora).unwrap();
         assert_eq!(
             licences_beside(&bin),

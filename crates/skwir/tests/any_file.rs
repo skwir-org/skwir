@@ -1,4 +1,4 @@
-//! Every preview and thumbnail bibli makes in its own process, given
+//! Every preview and thumbnail skwir makes in its own process, given
 //! files no application writes: a sample of each type it reads, mutated
 //! (bytes changed, characters of several bytes put in, cut short), asked
 //! of every provider as the preview panel and the views ask. A provider
@@ -10,7 +10,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::{
+use proptest::prelude::*;
+use skwir_core::{
     App, CancelToken,
     app::AppConfig,
     inspection::InspectRequest,
@@ -21,14 +22,13 @@ use bibli_core::{
     testing::mutated,
     thumbs::{ThumbRequest, ThumbSize, ThumbState},
 };
-use proptest::prelude::*;
 
 mod common;
 
-/// The plugins that read files in bibli's process to show them.
+/// The plugins that read files in skwir's process to show them.
 fn app(root: &Path) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(root.join("state"))).unwrap();
-    for plugin in bibli::plugins() {
+    for plugin in skwir::plugins() {
         let reads = plugin.category() == Category::Previews
             || ["thumbnails", "geo", "xmp"].contains(&plugin.id());
         if reads {
@@ -108,7 +108,7 @@ fn binary_stl() -> Vec<u8> {
     out
 }
 
-/// A sample of each type read in bibli's process, by its name.
+/// A sample of each type read in skwir's process, by its name.
 fn samples() -> Vec<(&'static str, Vec<u8>)> {
     let text = |s: &str| s.as_bytes().to_vec();
     vec![
@@ -269,7 +269,7 @@ fn samples() -> Vec<(&'static str, Vec<u8>)> {
 /// A request as the preview panel makes one: the type the name says, and
 /// the bytes where the name is ambiguous.
 fn request(path: &Path) -> PreviewRequest {
-    let mime = bibli_platform::mime::identify(path.file_name().unwrap(), path);
+    let mime = skwir_platform::mime::identify(path.file_name().unwrap(), path);
     PreviewRequest {
         entry: EntryRef::from_path(path).unwrap(),
         mime: mime.map(|mime| mime.0),
@@ -280,7 +280,7 @@ fn request(path: &Path) -> PreviewRequest {
     }
 }
 
-/// Everything shown of `path` in bibli's process, as the preview panel
+/// Everything shown of `path` in skwir's process, as the preview panel
 /// and the views ask it.
 fn show(app: &App, path: &Path) {
     let cancel = CancelToken::new();
@@ -342,7 +342,7 @@ fn every_sample_is_shown_as_it_is() {
     assert_eq!(panics(&app), [], "no job panicked");
 }
 
-/// Each case shows a file every way bibli does, a thumbnail included: a
+/// Each case shows a file every way skwir does, a thumbnail included: a
 /// few of them in every run, more when `PROPTEST_CASES` asks.
 fn cases() -> u32 {
     std::env::var("PROPTEST_CASES")

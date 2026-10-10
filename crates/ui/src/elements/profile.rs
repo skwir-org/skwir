@@ -10,12 +10,12 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use bibli_core::geo::{Datum, GeoDoc, LatLon, LineKind};
 use gpui::{
     App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
     InspectorElementId, IntoElement, LayoutId, MouseMoveEvent, PathBuilder, Pixels, ShapedLine,
     Style, Window, point, px, relative, size,
 };
+use skwir_core::geo::{Datum, GeoDoc, LatLon, LineKind};
 
 /// Points drawn at most: more than a profile's width has pixels.
 const MOST_POINTS: usize = 2000;
@@ -422,7 +422,7 @@ fn distance(metres: f64) -> String {
 #[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
-    use bibli_core::geo::{Line, Point};
+    use skwir_core::geo::{Line, Point};
 
     fn line(kind: LineKind, datum: Datum, points: &[(f64, Option<f32>)]) -> Line {
         Line {

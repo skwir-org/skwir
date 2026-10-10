@@ -1,17 +1,17 @@
 //! Tile archives previewed as the maps they hold: what the file says of
 //! itself in Details, and on the preview's map its tiles over the
 //! background where it has them (`Inspection::tiles`), fitted to its area.
-//! Tiles bibli does not draw (vector shapes, AVIF, Brotli) leave the area
+//! Tiles skwir does not draw (vector shapes, AVIF, Brotli) leave the area
 //! outlined instead, and the notice says why.
 use std::sync::Arc;
 
-use bibli_core::CancelToken;
-use bibli_core::geo::{Area, Bounds, GeoDoc, LatLon};
-use bibli_core::inspection::{InspectRequest, Inspection, InspectionKind};
-use bibli_core::preview::{PreviewProvider, PreviewRequest};
-use bibli_core::scheduler::Scheduler;
-use bibli_core::tiles::Layer;
-use bibli_platform::inspection::{check, details};
+use skwir_core::CancelToken;
+use skwir_core::geo::{Area, Bounds, GeoDoc, LatLon};
+use skwir_core::inspection::{InspectRequest, Inspection, InspectionKind};
+use skwir_core::preview::{PreviewProvider, PreviewRequest};
+use skwir_core::scheduler::Scheduler;
+use skwir_core::tiles::Layer;
+use skwir_platform::inspection::{check, details};
 
 use crate::archive::{self, Archive, Format, Kind};
 
@@ -164,8 +164,8 @@ fn inspection(archive: &Arc<dyn Archive>, provider: &Provider) -> Inspection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::app::{App, AppConfig};
-    use bibli_core::op::EntryRef;
+    use skwir_core::app::{App, AppConfig};
+    use skwir_core::op::EntryRef;
 
     fn fact<'a>(data: &'a Inspection, label: &str) -> Option<&'a str> {
         data.details
@@ -237,12 +237,12 @@ mod tests {
         let ask = |x: u32, y: u32| {
             let (tx, rx) = std::sync::mpsc::channel();
             layer.source.request(
-                bibli_core::tiles::TileRequest {
+                skwir_core::tiles::TileRequest {
                     z: 3,
                     x,
                     y,
                     scale: 1,
-                    palette: bibli_core::tiles::Palette::default(),
+                    palette: skwir_core::tiles::Palette::default(),
                 },
                 CancelToken::new(),
                 Box::new(move |tile| {
@@ -255,7 +255,7 @@ mod tests {
         let tile = ask(4, 2).unwrap();
         assert_eq!((tile.width, tile.height), (256, 256));
         let missing = ask(4, 3).err().unwrap();
-        assert!(missing.is::<bibli_core::tiles::NoTile>(), "{missing:#}");
+        assert!(missing.is::<skwir_core::tiles::NoTile>(), "{missing:#}");
     }
 
     #[test]

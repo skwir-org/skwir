@@ -3,7 +3,7 @@
 # distribution it is for (a CI container, or tools/package/try.sh's
 # root): the libraries' development packages (build-deps.<distribution>),
 # and for Debian and Fedora rustup's Rust (a distribution's may be older
-# than bibli needs) and the packaging tool; Arch builds with its own Rust
+# than skwir needs) and the packaging tool; Arch builds with its own Rust
 # (the PKGBUILD's makedepends) as a user of its own, `builder`.
 #
 #     tools/package/linux/prepare.sh debian|fedora|arch

@@ -476,7 +476,7 @@ fn step(id: &'static str, delta: i64, shell: &Shell) -> Button {
     .enabled(there)
 }
 
-fn mute(id: &'static str, state: &bibli_core::media::Playback) -> Button {
+fn mute(id: &'static str, state: &skwir_core::media::Playback) -> Button {
     crate::player::request(
         id,
         if state.muted { "muted" } else { "volume" },

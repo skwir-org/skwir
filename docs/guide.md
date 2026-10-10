@@ -1,6 +1,6 @@
-# Using bibli
+# Using skwir
 
-This guide is for bibli 0.1 on Linux. Every action is also a command in
+This guide is for skwir 0.1 on Linux. Every action is also a command in
 the palette (`Ctrl+Shift+P`), which shows its keys, and `F1` lists the
 keys that work where the keyboard is.
 
@@ -21,7 +21,7 @@ keys that work where the keyboard is.
 - **More** (the sidebar's button, or the pane's row when the sidebar is
   hidden) holds what has no button of its own, and Layout: where the
   split and the preview go, or Automatic, which follows the window's
-  shape. About bibli, at its end, says which version runs and on what
+  shape. About skwir, at its end, says which version runs and on what
   system, display and graphics, and copies it all for a report.
 - **The footer** of each pane says how many items it lists, what is
   selected and what it weighs. The last pane's footer also shows Undo,
@@ -71,7 +71,7 @@ or `Ctrl+wheel`).
   you keep. Moving files to the Trash frees nothing until it is
   emptied.
 - **Map** (`Ctrl+5`) places pictures, tracks and plans where they were
-  taken or go. Its background is drawn from data bibli carries; a
+  taken or go. Its background is drawn from data skwir carries; a
   background that downloads tiles is used only once you choose one.
 - **Timeline** (`Ctrl+Shift+L`) shows when the files were changed, a
   bar per period; a click on a bar searches it.
@@ -100,7 +100,7 @@ or `Ctrl+wheel`).
   sidebar: Restore puts a file back where it was, a file dragged out of
   it is restored where you drop it.
 - **Undo and Redo**: `Ctrl+Z`, `Ctrl+Shift+Z` (or `Ctrl+Y`), for every
-  change bibli made, in order. The journal lasts while bibli runs.
+  change skwir made, in order. The journal lasts while skwir runs.
 - **Plans**: a change of many files, and anything an agent or a plugin
   proposes, is shown as steps to review first. `Enter` applies it,
   `Escape` dismisses it.
@@ -137,7 +137,7 @@ go faster, and always checks the files themselves.
 `Ctrl+Shift+G` edits the tags of the selection; Details (`Ctrl+I`, or
 `Alt+Enter` on a file) shows them with the rating and the comment.
 
-- **Where they are kept.** bibli keeps notes where other applications
+- **Where they are kept.** skwir keeps notes where other applications
   keep them: the file's extended attributes (as Dolphin does), XMP
   sidecars (`photo.jpg.xmp`, as darktable and Lightroom do), a Mac's tags
   and its `._` files on drives that keep no attributes, TagSpaces'
@@ -165,7 +165,7 @@ the panel's bar:
 - **Text and code**, with its language's colours; **Markdown**, laid
   out, its source a click away; **tables** (CSV, TSV, JSON lines);
   structured files (JSON, YAML, TOML, XML) folded and unfolded.
-- **Documents**: PDFs in bibli's reader (continuous or a page at a time,
+- **Documents**: PDFs in skwir's reader (continuous or a page at a time,
   zoom, search, contents, text selected and copied); office documents
   through LibreOffice, converted in isolation; EPUB books, comics,
   e-mails, Jupyter notebooks.
@@ -176,7 +176,7 @@ the panel's bar:
 
 A link in a document opens with a click; an address found in plain
 text, with `Ctrl+click`. `Ctrl+Shift+O` labels the links in view for the
-keyboard. Some kinds need a program bibli does not carry; Settings ›
+keyboard. Some kinds need a program skwir does not carry; Settings ›
 Plugins says which, and what to install.
 
 ## The terminal
@@ -189,32 +189,32 @@ link with `Ctrl+click`.
 ## Settings
 
 `Ctrl+,` opens them; a change applies at once, with no Save button.
-General is what bibli does with files, Appearance how it looks,
+General is what skwir does with files, Appearance how it looks,
 Keyboard the keys (record your own over any default, or choose a scheme
 such as vim's), Reading the reader shared by documents, books and
 Markdown, Notes where notes are kept, Privacy the folders that never
 leave this machine, and Plugins every plugin, on or off, with what it
 may do and what it needs.
 
-The settings are a file, `~/.config/bibli/settings.toml`. If it cannot
-be read (edited by hand into something that is no longer TOML), bibli
+The settings are a file, `~/.config/skwir/settings.toml`. If it cannot
+be read (edited by hand into something that is no longer TOML), skwir
 starts with its defaults, keeps the file aside as
 `settings.toml.unreadable-…`, and says so.
 
-## What bibli keeps, and where
+## What skwir keeps, and where
 
-- **Settings**: `~/.config/bibli/settings.toml`, the window's shape among
+- **Settings**: `~/.config/skwir/settings.toml`, the window's shape among
   them.
-- **The cache**: `~/.cache/bibli`. Delete it whenever you like: bibli
+- **The cache**: `~/.cache/skwir`. Delete it whenever you like: skwir
   makes again what it needs.
 - **Nothing else.** No database, no daemon: tags and notes are on the
   files, bookmarks are the desktop's, thumbnails the desktop's cache.
 
-If bibli stops during a copy, the part already copied stays in a hidden
-folder named `.bibli-copy-…` in the destination, never under the file's
+If skwir stops during a copy, the part already copied stays in a hidden
+folder named `.skwir-copy-…` in the destination, never under the file's
 own name; delete it, and copy again.
 
 ## Agents, scripts and plugins
 
 See the [README](../README.md#scripts-and-agents) for agents and scripts,
-and [writing a plugin](plugins/README.md) for plugins from outside bibli.
+and [writing a plugin](plugins/README.md) for plugins from outside skwir.

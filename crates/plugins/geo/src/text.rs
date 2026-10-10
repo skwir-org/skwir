@@ -4,7 +4,7 @@
 //! into memory.
 use std::io::{BufRead, Read};
 
-use bibli_core::CancelToken;
+use skwir_core::CancelToken;
 
 use crate::xml::Damaged;
 
@@ -48,7 +48,7 @@ pub fn lines<R: BufRead>(
     let mut number = 0usize;
     loop {
         if number.is_multiple_of(4096) {
-            bibli_platform::inspection::check(cancel)?;
+            skwir_platform::inspection::check(cancel)?;
         }
         buf.clear();
         let read = match Read::take(&mut input, longest as u64 + 1).read_until(b'\n', &mut buf) {
@@ -72,7 +72,7 @@ pub fn lines<R: BufRead>(
                     return Ok(Some(Damaged(format!(
                         "line {} is longer than {}",
                         number + 1,
-                        bibli_platform::inspection::limits::describe(longest)
+                        skwir_platform::inspection::limits::describe(longest)
                     ))));
                 }
             }

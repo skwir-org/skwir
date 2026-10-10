@@ -13,29 +13,29 @@
 //! It holds references: files dropped or pasted on a tag are given it,
 //! and moved from another tag lose that one (`tags.drop`); Delete takes
 //! its tag off them (`tags.untag`); New Folder makes a tag in it, kept
-//! while bibli runs until a file is given it (`tags.new`: nothing on disk
+//! while skwir runs until a file is given it (`tags.new`: nothing on disk
 //! can hold a tag no file has); F2 on a tag renames it everywhere.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
-use bibli_core::app::App;
-use bibli_core::cancel::CancelToken;
-use bibli_core::command::Invocation;
-use bibli_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
-use bibli_core::location::{
+use crossbeam_channel::Receiver;
+use parking_lot::Mutex;
+use skwir_core::app::App;
+use skwir_core::cancel::CancelToken;
+use skwir_core::command::Invocation;
+use skwir_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
+use skwir_core::location::{
     Crumb, EmptyState, EventSink, ListingEvent, Location, LocationProvider, Narrowing, OpenContext,
     OpenLocation, Toggle, Trail, Verb, Verbs, escape, unescape,
 };
-use bibli_core::metadata::{
+use skwir_core::metadata::{
     TagRef, clean_tag, same_tag, tag_leaf, tag_parent, tag_under, tag_within,
 };
-use bibli_core::os_path::PathArg;
-use bibli_core::scheduler::Priority;
-use bibli_platform::mime::Kind;
-use crossbeam_channel::Receiver;
-use parking_lot::Mutex;
+use skwir_core::os_path::PathArg;
+use skwir_core::scheduler::Priority;
+use skwir_platform::mime::Kind;
 
 use crate::index::{TagIndex, stable_hash};
 
@@ -80,7 +80,7 @@ impl Address {
             let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
             match key {
                 "in" => {
-                    let path = PathBuf::from(bibli_core::os_path::from_bytes(unescape(value)));
+                    let path = PathBuf::from(skwir_core::os_path::from_bytes(unescape(value)));
                     address.scope = scope_of(path);
                 }
                 "with" => push_tag(&mut address.with, &text(value)),
@@ -462,8 +462,8 @@ pub const MOSAIC: usize = 4;
 /// Whether `path`'s name says it is a picture.
 fn is_picture(path: &Path) -> bool {
     path.file_name()
-        .and_then(bibli_platform::mime::by_name)
-        .is_some_and(|m| bibli_platform::mime::is_kind(&m, Kind::Image))
+        .and_then(skwir_platform::mime::by_name)
+        .is_some_and(|m| skwir_platform::mime::is_kind(&m, Kind::Image))
 }
 
 /// Whether `file` passes what narrows `address`.
@@ -475,12 +475,12 @@ fn passes(address: &Address, file: &Tagged) -> bool {
             || file
                 .path
                 .file_name()
-                .and_then(bibli_platform::mime::by_name)
+                .and_then(skwir_platform::mime::by_name)
                 .is_some_and(|m| {
                     address
                         .kinds
                         .iter()
-                        .any(|k| bibli_platform::mime::is_kind(&m, *k))
+                        .any(|k| skwir_platform::mime::is_kind(&m, *k))
                 }))
         && (address.years.is_empty() || file.year.is_some_and(|y| address.years.contains(&y)))
 }
@@ -575,7 +575,7 @@ fn entry_at(path: &Path) -> Option<Entry> {
         EntryKind::File
     };
     // A tag's files are from many folders: told apart by their paths.
-    let id = EntryId::at_path(bibli_core::fs::stat::identity(path, &meta)?, path);
+    let id = EntryId::at_path(skwir_core::fs::stat::identity(path, &meta)?, path);
     Some(Entry::new(id, path.file_name()?.to_owned(), kind))
 }
 
@@ -588,7 +588,7 @@ fn tile_of(pictures: &[PathBuf]) -> Value {
             .iter()
             .filter_map(|path| {
                 let meta = std::fs::metadata(path).ok()?;
-                let id = bibli_core::fs::stat::identity(path, &meta)?;
+                let id = skwir_core::fs::stat::identity(path, &meta)?;
                 Some(Value::List(vec![
                     Value::Text(path.to_string_lossy().as_ref().into()),
                     Value::UInt(id.dev),
@@ -610,7 +610,7 @@ pub fn place_id(tag: &str) -> EntryId {
 struct Scope {
     /// A count or a check of it runs.
     running: bool,
-    /// Counted or checked since bibli started: what the index says of it
+    /// Counted or checked since skwir started: what the index says of it
     /// holds.
     done: bool,
     /// A plan changed something under it while its count ran: what the
@@ -677,7 +677,7 @@ impl Places {
         }
     }
 
-    /// Count `root`'s tags unless counted since bibli started, or checked
+    /// Count `root`'s tags unless counted since skwir started, or checked
     /// what changed when a count covers it; `again` checks anew.
     fn ensure(self: &Arc<Self>, root: &Path, again: bool) {
         let Some(app) = self.app.upgrade() else {
@@ -729,8 +729,8 @@ impl Places {
                         .swap(true, std::sync::atomic::Ordering::Relaxed)
                 {
                     app.notify_about_setting(
-                        bibli_core::app::NotifyLevel::Warning,
-                        "Some tagged files are left out of the tags: the room bibli gives them is full",
+                        skwir_core::app::NotifyLevel::Warning,
+                        "Some tagged files are left out of the tags: the room skwir gives them is full",
                         crate::index::LIMIT_SETTING,
                     );
                 }
@@ -740,7 +740,7 @@ impl Places {
         );
     }
 
-    /// Whether `root`'s tags were counted or checked since bibli
+    /// Whether `root`'s tags were counted or checked since skwir
     /// started: what the index says of them holds. A tag location of it
     /// is complete then; until, it shows what the index knew, checking.
     fn done(&self, root: &Path) -> bool {
@@ -782,7 +782,7 @@ impl Places {
     /// at the top), with their years when it is narrowed by one. Reads the
     /// index and stats: on a worker.
     pub fn tagged(&self, address: &Address, root: &Path) -> Vec<Tagged> {
-        let calendar = (!address.years.is_empty()).then(bibli_platform::calendar::Calendar::system);
+        let calendar = (!address.years.is_empty()).then(skwir_platform::calendar::Calendar::system);
         self.index
             .files_under(root, address.tag.as_deref())
             .into_iter()
@@ -1077,7 +1077,7 @@ impl OpenLocation for Open {
         }
         // A job for each slice, side by side on the workers; what is gone
         // is sent as removed by the hydration itself.
-        for items in items.chunks(bibli_core::fs::HYDRATE_JOB) {
+        for items in items.chunks(skwir_core::fs::HYDRATE_JOB) {
             let items = items.to_vec();
             let sink = self.sink.clone();
             let metadata = Arc::clone(&self.ctx.metadata);
@@ -1085,7 +1085,7 @@ impl OpenLocation for Open {
             self.ctx
                 .scheduler
                 .spawn(priority, "tags.location.stat", cancel.clone(), move || {
-                    bibli_core::fs::hydrate_paths(&items, &metadata, &sink, &cancel);
+                    skwir_core::fs::hydrate_paths(&items, &metadata, &sink, &cancel);
                 });
         }
     }
@@ -1185,7 +1185,7 @@ impl LocationProvider for Provider {
         };
         let mut places = contents(&narrowed, &tagged, &self.places.drafts_of(&root)).places;
         places.sort_by_cached_key(|(tag, _)| {
-            bibli_core::collate::sort_key(std::ffi::OsStr::new(tag_leaf(tag)))
+            skwir_core::collate::sort_key(std::ffi::OsStr::new(tag_leaf(tag)))
         });
         places
             .into_iter()

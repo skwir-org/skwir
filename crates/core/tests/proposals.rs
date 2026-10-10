@@ -6,9 +6,9 @@ mod common;
 
 use std::time::Duration;
 
-use bibli_core::Plan;
-use bibli_core::op::{Mkdir, Verdict};
 use common::*;
+use skwir_core::Plan;
+use skwir_core::op::{Mkdir, Verdict};
 
 fn a_folder_plan(path: &std::path::Path) -> Plan {
     let mut plan = Plan::new("Make a folder");

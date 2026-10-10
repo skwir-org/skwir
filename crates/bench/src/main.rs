@@ -1,4 +1,4 @@
-//! `bibli-bench`: generate synthetic trees on demand and measure the raw
+//! `skwir-bench`: generate synthetic trees on demand and measure the raw
 //! filesystem operations the core is built on. `check` compares against
 //! `budgets.toml` and fails on regression.
 //!
@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 use profiles::Profile;
 
 #[derive(Parser)]
-#[command(name = "bibli-bench", version, about)]
+#[command(name = "skwir-bench", version, about)]
 struct Cli {
     /// Directory holding the generated trees.
     #[arg(long, default_value = "bench-data", global = true)]
@@ -111,7 +111,7 @@ fn measure_all(
 
 fn main() -> Result<()> {
     // The allocator the application ships with (ADR-011).
-    bibli_alloc::tune();
+    skwir_alloc::tune();
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Gen { profiles } => {
@@ -132,7 +132,7 @@ fn main() -> Result<()> {
             expr,
         } => {
             let dir = generate::generate(&cli.root, profile)?;
-            let dir = bibli_core::os_path::canonical(dir)?;
+            let dir = skwir_core::os_path::canonical(dir)?;
             let app = measure::tags_app();
             for run in 1..=runs {
                 let s = measure::search(&app, &expr, &dir);

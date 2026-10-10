@@ -10,16 +10,16 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bibli_core::app::NotifyLevel;
-use bibli_core::command::{Effect, Invocation, Outcome, is_nothing_selected};
-use bibli_core::op::{self, EntryArg, EntryRef, Operation, Plan};
-use bibli_core::permissions::Capability;
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
-use bibli_core::{App, CancelToken};
-use bibli_plugin_api::manifest::Effect as Declared;
-use bibli_plugin_api::protocol::{CommandAnswer, CommandParams, Step, method};
 use serde_json::{Value, json};
+use skwir_core::app::NotifyLevel;
+use skwir_core::command::{Effect, Invocation, Outcome, is_nothing_selected};
+use skwir_core::op::{self, EntryArg, EntryRef, Operation, Plan};
+use skwir_core::permissions::Capability;
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
+use skwir_core::{App, CancelToken};
+use skwir_plugin_api::manifest::Effect as Declared;
+use skwir_plugin_api::protocol::{CommandAnswer, CommandParams, Step, method};
 
 use crate::call::Call;
 use crate::external::{External, Runner};
@@ -87,7 +87,7 @@ fn run(
         Err(error) if is_nothing_selected(&error) => Vec::new(),
         refs => refs?,
     };
-    if !bibli_core::scheduler::on_window_thread() {
+    if !skwir_core::scheduler::on_window_thread() {
         return ask(app, runner, name, args, &refs, CancelToken::new());
     }
     let (weak, runner, name, title) = (
@@ -149,7 +149,7 @@ fn ask(
     let mut check = privacy.checker();
     anyhow::ensure!(
         !refs.iter().any(|r| check.holds(&r.path)) && check.named_in(&args).is_none(),
-        "a private file: a plugin from outside bibli does not see it (Settings, Privacy)"
+        "a private file: a plugin from outside skwir does not see it (Settings, Privacy)"
     );
     let paths: Vec<PathBuf> = refs.iter().map(|r| r.path.clone()).collect();
     let call = Call::new(paths, runner.granted, cancel);
@@ -158,7 +158,7 @@ fn ask(
             let mime = refs[n]
                 .path
                 .file_name()
-                .and_then(bibli_platform::mime::by_name)
+                .and_then(skwir_platform::mime::by_name)
                 .map(|m| m.0);
             call.describe(n, mime)
         })
@@ -207,7 +207,7 @@ fn plan_steps(
     };
     let mut folder = |to: &str| -> anyhow::Result<PathBuf> {
         let path = PathBuf::from(to);
-        bibli_core::os_path::absolute(&path)?;
+        skwir_core::os_path::absolute(&path)?;
         anyhow::ensure!(
             !check.holds(&path),
             "a private folder: a plugin does not reach it"

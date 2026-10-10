@@ -4,8 +4,8 @@
 //! before version 5, 8 since); the properties table near the start holds
 //! the preview, a Windows bitmap whose pixels are zlib-compressed.
 use crate::Found;
-use bibli_core::CancelToken;
-use bibli_platform::inspection::{self, limits};
+use skwir_core::CancelToken;
+use skwir_platform::inspection::{self, limits};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -135,7 +135,7 @@ fn application(body: &[u8]) -> Option<String> {
 
 /// The preview: a bitmap's 40-byte header written field by field, then
 /// its palette (for 8 bits or fewer) and its pixels, each a buffer.
-fn preview(body: &[u8], wide: bool, side: u32) -> Option<bibli_core::thumbs::Image> {
+fn preview(body: &[u8], wide: bool, side: u32) -> Option<skwir_core::thumbs::Image> {
     let header = body.get(..40)?;
     let int = |at: usize| i32::from_le_bytes(header[at..at + 4].try_into().unwrap_or_default());
     let (width, height) = (int(4), int(8));

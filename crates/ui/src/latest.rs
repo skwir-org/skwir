@@ -9,9 +9,9 @@
 
 use std::sync::Arc;
 
-use bibli_core::app::App;
-use bibli_core::cancel::CancelToken;
-use bibli_core::scheduler::Priority;
+use skwir_core::app::App;
+use skwir_core::cancel::CancelToken;
+use skwir_core::scheduler::Priority;
 
 pub struct Latest<T> {
     /// Advanced by each ask and each forget: an answer carries the one it
@@ -105,7 +105,7 @@ mod tests {
     fn only_the_answer_to_the_last_ask_is_taken() {
         let mut latest = Latest::<u32>::default();
         latest.asked = 1;
-        latest.pending = Some(bibli_core::cancel::CancelToken::new());
+        latest.pending = Some(skwir_core::cancel::CancelToken::new());
         latest.tx.send((0, 7)).unwrap();
         latest.tx.send((1, 8)).unwrap();
         assert_eq!(latest.take(), Some(8));

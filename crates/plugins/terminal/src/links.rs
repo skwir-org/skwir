@@ -35,13 +35,13 @@ use alacritty_terminal::grid::{Dimensions, Grid};
 use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::cell::{Cell, CellExtra, Flags, Hyperlink};
 use alacritty_terminal::term::{Term, TermMode};
-use bibli_core::terminal::Target;
-use bibli_platform::links::{self, PathWord};
 use parking_lot::{Mutex, MutexGuard};
+use skwir_core::terminal::Target;
+use skwir_platform::links::{self, PathWord};
 
 /// What the id of a stamp starts with. OSC 8 separates its parameters with
 /// `:`, so no program can write an id that starts so.
-const STAMP: &str = "bibli:";
+const STAMP: &str = "skwir:";
 /// Stamps remembered: the oldest go first, and their cells are text again.
 const KEPT: usize = 4096;
 /// Paths waiting for the filesystem's answer, at most: in a flood of
@@ -51,7 +51,7 @@ const ASKED: usize = 1024;
 const WRAPPED: usize = 16;
 /// The id of the marker on words asked about that name nothing: stamps
 /// are numbered from 1.
-const NOWHERE: &str = "bibli:0";
+const NOWHERE: &str = "skwir:0";
 
 /// What a stamp leads to.
 #[derive(Clone, Debug)]
@@ -108,7 +108,7 @@ impl Stamps {
     pub fn target(&self, link: &Hyperlink) -> Option<(Target, bool)> {
         if !link.id().starts_with(STAMP) {
             let uri = link.uri();
-            let target = match bibli_platform::uri::path_of(uri) {
+            let target = match skwir_platform::uri::path_of(uri) {
                 Some(path) => Target::Path {
                     path,
                     line: None,
@@ -193,7 +193,7 @@ impl Finder {
         let (asks, asked) = std::sync::mpsc::sync_channel(ASKED);
         let answers = Arc::clone(&stamps);
         let started = std::thread::Builder::new()
-            .name("bibli-terminal-links".into())
+            .name("skwir-terminal-links".into())
             .spawn(move || answer(&asked, &answers, &wake));
         if let Err(error) = &started {
             tracing::warn!(%error, "terminal: no thread to find paths on");
@@ -253,7 +253,7 @@ impl Finder {
                 continue;
             }
             let id = match path {
-                None => match bibli_platform::uri::path_of(&text) {
+                None => match skwir_platform::uri::path_of(&text) {
                     // An address of a file is the file.
                     Some(file) => stamps.add(
                         text.clone(),
@@ -406,7 +406,7 @@ mod tests {
     use alacritty_terminal::term::Config;
     use alacritty_terminal::term::test::TermSize;
     use alacritty_terminal::vte::ansi::Processor;
-    use bibli_core::terminal::Link;
+    use skwir_core::terminal::Link;
 
     use super::*;
     use crate::screen;

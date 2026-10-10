@@ -9,8 +9,8 @@
 //! (`KEEP_PLAYING`, `AUTOPLAY`, `CONTINUE`); with the plugin off there is no
 //! player, and nothing reads them.
 
-use bibli_core::{App, plugin::Plugin, settings::SettingSpec};
-use bibli_platform::{
+use skwir_core::{App, plugin::Plugin, settings::SettingSpec};
+use skwir_platform::{
     media::ReplayGain,
     preview::{MediaPreviews, SharedTuning, VIDEO_PROVIDER},
 };
@@ -124,8 +124,8 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Play audio and video files in the preview panel: audio with its cover and a spectrum, video with a still frame when playback is unavailable"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
         if keys.iter().any(|key| key == REPLAY_GAIN) {
@@ -137,16 +137,16 @@ impl Plugin for PreviewPlugin {
             Self::register_video(app);
         }
     }
-    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
-        use bibli_core::plugin::Requirement;
+    fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
+        use skwir_core::plugin::Requirement;
         vec![
-            bibli_platform::media::WORKER.requirement("Audio and video playback"),
+            skwir_platform::media::WORKER.requirement("Audio and video playback"),
             Requirement::program("ffmpeg", "Still frames when playback is unavailable"),
         ]
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
     }
     fn register(&self, app: &App) {
         declare(app);
@@ -162,15 +162,15 @@ impl Plugin for PreviewPlugin {
         );
         Self::register_video(app);
         app.thumbnails
-            .register(ID, Arc::new(bibli_platform::thumb_providers::AudioCovers));
+            .register(ID, Arc::new(skwir_platform::thumb_providers::AudioCovers));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::app::AppConfig;
-    use bibli_platform::preview::AUDIO_PROVIDER;
+    use skwir_core::app::AppConfig;
+    use skwir_platform::preview::AUDIO_PROVIDER;
 
     fn app() -> (tempfile::TempDir, Arc<App>, Arc<PreviewPlugin>) {
         let dir = tempfile::tempdir().unwrap();

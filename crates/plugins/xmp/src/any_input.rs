@@ -2,8 +2,8 @@
 //! a sidecar mutated, and bytes at random. Reading or editing it may
 //! fail; it never panics.
 
-use bibli_core::testing::{bytes, mutated};
 use proptest::prelude::*;
+use skwir_core::testing::{bytes, mutated};
 
 use crate::packet::{edit, notes_of, packet_in, tests::DARKTABLE};
 

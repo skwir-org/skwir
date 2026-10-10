@@ -115,7 +115,7 @@ A section of the frame, not a preview kind.
 
 Providers take a path and nothing else (`PreviewProvider`, `PreviewRequest`
 holds an `EntryRef`). A member is written out by `PreviewProvider::extract`
-(`bibli-archive-worker` for an archive, at most 16 MiB; the parsed message
+(`skwir-archive-worker` for an archive, at most 16 MiB; the parsed message
 for an email attachment) and the worker pipeline previews that file like any
 other. Containers never inspect a member themselves: there is no second,
 poorer member view.
@@ -153,7 +153,7 @@ as data, and to make the UI ask what a preview can do rather than what it is.
    bytes, image), and the features it supports: find, folds, outline, text
    size, sections, source. The toolbar builder and the key context read the
    features. A new format picks a layout and needs no UI change; a new layout
-   is one registration in `bibli-ui`, resolved like `views::named_renderer`,
+   is one registration in `skwir-ui`, resolved like `views::named_renderer`,
    not a match arm in five files.
 2. **Actions are contributed.** A provider lists actions for the file it
    shows: id, title, icon, toolbar slot and a command invocation that receives
@@ -186,7 +186,7 @@ as data, and to make the UI ask what a preview can do rather than what it is.
    resolve through `OpenLocation::path_of`.
 9. **Readable without a window.** `preview.describe` returns the inspection as
    JSON through the same providers and bounds, for the CLI, the MCP server and
-   tests. A conformance test in `crates/bibli/tests/` runs every provider over
+   tests. A conformance test in `crates/skwir/tests/` runs every provider over
    fixtures and checks the contract: bounds, fold nesting, actions that resolve
    to registered commands, no trace after disable.
 

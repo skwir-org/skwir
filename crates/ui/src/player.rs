@@ -18,11 +18,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use bibli_core::media::{Control, MediaSession, Playback};
-use bibli_core::playing::{NowPlaying, PlayerRequest};
-use bibli_core::preview::PreviewRequest;
-use bibli_core::{CancelToken, op::EntryRef, scheduler::Priority};
 use gpui::{AnyElement, Context, RenderImage, Window, div, prelude::*, px};
+use skwir_core::media::{Control, MediaSession, Playback};
+use skwir_core::playing::{NowPlaying, PlayerRequest};
+use skwir_core::preview::PreviewRequest;
+use skwir_core::{CancelToken, op::EntryRef, scheduler::Priority};
 
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -271,8 +271,8 @@ pub struct PlayerState {
     /// The track whose cover was asked for, and the file it was written to
     /// once a worker has done so.
     cover: Option<(PathBuf, Option<PathBuf>)>,
-    cover_tx: flume::Sender<(PathBuf, PathBuf, bibli_core::thumbs::Image)>,
-    cover_rx: flume::Receiver<(PathBuf, PathBuf, bibli_core::thumbs::Image)>,
+    cover_tx: flume::Sender<(PathBuf, PathBuf, skwir_core::thumbs::Image)>,
+    cover_rx: flume::Receiver<(PathBuf, PathBuf, skwir_core::thumbs::Image)>,
     /// The dock's height, as dragged; `dock::COMPACT` until it is.
     pub height: f32,
     /// The colour of the cover shown, by image: worked out once per cover.
@@ -633,13 +633,13 @@ impl Shell {
                 // The session's own: it outlives this job once opened.
                 let lifetime = CancelToken::new();
                 // A link plays, and is typed as, what it leads to.
-                let session = bibli_core::fs::content_path(&path)
+                let session = skwir_core::fs::content_path(&path)
                     .and_then(|content| Some((EntryRef::from_path(&*content)?, content)))
                     .ok_or_else(|| anyhow::anyhow!("{} is no file to play", path.display()))
                     .and_then(|(entry, content)| {
                         let request = PreviewRequest {
                             entry,
-                            mime: bibli_platform::mime::by_name(content.as_os_str())
+                            mime: skwir_platform::mime::by_name(content.as_os_str())
                                 .map(|mime| mime.to_string()),
                             page: 1,
                             seconds: None,
@@ -705,11 +705,11 @@ impl Shell {
             "player-cover",
             job.clone(),
             move || {
-                let cover = || -> Option<(PathBuf, bibli_core::thumbs::Image)> {
-                    let content = bibli_core::fs::content_path(&track)?;
+                let cover = || -> Option<(PathBuf, skwir_core::thumbs::Image)> {
+                    let content = skwir_core::fs::content_path(&track)?;
                     let request = PreviewRequest {
                         entry: EntryRef::from_path(&*content)?,
-                        mime: bibli_platform::mime::by_name(content.as_os_str())
+                        mime: skwir_platform::mime::by_name(content.as_os_str())
                             .map(|mime| mime.to_string()),
                         page: 1,
                         seconds: None,

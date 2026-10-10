@@ -1,12 +1,12 @@
 //! Plugins that run as programs (Level 2, ADR-045): the template built as
 //! one, installed in a folder of plugins, started isolated when first
-//! asked, its reads answered by bibli, ended when turned off.
+//! asked, its reads answered by skwir, ended when turned off.
 #![cfg(target_os = "linux")] // Isolated by bubblewrap; built by cargo.
 
 mod common;
 
-use bibli_core::CancelToken;
-use bibli_core::command::{Invocation, Outcome};
+use skwir_core::CancelToken;
+use skwir_core::command::{Invocation, Outcome};
 
 /// The template's manifest, run as the program `word-count`.
 fn manifest(capabilities: &str) -> String {
@@ -22,7 +22,7 @@ fn manifest(capabilities: &str) -> String {
 
 /// Whether this machine isolates programs: a plugin never runs otherwise.
 fn isolates() -> bool {
-    let can = bibli_platform::sandbox::available();
+    let can = skwir_platform::sandbox::available();
     if !can {
         eprintln!("bubblewrap cannot isolate here: a program plugin does not run");
     }
@@ -30,11 +30,11 @@ fn isolates() -> bool {
 }
 
 #[test]
-fn a_program_answers_a_field_and_a_command_reading_through_bibli() {
+fn a_program_answers_a_field_and_a_command_reading_through_skwir() {
     if !isolates() {
         return;
     }
-    let program = common::program("bibli-outside-template");
+    let program = common::program("skwir-outside-template");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
     common::install(
@@ -50,7 +50,7 @@ fn a_program_answers_a_field_and_a_command_reading_through_bibli() {
     assert_eq!(
         app.fields
             .get("word-count.words", &note, &CancelToken::new()),
-        Some(bibli_core::Value::UInt(3))
+        Some(skwir_core::Value::UInt(3))
     );
     let outcome = app
         .dispatch(&Invocation::with_args(
@@ -73,7 +73,7 @@ fn a_program_that_may_not_read_is_refused_its_reads() {
     if !isolates() {
         return;
     }
-    let program = common::program("bibli-outside-template");
+    let program = common::program("skwir-outside-template");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
     common::install(
@@ -96,7 +96,7 @@ fn a_program_that_may_not_read_is_refused_its_reads() {
     // A private file is never handed to it at all.
     let keys = tmp.path().join("keys");
     std::fs::create_dir(&keys).unwrap();
-    std::fs::write(keys.join(bibli_core::permissions::MARKER), "").unwrap();
+    std::fs::write(keys.join(skwir_core::permissions::MARKER), "").unwrap();
     std::fs::write(keys.join("id"), "secret").unwrap();
     let error = app
         .dispatch(&Invocation::with_args(
@@ -127,5 +127,5 @@ fn a_manifest_that_does_not_hold_together_is_left_out() {
     )
     .unwrap();
     std::fs::write(other.join("x.wasm"), b"\0asm").unwrap();
-    assert!(bibli_extend::discover(&[plugins], &["tags"]).is_empty());
+    assert!(skwir_extend::discover(&[plugins], &["tags"]).is_empty());
 }

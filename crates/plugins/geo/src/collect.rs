@@ -4,7 +4,7 @@
 //! time and climb are still the whole track's.
 use std::time::{Duration, SystemTime};
 
-use bibli_core::geo::{
+use skwir_core::geo::{
     Area, BoundsBuilder, Datum, GeoDoc, LatLon, Line, LineKind, Point, Waypoint,
 };
 

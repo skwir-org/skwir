@@ -1,7 +1,7 @@
-//! bibli plugin: map-tiles. What maps are drawn on (ADR-020): the outline
+//! skwir plugin: map-tiles. What maps are drawn on (ADR-020): the outline
 //! of the land, drawn here from Natural Earth and never downloaded, until
 //! the user chooses OpenStreetMap or a server of their own. It is the only
-//! code in bibli that uses the network, and only after that choice;
+//! code in skwir that uses the network, and only after that choice;
 //! disabling it withdraws every source and cancels the downloads in flight.
 //!
 //! Tiles kept in a file (`PMTiles`, `MBTiles`: `archive.rs`) are previewed as
@@ -17,15 +17,15 @@ mod server;
 
 use std::sync::{Arc, Weak};
 
-use bibli_core::CancelToken;
-use bibli_core::app::{App, NotifyLevel};
-use bibli_core::command::Outcome;
-use bibli_core::plugin::Plugin;
-use bibli_core::scheduler::Priority;
-use bibli_core::settings::{RecordField, SettingSpec};
-use bibli_core::tiles::{Palette, SourceInfo, TileDone, TileRequest, TileSource};
 use parking_lot::Mutex;
 use server::Server;
+use skwir_core::CancelToken;
+use skwir_core::app::{App, NotifyLevel};
+use skwir_core::command::Outcome;
+use skwir_core::plugin::Plugin;
+use skwir_core::scheduler::Priority;
+use skwir_core::settings::{RecordField, SettingSpec};
+use skwir_core::tiles::{Palette, SourceInfo, TileDone, TileRequest, TileSource};
 
 const ID: &str = "map-tiles";
 pub const SOURCE_KEY: &str = "map-tiles.source";
@@ -154,12 +154,12 @@ impl Plugin for MapTilesPlugin {
     fn description(&self) -> &'static str {
         "Draw maps on the outline of the land, offline, or on OpenStreetMap or tile servers you add once you choose one, and preview maps kept in files (PMTiles, MBTiles). Only this plugin uses the network"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Network])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Network])
     }
     fn register(&self, app: &App) {
         app.settings.declare(
@@ -183,7 +183,7 @@ impl Plugin for MapTilesPlugin {
                     RecordField::pairs(
                         "headers",
                         "Headers",
-                        "Sent with every request: User-Agent replaces bibli's, Referer, Authorization… {key} is replaced by the API key",
+                        "Sent with every request: User-Agent replaces skwir's, Referer, Authorization… {key} is replaced by the API key",
                     ),
                     RecordField::secret(KEY_FIELD, "API key", "Kept in your keyring, never in the settings. Put {key} in the address or a header where it goes"),
                 ],
@@ -279,7 +279,7 @@ fn choose(source: Option<&str>, servers: Vec<Server>) -> Choice {
 
 struct Source {
     app: Weak<App>,
-    scheduler: bibli_core::scheduler::Scheduler,
+    scheduler: skwir_core::scheduler::Scheduler,
     /// Decoded the first time a map needs it.
     outline: Arc<Mutex<Option<Arc<outline::Outline>>>>,
     downloads: Arc<download::Downloads>,
@@ -396,7 +396,7 @@ impl TileSource for Source {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::tiles::Palette;
+    use skwir_core::tiles::Palette;
 
     #[test]
     fn the_settings_choose_where_tiles_come_from() {
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn servers_become_choices_and_an_old_single_server_is_kept() {
         let dir = tempfile::tempdir().unwrap();
-        let app = App::new(bibli_core::app::AppConfig::ephemeral(dir.path())).unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(dir.path())).unwrap();
         app.settings.set(
             "map-tiles.url",
             toml::Value::String("https://x.org/{z}/{x}/{y}.png".into()),
@@ -473,7 +473,7 @@ mod tests {
     #[test]
     fn the_outline_answers_without_a_network() {
         let dir = tempfile::tempdir().unwrap();
-        let app = App::new(bibli_core::app::AppConfig::ephemeral(dir.path())).unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(dir.path())).unwrap();
         let plugin = MapTilesPlugin::default();
         plugin.register(&app);
         let (source, lifetime) = app.tiles.source().unwrap();

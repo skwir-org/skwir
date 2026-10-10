@@ -1,26 +1,26 @@
-//! bibli plugin: places. Fills the sidebar from what the desktop already
+//! skwir plugin: places. Fills the sidebar from what the desktop already
 //! knows: home, XDG user dirs, GTK bookmarks, mounted volumes.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use bibli_core::app::{App, NotifyLevel};
-use bibli_core::cancel::CancelToken;
-use bibli_core::command::{Invocation, NoArgs, Outcome};
-use bibli_core::location::Location;
-use bibli_core::os_path::PathArg;
-use bibli_core::plugin::Plugin;
-use bibli_core::registry::{Keeper, MenuItem, Place, Reorder};
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
-use bibli_platform::places::BookmarkEdit;
 use parking_lot::Mutex;
+use skwir_core::app::{App, NotifyLevel};
+use skwir_core::cancel::CancelToken;
+use skwir_core::command::{Invocation, NoArgs, Outcome};
+use skwir_core::location::Location;
+use skwir_core::os_path::PathArg;
+use skwir_core::plugin::Plugin;
+use skwir_core::registry::{Keeper, MenuItem, Place, Reorder};
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
+use skwir_platform::places::BookmarkEdit;
 
 const ID: &str = "places";
 /// A disk brings several partitions: events this close together are one change.
 const SETTLE: Duration = Duration::from_millis(400);
-/// How long an unmount waits for what bibli let go of to close: its
+/// How long an unmount waits for what skwir let go of to close: its
 /// listings close their directories on a worker, and a preview's reader or
 /// player, and the terminal's shell after its `cd`, are processes of their
 /// own. Past this, what still uses the volume is not ours.
@@ -38,14 +38,14 @@ pub struct PlacesPlugin {
 /// The plugin's watcher, shared with the bookmark commands: the first
 /// bookmark can create the folder that is then to be watched.
 #[derive(Clone, Default)]
-struct Watcher(Arc<Mutex<Option<bibli_core::fs::Settled>>>);
+struct Watcher(Arc<Mutex<Option<skwir_core::fs::Settled>>>);
 
 impl Watcher {
     /// Watch the bookmarks' folders that exist; watching one again is
     /// harmless.
     fn watch_bookmarks(&self) {
         if let Some(watcher) = self.0.lock().as_mut() {
-            for folder in bibli_platform::places::bookmarks_folders() {
+            for folder in skwir_platform::places::bookmarks_folders() {
                 watcher.watch(&folder);
             }
         }
@@ -162,7 +162,7 @@ fn size_label(bytes: u64) -> String {
 /// (`Place::key`): its filesystem, and what of it is mounted (`root`, a
 /// subvolume: `/` and `/home` can be one filesystem's), so that it is one
 /// place mounted or not, wherever it is mounted.
-fn volume_key(identity: &bibli_platform::places::Identity, root: &Path) -> Option<String> {
+fn volume_key(identity: &skwir_platform::places::Identity, root: &Path) -> Option<String> {
     let uuid = identity.uuid.as_deref()?;
     Some(if root == Path::new("/") {
         format!("volume:{uuid}")
@@ -175,9 +175,9 @@ fn volume_key(identity: &bibli_platform::places::Identity, root: &Path) -> Optio
 /// it, asking for the passphrase first when it is locked. One udisks says
 /// not to show (an EFI partition) is offered hidden, as is a small FAT or
 /// NTFS partition where udev says nothing.
-fn volume_place(volume: &bibli_platform::places::Volume) -> Place {
-    use bibli_core::command::Invocation;
-    let identity = bibli_platform::places::identity(&volume.device);
+fn volume_place(volume: &skwir_platform::places::Volume) -> Place {
+    use skwir_core::command::Invocation;
+    let identity = skwir_platform::places::identity(&volume.device);
     let title = match (volume.label.is_empty(), volume.locked) {
         (false, _) => volume.label.clone(),
         (true, true) => format!("{} encrypted", size_label(volume.size)),
@@ -249,7 +249,7 @@ fn folder_menu(path: &Path) -> Vec<MenuItem> {
 }
 
 /// Asking for a bookmark's new name: its menu's Rename…, and F2.
-fn bookmark_rename(bookmark: &bibli_platform::places::Bookmark) -> Invocation {
+fn bookmark_rename(bookmark: &skwir_platform::places::Bookmark) -> Invocation {
     Invocation::with_args(
         "ui.ask",
         &serde_json::json!({
@@ -270,13 +270,13 @@ pub fn scan() -> Vec<Place> {
         ..Place::new(group, title, icon, Location::from_path(path))
     };
     let mut out = Vec::new();
-    if let Some(home) = bibli_platform::places::home() {
+    if let Some(home) = skwir_platform::places::home() {
         out.push(folder("Home".into(), home, "user-home", "places"));
     }
-    for d in bibli_platform::places::user_dirs() {
+    for d in skwir_platform::places::user_dirs() {
         out.push(folder(d.name, d.path, icon_for_user_dir(&d.kind), "places"));
     }
-    for b in bibli_platform::places::bookmarks() {
+    for b in skwir_platform::places::bookmarks() {
         let path = serde_json::json!(PathArg::from(b.path.as_path()));
         // Rename… and the item that removes it are the sidebar's, from
         // `rename` and `forget`.
@@ -297,7 +297,7 @@ pub fn scan() -> Vec<Place> {
             ..folder(b.title, b.path, "folder", "bookmarks")
         });
     }
-    for m in bibli_platform::places::mounts() {
+    for m in skwir_platform::places::mounts() {
         let icon = if m.removable {
             "drive-removable-media"
         } else {
@@ -305,7 +305,7 @@ pub fn scan() -> Vec<Place> {
         };
         // What udisks says of it: an EFI partition mounted at /boot is
         // offered hidden. Read from memory (sysfs, udev's database).
-        let identity = bibli_platform::places::identity(&m.source);
+        let identity = skwir_platform::places::identity(&m.source);
         out.push(Place {
             key: volume_key(&identity, &m.root),
             hidden: identity.ignored == Some(true),
@@ -453,7 +453,7 @@ impl Places {
                             place.space = place
                                 .location
                                 .path()
-                                .and_then(|path| bibli_platform::places::space(&path));
+                                .and_then(|path| skwir_platform::places::space(&path));
                         }
                         // A bookmark outlives its folder: it may have moved,
                         // or live on a volume that is not mounted.
@@ -470,7 +470,7 @@ impl Places {
                     .collect();
                 // Volumes that are plugged in but not mounted: `lsblk` is a
                 // process, so it belongs here and not in the synchronous scan.
-                let volumes = bibli_platform::places::unmounted_volumes();
+                let volumes = skwir_platform::places::unmounted_volumes();
                 measured.extend(volumes.iter().map(volume_place));
                 let cleartext = volumes
                     .iter()
@@ -508,7 +508,7 @@ struct MountArgs {
     /// Block device, as listed in the sidebar (`/dev/sdb1`).
     device: String,
     #[serde(default)]
-    pane: Option<bibli_core::workspace::PaneId>,
+    pane: Option<skwir_core::workspace::PaneId>,
     /// Open the volume in a tab behind the one shown, not in the pane.
     #[serde(default)]
     tab: bool,
@@ -521,7 +521,7 @@ struct UnlockArgs {
     /// Secret. Handed to udisks on standard input; never stored or logged.
     passphrase: String,
     #[serde(default)]
-    pane: Option<bibli_core::workspace::PaneId>,
+    pane: Option<skwir_core::workspace::PaneId>,
     /// Open the volume in a tab behind the one shown, not in the pane.
     #[serde(default)]
     tab: bool,
@@ -536,7 +536,7 @@ fn attach(
     app: &App,
     device: String,
     passphrase: Option<String>,
-    pane: Option<bibli_core::workspace::PaneId>,
+    pane: Option<skwir_core::workspace::PaneId>,
     tab: bool,
 ) {
     let pane = app.pane_or_active(pane);
@@ -553,13 +553,13 @@ fn attach(
         },
     );
     places.spawn(app, "places-attach", move |app| {
-        use bibli_core::app::NotifyLevel;
+        use skwir_core::app::NotifyLevel;
         let mounted = passphrase
             .map_or_else(
                 || Ok(device.clone()),
-                |passphrase| bibli_platform::places::unlock(&device, &passphrase),
+                |passphrase| skwir_platform::places::unlock(&device, &passphrase),
             )
-            .and_then(|cleartext| bibli_platform::places::mount(&cleartext));
+            .and_then(|cleartext| skwir_platform::places::mount(&cleartext));
         // Whatever happened, the set of volumes may have changed (a
         // container can unlock and its filesystem still fail to mount).
         this.end_busy(&location, mounted.is_ok());
@@ -601,14 +601,14 @@ impl PlacesPlugin {
     fn watch(&self, app: &App) {
         // The bookmarks' folder holds other settings: only the file counts
         // (writers replace it, so its name is among the event's paths).
-        let settings = bibli_platform::places::bookmarks_folders();
+        let settings = skwir_platform::places::bookmarks_folders();
         let relevant = move |path: &std::path::Path| {
             path.file_name().is_some_and(|name| name == "bookmarks")
                 || !settings.iter().any(|folder| path.parent() == Some(folder))
         };
         let (places, weak) = (self.places.clone(), app.weak());
         let Some(mut watcher) =
-            bibli_core::fs::Settled::start("bibli-places", SETTLE, relevant, move || {
+            skwir_core::fs::Settled::start("skwir-places", SETTLE, relevant, move || {
                 let Some(app) = weak.upgrade() else {
                     return false;
                 };
@@ -796,11 +796,11 @@ impl Places {
                 );
                 return;
             }
-            let shown = bibli_platform::places::bookmarks()
+            let shown = skwir_platform::places::bookmarks()
                 .into_iter()
                 .find(|b| b.path == edit.path())
                 .map(|b| b.title);
-            match bibli_platform::places::edit_bookmarks(&edit) {
+            match skwir_platform::places::edit_bookmarks(&edit) {
                 Ok(Some(inverse)) => {
                     watcher.watch_bookmarks();
                     this.populate(app);
@@ -835,12 +835,12 @@ impl Plugin for PlacesPlugin {
         "Sidebar entries from your home, XDG user folders, GTK bookmarks, and mounted volumes"
     }
 
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Browsing
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Browsing
     }
 
-    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
-        vec![bibli_core::plugin::Requirement::program(
+    fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
+        vec![skwir_core::plugin::Requirement::program(
             "udisksctl",
             "Unmounting removable volumes from the sidebar",
         )]
@@ -853,9 +853,9 @@ impl Plugin for PlacesPlugin {
         }
     }
 
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Programs])
     }
     fn register(&self, app: &App) {
         if let Some(previous) = self
@@ -892,7 +892,7 @@ impl Plugin for PlacesPlugin {
                 let path = target(app, args.target)?;
                 // Restored or deleted, a folder of the trash leaves the
                 // bookmark leading nowhere.
-                if bibli_core::op::in_trash(&path).is_some() {
+                if skwir_core::op::in_trash(&path).is_some() {
                     anyhow::bail!(
                         "“{}” is in the trash: restore it first",
                         path.file_name().unwrap_or(path.as_os_str()).display()
@@ -960,7 +960,7 @@ impl Plugin for PlacesPlugin {
                 let path = args
                     .path
                     .ok_or_else(|| anyhow::anyhow!("which volume? pass its mount point"))?;
-                let mount = bibli_platform::places::mounts()
+                let mount = skwir_platform::places::mounts()
                     .into_iter()
                     .find(|mount| mount.path == *path && mount.udisks)
                     .ok_or_else(|| anyhow::anyhow!("not a removable volume"))?;
@@ -972,17 +972,17 @@ impl Plugin for PlacesPlugin {
                     Some(device_location(&mount.source)),
                     "Unmounting…",
                 );
-                // Nothing of bibli's may hold the volume: a pane showing it
+                // Nothing of skwir's may hold the volume: a pane showing it
                 // goes home, the folders kept there close.
-                let home = bibli_platform::places::home().unwrap_or_else(|| PathBuf::from("/"));
+                let home = skwir_platform::places::home().unwrap_or_else(|| PathBuf::from("/"));
                 app.release(&mount.path, &Location::from_path(home))?;
                 let lifetime = places.lifetime();
                 places.spawn(app, "places-unmount", move |app| {
-                    use bibli_core::app::NotifyLevel;
+                    use skwir_core::app::NotifyLevel;
                     // Written first, while still mounted: the row stays busy
                     // until the drive has it all, and a write that fails is
                     // reported instead of lost.
-                    if let Err(error) = bibli_platform::places::flush(&mount.path) {
+                    if let Err(error) = skwir_platform::places::flush(&mount.path) {
                         this.end_busy(&location, false);
                         this.populate(app);
                         app.notify(
@@ -996,9 +996,9 @@ impl Plugin for PlacesPlugin {
                     }
                     let deadline = std::time::Instant::now() + RELEASE;
                     let unmounted = loop {
-                        match bibli_platform::places::unmount(&mount.source) {
+                        match skwir_platform::places::unmount(&mount.source) {
                             Err(error)
-                                if bibli_platform::places::is_busy(&error)
+                                if skwir_platform::places::is_busy(&error)
                                     && std::time::Instant::now() < deadline
                                     && !lifetime.as_ref().is_none_or(CancelToken::is_cancelled) =>
                             {
@@ -1014,8 +1014,8 @@ impl Plugin for PlacesPlugin {
                             NotifyLevel::Info,
                             format!("“{}” can be removed", mount.label),
                         ),
-                        // bibli let go of it: another program has it.
-                        Err(error) if bibli_platform::places::is_busy(&error) => app.notify(
+                        // skwir let go of it: another program has it.
+                        Err(error) if skwir_platform::places::is_busy(&error) => app.notify(
                             NotifyLevel::Error,
                             format!(
                                 "“{}” was not unmounted: another program is using it",
@@ -1083,7 +1083,7 @@ impl Plugin for PlacesPlugin {
         app.registry.keepers.add(
             ID,
             Keeper {
-                scheme: bibli_core::location::PATH_SCHEME.into(),
+                scheme: skwir_core::location::PATH_SCHEME.into(),
                 save: shown(),
                 save_title: "Bookmark this folder".into(),
                 forget_title: "Remove from bookmarks".into(),
@@ -1096,7 +1096,7 @@ impl Plugin for PlacesPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::app::AppConfig;
+    use skwir_core::app::AppConfig;
 
     /// The kernel takes a mount out of the list as its unmount begins and
     /// only then writes what it had to: the volume, listed by its device in
@@ -1108,7 +1108,7 @@ mod tests {
             device: Some(device_location("/dev/sdz1")),
             what: "Unmounting…",
         }];
-        let volume = bibli_platform::places::Volume {
+        let volume = skwir_platform::places::Volume {
             device: "/dev/sdz1".into(),
             label: "STICK".into(),
             size: 16 << 20,
@@ -1120,7 +1120,7 @@ mod tests {
         let mut places = vec![volume_place(&volume)];
         mark_busy(&mut places, &busy, &[]);
         assert_eq!(places[0].busy.as_deref(), Some("Unmounting…"));
-        let mut other = vec![volume_place(&bibli_platform::places::Volume {
+        let mut other = vec![volume_place(&skwir_platform::places::Volume {
             device: "/dev/sdy1".into(),
             ..volume
         })];
@@ -1364,7 +1364,7 @@ mod tests {
         assert!(volume().is_none() && opened().is_none());
     }
 
-    fn next_notice(app: &App) -> bibli_core::app::Notification {
+    fn next_notice(app: &App) -> skwir_core::app::Notification {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             if let Some(notice) = app.take_notifications().into_iter().next() {
@@ -1408,7 +1408,7 @@ mod tests {
             app.dispatch(&Invocation::with_args(name, &args)).unwrap();
             next_notice(&app)
         };
-        let undo = |notice: &bibli_core::app::Notification, label: &str| {
+        let undo = |notice: &skwir_core::app::Notification, label: &str| {
             let action = notice.action.as_ref().expect("a way back");
             assert_eq!(action.label, label);
             app.dispatch(&action.command).unwrap();
@@ -1483,8 +1483,8 @@ mod tests {
             file,
             format!(
                 "{} Bee\n{} Reports\n",
-                bibli_platform::uri::file_uri(&b),
-                bibli_platform::uri::file_uri(&a)
+                skwir_platform::uri::file_uri(&b),
+                skwir_platform::uri::file_uri(&a)
             )
         );
 
@@ -1517,7 +1517,7 @@ mod tests {
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
         app.plugins.add(Arc::new(PlacesPlugin::default()), &app);
         let path = std::path::Path::new(std::ffi::OsStr::from_bytes(b"/run/media/x/caf\xe9"));
-        let invocation = bibli_core::command::Invocation::try_with_args(
+        let invocation = skwir_core::command::Invocation::try_with_args(
             "places.unmount",
             &serde_json::json!({ "path": PathArg::from(path) }),
         )

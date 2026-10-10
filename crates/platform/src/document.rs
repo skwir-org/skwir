@@ -14,12 +14,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
-use bibli_core::CancelToken;
-use bibli_core::document::{
+use crossbeam_channel::{Receiver, Sender};
+use skwir_core::CancelToken;
+use skwir_core::document::{
     DocumentInfo, DocumentPage, DocumentSession, MAX_PAGE_SIZE, MAX_REPLY, MAX_SIDE, PIXELS_FILE,
     SearchHit, Tagged, WorkerReply, WorkerRequest,
 };
-use crossbeam_channel::{Receiver, Sender};
 
 use crate::line_channel::LineChannel;
 
@@ -76,9 +76,9 @@ pub fn worker_path(engine: Engine) -> Option<PathBuf> {
 /// The engine's worker.
 pub fn worker(engine: Engine) -> crate::process::Worker {
     let (variable, executable) = match engine {
-        Engine::Pdfium => ("BIBLI_PDF_WORKER", "bibli-pdf-worker"),
-        Engine::Poppler => ("BIBLI_POPPLER_WORKER", "bibli-poppler-worker"),
-        Engine::Mupdf => ("BIBLI_MUPDF_WORKER", "bibli-mupdf-worker"),
+        Engine::Pdfium => ("SKWIR_PDF_WORKER", "skwir-pdf-worker"),
+        Engine::Poppler => ("SKWIR_POPPLER_WORKER", "skwir-poppler-worker"),
+        Engine::Mupdf => ("SKWIR_MUPDF_WORKER", "skwir-mupdf-worker"),
     };
     crate::process::Worker {
         variable,
@@ -145,7 +145,7 @@ pub fn open_book(
         Engine::Mupdf,
         source.clone(),
         source,
-        crate::file::memory_dir("bibli-pages-")?,
+        crate::file::memory_dir("skwir-pages-")?,
         setup,
         lifetime,
     )
@@ -157,7 +157,7 @@ pub fn open_book(
 /// helper, else the system's (ADR-041).
 pub type PdfiumChoice = Arc<parking_lot::RwLock<Option<PathBuf>>>;
 
-/// The engines `auto` tries, in its order: `PDFium` (the one bibli's
+/// The engines `auto` tries, in its order: `PDFium` (the one skwir's
 /// packages carry), then Poppler. `MuPDF` only when chosen (ADR-014).
 pub const AUTO: [Engine; 2] = [Engine::Pdfium, Engine::Poppler];
 
@@ -172,7 +172,7 @@ pub fn first_page(
     engines: &[Engine],
     library: Option<&Path>,
     cancel: &CancelToken,
-) -> anyhow::Result<Option<bibli_core::thumbs::Image>> {
+) -> anyhow::Result<Option<skwir_core::thumbs::Image>> {
     for &engine in engines {
         let setup = Setup {
             library: library
@@ -185,7 +185,7 @@ pub fn first_page(
             engine,
             pdf.to_owned(),
             pdf.to_owned(),
-            crate::file::memory_dir("bibli-pages-")?,
+            crate::file::memory_dir("skwir-pages-")?,
             setup,
             cancel.child(),
         )?
@@ -193,7 +193,7 @@ pub fn first_page(
             continue;
         };
         let page = session.render(1, side, cancel)?;
-        return Ok(Some(bibli_core::thumbs::Image {
+        return Ok(Some(skwir_core::thumbs::Image {
             width: page.width,
             height: page.height,
             rgba: page.into_rgba().into(),
@@ -232,7 +232,7 @@ impl WorkerSession {
         let (ready, startup) = crossbeam_channel::bounded(1);
         let cancelled = lifetime.subscribe();
         std::thread::Builder::new()
-            .name("bibli-pdf-session".into())
+            .name("skwir-pdf-session".into())
             .spawn(move || {
                 let launch = Launch {
                     executable,
@@ -562,7 +562,7 @@ impl Worker {
     fn start(launch: &Launch, cancel: &CancelToken) -> anyhow::Result<(Self, WorkerReply)> {
         anyhow::ensure!(!cancel.is_cancelled(), "document open cancelled");
         // A document is a file nobody vouched for: its engine runs isolated
-        // where the system can (ADR-041), as bibli's other helpers on such
+        // where the system can (ADR-041), as skwir's other helpers on such
         // files do, reading its own folder (where a package carries
         // PDFium) and the library the settings name.
         let run = if launch.isolate {
@@ -601,13 +601,13 @@ impl Worker {
             command.arg(format!("--layout={width},{height},{em}"));
         }
         if launch.setup.first_page {
-            command.arg(bibli_core::document::FIRST_PAGE);
+            command.arg(skwir_core::document::FIRST_PAGE);
         }
         if let Some(library) = &launch.setup.library {
-            command.env("BIBLI_PDFIUM_LIBRARY", library);
+            command.env("SKWIR_PDFIUM_LIBRARY", library);
         }
         let mut worker = Self {
-            channel: LineChannel::spawn(&mut command, MAX_REPLY, "bibli-pdf")?,
+            channel: LineChannel::spawn(&mut command, MAX_REPLY, "skwir-pdf")?,
             sent: 0,
             due: 0,
         };
@@ -654,7 +654,7 @@ impl Worker {
     fn wait(
         &mut self,
         id: u64,
-        cancelled: &bibli_core::cancel::CancelSignal,
+        cancelled: &skwir_core::cancel::CancelSignal,
         deadline: &Receiver<Instant>,
     ) -> Result<WorkerReply, Failure> {
         loop {
@@ -676,7 +676,7 @@ impl Worker {
     /// Wait until every request sent has been answered.
     fn settle(
         &mut self,
-        cancelled: &bibli_core::cancel::CancelSignal,
+        cancelled: &skwir_core::cancel::CancelSignal,
         deadline: &Receiver<Instant>,
     ) -> Result<(), Failure> {
         if self.busy() {

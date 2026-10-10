@@ -9,8 +9,8 @@
 use std::path::Path;
 use std::time::Duration;
 
-use bibli_core::op::{Change, ExecEvent, PlanId, RunKind, Transfer};
 use gpui::{Animation, AnimationExt, AnyElement, Context, div, prelude::*, px};
+use skwir_core::op::{Change, ExecEvent, PlanId, RunKind, Transfer};
 
 use crate::controls::{self, ButtonStyle};
 use crate::format;
@@ -574,7 +574,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 #[cfg(test)]
 mod tests {
     use super::{bar, describe, failure, quit_question};
-    use bibli_core::op::{Change, RunKind, Transfer};
+    use skwir_core::op::{Change, RunKind, Transfer};
     use std::path::PathBuf;
 
     #[test]

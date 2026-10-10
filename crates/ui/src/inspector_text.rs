@@ -1,12 +1,12 @@
 //! Native rich-text selection. Geometry is read only for pointer hit testing.
 use crate::{markdown::MarkdownStyle, shell::Shell};
-use bibli_core::{
-    inspection::{Block, Script},
-    workspace::PaneId,
-};
 use gpui::{
     AnyElement, HighlightStyle, MouseButton, RunPosition, SharedString, StrikethroughStyle,
     StyledText, UnderlineStyle, WeakEntity, div, prelude::*, px,
+};
+use skwir_core::{
+    inspection::{Block, Script},
+    workspace::PaneId,
 };
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Selection {
@@ -481,7 +481,7 @@ mod tests {
     use super::*;
     #[test]
     fn small_capitals_keep_every_offset() {
-        use bibli_core::inspection::Run;
+        use skwir_core::inspection::Run;
         let text = "The Straße, éclair";
         let block = Block {
             text: text.into(),
@@ -547,7 +547,7 @@ mod tests {
         // Its cells are ranges of one text, so a selection across them needs
         // no special case and copies with the tabs between the columns.
         let blocks = vec![Block {
-            kind: bibli_core::inspection::BlockKind::TableRow {
+            kind: skwir_core::inspection::BlockKind::TableRow {
                 cells: vec![0..3, 4..8],
                 header: false,
             },

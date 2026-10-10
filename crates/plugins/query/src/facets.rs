@@ -20,10 +20,10 @@
 //! truth: chips are a view of it, and the words and presets they write are
 //! the language's own (`kind:image`, `modified:this-week`, `size>1G`).
 
-use bibli_core::command::Invocation;
-use bibli_core::metadata::{TAG_SEPARATOR, TagRef, clean_tag, same_tag, tag_leaf, tag_within};
-use bibli_platform::mime::Kind;
 use serde::Serialize;
+use skwir_core::command::Invocation;
+use skwir_core::metadata::{TAG_SEPARATOR, TagRef, clean_tag, same_tag, tag_leaf, tag_within};
+use skwir_platform::mime::Kind;
 
 use crate::lang::{self, ContentPat, Expr, Query, Term, TimeField, quote};
 
@@ -94,7 +94,7 @@ pub struct Choice {
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Description {
     pub chips: Vec<Chip>,
-    #[serde(with = "bibli_core::os_path")]
+    #[serde(with = "skwir_core::os_path")]
     pub root: std::path::PathBuf,
     pub text: String,
 }
@@ -600,7 +600,7 @@ fn without_root(p: &Parts, q: &Query) -> String {
 pub fn describe(
     expr: &str,
     tags_known: bool,
-    app: Option<&bibli_core::App>,
+    app: Option<&skwir_core::App>,
 ) -> Result<Description, String> {
     let q = lang::parse(expr).map_err(|e| e.to_string())?;
     let p = Parts::of(&q);

@@ -16,8 +16,8 @@
 //! The planned home is where the mission returns to, not a point of its
 //! path; its altitude is above the sea. Rally points are above the home.
 //! Speeds (`cruiseSpeed`, `hoverSpeed`) and the vehicle are left out.
-use bibli_core::geo::{Area, Datum, LatLon, WaypointKind};
 use serde_json::Value;
+use skwir_core::geo::{Area, Datum, LatLon, WaypointKind};
 
 use crate::collect::{Collector, Plan, PlanKind};
 use crate::mission::{self, Item, Position, Route};
@@ -60,7 +60,7 @@ pub fn read(document: &Value, into: &mut Collector) {
     }
     for (i, point) in list(document.get("rallyPoints").and_then(|r| r.get("points"))).enumerate() {
         match coordinate(point) {
-            Some((Position::At(at), altitude)) => into.waypoint(bibli_core::geo::Waypoint {
+            Some((Position::At(at), altitude)) => into.waypoint(skwir_core::geo::Waypoint {
                 name: format!("R{}", i + 1),
                 at,
                 kind: WaypointKind::Rally,
@@ -276,7 +276,7 @@ fn geofence(fence: &Value, into: &mut Collector) {
 #[allow(clippy::float_cmp)]
 pub(crate) mod tests {
     use super::*;
-    use bibli_core::geo::LineKind;
+    use skwir_core::geo::LineKind;
 
     fn at(lat: f64, lon: f64) -> LatLon {
         LatLon::new(lat, lon).unwrap()

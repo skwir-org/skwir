@@ -6,7 +6,7 @@ anything it can runs isolated, or not at all.
 
 ## Context
 
-bibli runs other programs on files nobody vouched for, as soon as one
+skwir runs other programs on files nobody vouched for, as soon as one
 is selected: LibreOffice, Pandoc and ImageMagick (which must run
 isolated, `sandbox::Otherwise::Refuse`), and decoders the desktop runs
 on the same files anyway (ffmpeg, Poppler's tools, its own helpers, the
@@ -46,7 +46,7 @@ beside a converter's start (LibreOffice's, one to three seconds).
 ## Decision
 
 1. **macOS isolates with `sandbox-exec`** (`platform::sandbox`), under
-   bibli's profile, with the contract bubblewrap has on Linux: no
+   skwir's profile, with the contract bubblewrap has on Linux: no
    network; it reads the system's folders, what a package manager
    installed, the program itself (its `.app` with it), the input and its
    working folder; it writes only in that folder; it may read where
@@ -86,7 +86,7 @@ beside a converter's start (LibreOffice's, one to three seconds).
   profile is compiled, never run (5b), and what it lets through (the
   font, name and preference services; where any file is) is what
   programs ask to start, to be narrowed if they start without it.
-- On Windows Office documents are shown by bibli's own readers and
+- On Windows Office documents are shown by skwir's own readers and
   Pandoc, not as pages, until AppContainer is built.
 - The requirement a plugin lists for isolation names the program that
   isolates on that system (`sandbox::PROGRAM`: `bwrap`, `sandbox-exec`),

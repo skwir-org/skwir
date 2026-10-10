@@ -1,6 +1,6 @@
 //! `file://` URIs, written the way the desktop writes them.
 //!
-//! One escaping rule for every URI bibli hands to another program or uses as
+//! One escaping rule for every URI skwir hands to another program or uses as
 //! a key: `GLib`'s `g_filename_to_uri`, which GNOME, tumbler, GTK bookmarks and
 //! most thumbnailers use. The thumbnail cache is keyed by the MD5 of this
 //! string, so a single byte of difference means never finding the desktop's
@@ -78,7 +78,7 @@ pub fn path_of(uri: &str) -> Option<PathBuf> {
         windows_path_of(host, path, here).map(PathBuf::from)
     }
     #[cfg(not(windows))]
-    here.then(|| PathBuf::from(bibli_core::os_path::from_bytes(percent_decode(path))))
+    here.then(|| PathBuf::from(skwir_core::os_path::from_bytes(percent_decode(path))))
 }
 
 /// [`path_of`] on Windows, for a URI's `host` and `path` (`/C:/a%20b`):

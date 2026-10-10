@@ -1,7 +1,7 @@
 //! Synthetic Word and `OpenDocument` files, written by the tests themselves.
 use super::*;
-use bibli_core::inspection::{Align, Block, BlockKind, Picture, Script};
-use bibli_core::op::EntryRef;
+use skwir_core::inspection::{Align, Block, BlockKind, Picture, Script};
+use skwir_core::op::EntryRef;
 use std::fmt::Write as _;
 use std::io::Write;
 
@@ -114,7 +114,7 @@ fn texts(blocks: &[Block]) -> Vec<&str> {
 }
 
 /// The run of `block` covering `text`.
-fn run<'b>(block: &'b Block, text: &str) -> &'b bibli_core::inspection::Run {
+fn run<'b>(block: &'b Block, text: &str) -> &'b skwir_core::inspection::Run {
     let start = block.text.find(text).expect("text in block");
     block
         .runs
@@ -292,32 +292,32 @@ fn a_long_word_document_is_read_in_parts_numbered_from_its_start() {
 /// open the library the settings name (`process::probe`), not merely
 /// where the helper is. Needs the helper built in the target folder the
 /// test runs from; without it the test says so and passes, unless
-/// `BIBLI_REQUIRE_WORKERS` is set.
+/// `SKWIR_REQUIRE_WORKERS` is set.
 #[test]
 fn pdfium_is_installed_only_with_a_library_it_can_open() {
     let built = std::env::current_exe()
         .ok()
-        .and_then(|exe| Some(exe.parent()?.parent()?.join("bibli-pdf-worker")))
+        .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-pdf-worker")))
         .filter(|path| path.is_file());
     let Some(worker) = built else {
         assert!(
-            std::env::var_os("BIBLI_REQUIRE_WORKERS").is_none(),
-            "bibli-pdf-worker is not built"
+            std::env::var_os("SKWIR_REQUIRE_WORKERS").is_none(),
+            "skwir-pdf-worker is not built"
         );
-        eprintln!("skipped: bibli-pdf-worker is not built");
+        eprintln!("skipped: skwir-pdf-worker is not built");
         return;
     };
     // The shell's own library, if it names one (the `pdf` dev shell).
-    let real = std::env::var_os("BIBLI_PDFIUM_LIBRARY");
+    let real = std::env::var_os("SKWIR_PDFIUM_LIBRARY");
     // SAFETY: nextest runs each test in a process of its own, and nothing
     // else reads the environment before this.
     #[allow(unsafe_code)]
     unsafe {
-        std::env::set_var("BIBLI_PDF_WORKER", &worker);
-        std::env::remove_var("BIBLI_PDFIUM_LIBRARY");
+        std::env::set_var("SKWIR_PDF_WORKER", &worker);
+        std::env::remove_var("SKWIR_PDFIUM_LIBRARY");
     }
     let dir = tempfile::tempdir().unwrap();
-    let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(
+    let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(
         dir.path().join("state"),
     ))
     .unwrap();
@@ -333,7 +333,7 @@ fn pdfium_is_installed_only_with_a_library_it_can_open() {
         app.plugins
             .probe_requirements()
             .into_iter()
-            .find(|status| status.name == "bibli-pdf-worker")
+            .find(|status| status.name == "skwir-pdf-worker")
             .expect("the PDFium requirement")
             .found
     };
@@ -352,7 +352,7 @@ fn pdfium_is_installed_only_with_a_library_it_can_open() {
 #[test]
 fn a_text_document_is_read_by_default_whatever_is_installed() {
     let dir = tempfile::tempdir().unwrap();
-    let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(
+    let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(
         dir.path().join("state"),
     ))
     .unwrap();
@@ -387,12 +387,12 @@ fn request(path: &Path) -> PreviewRequest {
 fn reading(choice: Choice, dir: &Path) -> Reading {
     Reading {
         choice,
-        cache: bibli_core::cache::Cache::new(dir.join("cache")).namespace(ID),
+        cache: skwir_core::cache::Cache::new(dir.join("cache")).namespace(ID),
     }
 }
 
 #[test]
-fn reading_takes_what_bibli_reads_and_names_its_pictures_for_later() {
+fn reading_takes_what_skwir_reads_and_names_its_pictures_for_later() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("report.docx");
     word(&path, BODY, &[(1, "The note.")], false);

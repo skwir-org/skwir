@@ -19,7 +19,7 @@ Four things were left for later because each closes a door:
    search can ask for, and so a contract between plugins.
 2. Writing locations: geotagging pictures from a track, and removing
    locations before sharing. The first mutation of a file's content that
-   bibli would make on its own.
+   skwir would make on its own.
 3. Place names without the network: "Near Example Town" rather than two
    numbers.
 4. Backgrounds from a local file (PMTiles, MBTiles), for streets without
@@ -70,7 +70,7 @@ enough for a search over thousands of files:
   disabled Maps plugin as any disabled command. No core change, but a
   contract only these two know, and a second plugin wanting positions
   would reach for the same command.
-- **An index.** Ruled out: bibli keeps no database (ADR-000, principle 3).
+- **An index.** Ruled out: skwir keeps no database (ADR-000, principle 3).
 
 Leaning: the core contract, since two consumers (search, views) and more
 than one field are foreseen; the geo plugin's cache becomes its store.
@@ -79,7 +79,7 @@ Whatever is chosen: a position term is evaluated late, as `content:` is
 tree reports it is still looking rather than blocking.
 
 **Decided (2026-09-27):** the core contract, in ADR-023
-(`bibli_core::fields`; the geo plugin answers `position` for pictures
+(`skwir_core::fields`; the geo plugin answers `position` for pictures
 and videos). `near:LAT,LON~DISTANCE` (1 km unsaid) and
 `inside:S,W,N,E` are query terms decided last, as `content:`; the Map
 view's "This area" searches the folder and its subfolders for the
@@ -119,8 +119,8 @@ What must hold:
   writes every format that matters (JPEG, HEIC, TIFF, the RAW formats,
   XMP sidecars, videos' QuickTime keys) and preserves what it does not
   touch; it is a `Plugin::requirements` probe, run through
-  `bibli_platform::process` with separate arguments. Without it, the
-  commands say what is missing and where to get it. A writer of bibli's
+  `skwir_platform::process` with separate arguments. Without it, the
+  commands say what is missing and where to get it. A writer of skwir's
   own for JPEG alone is the fallback considered, not the plan.
 - **What else changes.** Whether the file's modification time is kept
   (a folder sorted by date should not reorder) is decided with the
@@ -161,7 +161,7 @@ labels at low zooms, and for `near:` by name.
 
 The network is not an option here without an ADR of its own, and no
 desktop service answers offline (GNOME's geocoding asks Nominatim over
-the network). The data comes with bibli or is installed beside it:
+the network). The data comes with skwir or is installed beside it:
 
 - **Natural Earth's populated places** (public domain, about 7 300
   places at 1:10m): a few hundred kilobytes packed as the outline is;
@@ -184,7 +184,7 @@ out (they multiply the data).
 places are built in (126 KB, 178 KB decoded on first use in 0.5 ms);
 GeoNames `cities1000`, packed by `tools/maps/places.py`, is used
 instead when installed under the XDG data directories
-(`bibli/places/geonames.bin`, 161 535 places, 4.2 MB decoded) and
+(`skwir/places/geonames.bin`, 161 535 places, 4.2 MB decoded) and
 credited in Details. A position is named after the place whose extent
 holds it, else "12 km NE of Example Town" for the place nearest relative
 to how far its name carries (15 to 100 km with its size). Details shows
@@ -204,7 +204,7 @@ What must hold:
   decoded like downloaded ones. Most offline maps are vector tiles (MVT,
   Protomaps' basemaps): drawing them needs a style and a renderer, which
   ADR-020 put out of scope; a file of vector tiles is said to be one and
-  refused, until an ADR of its own decides whether bibli draws them (a
+  refused, until an ADR of its own decides whether skwir draws them (a
   fixed simple style on the workers that draw the outline is the option
   seen).
 - **Readers bounded like every other**: PMTiles' directories are read

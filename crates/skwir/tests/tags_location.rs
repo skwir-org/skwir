@@ -8,18 +8,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::keys;
-use bibli_core::location::Location;
-use bibli_core::op::EntryRef;
-use bibli_core::workspace::PaneId;
-use bibli_plugin_tags::location::Address;
-use bibli_plugin_tags::{read_tags, write_tags};
+use skwir_core::app::{App, AppConfig};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::entry::keys;
+use skwir_core::location::Location;
+use skwir_core::op::EntryRef;
+use skwir_core::workspace::PaneId;
+use skwir_plugin_tags::location::Address;
+use skwir_plugin_tags::{read_tags, write_tags};
 
 /// A folder where extended attributes work: not `/tmp`, often a tmpfs.
 fn home_tempdir() -> tempfile::TempDir {
-    let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+    let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
         .prefix("tags-location-")
@@ -71,11 +71,11 @@ fn setup() -> Setup {
     }
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
     app.plugins.add(
-        Arc::new(bibli_plugin_ops_basic::OpsBasicPlugin::default()),
+        Arc::new(skwir_plugin_ops_basic::OpsBasicPlugin::default()),
         &app,
     );
     let pane = app.workspace.read().active_id();
@@ -117,7 +117,7 @@ fn listed(s: &Setup) -> (BTreeSet<(String, u64)>, BTreeSet<String>) {
             let n = e
                 .metadata
                 .value(keys::FILES)
-                .and_then(bibli_core::Value::as_u64)
+                .and_then(skwir_core::Value::as_u64)
                 .unwrap_or_default();
             places.insert((e.name_str().into_owned(), n));
         } else {
@@ -154,7 +154,7 @@ fn shows(s: &Setup) -> Location {
     s.app.pane_location(s.pane).unwrap()
 }
 
-fn plan_of(outcome: Outcome) -> bibli_core::op::Plan {
+fn plan_of(outcome: Outcome) -> skwir_core::op::Plan {
     match outcome {
         Outcome::Plan(plan) => plan,
         other => panic!("a plan, not {other:?}"),

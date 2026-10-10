@@ -154,7 +154,7 @@ pub trait DocumentSession: Send + Sync {
         Ok(None)
     }
     /// Why its links are not followed, when they are not: a plugin from
-    /// outside bibli that may not use the network drew its pages, and a
+    /// outside skwir that may not use the network drew its pages, and a
     /// link the user clicks would carry what it read (ADR-047).
     fn closed_links(&self) -> Option<&str> {
         None

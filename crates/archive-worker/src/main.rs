@@ -144,11 +144,11 @@ mod native {
         }
         Ok(())
     }
-    /// `bibli-archive-worker <archive> --members N --names N` lists members;
-    /// `bibli-archive-worker <archive> <index> <output> --name NAME --bytes N`
+    /// `skwir-archive-worker <archive> --members N --names N` lists members;
+    /// `skwir-archive-worker <archive> <index> <output> --name NAME --bytes N`
     /// streams the member at `index`, provided it is still called `NAME`, so
     /// an archive rewritten since its listing never yields another member;
-    /// `bibli-archive-worker <archive> --extract` extracts it all into the
+    /// `skwir-archive-worker <archive> --extract` extracts it all into the
     /// folder it runs in, taking a byte of standard input before each unit
     /// of work (an entry, or `UNIT_BYTES` of one: none, and it waits) and
     /// reporting `{"read": bytes of the archive read, "units": taken}`
@@ -206,7 +206,7 @@ mod native {
                     continue;
                 }
                 // One it does not know is refused, never taken for the
-                // archive or a member: a bibli newer than this helper
+                // archive or a member: a skwir newer than this helper
                 // asking what it cannot do says so.
                 Some(option) if option.starts_with("--") => {
                     anyhow::bail!("unknown option {option}");
@@ -555,16 +555,16 @@ mod native {
     }
 }
 fn main() {
-    // `--build`, bibli asking which build of it this helper is, when a
+    // `--build`, skwir asking which build of it this helper is, when a
     // call of it failed (`platform::process::explain`).
     if std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == "--build")
     {
-        println!("{}", env!("BIBLI_BUILD"));
+        println!("{}", env!("SKWIR_BUILD"));
         return;
     }
-    // `--probe`, bibli's settings asking whether this helper works here
+    // `--probe`, skwir's settings asking whether this helper works here
     // (`platform::process::probe`): being started at all says its
     // libraries are there.
     if std::env::args_os()

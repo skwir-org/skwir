@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::keys;
-use bibli_core::location::Location;
-use bibli_core::op::{EntryRef, Operation, Plan, Trash};
+use skwir_core::app::{App, AppConfig};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::entry::keys;
+use skwir_core::location::Location;
+use skwir_core::op::{EntryRef, Operation, Plan, Trash};
 
 use super::{TrashPlugin, place};
 
@@ -16,7 +16,7 @@ use super::{TrashPlugin, place};
 /// there goes to the home trash, which the tests' own XDG data home holds
 /// (`tools/test/isolate-xdg.sh`).
 fn base() -> tempfile::TempDir {
-    let base = std::env::home_dir().unwrap().join(".cache/bibli-tests");
+    let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::tempdir_in(base).unwrap()
 }
@@ -67,7 +67,7 @@ fn a_file_in_the_trash_is_listed_as_it_was_and_restored_where_it_was() {
     let file = folder.join("notes [draft].txt");
     std::fs::write(&file, "x").unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("app"))).unwrap();
-    let home = bibli_platform::trash::home_trash().unwrap();
+    let home = skwir_platform::trash::home_trash().unwrap();
     app.plugins.add(
         Arc::new(TrashPlugin::with_trashes(vec![home.clone()])),
         &app,
@@ -109,7 +109,7 @@ fn a_file_in_the_trash_is_listed_as_it_was_and_restored_where_it_was() {
             .find(|e| {
                 e.metadata
                     .value(keys::TRASHED_FROM)
-                    .and_then(bibli_core::Value::as_str)
+                    .and_then(skwir_core::Value::as_str)
                     == Some(folder.to_str().unwrap())
             })
             .expect("listed in the trash");
@@ -196,7 +196,7 @@ fn emptying_the_trash_deletes_its_files_and_what_it_said_of_them() {
             .iter()
             .map(|t| (t.command.name.as_ref(), t.pane))
             .collect::<Vec<_>>(),
-        [("trash.empty", bibli_core::ToolPane::Shown)]
+        [("trash.empty", skwir_core::ToolPane::Shown)]
     );
     let pane = app.workspace.read().active_id();
     let empty = plan(&app, "trash.empty", &serde_json::json!({ "pane": pane }));

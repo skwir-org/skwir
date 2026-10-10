@@ -20,12 +20,12 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use bibli_core::terminal::{
-    Input, Key, KeyCode, Mods, Palette, Screen, Size, Spawn, TerminalSession,
-};
 use gpui::{
     AnyElement, ClipboardItem, Context, CursorStyle, DragMoveEvent, FocusHandle, Hsla,
     KeyDownEvent, Window, div, prelude::*, px,
+};
+use skwir_core::terminal::{
+    Input, Key, KeyCode, Mods, Palette, Screen, Size, Spawn, TerminalSession,
 };
 
 use crate::elements::terminal::{Colors, GridState, TerminalGrid};
@@ -223,7 +223,7 @@ impl Shell {
             .app
             .pane_dir(self.pane)
             .ok()
-            .or_else(bibli_core::os_path::home)
+            .or_else(skwir_core::os_path::home)
             .unwrap_or_else(|| PathBuf::from("/"));
         let theme = cx.global::<Theme>();
         let spawn = Spawn {
@@ -320,7 +320,7 @@ impl Shell {
                     self.terminal.followed = Some(cwd.clone());
                     if let Err(error) = self
                         .app
-                        .navigate(self.pane, &bibli_core::Location::from_path(&cwd))
+                        .navigate(self.pane, &skwir_core::Location::from_path(&cwd))
                     {
                         self.set_status(format!("{error:#}"), true, cx);
                     }

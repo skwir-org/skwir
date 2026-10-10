@@ -9,7 +9,7 @@ Tags, a rating and a comment live on the file, in its extended
 attributes (AGENTS.md, "Notes live on the file"). Nothing else holds
 them, so a search by tag reads every file's attributes under its root.
 Measured on the reference machine (btrfs, warm cache, one file in a
-thousand tagged, `bibli-bench search deep1m tag:bench`):
+thousand tagged, `skwir-bench search deep1m tag:bench`):
 
 | per million files          | 1 thread | 8 threads | 20 threads |
 |----------------------------|----------|-----------|------------|
@@ -25,7 +25,7 @@ again to stat it (`stat_path`): through a folder kept open
 (`fs::Statter`), a search that stats every file went from 2.2–2.8 s to
 0.64–0.9 s, and `tag:` from 3.8 s to 3.0 s. The rest is the attributes.
 A cold cache is slower still, by an amount this machine cannot measure
-without root (`bibli-bench search` prints each run, the first after
+without root (`skwir-bench search` prints each run, the first after
 `echo 3 > /proc/sys/vm/drop_caches` being the cold one).
 
 An index answers in milliseconds. ADR-000 rules out a daemon and a
@@ -35,7 +35,7 @@ a requirement", in the deletable cache, and says the system's indexes
 
 ## Decision
 
-- **A hint is not an answer.** `bibli_core::hints`: a plugin registers a
+- **A hint is not an answer.** `skwir_core::hints`: a plugin registers a
   `HintProvider` that names files that may have a value in a field
   (`keys::TAGS` first). A search whose every match must have a tag (a
   `tag:` term, alone or in an AND) asks the providers first, considers
@@ -48,7 +48,7 @@ a requirement", in the deletable cache, and says the system's indexes
 - **The system's index first.** The tags plugin asks Baloo
   (`baloosearch -d root tag:"…"`) while Baloo's settings say it indexes
   (`baloofilerc`, `Indexing-Enabled`); Baloo indexes the desktop's tags,
-  which are ours. bibli never starts or configures it.
+  which are ours. skwir never starts or configures it.
 - **An index of our own, learned, not built.** The tags plugin keeps the
   tagged files it has seen in the cache (namespace `tags`, key `index`):
   every file its provider reads, in a folder shown or in a search's
@@ -69,7 +69,7 @@ a requirement", in the deletable cache, and says the system's indexes
 - A second `tag:` search of the million-file tree shows its 1 000 files
   after 0.10 s instead of several seconds; it completes when the walk
   does (3.3–4.0 s). Tested against a private Baloo
-  (`bibli-plugin-tags`, ignored test `a_private_baloo_names_the_tagged_files`,
+  (`skwir-plugin-tags`, ignored test `a_private_baloo_names_the_tagged_files`,
   which runs `baloo_file` on a D-Bus session of its own).
 - `content:` can use the same hook when a full-text index lands
   (ADR-003); Tracker and Spotlight would be further providers.
@@ -80,7 +80,7 @@ a requirement", in the deletable cache, and says the system's indexes
   soon. Renaming or removing a tag everywhere does not trust it: the
   files come from the search, walk included, and the plan is proposed
   for review.
-- `bibli-bench` measures the provider (`tags_fill_us`) and the search
+- `skwir-bench` measures the provider (`tags_fill_us`) and the search
   (`tag_search_us`); their budgets are in `budgets.toml`.
 - Amended (2026-10-01): the index also covers folders. The Tags view's
   count (`count.rs`) teaches it every tagged file under a folder, outside
@@ -93,7 +93,7 @@ a requirement", in the deletable cache, and says the system's indexes
   change times do not tell (network, FUSE: `statfs`). This is the one
   place the index is trusted as complete, and only for counting: a
   `tag:` search still walks, as above. The cover ends when the index is
-  full, or when bibli moves the folder. `tags_check_us` measures a check
+  full, or when skwir moves the folder. `tags_check_us` measures a check
   that finds nothing changed on the million-file tree (1.3 s, against
   3.0 s for the search).
 - Amended (2026-10-01): the index has no count of files for a bound, but

@@ -15,7 +15,7 @@ pub(crate) fn decoded_piece(bytes: &[u8], parents: &[Option<u32>]) -> Option<usi
 }
 
 fn home_tempdir() -> tempfile::TempDir {
-    let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+    let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
         .prefix("tags-index-")
@@ -139,7 +139,7 @@ fn past_its_room_it_learns_no_new_file_but_keeps_those_known_current() {
 #[test]
 fn it_is_kept_in_pieces_read_when_needed_and_moves_carry_tags_along() {
     let tmp = home_tempdir();
-    let slot = || Some(bibli_core::cache::Cache::new(tmp.path()).namespace("tags"));
+    let slot = || Some(skwir_core::cache::Cache::new(tmp.path()).namespace("tags"));
     let first = index(slot(), 64);
     first.learn(vec![
         (PathBuf::from("/r/a"), tags(&["x"])),
@@ -211,7 +211,7 @@ fn it_is_kept_in_pieces_read_when_needed_and_moves_carry_tags_along() {
 #[test]
 fn an_older_index_is_learned_into_pieces() {
     let tmp = home_tempdir();
-    let slot = bibli_core::cache::Cache::new(tmp.path()).namespace("tags");
+    let slot = skwir_core::cache::Cache::new(tmp.path()).namespace("tags");
     slot.put(
         b"index.2",
         serde_json::to_string(&[("/r/a", ["x"])])
@@ -227,7 +227,7 @@ fn an_older_index_is_learned_into_pieces() {
 }
 
 /// What the index takes, against `FILE_BYTES` and `FOLDER_BYTES`:
-/// `cargo nextest run --release -p bibli-plugin-tags scale_probe
+/// `cargo nextest run --release -p skwir-plugin-tags scale_probe
 /// --run-ignored only --no-capture`.
 #[test]
 #[ignore = "measures memory"]

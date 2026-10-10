@@ -1,4 +1,4 @@
-//! The helper as bibli runs it: a file and its format in, a line of
+//! The helper as skwir runs it: a file and its format in, a line of
 //! measures and a PNG out, or a reason and an exit status of 1.
 use std::fmt::Write as _;
 use std::io::Write as _;
@@ -13,7 +13,7 @@ struct Answer {
 }
 
 fn run(path: &Path, format: &str, extra: &[&str]) -> Result<Answer, String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_bibli-model-worker"))
+    let output = Command::new(env!("CARGO_BIN_EXE_skwir-model-worker"))
         .arg(path)
         .args(["--format", format, "--side", "256"])
         .args(extra)

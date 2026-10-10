@@ -1,19 +1,19 @@
 //! Virtual source lines. Fold coordinates stay in the provider's logical lines.
 //!
-//! Code is colored with bat's grammars and themes, in bibli's look or the
+//! Code is colored with bat's grammars and themes, in skwir's look or the
 //! one the Reading page keeps it in (`reading.code_appearance`). Unless
 //! the page chooses a theme for that look (`CodeTheme`), the colors are
-//! bibli's own: base16 Ocean's, on that look's background. A theme
+//! skwir's own: base16 Ocean's, on that look's background. A theme
 //! chosen, one of bat's or one its user added to bat (`bat::themes_dir`),
 //! brings the background it is meant for, and its bold and italic: not
-//! its underline, which in bibli is a link's. Code in a look that is not
-//! bibli's is drawn with that look's tokens (`Theme::in_look`).
+//! its underline, which in skwir is a link's. Code in a look that is not
+//! skwir's is drawn with that look's tokens (`Theme::in_look`).
 use crate::{inspector_text::Selection, shell::Shell, theme::Theme};
-use bibli_core::{
+use gpui::{AnyElement, Hsla, WeakEntity, div, prelude::*, px};
+use skwir_core::{
     inspection::{Inspection, Run},
     workspace::PaneId,
 };
-use gpui::{AnyElement, Hsla, WeakEntity, div, prelude::*, px};
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, OnceLock, RwLock};
@@ -35,10 +35,10 @@ fn bat_themes() -> &'static EmbeddedLazyThemeSet {
 }
 
 /// The choice of `reading.code_light` and `reading.code_dark` that keeps
-/// bibli's own colors.
+/// skwir's own colors.
 pub const DEFAULT: &str = "default";
 
-/// bat's themes bibli offers: bat's name for each (what `bat --theme`
+/// bat's themes skwir offers: bat's name for each (what `bat --theme`
 /// takes, and the value stored), the name shown, and whether it is dark,
 /// so each look offers its own (a test holds this to the background).
 /// A pair's light and dark are one name in their two lists. bat's
@@ -77,12 +77,12 @@ const BAT: [(Bat, &str, bool); 29] = [
 ];
 
 /// The colors code is drawn in and the look they are for, as the
-/// settings choose them while bibli has its look (`Theme::code`, read
+/// settings choose them while skwir has its look (`Theme::code`, read
 /// with the theme). A preview is highlighted with it, so a new choice
 /// shows the file again (`preview::Version`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeTheme {
-    /// Whether code is drawn dark: bibli's look, unless
+    /// Whether code is drawn dark: skwir's look, unless
     /// `reading.code_appearance` keeps code in one.
     pub dark: bool,
     /// bat's name for the theme, the name of a theme the user added to
@@ -91,7 +91,7 @@ pub struct CodeTheme {
 }
 
 impl CodeTheme {
-    /// bibli's own colors, for a look.
+    /// skwir's own colors, for a look.
     pub fn own(dark: bool) -> Self {
         Self {
             dark,
@@ -99,10 +99,10 @@ impl CodeTheme {
         }
     }
 
-    /// The theme the settings choose while bibli is dark, or light: the
+    /// The theme the settings choose while skwir is dark, or light: the
     /// look `reading.code_appearance` keeps code in, Automatic following
-    /// bibli's, and the theme chosen for that look.
-    pub fn chosen(app: &bibli_core::App, bibli_dark: bool) -> Self {
+    /// skwir's, and the theme chosen for that look.
+    pub fn chosen(app: &skwir_core::App, skwir_dark: bool) -> Self {
         let dark = match app
             .settings
             .get::<String>(crate::settings::CODE_APPEARANCE_KEY)
@@ -110,7 +110,7 @@ impl CodeTheme {
         {
             Some("light") => false,
             Some("dark") => true,
-            _ => bibli_dark,
+            _ => skwir_dark,
         };
         let key = if dark {
             crate::settings::CODE_DARK_KEY
@@ -145,7 +145,7 @@ pub fn user_themes(again: bool) -> Arc<[Arc<UserTheme>]> {
     if !again && let Some(themes) = USER.read().ok().and_then(|themes| themes.clone()) {
         return themes;
     }
-    let themes: Arc<[_]> = bibli_platform::bat::themes_dir()
+    let themes: Arc<[_]> = skwir_platform::bat::themes_dir()
         .map(|dir| read_user_themes(&dir))
         .unwrap_or_default()
         .into();
@@ -166,7 +166,7 @@ fn read_user_themes(dir: &Path) -> Vec<Arc<UserTheme>> {
         .into_iter()
         .filter_map(|path| {
             let name = path.file_stem()?.to_str()?.to_owned();
-            let bytes = bibli_platform::file::read_regular(&path, LIMIT).ok()?;
+            let bytes = skwir_platform::file::read_regular(&path, LIMIT).ok()?;
             let colors = ThemeSet::load_from_reader(&mut std::io::Cursor::new(bytes)).ok()?;
             Some(Arc::new(UserTheme {
                 name,
@@ -193,7 +193,7 @@ fn is_dark(colors: &Colors) -> bool {
     }
 }
 
-/// The choices of a look's setting, `(value, label)`: bibli's own colors,
+/// The choices of a look's setting, `(value, label)`: skwir's own colors,
 /// then bat's themes of that look, then the user's once read, a theme of
 /// the user's taking the place of bat's of the same name as in bat. The
 /// one chosen is always among them, said missing once the user's are
@@ -226,12 +226,12 @@ pub fn choices(dark: bool, chosen: &str, user: Option<&[Arc<UserTheme>]>) -> Vec
 }
 
 /// What code is drawn with: a theme's colors and, unless they are
-/// bibli's own, the background they are meant for and their bold and
+/// skwir's own, the background they are meant for and their bold and
 /// italic.
 pub(crate) struct Palette {
     colors: Painted,
     /// The theme's background, as a run's color is kept (`Run::color`);
-    /// `None` draws on bibli's own.
+    /// `None` draws on skwir's own.
     pub background: Option<[u8; 3]>,
     /// Whether its font styles are drawn.
     styled: bool,
@@ -244,7 +244,7 @@ enum Painted {
 
 impl Palette {
     /// The palette `code` names: a theme the user added to bat, then one
-    /// of bat's, as bat looks them up; bibli's own colors when none has
+    /// of bat's, as bat looks them up; skwir's own colors when none has
     /// its name (a file taken out of bat's folder). It may read the
     /// user's themes: a worker's work.
     pub fn of(code: &CodeTheme) -> Self {
@@ -372,11 +372,11 @@ pub(crate) fn highlight(data: &mut Inspection, palette: &Palette) {
     for (line, block) in data.blocks.iter_mut().enumerate() {
         // A preview moved on from is not colored further: its answer is
         // not taken.
-        if line % 256 == 0 && bibli_core::scheduler::job_cancelled() {
+        if line % 256 == 0 && skwir_core::scheduler::job_cancelled() {
             return;
         }
         block.runs = highlighter.line(&block.text);
-        bibli_platform::links::link_block(block, true);
+        skwir_platform::links::link_block(block, true);
     }
 }
 
@@ -514,7 +514,7 @@ impl CodeRow<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::inspection::{Block, InspectionKind};
+    use skwir_core::inspection::{Block, InspectionKind};
 
     #[test]
     fn nested_folds_retain_siblings_and_remember_child_state() {
@@ -638,14 +638,14 @@ mod tests {
     }
 
     #[test]
-    fn default_keeps_the_colors_bibli_drew_code_in_before() {
-        // syntect's own base16 Ocean, which bibli drew with before it
+    fn default_keeps_the_colors_skwir_drew_code_in_before() {
+        // syntect's own base16 Ocean, which skwir drew with before it
         // offered bat's themes.
         let before = ThemeSet::load_defaults();
         let markdown = syntaxes().find_syntax_by_token("md").unwrap();
         for (dark, name) in [(false, "base16-ocean.light"), (true, "base16-ocean.dark")] {
             let palette = Palette::of(&CodeTheme::own(dark));
-            assert_eq!(palette.background, None, "drawn on bibli's background");
+            assert_eq!(palette.background, None, "drawn on skwir's background");
             let text = "# Title\n**bold** and _italic_ `code`";
             let ours = Highlighter::new(Some("md"), &palette).text(text);
             let mut theirs = syntect::easy::HighlightLines::new(markdown, &before.themes[name]);
@@ -694,28 +694,28 @@ mod tests {
         };
         assert_eq!(styles(&theme(false, DEFAULT)), (false, false));
         assert_eq!(styles(&theme(false, "Catppuccin Latte")), (true, true));
-        // Dracula underlines a path's modules; in bibli an underline is a
+        // Dracula underlines a path's modules; in skwir an underline is a
         // link's.
         let dracula = theme(true, "Dracula");
         let runs = Highlighter::new(Some("rs"), &dracula).line("use std::collections::HashMap;");
         assert!(runs.iter().all(|run| !run.underline), "{runs:?}");
-        // A name no theme has any more is drawn in bibli's own colors.
+        // A name no theme has any more is drawn in skwir's own colors.
         assert_eq!(theme(true, "Taken out of bat's folder").background, None);
     }
 
-    /// Code is as light or dark as bibli unless the settings keep it in a
+    /// Code is as light or dark as skwir unless the settings keep it in a
     /// look, and wears the theme chosen for the look it is in.
     #[test]
-    fn code_is_in_bibli_s_look_unless_the_settings_keep_it_in_one() {
+    fn code_is_in_skwir_s_look_unless_the_settings_keep_it_in_one() {
         let tmp = tempfile::tempdir().unwrap();
-        let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         crate::settings::declare(&app);
         app.settings
             .set(crate::settings::CODE_LIGHT_KEY, "GitHub".into());
         app.settings
             .set(crate::settings::CODE_DARK_KEY, "Dracula".into());
-        let chosen = |bibli_dark| {
-            let code = CodeTheme::chosen(&app, bibli_dark);
+        let chosen = |skwir_dark| {
+            let code = CodeTheme::chosen(&app, skwir_dark);
             (code.dark, code.name.to_string())
         };
         let (light, dark) = ((false, "GitHub".to_owned()), (true, "Dracula".to_owned()));

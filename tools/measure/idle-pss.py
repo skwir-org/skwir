@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Measure bibli's idle memory as ADR-033 budgets it, and its first frame.
+"""Measure skwir's idle memory as ADR-033 budgets it, and its first frame.
 
 Starts the release binary on the display of the current session (the
 reference machine's Wayland session for the gate), on a four-entry folder,
 with XDG directories of its own: once to fill the caches (the GPU driver's
-shader cache, bibli's), then RUNS times. Each start idles IDLE seconds; its
+shader cache, skwir's), then RUNS times. Each start idles IDLE seconds; its
 PSS is read from /proc/<pid>/smaps and split by mapping. The budget is on
-bibli's own share: everything but the GPU driver's code (the user-space
+skwir's own share: everything but the GPU driver's code (the user-space
 driver, the Vulkan ICDs and their LLVM), whose share of PSS depends on the
-GPU vendor and on how many other GPU clients map it, not on bibli.
+GPU vendor and on how many other GPU clients map it, not on skwir.
 
-    tools/measure/idle-pss.py [--binary target/release/bibli] [--runs 3]
+    tools/measure/idle-pss.py [--binary target/release/skwir] [--runs 3]
 
 Exits 1 when the median own share is over the budget. Another process
 running the same binary file shares its pages and lowers the reading, so
-it refuses to start while one does; a bibli built before (its file since
+it refuses to start while one does; a skwir built before (its file since
 replaced, the one the user keeps open) maps another file, and shares no
 more with the one measured than any program does. Each instance it starts
 is stopped by its own pid.
@@ -89,7 +89,7 @@ def others_running(binary):
 
 
 def start(binary, folder, xdg, idle, log):
-    env = dict(os.environ, RUST_LOG="bibli_ui=info", NO_COLOR="1",
+    env = dict(os.environ, RUST_LOG="skwir_ui=info", NO_COLOR="1",
                XDG_CONFIG_HOME=str(xdg / "config"),
                XDG_CACHE_HOME=str(xdg / "cache"),
                XDG_DATA_HOME=str(xdg / "data"))
@@ -102,7 +102,7 @@ def start(binary, folder, xdg, idle, log):
         time.sleep(5)
         cpu = (cpu_ticks(app.pid) - before) / os.sysconf("SC_CLK_TCK") / 5 * 100
         if app.poll() is not None:
-            sys.exit(f"bibli exited during the run; see {log}")
+            sys.exit(f"skwir exited during the run; see {log}")
         result = breakdown(app.pid, binary)
         result["idle CPU %"] = cpu
         frame = FIRST_FRAME.search(Path(log).read_text())
@@ -122,7 +122,7 @@ def main():
         return 0
     root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--binary", default=str(root / "target/release/bibli"))
+    parser.add_argument("--binary", default=str(root / "target/release/skwir"))
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--idle", type=float, default=15.0)
     args = parser.parse_args()
@@ -131,7 +131,7 @@ def main():
         sys.exit(f"another process runs {binary} (pid {', '.join(map(str, others))}): "
                  "it shares the binary's pages; close it first")
 
-    base = Path.home() / ".cache/bibli-tests"
+    base = Path.home() / ".cache/skwir-tests"
     base.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="idle-pss-", dir=base))
     try:

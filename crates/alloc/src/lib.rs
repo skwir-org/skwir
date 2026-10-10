@@ -1,4 +1,4 @@
-//! The process-wide allocator of the bibli binaries (ADR-011).
+//! The process-wide allocator of the skwir binaries (ADR-011).
 //!
 //! glibc's malloc keeps what a thread freed in that thread's arena, and
 //! after a large block is freed it raises the size it serves from the OS,
@@ -9,7 +9,7 @@
 //! at once and streams listings faster; ADR-011 has the measurements.
 //!
 //! A binary depends on this crate with the `mimalloc` feature (on by
-//! default in `bibli` and `bibli-bench`, so the benchmarks measure what
+//! default in `skwir` and `skwir-bench`, so the benchmarks measure what
 //! ships) and calls [`tune`] first thing in `main`. Build a binary with
 //! `--no-default-features` to profile the heap with heaptrack, which only
 //! sees the system allocator.
@@ -84,7 +84,7 @@ pub fn tune() {
 /// thread's emptied pages only when that thread allocates again: a worker
 /// that read and freed a burst, then waits for the next job, kept them, a
 /// megabyte at idle (2026-10-06). The scheduler's workers call it once
-/// idle after a job (`bibli_core::scheduler::release_when_idle`). Costs a
+/// idle after a job (`skwir_core::scheduler::release_when_idle`). Costs a
 /// walk of the thread's heap: never call it on a hot path. Does nothing
 /// without the `mimalloc` feature.
 pub fn collect() {

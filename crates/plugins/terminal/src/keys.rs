@@ -4,7 +4,7 @@
 //! Plain text never comes here (it is `Input::Text`, UTF-8 as typed); these
 //! are the keys that have no text, and characters with Ctrl or Alt.
 
-use bibli_core::terminal::{Key, KeyCode, Mods};
+use skwir_core::terminal::{Key, KeyCode, Mods};
 
 const ESC: u8 = 0x1b;
 

@@ -1,8 +1,8 @@
 //! Names as anyone writes them, cut into a base, tags and an extension
 //! by each convention and joined back: never a panic.
 
-use bibli_core::testing::mutated_text;
 use proptest::prelude::*;
+use skwir_core::testing::mutated_text;
 
 use crate::Convention;
 

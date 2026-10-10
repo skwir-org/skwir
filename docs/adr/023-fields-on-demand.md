@@ -6,7 +6,7 @@ position (ADR-022, part 1).
 ## Context
 
 A file's metadata is filled at hydration: a stat, then the metadata
-providers (`bibli_core::metadata`), run on every batch of every listing.
+providers (`skwir_core::metadata`), run on every batch of every listing.
 That suits what is cheap and wanted everywhere (sizes, times, tags).
 Some facts are costly to read and wanted rarely: where a picture was
 taken (its EXIF), a video's duration, a document's page count. ADR-020
@@ -20,7 +20,7 @@ the contract is the core's (ADR-000, principle 5).
 
 ## Decision
 
-- **`bibli_core::fields`**: a plugin registers a `FieldProvider` for the
+- **`skwir_core::fields`**: a plugin registers a `FieldProvider` for the
   keys it answers (core keys such as `entry::keys::POSITION`, or its own,
   namespaced); `accepts` says, from the name alone, whether a file may
   have one; `read` reads it, on a worker. `App::fields` holds them,

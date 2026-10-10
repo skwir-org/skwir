@@ -11,9 +11,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
-use bibli_core::CancelToken;
-use bibli_core::geo::Bounds;
 use parking_lot::Mutex;
+use skwir_core::CancelToken;
+use skwir_core::geo::Bounds;
 
 use crate::archive::{About, Archive, Compression, Format, TILE_INFLATED, inflate};
 
@@ -236,7 +236,7 @@ pub(crate) struct PmTiles {
 
 impl PmTiles {
     pub(crate) fn open(path: &Path) -> anyhow::Result<PmTiles> {
-        let mut file = bibli_platform::inspection::open(path)?;
+        let mut file = skwir_platform::inspection::open(path)?;
         let len = file.metadata()?.len();
         let mut bytes = [0u8; HEADER];
         file.read_exact(&mut bytes)
@@ -352,7 +352,7 @@ impl Archive for PmTiles {
         let id = tile_id(z, x, y);
         let mut entries = Arc::clone(&self.root);
         for _ in 0..DEPTH {
-            bibli_platform::inspection::check(cancel)?;
+            skwir_platform::inspection::check(cancel)?;
             let Some(entry) = find(&entries, id) else {
                 return Ok(None);
             };
@@ -576,7 +576,7 @@ pub(crate) mod tests {
             for x in x0..=x1 {
                 for y in y0..=y1 {
                     let bytes = hills.tile(z, x, y, &cancel).unwrap().expect("a tile");
-                    let image = bibli_platform::inspection::image(&bytes).unwrap();
+                    let image = skwir_platform::inspection::image(&bytes).unwrap();
                     assert_eq!((image.width, image.height), (256, 256));
                     let pixel = |px: usize, py: usize| {
                         let at = (py * 256 + px) * 4;

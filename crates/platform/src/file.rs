@@ -4,7 +4,7 @@
 //! Every read of a file the user pointed at (content sniffing, previews,
 //! thumbnails, EXIF) or that another application keeps beside one (a
 //! sidecar, a `.trashinfo`) goes through [`open_regular`] or
-//! [`read_regular`], the core's (`bibli_core::fs::file`), which never block
+//! [`read_regular`], the core's (`skwir_core::fs::file`), which never block
 //! and refuse anything that is not a regular file: a named pipe, socket or
 //! device called `x.png` is not an image.
 //!
@@ -14,7 +14,7 @@
 use std::io;
 use std::path::Path;
 
-pub use bibli_core::fs::file::{SIDE_FILE_LIMIT, open_regular, read_regular, read_regular_text};
+pub use skwir_core::fs::file::{SIDE_FILE_LIMIT, open_regular, read_regular, read_regular_text};
 
 /// Rewrite the text file at/// Rewrite the text file at `link` with `change`, which gets its current
 /// text (empty when there is no file) and answers the new text with a value
@@ -35,7 +35,7 @@ pub fn rewrite<T>(
     change: impl FnOnce(&str) -> Option<(String, T)>,
 ) -> anyhow::Result<Option<T>> {
     use std::io::Write as _;
-    let file = match bibli_core::os_path::canonical(link) {
+    let file = match skwir_core::os_path::canonical(link) {
         Ok(target) => target,
         Err(error) if error.kind() == io::ErrorKind::NotFound => link.to_path_buf(),
         Err(error) => return Err(error.into()),
@@ -83,7 +83,7 @@ pub fn rewrite<T>(
 /// such file.
 pub const DESKTOP_FILE: u64 = 4 << 20;
 
-/// A private folder for what a helper hands bibli and is read at once (a
+/// A private folder for what a helper hands skwir and is read at once (a
 /// video's frames, a document's pages): in memory through `/dev/shm` where
 /// that exists and is writable, else the ordinary temporary folder, which
 /// may be on a disk. There a file rewritten in place (the video's one

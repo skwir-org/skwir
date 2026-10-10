@@ -1,9 +1,9 @@
-# Package bibli for Windows (Phase 5, step K): build what ships, then the
-# installer from tools\package\windows\bibli.wxs. Run on Windows with the
+# Package skwir for Windows (Phase 5, step K): build what ships, then the
+# installer from tools\package\windows\skwir.wxs. Run on Windows with the
 # Rust toolchain and WiX 5 or later (`dotnet tool install --global wix`);
 # written on Linux, never run yet (ADR-035: 5b runs it).
 #
-#     powershell -File tools\package\windows.ps1 -MimeDatabase <dir> [-Version 0.0.1]
+#     powershell -File tools\package\windows.ps1 -MimeDatabase <dir> [-Version 0.1.0]
 #
 # <dir> is the type database, the fallback of the system's types
 # (ADR-037), as tools/package/mime-database.sh compiles it from
@@ -11,7 +11,7 @@
 # update-mime-database to compile it with.
 param(
     [Parameter(Mandatory = $true)][string]$MimeDatabase,
-    [string]$Version = "0.0.1"
+    [string]$Version = "0.1.0"
 )
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path "$PSScriptRoot\..\.."
@@ -22,7 +22,7 @@ if (-not (Test-Path "$MimeDatabase\globs2")) {
 # The helpers an installer carries (ADR-041): Mermaid and MuPDF are left
 # out, as Linux's packages only suggest them; those linking native
 # libraries (GStreamer, libarchive) wait for their libraries here.
-cargo build --profile dist -p bibli -p bibli-pdf-worker -p bibli-model-worker -p bibli-module-worker
+cargo build --profile dist -p skwir -p skwir-pdf-worker -p skwir-model-worker -p skwir-module-worker
 # PDFium, beside the PDF helper, where it finds it (ADR-041): the release
 # tools\package\pdfium.lock pins, checked against its sum.
 $lock = Get-Content tools\package\pdfium.lock | Where-Object { $_ -notmatch '^#' }
@@ -45,11 +45,11 @@ if (Test-Path $licenses) { Remove-Item -Recurse -Force $licenses }
 New-Item -ItemType Directory -Force "$licenses\pdfium" | Out-Null
 Copy-Item "$unpacked\LICENSE", "$unpacked\licenses\*" "$licenses\pdfium"
 Copy-Item LICENSE $licenses
-# Beside bibli.exe, where it looks for it.
+# Beside skwir.exe, where it looks for it.
 $share = "target\dist\share\mime"
 if (Test-Path $share) { Remove-Item -Recurse -Force $share }
 New-Item -ItemType Directory -Force $share | Out-Null
 Copy-Item "$MimeDatabase\*" $share
 New-Item -ItemType Directory -Force target\package | Out-Null
-wix build tools\package\windows\bibli.wxs -d "Version=$Version" -d "Dist=$root\target\dist" -o "target\package\bibli-$Version.msi"
-Write-Output "target\package\bibli-$Version.msi"
+wix build tools\package\windows\skwir.wxs -d "Version=$Version" -d "Dist=$root\target\dist" -o "target\package\skwir-$Version.msi"
+Write-Output "target\package\skwir-$Version.msi"

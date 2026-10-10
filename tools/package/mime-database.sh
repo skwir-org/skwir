@@ -1,10 +1,10 @@
 #!/bin/sh
-# The type database the macOS and Windows packages carry beside bibli:
+# The type database the macOS and Windows packages carry beside skwir:
 # the fallback of the system's own types (ADR-037). Compiled from the
 # source vendored in vendor/shared-mime-info by shared-mime-info's own
 # `update-mime-database` (in the dev shell; on a Mac, Homebrew's
-# `shared-mime-info`), and only the files bibli reads, with the licence
-# (GPL-2.0-or-later: data of its own beside bibli, never built into it)
+# `shared-mime-info`), and only the files skwir reads, with the licence
+# (GPL-2.0-or-later: data of its own beside skwir, never built into it)
 # and a note of where its source is.
 #
 #     tools/package/mime-database.sh <out>
@@ -31,7 +31,7 @@ mkdir -p "$build/mime/packages" "$out"
 cp "$source/freedesktop.org.xml.in" "$build/mime/packages/freedesktop.org.xml"
 # Named as a data folder, so it does not say it is not one.
 XDG_DATA_DIRS="$build" update-mime-database "$build/mime"
-# What bibli reads: the xdg-mime crate, and `platform::mime` itself.
+# What skwir reads: the xdg-mime crate, and `platform::mime` itself.
 for f in aliases generic-icons globs2 icons magic subclasses; do
     cp "$build/mime/$f" "$out/$f"
 done
@@ -39,9 +39,9 @@ cp "$source/COPYING" "$out/COPYING"
 cat > "$out/README" <<README
 shared-mime-info's type database, release $version, compiled
 (https://gitlab.freedesktop.org/xdg/shared-mime-info). Its source is
-in bibli's source, vendor/shared-mime-info, and upstream at that release.
+in skwir's source, vendor/shared-mime-info, and upstream at that release.
 
 Licensed under the GNU General Public License, version 2 or later
-(COPYING), apart from bibli, which reads it as data.
+(COPYING), apart from skwir, which reads it as data.
 README
 echo "$out"

@@ -1,10 +1,10 @@
 //! Shared command-backed toolbar buttons, bundled symbolic icons and popovers.
 use crate::{keymap::RunCommand, shell::Shell, theme::Theme};
-use bibli_core::workspace::PaneId;
 use gpui::{
     AnyView, App, Context, Div, FocusHandle, Render, ScrollHandle, SharedString, Stateful, Window,
     div, prelude::*, px, svg,
 };
+use skwir_core::workspace::PaneId;
 
 pub fn asset(path: &str) -> Option<&'static [u8]> {
     macro_rules! assets {
@@ -161,7 +161,7 @@ pub struct Tint {
 
 impl Tint {
     /// `tag`'s, in the color the user's choices give it.
-    pub fn of(tag: &bibli_core::metadata::TagRef, colors: &crate::tags::TagColors) -> Option<Self> {
+    pub fn of(tag: &skwir_core::metadata::TagRef, colors: &crate::tags::TagColors) -> Option<Self> {
         Some(Tint {
             color: u8::try_from(colors.of(&tag.name)).ok()?,
             hollow: tag.lacks,

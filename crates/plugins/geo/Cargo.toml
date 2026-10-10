@@ -1,5 +1,5 @@
 [package]
-name = "bibli-plugin-geo"
+name = "skwir-plugin-geo"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -7,8 +7,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
-bibli-platform.workspace = true
+skwir-core.workspace = true
+skwir-platform.workspace = true
 anyhow.workspace = true
 jiff.workspace = true
 serde_json.workspace = true
@@ -23,7 +23,7 @@ quick-xml = "0.42"
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 
 [dev-dependencies]
-bibli-core = { workspace = true, features = ["testing"] }
+skwir-core = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 # The tests write KMZ files.
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }

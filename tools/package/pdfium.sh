@@ -1,5 +1,5 @@
 #!/bin/sh
-# PDFium as bibli's packages carry it (ADR-041): the release pinned in
+# PDFium as skwir's packages carry it (ADR-041): the release pinned in
 # tools/package/pdfium.lock, from bblanchon/pdfium-binaries, checked
 # against its sum and unpacked into <out>: the library as the system
 # names it (libpdfium.so, libpdfium.dylib, pdfium.dll) and its notices

@@ -1,7 +1,7 @@
 #!/bin/sh
 # The AUR package built from this tree as it would be from a release
 # (ADR-040): the tree's files as the release's source tarball
-# (`bibli-<version>/…`, as GitHub lays it out), then makepkg with the
+# (`skwir-<version>/…`, as GitHub lays it out), then makepkg with the
 # PKGBUILD unchanged, in target/aur. On Arch, not as root; arguments go
 # to makepkg (`--syncdeps` installs what it needs through sudo).
 #
@@ -33,6 +33,6 @@ if git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
 else
     (cd "$root" && find . -path ./target -prune -o -type f -print | sed 's,^\./,,') > "$work/files"
 fi
-tar -C "$root" -T "$work/files" --transform "s,^,bibli-$version/," -czf "$work/bibli-$version.tar.gz"
+tar -C "$root" -T "$work/files" --transform "s,^,skwir-$version/," -czf "$work/skwir-$version.tar.gz"
 cd "$work"
 makepkg --noconfirm "$@"

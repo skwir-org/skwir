@@ -1,12 +1,12 @@
 //! Font specimens rasterized on a worker, without registering fonts globally.
-use bibli_core::{
+use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
     thumbs::Image,
 };
-use bibli_platform::inspection::{self, limits};
+use skwir_platform::inspection::{self, limits};
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -19,12 +19,12 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Show a specimen of font files without installing them"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read])
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
@@ -48,7 +48,7 @@ const BOUNDS_EMS: f32 = 8.;
 /// What the font parser reads, by type: an `.otf` name is also an
 /// `OpenDocument` formula template's, which the request's type, read from
 /// the bytes, tells apart.
-static FONTS: bibli_platform::mime::Types = bibli_platform::mime::Types::new(&[
+static FONTS: skwir_platform::mime::Types = skwir_platform::mime::Types::new(&[
     "font/ttf",
     "font/otf",
     "font/collection",
@@ -206,7 +206,7 @@ fn specimen(
     }
     Ok(Inspection {
         details,
-        kind: bibli_core::inspection::InspectionKind::Font,
+        kind: skwir_core::inspection::InspectionKind::Font,
         title: format!("Font · {name}"),
         image: Some(Image {
             width: WIDTH as u32,
@@ -415,7 +415,7 @@ mod tests {
     fn fonts_are_known_by_type() {
         let accepts = |name: &str, mime: Option<&str>| {
             Provider.accepts(&PreviewRequest {
-                entry: bibli_core::op::EntryRef::new(bibli_core::FileId { dev: 1, ino: 1 }, name),
+                entry: skwir_core::op::EntryRef::new(skwir_core::FileId { dev: 1, ino: 1 }, name),
                 mime: mime.map(str::to_owned),
                 page: 1,
                 seconds: None,
@@ -563,7 +563,7 @@ mod tests {
     #[test]
     fn synthetic_font_renders_a_specimen() {
         let data = render(synthetic_ttf(1000, 400, 400), Some("AAA")).unwrap();
-        assert_eq!(data.kind, bibli_core::inspection::InspectionKind::Font);
+        assert_eq!(data.kind, skwir_core::inspection::InspectionKind::Font);
         assert!(data.title.starts_with("Font · "));
         // What the font is made of is Details, never a sentence in the sheet.
         assert!(data.blocks.is_empty());
@@ -620,8 +620,8 @@ mod tests {
         #[test]
         fn any_font_is_drawn_or_refused(
             input in proptest::prop_oneof![
-                bibli_core::testing::mutated(synthetic_ttf(1000, 400, 400)),
-                bibli_core::testing::bytes(512),
+                skwir_core::testing::mutated(synthetic_ttf(1000, 400, 400)),
+                skwir_core::testing::bytes(512),
             ],
         ) {
             let _ = render(input.clone(), None);

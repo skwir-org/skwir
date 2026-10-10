@@ -16,11 +16,11 @@
 //! truth, which the address field edits as it is (Ctrl+L, or a click
 //! beside the pills).
 
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::metadata::TagRef;
-use bibli_core::workspace::PaneId;
 use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*, px};
 use serde::Deserialize;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::metadata::TagRef;
+use skwir_core::workspace::PaneId;
 
 use crate::elements::popover::PopoverAnchor;
 use crate::shell::Shell;
@@ -80,7 +80,7 @@ impl Chip {
 #[derive(Clone, Debug, Default, Deserialize)]
 struct Description {
     chips: Vec<Chip>,
-    #[serde(default, with = "bibli_core::os_path")]
+    #[serde(default, with = "skwir_core::os_path")]
     root: std::path::PathBuf,
     #[serde(default)]
     text: String,

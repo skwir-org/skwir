@@ -10,15 +10,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::cancel::CancelToken;
-use bibli_core::entry::keys;
-use bibli_core::hints::HintProvider;
-use bibli_core::location::ListingEvent;
+use skwir_core::app::{App, AppConfig};
+use skwir_core::cancel::CancelToken;
+use skwir_core::entry::keys;
+use skwir_core::hints::HintProvider;
+use skwir_core::location::ListingEvent;
 
 /// A folder where extended attributes work: not `/tmp`, often a tmpfs.
 fn home_tempdir() -> tempfile::TempDir {
-    let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+    let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
         .prefix("search-hints-")
@@ -28,7 +28,7 @@ fn home_tempdir() -> tempfile::TempDir {
 
 /// Each file a search found, with how many times it was sent.
 fn search(app: &App, expr: &str, root: &Path) -> BTreeMap<String, usize> {
-    let location = bibli_plugin_query::location_for(expr, Some(root));
+    let location = skwir_plugin_query::location_for(expr, Some(root));
     let open = app.open_location(&location).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut found = BTreeMap::new();
@@ -85,17 +85,17 @@ fn a_tag_search_asks_the_index_first_and_trusts_only_the_files() {
         std::fs::write(root.join(name), name).unwrap();
     }
     for name in tagged {
-        if bibli_core::fs::xattr::set(root.join(name), "user.xdg.tags", b"Work,other").is_err() {
+        if skwir_core::fs::xattr::set(root.join(name), "user.xdg.tags", b"Work,other").is_err() {
             eprintln!("skipped: no user extended attributes here");
             return;
         }
     }
-    let root = bibli_core::os_path::canonical(&root).unwrap();
+    let root = skwir_core::os_path::canonical(&root).unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
     let once = |names: &[&str]| -> BTreeMap<String, usize> {
         names.iter().map(|n| ((*n).to_owned(), 1)).collect()
     };
@@ -123,7 +123,7 @@ fn a_tag_search_asks_the_index_first_and_trusts_only_the_files() {
     assert!(known(&app).contains(&".hidden/b.txt".to_owned()));
 
     // Changed behind its back: the index still names it, the file says no.
-    bibli_core::fs::xattr::remove(root.join("stale.txt"), "user.xdg.tags").unwrap();
+    skwir_core::fs::xattr::remove(root.join("stale.txt"), "user.xdg.tags").unwrap();
     // Named by another index: through a link, not tagged, gone, elsewhere.
     app.hints.register(
         "test",

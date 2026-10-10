@@ -4,9 +4,9 @@
 //! is a route), each over a white casing so it reads on any tile; the
 //! start is a dot, the end a ring, areas a light fill. A fallback: a
 //! thumbnailer the desktop installed for these files comes first.
-use bibli_core::CancelToken;
-use bibli_core::geo::{GeoDoc, LatLon, LineKind};
-use bibli_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
+use skwir_core::CancelToken;
+use skwir_core::geo::{GeoDoc, LatLon, LineKind};
+use skwir_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
 use tiny_skia::{
     Color, FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform,
 };
@@ -36,7 +36,7 @@ impl ThumbnailProvider for Lines {
     }
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
         let path = req.entry.resolve()?;
-        bibli_platform::thumb_providers::ensure_file(&path)?;
+        skwir_platform::thumb_providers::ensure_file(&path)?;
         let Some(format) = crate::Format::detect(&path) else {
             // A `.csv` or a `.txt` that is not a plan.
             return Ok(None);
@@ -246,7 +246,7 @@ pub fn draw(doc: &GeoDoc, side: u32) -> Option<Image> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::geo::{BoundsBuilder, Datum, Line, Point};
+    use skwir_core::geo::{BoundsBuilder, Datum, Line, Point};
 
     fn at(lat: f64, lon: f64) -> LatLon {
         LatLon::new(lat, lon).unwrap()
@@ -304,10 +304,10 @@ mod tests {
         let mut bounds = BoundsBuilder::default();
         bounds.add(at(10., 20.));
         one.bounds = bounds.finish();
-        one.waypoints.push(bibli_core::geo::Waypoint {
+        one.waypoints.push(skwir_core::geo::Waypoint {
             name: String::new(),
             at: at(10., 20.),
-            kind: bibli_core::geo::WaypointKind::Point,
+            kind: skwir_core::geo::WaypointKind::Point,
             altitude: None,
             line: None,
         });

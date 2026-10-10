@@ -4,9 +4,9 @@
 //! milling, engraving or laser program seen from above, its cuts by depth
 //! and its rapid moves faint. The file is read twice, as a stream: once for
 //! what it covers, once to draw; nothing but the picture is held.
-use bibli_core::CancelToken;
-use bibli_core::thumbs::Image;
-use bibli_platform::inspection;
+use skwir_core::CancelToken;
+use skwir_core::thumbs::Image;
+use skwir_platform::inspection;
 use std::io::{BufRead, Read};
 use std::path::Path;
 use tiny_skia::{Color, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};

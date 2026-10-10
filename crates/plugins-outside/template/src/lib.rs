@@ -1,12 +1,12 @@
-//! A plugin from outside bibli, to start one from (`docs/plugins/README.md`):
+//! A plugin from outside skwir, to start one from (`docs/plugins/README.md`):
 //! a field Details shows (how many words a text holds) and a command
 //! (how many words the files given hold). The same code is a WebAssembly
 //! module (`export!`, built by `just plugins`) and a program that speaks
 //! the protocol (`main.rs`).
 
-use bibli_plugin_api::guest::{Host, Plugin};
-use bibli_plugin_api::protocol::{CommandAnswer, CommandParams, FieldParams, File};
 use serde_json::{Value, json};
+use skwir_plugin_api::guest::{Host, Plugin};
+use skwir_plugin_api::protocol::{CommandAnswer, CommandParams, FieldParams, File};
 
 /// How much of a file is read, a page at a time: a field is cheap.
 const LIMIT: u64 = 2 * 1024 * 1024;
@@ -63,7 +63,7 @@ pub fn words(host: &dyn Host, file: &File) -> Result<u64, String> {
     Ok(count)
 }
 
-bibli_plugin_api::export!(WordCount);
+skwir_plugin_api::export!(WordCount);
 
 #[cfg(test)]
 mod tests {

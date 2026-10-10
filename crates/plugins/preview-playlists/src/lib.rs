@@ -7,15 +7,15 @@ mod parse;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bibli_core::{
+use parse::Track;
+use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, InspectionKind, Row},
     plugin::Plugin,
     preview::{Member, PreviewProvider, PreviewRequest},
 };
-use bibli_platform::inspection::{self, limits};
-use bibli_platform::preview::{self, PlaylistFormat};
-use parse::Track;
+use skwir_platform::inspection::{self, limits};
+use skwir_platform::preview::{self, PlaylistFormat};
 
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -28,12 +28,12 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "List the tracks of M3U, PLS, XSPF and CUE files, and play the ones that are on this machine. Remote entries are named, never fetched"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read])
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
@@ -55,7 +55,7 @@ enum Place {
 fn place(base: &Path, location: &str, uri: bool) -> Place {
     let location = location.trim();
     if location.starts_with("file://") {
-        return bibli_platform::uri::path_of(location).map_or(Place::Remote, Place::Local);
+        return skwir_platform::uri::path_of(location).map_or(Place::Remote, Place::Local);
     }
     let scheme = location.split_once("://").is_some_and(|(scheme, _)| {
         scheme.len() > 1
@@ -326,7 +326,7 @@ mod tests {
             let list = dir.path().join(name);
             std::fs::write(&list, bytes).unwrap();
             let request = PreviewRequest {
-                entry: bibli_core::op::EntryRef::from_path(&list).unwrap(),
+                entry: skwir_core::op::EntryRef::from_path(&list).unwrap(),
                 mime: Some("audio/x-mpegurl".into()),
                 page: 1,
                 seconds: None,
@@ -375,7 +375,7 @@ mod tests {
         )
         .unwrap();
         let request = PreviewRequest {
-            entry: bibli_core::op::EntryRef::from_path(&list).unwrap(),
+            entry: skwir_core::op::EntryRef::from_path(&list).unwrap(),
             mime: None,
             page: 1,
             seconds: None,

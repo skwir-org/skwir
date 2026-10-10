@@ -19,7 +19,7 @@
 //! 120  records, then the values, then the resource fork
 //! ```
 //!
-//! Read wherever a Mac writes them (`bibli_platform::filesystem`). A file
+//! Read wherever a Mac writes them (`skwir_platform::filesystem`). A file
 //! laid out otherwise (other entries, an older writer) is read but never
 //! written: what we would write back could lose what we do not know.
 
@@ -28,8 +28,8 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bibli_core::notes::raw::RawKey;
-use bibli_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote, parse_tags};
+use skwir_core::notes::raw::RawKey;
+use skwir_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote, parse_tags};
 
 use crate::xdg;
 
@@ -88,7 +88,7 @@ pub fn applies(dir: &Path) -> bool {
     if EVERYWHERE.load(std::sync::atomic::Ordering::Relaxed) {
         return true;
     }
-    bibli_platform::filesystem::apple_double(dir)
+    skwir_platform::filesystem::apple_double(dir)
 }
 
 /// The `._` file beside `path`.
@@ -306,7 +306,7 @@ impl AppleDouble {
 /// one. Reads it whole, so it can be written back: one longer than
 /// `READ_AT_MOST` is not read at all, never cut.
 pub fn read(path: &Path) -> Option<AppleDouble> {
-    let bytes = bibli_platform::file::read_regular(&sidecar(path)?, READ_AT_MOST).ok()?;
+    let bytes = skwir_platform::file::read_regular(&sidecar(path)?, READ_AT_MOST).ok()?;
     AppleDouble::parse(&bytes)
 }
 
@@ -316,7 +316,7 @@ pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
     let bytes = ad.encode().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::Unsupported,
-            "its Mac attributes are kept in a form bibli does not write",
+            "its Mac attributes are kept in a form skwir does not write",
         )
     })?;
     let aside = sidecar(path).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
@@ -340,7 +340,7 @@ pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
 /// folder's names (`FolderNames`) for the files that have one.
 fn aside_of(name: &OsStr) -> Option<OsString> {
     let file = name.as_encoded_bytes().strip_prefix(PREFIX.as_bytes())?;
-    Some(bibli_core::os_path::from_bytes(file.to_vec()))
+    Some(skwir_core::os_path::from_bytes(file.to_vec()))
 }
 
 /// The attributes a Mac keeps outside its attribute list, named as
@@ -397,7 +397,7 @@ const RF_BLANK: &[u8] = b"This resource fork intentionally left blank";
 /// goes, and it holds the file's attributes where its volume keeps none.
 pub struct AsideCompanion;
 
-impl bibli_core::companions::Companion for AsideCompanion {
+impl skwir_core::companions::Companion for AsideCompanion {
     fn id(&self) -> &'static str {
         "appledouble"
     }
@@ -408,7 +408,7 @@ impl bibli_core::companions::Companion for AsideCompanion {
     }
     fn owner(&self, name: &OsStr) -> Option<OsString> {
         let file = name.as_encoded_bytes().strip_prefix(PREFIX.as_bytes())?;
-        (!file.is_empty()).then(|| bibli_core::os_path::from_bytes(file.to_vec()))
+        (!file.is_empty()).then(|| skwir_core::os_path::from_bytes(file.to_vec()))
     }
     fn holds_attributes(&self) -> bool {
         true
@@ -466,13 +466,13 @@ pub fn notes_of(ad: &AppleDouble) -> Option<Notes> {
 /// holds the Mac's attributes and the desktop's alike.
 pub struct AppleDoubleStore {
     /// The files of a folder that have a `._` file.
-    aside: bibli_core::companions::FolderNames,
+    aside: skwir_core::companions::FolderNames,
 }
 
 impl Default for AppleDoubleStore {
     fn default() -> Self {
         AppleDoubleStore {
-            aside: bibli_core::companions::FolderNames::new(aside_of),
+            aside: skwir_core::companions::FolderNames::new(aside_of),
         }
     }
 }
@@ -510,7 +510,7 @@ impl NotesStore for AppleDoubleStore {
         &self,
         dir: &Path,
         files: &[Probe<'_>],
-        listed: Option<&bibli_core::metadata::Listed<'_>>,
+        listed: Option<&skwir_core::metadata::Listed<'_>>,
     ) -> Vec<Option<Notes>> {
         // The folder's names from its listing when it knows them all, else
         // one read of the folder for its batches.
@@ -726,7 +726,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_sidecar_started_for_a_file_is_one_a_mac_reads_and_holds_every_note() {
-        let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         let tmp = tempfile::Builder::new()
             .prefix("appledouble-")

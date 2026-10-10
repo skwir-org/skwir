@@ -8,12 +8,12 @@
 //! calamine reads whole (shared strings, styles) are bounded before it
 //! opens them: every XML or binary part of the container is inflated once
 //! through a counter, within `limits::CONTAINER_EXPANSION`.
-use bibli_core::{
+use calamine::{DataRef, Reader, SheetType, SheetVisible, Xlsb, Xlsx};
+use skwir_core::{
     CancelToken,
     inspection::{Inspection, Row},
 };
-use bibli_platform::inspection::{self, limits};
-use calamine::{DataRef, Reader, SheetType, SheetVisible, Xlsb, Xlsx};
+use skwir_platform::inspection::{self, limits};
 use std::io::{BufReader, Read};
 use std::path::Path;
 
@@ -155,7 +155,7 @@ fn bounded(path: &Path, limit: u64, cancel: &CancelToken) -> anyhow::Result<()> 
 /// Every part calamine may read inflated and counted.
 fn measure(path: &Path, limit: u64, cancel: &CancelToken) -> anyhow::Result<()> {
     let mut package =
-        bibli_platform::package::Package::open(path, "The spreadsheet", false, cancel)?;
+        skwir_platform::package::Package::open(path, "The spreadsheet", false, cancel)?;
     let parts: Vec<String> = package
         .names()
         .filter(|name| {
@@ -355,7 +355,7 @@ pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<I
     ]);
     Ok(Inspection {
         details,
-        kind: bibli_core::inspection::InspectionKind::Table,
+        kind: skwir_core::inspection::InspectionKind::Table,
         title: if table_rows.is_empty() {
             sheets[sheet].clone()
         } else {

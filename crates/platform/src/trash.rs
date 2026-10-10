@@ -4,7 +4,7 @@
 //! home trash is `$XDG_DATA_HOME/Trash`; a volume's are `.Trash/<uid>`
 //! (in a sticky `.Trash` the administrator made) and `.Trash-<uid>` at its
 //! top. Putting files there, restoring and deleting them is the core's
-//! (the trash crate, `bibli_core::op`); this reads what each trash holds,
+//! (the trash crate, `skwir_core::op`); this reads what each trash holds,
 //! from the trashes a caller names.
 
 use std::path::{Path, PathBuf};
@@ -143,7 +143,7 @@ pub fn list(trash: &Path, calendar: &Calendar) -> Vec<Trashed> {
         // they are.
         let Some(name) = info.file_name().and_then(|name| {
             let stem = name.as_encoded_bytes().strip_suffix(b".trashinfo")?;
-            Some(bibli_core::os_path::from_bytes(stem.to_vec()))
+            Some(skwir_core::os_path::from_bytes(stem.to_vec()))
         }) else {
             continue;
         };
@@ -189,7 +189,7 @@ fn top_of(trash: &Path) -> Option<&Path> {
 /// left unread. `None` for a file that is no item of a trash, or whose
 /// record says nothing of it. Reads the record: call it from a worker.
 pub fn item(file: &Path, calendar: &Calendar) -> Option<Trashed> {
-    use bibli_core::op::records::{self, Deleted};
+    use skwir_core::op::records::{self, Deleted};
     let info = records::record_of(file)?;
     let bytes = crate::file::read_regular(&info, crate::file::SIDE_FILE_LIMIT).ok()?;
     let trash = info.parent().and_then(Path::parent);
@@ -210,7 +210,7 @@ pub fn item(file: &Path, calendar: &Calendar) -> Option<Trashed> {
 /// `$R` item its `$I` record speaks of, where it came from and when.
 /// Nothing for a folder that is no such bin.
 fn list_recycle_bin(bin: &Path) -> Vec<Trashed> {
-    use bibli_core::op::records;
+    use skwir_core::op::records;
     let Ok(names) = std::fs::read_dir(bin) else {
         return Vec::new();
     };
@@ -239,8 +239,8 @@ fn list_recycle_bin(bin: &Path) -> Vec<Trashed> {
 }
 
 /// A `.trashinfo`'s `Path` and `DeletionDate`: the core's reading
-/// (`bibli_core::op::parse_trash_info`), which the operations share.
-pub use bibli_core::op::parse_trash_info as parse_info;
+/// (`skwir_core::op::parse_trash_info`), which the operations share.
+pub use skwir_core::op::parse_trash_info as parse_info;
 
 #[cfg(test)]
 // Helpers of the tests that run on Unix alone (ADR-035).

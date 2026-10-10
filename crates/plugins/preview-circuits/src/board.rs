@@ -612,7 +612,7 @@ fn mm(value: f64) -> String {
 }
 
 /// A board: its picture and what it holds.
-pub fn board(text: &str, cancel: &bibli_core::CancelToken) -> anyhow::Result<Found> {
+pub fn board(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Found> {
     let (mut reader, head) = Reader::open(text)?;
     anyhow::ensure!(head == "kicad_pcb", "Not a KiCad board");
     let mut canvas = Canvas::new(Some(EDGES));
@@ -621,7 +621,7 @@ pub fn board(text: &str, cancel: &bibli_core::CancelToken) -> anyhow::Result<Fou
     while let Some(node) = reader.next_item()? {
         read += 1;
         if read.is_multiple_of(256) {
-            bibli_platform::inspection::check(cancel)?;
+            skwir_platform::inspection::check(cancel)?;
         }
         item(&mut canvas, &mut facts, &node);
     }
@@ -694,7 +694,7 @@ pub fn footprint_file(text: &str) -> anyhow::Result<Found> {
             "Description".into(),
             description
                 .chars()
-                .take(bibli_platform::inspection::limits::DETAIL_CHARS)
+                .take(skwir_platform::inspection::limits::DETAIL_CHARS)
                 .collect(),
         ));
     }
@@ -717,7 +717,7 @@ pub fn footprint_file(text: &str) -> anyhow::Result<Found> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::CancelToken;
+    use skwir_core::CancelToken;
 
     const BOARD: &str = r#"(kicad_pcb (version 20241229) (generator "pcbnew") (generator_version "9.0")
         (general (thickness 1.6))
@@ -778,7 +778,7 @@ mod tests {
             ]
         );
         // And the rasterizer draws it.
-        let drawn = bibli_platform::inspection::drawing(svg.as_bytes(), Some(300)).unwrap();
+        let drawn = skwir_platform::inspection::drawing(svg.as_bytes(), Some(300)).unwrap();
         assert_eq!(drawn.width.max(drawn.height), 300);
     }
 

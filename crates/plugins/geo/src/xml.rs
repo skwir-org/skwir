@@ -5,9 +5,9 @@
 //! expanded: a DTD's entities are neither read nor fetched.
 use std::io::BufRead;
 
-use bibli_core::CancelToken;
 use quick_xml::XmlVersion;
 use quick_xml::events::Event;
+use skwir_core::CancelToken;
 
 /// Text an element may hold (a KML line's coordinates are one text).
 pub const MAX_TEXT: usize = 64 * 1024 * 1024;
@@ -55,7 +55,7 @@ pub fn walk<R: BufRead>(
     loop {
         events = events.wrapping_add(1);
         if events.is_multiple_of(4096) {
-            bibli_platform::inspection::check(cancel)?;
+            skwir_platform::inspection::check(cancel)?;
         }
         buf.clear();
         let event = match reader.read_event_into(&mut buf) {
@@ -139,7 +139,7 @@ fn push(text: &mut String, more: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         text.len() + more.len() <= MAX_TEXT,
         "an element holds more than {} of text",
-        bibli_platform::inspection::limits::describe(MAX_TEXT)
+        skwir_platform::inspection::limits::describe(MAX_TEXT)
     );
     text.push_str(more);
     Ok(())

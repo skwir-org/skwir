@@ -5,12 +5,12 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use bibli_core::CancelToken;
-use bibli_core::permissions::{Capabilities, Capability};
-use bibli_plugin_api::protocol::{File, READ_LIMIT};
 use serde_json::Value;
+use skwir_core::CancelToken;
+use skwir_core::permissions::{Capabilities, Capability};
+use skwir_plugin_api::protocol::{File, READ_LIMIT};
 
-/// How a plugin's answers reach bibli: a program's pipe, a module's call.
+/// How a plugin's answers reach skwir: a program's pipe, a module's call.
 pub(crate) trait Transport: Send + Sync {
     /// Ask `method` with `params`, the plugin reading through `call`.
     fn call(&self, method: &str, params: Value, call: &Call) -> anyhow::Result<Value>;
@@ -81,7 +81,7 @@ impl Call {
             .path(handle)
             .ok_or_else(|| format!("no file {handle} in this call"))?;
         let mut file =
-            bibli_core::fs::file::open_regular(path).map_err(|error| error.to_string())?;
+            skwir_core::fs::file::open_regular(path).map_err(|error| error.to_string())?;
         file.seek(SeekFrom::Start(offset))
             .map_err(|error| error.to_string())?;
         let mut bytes = Vec::new();

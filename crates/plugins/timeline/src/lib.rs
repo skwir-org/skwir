@@ -1,4 +1,4 @@
-//! bibli plugin: timeline. Files by modification time as a histogram the
+//! skwir plugin: timeline. Files by modification time as a histogram the
 //! UI renders as a scrubbable bar chart; a bucket becomes a `query:`
 //! location (`modified>=start modified<end in:dir`) when selected.
 //!
@@ -13,7 +13,7 @@
 //! (files, folders and links, hidden ones only when the pane shows hidden
 //! entries), from the listing (`depth:1`) or from the whole subtree.
 //!
-//! Buckets are periods of the user's calendar (`bibli_platform::calendar`),
+//! Buckets are periods of the user's calendar (`skwir_platform::calendar`),
 //! like the query language's dates: days from local midnight, daylight
 //! saving time included, and weeks from the locale's first weekday. Entries
 //! are folded by the civil day they fall on; a bar's instants are the
@@ -24,18 +24,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use bibli_core::app::App;
-use bibli_core::cancel::CancelToken;
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::{Value, keys};
-use bibli_core::os_path::PathArg;
-use bibli_core::plugin::Plugin;
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
-use bibli_platform::calendar::{Calendar, Period, civil_from_days, date_string, days_from_civil};
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use skwir_core::app::App;
+use skwir_core::cancel::CancelToken;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::entry::{Value, keys};
+use skwir_core::os_path::PathArg;
+use skwir_core::plugin::Plugin;
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
+use skwir_platform::calendar::{Calendar, Period, civil_from_days, date_string, days_from_civil};
 
 const ID: &str = "timeline";
 /// 9999-12-31T23:59:59Z: later times (a bogus mtime) count as that instant.
@@ -358,7 +358,7 @@ fn walk_days(root: &Path, hidden: bool, cancel: &CancelToken) -> Option<Days> {
         }
         if let Ok(rd) = std::fs::read_dir(dir) {
             for e in rd.flatten() {
-                if !hidden && bibli_core::fs::is_hidden(&e) {
+                if !hidden && skwir_core::fs::is_hidden(&e) {
                     continue;
                 }
                 // `DirEntry::metadata` does not follow links: a link is
@@ -528,8 +528,8 @@ impl Plugin for TimelinePlugin {
     fn description(&self) -> &'static str {
         "Files by modification date, as a histogram you can scrub"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Browsing
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Browsing
     }
     fn register(&self, app: &App) {
         if let Some(previous) = self.state.lock().lifetime.replace(app.lifetime().child()) {
@@ -541,7 +541,7 @@ impl Plugin for TimelinePlugin {
             Priority::Background,
             "calendar.week",
             app.lifetime().child(),
-            bibli_platform::calendar::prewarm,
+            skwir_platform::calendar::prewarm,
         );
         let this = Arc::new(TimelinePlugin {
             state: Arc::clone(&self.state),
@@ -630,7 +630,7 @@ impl Plugin for TimelinePlugin {
             .shows();
         app.registry.keymap.add(
             ID,
-            bibli_core::registry::KeyBinding {
+            skwir_core::registry::KeyBinding {
                 keys: "ctrl-shift-l".into(),
                 command: Invocation::new("ui.timeline"),
                 when: None,
@@ -638,7 +638,7 @@ impl Plugin for TimelinePlugin {
         );
         app.registry.menus.add(
             ID,
-            bibli_core::registry::MenuItem {
+            skwir_core::registry::MenuItem {
                 menu: "context".into(),
                 title: "Timeline…".into(),
                 command: Invocation::new("ui.timeline"),
@@ -678,7 +678,7 @@ mod tests {
     /// 26th in Paris, and the bar for it begins at Paris midnight.
     #[test]
     fn bars_are_the_users_days() {
-        use bibli_platform::calendar::Weekday;
+        use skwir_platform::calendar::Weekday;
         let paris = Calendar::named("Europe/Paris", Weekday::Monday).unwrap();
         let late =
             Calendar::utc().day_start(days_from_civil(2026, 9, 25)) + Duration::from_mins(1410);
@@ -759,8 +759,8 @@ mod tests {
 
     #[test]
     fn a_subtree_walk_answers_once_and_is_not_restarted() {
-        use bibli_core::app::AppConfig;
-        use bibli_core::location::Location;
+        use skwir_core::app::AppConfig;
+        use skwir_core::location::Location;
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("r");
         std::fs::create_dir_all(root.join("a")).unwrap();

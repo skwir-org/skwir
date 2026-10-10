@@ -4,25 +4,25 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::command::Invocation;
-use bibli_core::location::Location;
+use skwir_core::app::{App, AppConfig};
+use skwir_core::command::Invocation;
+use skwir_core::location::Location;
 
 #[test]
 fn timeline_selection_preserves_paths_and_filters_the_period() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
     app.plugins.add(
-        Arc::new(bibli_plugin_timeline::TimelinePlugin::default()),
+        Arc::new(skwir_plugin_timeline::TimelinePlugin::default()),
         &app,
     );
     let pane = app.workspace.read().active_id();
     // A bar is a day of the user's calendar: 2026-07-01 from its midnight
     // where the test runs.
-    let cal = bibli_platform::calendar::Calendar::system();
-    let day = bibli_platform::calendar::days_from_civil(2026, 7, 1);
+    let cal = skwir_platform::calendar::Calendar::system();
+    let day = skwir_platform::calendar::days_from_civil(2026, 7, 1);
     let secs = |t: std::time::SystemTime| t.duration_since(UNIX_EPOCH).unwrap().as_secs();
     let (start, end) = (secs(cal.day_start(day)), secs(cal.day_start(day + 1)));
     for dirname in [
@@ -61,7 +61,7 @@ fn timeline_selection_preserves_paths_and_filters_the_period() {
         let location = p.location().unwrap();
         assert_eq!(location.scheme.as_ref(), "query");
         assert_eq!(
-            bibli_plugin_query::lang::parse(&location.rest)
+            skwir_plugin_query::lang::parse(&location.rest)
                 .unwrap()
                 .root,
             root

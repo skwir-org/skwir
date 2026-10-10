@@ -6,15 +6,15 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::{Arc, Weak};
 
-use bibli_core::cache::CacheSlot;
-use bibli_core::document::DocumentSession;
-use bibli_core::fields::FieldProvider;
-use bibli_core::inspection::{self, InspectRequest};
-use bibli_core::preview::{Converted, Preview, PreviewProvider, PreviewRequest};
-use bibli_core::thumbs::{Image, ThumbRequest, ThumbnailProvider};
-use bibli_core::{App, CancelToken, Value};
-use bibli_platform::mime::{self, Types};
-use bibli_plugin_api::protocol::{
+use skwir_core::cache::CacheSlot;
+use skwir_core::document::DocumentSession;
+use skwir_core::fields::FieldProvider;
+use skwir_core::inspection::{self, InspectRequest};
+use skwir_core::preview::{Converted, Preview, PreviewProvider, PreviewRequest};
+use skwir_core::thumbs::{Image, ThumbRequest, ThumbnailProvider};
+use skwir_core::{App, CancelToken, Value};
+use skwir_platform::mime::{self, Types};
+use skwir_plugin_api::protocol::{
     self, ConvertAnswer, ConvertParams, FieldAnswer, FieldParams, InspectParams, ThumbnailAnswer,
     ThumbnailParams, method,
 };
@@ -95,7 +95,7 @@ fn private(app: &Weak<App>, path: &Path) -> bool {
 
 /// The words a preview says for a private file.
 const PRIVATE: &str =
-    "This file is private: a plugin from outside bibli does not read it (Settings, Privacy)";
+    "This file is private: a plugin from outside skwir does not read it (Settings, Privacy)";
 
 struct Fields {
     runner: Arc<Runner>,
@@ -185,7 +185,7 @@ impl ThumbnailProvider for Thumbnails {
         let Some(turn) = self.runner.turn.try_take() else {
             let runner = Arc::clone(&self.runner);
             return Err(
-                bibli_core::thumbs::Busy::new(move |then| runner.turn.when_free(then)).into(),
+                skwir_core::thumbs::Busy::new(move |then| runner.turn.when_free(then)).into(),
             );
         };
         let call = Call::new(vec![path], self.runner.granted, cancel.clone());
@@ -204,9 +204,9 @@ impl ThumbnailProvider for Thumbnails {
         let Some(png) = answer.png else {
             return Ok(None);
         };
-        let png = bibli_plugin_api::base64::decode(&png)
+        let png = skwir_plugin_api::base64::decode(&png)
             .ok_or_else(|| anyhow::anyhow!("a thumbnail that is no base64"))?;
-        let decoded = bibli_platform::inspection::picture(&png, side)?;
+        let decoded = skwir_platform::inspection::picture(&png, side)?;
         Ok(Some(Image {
             width: decoded.width,
             height: decoded.height,
@@ -259,7 +259,7 @@ impl PreviewProvider for Previews {
         anyhow::bail!("“{}” shows nothing of this file", self.runner.title)
     }
     /// The file a page at a time, when the plugin shows it so (ADR-047):
-    /// read by bibli's reader, which turns, selects and searches it.
+    /// read by skwir's reader, which turns, selects and searches it.
     fn open_document(
         &self,
         request: &PreviewRequest,
@@ -308,7 +308,7 @@ impl PreviewProvider for Previews {
     }
     /// The file it converts this one to (ADR-047): kept in the plugin's
     /// folder of the cache under the file's version and the plugin's, so
-    /// a page turned, the file shown again or bibli started again asks the
+    /// a page turned, the file shown again or skwir started again asks the
     /// plugin nothing.
     fn converted(
         &self,
@@ -320,7 +320,7 @@ impl PreviewProvider for Previews {
         };
         let path = request.entry.resolve()?;
         anyhow::ensure!(!private(&self.app, &path), PRIVATE);
-        let key = bibli_platform::preview::made_key(
+        let key = skwir_platform::preview::made_key(
             request.entry.id,
             &path,
             self.runner.made_by(),
@@ -348,7 +348,7 @@ impl PreviewProvider for Previews {
                 .and_then(|()| std::fs::write(kept.join(NOTHING), b""));
             return Ok(None);
         };
-        let bytes = bibli_plugin_api::base64::decode(&answer.data)
+        let bytes = skwir_plugin_api::base64::decode(&answer.data)
             .ok_or_else(|| anyhow::anyhow!("the plugin's file is no base64"))?;
         // Its name is a name: what it says of folders is dropped.
         let name = Path::new(&answer.name)
@@ -371,7 +371,7 @@ impl Previews {
         let closed_links = (!self
             .runner
             .granted
-            .has(bibli_core::permissions::Capability::Network))
+            .has(skwir_core::permissions::Capability::Network))
         .then(|| {
             format!(
                 "Links are not followed in a preview “{}” made: it may not use the network",
@@ -450,7 +450,7 @@ fn trim(folder: &Path, kept: &Path) {
 
 /// What a plugin's preview shows, as the core draws it.
 pub(crate) fn inspection_of(answer: protocol::Inspection) -> inspection::Inspection {
-    use bibli_plugin_api::protocol::InspectionKind as Kind;
+    use skwir_plugin_api::protocol::InspectionKind as Kind;
     let code = answer.kind == Kind::Code;
     inspection::Inspection {
         kind: match answer.kind {
@@ -520,7 +520,7 @@ mod tests {
             assert_eq!(method, method::THUMBNAIL);
             self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(serde_json::to_value(ThumbnailAnswer {
-                png: Some(bibli_plugin_api::base64::encode(PIXEL)),
+                png: Some(skwir_plugin_api::base64::encode(PIXEL)),
             })?)
         }
         fn stop(&self) {}
@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn a_thumbnail_asked_while_its_plugin_works_is_set_aside() {
         let tmp = tempfile::tempdir().unwrap();
-        let app = App::new(bibli_core::app::AppConfig::ephemeral(
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(
             tmp.path().join("state"),
         ))
         .unwrap();
@@ -548,15 +548,15 @@ mod tests {
             types: types(&["image/x-portable-pixmap".to_owned()]),
         };
         let req = ThumbRequest {
-            entry: bibli_core::op::EntryRef::from_path(&file).unwrap(),
+            entry: skwir_core::op::EntryRef::from_path(&file).unwrap(),
             mime: Some("image/x-portable-pixmap".into()),
             mtime: None,
-            size: bibli_core::thumbs::ThumbSize::Normal,
+            size: skwir_core::thumbs::ThumbSize::Normal,
         };
         let cancel = CancelToken::new();
         let working = runner.turn.try_take().unwrap();
         let error = thumbnails.thumbnail(&req, &cancel).unwrap_err();
-        assert!(error.is::<bibli_core::thumbs::Busy>(), "{error:#}");
+        assert!(error.is::<skwir_core::thumbs::Busy>(), "{error:#}");
         assert_eq!(pixel.0.load(std::sync::atomic::Ordering::Relaxed), 0);
         drop(working);
         let drawn = thumbnails.thumbnail(&req, &cancel).unwrap().unwrap();

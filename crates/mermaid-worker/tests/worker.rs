@@ -2,7 +2,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn draw(source: &str) -> std::process::Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_bibli-mermaid-worker"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_skwir-mermaid-worker"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

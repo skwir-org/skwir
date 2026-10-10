@@ -79,7 +79,7 @@ pub fn description(m: &Mime) -> Option<String> {
 /// The kinds of `m`: the database's; where it gives none, what the
 /// registry perceives files of the type as. `PerceivedType` has no
 /// spreadsheets, presentations or fonts, and calls Office files
-/// documents: it does not group as bibli does, so it only fills in.
+/// documents: it does not group as skwir does, so it only fills in.
 pub fn kinds(m: &Mime, database: u16) -> u16 {
     if database != 0 {
         return database;

@@ -1,5 +1,5 @@
 [package]
-name = "bibli-plugin-preview-fonts"
+name = "skwir-plugin-preview-fonts"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -7,8 +7,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
-bibli-platform.workspace = true
+skwir-core.workspace = true
+skwir-platform.workspace = true
 anyhow.workspace = true
 # Fonts read by skrifa (fontations, maintained) and drawn by zeno, the two
 # already in the tree with gpui's glyph rasterizer (swash).
@@ -20,7 +20,7 @@ wuff = { version = "0.2", default-features = false, features = ["brotli"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 [dev-dependencies]
-bibli-core = { workspace = true, features = ["testing"] }
+skwir-core = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 tempfile.workspace = true
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }

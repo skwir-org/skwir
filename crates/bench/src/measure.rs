@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use bibli_core::os_path::from_bytes_ref;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use skwir_core::os_path::from_bytes_ref;
 
 use crate::profiles::Profile;
 
@@ -37,7 +37,7 @@ pub struct Report {
     pub stat_parallel: Stat,
     /// Recursive walk counting files, rayon-parallel (only meaningful for deep trees).
     pub walk_parallel: Stat,
-    /// Through `bibli-core`'s path provider: time for `open` to return.
+    /// Through `skwir-core`'s path provider: time for `open` to return.
     pub stream_open: Stat,
     /// Through the provider: time until the first `Added` batch is received.
     pub stream_first_batch: Stat,
@@ -58,7 +58,7 @@ pub struct Report {
     /// counted before and unchanged since: the check of what changed,
     /// until it ends.
     pub tags_check: Stat,
-    /// The tags index (`bibli_plugin_tags::index`) learning 500 000
+    /// The tags index (`skwir_plugin_tags::index`) learning 500 000
     /// tagged files, in batches as a count teaches it.
     pub tags_index_learn: Stat,
     /// Then the counts under the home folder, as a tag location asks.
@@ -267,8 +267,8 @@ fn walk_parallel(path: &Path) -> u64 {
 const STREAM_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Open `path` through the core provider; return (open, first batch, complete) durations.
-fn stream(app: &bibli_core::App, path: &Path) -> (Duration, Duration, Duration) {
-    use bibli_core::location::{ListingEvent, Location};
+fn stream(app: &skwir_core::App, path: &Path) -> (Duration, Duration, Duration) {
+    use skwir_core::location::{ListingEvent, Location};
     let t = Instant::now();
     let open = app.open_location(&Location::from_path(path)).expect("open");
     let opened = t.elapsed();
@@ -300,11 +300,11 @@ fn stream(app: &bibli_core::App, path: &Path) -> (Duration, Duration, Duration) 
 /// the thumbnails plugin registers for images, the cache at `cache`; return
 /// the time until every one is `Ready`, divided by the count.
 fn thumbs_pass(paths: &[std::path::PathBuf], cache: &Path, scratch: &Path) -> Duration {
-    use bibli_core::scheduler::Priority;
-    use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
-    use bibli_platform::thumb_providers::{FreedesktopCache, ImageDecoder};
-    use bibli_platform::thumbnails::ThumbCache;
-    let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(scratch)).expect("app");
+    use skwir_core::scheduler::Priority;
+    use skwir_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
+    use skwir_platform::thumb_providers::{FreedesktopCache, ImageDecoder};
+    use skwir_platform::thumbnails::ThumbCache;
+    let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(scratch)).expect("app");
     app.thumbnails.register(
         "bench",
         std::sync::Arc::new(FreedesktopCache::at(ThumbCache::at(cache), true)),
@@ -314,7 +314,7 @@ fn thumbs_pass(paths: &[std::path::PathBuf], cache: &Path, scratch: &Path) -> Du
     let reqs: Vec<ThumbRequest> = paths
         .iter()
         .map(|p| ThumbRequest {
-            entry: bibli_core::op::EntryRef::from_path(p).expect("stat"),
+            entry: skwir_core::op::EntryRef::from_path(p).expect("stat"),
             mime: Some("image/png".into()),
             mtime: None,
             size: ThumbSize::Normal,
@@ -356,7 +356,7 @@ fn thumbs(root: &Path, dir: &Path, runs: usize) -> (Stat, Stat) {
     paths.truncate(200);
     let paths: Vec<_> = paths
         .into_iter()
-        .map(|p| bibli_core::os_path::canonical(p).expect("canonical"))
+        .map(|p| skwir_core::os_path::canonical(p).expect("canonical"))
         .collect();
     let mut cold = Vec::new();
     let mut warm = Vec::new();
@@ -374,27 +374,27 @@ fn thumbs(root: &Path, dir: &Path, runs: usize) -> (Stat, Stat) {
 
 /// An app with the tags plugin and every other notes store's (ADR-027),
 /// as the application runs them, and the query plugin to search with it.
-pub fn tags_app() -> std::sync::Arc<bibli_core::App> {
-    let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(
-        std::env::temp_dir().join("bibli-bench-tags"),
+pub fn tags_app() -> std::sync::Arc<skwir_core::App> {
+    let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(
+        std::env::temp_dir().join("skwir-bench-tags"),
     ))
     .expect("app");
     app.plugins.add(
-        std::sync::Arc::new(bibli_plugin_tags::TagsPlugin::default()),
+        std::sync::Arc::new(skwir_plugin_tags::TagsPlugin::default()),
         &app,
     );
     app.plugins
-        .add(std::sync::Arc::new(bibli_plugin_xmp::XmpPlugin), &app);
+        .add(std::sync::Arc::new(skwir_plugin_xmp::XmpPlugin), &app);
     app.plugins.add(
-        std::sync::Arc::new(bibli_plugin_tagspaces::TagSpacesPlugin),
+        std::sync::Arc::new(skwir_plugin_tagspaces::TagSpacesPlugin),
         &app,
     );
     app.plugins.add(
-        std::sync::Arc::new(bibli_plugin_name_tags::NameTagsPlugin),
+        std::sync::Arc::new(skwir_plugin_name_tags::NameTagsPlugin),
         &app,
     );
     app.plugins.add(
-        std::sync::Arc::new(bibli_plugin_query::QueryPlugin::default()),
+        std::sync::Arc::new(skwir_plugin_query::QueryPlugin::default()),
         &app,
     );
     app
@@ -402,11 +402,11 @@ pub fn tags_app() -> std::sync::Arc<bibli_core::App> {
 
 /// The metadata providers over every entry of `dir`: stat-ed once, then
 /// filled afresh each run.
-fn tags_fill(app: &bibli_core::App, dir: &Path, runs: usize) -> Stat {
-    let entries: Vec<bibli_core::Entry> = std::fs::read_dir(dir)
+fn tags_fill(app: &skwir_core::App, dir: &Path, runs: usize) -> Stat {
+    let entries: Vec<skwir_core::Entry> = std::fs::read_dir(dir)
         .expect("read dir")
         .flatten()
-        .filter_map(|e| bibli_core::fs::stat_path(&e.path()))
+        .filter_map(|e| skwir_core::fs::stat_path(&e.path()))
         .collect();
     Stat::of(
         (0..runs)
@@ -431,10 +431,10 @@ pub struct Searched {
 }
 
 /// Search `expr` under `root` through the query plugin.
-pub fn search(app: &bibli_core::App, expr: &str, root: &Path) -> Searched {
-    use bibli_core::location::ListingEvent;
+pub fn search(app: &skwir_core::App, expr: &str, root: &Path) -> Searched {
+    use skwir_core::location::ListingEvent;
     let t = Instant::now();
-    let location = bibli_plugin_query::location_for(expr, Some(root));
+    let location = skwir_plugin_query::location_for(expr, Some(root));
     let open = app.open_location(&location).expect("open search");
     let mut found = 0;
     let mut first = None;
@@ -473,7 +473,7 @@ pub fn tag_search(root: &Path, profile: Profile, runs: usize) -> Stat {
         return Stat::NONE;
     }
     let tags = tags_app();
-    let root = bibli_core::os_path::canonical(&dir).expect("tree");
+    let root = skwir_core::os_path::canonical(&dir).expect("tree");
     let expr = format!("tag:{}", crate::generate::TAG);
     Stat::of(
         (0..runs)
@@ -490,13 +490,13 @@ pub fn tag_search(root: &Path, profile: Profile, runs: usize) -> Stat {
 /// full, then checked again `runs` times (F5), each check finding nothing
 /// changed, timed until it ends.
 pub fn tags_check(root: &Path, profile: Profile, runs: usize) -> Stat {
-    use bibli_core::command::{Invocation, Outcome};
+    use skwir_core::command::{Invocation, Outcome};
     let dir = root.join(profile.name());
     if profile != Profile::Deep1m || !tagged(&dir) {
         return Stat::NONE;
     }
     let app = tags_app();
-    let root = bibli_core::os_path::canonical(&dir).expect("tree");
+    let root = skwir_core::os_path::canonical(&dir).expect("tree");
     let pane = app.workspace.read().active_id();
     let call = |name: &str, args: serde_json::Value| {
         app.dispatch(&Invocation::with_args(name, &args))
@@ -505,13 +505,13 @@ pub fn tags_check(root: &Path, profile: Profile, runs: usize) -> Stat {
     let counted = || {
         let Outcome::Value(v) = call(
             "tags.counted",
-            serde_json::json!({ "root": bibli_core::os_path::PathArg::from(root.as_path()) }),
+            serde_json::json!({ "root": skwir_core::os_path::PathArg::from(root.as_path()) }),
         ) else {
             panic!("tags.counted answers a value");
         };
         v
     };
-    let location = bibli_plugin_tags::location::Address {
+    let location = skwir_plugin_tags::location::Address {
         scope: Some(root.clone()),
         ..Default::default()
     }
@@ -542,7 +542,7 @@ pub fn tags_check(root: &Path, profile: Profile, runs: usize) -> Stat {
 /// in 20 000 folders under a home folder, learned, counted, changed. The
 /// index writes to a cache of its own, emptied first.
 pub fn tags_index(profile: Profile, runs: usize) -> (Stat, Stat, Stat) {
-    use bibli_plugin_tags::index::TagIndex;
+    use skwir_plugin_tags::index::TagIndex;
     if profile != Profile::Deep1m {
         return (Stat::NONE, Stat::NONE, Stat::NONE);
     }
@@ -567,10 +567,10 @@ pub fn tags_index(profile: Profile, runs: usize) -> (Stat, Stat, Stat) {
     for run in 0..runs {
         // A cache of its own each run: the last run's index may still be
         // writing to its own.
-        let cache = std::env::temp_dir().join(format!("bibli-bench-tags-index-{run}"));
+        let cache = std::env::temp_dir().join(format!("skwir-bench-tags-index-{run}"));
         let _ = std::fs::remove_dir_all(&cache);
-        let slot = bibli_core::cache::Cache::new(&cache).namespace("tags");
-        let index = TagIndex::new(Some(slot), &app, bibli_core::CancelToken::new());
+        let slot = skwir_core::cache::Cache::new(&cache).namespace("tags");
+        let index = TagIndex::new(Some(slot), &app, skwir_core::CancelToken::new());
         let t = Instant::now();
         for batch in (0..500_000).collect::<Vec<usize>>().chunks(2_000) {
             index.learn(batch.iter().map(|&i| (file(i), tags(i))).collect());
@@ -601,14 +601,14 @@ pub fn usage_scan(root: &Path, profile: Profile, runs: usize) -> Stat {
 
 /// Each of `runs` scans of [`usage_scan`].
 pub fn usage_scans(root: &Path, profile: Profile, runs: usize) -> Vec<Duration> {
-    use bibli_core::command::{Invocation, Outcome};
-    let dir = bibli_core::os_path::canonical(root.join(profile.name())).expect("tree");
-    let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(
-        std::env::temp_dir().join("bibli-bench-usage"),
+    use skwir_core::command::{Invocation, Outcome};
+    let dir = skwir_core::os_path::canonical(root.join(profile.name())).expect("tree");
+    let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(
+        std::env::temp_dir().join("skwir-bench-usage"),
     ))
     .expect("app");
     app.plugins.add(
-        std::sync::Arc::new(bibli_plugin_usage::UsagePlugin::default()),
+        std::sync::Arc::new(skwir_plugin_usage::UsagePlugin::default()),
         &app,
     );
     let pane = app.workspace.read().active_id();
@@ -618,7 +618,7 @@ pub fn usage_scans(root: &Path, profile: Profile, runs: usize) -> Vec<Duration> 
             "usage.scan",
             &serde_json::json!({
                 "pane": pane,
-                "path": bibli_core::os_path::PathArg::from(dir.as_path()),
+                "path": skwir_core::os_path::PathArg::from(dir.as_path()),
                 "force": true,
             }),
         ))
@@ -648,8 +648,8 @@ pub fn usage_scans(root: &Path, profile: Profile, runs: usize) -> Vec<Duration> 
 /// The listing's own work at the scale of a big folder, in memory: see
 /// `Report::listing_sort_hydrate` and `listing_sort_update`.
 pub fn listing_sort(profile: Profile, runs: usize) -> (Stat, Stat) {
-    use bibli_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
-    use bibli_core::location::{Listing, ListingEvent, SortKey, SortSpec};
+    use skwir_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
+    use skwir_core::location::{Listing, ListingEvent, SortKey, SortSpec};
     if profile != Profile::Flat100k {
         return (Stat::NONE, Stat::NONE);
     }
@@ -657,7 +657,7 @@ pub fn listing_sort(profile: Profile, runs: usize) -> (Stat, Stat) {
     let bare = |ino: u64| {
         Entry::new(
             EntryId {
-                file: bibli_core::FileId { dev: 1, ino },
+                file: skwir_core::FileId { dev: 1, ino },
                 at: 0,
             },
             format!("IMG_{:06}.jpg", ino.wrapping_mul(7_919) % n),
@@ -719,20 +719,20 @@ fn mime_by_name(dir: &Path, profile: Profile, runs: usize) -> Stat {
         .expect("tree")
         .map(|e| e.expect("entry").file_name())
         .collect();
-    std::hint::black_box(bibli_platform::mime::by_name(std::ffi::OsStr::new(
+    std::hint::black_box(skwir_platform::mime::by_name(std::ffi::OsStr::new(
         "warm.txt",
     )));
     timed(runs, || {
         names
             .iter()
-            .filter(|name| bibli_platform::mime::by_name(name).is_some())
+            .filter(|name| skwir_platform::mime::by_name(name).is_some())
             .count()
     })
 }
 
 /// Whether the generator could tag `dir` (see `generate::tag`).
 fn tagged(dir: &Path) -> bool {
-    dir.join(".bibli-bench-tagged").exists()
+    dir.join(".skwir-bench-tagged").exists()
 }
 
 /// Measure `profile` under `root`.
@@ -745,8 +745,8 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         _ => dir.clone(),
     };
     let n = names(&single);
-    let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(
-        std::env::temp_dir().join("bibli-bench"),
+    let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(
+        std::env::temp_dir().join("skwir-bench"),
     ))
     .expect("app");
     let mut opens = Vec::new();

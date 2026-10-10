@@ -18,8 +18,8 @@
 use std::collections::HashSet;
 use std::io::BufRead;
 
-use bibli_core::CancelToken;
-use bibli_core::geo::{Datum, LatLon, Waypoint, WaypointKind};
+use skwir_core::CancelToken;
+use skwir_core::geo::{Datum, LatLon, Waypoint, WaypointKind};
 
 use crate::collect::{self, Collector, Plan, PlanKind};
 use crate::mission::Route;
@@ -171,7 +171,7 @@ fn interest(fields: &[&str], columns: &Columns) -> Option<Waypoint> {
 #[allow(clippy::float_cmp)]
 pub(crate) mod tests {
     use super::*;
-    use bibli_core::geo::LineKind;
+    use skwir_core::geo::LineKind;
 
     /// A header as Litchi writes it, fifteen actions and all.
     pub(crate) fn litchi_header(unit: &str) -> String {

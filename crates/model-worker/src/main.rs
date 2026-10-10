@@ -2,7 +2,7 @@
 //! model can hold millions of triangles, whose memory is given back when
 //! this exits, and a reader that fails takes nothing else with it.
 //!
-//! `bibli-model-worker <path> --format stl|obj|ply|off|gltf|3mf --side N
+//! `skwir-model-worker <path> --format stl|obj|ply|off|gltf|3mf --side N
 //! --triangles N --bytes N` writes one line of JSON (what the mesh
 //! measures) then the picture as PNG, at most `side` pixels on its longer
 //! side, on standard output. A file larger than `bytes`, or a mesh of more
@@ -61,16 +61,16 @@ fn arguments() -> Result<Arguments, String> {
 }
 
 fn main() {
-    // `--build`, bibli asking which build of it this helper is, when a
+    // `--build`, skwir asking which build of it this helper is, when a
     // call of it failed (`platform::process::explain`).
     if std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == "--build")
     {
-        println!("{}", env!("BIBLI_BUILD"));
+        println!("{}", env!("SKWIR_BUILD"));
         return;
     }
-    // `--probe`, bibli's settings asking whether this helper works here
+    // `--probe`, skwir's settings asking whether this helper works here
     // (`platform::process::probe`): being started at all says its
     // libraries are there.
     if std::env::args_os()

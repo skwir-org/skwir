@@ -1,7 +1,7 @@
 # Vendored gpui 0.2.2
 
 This directory is the `gpui` 0.2.2 crate exactly as published on crates.io,
-plus bibli's patches, wired in through `[patch.crates-io]` in the root
+plus skwir's patches, wired in through `[patch.crates-io]` in the root
 `Cargo.toml`. Remove both once the patches are upstream.
 
 ## Patches
@@ -34,12 +34,12 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   regression tests cover removal before flush and slot reuse. They live in
   `platform::blade::blade_atlas::tests` and require a working GPU context.
   On Linux, run `just atlas-check` in the development shell. The runner uses an
-  isolated copy so GPUI's dev dependencies do not enter bibli's workspace.
+  isolated copy so GPUI's dev dependencies do not enter skwir's workspace.
 
   The patch relies on one invariant of the callers. `BladeRenderer::draw`
   submits the frame, waits for the *previous* submission, then destroys the
   retired textures. That is sufficient only because every `cx.drop_image`
-  call in bibli runs from an update or render handler, before the current
+  call in skwir runs from an update or render handler, before the current
   frame's scene is built: a texture retired there can belong to the previous
   submission (waited for) but never to the scene being drawn. Calling
   `drop_image` from inside an element's `paint` would retire a texture that
@@ -136,8 +136,8 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   default features, which include `avif`: in `image` 0.25 that is the AVIF
   *encoder*, rav1e, 2.4 MB of machine code nothing calls (decoding AVIF is
   the separate `avif-native`). gpui now names the formats it decodes itself
-  (`ImageFormat`: PNG, JPEG, WebP, GIF, BMP, TIFF); bibli's crates name
-  theirs, and features add up, so what bibli decodes is unchanged. Also
+  (`ImageFormat`: PNG, JPEG, WebP, GIF, BMP, TIFF); skwir's crates name
+  theirs, and features add up, so what skwir decodes is unchanged. Also
   gone: Radiance HDR and farbfeld, which nothing reaches, and `image`'s
   `rayon` (parallel OpenEXR decoding; our previews run on workers already).
   In Zed the dependency is declared in the workspace `Cargo.toml`, so the
@@ -148,7 +148,7 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   several strokes (`g g`) waited one second for the next and was then
   replayed alone, a constant in `Window::dispatch_key_event`.
   `App::set_key_sequence_timeout` sets it; `None` waits until the next key,
-  as yazi and a modal editor do. bibli waits (ADR-024) and shows what may
+  as yazi and a modal editor do. skwir waits (ADR-024) and shows what may
   follow (`crates/ui/src/sequence.rs`), so reading the strip is not a race.
   A change of focus still drops the pending keys, as before.
 
@@ -160,11 +160,11 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   after every delayed build whatever it returned.
   `TooltipBuilder` already ended in an `Option` (the tooltip machinery
   takes one, and `InteractiveText` declines through it), so `tooltip` and
-  `hoverable_tooltip` now wrap theirs in `Some`. bibli uses it for a text
+  `hoverable_tooltip` now wrap theirs in `Some`. skwir uses it for a text
   cut to fit (`crates/ui/src/elements/clip.rs`): whether it was cut is
   known only after layout, so its tooltip decides when shown.
   `InteractiveText` could decline already, but it notifies its view each
-  time the pointer crosses a character, and bibli's shell is one view.
+  time the pointer crosses a character, and skwir's shell is one view.
   Measured in a release build on Xvfb, sweeping the pointer: 55 such
   tooltips per draw (a list) cost nothing measurable; 551 (a CSV of 20
   columns, one per cell) about 0.3 ms per draw (median 7.55 to 7.86 ms)
@@ -219,7 +219,7 @@ layout (`crates/gpui/...`) so they apply there with `git apply -p1`.
   fonts take about 7 ms, which is what it saves there; after a boot both
   come from disk.
 
-With 0012 to 0014, bibli's first frame went from a median of 134.6 ms to
+With 0012 to 0014, skwir's first frame went from a median of 134.6 ms to
 114.5 ms on the reference machine (ten warm starts of each build,
 alternated back to back on a quiet machine); 0013 and 0014 are the ones on
 that path.
@@ -240,13 +240,13 @@ that path.
   calloop called the event source again at once, forever: each poll failed,
   logged `error while polling for X11 events` (a backtrace with it where
   one is captured) and returned as if nothing had happened, the refresh
-  timers the same. A bibli left on an Xvfb that was stopped spun a core and
+  timers the same. A skwir left on an Xvfb that was stopped spun a core and
   wrote 131 GB of log in four hours, until the disk was full; on the
   reference machine the log grew 27 MB a second. Now a poll that fails
   on a connection in error (`XCBConnection::has_error`; a single event that
   does not parse is not one, and still only warns) says so once and stops
   the event loop (`X11Client::connection_lost`), so the application ends
-  as when it quits: `LinuxPlatform::run` runs the quit callbacks (bibli's
+  as when it quits: `LinuxPlatform::run` runs the quit callbacks (skwir's
   winds its plans down). Windows dropped then are not destroyed on a
   server that is gone, which logged a failure with a backtrace for each.
   Checked on Xvfb, stopping the server under a window: the app ended
@@ -265,7 +265,7 @@ that path.
   draw them went wrong: `0005`'s clamped truncation took the last line to
   start inside a word, kept the rest of that word before the ellipsis,
   and the layout, starting the line a word earlier, drew it wider than the
-  box, cut at both ends (a grid name of three lines); bibli's grid counts
+  box, cut at both ends (a grid name of three lines); skwir's grid counts
   each name's lines with it too. Now the character is remembered before
   the line is checked. Zed's main branch has the same order: the fix and
   the `wrap_line` test are for upstream, the clamped test is `0005`'s.
@@ -284,7 +284,7 @@ that path.
 - `0019-font-id-without-fallback.patch`: `TextSystem::font_id` is
   public, so a caller can ask whether a family loads without
   `resolve_font`, which falls back to its own stack and panics when none
-  of that is installed either. bibli picked its font by resolving a
+  of that is installed either. skwir picked its font by resolving a
   family that does not exist and comparing: on a minimal system with
   only Liberation or Inter, that panicked before the window opened.
 

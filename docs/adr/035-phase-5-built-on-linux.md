@@ -4,7 +4,7 @@ Status: accepted, 2026-10-05. Splits Phase 5's gate (`docs/PLAN.md`).
 
 ## Context
 
-Phase 5 ports bibli to macOS and Windows. Neither machine is available
+Phase 5 ports skwir to macOS and Windows. Neither machine is available
 for now; one will be later, for testing. The gate, a week of daily use
 on each system with the budgets passing there, cannot be met before.
 What can be done is everything short of running the result: the code
@@ -23,8 +23,8 @@ shell's toolchain plus the two targets:
 - **macOS (`aarch64-apple-darwin`).** The C dependencies build the same
   way. gpui's Metal backend does not: its build script generates
   bindings from Apple's SDK headers (`gpui_media`, `dispatch.h`), and
-  Apple's terms allow its SDK on Apple hardware only. So `bibli-ui`
-  and `bibli` are not checked for macOS; everything else is. Core fails
+  Apple's terms allow its SDK on Apple hardware only. So `skwir-ui`
+  and `skwir` are not checked for macOS; everything else is. Core fails
   first on its manifest (ordinary dependencies listed as Linux-only),
   then on statx, `syncfs`, `copy_file_range`, FICLONE, `mknodat` and the
   `trash` crate's listing, which macOS lacks.

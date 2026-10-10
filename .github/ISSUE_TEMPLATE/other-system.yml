@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thank you for trying bibli where it has never run. Rename anything
+        Thank you for trying skwir where it has never run. Rename anything
         personal in paths and screenshots before you share them.
   - type: dropdown
     id: system
@@ -32,6 +32,6 @@ body:
     id: what
     attributes:
       label: What happened
-      description: What you did, and what bibli did. A test that failed, with what it printed.
+      description: What you did, and what skwir did. A test that failed, with what it printed.
     validations:
       required: true

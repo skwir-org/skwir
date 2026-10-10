@@ -80,7 +80,7 @@ fn coordinates(line: &str) -> (Option<&str>, Option<&str>) {
 }
 
 /// A drill file drawn.
-pub fn draw(text: &str, cancel: &bibli_core::CancelToken) -> anyhow::Result<Drawn> {
+pub fn draw(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Drawn> {
     let mut numbers = Numbers {
         unit: 25.4,
         integers: 2,
@@ -101,7 +101,7 @@ pub fn draw(text: &str, cancel: &bibli_core::CancelToken) -> anyhow::Result<Draw
     let mut software = None;
     for (index, raw) in text.lines().enumerate() {
         if index.is_multiple_of(65_536) {
-            bibli_platform::inspection::check(cancel)?;
+            skwir_platform::inspection::check(cancel)?;
         }
         let line = raw.trim();
         if let Some(comment) = line.strip_prefix(';') {
@@ -340,7 +340,7 @@ fn write(holes: &[(Point, f64)], paths: &[(Vec<Point>, f64)], bounds: Bounds) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::CancelToken;
+    use skwir_core::CancelToken;
 
     #[test]
     fn a_kicad_drill_file() {

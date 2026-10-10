@@ -57,10 +57,10 @@ Settings → `preview-media.backend`:
 - `gstreamer`: require the player; report missing dependencies explicitly.
 - `stills`: use the previous FFmpeg frame browser.
 
-A packaged installation needs `bibli-media-worker` next to `bibli` or on PATH,
+A packaged installation needs `skwir-media-worker` next to `skwir` or on PATH,
 and GStreamer with base/good playback plugins and suitable codec plugins.
-`BIBLI_MEDIA_WORKER` overrides the executable. GStreamer loads only in the child,
-not in the file manager. `cargo build -p bibli` does not link GStreamer; workspace
+`SKWIR_MEDIA_WORKER` overrides the executable. GStreamer loads only in the child,
+not in the file manager. `cargo build -p skwir` does not link GStreamer; workspace
 builds also build the optional worker and need its development libraries.
 
 Continuous playback uses CPU BGRA transfer and GPU upload, capped at a
@@ -80,7 +80,7 @@ is closed.
 
 ```
 just media-check
-python3 tools/media/check.py --worker target/release/bibli-media-worker --size 3840x2160
+python3 tools/media/check.py --worker target/release/skwir-media-worker --size 3840x2160
 ```
 
 The generator creates only synthetic material (moving test pattern, two sine

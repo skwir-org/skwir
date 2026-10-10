@@ -84,7 +84,7 @@ mod imp {
     use std::path::Path;
     use std::process::{Command, Stdio};
 
-    use bibli_core::os_path::find_program;
+    use skwir_core::os_path::find_program;
 
     const CANDIDATES: [&str; 8] = [
         "kitty",
@@ -178,7 +178,7 @@ mod imp {
     /// A Mac's terminal applications hand a command to a window and return
     /// at once: nothing waits for the program yet.
     pub fn terminal_with<S: AsRef<OsStr>>(_dir: &Path, _argv: &[S]) -> anyhow::Result<Command> {
-        Err(bibli_core::system::not_yet("A terminal running a program").into())
+        Err(skwir_core::system::not_yet("A terminal running a program").into())
     }
 }
 
@@ -199,7 +199,7 @@ mod imp {
     const NEW_CONSOLE: u32 = 0x10;
 
     pub fn terminal(dir: &Path) -> anyhow::Result<Command> {
-        if let Some(wt) = bibli_core::os_path::find_program("wt") {
+        if let Some(wt) = skwir_core::os_path::find_program("wt") {
             let mut c = Command::new(wt);
             c.arg("-d")
                 .arg(dir)

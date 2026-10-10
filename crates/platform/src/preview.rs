@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use anyhow::Context;
-use bibli_core::cache::CacheSlot;
-use bibli_core::preview::{Preview, PreviewInfo, PreviewProvider, PreviewRequest};
-use bibli_core::{CancelToken, thumbs::Image};
 use parking_lot::{Mutex, MutexGuard};
+use skwir_core::cache::CacheSlot;
+use skwir_core::preview::{Preview, PreviewInfo, PreviewProvider, PreviewRequest};
+use skwir_core::{CancelToken, thumbs::Image};
 
 use crate::inspection::{check, extension};
 use crate::process;
@@ -93,7 +93,7 @@ fn fingerprint(request: &PreviewRequest, path: &Path) -> anyhow::Result<Vec<u8>>
     fingerprint_of(request.entry.id, path)
 }
 
-fn fingerprint_of(id: bibli_core::FileId, path: &Path) -> anyhow::Result<Vec<u8>> {
+fn fingerprint_of(id: skwir_core::FileId, path: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(serde_json::to_vec(&(
         id,
         path,
@@ -109,7 +109,7 @@ fn key(base: &[u8], suffix: impl serde::Serialize) -> anyhow::Result<Vec<u8>> {
 /// the products of one conversion apart: by the file's version and the
 /// tool's, so either changing makes it again.
 pub fn made_key(
-    id: bibli_core::FileId,
+    id: skwir_core::FileId,
     path: &Path,
     tool: &Path,
     what: impl serde::Serialize,
@@ -193,8 +193,8 @@ impl PreviewProvider for MediaPreviews {
         &self,
         req: &PreviewRequest,
         lifetime: &CancelToken,
-        wake: bibli_core::location::Waker,
-    ) -> anyhow::Result<Option<std::sync::Arc<dyn bibli_core::media::MediaSession>>> {
+        wake: skwir_core::location::Waker,
+    ) -> anyhow::Result<Option<std::sync::Arc<dyn skwir_core::media::MediaSession>>> {
         if self.backend == "stills" {
             return Ok(None);
         }
@@ -306,7 +306,7 @@ impl PreviewProvider for MediaPreviews {
 }
 
 /// Told which entry an Office document was just converted for.
-pub type Converted = std::sync::Arc<dyn Fn(bibli_core::FileId) + Send + Sync>;
+pub type Converted = std::sync::Arc<dyn Fn(skwir_core::FileId) + Send + Sync>;
 
 pub struct DocumentPreviews {
     cache: CacheSlot,
@@ -395,7 +395,7 @@ fn conversion_key(base: &[u8], office: &Path) -> anyhow::Result<Vec<u8>> {
 /// an office suite for every document in view.
 pub(crate) fn converted_pdf(
     cache: &CacheSlot,
-    id: bibli_core::FileId,
+    id: skwir_core::FileId,
     source: &Path,
     into: &Path,
 ) -> anyhow::Result<Option<PathBuf>> {
@@ -469,7 +469,7 @@ fn is_pdf(req: &PreviewRequest) -> bool {
 /// Office documents, by type: what `LibreOffice` converts to PDF for a
 /// preview, and an office package's stored picture is looked for in. Not
 /// all it opens: its desktop entries also claim plain text, CSV and PDF,
-/// which bibli reads itself.
+/// which skwir reads itself.
 static OFFICE: crate::mime::Types = crate::mime::Types::new(&[
     "application/msword",
     "application/msword-template",
@@ -527,7 +527,7 @@ impl PreviewProvider for DocumentPreviews {
         &self,
         req: &PreviewRequest,
         lifetime: &CancelToken,
-    ) -> anyhow::Result<Option<std::sync::Arc<dyn bibli_core::document::DocumentSession>>> {
+    ) -> anyhow::Result<Option<std::sync::Arc<dyn skwir_core::document::DocumentSession>>> {
         use crate::document::{Engine, WorkerSession};
         anyhow::ensure!(
             matches!(
@@ -568,7 +568,7 @@ impl PreviewProvider for DocumentPreviews {
             // page written to a disk's temporary folder was written out to
             // the disk each time (a converted document's PDF, a few
             // megabytes, is copied in with them).
-            let scratch = crate::file::memory_dir("bibli-pages-")?;
+            let scratch = crate::file::memory_dir("skwir-pages-")?;
             let pdf = match &converted {
                 None => source.clone(),
                 Some((_, converted)) => {
@@ -840,7 +840,7 @@ fn convert_office(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::{cache::Cache, op::EntryRef};
+    use skwir_core::{cache::Cache, op::EntryRef};
     use std::io::Write;
     use std::process::Command;
 
@@ -895,7 +895,7 @@ mod tests {
         ] {
             assert!(office(name), "{name} is an office document");
         }
-        // `LibreOffice` opens these too; bibli reads them itself.
+        // `LibreOffice` opens these too; skwir reads them itself.
         for name in ["a.txt", "a.csv", "a.pdf", "a.epub", "a.png"] {
             assert!(!office(name), "{name} is no office document");
         }
@@ -908,7 +908,7 @@ mod tests {
     #[test]
     fn pdf_pages_is_a_fallback_for_pdfs_only() {
         use crate::thumb_providers::PdfPages;
-        use bibli_core::thumbs::{Stage, ThumbRequest, ThumbSize, ThumbnailProvider};
+        use skwir_core::thumbs::{Stage, ThumbRequest, ThumbSize, ThumbnailProvider};
         let tmp = tempfile::tempdir().unwrap();
         let req = |name: &str, mime: Option<&str>| {
             let path = tmp.path().join(name);
@@ -935,20 +935,20 @@ mod tests {
     #[test]
     fn pdf_thumbnails_are_drawn_by_the_readers_engine() {
         use crate::thumb_providers::PdfPages;
-        use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
+        use skwir_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
         let helper = std::env::current_exe()
             .ok()
-            .and_then(|exe| Some(exe.parent()?.parent()?.join("bibli-pdf-worker")))
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-pdf-worker")))
             .filter(|path| path.is_file());
-        let (Some(helper), Some(_)) = (helper, std::env::var_os("BIBLI_PDFIUM_LIBRARY")) else {
-            eprintln!("skipped: needs bibli-pdf-worker built and a PDFium library");
+        let (Some(helper), Some(_)) = (helper, std::env::var_os("SKWIR_PDFIUM_LIBRARY")) else {
+            eprintln!("skipped: needs skwir-pdf-worker built and a PDFium library");
             return;
         };
         // SAFETY: nextest runs each test in a process of its own, and
         // nothing else reads the environment before this.
         #[allow(unsafe_code)]
         unsafe {
-            std::env::set_var("BIBLI_PDF_WORKER", &helper);
+            std::env::set_var("SKWIR_PDF_WORKER", &helper);
             // No `pdftoppm` to fall back on.
             std::env::set_var("PATH", "");
         }
@@ -982,7 +982,7 @@ mod tests {
     #[ignore = "requires installed Poppler tools; run explicitly for preview changes"]
     fn pdf_thumbnails_are_the_first_page_at_the_size_asked() {
         use crate::thumb_providers::PdfPages;
-        use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
+        use skwir_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp
             .path()
@@ -1027,7 +1027,7 @@ mod tests {
     #[ignore = "requires installed FFmpeg; run explicitly for preview changes"]
     fn audio_covers_are_the_attached_picture_at_its_size() {
         use crate::thumb_providers::AudioCovers;
-        use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
+        use skwir_core::thumbs::{ThumbRequest, ThumbSize, ThumbnailProvider};
         let tmp = tempfile::tempdir().unwrap();
         let ffmpeg = |args: &[&str], out: &Path| {
             let status = Command::new(process::required("ffmpeg").unwrap())
@@ -1480,7 +1480,7 @@ mod tests {
                 assert!(preview.image.width > 0 && preview.image.height > 0);
                 // The optional reader consumes the same isolated conversion.
                 for engine in ["pdfium", "poppler", "mupdf"] {
-                    if engine == "pdfium" && std::env::var_os("BIBLI_PDFIUM_LIBRARY").is_none() {
+                    if engine == "pdfium" && std::env::var_os("SKWIR_PDFIUM_LIBRARY").is_none() {
                         continue;
                     }
                     let reader = DocumentPreviews::new(Cache::new(tmp.path()).namespace("preview"))

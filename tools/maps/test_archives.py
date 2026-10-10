@@ -8,7 +8,7 @@ the spec says), for the reference `pmtiles` tool to convert to PMTiles:
     pmtiles convert OUT/roads.mbtiles OUT/roads.pmtiles
 
 (`pmtiles` 1.31.2, nixpkgs#pmtiles). Its output is what
-crates/plugins/map-tiles/src/testdata/ keeps: files bibli did not write.
+crates/plugins/map-tiles/src/testdata/ keeps: files skwir did not write.
 
 Each raster tile is a north-to-south gradient across the whole box (blue
 at the north, red at the south) with a dark frame, so tiles placed in the

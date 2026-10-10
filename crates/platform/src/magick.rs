@@ -1,6 +1,6 @@
 //! `ImageMagick`, when installed, draws the pictures nothing else draws
 //! (ADR-031): the last resort for thumbnails, and for the preview of a
-//! picture bibli does not decode. It runs only isolated
+//! picture skwir does not decode. It runs only isolated
 //! (`crate::sandbox`), under a policy written for each run: it reads the
 //! one format named and writes PAM, runs no other program, and holds
 //! bounded memory, on one thread.
@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bibli_core::CancelToken;
-use bibli_core::thumbs::Image;
+use skwir_core::CancelToken;
+use skwir_core::thumbs::Image;
 
 use crate::inspection::limits;
 use crate::{process, sandbox};
@@ -127,11 +127,11 @@ impl Magick {
         }
     }
 
-    /// [`Magick::find`], its answer kept in `kept` (bibli's cache) by the
+    /// [`Magick::find`], its answer kept in `kept` (skwir's cache) by the
     /// programs' paths, sizes and modification times: a start asks
     /// nothing of an `ImageMagick` that did not change, where each ran it
     /// three times and bubblewrap once. Call on a worker.
-    pub fn find_kept(kept: Option<&bibli_core::cache::CacheSlot>) -> Option<Magick> {
+    pub fn find_kept(kept: Option<&skwir_core::cache::CacheSlot>) -> Option<Magick> {
         const KEY: &[u8] = b"imagemagick.1";
         let stamp = installed_stamp();
         if let Some(text) = kept
@@ -174,7 +174,7 @@ impl Magick {
         }
     }
 
-    /// Whether it draws files of type `mime`: a picture bibli does not
+    /// Whether it draws files of type `mime`: a picture skwir does not
     /// decode itself, in a format it reads.
     pub fn draws(&self, mime: &str) -> bool {
         self.format(mime, None).is_some()
@@ -219,7 +219,7 @@ impl Magick {
 
     /// The thumbnail of the picture at `path`, as [`draw`] would draw it,
     /// but never waiting for a turn: with none free it answers
-    /// [`bibli_core::thumbs::Busy`], and the thumbnails take it again once
+    /// [`skwir_core::thumbs::Busy`], and the thumbnails take it again once
     /// one is, their worker going on with other files meanwhile.
     ///
     /// [`draw`]: Magick::draw
@@ -232,7 +232,7 @@ impl Magick {
     ) -> anyhow::Result<Option<Image>> {
         let format = self.readable(path, mime)?;
         let Some(turn) = TURNS.try_take() else {
-            return Err(bibli_core::thumbs::Busy::new(|then| TURNS.when_free(then)).into());
+            return Err(skwir_core::thumbs::Busy::new(|then| TURNS.when_free(then)).into());
         };
         self.run(turn, path, &format, pixels, cancel)
     }
@@ -460,8 +460,8 @@ mod tests {
             Some("ARW")
         );
         assert!(magick.draws("image/x-xcf"));
-        assert!(!magick.draws("image/png"), "bibli decodes it");
-        assert!(!magick.draws("image/svg+xml"), "bibli draws it");
+        assert!(!magick.draws("image/png"), "skwir decodes it");
+        assert!(!magick.draws("image/svg+xml"), "skwir draws it");
         assert!(!magick.draws("image/x-eps"), "PostScript is refused");
         assert!(!magick.draws("image/jxl"), "this one does not read it");
         assert!(!magick.draws("application/pdf"), "not a picture");
@@ -521,7 +521,7 @@ mod tests {
     }
 
     /// `ImageMagick` and bubblewrap as installed: run by hand
-    /// (`cargo nextest run -p bibli-platform --run-ignored only magick`).
+    /// (`cargo nextest run -p skwir-platform --run-ignored only magick`).
     #[test]
     #[ignore = "needs ImageMagick with libheif, and bubblewrap"]
     fn magick_draws_an_avif_isolated_and_refuses_what_it_was_not_asked() {

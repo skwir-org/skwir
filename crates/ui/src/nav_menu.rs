@@ -17,12 +17,12 @@
 
 use std::path::{Path, PathBuf};
 
-use bibli_core::os_path::PathArg;
-use bibli_core::workspace::PaneId;
 use gpui::{
     AnyElement, Context, FocusHandle, Pixels, ScrollStrategy, SharedString,
     UniformListScrollHandle, Window, div, prelude::*, px,
 };
+use skwir_core::os_path::PathArg;
+use skwir_core::workspace::PaneId;
 
 use crate::keymap::RunCommand;
 use crate::shell::Shell;
@@ -42,12 +42,12 @@ pub enum NavWhat {
     },
     /// The places inside `of`: a folder's folders, a tag's tags.
     Subfolders {
-        of: bibli_core::Location,
+        of: skwir_core::Location,
     },
     /// What is above `of`, a place of the trail: the folders that hold
     /// it, or for a place that is no folder the trail's places before it.
     Parents {
-        of: bibli_core::Location,
+        of: skwir_core::Location,
     },
 }
 
@@ -169,7 +169,7 @@ impl Shell {
             return;
         }
         let pane = self.pane;
-        let places: Vec<(usize, bibli_core::Location)> = {
+        let places: Vec<(usize, skwir_core::Location)> = {
             let ws = self.app.workspace.read();
             let Some(p) = ws.pane(pane) else {
                 return;
@@ -231,7 +231,7 @@ impl Shell {
         let location = |key: &str| {
             args.get(key)
                 .and_then(|v| serde_json::from_value::<PathArg>(v.clone()).ok())
-                .map(|arg| bibli_core::Location::parse_os(arg.as_os_str()))
+                .map(|arg| skwir_core::Location::parse_os(arg.as_os_str()))
         };
         cx.notify();
         let of = location("location").or_else(|| location("path"));
@@ -305,8 +305,8 @@ impl Shell {
         let of = args
             .get("location")
             .and_then(|v| serde_json::from_value::<PathArg>(v.clone()).ok())
-            .map(|arg| bibli_core::Location::parse_os(arg.as_os_str()))
-            .map(|of| of.path().map_or(of, bibli_core::Location::from_path));
+            .map(|arg| skwir_core::Location::parse_os(arg.as_os_str()))
+            .map(|of| of.path().map_or(of, skwir_core::Location::from_path));
         let key = of
             .clone()
             .map(|of| NavWhat::Parents { of }.key())
@@ -336,7 +336,7 @@ impl Shell {
     /// a place that is no folder: the folders above the trail's first
     /// segment when that is a folder, root down, then its segments down to
     /// `of` (marked), as the trail names them.
-    fn trail_rows(&self, of: &bibli_core::Location) -> Vec<NavRow> {
+    fn trail_rows(&self, of: &skwir_core::Location) -> Vec<NavRow> {
         let Some(trail) = self.ui().place.trail.as_ref() else {
             return Vec::new();
         };
@@ -375,14 +375,14 @@ impl NavWhat {
 /// `FOLDER_ROWS`, then a row that opens `of` for the rest, or one that
 /// says there is nothing inside.
 fn inside_rows(
-    app: &bibli_core::App,
-    of: &bibli_core::Location,
-    inside: Vec<bibli_core::location::Crumb>,
-    current: Option<&bibli_core::Location>,
+    app: &skwir_core::App,
+    of: &skwir_core::Location,
+    inside: Vec<skwir_core::location::Crumb>,
+    current: Option<&skwir_core::Location>,
 ) -> Vec<NavRow> {
     let total = inside.len();
     let first_folder = inside.iter().position(|p| p.location.is_path());
-    let navigate = |l: &bibli_core::Location| serde_json::json!({ "location": l.arg() });
+    let navigate = |l: &skwir_core::Location| serde_json::json!({ "location": l.arg() });
     let mut rows: Vec<NavRow> = inside
         .into_iter()
         .take(FOLDER_ROWS)
@@ -436,9 +436,9 @@ fn inside_rows(
 /// other (those above it and it come first, under their own names), then
 /// the trail's places down to `of`.
 fn above_in_trail<'a>(
-    segments: &'a [bibli_core::location::Crumb],
-    of: &bibli_core::Location,
-) -> Option<(Option<PathBuf>, &'a [bibli_core::location::Crumb])> {
+    segments: &'a [skwir_core::location::Crumb],
+    of: &skwir_core::Location,
+) -> Option<(Option<PathBuf>, &'a [skwir_core::location::Crumb])> {
     let at = segments.iter().position(|s| s.location.same_place(of))?;
     let upto = &segments[..=at];
     let folders = upto.iter().take_while(|s| s.location.is_path()).count();
@@ -610,7 +610,7 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{above_in_trail, parent_rows};
-    use bibli_core::fs::subfolders;
+    use skwir_core::fs::subfolders;
     use std::path::Path;
 
     /// From the root down to the folder the trail starts at, which is
@@ -630,7 +630,7 @@ mod tests {
         );
         assert_eq!(
             rows[1].args,
-            serde_json::json!({ "location": bibli_core::os_path::PathArg::from(Path::new("/home")) })
+            serde_json::json!({ "location": skwir_core::os_path::PathArg::from(Path::new("/home")) })
         );
         let rows = parent_rows(Path::new("/srv/it's data"), true);
         let labels: Vec<&str> = rows.iter().map(|r| r.label.as_ref()).collect();
@@ -642,8 +642,8 @@ mod tests {
     /// its places down to it, as a narrow pane may have hidden them.
     #[test]
     fn above_a_place_of_a_trail_are_its_folders_then_its_places() {
-        use bibli_core::Location;
-        use bibli_core::location::Crumb;
+        use skwir_core::Location;
+        use skwir_core::location::Crumb;
         let segments = [
             Crumb::new("Home", Location::from_path("/home/example")),
             Crumb::new("Papers", Location::from_path("/home/example/Documents")),

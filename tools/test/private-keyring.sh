@@ -4,17 +4,17 @@
 # user's keyring. Needs dbus-run-session, dbus-send and gnome-keyring-daemon
 # on PATH.
 #
-#   tools/test/private-keyring.sh cargo nextest run -p bibli-platform \
+#   tools/test/private-keyring.sh cargo nextest run -p skwir-platform \
 #       --run-ignored only secrets
 #
 # The bus activates nothing (its configuration names no service directory),
 # so no other keyring (KeePassXC, KWallet) can be started on it, and the
 # command runs only once this keyring owns org.freedesktop.secrets. The
-# command sees BIBLI_PRIVATE_KEYRING=1, which keyring tests require.
+# command sees SKWIR_PRIVATE_KEYRING=1, which keyring tests require.
 set -eu
 # Short on purpose: the keyring's control socket lives under it, and a Unix
 # socket's path is at most 108 bytes.
-base="$HOME/.cache/bibli-tests"
+base="$HOME/.cache/skwir-tests"
 mkdir -p "$base"
 dir=$(mktemp -d "$base/k.XXXXXX")
 trap 'rm -rf "$dir"' EXIT
@@ -49,5 +49,5 @@ dbus-run-session --config-file="$dir/bus.conf" -- sh -c '
         fi
         sleep 0.1
     done
-    BIBLI_PRIVATE_KEYRING=1 "$@"
+    SKWIR_PRIVATE_KEYRING=1 "$@"
 ' sh "$@"

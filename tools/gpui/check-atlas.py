@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Blade atlas GPU regressions without adding GPUI dev dependencies to bibli.
+"""Run Blade atlas GPU regressions without adding GPUI dev dependencies to skwir.
 
 Run inside the Linux development shell. Requires a working GPU context.
 """
@@ -10,7 +10,7 @@ import tempfile
 
 
 root = Path(__file__).resolve().parents[2]
-with tempfile.TemporaryDirectory(prefix="bibli-atlas-tests-") as temporary:
+with tempfile.TemporaryDirectory(prefix="skwir-atlas-tests-") as temporary:
     source = Path(temporary) / "gpui"
     shutil.copytree(root / "vendor/gpui", source)
     manifest = source / "Cargo.toml"

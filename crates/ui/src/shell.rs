@@ -5,15 +5,15 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
-use bibli_core::app::NotifyLevel;
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::os_path::PathArg;
-use bibli_core::workspace::PaneId;
-use bibli_core::{App, Location, Plan, SortKey};
 use gpui::{
     ClipboardItem, Context, Entity, FocusHandle, IntoElement, SharedString, Subscription, Window,
     div, prelude::*, px,
 };
+use skwir_core::app::NotifyLevel;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::os_path::PathArg;
+use skwir_core::workspace::PaneId;
+use skwir_core::{App, Location, Plan, SortKey};
 
 use crate::choose::ChooseState;
 use crate::icons::IconCache;
@@ -49,7 +49,7 @@ pub struct PaneUi {
     pub list: ListState,
     /// Instantiated views by id; the active one is taken out during render.
     pub views: HashMap<&'static str, Box<dyn PaneView>>,
-    view_registrations: HashMap<String, bibli_core::registry::Factory>,
+    view_registrations: HashMap<String, skwir_core::registry::Factory>,
     /// Registry revision the registrations above were reconciled against.
     views_revision: u64,
     pub view_id: &'static str,
@@ -80,9 +80,9 @@ pub struct PaneUi {
     pub(crate) returning: bool,
     /// Where it was scrolled when its tab was left: the entry at the top,
     /// its index then, and how many pixels into its row the view began.
-    pub(crate) anchor: Option<(bibli_core::EntryId, usize, f32)>,
+    pub(crate) anchor: Option<(skwir_core::EntryId, usize, f32)>,
     /// What it will show first, still waiting for metadata.
-    pub(crate) warm: Vec<bibli_core::EntryId>,
+    pub(crate) warm: Vec<skwir_core::EntryId>,
     _sub: Subscription,
 }
 
@@ -191,17 +191,17 @@ pub struct Shell {
     pub(crate) hidden: HashMap<PaneId, PaneUi>,
     /// Workspace revision the panes above follow.
     pub(crate) tabs_revision: u64,
-    pub(crate) shown_tab: Option<bibli_core::workspace::TabId>,
+    pub(crate) shown_tab: Option<skwir_core::workspace::TabId>,
     /// How many tabs the workspace has, as of `tabs_revision`: read while
     /// drawing, under a workspace guard the caller may already hold.
     pub(crate) tab_count: usize,
     /// The splits of tabs not shown: their own arrangement and share.
-    pub(crate) tab_splits: HashMap<bibli_core::workspace::TabId, crate::layout::TabSplit>,
+    pub(crate) tab_splits: HashMap<skwir_core::workspace::TabId, crate::layout::TabSplit>,
     pub(crate) tab_labels: crate::tabs::Labels,
     /// The panes of the tab left, still drawn while the tab shown gets
     /// ready (`Shell::present`), and which tab they are.
     pub(crate) presented: Option<Vec<PaneUi>>,
-    pub(crate) presented_tab: Option<bibli_core::workspace::TabId>,
+    pub(crate) presented_tab: Option<skwir_core::workspace::TabId>,
     /// When the tab shown started waiting to be drawn, and the wake at its
     /// deadline.
     pub(crate) held_since: Option<Instant>,
@@ -324,7 +324,7 @@ pub struct Shell {
     pub toasts: crate::toast::ToastState,
     /// This frame's snapshot of what waits for a paste; rows and cells test
     /// membership here instead of taking the lock each.
-    pub pending: Arc<bibli_core::pending::Pending>,
+    pub pending: Arc<skwir_core::pending::Pending>,
     pub shortcuts: Option<crate::shortcuts::Overview>,
     pub about: Option<crate::about::About>,
     /// A rubber-band selection in progress.
@@ -338,12 +338,12 @@ pub struct Shell {
     /// Keys typed that wait for the next, and what can follow.
     pub(crate) sequence: Option<crate::sequence::Sequence>,
     /// What plugins count for the footer (`App::tallies`).
-    pub tallies: Vec<bibli_core::tally::Tally>,
+    pub tallies: Vec<skwir_core::tally::Tally>,
     /// The `App::tallies` revision they were read at.
     tallies_revision: Option<u64>,
     /// A plain press on a row of a multi-selection, waiting for its
     /// release to make the selection that row (unless a drag starts).
-    pub press_collapse: Option<(PaneId, bibli_core::EntryId)>,
+    pub press_collapse: Option<(PaneId, skwir_core::EntryId)>,
     /// A file to select once the folder it lives in has listed it: a listing
     /// streams, so a link followed to another folder cannot select its target
     /// in the same frame it navigates.
@@ -389,13 +389,13 @@ impl Shell {
         // block, so not here.
         let wake = app.waker_handle();
         app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Background,
+            skwir_core::scheduler::Priority::Background,
             "user-names",
             app.lifetime().child(),
             {
                 let cache = app.cache.root().to_owned();
                 move || {
-                    bibli_platform::users::load();
+                    skwir_platform::users::load();
                     // Members a killed process extracted for its previews.
                     crate::preview::sweep_members(&cache);
                     wake();
@@ -878,7 +878,7 @@ impl Shell {
     pub fn off_thread_until<T: Send + 'static>(
         &self,
         label: &'static str,
-        cancel: bibli_core::CancelToken,
+        cancel: skwir_core::CancelToken,
         work: impl FnOnce() -> T + Send + 'static,
         then: impl FnOnce(&mut Shell, T, &mut Window, &mut Context<Shell>) + 'static,
         window: &mut Window,
@@ -886,7 +886,7 @@ impl Shell {
     ) {
         let (tx, rx) = flume::bounded(1);
         self.app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Visible,
+            skwir_core::scheduler::Priority::Visible,
             label,
             cancel,
             move || {
@@ -960,7 +960,7 @@ impl Shell {
                     return;
                 };
                 let pane = if at.tab {
-                    let location = bibli_core::Location::from_path(&folder);
+                    let location = skwir_core::Location::from_path(&folder);
                     match this.app.new_tab(Some(pane), Some(location), true) {
                         Ok((_, opened)) => opened,
                         Err(error) => {
@@ -1151,7 +1151,7 @@ impl Shell {
     }
 
     /// The registry controls availability; panes retain only live renderers.
-    pub fn available_views(&self) -> Vec<bibli_core::registry::ViewSpec> {
+    pub fn available_views(&self) -> Vec<skwir_core::registry::ViewSpec> {
         let mut specs: Vec<_> = self
             .app
             .registry
@@ -1188,7 +1188,7 @@ impl Shell {
             return;
         }
         self.keys.settings = settings;
-        let user = bibli_core::keymap::user_bindings(&self.app.settings);
+        let user = skwir_core::keymap::user_bindings(&self.app.settings);
         if revisions == self.keys.stamp.revisions && user == self.keys.stamp.user {
             return;
         }
@@ -1241,7 +1241,7 @@ impl Shell {
                     .registry
                     .views
                     .find(|s| &*s.id == leaving)
-                    .is_none_or(|s| s.role == bibli_core::registry::ViewRole::Listing);
+                    .is_none_or(|s| s.role == skwir_core::registry::ViewRole::Listing);
                 if listing {
                     self.ui_mut().listing_view = leaving;
                 }
@@ -1512,7 +1512,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Quit: close the window, which ends bibli once the plans running
+    /// Quit: close the window, which ends skwir once the plans running
     /// have stopped (`lib.rs`). While one runs, ask first, saying what
     /// stops; asked already, Quit again answers yes.
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1778,7 +1778,7 @@ impl Shell {
             "tag_editor_apply" => self.tag_editor_apply(window, cx),
             // An address followed (a document's link, one found in text,
             // where a file was downloaded from), opened by the desktop when
-            // the user asks: bibli fetches nothing (ADR-020).
+            // the user asks: skwir fetches nothing (ADR-020).
             "open_url" => self.open_address(&arg("url").unwrap_or_default(), cx),
             // A file shown in its folder, from a link.
             "reveal" => self.reveal_command(args, window, cx),
@@ -2111,7 +2111,7 @@ impl Shell {
             self.tag_fields = self
                 .app
                 .settings
-                .get(bibli_core::metadata::TAG_EXCLUSIVE_SETTING)
+                .get(skwir_core::metadata::TAG_EXCLUSIVE_SETTING)
                 .unwrap_or_default();
             self.prefs.friendly_dates = self
                 .app
@@ -2141,7 +2141,7 @@ impl Shell {
             self.prefs.close_split = crate::layout::CloseSplit::read(
                 self.app
                     .settings
-                    .get::<String>(bibli_core::settings::CLOSE_SPLIT)
+                    .get::<String>(skwir_core::settings::CLOSE_SPLIT)
                     .as_deref(),
             );
             let icon_theme = self

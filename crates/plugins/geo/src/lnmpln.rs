@@ -13,8 +13,8 @@
 //! the simulator's data.
 use std::io::BufRead;
 
-use bibli_core::CancelToken;
-use bibli_core::geo::{Datum, Waypoint, WaypointKind};
+use skwir_core::CancelToken;
+use skwir_core::geo::{Datum, Waypoint, WaypointKind};
 
 use crate::collect::{self, Collector};
 use crate::flight::{self, Ends, Route, Stop};
@@ -188,7 +188,7 @@ pub fn sniff(head: &[u8]) -> bool {
 pub(crate) mod tests {
     use super::*;
     use crate::collect::{Plan, PlanKind};
-    use bibli_core::geo::LineKind;
+    use skwir_core::geo::LineKind;
 
     pub(crate) const PLAN: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <LittleNavmap xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://www.littlenavmap.org/schema/lnmpln.xsd">
@@ -270,14 +270,14 @@ pub(crate) mod tests {
   </Flightplan>
 </LittleNavmap>"#;
 
-    fn read_str(text: &str) -> (bibli_core::geo::GeoDoc, Collector, Option<Damaged>) {
+    fn read_str(text: &str) -> (skwir_core::geo::GeoDoc, Collector, Option<Damaged>) {
         let mut c = Collector::new();
         let damaged = read(text.as_bytes(), &mut c, &CancelToken::new()).unwrap();
         let (doc, c) = c.finish();
         (doc, c, damaged)
     }
 
-    fn feet(p: &bibli_core::geo::Point) -> Option<f32> {
+    fn feet(p: &skwir_core::geo::Point) -> Option<f32> {
         p.altitude.map(|m| (m / flight::FOOT).round())
     }
 

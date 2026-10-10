@@ -9,16 +9,16 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::plugin::Plugin;
-use bibli_core::terminal::{Input, Palette, Screen, Size, Spawn, TerminalSession};
-use bibli_plugin_terminal::TerminalPlugin;
+use skwir_core::app::{App, AppConfig};
+use skwir_core::plugin::Plugin;
+use skwir_core::terminal::{Input, Palette, Screen, Size, Spawn, TerminalSession};
+use skwir_plugin_terminal::TerminalPlugin;
 
 /// On the home filesystem, like every test that needs real directories.
 fn home_tempdir() -> tempfile::TempDir {
     let base = PathBuf::from(std::env::var_os("HOME").expect("HOME"))
         .join(".cache")
-        .join("bibli-tests");
+        .join("skwir-tests");
     std::fs::create_dir_all(&base).expect("test base");
     tempfile::Builder::new()
         .prefix("t-")
@@ -112,7 +112,7 @@ fn app(root: &Path) -> (Arc<App>, Arc<TerminalPlugin>) {
 #[test]
 fn what_is_typed_runs_and_the_shell_and_the_pane_follow_each_other() {
     let tmp = home_tempdir();
-    let root = bibli_core::os_path::canonical(tmp.path()).unwrap();
+    let root = skwir_core::os_path::canonical(tmp.path()).unwrap();
     let first = root.join("it's a dir");
     let second = root.join("an\\other");
     std::fs::create_dir_all(&first).unwrap();
@@ -159,7 +159,7 @@ fn what_is_typed_runs_and_the_shell_and_the_pane_follow_each_other() {
 #[test]
 fn the_shell_ends_on_exit_and_disabling_hangs_up_on_it() {
     let tmp = home_tempdir();
-    let root = bibli_core::os_path::canonical(tmp.path()).unwrap();
+    let root = skwir_core::os_path::canonical(tmp.path()).unwrap();
     let (app, _plugin) = app(&root);
 
     let leaving = Shell::open(&app, &root);

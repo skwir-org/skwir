@@ -3,26 +3,26 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use anyhow::Context;
-use bibli_core::document::{
+use cairo::{Context as CairoContext, Format, ImageSurface};
+use poppler::{Document, Page};
+use skwir_core::document::{
     CSS_PER_POINT, DocumentInfo, FIRST_PAGE, MAX_HITS, MAX_SIDE, PIXELS_FILE, PageContent,
     PixelOrder, Rect, SearchHit, WorkerReply, WorkerRequest, page_labels, worker,
 };
-use cairo::{Context as CairoContext, Format, ImageSurface};
-use poppler::{Document, Page};
 
 mod navigation;
 
 fn main() {
-    // `--build`, bibli asking which build of it this helper is, when a
+    // `--build`, skwir asking which build of it this helper is, when a
     // call of it failed (`platform::process::explain`).
     if std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == "--build")
     {
-        println!("{}", env!("BIBLI_BUILD"));
+        println!("{}", env!("SKWIR_BUILD"));
         return;
     }
-    // `--probe`, bibli's settings asking whether this helper works here
+    // `--probe`, skwir's settings asking whether this helper works here
     // (`platform::process::probe`): being started at all says its
     // libraries are there.
     if std::env::args_os()
@@ -43,7 +43,7 @@ fn run() -> anyhow::Result<()> {
         args.len() == 2 || (args.len() == 3 && first_page),
         "expected PDF path, scratch directory and maybe {FIRST_PAGE}"
     );
-    let uri = glib::filename_to_uri(bibli_core::os_path::canonical(&args[0])?, None)?;
+    let uri = glib::filename_to_uri(skwir_core::os_path::canonical(&args[0])?, None)?;
     let document = Document::from_file(&uri, None)
         .context("open PDF (encrypted files require an external reader)")?;
     let pages = u32::try_from(document.n_pages())?;

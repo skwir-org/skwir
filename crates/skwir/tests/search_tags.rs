@@ -5,14 +5,14 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::location::Location;
-use bibli_core::workspace::PaneId;
+use skwir_core::app::{App, AppConfig};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::location::Location;
+use skwir_core::workspace::PaneId;
 
 /// A folder where extended attributes work: not `/tmp`, often a tmpfs.
 fn home_tempdir() -> tempfile::TempDir {
-    let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+    let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
         .prefix("search-tags-")
@@ -55,7 +55,7 @@ fn the_tag_chip_offers_the_tags_found_and_find_similar_shares_them() {
         let path = root.join(name);
         std::fs::write(&path, name).unwrap();
         if let Some(tags) = tags
-            && bibli_core::fs::xattr::set(&path, "user.xdg.tags", tags.as_bytes()).is_err()
+            && skwir_core::fs::xattr::set(&path, "user.xdg.tags", tags.as_bytes()).is_err()
         {
             eprintln!("skipped: no user extended attributes here");
             return;
@@ -63,9 +63,9 @@ fn the_tag_chip_offers_the_tags_found_and_find_similar_shares_them() {
     }
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
     let pane = app.workspace.read().active_id();
     app.navigate(pane, &Location::from_path(&root)).unwrap();
     assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
@@ -135,7 +135,7 @@ fn the_tag_chip_offers_the_tags_found_and_find_similar_shares_them() {
         assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
         let location = app.pane_location(pane).unwrap();
         assert_eq!(
-            bibli_plugin_query::lang::parse(&location.rest)
+            skwir_plugin_query::lang::parse(&location.rest)
                 .unwrap()
                 .root,
             root

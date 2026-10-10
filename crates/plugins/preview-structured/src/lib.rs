@@ -1,11 +1,11 @@
 //! Bounded, syntax-preserving structured code previews.
-use bibli_core::{
+use skwir_core::{
     App, CancelToken,
     inspection::{Block, InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use bibli_platform::inspection::{self, limits};
+use skwir_platform::inspection::{self, limits};
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -18,12 +18,12 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Show JSON (with comments, and JSON5), YAML and TOML with syntax colors and foldable blocks"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read])
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
@@ -244,7 +244,7 @@ mod tests {
 
     fn inspect(path: &std::path::Path, source: bool) -> Inspection {
         let request = PreviewRequest {
-            entry: bibli_core::op::EntryRef::from_path(path).unwrap(),
+            entry: skwir_core::op::EntryRef::from_path(path).unwrap(),
             mime: Some("application/json".into()),
             page: 1,
             seconds: None,

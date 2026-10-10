@@ -38,8 +38,8 @@
 //! - spacing: multiples of 4 px; rows are 26 px, controls 28 px, bars 42 px
 //!   (a pane's row, the sidebar's header, the tab strip: their edges meet).
 
-use bibli_platform::mime::Kind;
 use gpui::{Global, Hsla, WindowAppearance, rgb};
+use skwir_platform::mime::Kind;
 
 /// The color tokens every module renders with.
 #[derive(Clone, Debug, PartialEq)]
@@ -80,7 +80,7 @@ pub struct Theme {
     /// Text and glyphs on a saturated fill (`accent`, `error`, chart blocks).
     pub on_fill: Hsla,
     /// The colors a tag wears, in the order of
-    /// `bibli_core::metadata::TAG_COLORS` (red, orange, yellow, green, teal,
+    /// `skwir_core::metadata::TAG_COLORS` (red, orange, yellow, green, teal,
     /// blue, purple, pink): a tag's dot is one, its chip `tag_fill` of it.
     pub tags: [Hsla; 8],
     /// A rating's stars.
@@ -114,7 +114,7 @@ pub struct Theme {
     /// whose backgrounds are close to ours.
     pub terminal: [Hsla; 16],
     pub is_dark: bool,
-    /// The colors code is drawn in and their look: bibli's own colors and
+    /// The colors code is drawn in and their look: skwir's own colors and
     /// look unless the Reading page chooses (`code_preview::CodeTheme`).
     pub code: crate::code_preview::CodeTheme,
 }
@@ -308,7 +308,7 @@ impl Theme {
 
     /// The tokens of the look `dark` names: these, or the other look's,
     /// which code kept in it is drawn with (`reading.code_appearance`): its
-    /// gutter, its selection, the background bibli's own colors are on.
+    /// gutter, its selection, the background skwir's own colors are on.
     pub fn in_look(&self, dark: bool) -> std::borrow::Cow<'_, Theme> {
         if dark == self.is_dark {
             return std::borrow::Cow::Borrowed(self);
@@ -319,7 +319,7 @@ impl Theme {
     }
 
     /// The `ui.theme` preference, falling back to the desktop's appearance.
-    pub fn resolve(app: &bibli_core::App, appearance: WindowAppearance) -> Self {
+    pub fn resolve(app: &skwir_core::App, appearance: WindowAppearance) -> Self {
         let mut theme = match app
             .settings
             .get::<String>(crate::settings::THEME_KEY)

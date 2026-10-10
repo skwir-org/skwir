@@ -7,12 +7,12 @@
 
 use crate::line_channel::LineChannel;
 use anyhow::Context;
-use bibli_core::{
+use parking_lot::Mutex;
+use skwir_core::{
     CancelToken,
     location::Waker,
     media::{Control, Frame, MAX_MESSAGE, MediaSession, PIXELS_FILE, Reply, Request, Update},
 };
-use parking_lot::Mutex;
 use std::{
     fs::OpenOptions,
     io::{Read, Seek, SeekFrom},
@@ -32,8 +32,8 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The player. Plugins that require it name this, not the literals.
 pub const WORKER: crate::process::Worker = crate::process::Worker {
-    variable: "BIBLI_MEDIA_WORKER",
-    executable: "bibli-media-worker",
+    variable: "SKWIR_MEDIA_WORKER",
+    executable: "skwir-media-worker",
 };
 
 pub fn worker_path() -> Option<PathBuf> {
@@ -66,7 +66,7 @@ impl Shared {
         self.spares.lock().pop()
     }
 
-    fn state(&self, generation: u64, state: bibli_core::media::Playback) {
+    fn state(&self, generation: u64, state: skwir_core::media::Playback) {
         let mut update = self.update.lock();
         if generation != self.generation.load(Ordering::Acquire) {
             return;
@@ -213,7 +213,7 @@ impl WorkerSession {
         let manager_shared = shared.clone();
         let manager_lifetime = lifetime.clone();
         std::thread::Builder::new()
-            .name("bibli-video-session".into())
+            .name("skwir-video-session".into())
             .spawn(move || {
                 let helper = executable.clone();
                 let result = manage(
@@ -315,9 +315,9 @@ fn manage(
         options.attributes(FILE_ATTRIBUTE_TEMPORARY);
     }
     let mut pixels = options.open(scratch.path().join(PIXELS_FILE))?;
-    pixels.set_len(u64::try_from(bibli_core::media::frame_bytes(
-        bibli_core::media::MAX_SIDE,
-        bibli_core::media::MAX_SIDE,
+    pixels.set_len(u64::try_from(skwir_core::media::frame_bytes(
+        skwir_core::media::MAX_SIDE,
+        skwir_core::media::MAX_SIDE,
     )?)?)?;
     // By the bytes where the name is not enough: an `.ogg` may hold a film.
     let audio_only = path.file_name().is_some_and(|name| {
@@ -326,15 +326,15 @@ fn manage(
     let mut command = Command::new(executable);
     command.arg(path).arg(scratch.path());
     if audio_only {
-        command.env("BIBLI_MEDIA_AUDIO_ONLY", "1");
+        command.env("SKWIR_MEDIA_AUDIO_ONLY", "1");
     }
     match tuning.replay_gain {
         ReplayGain::Off => {}
         ReplayGain::Track => {
-            command.env("BIBLI_MEDIA_REPLAYGAIN", "track");
+            command.env("SKWIR_MEDIA_REPLAYGAIN", "track");
         }
         ReplayGain::Album => {
-            command.env("BIBLI_MEDIA_REPLAYGAIN", "album");
+            command.env("SKWIR_MEDIA_REPLAYGAIN", "album");
         }
     }
     // Decoder/overlay threads are recreated during track changes. glibc's
@@ -342,7 +342,7 @@ fn manage(
     // frame buffers across those threads. Bound fragmentation in this child.
     #[cfg(target_env = "gnu")]
     command.env("MALLOC_ARENA_MAX", "2");
-    let mut worker = LineChannel::<Reply>::spawn(&mut command, MAX_MESSAGE, "bibli-media-worker")?;
+    let mut worker = LineChannel::<Reply>::spawn(&mut command, MAX_MESSAGE, "skwir-media-worker")?;
     let cancelled = lifetime.subscribe();
     // Fires once; after the greeting it is simply never selected again.
     let deadline = crossbeam_channel::at(Instant::now() + STARTUP_TIMEOUT);
@@ -401,7 +401,7 @@ fn manage(
                 height,
                 ..
             } => {
-                let bytes = bibli_core::media::frame_bytes(width, height)?;
+                let bytes = skwir_core::media::frame_bytes(width, height)?;
                 let mut bgra = std::mem::take(&mut spare);
                 // A buffer the window gave back, when this one is too small.
                 if bgra.capacity() < bytes
@@ -438,7 +438,7 @@ fn manage(
 /// `/dev/shm` where that exists and is writable, otherwise the ordinary
 /// temporary directory, which may be disk-backed.
 fn frame_slot_dir() -> anyhow::Result<tempfile::TempDir> {
-    crate::file::memory_dir("bibli-video-").context("create video frame slot")
+    crate::file::memory_dir("skwir-video-").context("create video frame slot")
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -690,7 +690,7 @@ mod tests {
         }
         assert_eq!(session.take_update().frame.unwrap().bgra, vec![99; 4]);
         assert!(session.take_update().frame.is_none());
-        shared.state(0, bibli_core::media::Playback::default());
+        shared.state(0, skwir_core::media::Playback::default());
         session.control(Control::Seek(3.)).unwrap();
         assert!(
             session.take_update().state.is_none(),
@@ -715,14 +715,14 @@ mod tests {
             },
         );
         assert!(session.take_update().frame.is_none());
-        shared.state(0, bibli_core::media::Playback::default());
+        shared.state(0, skwir_core::media::Playback::default());
         assert!(
             session.take_update().state.is_none(),
             "discard late old position"
         );
         shared.state(
             1,
-            bibli_core::media::Playback {
+            skwir_core::media::Playback {
                 position: 3.,
                 ..Default::default()
             },

@@ -32,16 +32,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use bibli_core::cache::CacheSlot;
-use bibli_core::entry::{Value, keys};
-use bibli_core::geo::LatLon;
-use bibli_core::location::OpenLocation;
-use bibli_core::map_points::{Batch, MapSource, Placed};
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
-use bibli_core::{App, CancelToken, EntryId};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use skwir_core::cache::CacheSlot;
+use skwir_core::entry::{Value, keys};
+use skwir_core::geo::LatLon;
+use skwir_core::location::OpenLocation;
+use skwir_core::map_points::{Batch, MapSource, Placed};
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
+use skwir_core::{App, CancelToken, EntryId};
 
 /// What the tracks kept in the cache may take: each is a small file, a
 /// record per version of a file, so the disk holds a block of each.
@@ -169,7 +169,7 @@ pub struct Scanner {
     generations: AtomicU64,
     /// The view descriptor's revision: advanced when there is news.
     pub revision: Arc<AtomicU64>,
-    wake: bibli_core::location::Waker,
+    wake: skwir_core::location::Waker,
 }
 
 /// Whether a name is one this view reads: a picture, or a track.
@@ -177,11 +177,11 @@ fn readable(name: &std::ffi::OsStr) -> Option<Kind> {
     if crate::Format::placeable(Path::new(name)) {
         return Some(Kind::Track);
     }
-    let mime = bibli_platform::mime::by_name(name)?;
-    let is = |kind| bibli_platform::mime::is_kind(&mime, kind);
-    if is(bibli_platform::mime::Kind::Image) {
+    let mime = skwir_platform::mime::by_name(name)?;
+    let is = |kind| skwir_platform::mime::is_kind(&mime, kind);
+    if is(skwir_platform::mime::Kind::Image) {
         Some(Kind::Picture)
-    } else if is(bibli_platform::mime::Kind::Video) {
+    } else if is(skwir_platform::mime::Kind::Video) {
         Some(Kind::Video)
     } else {
         None
@@ -191,7 +191,7 @@ fn readable(name: &std::ffi::OsStr) -> Option<Kind> {
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Picture,
-    /// Where a phone recorded it (`bibli_platform::mp4`).
+    /// Where a phone recorded it (`skwir_platform::mp4`).
     Video,
     Track,
 }
@@ -289,7 +289,7 @@ fn to_look_at(
                         .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
                     let known = size
                         .zip(modified)
-                        .filter(|_| entry.kind == bibli_core::EntryKind::File);
+                        .filter(|_| entry.kind == skwir_core::EntryKind::File);
                     Listed {
                         id: entry.id,
                         name: entry.name.clone(),
@@ -388,7 +388,7 @@ impl Scanner {
             (
                 source,
                 pane_ref.open.clone(),
-                pane_ref.location().and_then(bibli_core::Location::path),
+                pane_ref.location().and_then(skwir_core::Location::path),
                 pane_ref.location_lifetime(),
                 listing.len(),
                 listing.removed_version(),
@@ -668,7 +668,7 @@ impl Scanner {
         if let Some(found) = self.remembered.lock().get(&identity) {
             return Some(found.clone());
         }
-        // Versioned: what an older bibli kept did not have the clock.
+        // Versioned: what an older skwir kept did not have the clock.
         let key = format!(
             "{FOUND_VERSION}:{}:{}:{}:{}",
             candidate.id.file.dev, candidate.id.file.ino, identity.1, identity.2

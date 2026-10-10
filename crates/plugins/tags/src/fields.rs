@@ -4,15 +4,15 @@
 //! (`metadata::with_exclusive`), the tag editor offers them as a choice,
 //! and Details shows the field with its value. A field is still a
 //! category of tags, kept on the file as any tag is; only the mark is
-//! bibli's (`metadata::TAG_EXCLUSIVE_SETTING`), and it follows the
+//! skwir's (`metadata::TAG_EXCLUSIVE_SETTING`), and it follows the
 //! category renamed (`follow.rs`).
 
 use std::sync::Arc;
 
-use bibli_core::app::{App, NotifyLevel};
-use bibli_core::command::Invocation;
-use bibli_core::metadata::{TAG_EXCLUSIVE_SETTING, clean_tag, same_tag};
 use parking_lot::Mutex;
+use skwir_core::app::{App, NotifyLevel};
+use skwir_core::command::Invocation;
+use skwir_core::metadata::{TAG_EXCLUSIVE_SETTING, clean_tag, same_tag};
 
 /// The categories marked, each once.
 pub fn exclusive(app: &App) -> Vec<String> {
@@ -45,7 +45,7 @@ pub fn set(app: &App, saving: &Arc<Mutex<()>>, tag: &str, on: bool, undo: bool) 
     let tag = clean_tag(tag);
     let (saving, weak) = (Arc::clone(saving), app.weak());
     app.scheduler.spawn(
-        bibli_core::scheduler::Priority::Normal,
+        skwir_core::scheduler::Priority::Normal,
         "tags.exclusive",
         app.lifetime().child(),
         move || {

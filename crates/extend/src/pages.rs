@@ -1,6 +1,6 @@
-//! A plugin's pages as a document bibli reads (ADR-047, protocol version
+//! A plugin's pages as a document skwir reads (ADR-047, protocol version
 //! 3): the plugin draws the page asked and says its text and its links,
-//! where they lie, and the file's outline; bibli's reader turns, zooms,
+//! where they lie, and the file's outline; skwir's reader turns, zooms,
 //! selects, copies, searches and follows it as any document. What the
 //! plugin answered is kept in its slot of the cache: how many pages and
 //! the outline, a page's picture by the side drawn, its text and links
@@ -10,15 +10,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bibli_core::cache::CacheSlot;
-use bibli_core::document::{
+use serde_json::json;
+use skwir_core::cache::CacheSlot;
+use skwir_core::document::{
     Destination, DocumentInfo, DocumentPage, DocumentSession, Link, MAX_PAGE_SIZE, Outline,
     PageContent, PixelOrder, Rect, SearchHit, TextChar,
 };
-use bibli_core::permissions::Capability;
-use bibli_core::{CancelToken, FileId};
-use bibli_plugin_api::protocol::{OutlineEntry, PageAnswer, PageLink, PageParams, TextRun, method};
-use serde_json::json;
+use skwir_core::permissions::Capability;
+use skwir_core::{CancelToken, FileId};
+use skwir_plugin_api::protocol::{OutlineEntry, PageAnswer, PageLink, PageParams, TextRun, method};
 
 use crate::call::Call;
 use crate::external::Runner;
@@ -133,7 +133,7 @@ impl Pages {
     /// Where what the plugin made of this version of the file is kept:
     /// the file's version, the plugin's, and `what`.
     fn key(&self, what: &serde_json::Value) -> anyhow::Result<Vec<u8>> {
-        bibli_platform::preview::made_key(self.id, &self.path, self.runner.made_by(), what)
+        skwir_platform::preview::made_key(self.id, &self.path, self.runner.made_by(), what)
     }
 
     fn keep(&self, key: &[u8], value: &[u8]) {
@@ -262,7 +262,7 @@ impl DocumentSession for Pages {
             let png = answer.png.ok_or_else(|| {
                 anyhow::anyhow!("There is no page {page}: it has {}", answer.pages)
             })?;
-            let png = bibli_plugin_api::base64::decode(&png)
+            let png = skwir_plugin_api::base64::decode(&png)
                 .ok_or_else(|| anyhow::anyhow!("the plugin's page is no base64"))?;
             let own = answer.width.zip(answer.height);
             if words.is_none() {
@@ -280,7 +280,7 @@ impl DocumentSession for Pages {
             self.keep(&picture_key, &value);
             (own, png)
         };
-        let decoded = bibli_platform::inspection::picture(&png, side)?;
+        let decoded = skwir_platform::inspection::picture(&png, side)?;
         let words = words.unwrap_or_default();
         // Its own size, else its picture's.
         #[allow(clippy::cast_precision_loss)] // A picture's sides.
@@ -525,7 +525,7 @@ mod tests {
             let answer = PageAnswer {
                 pages: 3,
                 png: (params.side > 0 && params.page <= 3)
-                    .then(|| bibli_plugin_api::base64::encode(PIXEL)),
+                    .then(|| skwir_plugin_api::base64::encode(PIXEL)),
                 width: Some(612.),
                 height: Some(792.),
                 text: if params.text {
@@ -569,8 +569,8 @@ mod tests {
         std::fs::write(&module, "module").unwrap();
         let three = Arc::new(Three(parking_lot::Mutex::default()));
         let runner = Arc::new(Runner::answered_by(&module, three.clone()));
-        let cache = bibli_core::cache::Cache::new(tmp.path().join("cache"));
-        let id = bibli_core::op::EntryRef::from_path(&file).unwrap().id;
+        let cache = skwir_core::cache::Cache::new(tmp.path().join("cache"));
+        let id = skwir_core::op::EntryRef::from_path(&file).unwrap().id;
         let open = || {
             Pages::open(
                 Arc::clone(&runner),

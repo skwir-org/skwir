@@ -7,12 +7,12 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::location::Location;
+use skwir_core::app::{App, AppConfig};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::location::Location;
 
 fn home_tempdir() -> tempfile::TempDir {
-    let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+    let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
         .prefix("notes-stores-")
@@ -33,10 +33,10 @@ const SIDECAR: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 fn app(tmp: &Path) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(tmp.join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
-    app.plugins.add(Arc::new(bibli_plugin_xmp::XmpPlugin), &app);
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
+    app.plugins.add(Arc::new(skwir_plugin_xmp::XmpPlugin), &app);
     app.plugins
-        .add(Arc::new(bibli_plugin_tagspaces::TagSpacesPlugin), &app);
+        .add(Arc::new(skwir_plugin_tagspaces::TagSpacesPlugin), &app);
     app
 }
 
@@ -48,7 +48,7 @@ fn the_desktops_tags_and_a_sidecar_are_one_set_of_notes() {
     let photo = dir.join("it's a.jpg");
     std::fs::write(&photo, b"x").unwrap();
     std::fs::write(dir.join("it's a.jpg.xmp"), SIDECAR).unwrap();
-    bibli_plugin_tags::write_tags(&photo, &["mine".into()]).unwrap();
+    skwir_plugin_tags::write_tags(&photo, &["mine".into()]).unwrap();
     let app = app(tmp.path());
     let read = || app.notes.read_path(&photo, &app.notes.policy()).tag_names();
     assert_eq!(read(), ["mine", "trip"]);
@@ -78,7 +78,7 @@ fn the_desktops_tags_and_a_sidecar_are_one_set_of_notes() {
             .is_none()
     );
     assert_eq!(
-        bibli_core::fs::xattr::get(&photo, "user.xdg.tags")
+        skwir_core::fs::xattr::get(&photo, "user.xdg.tags")
             .unwrap()
             .as_deref(),
         Some(b"mine,trip,Alps".as_slice())
@@ -139,10 +139,10 @@ fn one_edit_reaches_every_store_that_keeps_the_files_notes() {
     );
     let edit = app
         .notes
-        .edit(bibli_core::op::EntryRef::from_path(&file).unwrap())
+        .edit(skwir_core::op::EntryRef::from_path(&file).unwrap())
         .tags(vec!["trip".into(), "Été".into()])
         .comment(Some("the lake".into()));
-    let mut plan = bibli_core::op::Plan::new("edit");
+    let mut plan = skwir_core::op::Plan::new("edit");
     plan.steps.push(Box::new(edit));
     assert!(
         app.executor
@@ -151,7 +151,7 @@ fn one_edit_reaches_every_store_that_keeps_the_files_notes() {
             .is_none()
     );
     assert_eq!(
-        bibli_core::fs::xattr::get(&file, "user.xdg.tags")
+        skwir_core::fs::xattr::get(&file, "user.xdg.tags")
             .unwrap()
             .as_deref(),
         Some("trip,Été".as_bytes())
@@ -169,7 +169,7 @@ fn one_edit_reaches_every_store_that_keeps_the_files_notes() {
         SIDECAR
     );
     assert!(
-        bibli_core::fs::xattr::get(&file, "user.xdg.tags")
+        skwir_core::fs::xattr::get(&file, "user.xdg.tags")
             .unwrap()
             .is_none()
     );

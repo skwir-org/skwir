@@ -5,14 +5,14 @@
 //! reader. rbook never touches the file: it parses a small in-memory package
 //! holding only the entries it needs (container.xml, the OPF and its contents
 //! documents), each extracted here with the same bound as every chapter.
-use bibli_core::{
+use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Picture, PrintedPage, Row},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
-use bibli_platform::{
+use skwir_platform::{
     inspection::{self, limits},
     rich_preview,
 };
@@ -31,8 +31,8 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Read EPUB books with their table of contents"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
     /// A new engine reads books from now on; covers are the same either way.
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
@@ -41,16 +41,16 @@ impl Plugin for PreviewPlugin {
             register_books(app);
         }
     }
-    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
-        use bibli_platform::document::{Engine, worker};
+    fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
+        use skwir_platform::document::{Engine, worker};
         vec![worker(Engine::Mupdf).requirement("Books laid out into pages by MuPDF")]
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
     }
     fn register(&self, app: &App) {
-        app.settings.declare(bibli_core::settings::SettingSpec::choice(
+        app.settings.declare(skwir_core::settings::SettingSpec::choice(
             BACKEND,
             "Book engine",
             "Automatic reads books with the built-in engine: text that reflows in the theme, fixed-layout pages drawn as their book lays them out. MuPDF lays every book out into pages, with its own styles.",
@@ -181,7 +181,7 @@ impl PreviewProvider for Provider {
         _view: &InspectRequest,
         key: &str,
         cancel: &CancelToken,
-    ) -> anyhow::Result<Option<bibli_core::thumbs::Image>> {
+    ) -> anyhow::Result<Option<skwir_core::thumbs::Image>> {
         let mut container = Container::open(&req.entry.resolve()?, cancel)?;
         let bytes = container.read(key, "Embedded image", cancel)?;
         Ok(Some(inspection::image(&bytes)?))
@@ -194,21 +194,21 @@ impl PreviewProvider for Provider {
         &self,
         req: &PreviewRequest,
         lifetime: &CancelToken,
-    ) -> anyhow::Result<Option<Arc<dyn bibli_core::document::DocumentSession>>> {
+    ) -> anyhow::Result<Option<Arc<dyn skwir_core::document::DocumentSession>>> {
         if self.engine != Engine::Mupdf {
             let book = pages::FixedBook::open(req.entry.resolve()?, lifetime)?;
             return Ok(
-                book.map(|book| Arc::new(book) as Arc<dyn bibli_core::document::DocumentSession>)
+                book.map(|book| Arc::new(book) as Arc<dyn skwir_core::document::DocumentSession>)
             );
         }
-        let session = bibli_platform::document::open_book(
+        let session = skwir_platform::document::open_book(
             req.entry.resolve()?,
             req.text_size,
             lifetime.clone(),
         )?;
         anyhow::ensure!(
             session.is_some(),
-            "Reading books with MuPDF needs bibli-mupdf-worker; install it, or choose the built-in book engine"
+            "Reading books with MuPDF needs skwir-mupdf-worker; install it, or choose the built-in book engine"
         );
         Ok(session)
     }
@@ -388,7 +388,7 @@ impl PreviewProvider for Provider {
             }
         }
         Ok(Some(Inspection {
-            kind: bibli_core::inspection::InspectionKind::Book,
+            kind: skwir_core::inspection::InspectionKind::Book,
             blocks,
             rows,
             notice: notice.join(" · "),
@@ -479,11 +479,11 @@ fn resolve(base: &str, href: &str) -> String {
 }
 
 /// The ZIP container, read as every package is
-/// (`bibli_platform::package`: bounded, members by normalized name, so
+/// (`skwir_platform::package`: bounded, members by normalized name, so
 /// hrefs never become archive lookups through a path the ZIP library
 /// interprets).
 struct Container {
-    package: bibli_platform::package::Package,
+    package: skwir_platform::package::Package,
     /// Members `META-INF/encryption.xml` lists, by the algorithm named.
     encrypted: HashMap<String, String>,
     /// The package's unique identifier, which obfuscated fonts are keyed by.
@@ -539,7 +539,7 @@ impl Container {
         // video are never read unless a chapter shows them, and `read`
         // bounds the bytes each read actually produces.
         let mut container = Self {
-            package: bibli_platform::package::Package::open(path, "This EPUB", false, cancel)?,
+            package: skwir_platform::package::Package::open(path, "This EPUB", false, cancel)?,
             encrypted: HashMap::new(),
             identifier: String::new(),
         };
@@ -606,7 +606,7 @@ fn member_key(href: &str) -> Option<String> {
         .ok()?;
     normalize(&decoded)
 }
-use bibli_platform::package::normalize;
+use skwir_platform::package::normalize;
 const CONTAINER: &str = "META-INF/container.xml";
 /// The container document, the package document's path, and the package
 /// document (the OPF) it names.
@@ -788,7 +788,7 @@ fn contents(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::op::EntryRef;
+    use skwir_core::op::EntryRef;
 
     const CONTAINER_XML: &str = r#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="EPUB/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
     const OPF: &str = r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:example:synthetic</dc:identifier><dc:title>Synthetic book</dc:title><dc:language>en</dc:language></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/><item id="three" href="sub/caf%C3%A9%20three.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/><itemref idref="three"/></spine></package>"#;
@@ -1175,7 +1175,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(source.kind, bibli_core::inspection::InspectionKind::Code);
+        assert_eq!(source.kind, skwir_core::inspection::InspectionKind::Code);
         assert!(source.blocks.iter().all(|b| b.code));
         assert_eq!(source.blocks[0].language.as_deref(), Some("xhtml"));
         assert_eq!(source.position, 1);
@@ -1234,7 +1234,7 @@ mod tests {
         let first = inspect(&path, &InspectRequest::default()).unwrap();
         let texts: Vec<_> = first.blocks.iter().map(|b| b.text.as_str()).collect();
         assert_eq!(texts, ["CHAPTER ONE", "She said never."]);
-        assert_eq!(first.blocks[0].align, bibli_core::inspection::Align::Center);
+        assert_eq!(first.blocks[0].align, skwir_core::inspection::Align::Center);
         let never = &first.blocks[1].runs[1];
         assert!(never.italic && first.blocks[1].text[never.range.clone()] == *"never");
         // What the book hides is not a match either.
@@ -1271,7 +1271,7 @@ mod tests {
         write(path, &entries);
     }
 
-    fn session(path: &std::path::Path) -> Arc<dyn bibli_core::document::DocumentSession> {
+    fn session(path: &std::path::Path) -> Arc<dyn skwir_core::document::DocumentSession> {
         let request = PreviewRequest {
             entry: EntryRef::from_path(path).unwrap(),
             mime: None,
@@ -1527,7 +1527,7 @@ mod tests {
             entry: EntryRef::from_path(path).unwrap(),
             mime: None,
             mtime: None,
-            size: bibli_core::thumbs::ThumbSize::Normal,
+            size: skwir_core::thumbs::ThumbSize::Normal,
         };
         assert!(Cover.accepts(&req));
         Cover

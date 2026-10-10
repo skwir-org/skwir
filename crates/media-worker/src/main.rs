@@ -2,12 +2,12 @@
 //! late frames. A single acknowledged RAM-backed slot carries packed BGRA.
 
 use anyhow::Context;
-use bibli_core::media::{
-    Control, MAX_MESSAGE, MAX_SIDE, PIXELS_FILE, Playback, PlaybackStatus, Reply, Request,
-};
 use gstreamer::{self as gst, prelude::*};
 use gstreamer_app::AppSink;
 use gstreamer_video::{VideoFrameExt, VideoFrameRef, VideoInfo};
+use skwir_core::media::{
+    Control, MAX_MESSAGE, MAX_SIDE, PIXELS_FILE, Playback, PlaybackStatus, Reply, Request,
+};
 use std::{
     fs::OpenOptions,
     io::{Seek, SeekFrom, Write},
@@ -21,7 +21,7 @@ use std::{
 
 fn reply(message: &Reply) -> anyhow::Result<()> {
     let mut out = std::io::stdout().lock();
-    let line = bibli_core::jsonl::encode(message)?;
+    let line = skwir_core::jsonl::encode(message)?;
     anyhow::ensure!(line.len() <= MAX_MESSAGE, "video message exceeds limit");
     out.write_all(&line)?;
     out.flush()?;
@@ -88,7 +88,7 @@ impl Player {
             .property("uri", uri.as_str())
             .property("video-sink", &sink)
             .build()?;
-        let audio_only = std::env::var_os("BIBLI_MEDIA_AUDIO_ONLY").is_some();
+        let audio_only = std::env::var_os("SKWIR_MEDIA_AUDIO_ONLY").is_some();
         if audio_only {
             let flags = pipeline.property_value("flags");
             if let Some(class) = gst::glib::FlagsClass::with_type(flags.type_())
@@ -122,7 +122,7 @@ impl Player {
             None
         });
         // Tests may request a clocked fake audio sink without changing desktop volume.
-        if std::env::var_os("BIBLI_MEDIA_TEST_AUDIO").is_some() {
+        if std::env::var_os("SKWIR_MEDIA_TEST_AUDIO").is_some() {
             let audio = gst::ElementFactory::make("fakesink")
                 .property("sync", true)
                 .build()?;
@@ -251,7 +251,7 @@ impl Player {
             Control::Volume(volume) => {
                 // The control is perceptual; the pipeline wants an amplitude.
                 self.pipeline
-                    .set_property("volume", bibli_core::media::amplitude(volume));
+                    .set_property("volume", skwir_core::media::amplitude(volume));
                 self.state.volume = volume;
             }
             Control::Mute(muted) => {
@@ -421,7 +421,7 @@ fn audio_filter(measure: bool) -> Filter {
     // Loudness first, from the gain a track's tags carry (the element reads
     // the tag events itself, once the stream flows); the limiter keeps a
     // boosted quiet recording from clipping. Tracks without tags pass as is.
-    let mode = std::env::var("BIBLI_MEDIA_REPLAYGAIN").unwrap_or_default();
+    let mode = std::env::var("SKWIR_MEDIA_REPLAYGAIN").unwrap_or_default();
     if matches!(mode.as_str(), "track" | "album")
         && let (Ok(volume), Ok(limiter)) = (
             gst::ElementFactory::make("rgvolume")
@@ -438,7 +438,7 @@ fn audio_filter(measure: bool) -> Filter {
             gst::ElementFactory::make("spectrum")
                 // Many linear bins, folded into a few logarithmic bands
                 // (`media::log_bands`): music is heard in octaves.
-                .property("bands", bibli_core::media::SPECTRUM_BINS)
+                .property("bands", skwir_core::media::SPECTRUM_BINS)
                 .property("interval", 50_000_000u64)
                 .property("threshold", -80i32)
                 .property("post-messages", false)
@@ -511,7 +511,7 @@ fn run() -> anyhow::Result<()> {
     let input_tx = events.tx.clone();
     std::thread::spawn(move || {
         let mut input = std::io::stdin().lock();
-        while let Some(Ok(request)) = bibli_core::jsonl::read::<Request>(&mut input, MAX_MESSAGE) {
+        while let Some(Ok(request)) = skwir_core::jsonl::read::<Request>(&mut input, MAX_MESSAGE) {
             if input_tx.send(Event::Request(request)).is_err() {
                 break;
             }
@@ -587,7 +587,7 @@ fn run() -> anyhow::Result<()> {
             };
             if let Some(sample) = sample {
                 let info = VideoInfo::from_caps(sample.caps().context("video caps")?)?;
-                bibli_core::media::frame_bytes(info.width(), info.height())?;
+                skwir_core::media::frame_bytes(info.width(), info.height())?;
                 let frame = VideoFrameRef::from_buffer_ref_readable(
                     sample.buffer().context("video buffer")?,
                     &info,
@@ -787,7 +787,7 @@ fn handle_message(
             {
                 let bins: Vec<f32> = values
                     .iter()
-                    .take(bibli_core::media::SPECTRUM_BINS as usize)
+                    .take(skwir_core::media::SPECTRUM_BINS as usize)
                     .filter_map(|v| v.get::<f32>().ok())
                     .collect();
                 let rate = player
@@ -795,7 +795,7 @@ fn handle_message(
                     .as_ref()
                     .and_then(spectrum_rate)
                     .unwrap_or(44_100);
-                player.state.spectrum = bibli_core::media::log_bands(&bins, rate);
+                player.state.spectrum = skwir_core::media::log_bands(&bins, rate);
                 *dirty = true;
             }
         }
@@ -866,16 +866,16 @@ fn handle_message(
     Ok(())
 }
 fn main() {
-    // `--build`, bibli asking which build of it this helper is, when a
+    // `--build`, skwir asking which build of it this helper is, when a
     // call of it failed (`platform::process::explain`).
     if std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == "--build")
     {
-        println!("{}", env!("BIBLI_BUILD"));
+        println!("{}", env!("SKWIR_BUILD"));
         return;
     }
-    // `--probe`, bibli's settings asking whether this helper works here
+    // `--probe`, skwir's settings asking whether this helper works here
     // (`platform::process::probe`): GStreamer and its playback plugins.
     if std::env::args_os()
         .nth(1)

@@ -7,10 +7,10 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::command::{NoArgs, Outcome};
-use bibli_plugin_control::{Control, ID, PlanMode, channel, client};
 use serde_json::json;
+use skwir_core::app::{App, AppConfig};
+use skwir_core::command::{NoArgs, Outcome};
+use skwir_plugin_control::{Control, ID, PlanMode, channel, client};
 
 #[test]
 fn turned_on_the_window_listens_and_turned_off_it_leaves_nothing() {
@@ -45,7 +45,7 @@ fn turned_on_the_window_listens_and_turned_off_it_leaves_nothing() {
         std::thread::sleep(Duration::from_millis(10));
     }
     let status = app
-        .dispatch(&bibli_core::command::Invocation::new("control.status"))
+        .dispatch(&skwir_core::command::Invocation::new("control.status"))
         .unwrap();
     let Outcome::Value(status) = status else {
         panic!("{status:?}")
@@ -86,7 +86,7 @@ fn turned_on_where_it_cannot_listen_it_says_why() {
         use std::os::unix::fs::DirBuilderExt as _;
         std::fs::DirBuilder::new()
             .mode(0o755)
-            .create(runtime.path().join("bibli"))
+            .create(runtime.path().join("skwir"))
             .unwrap();
     }
     let tmp = tempfile::tempdir().unwrap();
@@ -111,7 +111,7 @@ fn turned_on_where_it_cannot_listen_it_says_why() {
         notes[0].text
     );
     let Outcome::Value(status) = app
-        .dispatch(&bibli_core::command::Invocation::new("control.status"))
+        .dispatch(&skwir_core::command::Invocation::new("control.status"))
         .unwrap()
     else {
         panic!("a value")
@@ -122,5 +122,5 @@ fn turned_on_where_it_cannot_listen_it_says_why() {
             .as_str()
             .is_some_and(|why| !why.is_empty())
     );
-    assert!(!runtime.path().join("bibli").join("control.sock").exists());
+    assert!(!runtime.path().join("skwir").join("control.sock").exists());
 }

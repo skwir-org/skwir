@@ -6,7 +6,7 @@
 //! private-use glyphs, which read as nothing.
 use std::{path::PathBuf, sync::Arc};
 
-use bibli_core::{
+use skwir_core::{
     CancelToken,
     document::{
         DocumentInfo, DocumentPage, DocumentSession, MAX_HITS, Outline, PageContent, PixelOrder,
@@ -14,7 +14,7 @@ use bibli_core::{
     },
     inspection::Picture,
 };
-use bibli_platform::{
+use skwir_platform::{
     inspection,
     rich_preview::{self, Drawing, Markup},
 };

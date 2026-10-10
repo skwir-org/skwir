@@ -6,13 +6,13 @@ Status: accepted, 2026-09-28.
 
 People who come from yazi, ranger or vim drive a file manager with
 letters: `j` and `k` move, `space` marks a file, `v` selects a range, `y`,
-`x` and `p` copy, cut and paste. Nothing in bibli stopped a plugin from
+`x` and `p` copy, cut and paste. Nothing in skwir stopped a plugin from
 binding those keys, but four things made the result wrong:
 
 - **The selection had no notion of marks.** In yazi a hovered file and the
   selected ones are apart: moving leaves the marks alone, and a command
   acts on the marks, or on the hovered file when nothing is marked. In
-  bibli an arrow replaces the selection with the item reached and Ctrl+arrow
+  skwir an arrow replaces the selection with the item reached and Ctrl+arrow
   moves only the cursor, so neither is yazi's `j`: the first loses the
   marks, the second leaves nothing to act on once the marks are cleared.
 - **Nothing held a range while the cursor moved** (visual mode).
@@ -80,7 +80,7 @@ window lists what can follow.
 
 ## Consequences
 
-- Yazi's keys that name something bibli does not have are left out: line
+- Yazi's keys that name something skwir does not have are left out: line
   modes, links, tasks, the trash as a place, sorting by birth time,
   extension or at random. Its arrows Left and Right keep each view's
   meaning (a grid moves sideways), and Tab keeps moving the keyboard to
@@ -90,7 +90,7 @@ window lists what can follow.
   record brings the default back.
 - A record whose keys GPUI cannot parse is refused at save, with the reason
   on the row; the parser in the core follows GPUI's
-  (`bibli_core::keymap::valid_keys`),
+  (`skwir_core::keymap::valid_keys`),
   and a key it accepts that GPUI does not is skipped with a warning.
 - Standard keys are unchanged: arrows still select the item reached, and
   type-ahead works while no letter is bound in the file list.

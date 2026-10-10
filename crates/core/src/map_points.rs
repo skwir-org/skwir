@@ -22,7 +22,7 @@ pub struct Placed {
     /// picture.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub line: Vec<Vec<[f64; 2]>>,
-    /// A picture's camera clock (`bibli_platform::exif::Taken::clock`):
+    /// A picture's camera clock (`skwir_platform::exif::Taken::clock`):
     /// the order of pictures taken at one place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clock: Option<u64>,

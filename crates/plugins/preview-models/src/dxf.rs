@@ -8,8 +8,8 @@
 //!
 //! A DXF file is pairs of lines, a group code and its value; `0` starts
 //! an entity. Blocks come before the entities that insert them.
-use bibli_core::CancelToken;
-use bibli_platform::inspection;
+use skwir_core::CancelToken;
+use skwir_platform::inspection;
 use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::TAU;
 use std::fmt::Write as _;

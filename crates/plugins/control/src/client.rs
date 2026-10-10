@@ -1,5 +1,5 @@
-//! The window's channel from outside: `bibli mcp`, which carries an agent's
-//! standard input and output to it, and `bibli cmd`, which runs one
+//! The window's channel from outside: `skwir mcp`, which carries an agent's
+//! standard input and output to it, and `skwir cmd`, which runs one
 //! command through it (ADR-043).
 
 use rmcp::ServiceExt as _;
@@ -15,7 +15,7 @@ fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
         .build()?)
 }
 
-/// `bibli mcp`: the agent's standard input to the window's channel and
+/// `skwir mcp`: the agent's standard input to the window's channel and
 /// the channel to its standard output. The window ending ends it at once;
 /// the agent's input ending first, the window's last answers still reach
 /// its output before it ends. `NotListening` when no window listens.
@@ -49,7 +49,7 @@ pub fn bridge(address: &Address) -> anyhow::Result<()> {
     bridged
 }
 
-/// `bibli cmd`: run `command` with `arguments` in the window, a plan as
+/// `skwir cmd`: run `command` with `arguments` in the window, a plan as
 /// `mode` says. `Err(NotListening)` when no window listens.
 pub fn call(
     address: &Address,

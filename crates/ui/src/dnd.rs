@@ -13,16 +13,16 @@
 
 use std::path::{Path, PathBuf};
 
-use bibli_core::EntryId;
-use bibli_core::command::Invocation;
-use bibli_core::op::{self, EntryRef};
-use bibli_core::os_path::PathArg;
-use bibli_core::registry::MenuItem;
-use bibli_core::workspace::PaneId;
-use bibli_core::{Plan, app::NotifyLevel, fs, scheduler::Priority, settings::Settings};
 use gpui::{
     Context, Div, ExternalPaths, Pixels, Point, Render, Stateful, Window, div, prelude::*, px,
 };
+use skwir_core::EntryId;
+use skwir_core::command::Invocation;
+use skwir_core::op::{self, EntryRef};
+use skwir_core::os_path::PathArg;
+use skwir_core::registry::MenuItem;
+use skwir_core::workspace::PaneId;
+use skwir_core::{Plan, app::NotifyLevel, fs, scheduler::Priority, settings::Settings};
 
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -155,7 +155,7 @@ fn dropped_plan(
     dest: &Path,
     how: DropOp,
     settings: &Settings,
-    companions: &std::sync::Arc<bibli_core::companions::Companions>,
+    companions: &std::sync::Arc<skwir_core::companions::Companions>,
 ) -> Result<Plan, &'static str> {
     let steps: Vec<Box<dyn op::Operation>> = paths
         .iter()
@@ -372,7 +372,7 @@ impl Shell {
         let home = {
             let ws = self.app.workspace.read();
             ws.pane(from).is_some_and(|p| {
-                let dest = bibli_core::Location::from_path(dest);
+                let dest = skwir_core::Location::from_path(dest);
                 !p.selection.is_empty() && p.selection.iter().all(|id| p.holder(id) == Some(&dest))
             })
         };
@@ -382,7 +382,7 @@ impl Shell {
         let (places, files) = {
             let ws = self.app.workspace.read();
             ws.pane(from).map_or((Vec::new(), 0), |p| {
-                let places: Vec<bibli_core::Location> = p
+                let places: Vec<skwir_core::Location> = p
                     .selection
                     .iter()
                     .filter_map(|id| p.location_of(id))
@@ -449,7 +449,7 @@ impl Shell {
     fn drop_asks(&self) -> bool {
         self.app
             .settings
-            .get(bibli_core::settings::DROP_ASKS)
+            .get(skwir_core::settings::DROP_ASKS)
             .unwrap_or(true)
     }
 
@@ -578,7 +578,7 @@ impl Shell {
     pub fn pane_folder(&self, pane: PaneId) -> Option<PathBuf> {
         let ws = self.app.workspace.read();
         ws.pane(pane)
-            .and_then(|p| p.location().and_then(bibli_core::Location::path))
+            .and_then(|p| p.location().and_then(skwir_core::Location::path))
     }
 
     /// Paths dropped onto the file area: into the current directory.
@@ -624,7 +624,7 @@ pub fn draggable(el: Stateful<Div>, pane: PaneId, cx: &mut Context<Shell>) -> St
                 })
                 .unwrap_or_default();
             // Hand the drag to the compositor so other applications can accept it.
-            // When that works, a drop back onto bibli arrives as ExternalPaths and
+            // When that works, a drop back onto skwir arrives as ExternalPaths and
             // `drop_paths_into` recognizes it as our own selection.
             let external = !paths.is_empty() && window.start_external_drag(paths, icon);
             if !external {
@@ -661,7 +661,7 @@ pub fn droppable_dir<E: InteractiveElement>(el: E, dir: PathBuf, cx: &mut Contex
 /// for in-window drags and for compositor drags.
 pub fn droppable_place<E: InteractiveElement>(
     el: E,
-    place: bibli_core::Location,
+    place: skwir_core::Location,
     cx: &mut Context<Shell>,
 ) -> E {
     let theme = cx.global::<Theme>().clone();
@@ -688,7 +688,7 @@ impl Shell {
     pub fn drop_on_place(
         &mut self,
         from: PaneId,
-        place: &bibli_core::Location,
+        place: &skwir_core::Location,
         how: Option<DropOp>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -727,7 +727,7 @@ impl Shell {
     pub fn drop_paths_on_place(
         &mut self,
         paths: &[PathBuf],
-        place: &bibli_core::Location,
+        place: &skwir_core::Location,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -780,7 +780,7 @@ pub fn takes_gifts<E: InteractiveElement>(
 /// above) take what a dragged place gives files, for that entry alone.
 pub fn takes_gift_for<E: InteractiveElement>(
     el: E,
-    entry: bibli_core::op::EntryRef,
+    entry: skwir_core::op::EntryRef,
     cx: &mut Context<Shell>,
 ) -> E {
     let theme = cx.global::<Theme>().clone();
@@ -809,7 +809,7 @@ impl Shell {
     /// or for its selection when the entry is in it.
     fn give(
         &mut self,
-        gives: &bibli_core::command::Invocation,
+        gives: &skwir_core::command::Invocation,
         id: EntryId,
         window: &mut Window,
         cx: &mut Context<Shell>,
@@ -827,7 +827,7 @@ impl Shell {
             } else {
                 let only = entry.is_only_name();
                 p.path_of(id)
-                    .map(|path| bibli_core::op::EntryRef::new(id.file, path).with_only_name(only))
+                    .map(|path| skwir_core::op::EntryRef::new(id.file, path).with_only_name(only))
             }
         };
         let mut args = gives.args.clone();
@@ -912,7 +912,7 @@ mod tests {
     fn scratch(name: &str) -> PathBuf {
         let base = PathBuf::from(std::env::var_os("HOME").expect("home"))
             .join(".cache")
-            .join("bibli-tests")
+            .join("skwir-tests")
             .join(format!("dnd-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).expect("scratch");

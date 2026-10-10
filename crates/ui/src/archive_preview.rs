@@ -6,8 +6,8 @@ use crate::{
     theme::Theme,
     views::list::{ROW_HEIGHT, column, line},
 };
-use bibli_core::inspection::Row;
 use gpui::{Div, SharedString, div, prelude::*, px, svg};
+use skwir_core::inspection::Row;
 
 const SIZE_WIDTH: f32 = 90.;
 const ICON_SIZE: f32 = 18.;

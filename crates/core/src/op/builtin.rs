@@ -56,7 +56,7 @@ fn parking_name(dir: &Path, purpose: &str) -> PathBuf {
     let pid = std::process::id();
     let mut n = 0u64;
     loop {
-        let candidate = dir.join(format!(".bibli-{purpose}-{pid}-{n}"));
+        let candidate = dir.join(format!(".skwir-{purpose}-{pid}-{n}"));
         if !exists(&candidate) {
             return candidate;
         }
@@ -3133,7 +3133,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_copy_written_through_is_whole_and_counted() {
-        let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         let dir = tempfile::tempdir_in(base).unwrap();
         let (src, dst) = (dir.path().join("firmware.bin"), dir.path().join("copy.bin"));
@@ -3163,7 +3163,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_folder_of_small_files_written_through_is_whole_and_counted() {
-        let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         let dir = tempfile::tempdir_in(base).unwrap();
         let album = dir.path().join("album");
@@ -3193,7 +3193,7 @@ mod tests {
 
     #[test]
     fn a_trees_state_changes_with_anything_of_it_and_only_then() {
-        let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         let dir = tempfile::tempdir_in(base).unwrap();
         let album = dir.path().join("album");
@@ -3219,7 +3219,7 @@ mod tests {
 
     #[test]
     fn a_plans_copies_onto_one_volume_share_its_pace() {
-        let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         let dir = tempfile::tempdir_in(base).unwrap();
         let (a, b) = (dir.path().join("a"), dir.path().join("b"));

@@ -1,15 +1,15 @@
-//! A plugin from outside bibli, as the plugin host knows plugins.
+//! A plugin from outside skwir, as the plugin host knows plugins.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use bibli_core::App;
-use bibli_core::permissions::{Capabilities, Capability};
-use bibli_core::plugin::{Category, Plugin};
-use bibli_plugin_api::Manifest;
-use bibli_plugin_api::manifest::{self, Category as Declared};
 use parking_lot::Mutex;
 use serde_json::Value;
+use skwir_core::App;
+use skwir_core::permissions::{Capabilities, Capability};
+use skwir_core::plugin::{Category, Plugin};
+use skwir_plugin_api::Manifest;
+use skwir_plugin_api::manifest::{self, Category as Declared};
 
 use crate::call::{Call, Transport};
 
@@ -84,7 +84,7 @@ impl External {
                 compiled: Mutex::new(None),
                 live: Mutex::new(None),
                 watch: Mutex::new(Watch::default()),
-                turn: bibli_platform::process::Turns::new(1),
+                turn: skwir_platform::process::Turns::new(1),
             }),
             manifest,
             folder,
@@ -142,7 +142,7 @@ impl Plugin for External {
     fn on_disable(&self, _app: &App) {
         self.runner.stop();
     }
-    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+    fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         match self.runner.kind {
             Kind::Module(_) => vec![
                 crate::MODULE_WORKER
@@ -169,7 +169,7 @@ pub(crate) struct Runner {
     pub kind: Kind,
     folder: PathBuf,
     pub granted: Capabilities,
-    /// Where a module is kept compiled: the plugin's folder of bibli's
+    /// Where a module is kept compiled: the plugin's folder of skwir's
     /// cache, known once the plugin is registered.
     compiled: Mutex<Option<PathBuf>>,
     live: Mutex<Option<Arc<dyn Transport>>>,
@@ -177,7 +177,7 @@ pub(crate) struct Runner {
     /// Its one turn: the plugin answers one call at a time, so a
     /// thumbnail asked meanwhile is set aside rather than holding a
     /// worker while it waits (`providers::Thumbnails`).
-    pub turn: bibli_platform::process::Turns,
+    pub turn: skwir_platform::process::Turns,
 }
 
 /// How many times in a row its program broke (`process::Broken`: no
@@ -209,7 +209,7 @@ impl Runner {
             compiled: Mutex::new(None),
             live: Mutex::new(Some(transport)),
             watch: Mutex::new(Watch::default()),
-            turn: bibli_platform::process::Turns::new(1),
+            turn: skwir_platform::process::Turns::new(1),
         }
     }
 
@@ -236,7 +236,7 @@ impl Runner {
     /// (`turn.try_take`).
     pub fn call_in(
         &self,
-        _turn: &bibli_platform::process::Turn<'_>,
+        _turn: &skwir_platform::process::Turn<'_>,
         method: &str,
         params: Value,
         call: &Call,
@@ -276,11 +276,11 @@ impl Runner {
         }
         match answer {
             // A module's failure may be its helper's, of another build of
-            // bibli: said after it. A program of the plugin's own is never
+            // skwir: said after it. A program of the plugin's own is never
             // asked which build it is.
             Err(error) if !stopped && matches!(self.kind, Kind::Module(_)) => {
                 Err(match crate::MODULE_WORKER.find() {
-                    Some(helper) => bibli_platform::process::explain(&helper, call.token(), error),
+                    Some(helper) => skwir_platform::process::explain(&helper, call.token(), error),
                     None => error,
                 })
             }
@@ -292,20 +292,20 @@ impl Runner {
     /// and say so with the way to its page.
     fn turned_off(&self, app: &App) {
         tracing::warn!(plugin = self.id, "turned off: its program kept breaking");
-        if let Err(error) = app.dispatch(&bibli_core::command::Invocation::with_args(
+        if let Err(error) = app.dispatch(&skwir_core::command::Invocation::with_args(
             "plugins.set_enabled",
             &serde_json::json!({ "id": self.id, "enabled": false }),
         )) {
             tracing::warn!("{error:#}");
         }
         app.notify_with_action(
-            bibli_core::app::NotifyLevel::Warning,
+            skwir_core::app::NotifyLevel::Warning,
             format!(
                 "{} was turned off: it stopped answering {BROKEN_AT_MOST} times in a row",
                 self.title
             ),
             "Plugins",
-            bibli_core::command::Invocation::with_args(
+            skwir_core::command::Invocation::with_args(
                 "ui.settings",
                 &serde_json::json!({ "page": "plugins" }),
             ),

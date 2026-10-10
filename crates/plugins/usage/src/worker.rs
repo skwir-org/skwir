@@ -18,12 +18,12 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::cancel::CancelToken;
-use bibli_core::workspace::PaneId;
-use bibli_core::{EntryId, FileId};
 use crossbeam_channel::{Receiver, Sender};
 use notify::{ErrorKind, EventKind, RecursiveMode, Watcher, event::ModifyKind};
 use parking_lot::Mutex;
+use skwir_core::cancel::CancelToken;
+use skwir_core::workspace::PaneId;
+use skwir_core::{EntryId, FileId};
 
 use super::marks::{self, Places, Types};
 use super::{Linked, Links, Message, Node, Request, Shared, SnapshotKind, Status};
@@ -753,7 +753,7 @@ impl<'a> Scanner<'a> {
     /// root's device are retained for the descent.
     fn list_root(&mut self) -> anyhow::Result<Vec<(OsString, EntryId, i64)>> {
         if !cfg!(unix) {
-            return Err(bibli_core::system::not_yet("Disk usage").into());
+            return Err(skwir_core::system::not_yet("Disk usage").into());
         }
         let path = self.path;
         anyhow::ensure!(
@@ -1128,7 +1128,7 @@ impl Target {
             .filter(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()))
             .map(Path::to_path_buf)
             .collect();
-        let path = bibli_core::os_path::canonical(path).unwrap_or_else(|_| normalize(path));
+        let path = skwir_core::os_path::canonical(path).unwrap_or_else(|_| normalize(path));
         Target { path, links }
     }
     /// Directories whose entries decide where the aliases point.
@@ -1191,7 +1191,7 @@ struct Worker {
     /// Read again as each request comes: a volume mounted since has a trash.
     places: Places,
     /// The plugin's lifetime, waited for with the messages.
-    stop: Option<bibli_core::cancel::CancelSignal>,
+    stop: Option<skwir_core::cancel::CancelSignal>,
     /// Since when no view has shown a breakdown.
     idle_since: Option<Instant>,
 }
@@ -1274,7 +1274,7 @@ impl Worker {
         let stop = self
             .stop
             .as_ref()
-            .map_or(&never, bibli_core::cancel::CancelSignal::receiver);
+            .map_or(&never, skwir_core::cancel::CancelSignal::receiver);
         let timeout = wait.map_or_else(crossbeam_channel::never, crossbeam_channel::after);
         crossbeam_channel::select! {
             recv(rx) -> message => message.map_or(Received::Closed, Received::Message),
@@ -1332,7 +1332,7 @@ impl Worker {
             }
             self.cache.clear();
             self.idle_since = None;
-            bibli_core::scheduler::release_now();
+            skwir_core::scheduler::release_now();
         }
     }
 
@@ -1522,7 +1522,7 @@ impl Worker {
                 state.last_duration = started.elapsed();
                 // What the scan freed, given back before the worker
                 // sleeps: it is no scheduler worker.
-                bibli_core::scheduler::release_now();
+                skwir_core::scheduler::release_now();
             }
         }
     }
@@ -1805,7 +1805,7 @@ mod tests {
                     folder,
                     name.as_ref(),
                 );
-                let listed = bibli_core::fs::stat::stat_path(&path).unwrap().id;
+                let listed = skwir_core::fs::stat::stat_path(&path).unwrap().id;
                 assert_eq!(usage, listed, "{name}");
                 usage
             })
@@ -1814,7 +1814,7 @@ mod tests {
         assert_ne!(ids[0], ids[1]);
         assert_eq!(
             super::folder_entry(&dir, &std::fs::metadata(&dir).unwrap()),
-            { bibli_core::fs::stat::stat_path(&dir).unwrap().id }
+            { skwir_core::fs::stat::stat_path(&dir).unwrap().id }
         );
     }
 
@@ -2406,7 +2406,7 @@ mod tests {
 
     #[test]
     fn a_folder_says_its_kinds_its_newest_change_and_the_room_it_gives_back() {
-        use bibli_platform::mime::Kind;
+        use skwir_platform::mime::Kind;
         let tmp = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(tmp.path()).unwrap();
         for dir in ["film/clips", "build/out", "not a cache", "Trash", "empty"] {
@@ -3126,7 +3126,7 @@ mod tests {
         let state = &worker.active[&PaneId(0)];
         assert_eq!(
             state.target.path,
-            bibli_core::os_path::canonical(&root).unwrap()
+            skwir_core::os_path::canonical(&root).unwrap()
         );
         assert_eq!(state.target.links, vec![alias.clone()]);
         assert_eq!(state.coverage, Coverage::Full);
@@ -3162,14 +3162,14 @@ mod tests {
         let state = &worker.active[&PaneId(0)];
         assert_eq!(
             state.target.path,
-            bibli_core::os_path::canonical(&replacement).unwrap()
+            skwir_core::os_path::canonical(&replacement).unwrap()
         );
         assert_eq!(worker.registrations[&parent].alias, 1);
         assert!(
             worker
                 .cache
                 .dirs
-                .contains_key(&bibli_core::os_path::canonical(&root).unwrap()),
+                .contains_key(&skwir_core::os_path::canonical(&root).unwrap()),
             "the old target stays cached under its own watch"
         );
         worker.remove_active(PaneId(0));

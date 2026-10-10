@@ -9,17 +9,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
-use bibli_core::location::{
-    Crumb, EmptyState, EventSink, Listing, ListingEvent, Location, LocationProvider, OpenContext,
-    OpenLocation, SortKey, SortSpec, Trail, Verb, Verbs,
-};
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
 use common::*;
 use crossbeam_channel::Receiver;
 use parking_lot::Mutex;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
+use skwir_core::location::{
+    Crumb, EmptyState, EventSink, Listing, ListingEvent, Location, LocationProvider, OpenContext,
+    OpenLocation, SortKey, SortSpec, Trail, Verb, Verbs,
+};
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
 
 const SCHEME: &str = "fake";
 
@@ -84,7 +84,7 @@ impl LocationProvider for Fake {
         if location.rest == "/few" {
             sink.send(ListingEvent::Added(vec![Entry::new(
                 EntryId {
-                    file: bibli_core::FileId { dev: 7, ino: 1 },
+                    file: skwir_core::FileId { dev: 7, ino: 1 },
                     at: 0,
                 },
                 "inside.txt",
@@ -126,11 +126,11 @@ impl LocationProvider for Fake {
     }
 }
 
-fn shows(app: &bibli_core::App, pane: PaneId) -> Option<Location> {
+fn shows(app: &skwir_core::App, pane: PaneId) -> Option<Location> {
     app.pane_location(pane)
 }
 
-fn go(app: &bibli_core::App, location: &str) {
+fn go(app: &skwir_core::App, location: &str) {
     app.dispatch(&Invocation::with_args(
         "navigate",
         &serde_json::json!({ "location": location }),
@@ -139,7 +139,7 @@ fn go(app: &bibli_core::App, location: &str) {
     assert!(app.pump_until_complete(active(app), Duration::from_secs(10)));
 }
 
-fn with_fake(base: &Path) -> Arc<bibli_core::App> {
+fn with_fake(base: &Path) -> Arc<skwir_core::App> {
     let app = app(base);
     app.register_provider(
         "test",
@@ -238,7 +238,7 @@ fn places_sort_first_and_by_how_many_files_they_hold() {
     let mut listing = Listing::default();
     let mut file = Entry::new(
         EntryId {
-            file: bibli_core::FileId { dev: 1, ino: 1 },
+            file: skwir_core::FileId { dev: 1, ino: 1 },
             at: 0,
         },
         "a.txt",
@@ -284,7 +284,7 @@ fn a_place_opens_in_place_as_a_folder_does() {
     ))
     .unwrap();
     let inside = EntryId {
-        file: bibli_core::FileId { dev: 7, ino: 1 },
+        file: skwir_core::FileId { dev: 7, ino: 1 },
         at: 0,
     };
     let deadline = std::time::Instant::now() + Duration::from_secs(10);

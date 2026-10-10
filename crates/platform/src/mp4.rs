@@ -10,8 +10,8 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use bibli_core::geo::LatLon;
-use bibli_core::inspection::Detail;
+use skwir_core::geo::LatLon;
+use skwir_core::inspection::Detail;
 
 use crate::exif::Taken;
 
@@ -405,8 +405,8 @@ mod tests {
         /// A video's boxes as no camera writes them: never a panic.
         #[test]
         fn any_video_is_read_without_a_panic(bytes in proptest::prop_oneof![
-            bibli_core::testing::mutated(android_video()),
-            bibli_core::testing::bytes(512),
+            skwir_core::testing::mutated(android_video()),
+            skwir_core::testing::bytes(512),
         ]) {
             let video = file(&bytes);
             let _ = taken(video.path());
@@ -415,8 +415,8 @@ mod tests {
 
         #[test]
         fn any_position_text_is_read_without_a_panic(text in proptest::prop_oneof![
-            bibli_core::testing::mutated_text("+10.5000+020.2500+012.000/"),
-            bibli_core::testing::mutated_text("2026-03-12T08:00:00+0100"),
+            skwir_core::testing::mutated_text("+10.5000+020.2500+012.000/"),
+            skwir_core::testing::mutated_text("2026-03-12T08:00:00+0100"),
             proptest::prelude::any::<String>(),
         ]) {
             let _ = iso6709(&text);

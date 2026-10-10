@@ -21,11 +21,11 @@ use crate::mime::Mime;
 /// with the 16 px of a sidebar row. Inert, as a drawing previewed is.
 /// Reads the file: call it from a worker.
 pub fn rasterize(path: &std::path::Path, side: u32) -> anyhow::Result<crate::inspection::Decoded> {
-    let bytes = crate::inspection::read_drawing(path, &bibli_core::CancelToken::new())?;
+    let bytes = crate::inspection::read_drawing(path, &skwir_core::CancelToken::new())?;
     crate::inspection::drawing_within(&bytes, side)
 }
 
-/// The theme the user chose in bibli (`ui.icon_theme`), by its folder's
+/// The theme the user chose in skwir (`ui.icon_theme`), by its folder's
 /// name; `None` follows the desktop.
 fn chosen() -> &'static Mutex<Option<String>> {
     static CHOSEN: Mutex<Option<String>> = Mutex::new(None);
@@ -70,7 +70,7 @@ pub fn choose_theme(theme: Option<&str>) {
 /// The desktop's theme, read once (`imp::detect_theme`).
 static DETECTED: OnceLock<String> = OnceLock::new();
 
-/// The active icon theme name: the one chosen in bibli when it is
+/// The active icon theme name: the one chosen in skwir when it is
 /// installed, else the desktop's. Reads the icon folders the first time:
 /// blocks.
 pub fn theme_name() -> String {
@@ -243,7 +243,7 @@ mod imp {
     /// Where icon themes are installed, as the icon theme specification
     /// lists them: `~/.icons`, then `icons` in each data folder.
     fn theme_folders() -> Vec<PathBuf> {
-        bibli_core::os_path::home()
+        skwir_core::os_path::home()
             .map(|home| home.join(".icons"))
             .into_iter()
             .chain(
@@ -329,7 +329,7 @@ mod imp {
         let finished = crate::process::run_capped(
             Command::new(program).args(args),
             None,
-            &bibli_core::CancelToken::new(),
+            &skwir_core::CancelToken::new(),
             Duration::from_secs(2),
             4096,
         )
@@ -614,12 +614,12 @@ mod tests {
     }
 
     #[test]
-    fn a_theme_chosen_in_bibli_is_used_while_it_is_installed() {
+    fn a_theme_chosen_in_skwir_is_used_while_it_is_installed() {
         let detected = theme_name();
         // A theme of the test's own, where themes are looked for (the
         // isolated data folder nextest gives each test).
         let data = crate::xdg::data_home().unwrap();
-        let folder = format!("bibli-test-theme-{}", std::process::id());
+        let folder = format!("skwir-test-theme-{}", std::process::id());
         let theme = data.join("icons").join(&folder);
         std::fs::create_dir_all(&theme).unwrap();
         std::fs::write(
@@ -631,7 +631,7 @@ mod tests {
         assert_eq!(theme_name(), folder);
         assert!(installed_themes().iter().any(|t| t.folder == folder));
         // One no longer installed follows the desktop.
-        choose_theme(Some("bibli-test-absent-theme"));
+        choose_theme(Some("skwir-test-absent-theme"));
         assert_eq!(theme_name(), detected);
         choose_theme(None);
         assert_eq!(theme_name(), detected);
@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn mime_icon_falls_back() {
-        let m = Mime("application/x-bibli-nonexistent".into());
+        let m = Mime("application/x-skwir-nonexistent".into());
         // Either the generic or last-resort icon must exist.
         assert!(for_mime(&m, 32).is_some());
     }

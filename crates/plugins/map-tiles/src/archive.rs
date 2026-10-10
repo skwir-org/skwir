@@ -12,10 +12,10 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
-use bibli_core::CancelToken;
-use bibli_core::geo::Bounds;
-use bibli_core::scheduler::{Priority, Scheduler};
-use bibli_core::tiles::{NoTile, SourceInfo, TileDone, TileRequest, TileSource};
+use skwir_core::CancelToken;
+use skwir_core::geo::Bounds;
+use skwir_core::scheduler::{Priority, Scheduler};
+use skwir_core::tiles::{NoTile, SourceInfo, TileDone, TileRequest, TileSource};
 
 /// A tile inflated is at most this large: a raster tile is tens of
 /// kilobytes, a dense vector tile a few megabytes.
@@ -35,7 +35,7 @@ pub(crate) enum Kind {
 impl Kind {
     /// The kind a file's name says.
     pub(crate) fn of(path: &Path) -> Option<Kind> {
-        match bibli_platform::inspection::extension(path).as_str() {
+        match skwir_platform::inspection::extension(path).as_str() {
             "pmtiles" => Some(Kind::PmTiles),
             "mbtiles" => Some(Kind::MbTiles),
             _ => None,
@@ -47,7 +47,7 @@ impl Kind {
     pub(crate) fn detect(path: &Path) -> Option<Kind> {
         let kind = Kind::of(path)?;
         let mut head = Vec::with_capacity(16);
-        bibli_platform::inspection::open(path)
+        skwir_platform::inspection::open(path)
             .ok()?
             .take(16)
             .read_to_end(&mut head)
@@ -67,7 +67,7 @@ pub(crate) enum Format {
     Jpeg,
     Webp,
     Avif,
-    /// Mapbox Vector Tiles: shapes to be styled, which bibli does not draw.
+    /// Mapbox Vector Tiles: shapes to be styled, which skwir does not draw.
     Vector,
     #[default]
     Unknown,
@@ -184,11 +184,11 @@ pub(crate) enum Compression {
 }
 
 impl Compression {
-    /// Why bibli cannot read what is compressed this way, if it cannot.
+    /// Why skwir cannot read what is compressed this way, if it cannot.
     pub(crate) fn unreadable(self) -> Option<&'static str> {
         match self {
-            Compression::Brotli => Some("compressed with Brotli, which bibli does not read"),
-            Compression::Zstd => Some("compressed with Zstandard, which bibli does not read"),
+            Compression::Brotli => Some("compressed with Brotli, which skwir does not read"),
+            Compression::Zstd => Some("compressed with Zstandard, which skwir does not read"),
             Compression::None | Compression::Gzip | Compression::Unknown => None,
         }
     }
@@ -312,7 +312,7 @@ impl TileSource for Source {
         self.scheduler
             .spawn(Priority::Visible, "map-tile", cancel, move || {
                 let tile = match archive.tile(request.z, request.x, request.y, &token) {
-                    Ok(Some(bytes)) => bibli_platform::inspection::image(&bytes),
+                    Ok(Some(bytes)) => skwir_platform::inspection::image(&bytes),
                     Ok(None) => Err(NoTile.into()),
                     Err(error) => Err(error),
                 };
@@ -370,9 +370,9 @@ mod tests {
         /// background: opened and read, or refused; never a panic.
         #[test]
         fn any_tile_archive_is_read_without_a_panic(bytes in proptest::prop_oneof![
-            bibli_core::testing::mutated(&include_bytes!("testdata/hills.pmtiles")[..]),
-            bibli_core::testing::mutated(&include_bytes!("testdata/roads.pmtiles")[..]),
-            bibli_core::testing::bytes(1024),
+            skwir_core::testing::mutated(&include_bytes!("testdata/hills.pmtiles")[..]),
+            skwir_core::testing::mutated(&include_bytes!("testdata/roads.pmtiles")[..]),
+            skwir_core::testing::bytes(1024),
         ]) {
             let file = tempfile::Builder::new().suffix(".pmtiles").tempfile().unwrap();
             std::fs::write(file.path(), &bytes).unwrap();

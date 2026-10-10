@@ -3,7 +3,7 @@
 //! ADR-030, ADR-031, ADR-039, ADR-041): no network,
 //! only the system runtime and the input readable, and only a disposable
 //! working folder writable. On Linux this is bubblewrap; on macOS the
-//! system's own sandbox, `sandbox-exec` with a profile of bibli's; on
+//! system's own sandbox, `sandbox-exec` with a profile of skwir's; on
 //! Windows nothing yet (`AppContainer`, ADR-039). A sandbox that cannot
 //! start is an error: a conversion is never retried without it.
 
@@ -44,7 +44,7 @@ const SYSTEM: &[&str] = &[
 /// Whether a program can run isolated here: on Linux, whether bubblewrap
 /// is installed and can make its namespaces, which a container or a
 /// kernel that restricts them refuses; on macOS, whether `sandbox-exec`
-/// runs a program under bibli's profile. Asked once, on a worker.
+/// runs a program under skwir's profile. Asked once, on a worker.
 pub fn available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(isolates)
@@ -65,7 +65,7 @@ fn isolates() -> bool {
             "--",
             "true",
         ]),
-        &bibli_core::CancelToken::new(),
+        &skwir_core::CancelToken::new(),
         std::time::Duration::from_secs(5),
     );
     if let Err(error) = &isolated {
@@ -90,7 +90,7 @@ fn isolates() -> bool {
             )?;
             crate::process::run(
                 &mut run.command,
-                &bibli_core::CancelToken::new(),
+                &skwir_core::CancelToken::new(),
                 std::time::Duration::from_secs(5),
             )
         });
@@ -112,7 +112,7 @@ fn needed() -> anyhow::Error {
     } else if cfg!(target_os = "macos") {
         anyhow::anyhow!("This needs the system's sandbox, to run isolated from your files")
     } else {
-        bibli_core::system::not_yet("Running a converter isolated from your files").into()
+        skwir_core::system::not_yet("Running a converter isolated from your files").into()
     }
 }
 
@@ -140,8 +140,8 @@ pub enum Otherwise {
     /// own sandbox) or `ImageMagick`, which a file can make do anything
     /// they can.
     Refuse,
-    /// It runs as it would without bibli: a decoder the desktop runs on
-    /// the same files all the same (`ffmpeg`, Poppler's tools, bibli's
+    /// It runs as it would without skwir: a decoder the desktop runs on
+    /// the same files all the same (`ffmpeg`, Poppler's tools, skwir's
     /// own helpers, a desktop thumbnailer), or a program that keeps itself
     /// to the files it is named (Pandoc's `--sandbox`, ADR-039).
     Run,
@@ -163,7 +163,7 @@ pub struct Untrusted {
 
 /// `program` set to read `input`, a file nobody vouched for, and to write
 /// in `work` (its current folder): isolated where the system can
-/// (`command`), else as `otherwise` says (`plain`). The one way bibli runs
+/// (`command`), else as `otherwise` says (`plain`). The one way skwir runs
 /// a program on a file that is not ours; the caller adds the program's
 /// arguments, naming the input and the folder as returned.
 pub fn untrusted(
@@ -213,7 +213,7 @@ pub fn untrusted_beside(
 }
 
 /// `program` set to read `input` and write in `work`, its current folder,
-/// as it would without bibli: not isolated. Only through `untrusted`'s
+/// as it would without skwir: not isolated. Only through `untrusted`'s
 /// `Otherwise::Run`, and for tests of what runs so.
 pub fn plain(program: &Path, input: &Path, work: &Path) -> Untrusted {
     let mut command = Command::new(program);
@@ -467,12 +467,12 @@ fn isolated(
     Err(needed())
 }
 
-/// A plugin from outside bibli that runs as a program (ADR-045), set to
+/// A plugin from outside skwir that runs as a program (ADR-045), set to
 /// run isolated for as long as it serves: the system's programs and
 /// libraries readable, its own `folder` readable at its own path, its
 /// working folder `work` writable (its home, its cache, its current
 /// folder), nothing of the user's; no network unless `network`. It reads
-/// files only through bibli, which hands it the bytes. An error where the
+/// files only through skwir, which hands it the bytes. An error where the
 /// system cannot isolate: such a plugin never runs otherwise.
 ///
 /// # Errors
@@ -611,7 +611,7 @@ fn plugin_isolated(
     _network: bool,
 ) -> anyhow::Result<Command> {
     Err(
-        bibli_core::system::not_yet("Running a plugin as a program, isolated from your files")
+        skwir_core::system::not_yet("Running a plugin as a program, isolated from your files")
             .into(),
     )
 }
@@ -659,7 +659,7 @@ mod tests {
         let mut command = plugin(&script, &folder, work.path(), false).unwrap();
         crate::process::run(
             &mut command,
-            &bibli_core::CancelToken::new(),
+            &skwir_core::CancelToken::new(),
             std::time::Duration::from_secs(20),
         )
         .unwrap();
@@ -697,7 +697,7 @@ mod tests {
         run.command.arg(&run.input).arg(dir.path().join("escaped"));
         crate::process::run(
             &mut run.command,
-            &bibli_core::CancelToken::new(),
+            &skwir_core::CancelToken::new(),
             std::time::Duration::from_secs(10),
         )
         .unwrap();
@@ -752,7 +752,7 @@ mod tests {
         run.command.arg(&run.input);
         crate::process::run(
             &mut run.command,
-            &bibli_core::CancelToken::new(),
+            &skwir_core::CancelToken::new(),
             std::time::Duration::from_secs(10),
         )
         .unwrap();

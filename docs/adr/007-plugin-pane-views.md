@@ -13,7 +13,7 @@ its toolbar and palette were hard-coded to List, Grid and Columns.
 
 Plugins contribute owner-tagged `ViewSpec` descriptors with a renderer name,
 title, icon, order and atomic data revision. `ViewSpec::named` has no toolkit
-dependency. Bundled renderers implement `PaneView` in `bibli-ui` and are resolved
+dependency. Bundled renderers implement `PaneView` in `skwir-ui` and are resolved
 by `views::named_renderer`. Opaque UI factories remain supported for base views.
 The toolbar and palette discover available renderers through the registry;
 unknown renderers are omitted. Narrow toolbars expose other views in More.

@@ -6,8 +6,8 @@
 //! A long document is cut into parts between paragraphs or table rows
 //! once a part holds `PART_BLOCKS`; only the part asked for is kept, the
 //! others are counted. Its notes follow it under a rule.
-use bibli_core::inspection::{Align, Block, BlockKind, Picture, Run, Script};
-use bibli_platform::inspection::limits;
+use skwir_core::inspection::{Align, Block, BlockKind, Picture, Run, Script};
+use skwir_platform::inspection::limits;
 
 /// Blocks of text a part holds before it is cut: what is left of
 /// `limits::BLOCKS` is for its notes.

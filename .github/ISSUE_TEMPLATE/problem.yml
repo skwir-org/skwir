@@ -1,5 +1,5 @@
 name: Something went wrong
-description: bibli did not do what you expected, or crashed.
+description: skwir did not do what you expected, or crashed.
 body:
   - type: markdown
     attributes:
@@ -12,26 +12,26 @@ body:
     id: system
     attributes:
       label: System
-      description: The distribution and its version, Wayland or X11, the GPU. More › About bibli › Copy details copies them with bibli's version.
+      description: The distribution and its version, Wayland or X11, the GPU. More › About skwir › Copy details copies them with skwir's version.
     validations:
       required: true
   - type: input
     id: version
     attributes:
-      label: bibli's version
-      description: "`bibli --version`, and how it was installed (package, AUR, source)."
+      label: skwir's version
+      description: "`skwir --version`, and how it was installed (package, AUR, source)."
     validations:
       required: true
   - type: textarea
     id: what
     attributes:
       label: What happened
-      description: What you did, what you expected, and what bibli did instead.
+      description: What you did, what you expected, and what skwir did instead.
     validations:
       required: true
   - type: textarea
     id: log
     attributes:
       label: Log
-      description: "Run `RUST_LOG=bibli=debug bibli` from a terminal and paste what it printed around the problem, with personal paths renamed."
+      description: "Run `RUST_LOG=skwir=debug skwir` from a terminal and paste what it printed around the problem, with personal paths renamed."
       render: text

@@ -6,8 +6,8 @@
 //! its entities (`dxf`); when nothing is, the `THUMBNAILIMAGE` section at
 //! its end may hold a bitmap in hexadecimal.
 use crate::Found;
-use bibli_core::CancelToken;
-use bibli_platform::inspection::{self, limits};
+use skwir_core::CancelToken;
+use skwir_platform::inspection::{self, limits};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -43,7 +43,7 @@ fn release(version: &str) -> Option<&'static str> {
 
 /// A bitmap stored without its file header, as the `image` crate reads one
 /// inside an icon.
-pub(crate) fn bitmap(dib: &[u8], side: u32) -> Option<bibli_core::thumbs::Image> {
+pub(crate) fn bitmap(dib: &[u8], side: u32) -> Option<skwir_core::thumbs::Image> {
     let mut decoder =
         image::codecs::bmp::BmpDecoder::new_without_file_header(std::io::Cursor::new(dib)).ok()?;
     // A run-length bitmap of a few kilobytes can say any size.
@@ -150,7 +150,7 @@ pub fn dxf(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found
         found.notice = drawing.notice;
         if let Some(svg) = drawing.svg {
             let drawn = inspection::drawing(svg.as_bytes(), Some(side))?;
-            found.picture = Some(bibli_core::thumbs::Image {
+            found.picture = Some(skwir_core::thumbs::Image {
                 width: drawn.width,
                 height: drawn.height,
                 rgba: drawn.rgba.into(),
@@ -225,7 +225,7 @@ mod tests {
         file
     }
 
-    fn red_first(picture: &bibli_core::thumbs::Image) -> bool {
+    fn red_first(picture: &skwir_core::thumbs::Image) -> bool {
         (picture.width, picture.height) == (8, 4) && picture.rgba[..3] == [255, 0, 0]
     }
 

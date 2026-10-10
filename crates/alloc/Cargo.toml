@@ -1,6 +1,6 @@
 [package]
-name = "bibli-alloc"
-description = "bibli: the process-wide allocator of the bibli binaries (ADR-011)"
+name = "skwir-alloc"
+description = "skwir: the process-wide allocator of the skwir binaries (ADR-011)"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true

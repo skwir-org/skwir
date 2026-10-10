@@ -7,16 +7,16 @@ use std::time::{Duration, Instant};
 
 use std::collections::BTreeSet;
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::command::Invocation;
-use bibli_core::location::{ListingEvent, Location, OpenLocation};
-use bibli_core::op::Plan;
-use bibli_core::os_path::PathArg;
-use bibli_plugin_tags::{read_tags, write_tags};
+use skwir_core::app::{App, AppConfig};
+use skwir_core::command::Invocation;
+use skwir_core::location::{ListingEvent, Location, OpenLocation};
+use skwir_core::op::Plan;
+use skwir_core::os_path::PathArg;
+use skwir_plugin_tags::{read_tags, write_tags};
 
 /// A folder where extended attributes work: not `/tmp`, often a tmpfs.
 fn home_tempdir() -> tempfile::TempDir {
-    let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+    let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
         .prefix("tags-everywhere-")
@@ -75,9 +75,9 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     }
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
     let at = |name: &str| read_tags(&root.join(name));
     let dispatch =
         |name: &str, args: serde_json::Value| app.dispatch(&Invocation::with_args(name, &args));
@@ -198,16 +198,16 @@ fn pinned_tags_replace_the_suggestions_in_the_order_put() {
     std::fs::create_dir_all(&root).unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
     let dispatch =
         |name: &str, args: serde_json::Value| app.dispatch(&Invocation::with_args(name, &args));
     // Tagged here, so the index learns them from the edits applied.
     for (name, t) in [("a.txt", &["Work", "x"][..]), ("b.txt", &["Été"][..])] {
         std::fs::write(root.join(name), b"x").unwrap();
-        let entry = bibli_core::op::EntryRef::from_path(root.join(name)).unwrap();
-        let Ok(bibli_core::command::Outcome::Plan(plan)) = dispatch(
+        let entry = skwir_core::op::EntryRef::from_path(root.join(name)).unwrap();
+        let Ok(skwir_core::command::Outcome::Plan(plan)) = dispatch(
             "tags.add",
             serde_json::json!({ "tags": t, "entries": [entry] }),
         ) else {
@@ -279,7 +279,7 @@ fn pinned_tags_replace_the_suggestions_in_the_order_put() {
 
 /// The tags `root`'s tag location lists at its top, with how many files
 /// each holds, by name.
-fn tags_at_top(app: &App, pane: bibli_core::workspace::PaneId) -> Vec<(String, u64)> {
+fn tags_at_top(app: &App, pane: skwir_core::workspace::PaneId) -> Vec<(String, u64)> {
     let ws = app.workspace.read();
     let mut have: Vec<(String, u64)> = ws
         .pane(pane)
@@ -290,8 +290,8 @@ fn tags_at_top(app: &App, pane: bibli_core::workspace::PaneId) -> Vec<(String, u
         .map(|e| {
             let files = e
                 .metadata
-                .value(bibli_core::entry::keys::FILES)
-                .and_then(bibli_core::Value::as_u64)
+                .value(skwir_core::entry::keys::FILES)
+                .and_then(skwir_core::Value::as_u64)
                 .unwrap_or_default();
             (e.name_str().into_owned(), files)
         })
@@ -301,8 +301,8 @@ fn tags_at_top(app: &App, pane: bibli_core::workspace::PaneId) -> Vec<(String, u
 }
 
 /// The top of `root`'s tags, shown in `pane`, listed whole.
-fn show_tags_of(app: &App, pane: bibli_core::workspace::PaneId, root: &std::path::Path) {
-    let location = bibli_plugin_tags::location::Address {
+fn show_tags_of(app: &App, pane: skwir_core::workspace::PaneId, root: &std::path::Path) {
+    let location = skwir_plugin_tags::location::Address {
         scope: Some(root.to_path_buf()),
         ..Default::default()
     }
@@ -330,9 +330,9 @@ fn a_tag_location_counts_the_files_under_its_folder_and_what_is_applied() {
     write_tags(&outside, &tags(&["away"])).unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
     let pane = app.workspace.read().active_id();
     let dispatch =
         |name: &str, args: serde_json::Value| app.dispatch(&Invocation::with_args(name, &args));
@@ -346,8 +346,8 @@ fn a_tag_location_counts_the_files_under_its_folder_and_what_is_applied() {
     counted(&[("Work", 2), ("x", 1)]);
 
     // What is applied is counted as it is, without walking again.
-    let entry = bibli_core::op::EntryRef::from_path(root.join("c.txt")).unwrap();
-    let Ok(bibli_core::command::Outcome::Plan(plan)) = dispatch(
+    let entry = skwir_core::op::EntryRef::from_path(root.join("c.txt")).unwrap();
+    let Ok(skwir_core::command::Outcome::Plan(plan)) = dispatch(
         "tags.add",
         serde_json::json!({ "tags": ["x", "new"], "entries": [entry] }),
     ) else {
@@ -364,8 +364,8 @@ fn a_tag_location_counts_the_files_under_its_folder_and_what_is_applied() {
     // Renamed, a file keeps counting; trashed, it is gone.
     let b = root.join("sub/b.txt");
     let mut plan = Plan::new("rename");
-    plan.push(bibli_core::op::Rename {
-        entry: bibli_core::op::EntryRef::from_path(&b).unwrap(),
+    plan.push(skwir_core::op::Rename {
+        entry: skwir_core::op::EntryRef::from_path(&b).unwrap(),
         new_name: "it's b.txt".into(),
     });
     assert!(
@@ -375,8 +375,8 @@ fn a_tag_location_counts_the_files_under_its_folder_and_what_is_applied() {
             .is_none()
     );
     let mut plan = Plan::new("trash");
-    plan.push(bibli_core::op::Trash {
-        entry: bibli_core::op::EntryRef::from_path(root.join("sub/it's b.txt")).unwrap(),
+    plan.push(skwir_core::op::Trash {
+        entry: skwir_core::op::EntryRef::from_path(root.join("sub/it's b.txt")).unwrap(),
     });
     assert!(
         app.executor
@@ -391,7 +391,7 @@ fn a_tag_location_counts_the_files_under_its_folder_and_what_is_applied() {
     app.navigate(pane, &Location::from_path(&root)).unwrap();
     show_tags_of(&app, pane, &root);
     counted(&[("new", 1), ("Work", 1), ("x", 2)]);
-    let Ok(bibli_core::command::Outcome::Value(v)) = dispatch(
+    let Ok(skwir_core::command::Outcome::Value(v)) = dispatch(
         "tags.counted",
         serde_json::json!({ "root": PathArg::from(root.as_path()) }),
     ) else {
@@ -405,9 +405,9 @@ fn a_tags_pin_and_color_follow_it_renamed_everywhere_and_come_back_with_undo() {
     let tmp = home_tempdir();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
     app.settings.set(
         "tags.pinned",
         toml::Value::Array(
@@ -422,7 +422,7 @@ fn a_tags_pin_and_color_follow_it_renamed_everywhere_and_come_back_with_undo() {
     // The step a rename on every file ends with, as a plan read back holds it.
     let step = app
         .ops
-        .build(&bibli_core::op::OpData {
+        .build(&skwir_core::op::OpData {
             kind: "tags_follow".into(),
             args: serde_json::json!({ "from": ["Trip"], "to": "travel", "root": PathArg::from(tmp.path()) }),
         })
@@ -470,9 +470,9 @@ fn a_folder_counted_is_checked_after_a_restart_for_what_others_changed() {
     let start = || {
         let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
         app.plugins
-            .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+            .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
         app.plugins
-            .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+            .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
         let pane = app.workspace.read().active_id();
         // Complete once counted, or checked when a count covers it.
         show_tags_of(&app, pane, &root);
@@ -514,7 +514,7 @@ fn without_the_search_a_tag_is_not_renamed_everywhere() {
     write_tags(&file, &tags(&["work"])).unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
     let err = app
         .dispatch(&Invocation::with_args(
             "tags.rename",
@@ -529,13 +529,13 @@ fn without_the_search_a_tag_is_not_renamed_everywhere() {
 /// What an open search shows, kept up to date from its events.
 struct Shown {
     open: Arc<dyn OpenLocation>,
-    names: std::collections::BTreeMap<bibli_core::entry::EntryId, String>,
+    names: std::collections::BTreeMap<skwir_core::entry::EntryId, String>,
     complete: bool,
 }
 
 impl Shown {
     fn new(app: &App, tag: &str, root: &std::path::Path) -> Self {
-        let bibli_core::command::Outcome::Value(v) = app
+        let skwir_core::command::Outcome::Value(v) = app
             .dispatch(&Invocation::with_args(
                 "query.location",
                 &serde_json::json!({ "facet": "tag", "value": tag, "root": PathArg::from(root) }),
@@ -587,9 +587,9 @@ fn an_open_search_sees_at_once_what_a_plan_changed() {
     std::fs::write(root.join("c.txt"), b"x").unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
     let mut work = Shown::new(&app, "work", &root);
     let mut job = Shown::new(&app, "Job", &root);
     until(&app, "both searches", || {
@@ -616,10 +616,10 @@ fn an_open_search_sees_at_once_what_a_plan_changed() {
         "tags.add",
         &serde_json::json!({
             "tags": ["Job"],
-            "entries": [bibli_core::op::EntryRef::from_path(root.join("c.txt")).unwrap()],
+            "entries": [skwir_core::op::EntryRef::from_path(root.join("c.txt")).unwrap()],
         }),
     );
-    let bibli_core::command::Outcome::Plan(plan) = app.dispatch(&give).unwrap() else {
+    let skwir_core::command::Outcome::Plan(plan) = app.dispatch(&give).unwrap() else {
         panic!("a plan")
     };
     app.executor.execute_blocking(&plan, app.lifetime());
@@ -649,9 +649,9 @@ fn a_category_carries_its_tags_and_tags_move_into_one() {
     }
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
     let at = |name: &str| read_tags(&root.join(name));
     let dispatch =
         |name: &str, args: serde_json::Value| app.dispatch(&Invocation::with_args(name, &args));
@@ -725,9 +725,9 @@ fn a_field_holds_one_value_and_follows_its_category() {
     write_tags(&file, &tags(&["Status/Draft", "work"])).unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_query::QueryPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
     app.plugins
-        .add(Arc::new(bibli_plugin_tags::TagsPlugin::default()), &app);
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
     let dispatch =
         |name: &str, args: serde_json::Value| app.dispatch(&Invocation::with_args(name, &args));
     let fields = || {
@@ -741,14 +741,14 @@ fn a_field_holds_one_value_and_follows_its_category() {
     )
     .unwrap();
     until(&app, "the field", || (fields() == ["Status"]).then_some(()));
-    let entry = bibli_core::op::EntryRef::from_path(&file).unwrap();
+    let entry = skwir_core::op::EntryRef::from_path(&file).unwrap();
     let plan = match dispatch(
         "tags.add",
         serde_json::json!({ "tags": ["Status/Final"], "entries": [entry] }),
     )
     .unwrap()
     {
-        bibli_core::command::Outcome::Plan(plan) => plan,
+        skwir_core::command::Outcome::Plan(plan) => plan,
         other => panic!("a plan, not {other:?}"),
     };
     app.executor.execute_blocking(&plan, app.lifetime());

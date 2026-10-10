@@ -28,13 +28,13 @@ use super::{
     stylesheets,
 };
 use crate::inspection::{check, limits};
-use bibli_core::{CancelToken, inspection::Align};
 use ego_tree::NodeRef;
 use resvg::{
     tiny_skia,
     usvg::{self, fontdb},
 };
 use scraper::{ElementRef, Node};
+use skwir_core::{CancelToken, inspection::Align};
 use std::{collections::HashMap, fmt::Write, rc::Rc, sync::Arc};
 
 /// Characters of text one page may set.
@@ -67,7 +67,7 @@ pub fn page(
         return Ok(None);
     };
     let own = (drawn.width, drawn.height);
-    let side = side.clamp(64, bibli_core::document::MAX_SIDE);
+    let side = side.clamp(64, skwir_core::document::MAX_SIDE);
     render(canvas, drawn, side, cancel).map(|(width, height, rgba)| {
         Some(Drawing {
             width,
@@ -1607,7 +1607,7 @@ mod tests {
     /// A book's files by name.
     struct Files(HashMap<&'static str, Vec<u8>>);
     impl Resources for Files {
-        fn picture(&mut self, _: &str) -> Option<bibli_core::inspection::Picture> {
+        fn picture(&mut self, _: &str) -> Option<skwir_core::inspection::Picture> {
             None
         }
         fn stylesheet(&mut self, href: &str) -> Option<String> {

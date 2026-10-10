@@ -2,7 +2,7 @@
 //!
 //! On Unix they are the system's (the `xattr` crate: `user.*` on Linux,
 //! any name on macOS); `_deref` follows a link to its file, the others act
-//! on the link itself. Windows keeps none that bibli uses, so there every
+//! on the link itself. Windows keeps none that skwir uses, so there every
 //! call answers as a volume refusing attributes does ([`refused`]), and
 //! what keeps notes on the file falls back to the stores beside it
 //! (ADR-027, ADR-028).

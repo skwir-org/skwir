@@ -1,4 +1,4 @@
-//! The tagged files bibli has seen (ADR-026): every file the provider
+//! The tagged files skwir has seen (ADR-026): every file the provider
 //! reads tells it whether the file has tags (a folder shown, a search's
 //! walk, a file changed and read again), and a count of a tag location's
 //! folder teaches it the whole folder (`count.rs`), which it then covers.
@@ -15,7 +15,7 @@
 //! `Places/France/Paris`), as a search for it finds them: each tag knows
 //! its category, which is a tag of the index too. How much room it may take
 //! is the user's (`tags.index_mb`): past it, it learns no new file (those
-//! known stay current) and covers no folder, and bibli says the tags
+//! known stay current) and covers no folder, and skwir says the tags
 //! leave some out.
 
 use std::borrow::Cow;
@@ -26,11 +26,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use bibli_core::app::App;
-use bibli_core::cache::CacheSlot;
-use bibli_core::cancel::CancelToken;
-use bibli_core::metadata::{tag_parent, tag_within};
 use parking_lot::{Mutex, MutexGuard};
+use skwir_core::app::App;
+use skwir_core::cache::CacheSlot;
+use skwir_core::cancel::CancelToken;
+use skwir_core::metadata::{tag_parent, tag_within};
 
 /// The setting: how much room the index may take, in megabytes.
 pub const LIMIT_SETTING: &str = "tags.index_mb";
@@ -141,7 +141,7 @@ impl File {
     }
 
     fn name(&self) -> Cow<'_, OsStr> {
-        bibli_core::os_path::from_bytes_ref(self.name_bytes())
+        skwir_core::os_path::from_bytes_ref(self.name_bytes())
     }
 
     /// Its name as stored: `OsStr::as_encoded_bytes`.
@@ -416,10 +416,10 @@ fn decode_piece(bytes: &[u8], parents: &[Option<u32>]) -> Option<HashMap<PathBuf
     };
     let mut folders = HashMap::new();
     for _ in 0..r.u32()? {
-        let path = PathBuf::from(bibli_core::os_path::from_bytes(r.bytes()?.to_vec()));
+        let path = PathBuf::from(skwir_core::os_path::from_bytes(r.bytes()?.to_vec()));
         let mut folder = Folder::default();
         for _ in 0..r.u32()? {
-            let name = bibli_core::os_path::from_bytes_ref(r.bytes()?);
+            let name = skwir_core::os_path::from_bytes_ref(r.bytes()?);
             let n = r.u32()?;
             let ids: Option<Vec<u32>> = (0..n).map(|_| r.u32()).collect();
             let ids: Vec<u32> = ids?.into_iter().filter(|t| (*t as usize) < tags).collect();
@@ -442,7 +442,7 @@ fn decode_folders(bytes: &[u8]) -> BTreeMap<PathBuf, usize> {
     let mut r = Reader { bytes };
     let mut out = BTreeMap::new();
     while let Some(path) = r.bytes() {
-        let path = PathBuf::from(bibli_core::os_path::from_bytes(path.to_vec()));
+        let path = PathBuf::from(skwir_core::os_path::from_bytes(path.to_vec()));
         let piece = piece_of(&path);
         out.insert(path, piece);
     }
@@ -672,7 +672,7 @@ impl TagIndex {
         // A first write waits a moment too, for what comes with the change.
         let first = Instant::now() + FIRST_WRITE;
         let spawned = std::thread::Builder::new()
-            .name("bibli-tags-index".into())
+            .name("skwir-tags-index".into())
             .spawn(move || {
                 loop {
                     let Some(wait) = this.upgrade().map(|index| index.next_wait(first)) else {
@@ -699,7 +699,7 @@ impl TagIndex {
                     let read = index.slot.is_some() && index.unload_idle();
                     // What a write or the pieces let go of freed, given
                     // back before it sleeps: it is no scheduler worker.
-                    bibli_core::scheduler::release_now();
+                    skwir_core::scheduler::release_now();
                     if ended || (!read && !index.pending.load(Ordering::Acquire)) {
                         index.working.store(false, Ordering::Release);
                         // Something changed as it ended: carry on.
@@ -945,7 +945,7 @@ impl TagIndex {
             .collect()
     }
 
-    /// What bibli applied moved files: `from` (and what is under it) is
+    /// What skwir applied moved files: `from` (and what is under it) is
     /// at `to`, or gone. A folder covered that moved is no longer.
     pub fn moved(self: &Arc<Self>, moves: &[(PathBuf, Option<PathBuf>)]) {
         let limit = u64::MAX;

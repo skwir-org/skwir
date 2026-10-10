@@ -1,11 +1,11 @@
 //! The hexadecimal preview, again, as a WebAssembly module (ADR-046,
 //! Phase 6's gate): what the built-in `preview-hex` shows, page for page
-//! and match for match, its bytes read through bibli. A page is 4 KiB in
+//! and match for match, its bytes read through skwir. A page is 4 KiB in
 //! rows of 16 bytes; a search goes on from `offset` and puts the row of
 //! its match on top.
 
-use bibli_plugin_api::guest::{Host, Plugin};
-use bibli_plugin_api::protocol::{InspectParams, Inspection, InspectionKind, Row};
+use skwir_plugin_api::guest::{Host, Plugin};
+use skwir_plugin_api::protocol::{InspectParams, Inspection, InspectionKind, Row};
 
 const ROW: u64 = 16;
 const GROUP: usize = 8;
@@ -51,7 +51,7 @@ impl Plugin for HexView {
     }
 }
 
-/// Up to `length` bytes from `offset`, in reads bibli bounds.
+/// Up to `length` bytes from `offset`, in reads skwir bounds.
 fn read(host: &dyn Host, file: u32, offset: u64, length: u64) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     while (bytes.len() as u64) < length {
@@ -172,7 +172,7 @@ fn size(bytes: u64) -> String {
     format!("{value:.1} {}", UNITS[unit])
 }
 
-bibli_plugin_api::export!(HexView);
+skwir_plugin_api::export!(HexView);
 
 #[cfg(test)]
 mod tests {

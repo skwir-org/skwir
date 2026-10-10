@@ -19,7 +19,7 @@ It merges them by union and writes an edit to its own attributes and to
 each Mac store already present. That is special-cased code in one module
 (`attrs.rs`), and it does not scale to the goal: the user's notes on any
 system (Linux, macOS, Windows, USB drives), with nothing lost going back
-and forth, and interoperable with other applications, which bibli reads
+and forth, and interoperable with other applications, which skwir reads
 by default and writes as the user chooses. Four things block it:
 
 1. **Every format is a branch.** XMP, TagSpaces and names that hold tags
@@ -69,7 +69,7 @@ What exists (researched 2026-09-30):
 
 ### One model of notes, in the core
 
-`bibli_core::notes` holds what every store and every surface agree on:
+`skwir_core::notes` holds what every store and every surface agree on:
 
 - **tags**: each a name, the color a file gives it (a palette name, as a
   Finder tag's digit maps today) and, where a store says it, its parent
@@ -98,7 +98,7 @@ declares:
 - what reading costs: a call per file, one look at the folder, or opening
   the file. A store that opens the file is never read for a listing, only
   on demand as a field (ADR-023), for Details;
-- the volumes it applies to (`bibli_platform::filesystem`), and whether it
+- the volumes it applies to (`skwir_platform::filesystem`), and whether it
   can create its storage where none exists;
 - read and write of one batch of a folder's files; a write gets the
   file's notes before and after, and keeps what it holds that the model
@@ -134,16 +134,16 @@ ours as well as the Mac's (`user.xdg.tags` as `xdg.tags`: a Mac copying
 the file home makes it an attribute again, and `rsync -X` back to Linux
 gives `user.xdg.tags`), with nothing translated and nothing lost.
 
-### Reading: what changed since bibli last wrote
+### Reading: what changed since skwir last wrote
 
-The cache (namespace `notes`, by the file's identity) keeps what bibli
+The cache (namespace `notes`, by the file's identity) keeps what skwir
 last wrote for a file in every store. Reading compares each store with
 it:
 
 - a store that differs from it was edited by another application: its
   edit wins, additions and removals alike;
 - stores that agree with it say nothing new;
-- with nothing remembered (a file bibli never wrote, a cache deleted),
+- with nothing remembered (a file skwir never wrote, a cache deleted),
   tags are the union and a rating or a comment is the most recent store's
   where stores keep a time (a sidecar's, XMP's `MetadataDate`), else the
   platform's own store's.
@@ -180,15 +180,15 @@ it or above it), and filetags names on request.
 
 ### Not a format of our own
 
-No format bibli invents would be read by anything else. What a new one
+No format skwir invents would be read by anything else. What a new one
 could improve (finding its file again after a rename by a fingerprint,
 merging edits made on two machines by keeping a time per field and the
 tags taken away, saying per field what survives a copy or a sync, as the
-macOS flags do) lives in bibli instead: the snapshot above, a check when
+macOS flags do) lives in skwir instead: the snapshot above, a check when
 a sidecar's file is missing (ADR-028), and the stores' declarations. If a
 sidecar of our own is ever needed (a Windows volume, a user who refuses
 `._` files), it will be an XMP profile: XMP any photo application reads
-for tags, rating and description, with a bibli namespace for the rest.
+for tags, rating and description, with a skwir namespace for the rest.
 
 ## Consequences
 

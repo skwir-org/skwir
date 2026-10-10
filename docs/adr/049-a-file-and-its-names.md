@@ -8,7 +8,7 @@ point is built (Consequences).
 ## Context
 
 An entry's identity (`EntryId { dev, ino }`) is what a stat reports of
-the file, and bibli keys by it both what belongs to the file and what
+the file, and skwir keys by it both what belongs to the file and what
 belongs to the name it was found under:
 
 | The file (the inode) | The name (an entry in a folder) |
@@ -24,7 +24,7 @@ the same file reached twice (through a bind mount, or two folders
 holding its names). Two names of one file in one listing were one row:
 a folder holding `a.txt` and its hard link `b.txt` listed one of them,
 and a `content:` search of a home folder lost 725 to 2,036 of its matches
-so (`bibli-bench trigram`, measured 2026-10-10). Worse than a row
+so (`skwir-bench trigram`, measured 2026-10-10). Worse than a row
 missing, two bugs could act on the wrong name or leave one behind:
 
 - `EntryRef::resolve` followed a reference whose name was gone, or held
@@ -100,8 +100,8 @@ and offers Copy Anyway since network shares reported 0 free.
    **Built.**
 
 Hard links are the only sharing a stat shows. Space shared below files
-(reflink copies, which bibli's own copies are on btrfs; snapshots;
-deduplication) is counted in full, and bibli says that is what its
+(reflink copies, which skwir's own copies are on btrfs; snapshots;
+deduplication) is counted in full, and skwir says that is what its
 sizes mean rather than estimate extents, a filesystem tool's work.
 
 ## Consequences

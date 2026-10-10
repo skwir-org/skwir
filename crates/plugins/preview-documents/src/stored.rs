@@ -5,9 +5,9 @@
 //! comes before a converted document's first page, which needs a preview
 //! to have been made.
 use crate::package::{self, Package};
-use bibli_core::CancelToken;
-use bibli_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
-use bibli_platform::inspection;
+use skwir_core::CancelToken;
+use skwir_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
+use skwir_platform::inspection;
 use std::path::Path;
 
 /// Where `OpenDocument` keeps its picture.
@@ -67,7 +67,7 @@ impl ThumbnailProvider for StoredPictures {
         Stage::Fallback
     }
     fn accepts(&self, req: &ThumbRequest) -> bool {
-        bibli_platform::preview::is_office(&req.entry.path, req.mime.as_deref())
+        skwir_platform::preview::is_office(&req.entry.path, req.mime.as_deref())
     }
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
         let path = req.entry.resolve()?;

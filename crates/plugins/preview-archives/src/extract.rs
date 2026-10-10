@@ -8,15 +8,15 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
-use bibli_core::App;
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::op::{
+use skwir_core::App;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::op::{
     self, Cancelled, Change, EntryRef, Operation, Plan, StepContext, StepStatus, Words,
 };
-use bibli_core::os_path::PathArg;
-use bibli_core::registry::MenuItem;
-use bibli_core::workspace::PaneId;
-use bibli_platform::{archive, mime};
+use skwir_core::os_path::PathArg;
+use skwir_core::registry::MenuItem;
+use skwir_core::workspace::PaneId;
+use skwir_platform::{archive, mime};
 
 /// The step's kind in a plan.
 const KIND: &str = "extract";
@@ -33,10 +33,10 @@ const ARCHIVES: &str = "kind:archive|kind:application/x-cd-image";
 pub struct Extract {
     /// The archive.
     pub entry: EntryRef,
-    #[serde(with = "bibli_core::os_path")]
+    #[serde(with = "skwir_core::os_path")]
     #[schemars(with = "PathArg")]
     pub dest_dir: PathBuf,
-    #[serde(with = "bibli_core::os_path")]
+    #[serde(with = "skwir_core::os_path")]
     #[schemars(with = "PathArg")]
     pub name: OsString,
 }
@@ -282,7 +282,7 @@ pub fn register(app: &App, owner: &str) {
                     .dest
                     .map(|d| -> anyhow::Result<PathBuf> {
                         let d = d.into_inner();
-                        bibli_core::os_path::absolute(&d)?;
+                        skwir_core::os_path::absolute(&d)?;
                         Ok(d)
                     })
                     .transpose()?;

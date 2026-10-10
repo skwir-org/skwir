@@ -1,5 +1,5 @@
 //! Shared bounded reads and embedded image decoding, called only by workers.
-use bibli_core::{
+use skwir_core::{
     CancelToken,
     inspection::{Block, Inspection, InspectionKind, Row},
     thumbs::Image,
@@ -43,8 +43,8 @@ pub mod limits {
     /// Semantic blocks per rich document; rows per contents listing.
     pub const BLOCKS: usize = 2000;
     /// Bytes per logical line: code lines and split rich-text rows. Must match
-    /// the row split in `bibli_core::inspection::split_blocks`.
-    pub const LINE_BYTES: usize = bibli_core::inspection::LINE_BYTES;
+    /// the row split in `skwir_core::inspection::split_blocks`.
+    pub const LINE_BYTES: usize = skwir_core::inspection::LINE_BYTES;
     pub const CODE_LINES: usize = 10000;
     pub const CODE_NODES: usize = 10000;
     /// Nesting depth of parsed documents, contents trees and archive paths.
@@ -74,7 +74,7 @@ pub mod limits {
     /// The largest side a picture shown zoomed in (a page, a comic's) is
     /// drawn or decoded at: about 45 MB of pixels for a page of a comic.
     /// Past it, a zoom enlarges these pixels.
-    pub const PICTURE_SIDE: u32 = bibli_core::document::MAX_SIDE;
+    pub const PICTURE_SIDE: u32 = skwir_core::document::MAX_SIDE;
     /// Bytes of a picture read to learn its size before it is shown: a
     /// raster header, with room for the metadata a JPEG may put first.
     pub const PICTURE_HEADER: usize = 256 * 1024;
@@ -802,14 +802,14 @@ fn roman(mut n: u32) -> String {
 }
 /// One fact for the panel's Details, or nothing when the format left it
 /// blank. Bounded: a title can be a whole abstract.
-pub fn detail(label: &str, value: impl AsRef<str>) -> Option<bibli_core::inspection::Detail> {
+pub fn detail(label: &str, value: impl AsRef<str>) -> Option<skwir_core::inspection::Detail> {
     let value = value.as_ref().trim();
     (!value.is_empty()).then(|| {
         let mut text: String = value.chars().take(limits::DETAIL_CHARS).collect();
         if text.len() < value.len() {
             text.push('…');
         }
-        bibli_core::inspection::Detail::new(label, text)
+        skwir_core::inspection::Detail::new(label, text)
     })
 }
 /// What a rich document cut at `limits::BLOCKS` says in its notice.
@@ -820,7 +820,7 @@ pub fn blocks_notice() -> String {
 /// leaving out what is blank or `None` (`count` makes a zero blank).
 pub fn details<'a, V: Into<Option<String>>>(
     facts: impl IntoIterator<Item = (&'a str, V)>,
-) -> Vec<bibli_core::inspection::Detail> {
+) -> Vec<skwir_core::inspection::Detail> {
     facts
         .into_iter()
         .filter_map(|(label, value)| detail(label, value.into()?))
@@ -834,10 +834,10 @@ pub const MAP_VIEW: &str = "map";
 /// `ui.view`: when the Maps plugin is off, the link fails as any command
 /// of a disabled plugin does.
 #[must_use]
-pub fn on_map(detail: bibli_core::inspection::Detail) -> bibli_core::inspection::Detail {
+pub fn on_map(detail: skwir_core::inspection::Detail) -> skwir_core::inspection::Detail {
     detail.with_action(
         "Show on map",
-        bibli_core::command::Invocation::with_args(
+        skwir_core::command::Invocation::with_args(
             "ui.view",
             &serde_json::json!({ "id": MAP_VIEW }),
         ),
@@ -851,7 +851,7 @@ pub fn count(n: usize) -> Option<String> {
 }
 /// A size the way the file list shows one: `512 B`, `1.5 KB`, `3.2 GB`, in
 /// binary multiples (the core's, which its own words use too).
-pub use bibli_core::fs::size_said as size;
+pub use skwir_core::fs::size_said as size;
 pub fn extension(path: &Path) -> String {
     path.extension()
         .unwrap_or_default()
@@ -993,7 +993,7 @@ mod tests {
         // As deep as is let through parses on a worker's stack: XML, and
         // an SVG of groups in groups.
         let parsed = std::thread::Builder::new()
-            .stack_size(bibli_core::scheduler::WORKER_STACK)
+            .stack_size(skwir_core::scheduler::WORKER_STACK)
             .spawn(move || {
                 let most = deep(limits::XML_PARSED_DEPTH);
                 assert!(roxmltree::Document::parse(&most).is_ok());
@@ -1234,7 +1234,7 @@ mod tests {
             ("Author", Some("  ".into())),
             ("Title", None),
         ]);
-        assert_eq!(facts, [bibli_core::inspection::Detail::new("Words", "12")]);
+        assert_eq!(facts, [skwir_core::inspection::Detail::new("Words", "12")]);
         assert_eq!(details([("Size", size(1536))])[0].value, "1.5 KB");
         assert_eq!(size(512), "512 B");
     }

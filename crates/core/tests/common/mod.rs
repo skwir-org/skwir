@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use bibli_core::app::{App, AppConfig};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::op::Plan;
-use bibli_core::workspace::PaneId;
+use skwir_core::app::{App, AppConfig};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::op::Plan;
+use skwir_core::workspace::PaneId;
 
 /// A temp dir on the home filesystem so the freedesktop trash works
 /// (tmpfs would need a top-level `.Trash` directory).
@@ -16,7 +16,7 @@ pub fn home_tempdir() -> tempfile::TempDir {
     let base = dirs::home_dir()
         .expect("home")
         .join(".cache")
-        .join("bibli-tests");
+        .join("skwir-tests");
     std::fs::create_dir_all(&base).expect("create test base");
     tempfile::Builder::new()
         .prefix("t-")
@@ -62,7 +62,7 @@ pub fn plan(app: &App, name: &str, args: serde_json::Value) -> Plan {
 }
 
 /// Apply a plan synchronously and require full success.
-pub fn apply(app: &App, plan: &Plan) -> bibli_core::op::ExecResult {
+pub fn apply(app: &App, plan: &Plan) -> skwir_core::op::ExecResult {
     let r = app.executor.execute_blocking(plan, app.lifetime());
     assert!(
         r.error.is_none(),
@@ -104,7 +104,7 @@ pub fn snapshot(root: &Path) -> Vec<(PathBuf, String)> {
     out
 }
 
-/// Whether the tests run under Wine: `bibli_core::system::under_wine`.
+/// Whether the tests run under Wine: `skwir_core::system::under_wine`.
 pub fn under_wine(what: &str) -> bool {
-    bibli_core::system::under_wine(what)
+    skwir_core::system::under_wine(what)
 }

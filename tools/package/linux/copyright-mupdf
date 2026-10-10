@@ -1,14 +1,14 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: bibli
-Source: https://github.com/venator/bibli
-Comment: bibli-mupdf-worker, bibli's own code (Apache-2.0), links
+Upstream-Name: skwir
+Source: https://github.com/skwir-org/skwir
+Comment: skwir-mupdf-worker, skwir's own code (Apache-2.0), links
  MuPDF (AGPL-3.0-or-later, Artifex Software), whose source the mupdf-sys
  crate bundles: the program is distributed under the AGPL, its source
- being bibli's repository and that crate's. bibli itself links neither:
+ being skwir's repository and that crate's. skwir itself links neither:
  it speaks to it over its worker protocol (ADR-014).
 
 Files: *
-Copyright: The bibli authors; Artifex Software, Inc.
+Copyright: The skwir authors; Artifex Software, Inc.
 License: AGPL-3.0-or-later
 
 License: AGPL-3.0-or-later

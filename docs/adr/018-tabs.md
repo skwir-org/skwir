@@ -115,7 +115,7 @@ ten for folders nobody is looking at.
 
 Release build, Xvfb with lavapipe (`AGENTS.md`, "Verifying UI changes"),
 fresh XDG directories per run, the default plugins, ten synthetic folders
-of 20 000 empty files each under `~/.cache/bibli-tests`. PSS from
+of 20 000 empty files each under `~/.cache/skwir-tests`. PSS from
 `/proc/<pid>/smaps_rollup` after 12 s idle, two runs each, back to back.
 Lavapipe maps the LLVM rasterizer, so these absolute numbers are not the
 reference machine's and do not bear on ADR-002's gate; the differences do.

@@ -9,16 +9,16 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
-use bibli_core::CancelToken;
-use bibli_core::entry::{Value, keys};
-use bibli_core::fields::FieldProvider;
-use bibli_platform::mime::{self, Kind};
+use skwir_core::CancelToken;
+use skwir_core::entry::{Value, keys};
+use skwir_core::fields::FieldProvider;
+use skwir_platform::mime::{self, Kind};
 
 pub struct Positions;
 
 /// The words for where a picture or a video was made.
 pub const PLACE: &str = "geo.place";
-/// A picture's camera clock (`bibli_platform::exif::Taken::clock`).
+/// A picture's camera clock (`skwir_platform::exif::Taken::clock`).
 pub const CLOCK: &str = "geo.clock";
 
 /// What a file of this name is, if its position can be read.
@@ -66,15 +66,15 @@ impl FieldProvider for Positions {
         _: &CancelToken,
     ) -> Vec<anyhow::Result<Option<Value>>> {
         // A link's content is read, and its name types it.
-        let name = bibli_core::fs::content_path(path)
+        let name = skwir_core::fs::content_path(path)
             .and_then(|content| content.file_name().map(std::ffi::OsStr::to_owned));
         let Some(kind) = name.as_deref().and_then(kind) else {
             return keys.iter().map(|_| Ok(None)).collect();
         };
         let taken = if kind == Kind::Video {
-            bibli_platform::mp4::taken(path)
+            skwir_platform::mp4::taken(path)
         } else {
-            bibli_platform::exif::taken(path)
+            skwir_platform::exif::taken(path)
         };
         keys.iter()
             .map(|&key| {
@@ -84,7 +84,7 @@ impl FieldProvider for Positions {
                         .and_then(crate::places::describe)
                         .map(|words| Value::Text(words.into())),
                     CLOCK => taken.clock.map(Value::UInt),
-                    _ => taken.at.map(bibli_core::geo::LatLon::to_value),
+                    _ => taken.at.map(skwir_core::geo::LatLon::to_value),
                 })
             })
             .collect()

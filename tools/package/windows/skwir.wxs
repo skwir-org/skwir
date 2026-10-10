@@ -1,31 +1,31 @@
-<!-- bibli's Windows installer (Phase 5, step K), for WiX 5 or later:
-     `wix build bibli.wxs -d Version=0.0.1 -d Dist=..\..\..\target\dist`.
+<!-- skwir's Windows installer (Phase 5, step K), for WiX 5 or later:
+     `wix build skwir.wxs -d Version=0.1.0 -d Dist=..\..\..\target\dist`.
      Written on Linux, never built yet (ADR-035: 5b builds it). The helpers
-     go beside bibli.exe, where it finds them. Unsigned. -->
+     go beside skwir.exe, where it finds them. Unsigned. -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="bibli" Manufacturer="bibli" Version="$(Version)"
+  <Package Name="skwir" Manufacturer="skwir" Version="$(Version)"
            UpgradeCode="6f1c2b7e-3d9a-4c5e-9b8f-2a7d4e1c0b35" Scope="perUser">
-    <MajorUpgrade DowngradeErrorMessage="A newer bibli is already installed." />
+    <MajorUpgrade DowngradeErrorMessage="A newer skwir is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="Programs" Name="Programs">
-        <Directory Id="INSTALLFOLDER" Name="bibli">
+        <Directory Id="INSTALLFOLDER" Name="skwir">
           <Component Id="Programs" Guid="*">
-            <File Source="$(Dist)\bibli.exe" KeyPath="yes">
-              <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="bibli"
+            <File Source="$(Dist)\skwir.exe" KeyPath="yes">
+              <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="skwir"
                         WorkingDirectory="INSTALLFOLDER" Advertise="yes" />
             </File>
-            <File Source="$(Dist)\bibli-pdf-worker.exe" />
-            <File Source="$(Dist)\bibli-model-worker.exe" />
-            <File Source="$(Dist)\bibli-module-worker.exe" />
+            <File Source="$(Dist)\skwir-pdf-worker.exe" />
+            <File Source="$(Dist)\skwir-model-worker.exe" />
+            <File Source="$(Dist)\skwir-module-worker.exe" />
             <!-- PDFium, beside its helper (ADR-041). -->
             <File Source="$(Dist)\pdfium.dll" />
           </Component>
-          <!-- bibli's licence, and PDFium's with those of what it carries. -->
+          <!-- skwir's licence, and PDFium's with those of what it carries. -->
           <Directory Id="Licenses" Name="licenses">
             <Files Include="$(Dist)\licenses\**" />
           </Directory>
-          <!-- The type database, beside bibli.exe (ADR-037): what
+          <!-- The type database, beside skwir.exe (ADR-037): what
                tools/package/mime-database.sh puts in it. -->
           <Directory Id="Share" Name="share">
             <Directory Id="MimeFolder" Name="mime">

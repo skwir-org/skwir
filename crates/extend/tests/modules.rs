@@ -10,11 +10,11 @@ mod common;
 use std::path::Path;
 use std::sync::Arc;
 
-use bibli_core::inspection::{InspectRequest, Inspection};
-use bibli_core::op::EntryRef;
-use bibli_core::plugin::Plugin;
-use bibli_core::preview::PreviewRequest;
-use bibli_core::{App, CancelToken};
+use skwir_core::inspection::{InspectRequest, Inspection};
+use skwir_core::op::EntryRef;
+use skwir_core::plugin::Plugin;
+use skwir_core::preview::PreviewRequest;
+use skwir_core::{App, CancelToken};
 
 fn manifest(crate_folder: &str) -> String {
     std::fs::read_to_string(common::root().join(crate_folder).join("plugin.toml")).unwrap()
@@ -74,7 +74,7 @@ fn seen(page: &Inspection) -> String {
 
 #[test]
 fn the_hex_view_as_a_module_shows_what_the_built_in_one_shows() {
-    let module = common::module("bibli-outside-preview-hex");
+    let module = common::module("skwir-outside-preview-hex");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
     common::install(
@@ -86,13 +86,13 @@ fn the_hex_view_as_a_module_shows_what_the_built_in_one_shows() {
     );
     // Built in first, then from outside, as the binary lists them.
     common::module_worker();
-    let app = App::new(bibli_core::app::AppConfig::ephemeral(
+    let app = App::new(skwir_core::app::AppConfig::ephemeral(
         tmp.path().join("state"),
     ))
     .unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_preview_hex::PreviewPlugin), &app);
-    for plugin in bibli_extend::discover(std::slice::from_ref(&plugins), &["preview-hex"]) {
+        .add(Arc::new(skwir_plugin_preview_hex::PreviewPlugin), &app);
+    for plugin in skwir_extend::discover(std::slice::from_ref(&plugins), &["preview-hex"]) {
         app.plugins.add(plugin, &app);
     }
     assert!(app.plugins.set_enabled("hex-view", true, &app));
@@ -176,7 +176,7 @@ fn the_hex_view_as_a_module_shows_what_the_built_in_one_shows() {
 
 #[test]
 fn a_module_reads_only_what_it_may_and_never_a_private_file() {
-    let module = common::module("bibli-outside-preview-hex");
+    let module = common::module("skwir-outside-preview-hex");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
     // Declared without `read`: it may not read what files hold.
@@ -210,7 +210,7 @@ fn a_module_reads_only_what_it_may_and_never_a_private_file() {
     let app = common::app_with(&tmp.path().join("state2"), &readable, &[]);
     let private = tmp.path().join("diary");
     std::fs::create_dir(&private).unwrap();
-    std::fs::write(private.join(bibli_core::permissions::MARKER), "").unwrap();
+    std::fs::write(private.join(skwir_core::permissions::MARKER), "").unwrap();
     std::fs::write(private.join("entry.bin"), b"secret").unwrap();
     let withheld = shown(
         &app,
@@ -225,7 +225,7 @@ fn a_module_reads_only_what_it_may_and_never_a_private_file() {
 
 #[test]
 fn the_template_counts_words_as_a_module_a_field_and_a_command() {
-    let module = common::module("bibli-outside-template");
+    let module = common::module("skwir-outside-template");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
     common::install(
@@ -241,7 +241,7 @@ fn the_template_counts_words_as_a_module_a_field_and_a_command() {
     let words = app
         .fields
         .get("word-count.words", &note, &CancelToken::new());
-    assert_eq!(words, Some(bibli_core::Value::UInt(7)));
+    assert_eq!(words, Some(skwir_core::Value::UInt(7)));
     assert_eq!(
         app.fields.shown_for(std::ffi::OsStr::new("a note.txt")),
         [("word-count.words", "Words")],
@@ -250,19 +250,19 @@ fn the_template_counts_words_as_a_module_a_field_and_a_command() {
     let other = tmp.path().join("other.md");
     std::fs::write(&other, "two words").unwrap();
     let outcome = app
-        .dispatch(&bibli_core::command::Invocation::with_args(
+        .dispatch(&skwir_core::command::Invocation::with_args(
             "word-count.count",
             &serde_json::json!({ "entries": [note, other] }),
         ))
         .unwrap();
-    let bibli_core::command::Outcome::Value(value) = outcome else {
+    let skwir_core::command::Outcome::Value(value) = outcome else {
         panic!("{outcome:?}")
     };
     assert_eq!(value["total"], 9);
     // What the plugin says it does, an agent reads.
     assert_eq!(
         app.commands.get("word-count.count").unwrap().effect,
-        bibli_core::command::Effect::Reads
+        skwir_core::command::Effect::Reads
     );
     // Its helper kept the module compiled in the plugin's folder of the
     // cache; started again, it loads it rather than compiling it.
@@ -284,7 +284,7 @@ fn the_template_counts_words_as_a_module_a_field_and_a_command() {
     assert_eq!(
         app.fields
             .get("word-count.words", &other, &CancelToken::new()),
-        Some(bibli_core::Value::UInt(2))
+        Some(skwir_core::Value::UInt(2))
     );
     assert_eq!(kept(), first);
     // Turned off, it leaves nothing.
@@ -295,13 +295,13 @@ fn the_template_counts_words_as_a_module_a_field_and_a_command() {
             .get("word-count.words", &note, &CancelToken::new()),
         None
     );
-    let _: &dyn Plugin = &*bibli_extend::discover(&[plugins], &[])[0];
+    let _: &dyn Plugin = &*skwir_extend::discover(&[plugins], &[])[0];
 }
 
 #[test]
 fn a_thumbnailer_from_outside_draws_through_the_thumbnail_service() {
-    use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
-    let module = common::module("bibli-outside-netpbm");
+    use skwir_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
+    let module = common::module("skwir-outside-netpbm");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
     common::install(
@@ -332,7 +332,7 @@ fn a_thumbnailer_from_outside_draws_through_the_thumbnail_service() {
     let image = loop {
         match app
             .thumbnails
-            .get(request.clone(), bibli_core::scheduler::Priority::Visible)
+            .get(request.clone(), skwir_core::scheduler::Priority::Visible)
         {
             ThumbState::Ready(image) => break image,
             ThumbState::Pending => {
@@ -371,7 +371,7 @@ fn children() -> usize {
 
 #[test]
 fn a_picture_from_outside_is_previewed_as_the_png_it_makes() {
-    let module = common::module("bibli-outside-netpbm");
+    let module = common::module("skwir-outside-netpbm");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
     let installed = common::install(
@@ -471,7 +471,7 @@ fn a_picture_from_outside_is_previewed_as_the_png_it_makes() {
 
 #[test]
 fn a_file_of_several_pictures_is_previewed_a_page_at_a_time() {
-    let module = common::module("bibli-outside-netpbm");
+    let module = common::module("skwir-outside-netpbm");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
     common::install(

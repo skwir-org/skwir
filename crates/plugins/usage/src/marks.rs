@@ -11,8 +11,8 @@ use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use bibli_platform::mime::{self, Kind};
 use serde::{Deserialize, Serialize};
+use skwir_platform::mime::{self, Kind};
 
 /// Room the user can have back: a cache, which its program makes again
 /// when it needs it, or what was put in the Trash.
@@ -22,7 +22,7 @@ pub enum Reclaim {
     /// A folder holding a `CACHEDIR.TAG` (bford.net/cachedir), or the
     /// user's cache folder (`$XDG_CACHE_HOME`).
     Cache,
-    /// A trash (`bibli_platform::trash`): freed when it is emptied.
+    /// A trash (`skwir_platform::trash`): freed when it is emptied.
     Trash,
 }
 
@@ -159,11 +159,11 @@ impl Places {
     pub(crate) fn read() -> Self {
         let canonical = |path: PathBuf| std::fs::canonicalize(&path).ok();
         Places {
-            caches: bibli_core::xdg::cache_home()
+            caches: skwir_core::xdg::cache_home()
                 .and_then(canonical)
                 .into_iter()
                 .collect(),
-            trashes: bibli_platform::trash::home_trash()
+            trashes: skwir_platform::trash::home_trash()
                 .and_then(canonical)
                 .into_iter()
                 .collect(),
@@ -177,7 +177,7 @@ impl Places {
     }
 
     pub(crate) fn of(&self, path: &Path) -> Option<Reclaim> {
-        if self.trashes.iter().any(|t| t == path) || bibli_platform::trash::named_as_trash(path) {
+        if self.trashes.iter().any(|t| t == path) || skwir_platform::trash::named_as_trash(path) {
             Some(Reclaim::Trash)
         } else if self.caches.iter().any(|c| c == path) {
             Some(Reclaim::Cache)
@@ -195,7 +195,7 @@ const SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
 /// file of that name and nothing more is not one.
 pub(crate) fn tags_a_cache(path: &Path) -> bool {
     let mut head = [0; SIGNATURE.len()];
-    bibli_core::fs::file::open_regular(path)
+    skwir_core::fs::file::open_regular(path)
         .and_then(|mut file| file.read_exact(&mut head))
         .is_ok_and(|()| head == SIGNATURE)
 }

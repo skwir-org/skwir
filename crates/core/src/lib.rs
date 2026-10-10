@@ -1,4 +1,4 @@
-//! bibli core.
+//! skwir core.
 //!
 //! Only what two plugins must agree on lives here:
 //!
@@ -18,7 +18,7 @@
 //! - [`thumbs`]: the thumbnail service: providers, LRU of decoded images, viewport priority.
 //! - [`workspace`]: panes, selection, focus; [`tabs`]: the tabs that group panes.
 //! - [`system`]: the system's name, and what is not written for it yet (ADR-035);
-//!   [`folders`]: bibli's own folders, where each system keeps them.
+//!   [`folders`]: skwir's own folders, where each system keeps them.
 //! - [`collate`] and [`lru`]: the natural name order and the byte-budgeted LRU every cache shares.
 //! - [`app`]: the object that ties them together and hosts the built-in commands.
 //!

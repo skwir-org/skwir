@@ -1,6 +1,6 @@
 [package]
-name = "bibli-plugin-api"
-description = "bibli: what a plugin from outside bibli is and speaks, as a program or a WebAssembly module (ADR-045, ADR-046)"
+name = "skwir-plugin-api"
+description = "skwir: what a plugin from outside skwir is and speaks, as a program or a WebAssembly module (ADR-045, ADR-046)"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -11,7 +11,7 @@ rust-version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
-# A plugin built as a WebAssembly module: its bindings to bibli's host.
+# A plugin built as a WebAssembly module: its bindings to skwir's host.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wit-bindgen = { version = "0.57", default-features = false, features = ["macros", "realloc"] }
 

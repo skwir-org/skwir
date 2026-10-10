@@ -320,7 +320,7 @@ mod tests {
 
     impl Sys {
         fn new() -> Self {
-            let base = dirs::home_dir().unwrap().join(".cache/bibli-tests");
+            let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
             std::fs::create_dir_all(&base).unwrap();
             let dir = tempfile::tempdir_in(base).unwrap();
             for d in [

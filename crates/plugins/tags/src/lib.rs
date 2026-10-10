@@ -1,4 +1,4 @@
-//! bibli plugin: tags and the other notes a file carries in its extended
+//! skwir plugin: tags and the other notes a file carries in its extended
 //! attributes, so they travel with the file and need no database: tags in
 //! `user.xdg.tags` (comma-separated, the freedesktop convention), a rating
 //! in `user.baloo.rating` and a comment in `user.xdg.comment`, as Dolphin
@@ -32,23 +32,23 @@ pub mod xdg;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bibli_core::app::App;
-use bibli_core::cancel::CancelToken;
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::keys;
-use bibli_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag};
-use bibli_core::op::{EntryRef, Plan};
-use bibli_core::os_path::PathArg;
-use bibli_core::plugin::Plugin;
-use bibli_core::registry::{KeyBinding, MenuItem, MenuSource};
-use bibli_core::scheduler::Priority;
-use bibli_core::settings::SettingSpec;
-use bibli_core::workspace::PaneId;
 use parking_lot::Mutex;
+use skwir_core::app::App;
+use skwir_core::cancel::CancelToken;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::entry::keys;
+use skwir_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag};
+use skwir_core::op::{EntryRef, Plan};
+use skwir_core::os_path::PathArg;
+use skwir_core::plugin::Plugin;
+use skwir_core::registry::{KeyBinding, MenuItem, MenuSource};
+use skwir_core::scheduler::Priority;
+use skwir_core::settings::SettingSpec;
+use skwir_core::workspace::PaneId;
 
 pub use attrs::tags_of;
-pub use bibli_core::notes::parse_tags;
-use bibli_core::notes::{NoteStores, Notes};
+pub use skwir_core::notes::parse_tags;
+use skwir_core::notes::{NoteStores, Notes};
 
 use vocabulary::Vocabulary;
 
@@ -58,7 +58,7 @@ pub const FIELD: &str = keys::TAGS;
 
 /// The plugin's stores (ADR-027), the desktop's first: it is this
 /// platform's own.
-fn stores() -> Vec<Arc<dyn bibli_core::notes::NotesStore>> {
+fn stores() -> Vec<Arc<dyn skwir_core::notes::NotesStore>> {
     vec![
         Arc::new(xdg::XdgStore),
         Arc::new(finder::FinderStore),
@@ -133,7 +133,7 @@ struct TagsArgs {
     /// The entries to act on, by absolute path; the pane's selection when
     /// omitted.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
@@ -156,7 +156,7 @@ struct ToggleArgs {
     /// The entries to act on, by absolute path; the pane's selection when
     /// omitted.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
@@ -172,7 +172,7 @@ struct EditArgs {
     /// The entries to act on, by absolute path; the pane's selection when
     /// omitted.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
@@ -182,7 +182,7 @@ struct PaneArgs {
     /// The entries to act on, by absolute path; the pane's selection when
     /// omitted.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     #[serde(default)]
     pane: Option<PaneId>,
 }
@@ -258,13 +258,13 @@ struct ColorArgs {
 /// A plan of one step per target entry, built from what each entry holds
 /// now (read from the file: the listing's field can be stale), leaving out
 /// the entries it would not change.
-fn per_entry<T: bibli_core::op::Operation + 'static>(
+fn per_entry<T: skwir_core::op::Operation + 'static>(
     refs: Vec<EntryRef>,
     title: String,
     step: impl Fn(EntryRef) -> Option<T>,
 ) -> anyhow::Result<Outcome> {
     if refs.is_empty() {
-        return Err(bibli_core::command::NothingSelected.into());
+        return Err(skwir_core::command::NothingSelected.into());
     }
     let mut plan = Plan::new(title);
     for r in refs {
@@ -285,17 +285,17 @@ fn edited(
     remove: &[String],
     exclusive: &[String],
 ) -> Vec<String> {
-    bibli_core::metadata::edited_tags(current, add, remove, exclusive)
+    skwir_core::metadata::edited_tags(current, add, remove, exclusive)
 }
 
 /// Whether a listed entry's notes hold `tag` (`keys::TAGS`).
-fn has_tag(e: &bibli_core::Entry, tag: &str) -> bool {
+fn has_tag(e: &skwir_core::Entry, tag: &str) -> bool {
     match e.metadata.value(keys::TAGS) {
-        Some(bibli_core::Value::List(items)) => items
+        Some(skwir_core::Value::List(items)) => items
             .iter()
-            .filter_map(bibli_core::Value::as_str)
+            .filter_map(skwir_core::Value::as_str)
             .any(|t| same_tag(t, tag)),
-        Some(bibli_core::Value::Text(t)) => same_tag(t, tag),
+        Some(skwir_core::Value::Text(t)) => same_tag(t, tag),
         _ => false,
     }
 }
@@ -322,7 +322,7 @@ fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Re
     // What each file holds is read when the plan is applied, where a file
     // that would not change is skipped: nothing is read here, on the
     // thread that dispatched it.
-    let change = bibli_core::notes::TagChange {
+    let change = skwir_core::notes::TagChange {
         add: add.clone(),
         remove: remove.clone(),
         within: Vec::new(),
@@ -339,7 +339,7 @@ fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Re
 fn selected(app: &App, vocabulary: &Vocabulary, a: PaneArgs) -> anyhow::Result<serde_json::Value> {
     // Nothing selected is no tags; an entry named that is not, an error.
     let refs = match app.targets(a.pane, a.entries) {
-        Err(error) if bibli_core::command::is_nothing_selected(&error) => Vec::new(),
+        Err(error) if skwir_core::command::is_nothing_selected(&error) => Vec::new(),
         refs => refs?,
     };
     // Keyed by the lowercase form, in the order first met, with the color
@@ -439,7 +439,7 @@ fn set_color(app: &App, lifetime: &CancelToken, sidebar: &Sidebar, tag: &str, co
                 .set(TAG_COLOR_SETTING, toml::Value::Table(colors));
             if let Err(error) = app.settings.save() {
                 app.notify(
-                    bibli_core::app::NotifyLevel::Error,
+                    skwir_core::app::NotifyLevel::Error,
                     format!("The tag's color was not saved: {error:#}"),
                 );
             }
@@ -500,8 +500,8 @@ impl Plugin for TagsPlugin {
     fn description(&self) -> &'static str {
         "Tags, ratings and comments kept in the files' extended attributes, no database; where downloads came from"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Files
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Files
     }
     fn on_disable(&self, _app: &App) {
         if let Some(lifetime) = self.lifetime.lock().take() {
@@ -538,9 +538,9 @@ impl Plugin for TagsPlugin {
         clippy::too_many_lines,
         reason = "one registration, read top to bottom"
     )]
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[
             Capability::Read,
             Capability::Write,
             Capability::Programs,
@@ -556,7 +556,7 @@ impl Plugin for TagsPlugin {
             SettingSpec::integer(
                 index::LIMIT_SETTING,
                 "Room for tagged files",
-                "How much memory bibli may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches. Past it, new tagged files are left out of the tags' folders, and bibli says so",
+                "How much memory skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches. Past it, new tagged files are left out of the tags' folders, and skwir says so",
                 index::LIMIT_DEFAULT,
                 (8, 4096),
             )
@@ -589,7 +589,7 @@ impl Plugin for TagsPlugin {
         // they are shown, it goes back to the folder, as Alt+G does.
         app.registry.aspects.add(
             ID,
-            bibli_core::registry::Aspect {
+            skwir_core::registry::Aspect {
                 scheme: location::SCHEME.into(),
                 icon: "tag".into(),
                 command: Invocation::with_args(
@@ -602,7 +602,7 @@ impl Plugin for TagsPlugin {
         );
         app.registry.keepers.add(
             ID,
-            bibli_core::registry::Keeper {
+            skwir_core::registry::Keeper {
                 scheme: location::SCHEME.into(),
                 save: Invocation::new("tags.keep"),
                 save_title: "Pin this tag to the sidebar".into(),
@@ -612,7 +612,7 @@ impl Plugin for TagsPlugin {
         );
         app.registry.menu_sources.add(
             ID,
-            bibli_core::registry::MenuSource {
+            skwir_core::registry::MenuSource {
                 menu: "context".into(),
                 when: Some("place".into()),
                 command: Invocation::new("tags.place_menu"),
@@ -625,7 +625,7 @@ impl Plugin for TagsPlugin {
         for menu in ["place", "tag"] {
             app.registry.menu_sources.add(
                 ID,
-                bibli_core::registry::MenuSource {
+                skwir_core::registry::MenuSource {
                     menu: menu.into(),
                     when: None,
                     command: Invocation::new("tags.tag_menu"),
@@ -643,7 +643,7 @@ impl Plugin for TagsPlugin {
             app.executor.observe(
                 ID,
                 Arc::new(move |changes| {
-                    use bibli_core::op::Change;
+                    use skwir_core::op::Change;
                     // Files to read again (their tags changed, or they came
                     // back or were copied), and files that moved.
                     let mut paths: Vec<std::path::PathBuf> = Vec::new();
@@ -771,7 +771,7 @@ impl Plugin for TagsPlugin {
             toml::Value::Array(Vec::new()),
         ));
         app.settings.declare(SettingSpec::data(
-            bibli_core::metadata::TAG_EXCLUSIVE_SETTING,
+            skwir_core::metadata::TAG_EXCLUSIVE_SETTING,
             "The categories a file has one tag of at a time: fields, whose values are the tags within them",
             toml::Value::Array(Vec::new()),
         ));
@@ -783,7 +783,7 @@ impl Plugin for TagsPlugin {
                 "One tag of a category at a time",
                 "Make a category (`tag`) hold one tag per file at a time, a field whose values are its tags (`on`), or several again",
                 move |a, app| {
-                    let tag = bibli_core::metadata::clean_tag(&a.tag);
+                    let tag = skwir_core::metadata::clean_tag(&a.tag);
                     anyhow::ensure!(!tag.is_empty(), "which category?");
                     fields::set(app, &fields.saving, &tag, a.on, a.undo);
                     Ok(Outcome::Done)
@@ -1285,14 +1285,14 @@ impl Plugin for TagsPlugin {
 #[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
-    use bibli_core::Value;
-    use bibli_core::app::AppConfig;
-    use bibli_core::location::Location;
+    use skwir_core::Value;
+    use skwir_core::app::AppConfig;
+    use skwir_core::location::Location;
     use std::path::Path;
     use std::time::Duration;
 
     fn home_tempdir() -> tempfile::TempDir {
-        let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         tempfile::Builder::new()
             .prefix("tags-")
@@ -1366,11 +1366,11 @@ mod tests {
                 color: *color,
             })
             .collect();
-        bibli_core::fs::xattr::set(f, name, &finder::encode(&tags, framing)).unwrap();
+        skwir_core::fs::xattr::set(f, name, &finder::encode(&tags, framing)).unwrap();
     }
 
     fn finder_of(f: &Path, name: &str, framing: finder::Framing) -> Vec<(String, u8)> {
-        let bytes = bibli_core::fs::xattr::get(f, name)
+        let bytes = skwir_core::fs::xattr::get(f, name)
             .unwrap()
             .expect("the Finder attribute");
         finder::parse(&bytes, framing)
@@ -1470,7 +1470,7 @@ mod tests {
             ]
         );
         assert_eq!(read_tags(&shared), ["new"]);
-        let raw = bibli_core::fs::xattr::get(&shared, SAMBA).unwrap().unwrap();
+        let raw = skwir_core::fs::xattr::get(&shared, SAMBA).unwrap().unwrap();
         assert_eq!(raw.last(), Some(&0), "Samba's NUL stays");
         assert_eq!(
             finder_of(&shared, SAMBA, finder::Framing::Stream),
@@ -1495,12 +1495,12 @@ mod tests {
         app.executor.execute_blocking(&clear, app.lifetime());
         assert!(read_tags(&copied).is_empty() && read_tags(&shared).is_empty());
         assert!(
-            bibli_core::fs::xattr::get(&copied, PLAIN)
+            skwir_core::fs::xattr::get(&copied, PLAIN)
                 .unwrap()
                 .is_none()
         );
         assert!(
-            bibli_core::fs::xattr::get(&shared, SAMBA)
+            skwir_core::fs::xattr::get(&shared, SAMBA)
                 .unwrap()
                 .is_none()
         );
@@ -1672,7 +1672,7 @@ mod tests {
         ] {
             let op = app
                 .ops
-                .build(&bibli_core::op::OpData {
+                .build(&skwir_core::op::OpData {
                     kind: kind.into(),
                     args,
                 })
@@ -1693,7 +1693,7 @@ mod tests {
     // Extended attributes: Unix's.
     #[cfg(unix)]
     #[test]
-    fn a_macs_edit_after_bibli_wrote_wins_and_the_stores_are_made_to_agree() {
+    fn a_macs_edit_after_skwir_wrote_wins_and_the_stores_are_made_to_agree() {
         const FINDER: &str = "user.com.apple.metadata:_kMDItemUserTags";
         let tmp = home_tempdir();
         let dir = tmp.path().join("synced");
@@ -1719,7 +1719,7 @@ mod tests {
         let now = read();
         assert_eq!(now.notes.tag_names(), ["a", "mac"], "the Mac's edit wins");
         assert_eq!(now.differ, ["xdg"]);
-        // Without what bibli wrote (another machine, a cache deleted): all.
+        // Without what skwir wrote (another machine, a cache deleted): all.
         assert_eq!(read_tags(&f), ["a", "b", "x", "mac"]);
         // Details says where they are, and where they differ.
         hydrate_all(&app, pane);
@@ -1737,7 +1737,7 @@ mod tests {
             if let Some(Value::List(titles)) = differ {
                 assert_eq!(
                     titles[0].as_str(),
-                    Some(bibli_core::notes::NotesStore::title(&xdg::XdgStore))
+                    Some(skwir_core::notes::NotesStore::title(&xdg::XdgStore))
                 );
                 break;
             }
@@ -1754,7 +1754,7 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            bibli_core::fs::xattr::get(&f, xdg::TAGS)
+            skwir_core::fs::xattr::get(&f, xdg::TAGS)
                 .unwrap()
                 .as_deref(),
             Some(b"a,mac".as_slice())
@@ -1765,7 +1765,7 @@ mod tests {
         assert_eq!((r.applied, r.skipped), (0, 1), "they agree already");
         app.executor.undo_blocking(app.lifetime()).unwrap();
         assert_eq!(
-            bibli_core::fs::xattr::get(&f, xdg::TAGS)
+            skwir_core::fs::xattr::get(&f, xdg::TAGS)
                 .unwrap()
                 .as_deref(),
             Some(b"a,b,x".as_slice())
@@ -1798,13 +1798,13 @@ mod tests {
         )
         .unwrap();
         let (app, _) = app_in(tmp.path(), &stick, &["it's a.pdf"]);
-        let run = |op: Box<dyn bibli_core::op::Operation>| {
+        let run = |op: Box<dyn skwir_core::op::Operation>| {
             let mut plan = Plan::new("op");
             plan.steps.push(op);
             let r = app.executor.execute_blocking(&plan, app.lifetime());
             assert!(r.error.is_none(), "{:?}", r.error);
         };
-        run(Box::new(bibli_core::op::Rename {
+        run(Box::new(skwir_core::op::Rename {
             entry: EntryRef::from_path(&file).unwrap(),
             new_name: "b.pdf".into(),
         }));
@@ -1813,7 +1813,7 @@ mod tests {
         assert_eq!(read_tags(&renamed), ["Rouge"]);
         // Copied to a disk, which keeps attributes: the Mac's become the
         // file's own, color and all, and no `._` file follows.
-        run(Box::new(bibli_core::op::Copy {
+        run(Box::new(skwir_core::op::Copy {
             entry: EntryRef::from_path(&renamed).unwrap(),
             dest_dir: disk.clone(),
             new_name: None,
@@ -1822,7 +1822,7 @@ mod tests {
         let copy = disk.join("b.pdf");
         assert!(!disk.join("._b.pdf").exists());
         assert!(
-            bibli_core::fs::xattr::get(&copy, "user.com.apple.metadata:_kMDItemUserTags")
+            skwir_core::fs::xattr::get(&copy, "user.com.apple.metadata:_kMDItemUserTags")
                 .unwrap()
                 .is_some()
         );
@@ -1836,13 +1836,13 @@ mod tests {
     /// with `bindfs --xattr-none`, a FAT stick): a copy onto it keeps the
     /// file's notes in a `._` file, which a copy back makes attributes
     /// again, and an edit there starts one for a file that has none.
-    /// `BIBLI_NO_XATTR_DIR=<folder> cargo nextest run -p bibli-plugin-tags
+    /// `SKWIR_NO_XATTR_DIR=<folder> cargo nextest run -p skwir-plugin-tags
     /// --run-ignored only refusing`.
     #[test]
     #[ignore = "needs a folder on a volume without attributes"]
     fn onto_a_volume_refusing_attributes_notes_go_beside_and_come_back() {
         let refusing = std::path::PathBuf::from(
-            std::env::var_os("BIBLI_NO_XATTR_DIR").expect("BIBLI_NO_XATTR_DIR"),
+            std::env::var_os("SKWIR_NO_XATTR_DIR").expect("SKWIR_NO_XATTR_DIR"),
         );
         let tmp = home_tempdir();
         let home = tmp.path().join("home");
@@ -1850,21 +1850,21 @@ mod tests {
         let file = home.join("it's tagged.txt");
         std::fs::write(&file, b"x").unwrap();
         write_tags(&file, &["work".into(), "Été".into()]).unwrap();
-        bibli_core::fs::xattr::set(&file, xdg::RATING, b"8").unwrap();
-        let stick = refusing.join(format!("bibli-refusing-{}", std::process::id()));
+        skwir_core::fs::xattr::set(&file, xdg::RATING, b"8").unwrap();
+        let stick = refusing.join(format!("skwir-refusing-{}", std::process::id()));
         std::fs::create_dir(&stick).unwrap();
         assert!(
-            bibli_core::fs::xattr::set(&stick, "user.test", b"x").is_err(),
+            skwir_core::fs::xattr::set(&stick, "user.test", b"x").is_err(),
             "attributes are refused"
         );
         let (app, _) = app_in(tmp.path(), &home, &["it's tagged.txt"]);
-        let run = |op: Box<dyn bibli_core::op::Operation>| {
+        let run = |op: Box<dyn skwir_core::op::Operation>| {
             let mut plan = Plan::new("op");
             plan.steps.push(op);
             let r = app.executor.execute_blocking(&plan, app.lifetime());
             assert!(r.error.is_none(), "{:?}", r.error);
         };
-        run(Box::new(bibli_core::op::Copy {
+        run(Box::new(skwir_core::op::Copy {
             entry: EntryRef::from_path(&file).unwrap(),
             dest_dir: stick.clone(),
             new_name: None,
@@ -1880,7 +1880,7 @@ mod tests {
         // Back to the disk: attributes again, no `._` file.
         let back = home.join("back");
         std::fs::create_dir(&back).unwrap();
-        run(Box::new(bibli_core::op::Copy {
+        run(Box::new(skwir_core::op::Copy {
             entry: EntryRef::from_path(&copied).unwrap(),
             dest_dir: back.clone(),
             new_name: None,
@@ -1888,7 +1888,7 @@ mod tests {
         }));
         assert!(!back.join("._it's tagged.txt").exists());
         assert_eq!(
-            bibli_core::fs::xattr::get(back.join("it's tagged.txt"), xdg::TAGS)
+            skwir_core::fs::xattr::get(back.join("it's tagged.txt"), xdg::TAGS)
                 .unwrap()
                 .as_deref(),
             Some("work,Été".as_bytes())
@@ -1951,7 +1951,7 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            bibli_core::fs::xattr::get(&f, xdg::TAGS)
+            skwir_core::fs::xattr::get(&f, xdg::TAGS)
                 .unwrap()
                 .as_deref(),
             Some(b"ours".as_slice())
@@ -1970,7 +1970,7 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            bibli_core::fs::xattr::get(&f, xdg::TAGS)
+            skwir_core::fs::xattr::get(&f, xdg::TAGS)
                 .unwrap()
                 .as_deref(),
             Some(b"ours,mac,new,more".as_slice())
@@ -2072,7 +2072,7 @@ mod tests {
             assert_eq!(tags_of(&e.metadata).unwrap(), ["old"]);
             assert_eq!(
                 e.metadata.get(FIELD).unwrap().provenance,
-                bibli_core::entry::Provenance::User
+                skwir_core::entry::Provenance::User
             );
         }
 
@@ -2145,7 +2145,7 @@ mod tests {
         for kind in ["set_tags", "set_rating", "set_comment"] {
             assert!(
                 app.ops
-                    .build(&bibli_core::op::OpData {
+                    .build(&skwir_core::op::OpData {
                         kind: kind.into(),
                         args: serde_json::json!({})
                     })
@@ -2234,7 +2234,7 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         let f = dir.join("pic.jpg");
         std::fs::write(&f, b"x").unwrap();
-        bibli_core::fs::xattr::set(&f, xdg::ORIGIN, b"https://example.org/pic.jpg").unwrap();
+        skwir_core::fs::xattr::set(&f, xdg::ORIGIN, b"https://example.org/pic.jpg").unwrap();
         let (app, pane) = app_in(tmp.path(), &dir, &["pic.jpg"]);
 
         let rate = plan(&app, "notes.rate", &serde_json::json!({ "stars": 4 }));
@@ -2247,7 +2247,7 @@ mod tests {
         app.executor.execute_blocking(&rate, app.lifetime());
         assert_eq!(read_rating(&f), Some(8));
         assert_eq!(
-            bibli_core::fs::xattr::get(&f, xdg::RATING)
+            skwir_core::fs::xattr::get(&f, xdg::RATING)
                 .unwrap()
                 .unwrap(),
             b"8",
@@ -2281,15 +2281,15 @@ mod tests {
                 continue;
             }
             assert_eq!(
-                m.value(keys::RATING).and_then(bibli_core::Value::as_u64),
+                m.value(keys::RATING).and_then(skwir_core::Value::as_u64),
                 Some(8)
             );
             assert_eq!(
-                m.value(keys::COMMENT).and_then(bibli_core::Value::as_str),
+                m.value(keys::COMMENT).and_then(skwir_core::Value::as_str),
                 Some("from the “trip”, day 2")
             );
             assert_eq!(
-                m.value(keys::ORIGIN).and_then(bibli_core::Value::as_str),
+                m.value(keys::ORIGIN).and_then(skwir_core::Value::as_str),
                 Some("https://example.org/pic.jpg")
             );
             break;
@@ -2308,7 +2308,7 @@ mod tests {
         app.executor.undo_blocking(app.lifetime()).unwrap();
         assert_eq!(read_rating(&f), None);
         assert!(
-            bibli_core::fs::xattr::get(&f, xdg::RATING)
+            skwir_core::fs::xattr::get(&f, xdg::RATING)
                 .unwrap()
                 .is_none()
         );

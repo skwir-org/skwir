@@ -20,13 +20,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use bibli_core::{App, Entry};
-use bibli_platform::system_icons::{self, SystemIcon};
-use bibli_platform::{icons, mime};
 use gpui::{
     AnyElement, Asset, AssetSource, Hsla, ImageCacheError, ImageSource, RenderImage, SharedString,
     Window, div, img, prelude::*, px, svg,
 };
+use skwir_core::{App, Entry};
+use skwir_platform::system_icons::{self, SystemIcon};
+use skwir_platform::{icons, mime};
 
 /// Serves any absolute path on disk. Icon themes live outside the binary.
 pub struct FsAssets;
@@ -124,8 +124,8 @@ impl AssetSource for FsAssets {
 }
 
 /// What an icon is drawn from: a file of the desktop's icon theme, or the
-/// system's own picture, where bibli reads no theme (macOS, Windows:
-/// `bibli_platform::system_icons`).
+/// system's own picture, where skwir reads no theme (macOS, Windows:
+/// `skwir_platform::system_icons`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Pic {
     /// A theme's icon, in its own colors.
@@ -342,7 +342,7 @@ impl IconCache {
         let results = Arc::clone(&self.results);
         let weak = app.weak();
         app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Visible,
+            skwir_core::scheduler::Priority::Visible,
             "icons",
             app.lifetime().child(),
             move || {
@@ -479,7 +479,7 @@ impl Asset for SizedSvg {
 }
 
 /// A system icon drawn within a side of device pixels
-/// (`bibli_platform::system_icons::picture`), loaded by GPUI's asset
+/// (`skwir_platform::system_icons::picture`), loaded by GPUI's asset
 /// system on its background executor and kept per (icon, side).
 enum SystemPicture {}
 

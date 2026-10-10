@@ -60,7 +60,7 @@ GPUI:
   to the sprite atlas, which is the thumbnail fast path.
 - The default system font stack does not resolve on this machine and the
   failed lookup repeats every frame, costing 35 to 50 ms per frame until an
-  explicit font family is set. bibli must always set a verified font family.
+  explicit font family is set. skwir must always set a verified font family.
 - No Cargo features were needed for Wayland; Vulkan through blade honored the
   ICD restriction. The code was compact (150 lines). Every API had to be read
   from the crate source since documentation is thin.
@@ -86,7 +86,7 @@ Mitigations adopted with it:
 
 - Pin an exact `gpui` version and upgrade deliberately; expect API churn.
 - Set an explicit font family at the root and verify it resolves at startup.
-- Keep `bibli-ui` thin over `bibli-core` so the toolkit remains replaceable.
+- Keep `skwir-ui` thin over `skwir-core` so the toolkit remains replaceable.
 
 ## What the spike could not verify
 
@@ -102,12 +102,12 @@ Mitigations adopted with it:
 
 ## Consequences
 
-- Phase 2 builds `bibli-ui` on gpui 0.2.2.
+- Phase 2 builds `skwir-ui` on gpui 0.2.2.
 - **Known gap: accessibility.** gpui 0.2.2 has no AccessKit integration
   (verified: no `accesskit` dependency in the crate). The plan's "AccessKit
   from day one" requirement cannot be met on this toolkit version. Tracked
   as an open item to revisit at each gpui upgrade; if it is still absent
   by Phase 5, evaluate contributing it upstream or a dedicated
-  AccessKit adapter in `bibli-ui`.
+  AccessKit adapter in `skwir-ui`.
 - The spike workspace stays in the repo as a reproducible benchmark; both
   spikes remain runnable through `just spike <toolkit> <gpu>`.

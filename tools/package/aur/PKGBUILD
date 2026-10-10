@@ -1,21 +1,22 @@
-# bibli's Arch packages, for the AUR (ADR-040, ADR-041): built from a
+# skwir's Arch packages, for the AUR (ADR-040, ADR-041): built from a
 # release's source with Arch's own Rust, PDFium from the release
-# tools/package/pdfium.lock pins (aur/build.sh checks they agree). bibli
+# tools/package/pdfium.lock pins (aur/build.sh checks they agree). skwir
 # carries its helpers, the Poppler reader's and the player's libraries
-# left optional (bibli says the engine is not installed without them);
+# left optional (skwir says the engine is not installed without them);
 # Mermaid and MuPDF are packages of their own. The files are those of the
-# Debian and RPM packages (crates/bibli/Cargo.toml). `just package-aur`
+# Debian and RPM packages (crates/skwir/Cargo.toml). `just package-aur`
 # writes .SRCINFO beside this file; publishing it is pushing both to the
 # AUR's git repository of the package.
 # Maintainer: whoever publishes it on the AUR
 
-pkgbase=bibli
-pkgname=(bibli bibli-mermaid bibli-mupdf)
-pkgver=0.0.1
+pkgbase=skwir
+pkgname=(skwir skwir-mermaid skwir-mupdf)
+pkgver=0.1.0
 pkgrel=1
 pkgdesc='An experimental file manager, GPU-drawn, for people, scripts and agents'
 arch=('x86_64' 'aarch64')
-url='https://github.com/venator/bibli'
+url='https://skwir.org'
+_repo='https://github.com/skwir-org/skwir'
 license=('Apache-2.0')
 # The libraries every helper links, to build them all, and what the
 # packages depend on (a split PKGBUILD names it here too).
@@ -29,10 +30,10 @@ makedepends=(
 # intermediate code, which Rust's linker (lld) cannot read.
 options=('!lto')
 _pdfium=8086
-source=("$pkgbase-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+source=("$pkgbase-$pkgver.tar.gz::$_repo/archive/v$pkgver.tar.gz")
 source_x86_64=("pdfium-linux-x64-$_pdfium.tgz::https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F$_pdfium/pdfium-linux-x64.tgz")
 source_aarch64=("pdfium-linux-arm64-$_pdfium.tgz::https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F$_pdfium/pdfium-linux-arm64.tgz")
-# bibli's: filled when a release is tagged (updpkgsums); PDFium's: as
+# skwir's: filled when a release is tagged (updpkgsums); PDFium's: as
 # tools/package/pdfium.lock pins them.
 sha256sums=('SKIP')
 sha256sums_x86_64=('588577cf52dabc1a444988bac841920df54cc2f141801424de97ab04f4fbb935')
@@ -51,12 +52,12 @@ build() {
   # shellcheck disable=SC2046 # one `-p name` per program
   cargo build --frozen --profile dist $(sed 's/^/-p /' tools/package/programs)
   # What each package's programs link, and their notices: Mermaid's and
-  # MuPDF's helpers apart, the others bibli's.
-  tools/package/notices.py bibli-mermaid-worker bibli-mupdf-worker
+  # MuPDF's helpers apart, the others skwir's.
+  tools/package/notices.py skwir-mermaid-worker skwir-mupdf-worker
 }
 
-package_bibli() {
-  # What its programs link, and what bibli opens at run time (the Vulkan
+package_skwir() {
+  # What its programs link, and what skwir opens at run time (the Vulkan
   # loader and a driver for it, fontconfig).
   depends=(
     'libgcc' 'glibc' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'sqlite'
@@ -70,9 +71,9 @@ package_bibli() {
     'gst-plugins-bad: more audio and video formats'
     'gst-plugins-ugly: more audio and video formats'
     'gst-libav: more audio and video formats'
-    'poppler-glib: PDFs through Poppler, beside the PDFium bibli carries'
-    'bibli-mermaid: Mermaid diagrams drawn in Markdown previews'
-    'bibli-mupdf: the MuPDF engine, PDFs and books laid out into pages'
+    'poppler-glib: PDFs through Poppler, beside the PDFium skwir carries'
+    'skwir-mermaid: Mermaid diagrams drawn in Markdown previews'
+    'skwir-mupdf: the MuPDF engine, PDFs and books laid out into pages'
     'bubblewrap: LibreOffice, ImageMagick and thumbnailers run isolated'
     'libreoffice-fresh: office documents shown as pages'
     'pandoc-cli: text documents read by Pandoc'
@@ -82,42 +83,42 @@ package_bibli() {
     'plocate: instant name searches over whole disks'
     'udisks2: unmounting volumes from the sidebar'
   )
-  # bibli's own, PDFium's, and the Poppler reader's: a program linking
+  # skwir's own, PDFium's, and the Poppler reader's: a program linking
   # Poppler, whose core is GPL v2 or v3, with code under Apache-2.0 is
   # under the GPL v3 (ADR-042).
   license=('Apache-2.0' 'BSD-3-Clause' 'GPL-3.0-only')
   cd "$pkgbase-$pkgver"
-  install -Dm755 target/dist/bibli "$pkgdir/usr/bin/bibli"
+  install -Dm755 target/dist/skwir "$pkgdir/usr/bin/skwir"
   while read -r program; do
     case "$program" in
-    bibli | bibli-mermaid-worker | bibli-mupdf-worker) ;;
-    *) install -Dm755 "target/dist/$program" -t "$pkgdir/usr/lib/bibli/" ;;
+    skwir | skwir-mermaid-worker | skwir-mupdf-worker) ;;
+    *) install -Dm755 "target/dist/$program" -t "$pkgdir/usr/lib/skwir/" ;;
     esac
   done < tools/package/programs
-  install -Dm755 "$srcdir/lib/libpdfium.so" -t "$pkgdir/usr/lib/bibli/"
+  install -Dm755 "$srcdir/lib/libpdfium.so" -t "$pkgdir/usr/lib/skwir/"
   install -Dm644 "$srcdir/LICENSE" "$srcdir"/licenses/* -t "$pkgdir/usr/share/licenses/$pkgbase/pdfium/"
-  install -Dm644 tools/package/linux/bibli.desktop -t "$pkgdir/usr/share/applications/"
-  install -Dm644 tools/package/linux/io.github.venator.bibli.metainfo.xml -t "$pkgdir/usr/share/metainfo/"
+  install -Dm644 tools/package/linux/org.skwir.skwir.desktop -t "$pkgdir/usr/share/applications/"
+  install -Dm644 tools/package/linux/org.skwir.skwir.metainfo.xml -t "$pkgdir/usr/share/metainfo/"
   install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgbase/"
   install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgbase/"
-  install -Dm644 target/notices/bibli/THIRD-PARTY-NOTICES -t "$pkgdir/usr/share/licenses/bibli/"
+  install -Dm644 target/notices/skwir/THIRD-PARTY-NOTICES -t "$pkgdir/usr/share/licenses/skwir/"
 }
 
-package_bibli-mermaid() {
-  pkgdesc="Mermaid diagrams drawn in bibli's Markdown previews"
-  depends=('bibli' 'libgcc' 'glibc')
+package_skwir-mermaid() {
+  pkgdesc="Mermaid diagrams drawn in skwir's Markdown previews"
+  depends=('skwir' 'libgcc' 'glibc')
   cd "$pkgbase-$pkgver"
-  install -Dm755 target/dist/bibli-mermaid-worker -t "$pkgdir/usr/lib/bibli/"
-  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/bibli-mermaid/"
-  install -Dm644 target/notices/bibli-mermaid/THIRD-PARTY-NOTICES -t "$pkgdir/usr/share/licenses/bibli-mermaid/"
+  install -Dm755 target/dist/skwir-mermaid-worker -t "$pkgdir/usr/lib/skwir/"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/skwir-mermaid/"
+  install -Dm644 target/notices/skwir-mermaid/THIRD-PARTY-NOTICES -t "$pkgdir/usr/share/licenses/skwir-mermaid/"
 }
 
-package_bibli-mupdf() {
-  pkgdesc="bibli's MuPDF engine: PDFs, and books laid out into pages"
-  depends=('bibli' 'libgcc' 'glibc')
-  # bibli's code, linking MuPDF (ADR-014).
+package_skwir-mupdf() {
+  pkgdesc="skwir's MuPDF engine: PDFs, and books laid out into pages"
+  depends=('skwir' 'libgcc' 'glibc')
+  # skwir's code, linking MuPDF (ADR-014).
   license=('AGPL-3.0-or-later')
   cd "$pkgbase-$pkgver"
-  install -Dm755 target/dist/bibli-mupdf-worker -t "$pkgdir/usr/lib/bibli/"
-  install -Dm644 target/notices/bibli-mupdf/THIRD-PARTY-NOTICES -t "$pkgdir/usr/share/licenses/bibli-mupdf/"
+  install -Dm755 target/dist/skwir-mupdf-worker -t "$pkgdir/usr/lib/skwir/"
+  install -Dm644 target/notices/skwir-mupdf/THIRD-PARTY-NOTICES -t "$pkgdir/usr/share/licenses/skwir-mupdf/"
 }

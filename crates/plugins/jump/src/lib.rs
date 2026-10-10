@@ -1,4 +1,4 @@
-//! bibli plugin: jump. Frecency jump that reuses what the environment already
+//! skwir plugin: jump. Frecency jump that reuses what the environment already
 //! tracks: zoxide's directory ranking and the desktop's recently used files.
 //! Also provides the `recent:` location listing those files.
 
@@ -12,23 +12,23 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use bibli_core::CancelToken;
-use bibli_core::app::{App, NotifyLevel};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::EntryId;
-use bibli_core::fs::hydrate_paths;
-use bibli_core::location::{
-    EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
-};
-use bibli_core::os_path::PathArg;
-use bibli_core::plugin::Plugin;
-use bibli_core::registry::{KeyBinding, Place};
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
 use crossbeam_channel::Receiver;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use parking_lot::Mutex;
+use skwir_core::CancelToken;
+use skwir_core::app::{App, NotifyLevel};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::entry::EntryId;
+use skwir_core::fs::hydrate_paths;
+use skwir_core::location::{
+    EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
+};
+use skwir_core::os_path::PathArg;
+use skwir_core::plugin::Plugin;
+use skwir_core::registry::{KeyBinding, Place};
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
 
 const ID: &str = "jump";
 /// What `recent:` is called, in the sidebar and wherever it is shown.
@@ -37,7 +37,7 @@ const RECENT: &str = "Recent";
 /// A ranked jump target.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Candidate {
-    #[serde(with = "bibli_core::os_path")]
+    #[serde(with = "skwir_core::os_path")]
     pub path: PathBuf,
     pub score: f64,
     /// `dir` or `file`.
@@ -139,7 +139,7 @@ fn first_need(
     lifetime: &CancelToken,
     app: &App,
 ) {
-    if bibli_core::scheduler::on_window_thread() {
+    if skwir_core::scheduler::on_window_thread() {
         if !*gathered.lock() {
             refresh(index, lifetime, app);
         }
@@ -266,12 +266,12 @@ impl Plugin for JumpPlugin {
     fn description(&self) -> &'static str {
         "Frecency jump from zoxide and recently used files; the recent: location"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Browsing
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Browsing
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Programs])
     }
     fn register(&self, app: &App) {
         let lifetime = app.lifetime().child();
@@ -403,7 +403,7 @@ impl RecentLocation {
                     if cancel.is_cancelled() {
                         return;
                     }
-                    let Some(e) = bibli_core::fs::stat::stat_path(&r.path) else {
+                    let Some(e) = skwir_core::fs::stat::stat_path(&r.path) else {
                         continue;
                     };
                     if !seen.insert(e.id) {
@@ -455,7 +455,7 @@ impl OpenLocation for RecentLocation {
             return;
         }
         // A job for each slice, side by side on the workers.
-        for wanted in wanted.chunks(bibli_core::fs::HYDRATE_JOB) {
+        for wanted in wanted.chunks(skwir_core::fs::HYDRATE_JOB) {
             let wanted = wanted.to_vec();
             let tx = self.tx.clone();
             let metadata = Arc::clone(&self.ctx.metadata);
@@ -488,7 +488,7 @@ impl OpenLocation for RecentLocation {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
-    use bibli_core::app::AppConfig;
+    use skwir_core::app::AppConfig;
     use std::time::Duration;
 
     fn app(root: &Path) -> Arc<App> {
@@ -500,23 +500,23 @@ mod tests {
         let dirs = vec![
             zoxide::ZEntry {
                 score: 50.0,
-                path: "/home/x/projects/bibli".into(),
+                path: "/home/x/projects/skwir".into(),
             },
             zoxide::ZEntry {
                 score: 5.0,
-                path: "/home/x/bibliography".into(),
+                path: "/home/x/skwirrels".into(),
             },
         ];
         let files = vec![xbel::Recent {
-            path: "/home/x/Downloads/bibli-notes.txt".into(),
+            path: "/home/x/Downloads/skwir-notes.txt".into(),
             mime: None,
             visited: SystemTime::now(),
         }];
-        let r = rank("bibli", &dirs, &files, 10);
+        let r = rank("skwir", &dirs, &files, 10);
         assert_eq!(r.len(), 3);
         assert_eq!(
             r[0].path,
-            PathBuf::from("/home/x/projects/bibli"),
+            PathBuf::from("/home/x/projects/skwir"),
             "highest zoxide score wins among matches"
         );
         assert!(rank("zzzzqq", &dirs, &files, 10).is_empty());
@@ -600,7 +600,7 @@ mod tests {
         let recent = Location::parse("recent:");
         // It reads as one place in the address, under its own glyph.
         let crumbs = app.trail(&recent).unwrap().crumbs;
-        assert_eq!(crumbs, [bibli_core::Crumb::new("Recent", recent.clone())]);
+        assert_eq!(crumbs, [skwir_core::Crumb::new("Recent", recent.clone())]);
         assert_eq!(app.location_icon(&recent), Some("recent"));
         app.navigate(pane, &recent).unwrap();
         assert!(app.pump_until_complete(pane, Duration::from_secs(5)));

@@ -3,7 +3,7 @@
 use std::time::SystemTime;
 
 /// `1.2 MB`, `512 B`: as every preview and Details say it.
-pub use bibli_platform::inspection::size;
+pub use skwir_platform::inspection::size;
 
 /// `YYYY-MM-DD HH:MM` in the local time zone.
 pub fn time(t: SystemTime) -> String {

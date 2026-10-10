@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate synthetic previews and exercise the optional archive/audio helpers.
 
-Usage: python3 tools/previews/check.py --root /tmp/bibli-preview-fixtures
+Usage: python3 tools/previews/check.py --root /tmp/skwir-preview-fixtures
 No personal media, mail or documents are used. Generated files stay outside git.
 """
 import argparse
@@ -80,8 +80,8 @@ fn main() {
     subprocess.run(["ffmpeg", "-y", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-i", str(root / "cover.png"), "-map", "0:a", "-map", "1:v", "-t", "8", "-c:a", "flac", "-c:v", "png", "-disposition:v", "attached_pic", "-metadata", "title=Synthetic tone", "-metadata", "artist=Example performer", str(root / "10 Audio.flac")], check=True)
 
 
-# The helper takes every bound from its caller (bibli-platform's shared limits);
-# these mirror bibli_platform::inspection::limits for the direct checks below.
+# The helper takes every bound from its caller (skwir-platform's shared limits);
+# these mirror skwir_platform::inspection::limits for the direct checks below.
 MEMBER_BYTES = 16 * 1024 * 1024
 LISTING = ["--members", "4000", "--names", str(256 * 1024)]
 
@@ -143,7 +143,7 @@ def check_audio(executable, root):
     spec = importlib.util.spec_from_file_location("media_check", Path(__file__).resolve().parents[1] / "media" / "check.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    os.environ["BIBLI_MEDIA_AUDIO_ONLY"] = "1"
+    os.environ["SKWIR_MEDIA_AUDIO_ONLY"] = "1"
     worker = module.Worker(executable, root / "10 Audio.flac")
     try:
         worker.until(lambda: worker.state.get("duration") is not None)
@@ -163,7 +163,7 @@ def check_audio(executable, root):
         print(f"Audio: paused startup, tags, spectrum, playback, seeking and pause passed; paused CPU {cpu:.1f}%; worker PSS {module.pss(worker.process.pid):.1f} MiB")
     finally:
         worker.close()
-        os.environ.pop("BIBLI_MEDIA_AUDIO_ONLY", None)
+        os.environ.pop("SKWIR_MEDIA_AUDIO_ONLY", None)
 
 
 def check_asf(executable, root):
@@ -172,7 +172,7 @@ def check_asf(executable, root):
     spec.loader.exec_module(module)
     # These files deliberately have the same extension/container MIME. Let the
     # worker discover their streams instead of supplying the audio-only hint.
-    hint = os.environ.pop("BIBLI_MEDIA_AUDIO_ONLY", None)
+    hint = os.environ.pop("SKWIR_MEDIA_AUDIO_ONLY", None)
     try:
         for audio_only in [False, True]:
             path = root / ("Synthetic audio.asf" if audio_only else "Synthetic video.asf")
@@ -203,7 +203,7 @@ def check_asf(executable, root):
         print("ASF: video and audio-only stream detection, playback, seek/pause and audio spectrum passed")
     finally:
         if hint is not None:
-            os.environ["BIBLI_MEDIA_AUDIO_ONLY"] = hint
+            os.environ["SKWIR_MEDIA_AUDIO_ONLY"] = hint
 
 
 def main():
@@ -211,12 +211,12 @@ def main():
     parser.add_argument("--root", type=Path)
     parser.add_argument("--temporary", action="store_true")
     parser.add_argument("--generate-only", action="store_true")
-    parser.add_argument("--archive-worker", default="target/debug/bibli-archive-worker")
-    parser.add_argument("--media-worker", default="target/debug/bibli-media-worker")
+    parser.add_argument("--archive-worker", default="target/debug/skwir-archive-worker")
+    parser.add_argument("--media-worker", default="target/debug/skwir-media-worker")
     args = parser.parse_args()
     if not args.root and not args.temporary:
         parser.error("choose --root or --temporary")
-    with tempfile.TemporaryDirectory(prefix="bibli-preview-check-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="skwir-preview-check-") as temporary:
         root = args.root or Path(temporary)
         generate(root)
         if not args.generate_only:

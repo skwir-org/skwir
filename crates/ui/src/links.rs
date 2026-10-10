@@ -1,4 +1,4 @@
-//! Links followed from what bibli shows (ADR-029): a document's own, an
+//! Links followed from what skwir shows (ADR-029): a document's own, an
 //! address found in raw text, a link of the terminal.
 //!
 //! A link the text was written with answers a click, as on a page. One
@@ -7,7 +7,7 @@
 //! while Ctrl is held over it (`Run::found`). Shift added shows a file's
 //! link in a tab of its own. An address goes to the browser or the mail
 //! client through one gate (`ui.open_url`, `open::open_address`, on a
-//! worker); a file or a folder is shown in bibli (`ui.reveal`), never
+//! worker); a file or a folder is shown in skwir (`ui.reveal`), never
 //! opened, so a link a file wrote cannot run anything, and a line number
 //! shows that line in the preview. The keyboard reaches the same links:
 //! Ctrl+Shift+O labels those in view (`labels`).
@@ -17,9 +17,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::os_path::PathArg;
-use bibli_core::terminal::Target;
 use gpui::{Context, ElementId, ModifiersChangedEvent, Window};
+use skwir_core::os_path::PathArg;
+use skwir_core::terminal::Target;
 
 use crate::shell::Shell;
 
@@ -41,7 +41,7 @@ pub struct LinkState {
 struct Goto {
     /// The pane the file was revealed in: its preview is the one to wait
     /// for, not another pane's of the same file.
-    pane: bibli_core::workspace::PaneId,
+    pane: skwir_core::workspace::PaneId,
     path: PathBuf,
     line: u32,
     until: Instant,
@@ -103,7 +103,7 @@ pub(crate) struct RevealArgs {
     #[serde(default)]
     tab: bool,
     #[serde(default)]
-    pane: Option<bibli_core::workspace::PaneId>,
+    pane: Option<skwir_core::workspace::PaneId>,
 }
 
 /// Labels for `count` links, in the order they are shown: the home row's
@@ -126,10 +126,10 @@ pub fn labels(count: usize) -> Vec<String> {
         .collect()
 }
 
-/// Whether `target` is an address the desktop opens for bibli: a web page
+/// Whether `target` is an address the desktop opens for skwir: a web page
 /// or a mail address.
 pub fn is_address(target: &str) -> bool {
-    bibli_platform::open::is_web_uri(target) || bibli_platform::open::is_mail_uri(target)
+    skwir_platform::open::is_web_uri(target) || skwir_platform::open::is_mail_uri(target)
 }
 
 impl Shell {
@@ -208,13 +208,13 @@ impl Shell {
         let app = Arc::clone(&self.app);
         let url = url.to_owned();
         self.app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Visible,
+            skwir_core::scheduler::Priority::Visible,
             "open-address",
             self.app.lifetime().child(),
             move || {
-                if let Err(error) = bibli_platform::open::open_address(&url) {
+                if let Err(error) = skwir_platform::open::open_address(&url) {
                     app.notify(
-                        bibli_core::app::NotifyLevel::Error,
+                        skwir_core::app::NotifyLevel::Error,
                         format!("Could not open the link: {error}"),
                     );
                 }
@@ -293,7 +293,7 @@ impl Shell {
     }
 
     /// A link of the terminal followed: an address to the desktop, a file
-    /// or a folder into bibli, where the terminal follows the pane.
+    /// or a folder into skwir, where the terminal follows the pane.
     pub(crate) fn follow_terminal_link(
         &mut self,
         target: &Target,
@@ -321,7 +321,7 @@ impl Shell {
     /// shows already goes there at once.
     pub(crate) fn wait_for_line(
         &mut self,
-        pane: bibli_core::workspace::PaneId,
+        pane: skwir_core::workspace::PaneId,
         path: PathBuf,
         line: u32,
         cx: &mut Context<Self>,
@@ -389,7 +389,7 @@ fn has_scheme(href: &str) -> bool {
 /// read the way the author wrote it: next to their file.
 pub(crate) fn document_link(from: &std::path::Path, href: &str) -> Option<std::path::PathBuf> {
     let href = href.split(['#', '?']).next().filter(|h| !h.is_empty())?;
-    let href = String::from_utf8_lossy(&bibli_platform::uri::percent_decode(href)).into_owned();
+    let href = String::from_utf8_lossy(&skwir_platform::uri::percent_decode(href)).into_owned();
     let path = if let Some(rest) = href.strip_prefix("file://") {
         // file://host/path is not ours to resolve; file:///path is.
         std::path::PathBuf::from(rest.strip_prefix('/').map(|p| format!("/{p}"))?)

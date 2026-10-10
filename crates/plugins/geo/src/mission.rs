@@ -2,7 +2,7 @@
 //! `litchi`, `wpml`): what `MAVLink`'s commands and frames mean
 //! (`MAV_CMD`, `MAV_FRAME`), and [`Route`], which turns a mission's items
 //! into its path and its places.
-use bibli_core::geo::{Datum, EARTH_RADIUS, LatLon, LineKind, Point, Waypoint, WaypointKind};
+use skwir_core::geo::{Datum, EARTH_RADIUS, LatLon, LineKind, Point, Waypoint, WaypointKind};
 
 use crate::collect::Collector;
 

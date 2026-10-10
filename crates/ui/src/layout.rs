@@ -17,8 +17,8 @@
 //! other one, the active one, or the right one. The Split toggle's
 //! tooltip then names it by where it is (`Shell::split_close_tip`).
 
-use bibli_core::workspace::PaneId;
 use gpui::{Context, Window};
+use skwir_core::workspace::PaneId;
 
 use crate::shell::Shell;
 

@@ -7,16 +7,16 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use bibli_core::app::{App, NotifyLevel};
-use bibli_core::cancel::CancelToken;
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::location::{ListingEvent, Location};
-use bibli_core::metadata::{same_tag, tag_leaf, tag_parent, tag_under, tag_within};
-use bibli_core::op::{EntryRef, Plan};
-use bibli_core::os_path::PathArg;
-use bibli_core::scheduler::Priority;
+use skwir_core::app::{App, NotifyLevel};
+use skwir_core::cancel::CancelToken;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::location::{ListingEvent, Location};
+use skwir_core::metadata::{same_tag, tag_leaf, tag_parent, tag_under, tag_within};
+use skwir_core::op::{EntryRef, Plan};
+use skwir_core::os_path::PathArg;
+use skwir_core::scheduler::Priority;
 
-use bibli_core::notes::parse_tags;
+use skwir_core::notes::parse_tags;
 
 /// `tags` with `from` renamed `to`, or taken away without one; a tag met
 /// twice (the file had both) is kept once, where it came first. A category
@@ -204,7 +204,7 @@ pub fn move_into(
 ) -> anyhow::Result<()> {
     anyhow::ensure!(!tags.is_empty(), "which tag?");
     let into = into
-        .map(bibli_core::metadata::clean_tag)
+        .map(skwir_core::metadata::clean_tag)
         .filter(|c| !c.is_empty());
     anyhow::ensure!(
         into.as_deref().is_none_or(|c| !c.contains(',')),

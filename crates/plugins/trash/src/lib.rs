@@ -1,5 +1,5 @@
-//! bibli plugin: trash. The desktop's trash as a place, `trash:`: what
-//! every trash of the user's holds (`bibli_platform::trash`: the home
+//! skwir plugin: trash. The desktop's trash as a place, `trash:`: what
+//! every trash of the user's holds (`skwir_platform::trash`: the home
 //! trash and the volumes'), each file under the name it had, with the
 //! folder it came from and when it was put there. Its files are restored
 //! (`trash.restore`: the core's `Restore` of that very item) or deleted for
@@ -7,7 +7,7 @@
 //! `.trashinfo` along, once the shell has asked); files dropped on it, or
 //! on its place in the sidebar, are put there. The trashes are read on a
 //! worker, and again when one changes (a watch on each `info` folder, and
-//! the plans bibli applies), so the listings open and the place's icon
+//! the plans skwir applies), so the listings open and the place's icon
 //! follow: what they hold by its files alone (`read_held`), and only
 //! while a listing shows them each item's record, those new since (the
 //! name it had, where from, when).
@@ -23,28 +23,28 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use bibli_core::app::App;
-use bibli_core::cancel::CancelToken;
-use bibli_core::command::{Invocation, NoArgs, Outcome};
-use bibli_core::entry::{Entry, EntryId, FileId, keys};
-use bibli_core::fs::stat::stat_path;
-use bibli_core::location::{
+use crossbeam_channel::Receiver;
+use parking_lot::Mutex;
+use skwir_core::app::App;
+use skwir_core::cancel::CancelToken;
+use skwir_core::command::{Invocation, NoArgs, Outcome};
+use skwir_core::entry::{Entry, EntryId, FileId, keys};
+use skwir_core::fs::stat::stat_path;
+use skwir_core::location::{
     Crumb, EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext,
     OpenLocation, PATH_SCHEME, Tool, ToolPane, Trail, Verbs, escape, unescape,
 };
-use bibli_core::op::{
+use skwir_core::op::{
     Change, Delete, EntryRef, Operation, Plan, Restore, RestorePart, Trash, in_trash,
 };
-use bibli_core::os_path::PathArg;
-use bibli_core::plugin::Plugin;
-use bibli_core::registry::{MenuItem, Place};
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
-use bibli_core::{Provenance, Value};
-use bibli_platform::calendar::Calendar;
-use bibli_platform::trash::Trashed;
-use crossbeam_channel::Receiver;
-use parking_lot::Mutex;
+use skwir_core::os_path::PathArg;
+use skwir_core::plugin::Plugin;
+use skwir_core::registry::{MenuItem, Place};
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
+use skwir_core::{Provenance, Value};
+use skwir_platform::calendar::Calendar;
+use skwir_platform::trash::Trashed;
 
 const ID: &str = "trash";
 /// What emptying the trash is called, in its place's menu and on its
@@ -74,7 +74,7 @@ fn folder_location(folder: &Path) -> Location {
 /// The folder of the trash `location` shows; `None` for the trash itself.
 fn folder_of(location: &Location) -> Option<PathBuf> {
     (!location.rest.is_empty())
-        .then(|| PathBuf::from(bibli_core::os_path::from_bytes(unescape(&location.rest))))
+        .then(|| PathBuf::from(skwir_core::os_path::from_bytes(unescape(&location.rest))))
 }
 
 /// Names a trashed file's entry as the file was named, and says when it was
@@ -110,7 +110,7 @@ fn read_held(trashes: &[PathBuf]) -> Vec<EntryRef> {
     let mut held = Vec::new();
     for trash in trashes {
         let files = trash.join("files");
-        let Ok(dir) = bibli_core::fs::Dir::open(&files) else {
+        let Ok(dir) = skwir_core::fs::Dir::open(&files) else {
             held.extend(read_bin(trash));
             continue;
         };
@@ -144,7 +144,7 @@ fn read_bin(bin: &Path) -> Vec<EntryRef> {
             names
                 .flatten()
                 .filter_map(|record| {
-                    let item = bibli_core::op::records::recycle_item_of(&record.path())?;
+                    let item = skwir_core::op::records::recycle_item_of(&record.path())?;
                     EntryRef::from_path(&item)
                 })
                 .collect()
@@ -165,7 +165,7 @@ fn read_items(
             let item = if let Some(item) = before.get(&r.path) {
                 Arc::clone(item)
             } else {
-                let trashed = bibli_platform::trash::item(&r.path, calendar)?;
+                let trashed = skwir_platform::trash::item(&r.path, calendar)?;
                 let mut entry = stat_path(&trashed.file)?;
                 mark(&mut entry, &trashed);
                 Arc::new(Item { entry, trashed })
@@ -209,7 +209,7 @@ struct State {
     lifetime: Option<CancelToken>,
     /// Watches each trash's `info`; dropped on disable, which ends the
     /// thread that waits for it.
-    watcher: Option<bibli_core::fs::Settled>,
+    watcher: Option<skwir_core::fs::Settled>,
     /// The `info` folders watched.
     watched: Vec<PathBuf>,
     /// Whether the place said last that the trash holds something.
@@ -280,7 +280,7 @@ impl Trashes {
     fn trashes(&self) -> Vec<PathBuf> {
         match &self.only {
             Some(only) => only.to_vec(),
-            None => bibli_platform::trash::trashes(),
+            None => skwir_platform::trash::trashes(),
         }
     }
 
@@ -400,8 +400,8 @@ impl Trashes {
     /// watcher (so no shared worker waits).
     fn watch(&self, app: &App) {
         let (this, weak) = (self.clone(), app.weak());
-        let watcher = bibli_core::fs::Settled::start(
-            "bibli-trash",
+        let watcher = skwir_core::fs::Settled::start(
+            "skwir-trash",
             SETTLE,
             |_| true,
             move || {
@@ -567,7 +567,7 @@ impl LocationProvider for TrashProvider {
                 .map(|i| Crumb::new(i.entry.name_str(), folder_location(&i.trashed.file)))
                 .collect(),
             // As a folder's: hidden ones too, a trash holds what it was given.
-            Some(folder) => bibli_core::fs::subfolders(&folder, true)
+            Some(folder) => skwir_core::fs::subfolders(&folder, true)
                 .unwrap_or_default()
                 .into_iter()
                 .map(|dir| {
@@ -581,7 +581,7 @@ impl LocationProvider for TrashProvider {
                 .collect(),
         };
         places
-            .sort_by_cached_key(|c| bibli_core::collate::sort_key(std::ffi::OsStr::new(&c.label)));
+            .sort_by_cached_key(|c| skwir_core::collate::sort_key(std::ffi::OsStr::new(&c.label)));
         places
     }
 
@@ -677,7 +677,7 @@ impl TrashProvider {
         let app = self
             .app
             .upgrade()
-            .ok_or_else(|| anyhow::anyhow!("bibli is closing"))?;
+            .ok_or_else(|| anyhow::anyhow!("skwir is closing"))?;
         let folders = app
             .provider(PATH_SCHEME)
             .ok_or_else(|| anyhow::anyhow!("no provider for folders"))?;
@@ -845,7 +845,7 @@ struct PutArgs {
     /// script's or an agent's, by absolute path), instead of a pane's
     /// selection.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
 }
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
@@ -860,17 +860,17 @@ struct RestoreArgs {
     /// Files of the trash to restore, by absolute path (in a trash's
     /// `files`, or inside a folder there), instead of a pane's.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
 }
 
 /// What `trash.list` says of a file in the trash.
 #[derive(serde::Serialize)]
 struct Listed {
-    #[serde(with = "bibli_core::os_path")]
+    #[serde(with = "skwir_core::os_path")]
     name: std::ffi::OsString,
-    #[serde(with = "bibli_core::os_path")]
+    #[serde(with = "skwir_core::os_path")]
     original: PathBuf,
-    #[serde(with = "bibli_core::os_path")]
+    #[serde(with = "skwir_core::os_path")]
     file: PathBuf,
     /// Seconds since 1970, when the trash says.
     deleted: Option<u64>,
@@ -920,7 +920,7 @@ fn restore_step(
 
 /// What its trash says of the item `file`, read from its record.
 fn read_item(file: &Path) -> Option<Trashed> {
-    bibli_platform::trash::item(file, &Calendar::system())
+    skwir_platform::trash::item(file, &Calendar::system())
 }
 
 fn register_commands(app: &App, trashes: &Trashes) {
@@ -951,9 +951,9 @@ fn register_commands(app: &App, trashes: &Trashes) {
             let named = !a.entries.is_empty();
             let steps: Vec<Box<dyn Operation>> = if named {
                 // Named by whoever asked, on their thread: the trash is
-                // read, which the plugin may not have done yet (`bibli
-                // cmd` runs a bibli just started).
-                bibli_core::op::EntryArg::refs(a.entries)?
+                // read, which the plugin may not have done yet (`skwir
+                // cmd` runs a skwir just started).
+                skwir_core::op::EntryArg::refs(a.entries)?
                     .into_iter()
                     .filter_map(|entry| restore_step(entry, read_item))
                     .collect()
@@ -968,7 +968,7 @@ fn register_commands(app: &App, trashes: &Trashes) {
             };
             if steps.is_empty() {
                 anyhow::ensure!(!named, "These are not in the trash");
-                return Err(bibli_core::command::NothingSelected.into());
+                return Err(skwir_core::command::NothingSelected.into());
             }
             Ok(Outcome::Plan(Plan::with_steps("restore from the trash", steps)))
         },
@@ -1001,7 +1001,7 @@ fn register_commands(app: &App, trashes: &Trashes) {
                 // the trash shows them, as when its button is pressed.
                 let kept = (s.read && s.items.len() == held.len())
                     .then(|| {
-                        bibli_core::entry::kept_by_other_names(s.items.iter().map(|i| &i.entry))
+                        skwir_core::entry::kept_by_other_names(s.items.iter().map(|i| &i.entry))
                     })
                     .flatten()
                     .and_then(|kept| kept.said());
@@ -1028,7 +1028,7 @@ fn register_commands(app: &App, trashes: &Trashes) {
                     // Not shown, so not kept: read for whoever asks, never
                     // on the window's thread.
                     anyhow::ensure!(
-                        !bibli_core::scheduler::on_window_thread(),
+                        !skwir_core::scheduler::on_window_thread(),
                         "Open the trash to see what it holds"
                     );
                     let held = read_held(&t.trashes());
@@ -1089,13 +1089,13 @@ impl Plugin for TrashPlugin {
         "The trash as a place: restore its files, delete them for good, empty it"
     }
 
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Files
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Files
     }
 
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Write])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Write])
     }
     fn register(&self, app: &App) {
         {
@@ -1113,7 +1113,7 @@ impl Plugin for TrashPlugin {
             }),
         );
         register_commands(app, &self.trashes);
-        // What bibli puts in the trash, restores or deletes reads it again,
+        // What skwir puts in the trash, restores or deletes reads it again,
         // even before there is a trash to watch.
         let (t, weak) = (self.trashes.clone(), app.weak());
         app.executor.observe(

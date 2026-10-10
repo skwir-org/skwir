@@ -14,7 +14,7 @@ use gpui::{
     Point, ScrollHandle, Style, WeakEntity, Window, point, px, relative,
 };
 
-use bibli_core::workspace::PaneId;
+use skwir_core::workspace::PaneId;
 
 use crate::elements::uniform_grid::UniformGridScrollHandle;
 use crate::elements::uniform_grid::math::Slots;
@@ -82,7 +82,7 @@ pub struct Drag {
     /// What the last move selected, to skip moves that change nothing.
     pub covered: Vec<usize>,
     /// Entries selected before the drag, kept when it began with Ctrl/Shift.
-    pub kept: Vec<bibli_core::EntryId>,
+    pub kept: Vec<skwir_core::EntryId>,
 }
 
 /// Where a view's entries are, read when the marquee paints: after the

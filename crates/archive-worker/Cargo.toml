@@ -1,5 +1,5 @@
 [package]
-name = "bibli-archive-worker"
+name = "skwir-archive-worker"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true

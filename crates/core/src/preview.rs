@@ -37,7 +37,7 @@ pub enum PreviewInfo {
         duration: Option<f64>,
     },
     /// A picture another program drew at a size of its choosing (a desktop
-    /// thumbnailer, for a format bibli does not decode): what it drew is all
+    /// thumbnailer, for a format skwir does not decode): what it drew is all
     /// there is. `width` × `height` is the picture's own size when the file
     /// says it, else the size drawn.
     Picture {
@@ -66,7 +66,7 @@ pub struct Member {
     pub own_file: bool,
 }
 
-/// A file shown in another's place: one of a format bibli shows (a PDF,
+/// A file shown in another's place: one of a format skwir shows (a PDF,
 /// a picture, Markdown, a table), which a provider made of the file asked
 /// for (ADR-047). The panel previews it as it would that file.
 #[derive(Clone, Debug)]
@@ -76,7 +76,7 @@ pub struct Converted {
     /// Its type, read from its name and bytes as any file's is.
     pub mime: Option<String>,
     /// Why its links are not followed, when they are not: a plugin from
-    /// outside bibli that may not use the network made it, and a link the
+    /// outside skwir that may not use the network made it, and a link the
     /// user clicks would carry what it read where it pleases.
     pub closed_links: Option<String>,
 }

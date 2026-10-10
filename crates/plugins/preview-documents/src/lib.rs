@@ -4,7 +4,7 @@
 //! converted them.
 //!
 //! A text document (Word, `OpenDocument`, RTF) is shown as pages by
-//! `LibreOffice`, or read as text by bibli or by Pandoc, as the Text
+//! `LibreOffice`, or read as text by skwir or by Pandoc, as the Text
 //! documents setting says and what is installed allows (ADR-030).
 
 mod blocks;
@@ -14,18 +14,18 @@ mod package;
 mod pandoc;
 mod stored;
 
-use bibli_core::{
+use pandoc::Pandoc;
+use skwir_core::{
     App, CancelToken,
     cache::CacheSlot,
     inspection::{InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use bibli_platform::inspection::{self, limits};
-use bibli_platform::preview::DocumentPreviews;
-use bibli_platform::rich_preview;
-use bibli_platform::thumb_providers::{OfficePages, PdfPages};
-use pandoc::Pandoc;
+use skwir_platform::inspection::{self, limits};
+use skwir_platform::preview::DocumentPreviews;
+use skwir_platform::rich_preview;
+use skwir_platform::thumb_providers::{OfficePages, PdfPages};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -46,7 +46,7 @@ pub struct PreviewPlugin {
     /// `PDFium`'s library as the settings name it: what the `PDFium`
     /// requirement's probe and the PDF thumbnails tell the helper, as the
     /// reader's launch does.
-    pdfium_library: bibli_platform::document::PdfiumChoice,
+    pdfium_library: skwir_platform::document::PdfiumChoice,
 }
 
 impl Plugin for PreviewPlugin {
@@ -59,8 +59,8 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Read PDF and office documents: continuous scrolling, search, text selection, links and contents; Word and OpenDocument text also as text that fits the panel"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
     /// Only the provider a key is about starts again: changing how text
     /// documents are shown leaves a PDF open in the reader as it is.
@@ -79,9 +79,9 @@ impl Plugin for PreviewPlugin {
         }
     }
 
-    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
-        use bibli_core::plugin::Requirement;
-        use bibli_platform::document::{Engine, worker};
+    fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
+        use skwir_core::plugin::Requirement;
+        use skwir_platform::document::{Engine, worker};
         let library = Arc::clone(&self.pdfium_library);
         let pdfium = worker(Engine::Pdfium);
         vec![
@@ -90,7 +90,7 @@ impl Plugin for PreviewPlugin {
                 let library = library.read().clone();
                 let envs: Vec<(&str, &std::ffi::OsStr)> = library
                     .iter()
-                    .map(|path| ("BIBLI_PDFIUM_LIBRARY", path.as_os_str()))
+                    .map(|path| ("SKWIR_PDFIUM_LIBRARY", path.as_os_str()))
                     .collect();
                 pdfium.works_with(&envs)
             }),
@@ -98,7 +98,7 @@ impl Plugin for PreviewPlugin {
             worker(Engine::Mupdf).requirement("PDF reading with MuPDF"),
             // Where it installs itself too, off Linux (`process::required`).
             Requirement::new("libreoffice", "Office documents shown as pages", || {
-                bibli_platform::process::required("libreoffice").is_ok()
+                skwir_platform::process::required("libreoffice").is_ok()
             }),
             Requirement::program(
                 "pandoc",
@@ -106,7 +106,7 @@ impl Plugin for PreviewPlugin {
             ),
         ]
         .into_iter()
-        .chain(bibli_platform::sandbox::PROGRAM.map(|program| {
+        .chain(skwir_platform::sandbox::PROGRAM.map(|program| {
             Requirement::program(
                 program,
                 "Isolation of LibreOffice, which needs it, and of Pandoc",
@@ -115,12 +115,12 @@ impl Plugin for PreviewPlugin {
         .collect()
     }
 
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
     }
     fn register(&self, app: &App) {
-        use bibli_core::settings::SettingSpec;
+        use skwir_core::settings::SettingSpec;
         app.settings.declare(SettingSpec::choice(
             BACKEND,
             "Document engine",
@@ -142,7 +142,7 @@ impl Plugin for PreviewPlugin {
         app.settings.declare(SettingSpec::choice(
             TEXT_DOCUMENTS,
             "Text documents",
-            "How Word, OpenDocument and RTF documents are shown. Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: bibli reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.",
+            "How Word, OpenDocument and RTF documents are shown. Reading shows their text, headings, lists, tables, notes and pictures at once, to fit the panel: skwir reads Word and OpenDocument files, Pandoc RTF. Pages lays them out as LibreOffice prints them, which takes a few seconds each. Pandoc has Pandoc read them all. When what a choice needs is not installed, another is used.",
             "reading",
             &[
                 ("reading", "Reading"),
@@ -240,7 +240,7 @@ struct Reading {
     cache: CacheSlot,
 }
 
-/// bibli's own reader for `path`, if it reads its format.
+/// skwir's own reader for `path`, if it reads its format.
 fn builtin(path: &Path) -> Option<Engine> {
     let engine = match inspection::extension(path).as_str() {
         "docx" | "docm" | "dotx" | "dotm" => Engine::Word,
@@ -270,7 +270,7 @@ impl Reading {
     /// next that can; `None` leaves it to the pages.
     fn engine(&self, path: &Path) -> Option<Engine> {
         match self.choice {
-            Choice::Pages if bibli_platform::preview::shown_as_pages(path, None) => None,
+            Choice::Pages if skwir_platform::preview::shown_as_pages(path, None) => None,
             Choice::Pages | Choice::Reading => builtin(path).or_else(|| by_pandoc(path)),
             Choice::Pandoc => by_pandoc(path).or_else(|| builtin(path)),
         }
@@ -283,7 +283,7 @@ impl Reading {
         tool: &Pandoc,
         name: &str,
     ) -> anyhow::Result<Vec<u8>> {
-        bibli_platform::preview::made_key(req.entry.id, path, &tool.path, ("pandoc-media", name))
+        skwir_platform::preview::made_key(req.entry.id, path, &tool.path, ("pandoc-media", name))
     }
 
     fn pandoc(
@@ -296,7 +296,7 @@ impl Reading {
     ) -> anyhow::Result<Inspection> {
         // What Pandoc made of this very file before, with its pictures'
         // sizes: kept, it is shown again without running Pandoc.
-        let html_key = bibli_platform::preview::made_key(
+        let html_key = skwir_platform::preview::made_key(
             req.entry.id,
             path,
             &tool.path,
@@ -429,7 +429,7 @@ fn about(path: &Path, cancel: &CancelToken) -> Vec<(&'static str, String)> {
 }
 
 /// Details in their order: what the document states, and its words.
-fn details(facts: &[(&'static str, String)], words: usize) -> Vec<bibli_core::inspection::Detail> {
+fn details(facts: &[(&'static str, String)], words: usize) -> Vec<skwir_core::inspection::Detail> {
     let fact = |label: &str| {
         facts
             .iter()
@@ -453,7 +453,7 @@ fn details(facts: &[(&'static str, String)], words: usize) -> Vec<bibli_core::in
     ])
 }
 
-/// A document bibli read, as the reading mode shows it: one part of it,
+/// A document skwir read, as the reading mode shows it: one part of it,
 /// `[` and `]` going to the others.
 fn shown(read: blocks::Read) -> Inspection {
     let paged = read.parts > 1;
@@ -519,7 +519,7 @@ impl PreviewProvider for Reading {
         _view: &InspectRequest,
         key: &str,
         cancel: &CancelToken,
-    ) -> anyhow::Result<Option<bibli_core::thumbs::Image>> {
+    ) -> anyhow::Result<Option<skwir_core::thumbs::Image>> {
         let path = req.entry.resolve()?;
         let bytes = match self.engine(&path) {
             Some(Engine::Word | Engine::OpenDocument) => {

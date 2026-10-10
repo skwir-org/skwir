@@ -2,8 +2,8 @@
 
 mod common;
 
-use bibli_core::command::{Invocation, NoArgs, Outcome};
 use common::*;
+use skwir_core::command::{Invocation, NoArgs, Outcome};
 
 #[test]
 fn a_command_that_panics_fails_without_taking_its_caller() {
@@ -34,7 +34,7 @@ fn a_command_that_panics_fails_without_taking_its_caller() {
 fn a_shadowed_command_returns_when_its_shadow_is_withdrawn() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
-    let value = |app: &bibli_core::App| match app.dispatch(&Invocation::new("probe")).unwrap() {
+    let value = |app: &skwir_core::App| match app.dispatch(&Invocation::new("probe")).unwrap() {
         Outcome::Value(v) => v,
         other => panic!("{other:?}"),
     };

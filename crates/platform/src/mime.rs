@@ -5,7 +5,7 @@
 //! registry's classes (`registry`). The system names a file by its
 //! extension and says what people call its type; the database says it
 //! more precisely where it can (`refine`), reads the bytes, and holds the
-//! hierarchy and the aliases, whose names are the ones bibli speaks.
+//! hierarchy and the aliases, whose names are the ones skwir speaks.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -68,7 +68,7 @@ pub fn by_name(name: &OsStr) -> Option<Mime> {
     // icons, the Type column, the thumbnails asked) are typed again at
     // every frame, and a name several types claim (`.ogg`, `.ts`) costs
     // the database a comparison of each with each. The database does not
-    // change while bibli runs. Forgotten whole when full.
+    // change while skwir runs. Forgotten whole when full.
     const KEPT: usize = 4096;
     thread_local! {
         static TYPED: std::cell::RefCell<std::collections::HashMap<std::ffi::OsString, Option<Mime>>> =
@@ -96,12 +96,12 @@ pub fn by_name(name: &OsStr) -> Option<Mime> {
 /// a link that leads nowhere); a file, or a link to one, is typed by the
 /// name that says its type (`Entry::type_name`). Type an entry through
 /// this, never by `by_name` of a name of your choosing.
-pub fn of_entry(entry: &bibli_core::Entry) -> Option<Mime> {
+pub fn of_entry(entry: &skwir_core::Entry) -> Option<Mime> {
     of_parts(entry.inode_type(), entry.type_name())
 }
 
-/// [`of_entry`] from what was read of an entry ([`bibli_core::Entry::inode_type`],
-/// [`bibli_core::Entry::type_name`]) under a lock, typed once it is let go.
+/// [`of_entry`] from what was read of an entry ([`skwir_core::Entry::inode_type`],
+/// [`skwir_core::Entry::type_name`]) under a lock, typed once it is let go.
 pub fn of_parts(inode_type: Option<&str>, type_name: &OsStr) -> Option<Mime> {
     match inode_type {
         Some(mime) => Some(Mime(mime.to_owned())),
@@ -520,7 +520,7 @@ pub fn lineage(mime: &Mime) -> Vec<Mime> {
 }
 
 /// Off Linux, the data folder whose `mime` holds the type database
-/// (ADR-037), the first of: beside bibli (`share` next to the program or
+/// (ADR-037), the first of: beside skwir (`share` next to the program or
 /// above it, a `.app`'s `Resources/share`: what a package ships), where a
 /// package manager installed it (Homebrew on a Mac), `$XDG_DATA_DIRS`.
 /// Reads the disk once.
@@ -561,7 +561,7 @@ fn found_database() -> Option<std::path::PathBuf> {
 /// The desktop's type database, shared-mime-info (ADR-037): Linux's own
 /// registry, read where the desktop installed it; elsewhere the fallback
 /// of the system's, read from the one found (`found_database`), which a
-/// package carries beside bibli. Where there is none it knows nothing.
+/// package carries beside skwir. Where there is none it knows nothing.
 mod database {
     use std::collections::{HashMap, HashSet};
     use std::ffi::OsStr;
@@ -1213,15 +1213,15 @@ mod tests {
         // One silent: the other's.
         assert_eq!(refine(None, known("a.png")), [m("image/png")]);
         assert_eq!(
-            refine(Some(m("application/x-bibli-test")), Vec::new()),
-            [m("application/x-bibli-test")]
+            refine(Some(m("application/x-skwir-test")), Vec::new()),
+            [m("application/x-skwir-test")]
         );
         assert!(database::knows(&m("image/png")));
         assert!(
             database::knows(&m("application/x-zip-compressed")),
             "an alias"
         );
-        assert!(!database::knows(&m("application/x-bibli-test")));
+        assert!(!database::knows(&m("application/x-skwir-test")));
     }
 
     /// The database read on Windows, where `just test-windows` puts one
@@ -1232,7 +1232,7 @@ mod tests {
     fn on_windows_the_database_answers_what_the_registry_does_not() {
         if found_database().is_none() {
             assert!(
-                std::env::var_os("BIBLI_TEST_UNDER_WINE").is_none(),
+                std::env::var_os("SKWIR_TEST_UNDER_WINE").is_none(),
                 "test-windows.sh puts the dev shell's database beside the tests"
             );
             eprintln!("skipped: no type database beside the tests");
@@ -1267,34 +1267,34 @@ mod tests {
         struct Classes;
         impl Drop for Classes {
             fn drop(&mut self) {
-                classes::remove(".bibliqz");
-                classes::remove("bibli.test.qz");
-                classes::remove(r"MIME\Database\Content Type\application/x-bibli-qz");
+                classes::remove(".skwirqz");
+                classes::remove("skwir.test.qz");
+                classes::remove(r"MIME\Database\Content Type\application/x-skwir-qz");
             }
         }
-        if std::env::var_os("BIBLI_TEST_UNDER_WINE").is_none() {
+        if std::env::var_os("SKWIR_TEST_UNDER_WINE").is_none() {
             eprintln!("skipped: writes the registry; only in Wine's scratch prefix");
             return;
         }
         let _classes = Classes;
-        classes::set(".bibliqz", "Content Type", "Application/X-Bibli-QZ");
-        classes::set(".bibliqz", "PerceivedType", "image");
-        classes::set(".bibliqz", "", "bibli.test.qz");
-        classes::set("bibli.test.qz", "", "Bibli test picture");
+        classes::set(".skwirqz", "Content Type", "Application/X-Skwir-QZ");
+        classes::set(".skwirqz", "PerceivedType", "image");
+        classes::set(".skwirqz", "", "skwir.test.qz");
+        classes::set("skwir.test.qz", "", "Skwir test picture");
         classes::set(
-            r"MIME\Database\Content Type\application/x-bibli-qz",
+            r"MIME\Database\Content Type\application/x-skwir-qz",
             "Extension",
-            ".bibliqz",
+            ".skwirqz",
         );
-        let qz = by_name(OsStr::new("Some Picture.BIBLIQZ")).expect("the registry's type");
-        assert_eq!(qz.as_str(), "application/x-bibli-qz", "lowercase");
-        assert!(!ambiguous(OsStr::new("a.bibliqz")));
+        let qz = by_name(OsStr::new("Some Picture.SKWIRQZ")).expect("the registry's type");
+        assert_eq!(qz.as_str(), "application/x-skwir-qz", "lowercase");
+        assert!(!ambiguous(OsStr::new("a.skwirqz")));
         assert_eq!(kinds(&qz), [Kind::Image], "as the registry perceives it");
-        assert_eq!(extensions(&qz), ["bibliqz"]);
+        assert_eq!(extensions(&qz), ["skwirqz"]);
         assert_eq!(unalias(&qz), qz);
-        assert_eq!(by_name(OsStr::new("a.bibli-nothing")), None);
+        assert_eq!(by_name(OsStr::new("a.skwir-nothing")), None);
         // What Explorer calls them: the name of the class they open as.
-        assert_eq!(qz.description().as_deref(), Some("Bibli test picture"));
+        assert_eq!(qz.description().as_deref(), Some("Skwir test picture"));
     }
 
     #[test]

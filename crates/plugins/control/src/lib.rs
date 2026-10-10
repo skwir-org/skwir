@@ -3,8 +3,8 @@
 //! (`channel`) and speaks MCP there, through `rmcp`, on a runtime of its
 //! own: each command of the registry is a tool. A command that gives a
 //! plan proposes it for review, and the tool answers once the user has:
-//! applied, with what applied, or dismissed. `bibli mcp` carries an
-//! agent's standard input and output to the channel, and `bibli cmd` runs
+//! applied, with what applied, or dismissed. `skwir mcp` carries an
+//! agent's standard input and output to the channel, and `skwir cmd` runs
 //! one command through it (`client`).
 
 pub mod channel;
@@ -13,12 +13,6 @@ pub mod client;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use bibli_core::app::NotifyLevel;
-use bibli_core::command::{Effect, Invocation, NoArgs, Outcome};
-use bibli_core::op::Verdict;
-use bibli_core::permissions::{self, AgentGate};
-use bibli_core::plugin::{Category, Plugin};
-use bibli_core::{App, Plan};
 use parking_lot::Mutex;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
@@ -28,12 +22,18 @@ use rmcp::model::{
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, ServiceExt as _};
 use serde_json::{Value, json};
+use skwir_core::app::NotifyLevel;
+use skwir_core::command::{Effect, Invocation, NoArgs, Outcome};
+use skwir_core::op::Verdict;
+use skwir_core::permissions::{self, AgentGate};
+use skwir_core::plugin::{Category, Plugin};
+use skwir_core::{App, Plan};
 
 pub const ID: &str = "control";
 
 /// The `_meta` key a call says what to do with a plan by: `propose` (an
-/// agent's, the default), `print` or `apply` (`bibli cmd`, the user's own).
-pub const PLAN_META: &str = "bibli/plan";
+/// agent's, the default), `print` or `apply` (`skwir cmd`, the user's own).
+pub const PLAN_META: &str = "skwir/plan";
 
 /// How long a tool waits for the user to review its plan before saying
 /// it still waits: the plan stays in the window.
@@ -95,7 +95,7 @@ struct Running {
 #[derive(Default)]
 struct Status {
     listening: bool,
-    /// Why it does not listen: another bibli does, or the system refused.
+    /// Why it does not listen: another skwir does, or the system refused.
     not: Option<String>,
 }
 
@@ -109,7 +109,7 @@ impl Plugin for Control {
         "Agents and scripts"
     }
     fn description(&self) -> &'static str {
-        "Let AI agents (over MCP: bibli mcp) and scripts (bibli cmd) drive this window. What they would change is proposed for your review. Any program running as you can then use it."
+        "Let AI agents (over MCP: skwir mcp) and scripts (skwir cmd) drive this window. What they would change is proposed for your review. Any program running as you can then use it."
     }
     fn category(&self) -> Category {
         Category::Desktop
@@ -133,8 +133,8 @@ impl Plugin for Control {
                     "listening": status.listening,
                     "not_listening": status.not,
                     "address": address.as_ref().map(|a| a.0.display().to_string()),
-                    "agent": "an MCP server started as: bibli mcp",
-                    "script": "bibli cmd [--apply] <command> [<arguments, a JSON object>]",
+                    "agent": "an MCP server started as: skwir mcp",
+                    "script": "skwir cmd [--apply] <command> [<arguments, a JSON object>]",
                 })))
             },
         )
@@ -167,7 +167,7 @@ fn start(
 ) -> Option<Running> {
     let (stop, stopped) = tokio::sync::watch::channel(());
     let thread = std::thread::Builder::new()
-        .name("bibli-control".into())
+        .name("skwir-control".into())
         .spawn(move || {
             if after_window {
                 loop {
@@ -175,7 +175,7 @@ fn start(
                     if app.wait_window_shown(std::time::Duration::from_millis(200)) {
                         break;
                     }
-                    // Turned off, or bibli ends, before the window was shown.
+                    // Turned off, or skwir ends, before the window was shown.
                     if stopped.has_changed().is_err() {
                         return;
                     }
@@ -234,8 +234,8 @@ async fn listen(
     let mut listener = match channel::listen(&address) {
         Ok(Some(listener)) => listener,
         Ok(None) => {
-            tracing::info!("another bibli listens for agents and scripts");
-            shared.lock().not = Some("another bibli window listens".into());
+            tracing::info!("another skwir listens for agents and scripts");
+            shared.lock().not = Some("another skwir window listens".into());
             return;
         }
         Err(error) => {
@@ -302,7 +302,7 @@ impl Tools {
                 }
                 let description = if gate == AgentGate::Asks {
                     format!(
-                        "{} (asks the user in bibli's window first)",
+                        "{} (asks the user in skwir's window first)",
                         spec.description
                     )
                 } else {
@@ -325,9 +325,9 @@ impl Tools {
 impl ServerHandler for Tools {
     fn get_info(&self) -> ServerConfig {
         let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
-        info.server_info = Implementation::new("bibli", env!("CARGO_PKG_VERSION"));
+        info.server_info = Implementation::new("skwir", env!("CARGO_PKG_VERSION"));
         info.instructions = Some(
-            "bibli, a file manager. Each tool is one of its commands, its dots written as two underscores. Name the files a command acts on in its `entries`, by absolute path: the selection is the user's, and can change between two calls (the `entries` tool lists what a pane shows, or with `location` a folder, without changing what the user sees). A command that would change files proposes a plan the user reviews in bibli's window; its answer says whether the user applied it, and how, or dismissed it. One that acts otherwise asks the user first. Private folders are never shown to you."
+            "skwir, a file manager. Each tool is one of its commands, its dots written as two underscores. Name the files a command acts on in its `entries`, by absolute path: the selection is the user's, and can change between two calls (the `entries` tool lists what a pane shows, or with `location` a folder, without changing what the user sees). A command that would change files proposes a plan the user reviews in skwir's window; its answer says whether the user applied it, and how, or dismissed it. One that acts otherwise asks the user first. Private folders are never shown to you."
                 .into(),
         );
         info
@@ -347,7 +347,7 @@ impl ServerHandler for Tools {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let Some(app) = self.app.upgrade() else {
-            return Ok(failed("bibli is closing").into());
+            return Ok(failed("skwir is closing").into());
         };
         let meta = request
             .meta
@@ -412,14 +412,14 @@ fn failed(message: &str) -> CallToolResult {
 /// Run `invocation` in `app`, and say what came of it: a value, a text for
 /// the clipboard, or what became of its plan, as `mode` says. Blocks while
 /// the user reviews a plan, until `cancelled` says to stop waiting.
-/// Shared by the window's tools and `bibli cmd` without a window.
+/// Shared by the window's tools and `skwir cmd` without a window.
 ///
 /// A call that proposes is an agent's, which goes through the permission
 /// layer (ADR-044): what it names must not be private, a command that
 /// acts without a plan waits for the user to allow it, one that answers
 /// the user's own dialogs is refused, what it counts leaves private files
 /// out (`permissions::as_agent`), and what it answers names nothing
-/// private. A call that prints or applies is the user's own (`bibli cmd`).
+/// private. A call that prints or applies is the user's own (`skwir cmd`).
 pub fn run(
     app: &App,
     invocation: &Invocation,
@@ -462,7 +462,7 @@ fn admit(
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         check.named_in(&invocation.args).is_none(),
-        "this names a private folder, which bibli keeps from agents (Settings, Privacy)"
+        "this names a private folder, which skwir keeps from agents (Settings, Privacy)"
     );
     let spec = app
         .commands
@@ -471,7 +471,7 @@ fn admit(
     match permissions::for_agent(&spec) {
         AgentGate::Runs => Ok(()),
         AgentGate::Refused => anyhow::bail!(
-            "`{}` answers the user in bibli's window: only the user runs it",
+            "`{}` answers the user in skwir's window: only the user runs it",
             spec.name
         ),
         AgentGate::Asks => allowed(app, &spec, invocation, cancelled),
@@ -482,7 +482,7 @@ fn admit(
 /// and wait for the answer.
 fn allowed(
     app: &App,
-    spec: &bibli_core::command::CommandSpec,
+    spec: &skwir_core::command::CommandSpec,
     invocation: &Invocation,
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<()> {
@@ -502,7 +502,7 @@ fn allowed(
             Ok(true) => return Ok(()),
             Ok(false) => anyhow::bail!("the user did not allow it"),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                anyhow::bail!("bibli closed before the user answered")
+                anyhow::bail!("skwir closed before the user answered")
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout)
                 if cancelled() || std::time::Instant::now() > deadline =>
@@ -524,7 +524,7 @@ fn dispatched(
 ) -> anyhow::Result<Answer> {
     let outcome = match app.dispatch(invocation) {
         // The selection is the window's: a script or an agent names files.
-        Err(error) if bibli_core::command::is_nothing_selected(&error) => {
+        Err(error) if skwir_core::command::is_nothing_selected(&error) => {
             anyhow::bail!("nothing is selected: name the files in `entries`, by absolute path")
         }
         outcome => outcome?,
@@ -570,7 +570,7 @@ fn planned(app: &App, plan: Plan, mode: PlanMode, cancelled: &dyn Fn() -> bool) 
             }
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 return Answer {
-                    value: json!({ "verdict": "unanswered", "plan": title, "error": "bibli closed before the plan was answered" }),
+                    value: json!({ "verdict": "unanswered", "plan": title, "error": "skwir closed before the plan was answered" }),
                     failed: true,
                 };
             }
@@ -578,7 +578,7 @@ fn planned(app: &App, plan: Plan, mode: PlanMode, cancelled: &dyn Fn() -> bool) 
                 if cancelled() || std::time::Instant::now() > deadline =>
             {
                 return Answer {
-                    value: json!({ "verdict": "waiting", "plan": title, "note": "the plan waits for the user's review in bibli" }),
+                    value: json!({ "verdict": "waiting", "plan": title, "note": "the plan waits for the user's review in skwir" }),
                     failed: false,
                 };
             }

@@ -7,10 +7,10 @@
 
 use std::sync::Arc;
 
-use bibli_core::entry::keys;
-use bibli_core::scheduler::Priority;
-use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
 use gpui::ExternalDragIcon;
+use skwir_core::entry::keys;
+use skwir_core::scheduler::Priority;
+use skwir_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
 
 use crate::shell::Shell;
 
@@ -220,11 +220,11 @@ impl Shell {
                 {
                     let req = ThumbRequest {
                         entry: content,
-                        mime: bibli_platform::mime::of_entry(e).map(|m| Arc::from(m.as_str())),
+                        mime: skwir_platform::mime::of_entry(e).map(|m| Arc::from(m.as_str())),
                         mtime: e
                             .metadata
                             .value(keys::MODIFIED)
-                            .and_then(bibli_core::Value::as_time),
+                            .and_then(skwir_core::Value::as_time),
                         size: ThumbSize::Normal,
                     };
                     if let ThumbState::Ready(img) = self.app.thumbnails.get(req, Priority::Visible)

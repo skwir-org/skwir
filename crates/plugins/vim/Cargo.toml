@@ -1,6 +1,6 @@
 [package]
-name = "bibli-plugin-vim"
-description = "bibli plugin: yazi's and vim's keys in the file list (a key scheme, off by default)"
+name = "skwir-plugin-vim"
+description = "skwir plugin: yazi's and vim's keys in the file list (a key scheme, off by default)"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -8,8 +8,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
-bibli-platform.workspace = true
+skwir-core.workspace = true
+skwir-platform.workspace = true
 serde_json.workspace = true
 parking_lot.workspace = true
 

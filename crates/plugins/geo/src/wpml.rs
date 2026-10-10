@@ -19,8 +19,8 @@
 //! turns), speeds and the drone's model are left out.
 use std::io::BufRead;
 
-use bibli_core::CancelToken;
-use bibli_core::geo::{Area, Datum, LatLon, Waypoint, WaypointKind};
+use skwir_core::CancelToken;
+use skwir_core::geo::{Area, Datum, LatLon, Waypoint, WaypointKind};
 
 use crate::collect::{self, Collector, Plan, PlanKind};
 use crate::mission::Route;
@@ -258,7 +258,7 @@ fn end(name: &str, parent: &str, text: &str, mission: &mut Mission, into: &mut C
 #[allow(clippy::float_cmp)]
 pub(crate) mod tests {
     use super::*;
-    use bibli_core::geo::LineKind;
+    use skwir_core::geo::LineKind;
 
     fn at(lat: f64, lon: f64) -> LatLon {
         LatLon::new(lat, lon).unwrap()

@@ -14,11 +14,11 @@ use crate::{
     inspector_text, latest::Latest, markdown::MarkdownStyle, preview::PreviewContent, shell::Shell,
     theme::Theme, toolbar,
 };
-use bibli_core::{
+use gpui::{AnyElement, Context, Pixels, Point, StyledText, Window, div, prelude::*, px};
+use skwir_core::{
     inspection::{Block, InspectRequest, InspectionKind},
     scheduler::Priority,
 };
-use gpui::{AnyElement, Context, Pixels, Point, StyledText, Window, div, prelude::*, px};
 use std::sync::Arc;
 
 /// Blocks a note shows at most: a note is a few paragraphs, and one that is

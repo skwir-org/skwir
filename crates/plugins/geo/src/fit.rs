@@ -16,8 +16,8 @@
 use std::io::{self, BufRead};
 use std::time::{Duration, SystemTime};
 
-use bibli_core::CancelToken;
-use bibli_core::geo::{Datum, LatLon, LineKind, Point};
+use skwir_core::CancelToken;
+use skwir_core::geo::{Datum, LatLon, LineKind, Point};
 
 use crate::collect::Collector;
 use crate::xml::Damaged;
@@ -177,7 +177,7 @@ fn file<R: BufRead>(
         }
         state.records = state.records.wrapping_add(1);
         if state.records.is_multiple_of(4096) {
-            bibli_platform::inspection::check(cancel).map_err(Stop::Error)?;
+            skwir_platform::inspection::check(cancel).map_err(Stop::Error)?;
         }
         record(source, &mut definitions, state, into)?;
     }

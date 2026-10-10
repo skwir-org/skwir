@@ -7,7 +7,7 @@ Status: accepted, 2026-09-30. Amends ADR-006.
 Some notes are kept in files beside the file they describe (ADR-027): a
 Mac's `._x`, XMP's `x.ext.xmp` or `x.xmp`, TagSpaces' `.ts/x.json` (and
 its thumbnail, `.ts/x.ext.jpg`). Only the name ties them to their file.
-Today bibli knows them in three unrelated places and nowhere else:
+Today skwir knows them in three unrelated places and nowhere else:
 
 - the tags plugin reads a folder a second time to find the `._` files of
   the files it fills (`attrs::AsideNames`), though the listing has every
@@ -15,14 +15,14 @@ Today bibli knows them in three unrelated places and nowhere else:
 - the folder listing reads `x` again when `._x` changes, a rule written
   for `._` alone (`path_provider.rs`);
 - the operations (rename, move, copy, trash, delete) do not know them:
-  renaming `x` in bibli leaves `._x` behind, pointing at nothing, and the
+  renaming `x` in skwir leaves `._x` behind, pointing at nothing, and the
   Mac loses the file's tags.
 
 Copying to a volume without attributes loses the notes (or, with
 attributes kept, fails: ADR-006 chose "no silent metadata loss or sidecar
 fallback"). A Mac does the opposite: it writes the attributes to `._x`
 on such a volume, and `dot_clean` puts them back as attributes on one
-that has them. Seamless notes on USB drives need bibli to do the same.
+that has them. Seamless notes on USB drives need skwir to do the same.
 
 ## Decision
 
@@ -97,7 +97,7 @@ them is on.
 
 ### Files another program renamed
 
-bibli cannot follow a rename made elsewhere; the companion becomes an
+skwir cannot follow a rename made elsewhere; the companion becomes an
 orphan. When a store records a fingerprint of its file (XMP's
 `xmpMM:DocumentID`, a size and a digest), an orphan whose fingerprint
 matches a file of its folder is offered back to it, as a plan. `._` files
@@ -115,6 +115,6 @@ record none and stay orphans.
   attributes.
 - `attrs::AsideNames` and the `._` special case of `path_provider.rs` go
   away.
-- Not covered: tools other than bibli (`cp`, `mv`, other file managers,
+- Not covered: tools other than skwir (`cp`, `mv`, other file managers,
   sync services) still move files without their companions; a companion
   deleted elsewhere takes its notes with it.

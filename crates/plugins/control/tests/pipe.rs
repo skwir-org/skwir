@@ -1,19 +1,19 @@
 //! The window's channel on Windows (ADR-043): a named pipe, each client on
-//! an instance of its own, the next made as one connects; a second bibli
+//! an instance of its own, the next made as one connects; a second skwir
 //! finds the pipe taken. Tried under Wine, which keeps no account apart:
 //! what the pipe lets other accounts do is not tested here.
 #![cfg(windows)]
 
 use std::time::{Duration, Instant};
 
-use bibli_core::App;
-use bibli_core::Plan;
-use bibli_core::app::AppConfig;
-use bibli_core::command::{NoArgs, Outcome};
-use bibli_core::op::Mkdir;
-use bibli_plugin_control::channel::Address;
-use bibli_plugin_control::{PlanMode, client, serve};
 use serde_json::json;
+use skwir_core::App;
+use skwir_core::Plan;
+use skwir_core::app::AppConfig;
+use skwir_core::command::{NoArgs, Outcome};
+use skwir_core::op::Mkdir;
+use skwir_plugin_control::channel::Address;
+use skwir_plugin_control::{PlanMode, client, serve};
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct Make {
@@ -42,7 +42,7 @@ fn clients_one_after_another_reach_the_window_through_its_pipe() {
             Ok(Outcome::Plan(plan))
         },
     );
-    let address = Address(format!(r"\\.\pipe\bibli-test-{}", std::process::id()).into());
+    let address = Address(format!(r"\\.\pipe\skwir-test-{}", std::process::id()).into());
     let call = |name: &str, args: serde_json::Value, mode| {
         let serde_json::Value::Object(args) = args else {
             unreachable!()
@@ -71,7 +71,7 @@ fn clients_one_after_another_reach_the_window_through_its_pipe() {
     assert_eq!(applied.value["verdict"], json!("applied"));
     assert!(tmp.path().join("Made").is_dir());
 
-    // A second bibli finds the pipe taken, and the first still answers.
+    // A second skwir finds the pipe taken, and the first still answers.
     drop(serve(&app, address.clone()));
     let answer = call("test.answer", json!({}), PlanMode::Propose).unwrap();
     assert_eq!(answer.value, json!(42));

@@ -41,7 +41,7 @@ static COUNTING: Counting = Counting;
 /// The allocations one lookup of `name` makes, and its answer.
 fn counted(name: &str) -> (usize, Option<String>) {
     let before = ALLOCATIONS.load(Ordering::Relaxed);
-    let found = bibli_platform::mime::by_name(std::ffi::OsStr::new(name));
+    let found = skwir_platform::mime::by_name(std::ffi::OsStr::new(name));
     let count = ALLOCATIONS.load(Ordering::Relaxed) - before;
     (count, found.map(|m| m.as_str().to_owned()))
 }

@@ -3,7 +3,7 @@
 //! asks for, and what the bytes of a selected hex row mean. Pure, so it is
 //! tested without a window; the shape is computed on the worker that builds
 //! the `Display`, never while painting.
-use bibli_core::inspection::Row;
+use skwir_core::inspection::Row;
 
 /// Column widths and kinds of a table, from its header and the rows loaded.
 #[derive(Clone, Debug, Default, PartialEq)]

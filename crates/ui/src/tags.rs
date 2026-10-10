@@ -4,7 +4,7 @@
 //! A tag wears the color the user chose for it (`tags.colors`, the tags
 //! plugin's, read when the settings change), else the one its file gives
 //! it (a Mac's Finder tags carry one: `keys::TAG_COLORS`), else the one
-//! its name gives it (`bibli_core::metadata::tag_color`), so every view
+//! its name gives it (`skwir_core::metadata::tag_color`), so every view
 //! agrees without storing anything of ours per file.
 //!
 //! The editor acts on the entries selected when it opened, whatever the
@@ -20,15 +20,15 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bibli_core::command::Outcome;
-use bibli_core::metadata::{
-    TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color, tag_leaf, tag_lineage, tag_parent,
-};
-use bibli_core::op::EntryRef;
-use bibli_core::workspace::PaneId;
 use gpui::{
     AnyElement, Context, Div, Entity, FocusHandle, Subscription, Window, div, prelude::*, px,
 };
+use skwir_core::command::Outcome;
+use skwir_core::metadata::{
+    TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color, tag_leaf, tag_lineage, tag_parent,
+};
+use skwir_core::op::EntryRef;
+use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::clip::clipped;
@@ -43,7 +43,7 @@ use crate::theme::Theme;
 pub struct TagColors(HashMap<String, usize>);
 
 impl TagColors {
-    pub fn read(app: &bibli_core::App) -> Self {
+    pub fn read(app: &skwir_core::App) -> Self {
         let table: toml::Table = app.settings.get(TAG_COLOR_SETTING).unwrap_or_default();
         TagColors(
             table
@@ -89,9 +89,9 @@ impl TagColors {
 
 /// The colors an entry's file gives its tags (`keys::TAG_COLORS`), as
 /// indices into `Theme::tags`.
-pub fn given_colors(e: &bibli_core::Entry) -> Vec<(String, usize)> {
-    use bibli_core::Value;
-    let Some(Value::List(pairs)) = e.metadata.value(bibli_core::entry::keys::TAG_COLORS) else {
+pub fn given_colors(e: &skwir_core::Entry) -> Vec<(String, usize)> {
+    use skwir_core::Value;
+    let Some(Value::List(pairs)) = e.metadata.value(skwir_core::entry::keys::TAG_COLORS) else {
         return Vec::new();
     };
     pairs
@@ -107,19 +107,19 @@ pub fn given_colors(e: &bibli_core::Entry) -> Vec<(String, usize)> {
 }
 
 /// Tags from the entry's `tags` metadata field (a list of text values).
-pub fn tags_of(e: &bibli_core::Entry) -> Vec<String> {
-    match e.metadata.value(bibli_core::entry::keys::TAGS) {
-        Some(bibli_core::Value::List(items)) => items
+pub fn tags_of(e: &skwir_core::Entry) -> Vec<String> {
+    match e.metadata.value(skwir_core::entry::keys::TAGS) {
+        Some(skwir_core::Value::List(items)) => items
             .iter()
             .filter_map(|v| v.as_str().map(str::to_owned))
             .collect(),
-        Some(bibli_core::Value::Text(t)) => vec![t.to_string()],
+        Some(skwir_core::Value::Text(t)) => vec![t.to_string()],
         _ => Vec::new(),
     }
 }
 
 /// An entry's tags, each with the color it wears.
-pub fn entry_tags(e: &bibli_core::Entry, colors: &TagColors) -> Vec<(String, usize)> {
+pub fn entry_tags(e: &skwir_core::Entry, colors: &TagColors) -> Vec<(String, usize)> {
     let given = given_colors(e);
     tags_of(e)
         .into_iter()
@@ -336,7 +336,7 @@ pub fn shown(rows: &[TagRow], query: &str) -> Vec<Shown> {
     // `Places/` asks what is in the category: nothing to add yet.
     let typed = if query
         .trim_end()
-        .ends_with(bibli_core::metadata::TAG_SEPARATOR)
+        .ends_with(skwir_core::metadata::TAG_SEPARATOR)
     {
         Vec::new()
     } else {
@@ -370,13 +370,13 @@ pub fn shown(rows: &[TagRow], query: &str) -> Vec<Shown> {
 /// Tags typed, separated by commas, each made one (`Places / France` is
 /// `Places/France`).
 fn split(text: &str) -> Vec<String> {
-    bibli_core::notes::parse_tags(text)
+    skwir_core::notes::parse_tags(text)
 }
 
 /// A tag of a field (a category holding one tag at a time, `fields`)
 /// given: the field's other values are taken, as the edit will.
 fn choose_one(rows: &mut [TagRow], picked: usize, fields: &[String]) {
-    use bibli_core::metadata::exclusive_category;
+    use skwir_core::metadata::exclusive_category;
     let Some(row) = rows.get(picked).filter(|r| r.mark == Mark::All) else {
         return;
     };
@@ -560,7 +560,7 @@ impl Shell {
         self.off_thread(
             "tags-selected",
             move || {
-                app.dispatch(&bibli_core::command::Invocation::with_args(
+                app.dispatch(&skwir_core::command::Invocation::with_args(
                     "tags.selected",
                     &serde_json::json!({ "entries": entries }),
                 ))

@@ -1,4 +1,4 @@
-//! `plugin.toml`: what a plugin from outside bibli is, what it may do,
+//! `plugin.toml`: what a plugin from outside skwir is, what it may do,
 //! what it provides, and how it runs (ADR-045).
 //!
 //! ```toml
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocol::{OLDEST, VERSION};
 
-/// What a plugin may do (bibli's `permissions::Capability`). A plugin
+/// What a plugin may do (skwir's `permissions::Capability`). A plugin
 /// gets what it declares once the user turns it on, and nothing more.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,7 +36,7 @@ pub enum Capability {
     Programs,
 }
 
-/// Where a plugin is listed among the others (bibli's `plugin::Category`).
+/// Where a plugin is listed among the others (skwir's `plugin::Category`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {
@@ -47,7 +47,7 @@ pub enum Category {
     Desktop,
 }
 
-/// What a command does (bibli's `command::Effect`), which decides what
+/// What a command does (skwir's `command::Effect`), which decides what
 /// an agent may run without asking.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -131,7 +131,7 @@ pub struct ThumbnailDecl {
 }
 
 /// The files it previews: an inspection (text, code, hex rows, a table),
-/// with `converts` another file bibli shows, or with `pages` a page at a
+/// with `converts` another file skwir shows, or with `pages` a page at a
 /// time.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -145,7 +145,7 @@ pub struct PreviewDecl {
     #[serde(default)]
     pub shows_bytes: bool,
     /// It answers `convert`: the file is shown as the one it makes (a PDF,
-    /// a picture, Markdown…), by bibli's own preview of that type.
+    /// a picture, Markdown…), by skwir's own preview of that type.
     #[serde(default)]
     pub converts: bool,
     /// It answers `page`: the file is shown a page at a time, each a
@@ -196,7 +196,7 @@ impl Manifest {
         }
         if !(OLDEST..=VERSION).contains(&self.api) {
             return Err(format!(
-                "it speaks version {} of the protocol; bibli speaks {OLDEST} to {VERSION}",
+                "it speaks version {} of the protocol; skwir speaks {OLDEST} to {VERSION}",
                 self.api
             ));
         }
@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plugin_speaks_a_version_bibli_speaks() {
+    fn a_plugin_speaks_a_version_skwir_speaks() {
         let preview = |converts| PreviewDecl {
             types: vec!["image/x-portable-pixmap".into()],
             priority: 0,

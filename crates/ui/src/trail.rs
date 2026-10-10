@@ -10,7 +10,7 @@
 //! workspace lock, never per frame. The shell never asks a location's
 //! scheme how to show it: a new kind of location needs no branch here.
 
-use bibli_core::location::{Crumb, EmptyState, Location, Trail, Verbs};
+use skwir_core::location::{Crumb, EmptyState, Location, Trail, Verbs};
 
 use crate::shell::Shell;
 
@@ -112,7 +112,7 @@ pub fn sync(shell: &mut Shell) {
 /// The glyph that stands for `location` where it is named among others (a
 /// tab, the history, a menu of places): its provider's
 /// (`LocationProvider::icon`), else a folder's.
-pub fn glyph(app: &bibli_core::App, location: &Location) -> &'static str {
+pub fn glyph(app: &skwir_core::App, location: &Location) -> &'static str {
     app.location_icon(location).unwrap_or("folder")
 }
 

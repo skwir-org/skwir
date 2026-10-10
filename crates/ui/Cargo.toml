@@ -1,6 +1,6 @@
 [package]
-name = "bibli-ui"
-description = "bibli UI shell on GPUI (ADR-001)"
+name = "skwir-ui"
+description = "skwir UI shell on GPUI (ADR-001)"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -10,7 +10,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
+skwir-core.workspace = true
 gpui.workspace = true
 flume.workspace = true
 nucleo-matcher.workspace = true
@@ -23,7 +23,7 @@ unicode-segmentation.workspace = true
 jiff.workspace = true
 schemars.workspace = true
 toml.workspace = true
-bibli-platform.workspace = true
+skwir-platform.workspace = true
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 syntect.workspace = true
 two-face.workspace = true

@@ -12,7 +12,7 @@ use crate::protocol::{
     PageParams, ThumbnailParams, method,
 };
 
-/// What bibli does for a plugin while it answers a call.
+/// What skwir does for a plugin while it answers a call.
 pub trait Host {
     /// Bytes of a file of the call, by its handle, from `offset`, at most
     /// `length` (fewer at its end).
@@ -21,7 +21,7 @@ pub trait Host {
     /// Refused (no such handle, may not read), or the file could not be
     /// read.
     fn read(&self, file: u32, offset: u64, length: u32) -> Result<Vec<u8>, String>;
-    /// A line for bibli's log.
+    /// A line for skwir's log.
     fn log(&self, level: &str, message: &str);
 }
 
@@ -168,7 +168,7 @@ pub fn answer(
 }
 
 /// A plugin that runs as a program: the protocol over standard input and
-/// output, one call at a time (bibli sends the next once one is
+/// output, one call at a time (skwir sends the next once one is
 /// answered).
 pub mod stdio {
     use std::cell::{Cell, RefCell};
@@ -182,7 +182,7 @@ pub mod stdio {
         method,
     };
 
-    /// Serve `plugin` until bibli closes standard input.
+    /// Serve `plugin` until skwir closes standard input.
     ///
     /// # Errors
     /// Standard input or output failing.
@@ -220,7 +220,7 @@ pub mod stdio {
     struct Stdio<R> {
         input: RefCell<R>,
         next: Cell<u64>,
-        /// A call bibli stopped waiting for: reads fail from then on.
+        /// A call skwir stopped waiting for: reads fail from then on.
         cancelled: Cell<Option<u64>>,
     }
 
@@ -257,7 +257,7 @@ pub mod stdio {
                 let message = self
                     .next_message()
                     .map_err(|e| e.to_string())?
-                    .ok_or("bibli closed the channel")?;
+                    .ok_or("skwir closed the channel")?;
                 if message.is_response() && message.id == Some(id) {
                     let answer: ReadAnswer =
                         serde_json::from_value(message.outcome()?).map_err(|e| e.to_string())?;
@@ -281,7 +281,7 @@ pub mod stdio {
     }
 }
 
-/// A plugin that runs as a WebAssembly module: bindings to bibli's host.
+/// A plugin that runs as a WebAssembly module: bindings to skwir's host.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm {
     #[allow(clippy::all, clippy::pedantic, unsafe_code)]
@@ -291,23 +291,23 @@ pub mod wasm {
             world: "plugin",
             pub_export_macro: true,
             export_macro_name: "export_guest",
-            default_bindings_module: "bibli_plugin_api::guest::wasm::bindings",
+            default_bindings_module: "skwir_plugin_api::guest::wasm::bindings",
         });
     }
 
     pub use bindings::export_guest;
-    pub use bindings::exports::bibli::plugin::guest::Guest;
+    pub use bindings::exports::skwir::plugin::guest::Guest;
 
-    /// bibli, as a module's imports reach it.
+    /// skwir, as a module's imports reach it.
     pub struct Imports;
 
     impl super::Host for Imports {
         fn read(&self, file: u32, offset: u64, length: u32) -> Result<Vec<u8>, String> {
-            bindings::bibli::plugin::host::read(file, offset, length)
+            bindings::skwir::plugin::host::read(file, offset, length)
         }
 
         fn log(&self, level: &str, message: &str) {
-            bindings::bibli::plugin::host::log(level, message);
+            bindings::skwir::plugin::host::log(level, message);
         }
     }
 }

@@ -1,12 +1,12 @@
-//! What bibli lets go where (ADR-044).
+//! What skwir lets go where (ADR-044).
 //!
 //! - **What a plugin may do** ([`Capability`]): read what files hold,
 //!   change files, use the network, start programs. A plugin built into
-//!   bibli declares it and the Plugins page says it; a plugin from outside
-//!   bibli (a program, a WebAssembly module) gets what it declares and
+//!   skwir declares it and the Plugins page says it; a plugin from outside
+//!   skwir (a program, a WebAssembly module) gets what it declares and
 //!   nothing more, from its host.
 //! - **Private folders** ([`Privacy`]): folders whose files never leave
-//!   this machine. Nothing bibli hands an agent or a plugin from outside
+//!   this machine. Nothing skwir hands an agent or a plugin from outside
 //!   names, lists or reads them: the folders the Privacy page lists
 //!   (`~/.ssh` and the like) and any folder holding a `.private` file,
 //!   with everything under them.
@@ -149,7 +149,7 @@ pub fn declare(settings: &Settings) {
     let mut folders = SettingSpec::records(
         FOLDERS_KEY,
         "Private folders",
-        "Files that never leave this machine: an agent and a plugin from outside bibli never see their names nor what they hold, nor anything under them. A path, ~ for your home folder.",
+        "Files that never leave this machine: an agent and a plugin from outside skwir never see their names nor what they hold, nor anything under them. A path, ~ for your home folder.",
         "private folder",
         vec![
             RecordField::text(

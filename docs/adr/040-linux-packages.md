@@ -4,20 +4,20 @@ Status: accepted, 2026-10-06 (Phase 5; the user chose the formats).
 Amended the same day by ADR-041: the packages carry PDFium, and the
 helpers few need, or whose libraries most systems do not, are packages
 of their own (on Arch, optional libraries). Amended the same day by
-ADR-042: bibli is under Apache-2.0 alone (`LICENSE`), and the Poppler
+ADR-042: skwir is under Apache-2.0 alone (`LICENSE`), and the Poppler
 reader is distributed under the GPL version 3.
 
 ## Context
 
-bibli had two Linux packages, both from Nix (ADR-035, step K): the
+skwir had two Linux packages, both from Nix (ADR-035, step K): the
 flake's package, for NixOS and Nix elsewhere, and an AppImage of it. A
 program built by Nix carries Nix's C library; on another distribution
 it cannot load that system's graphics driver, which is built against
-the system's own, and bibli draws with the GPU: the AppImage is likely
+the system's own, and skwir draws with the GPU: the AppImage is likely
 to fail there. People install what their distribution installs.
 
 Flatpak was considered and left out: its sandbox hides the programs
-installed on the system that bibli runs (LibreOffice, Pandoc, ffmpeg,
+installed on the system that skwir runs (LibreOffice, Pandoc, ffmpeg,
 exiftool…) and the folders it manages unless granted all of them, and
 bubblewrap, which isolates the converters (ADR-039), cannot run inside
 it.
@@ -31,28 +31,28 @@ it.
    `tools/package/rpm.sh`), and a PKGBUILD for the AUR, built from a
    release's source with Arch's own Rust (`tools/package/aur`). The
    Debian and RPM builds use rustup's Rust: a distribution's may be
-   older than bibli needs.
-2. **One layout**: `bibli` in `/usr/bin`, its helpers where the
-   distribution keeps a program's own (`/usr/lib/bibli` on Debian and
-   Arch, `/usr/libexec/bibli` on Fedora), which bibli now looks in
+   older than skwir needs.
+2. **One layout**: `skwir` in `/usr/bin`, its helpers where the
+   distribution keeps a program's own (`/usr/lib/skwir` on Debian and
+   Arch, `/usr/libexec/skwir` on Fedora), which skwir now looks in
    after its own folder (`process::helper_folders`), so no link or
-   wrapper script stands between them; a desktop entry (`bibli.desktop`,
+   wrapper script stands between them; a desktop entry (`org.skwir.skwir.desktop`,
    the window's application id) and AppStream metainfo
-   (`io.github.venator.bibli`). Which programs ship is one list,
+   (`org.skwir.skwir`). Which programs ship is one list,
    `tools/package/programs`, which the builds read; the packages'
    file lists name the same programs.
 3. **Dependencies**: what the programs link, found by each tool
-   (`$auto`, auto-req; listed by hand for the AUR), and what bibli opens
+   (`$auto`, auto-req; listed by hand for the AUR), and what skwir opens
    at run time, which no tool sees: the Vulkan loader and fontconfig.
    A Vulkan driver, bubblewrap and the basic GStreamer plugins are
-   recommended; the programs bibli uses when they are there
+   recommended; the programs skwir uses when they are there
    (LibreOffice, Pandoc, ImageMagick, ffmpeg, exiftool, plocate, the
    other GStreamer plugins) are suggested, so a package never pulls a
    suite of office programs.
 4. **Every helper ships**, the MuPDF reader included (EPUB's pages are
    MuPDF's): the packages say the Poppler reader is distributed under
    the GPL and the MuPDF reader under the AGPL (ADR-014), whose
-   sources are bibli's repository. A packager who wants neither drops
+   sources are skwir's repository. A packager who wants neither drops
    those programs, as ADR-014 says.
 5. **The licence texts** are in the repository (`LICENSE-MIT`, without
    a holder's line, as Rust's own; `LICENSE-APACHE`), installed by each
@@ -75,11 +75,11 @@ it.
 - The AUR package turns makepkg's LTO off (`options=('!lto')`): it
   compiles the C that crates build (MuPDF) into GCC's intermediate
   code, which Rust's linker (lld, its default) cannot read.
-- A system with no font holding a symbol bibli draws as text (the sort
+- A system with no font holding a symbol skwir draws as text (the sort
   arrow) shows a box there; every desktop installs one (DejaVu, Noto),
   so no font is depended on.
-- The Debian maintainer field says "The bibli authors" until someone
+- The Debian maintainer field says "The skwir authors" until someone
   answers for the package; the AUR's maintainer is whoever publishes
   it there, which is the user's to do.
-- bibli has no icon of its own yet: the desktop entry names the
+- skwir has no icon of its own yet: the desktop entry names the
   theme's file manager icon.

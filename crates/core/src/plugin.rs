@@ -34,12 +34,12 @@ pub trait Plugin: Send + Sync {
     fn on_disable(&self, _app: &App) {}
     /// What it may do beyond naming and listing files (ADR-044): read what
     /// files hold, change them, use the network, start programs. A plugin
-    /// built into bibli says it, for the Plugins page; one from outside
+    /// built into skwir says it, for the Plugins page; one from outside
     /// gets what it declares and nothing more, from its host.
     fn capabilities(&self) -> crate::permissions::Capabilities {
         crate::permissions::Capabilities::NONE
     }
-    /// Where a plugin from outside bibli comes from (its folder), said on
+    /// Where a plugin from outside skwir comes from (its folder), said on
     /// the Plugins page; `None` for one built in.
     fn origin(&self) -> Option<String> {
         None
@@ -206,7 +206,7 @@ pub struct PluginInfo {
     pub enabled: bool,
     /// What it may do (`Plugin::capabilities`).
     pub capabilities: crate::permissions::Capabilities,
-    /// Where it comes from, for one from outside bibli.
+    /// Where it comes from, for one from outside skwir.
     pub origin: Option<String>,
 }
 

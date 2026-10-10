@@ -6,7 +6,7 @@ Status: accepted, 2026-09-26.
 
 Dolphin's F4 opens a terminal under the view that follows the folder shown,
 and a `cd` typed there takes the view along. It is the one Dolphin feature
-people name when they try another file manager. bibli had only "Open
+people name when they try another file manager. skwir had only "Open
 Terminal Here" (Shift+F4), which hands the folder to `$TERMINAL`: a window
 elsewhere that knows nothing of the pane afterwards.
 
@@ -99,10 +99,10 @@ taken from them.
 
 - Cost (measured, below): with the panel never opened nothing is
   allocated and no thread runs; only the engine's code is in the binary.
-- The terminal-to-pane direction reads `/proc`: Linux only, as bibli is.
+- The terminal-to-pane direction reads `/proc`: Linux only, as skwir is.
 - The engine sets `ALACRITTY_WINDOW_ID` and `WINDOWID` in the shell's
   environment; `TERM` is `xterm-256color`, `COLORTERM` `truecolor`,
-  `TERM_PROGRAM` `bibli`.
+  `TERM_PROGRAM` `skwir`.
 - F4 in a program that uses it (Midnight Commander's Edit) closes the panel
   instead; everything else is the program's.
 - Not yet: mouse reporting to programs (htop, mc take no clicks; the wheel

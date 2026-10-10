@@ -2,10 +2,10 @@
 //! The plugin counts it (`timeline.histogram`), on a worker: a count reads
 //! every file the pane shows, which the window's thread does not wait for.
 
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::workspace::PaneId;
 use gpui::{AnyElement, Context, div, prelude::*, px};
 use serde::Deserialize;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::workspace::PaneId;
 
 use crate::format;
 use crate::shell::Shell;
@@ -214,7 +214,7 @@ impl Shell {
             self.timeline.asked.ask(
                 &app,
                 &lifetime,
-                bibli_core::scheduler::Priority::Visible,
+                skwir_core::scheduler::Priority::Visible,
                 "timeline-count",
                 move |_| {
                     let answer = match worker.dispatch(&ask) {

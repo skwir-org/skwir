@@ -1,10 +1,10 @@
 # Security
 
-bibli handles your files, runs plugins from outside its code, and lets
+skwir handles your files, runs plugins from outside its code, and lets
 agents act through it, so some problems are not for a public issue:
 
 - a private folder (Settings › Privacy) reaching an agent or a plugin
-  from outside bibli;
+  from outside skwir;
 - a plugin getting what its manifest did not declare (another file, the
   network, a program), or leaving its isolation;
 - an agent or a script changing files without the review its plan needs;

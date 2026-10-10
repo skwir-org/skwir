@@ -489,7 +489,7 @@ impl Operation for SetNotes {
             );
         }
         let after = raw::snapshot(&path, &keys)?;
-        // What each store says now, as bibli left it: the next read tells
+        // What each store says now, as skwir left it: the next read tells
         // another application's edit from this one by it. A store that did
         // not write says what it was read saying; one that wrote is read
         // again, as it keeps what it can of the notes.
@@ -555,7 +555,7 @@ pub struct RestoreNotes {
     /// What the edit left: if the stores hold something else now, another
     /// application changed them, and that is not overwritten.
     pub after: Vec<Raw>,
-    /// Whose snapshot of what bibli wrote is forgotten once the bytes are
+    /// Whose snapshot of what skwir wrote is forgotten once the bytes are
     /// back.
     #[serde(skip)]
     #[schemars(skip)]
@@ -689,7 +689,7 @@ mod tests {
     use crate::notes::{Holds, Kept, NotesStore};
 
     fn home_tempdir() -> tempfile::TempDir {
-        let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         tempfile::Builder::new()
             .prefix("notes-edit-")

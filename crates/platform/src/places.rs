@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use bibli_core::CancelToken;
+use skwir_core::CancelToken;
 
 /// An XDG user directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -393,7 +393,7 @@ pub fn is_busy(error: &anyhow::Error) -> bool {
 /// as long as the drive takes: worker only.
 pub fn flush(path: &Path) -> anyhow::Result<()> {
     // Closed before the unmount, which this would otherwise hold up.
-    bibli_core::fs::Dir::open(path)?.sync_volume()?;
+    skwir_core::fs::Dir::open(path)?.sync_volume()?;
     Ok(())
 }
 
@@ -409,7 +409,7 @@ pub fn unmount(source: &str) -> anyhow::Result<()> {
 }
 
 pub fn home() -> Option<PathBuf> {
-    bibli_core::os_path::home()
+    skwir_core::os_path::home()
 }
 
 /// The user's folders, existing ones only, the home folder itself
@@ -711,7 +711,7 @@ pub fn bookmarks_folders() -> Vec<PathBuf> {
         return Vec::new();
     };
     let mut folders: Vec<PathBuf> = file.parent().map(Path::to_path_buf).into_iter().collect();
-    if let Some(target) = bibli_core::os_path::canonical(&file)
+    if let Some(target) = skwir_core::os_path::canonical(&file)
         .ok()
         .and_then(|target| target.parent().map(Path::to_path_buf))
         && !folders.contains(&target)
@@ -769,7 +769,7 @@ fn is_interesting_mountpoint(p: &Path) -> bool {
 /// (`fs::volume::mountinfo`, the one reading of it).
 pub fn parse_mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mount> {
     let mut out: Vec<Mount> = Vec::new();
-    for mounted in bibli_core::fs::volume::mountinfo(text) {
+    for mounted in skwir_core::fs::volume::mountinfo(text) {
         let mountpoint = mounted.point;
         if !is_user_fs(&mounted.fstype) || !is_interesting_mountpoint(&mountpoint) {
             continue;
@@ -810,7 +810,7 @@ mod imp {
             .unwrap_or_default();
         for mount in &mut mounts {
             mount.removable =
-                bibli_core::fs::volume::device_removable(std::path::Path::new(&mount.source));
+                skwir_core::fs::volume::device_removable(std::path::Path::new(&mount.source));
         }
         mounts
     }

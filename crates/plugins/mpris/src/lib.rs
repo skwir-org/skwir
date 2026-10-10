@@ -1,4 +1,4 @@
-//! bibli plugin: the desktop's media controls (MPRIS, on the session bus).
+//! skwir plugin: the desktop's media controls (MPRIS, on the session bus).
 //!
 //! It mirrors core's `App::player` and nothing else: what plays becomes the
 //! properties of `org.mpris.MediaPlayer2.Player`, and the calls the desktop
@@ -7,16 +7,16 @@
 //! plugin knows neither the UI nor the player, and they do not know it.
 //!
 //! A file manager is not always a music player: the bus name is held only
-//! while something plays, so the desktop shows no idle "bibli" player.
+//! while something plays, so the desktop shows no idle "skwir" player.
 //! Everything runs on the plugin's own thread; without a session bus (a
 //! headless run) it logs once and ends.
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
-use bibli_core::media::PlaybackStatus;
-use bibli_core::playing::{NowPlaying, PlayerRequest};
-use bibli_core::{App, CancelToken, plugin::Plugin};
 use parking_lot::Mutex;
+use skwir_core::media::PlaybackStatus;
+use skwir_core::playing::{NowPlaying, PlayerRequest};
+use skwir_core::{App, CancelToken, plugin::Plugin};
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
@@ -38,14 +38,14 @@ impl Plugin for MprisPlugin {
     fn description(&self) -> &'static str {
         "Let the desktop show and steer what is playing: media keys, the panel's player, headset buttons (MPRIS)"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Desktop
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Desktop
     }
     fn register(&self, app: &App) {
         let stop = app.lifetime().child();
         let (weak, changes, token) = (app.weak(), app.player.subscribe(self.id()), stop.clone());
         let thread = std::thread::Builder::new()
-            .name("bibli-mpris".into())
+            .name("skwir-mpris".into())
             .spawn(move || {
                 if let Err(error) = serve(&weak, &changes, &token) {
                     tracing::debug!("media controls are unavailable: {error:#}");
@@ -100,11 +100,11 @@ impl Root {
     }
     #[zbus(property)]
     fn identity(&self) -> &'static str {
-        "bibli"
+        "skwir"
     }
     #[zbus(property)]
     fn desktop_entry(&self) -> &'static str {
-        "bibli"
+        "skwir"
     }
     #[zbus(property)]
     fn supported_uri_schemes(&self) -> Vec<&'static str> {
@@ -134,7 +134,7 @@ fn track_id(now: &NowPlaying) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     now.path.hash(&mut hasher);
-    format!("/org/bibli/track/{:016x}", hasher.finish())
+    format!("/org/skwir/track/{:016x}", hasher.finish())
 }
 
 fn metadata(now: Option<&NowPlaying>) -> HashMap<String, OwnedValue> {
@@ -154,7 +154,7 @@ fn metadata(now: Option<&NowPlaying>) -> HashMap<String, OwnedValue> {
         put("mpris:trackid", path.into());
     }
     put("xesam:title", now.title.as_str().into());
-    put("xesam:url", bibli_platform::uri::file_uri(&now.path).into());
+    put("xesam:url", skwir_platform::uri::file_uri(&now.path).into());
     if !now.artist.is_empty() {
         put("xesam:artist", vec![now.artist.as_str()].into());
     }
@@ -165,7 +165,7 @@ fn metadata(now: Option<&NowPlaying>) -> HashMap<String, OwnedValue> {
         put("mpris:length", micros(duration).into());
     }
     if let Some(cover) = &now.cover {
-        put("mpris:artUrl", bibli_platform::uri::file_uri(cover).into());
+        put("mpris:artUrl", skwir_platform::uri::file_uri(cover).into());
     }
     map
 }
@@ -284,7 +284,7 @@ fn serve(
         .build()?;
     // One name per process: two windows of two instances are two players.
     let name = format!(
-        "org.mpris.MediaPlayer2.bibli.instance{}",
+        "org.mpris.MediaPlayer2.skwir.instance{}",
         std::process::id()
     );
     let player = connection.object_server().interface::<_, Player>(PATH)?;
@@ -369,14 +369,14 @@ mod tests {
         let now = track();
         let map = metadata(Some(&now));
         let text = |key: &str| map.get(key).map(|value| format!("{:?}", **value));
-        assert!(text("mpris:trackid").unwrap().contains("/org/bibli/track/"));
+        assert!(text("mpris:trackid").unwrap().contains("/org/skwir/track/"));
         assert!(text("xesam:title").unwrap().contains("A Song"));
         assert!(text("xesam:artist").unwrap().contains("Someone"));
         assert!(text("mpris:length").unwrap().contains("200250000"));
         assert!(!map.contains_key("xesam:album"), "a blank is not a value");
         // A path is a URL on the bus, escaped the way the desktop escapes it.
         assert_eq!(
-            bibli_platform::uri::file_uri(&now.path),
+            skwir_platform::uri::file_uri(&now.path),
             "file:///music/it's%20a%20caf%C3%A9/01%20%E2%80%93%20song.flac"
         );
         // The same file is the same track; nothing playing is no track.

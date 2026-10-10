@@ -23,9 +23,9 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
 
-use bibli_core::EntryId;
-use bibli_core::thumbs::ThumbSize;
 use gpui::{AnyElement, Context, Window, div, img, prelude::*, px, size};
+use skwir_core::EntryId;
+use skwir_core::thumbs::ThumbSize;
 
 use crate::elements::uniform_grid::{TileHeights, UniformGridScrollHandle, uniform_grid};
 use crate::icons;
@@ -91,7 +91,7 @@ impl GridView {
         let list = &shell.ui().list;
         let ws = shell.app.workspace.read();
         let listing = ws.pane(shell.pane).map(|pane| &pane.listing);
-        let names = listing.map_or(0, bibli_core::Listing::names_version);
+        let names = listing.map_or(0, skwir_core::Listing::names_version);
         if let Some((counted, order, zoom)) = &self.lines_for
             && (*counted, *zoom) == (names, shell.zoom)
             && (std::sync::Arc::ptr_eq(order, &list.sorted) || **order == *list.sorted)
@@ -309,10 +309,10 @@ fn fitted((width, height): (f32, f32), side: f32) -> (f32, f32) {
 /// The pictures a place's tile shows (`keys::PLACE_PICTURES`): each one's
 /// identity and path, and when it was modified.
 fn mosaic_of(
-    e: &bibli_core::Entry,
-) -> Vec<(bibli_core::op::EntryRef, Option<std::time::SystemTime>)> {
-    use bibli_core::Value;
-    let Some(Value::List(items)) = e.metadata.value(bibli_core::entry::keys::PLACE_PICTURES) else {
+    e: &skwir_core::Entry,
+) -> Vec<(skwir_core::op::EntryRef, Option<std::time::SystemTime>)> {
+    use skwir_core::Value;
+    let Some(Value::List(items)) = e.metadata.value(skwir_core::entry::keys::PLACE_PICTURES) else {
         return Vec::new();
     };
     items
@@ -324,12 +324,12 @@ fn mosaic_of(
             let [path, dev, ino, modified] = parts.as_slice() else {
                 return None;
             };
-            let id = bibli_core::FileId {
+            let id = skwir_core::FileId {
                 dev: dev.as_u64()?,
                 ino: ino.as_u64()?,
             };
             let path = std::path::PathBuf::from(path.as_str()?);
-            Some((bibli_core::op::EntryRef::new(id, path), modified.as_time()))
+            Some((skwir_core::op::EntryRef::new(id, path), modified.as_time()))
         })
         .collect()
 }
@@ -343,7 +343,7 @@ fn mosaic_of(
 )]
 fn mosaic(
     shell: &mut Shell,
-    pictures: Vec<(bibli_core::op::EntryRef, Option<std::time::SystemTime>)>,
+    pictures: Vec<(skwir_core::op::EntryRef, Option<std::time::SystemTime>)>,
     side: f32,
     quality: ThumbSize,
     color: usize,

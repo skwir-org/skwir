@@ -1,4 +1,4 @@
-//! bibli plugin: terminal. A shell in a panel under the panes, as in
+//! skwir plugin: terminal. A shell in a panel under the panes, as in
 //! Dolphin, that keeps to the folder shown (ADR-019).
 //!
 //! The plugin owns the pseudo-terminal and the VT engine
@@ -17,14 +17,14 @@ mod session;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 
-use bibli_core::App;
-use bibli_core::command::Invocation;
-use bibli_core::location::Waker;
-use bibli_core::plugin::{Category, Plugin};
-use bibli_core::registry::KeyBinding;
-use bibli_core::settings::SettingSpec;
-use bibli_core::terminal::{Spawn, TerminalProvider, TerminalSession};
 use parking_lot::Mutex;
+use skwir_core::App;
+use skwir_core::command::Invocation;
+use skwir_core::location::Waker;
+use skwir_core::plugin::{Category, Plugin};
+use skwir_core::registry::KeyBinding;
+use skwir_core::settings::SettingSpec;
+use skwir_core::terminal::{Spawn, TerminalProvider, TerminalSession};
 
 const ID: &str = "terminal";
 const PROGRAM_KEY: &str = "terminal.program";
@@ -107,9 +107,9 @@ impl Plugin for TerminalPlugin {
     fn category(&self) -> Category {
         Category::Desktop
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Programs])
     }
     fn register(&self, app: &App) {
         app.settings.declare(SettingSpec::command(
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn history_is_capped_whatever_was_saved() {
         let tmp = tempfile::tempdir().unwrap();
-        let app = App::new(bibli_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         let follow = Arc::new(AtomicBool::new(true));
         assert_eq!(read_options(&app, Arc::clone(&follow)).scrollback, 10_000);
         app.settings

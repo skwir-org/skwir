@@ -6,9 +6,9 @@
 use std::ffi::CStr;
 use std::ptr;
 
-use bibli_core::document::{Destination, Link, MAX_PAGE_CHARS, Outline, TextChar};
 use glib::translate::ToGlibPtr;
 use poppler::{Document, Page, ffi};
+use skwir_core::document::{Destination, Link, MAX_PAGE_CHARS, Outline, TextChar};
 
 use crate::rect;
 

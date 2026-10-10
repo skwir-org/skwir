@@ -104,13 +104,13 @@ worker exited on close.
 Fresh isolated configurations, an 1189×1334 Wayland window, synthetic text
 PDF in the side panel, 50 alternating page turns:
 
-| Engine | bibli PSS after 10 turns | After 50 turns | Worker after 50 turns | Combined after 50 turns |
+| Engine | skwir PSS after 10 turns | After 50 turns | Worker after 50 turns | Combined after 50 turns |
 |---|---:|---:|---:|---:|
 | PDFium | 161.85 MiB | 161.89 MiB | 29.13 MiB | 191.02 MiB |
 | Poppler | 161.56 MiB | 161.46 MiB | 23.47 MiB | 184.93 MiB |
 
-Both stabilized across turns. Neither native PDF library was mapped in bibli.
-Closing the preview reaped its child for both engines; bibli retained about
+Both stabilized across turns. Neither native PDF library was mapped in skwir.
+Closing the preview reaped its child for both engines; skwir retained about
 161.5 MiB after close because GPU/allocator caches need not return to their
 initial footprint. Idle CPU samples over five seconds were 0.6–1.0% of one
 core. These are single-session observations, not portable budgets. The
@@ -137,12 +137,12 @@ from a single sample.
 Enter `nix develop .#pdf`, then:
 
 ```sh
-cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker
-python3 tools/pdf/check.py --library "$BIBLI_PDFIUM_LIBRARY"
-python3 tools/pdf/check.py --engine poppler --worker target/release/bibli-poppler-worker
-python3 tools/pdf/check.py --engine mupdf --worker target/release/bibli-mupdf-worker
-python3 tools/pdf/compare.py --library "$BIBLI_PDFIUM_LIBRARY" --runs 5
-BIBLI_PDF_WORKER="$PWD/target/release/bibli-pdf-worker" BIBLI_POPPLER_WORKER="$PWD/target/release/bibli-poppler-worker" cargo test --release -p bibli-platform real_pdfium_and_poppler_backend_comparison -- --ignored --nocapture
+cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker
+python3 tools/pdf/check.py --library "$SKWIR_PDFIUM_LIBRARY"
+python3 tools/pdf/check.py --engine poppler --worker target/release/skwir-poppler-worker
+python3 tools/pdf/check.py --engine mupdf --worker target/release/skwir-mupdf-worker
+python3 tools/pdf/compare.py --library "$SKWIR_PDFIUM_LIBRARY" --runs 5
+SKWIR_PDF_WORKER="$PWD/target/release/skwir-pdf-worker" SKWIR_POPPLER_WORKER="$PWD/target/release/skwir-poppler-worker" cargo test --release -p skwir-platform real_pdfium_and_poppler_backend_comparison -- --ignored --nocapture
 ```
 
 The default shell can run `just poppler-check` and `just mupdf-check` without

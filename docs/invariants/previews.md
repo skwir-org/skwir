@@ -27,7 +27,7 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
 - An address found in text (ADR-029) is a link too: in a document read as a
   page (Markdown's bare addresses, a plain-text mail) like a written one; in
   raw text (the code view) only under Ctrl, since a click there selects
-  (`bibli_platform::links::link_block`, run on the conversion worker).
+  (`skwir_platform::links::link_block`, run on the conversion worker).
   Every address, written or found, reaches the desktop through `ui.open_url`.
 - HTML reading mode is inert: no scripts, remote assets or automatic link opens.
   Markdown images, and an HTML file's pictures and stylesheets, must stay within
@@ -58,7 +58,7 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   (extracted again when the cache let it go). A long document is cut into
   parts between paragraphs or table rows (`blocks::PART_BLOCKS`), list and
   note numbers counted from its start, and each part's notes follow it
-  under a rule. Pandoc runs only in `bibli_platform::sandbox`, as
+  under a rule. Pandoc runs only in `skwir_platform::sandbox`, as
   `LibreOffice` does. An Office or `OpenDocument` file's grid picture is
   the one it keeps of its first page (`stored.rs`), before the first page
   of a conversion.
@@ -82,7 +82,7 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   `model/*` types and what the MIME database draws as a picture,
   `pictured`), and what it drew is all there is (`Pixels::Drawn`: never
   sharpened, its own size from EXIF when known). A picture no thumbnailer
-  draws is ImageMagick's (`bibli_platform::magick`, ADR-031): the last
+  draws is ImageMagick's (`skwir_platform::magick`, ADR-031): the last
   thumbnail provider of all (`Stage::LastResort`, after every plugin's
   fallback) and the preview's after the thumbnailer. It reads the format
   the MIME database's globs name, given explicitly, never one of
@@ -90,10 +90,10 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   run (that format read, PAM written, no delegate, bounded memory, one
   thread), at most `magick::RUNNING` at once.
 - Every program run on a file that is not ours runs in
-  `bibli_platform::sandbox` where bubblewrap can isolate, through one
+  `skwir_platform::sandbox` where bubblewrap can isolate, through one
   entry point, `sandbox::untrusted`, which says what to do where nothing
   isolates: converters (LibreOffice, Pandoc) and ImageMagick refuse
-  (`Otherwise::Refuse`); the desktop's thumbnailers, bibli's own decoders
+  (`Otherwise::Refuse`); the desktop's thumbnailers, skwir's own decoders
   (`ffprobe`, `ffmpeg`, Poppler's `pdfinfo` and `pdftoppm`) and helpers
   (the archive and model workers) run as before (`Otherwise::Run`). A
   sandbox that started and failed is never retried outside it. The file
@@ -107,7 +107,7 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   one decoded as a stream, only that far), a package's named members, a
   G-code's first `TEXT_INPUT` and last `TAIL` bytes, a DWG's listed
   pictures. Nothing is drawn in 3D in the process: a mesh with no picture
-  of its own goes to `bibli-model-worker` (`bibli_platform::model`), which
+  of its own goes to `skwir-model-worker` (`skwir_platform::model`), which
   reads the file itself within `model::BYTES` and `model::TRIANGLES`,
   follows a glTF's buffers only to files below the model's folder, and
   answers a line of measures and a PNG. Without the helper the plugin
@@ -137,8 +137,8 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   is inflated once through a counter first; a table declaring its own
   unpacked size (WOFF) is inflated by our bounded inflater.
 - A Mermaid diagram is a drawing in the page: its source goes to
-  `bibli-mermaid-worker` (`bibli_platform::diagram`), never to a layout
-  engine linked into bibli, and its SVG is decoded with the page like an
+  `skwir-mermaid-worker` (`skwir_platform::diagram`), never to a layout
+  engine linked into skwir, and its SVG is decoded with the page like an
   HTML drawing, within `EMBEDDED_IMAGES`. Whatever cannot be drawn, the
   helper missing included, stays the code it was written as.
 - A database is opened read-only and immutable (nothing written beside
@@ -180,7 +180,7 @@ Read this before touching `crates/core/src/inspection.rs`, `crates/platform/src/
   `settings.apply`), after the text size as Fit width is after a
   document's zoom, and the first to go to More. The column is for text
   only.
-- Only `bibli-archive-worker` links libarchive. For a preview, member names
+- Only `skwir-archive-worker` links libarchive. For a preview, member names
   are labels/keys, never paths: read only selected regular members, bound the
   actual decompressed bytes and keep temporary cleanup off the UI thread.
   Names reach the filesystem in one place, an archive extracted
@@ -242,11 +242,11 @@ still to come are in `docs/preview-frame.md`.
   background its colors are meant for, which the code view and a code
   block are drawn on (`Display::code_bg`); a look lists only the themes
   of its own lightness, so the tokens drawn over it still read. Code
-  kept in the look bibli is not in (`reading.code_appearance`) is drawn
+  kept in the look skwir is not in (`reading.code_appearance`) is drawn
   with that look's tokens, read from the look it was colored for
   (`Display::code_dark`, `Theme::in_look`): the code view whole, its
   gutter, selection and the background Default is on, and a document's
-  code blocks (`MarkdownStyle::code`), never bibli's tokens over colors
+  code blocks (`MarkdownStyle::code`), never skwir's tokens over colors
   meant for the other look.
 - **One toolbar.** A preview never builds a row: it lists its tools in
   `preview_bar::Bar`, each in a slot, and the bar lays them out. Left to right:
@@ -384,12 +384,12 @@ still to come are in `docs/preview-frame.md`.
   metadata with its provenance, collected when the entry, its listing or the
   selection changes (`entry_groups`, pure and tested); what the preview
   already holds in memory (a picture's size, a document's pages, a film's
-  length and tags, what the camera wrote: `bibli_platform::exif`, pure Rust,
+  length and tags, what the camera wrote: `skwir_platform::exif`, pure Rust,
   read on the worker that decodes the picture); and what the format told us, `Inspection::details`, which
   a provider fills from the parse it already did (`inspection::detail` bounds
   each fact). Any field a plugin or the user attached to the entry shows under
   More with who said it; a model's suggestion says so. Owner and group names
-  come from `bibli_platform::users`, loaded once on a worker and never read on
+  come from `skwir_platform::users`, loaded once on a worker and never read on
   the UI thread. Details never starts a scan: a folder says what its listing
   already counted. A click copies a value.
 - **A member is previewed as the file it is.** Providers take a path, so a
@@ -562,8 +562,8 @@ still to come are in `docs/preview-frame.md`.
   prepared runs and visible indices. Copy must retain empty selected lines.
 - Code is colored with bat's grammars and themes (two-face), through the
   one `code_preview::Highlighter`, for the code view and every document's
-  code blocks, light or dark as bibli is unless
-  `reading.code_appearance` keeps it in one. Default is bibli's own
+  code blocks, light or dark as skwir is unless
+  `reading.code_appearance` keeps it in one. Default is skwir's own
   colors (base16 Ocean's, on that look's background, no font styles); a
   theme chosen (`reading.code_light`, `reading.code_dark`) is one of
   bat's, or one the user added to bat, read from bat's folder

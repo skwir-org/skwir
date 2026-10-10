@@ -1,14 +1,14 @@
 # ADR-050: Names are indexed by skwird
 
 Status: accepted, 2026-10-10. Nothing is built. Amends ADR-026 (an index
-that proves its coverage answers) and the last point of ADR-003 (bibli
+that proves its coverage answers) and the last point of ADR-003 (skwir
 may start skwird for the session).
 
 ## Context
 
 - **A search walks every time.** On the reference home (2.1M files,
   138k folders), a walk that stats every file took 5.6 s, and a
-  `content:` scan 34 to 67 s (`bibli-bench trigram`, 2026-10-10). A name
+  `content:` scan 34 to 67 s (`skwir-bench trigram`, 2026-10-10). A name
   search of the home folder walks every folder each time it runs.
 - **A search of `/` trusts plocate.** When plocate answers, the walk is
   skipped (`plocate::try_locate` in the query plugin's provider).
@@ -29,8 +29,8 @@ may start skwird for the session).
   - macOS: FSEvents, with a history a restart replays.
   - Windows: as administrator, the change journal (USN); otherwise one
     recursive watch and no history.
-- **The rules this must keep:** ADR-000 rules out a daemon in bibli.
-  ADR-003 lets the system's indexes serve a term, as long as bibli never
+- **The rules this must keep:** ADR-000 rules out a daemon in skwir.
+  ADR-003 lets the system's indexes serve a term, as long as skwir never
   installs or starts them. ADR-026 makes an index a hint and the walk
   the answer.
 
@@ -38,19 +38,19 @@ may start skwird for the session).
 
 1. **skwird, a project of its own, indexes names.** Its repository's
    `docs/DESIGN.md` holds its design.
-   - bibli is one of its clients. It speaks skwird's protocol and never
+   - skwir is one of its clients. It speaks skwird's protocol and never
      links its engine.
-   - bibli is complete without skwird: it walks, as now.
-   - skwird is a general tool, and bibli asks nothing of it that
+   - skwir is complete without skwird: it walks, as now.
+   - skwird is a general tool, and skwir asks nothing of it that
      another client could not.
 2. **Three lifetimes, one protocol.** skwird runs as a system service,
    as a user service, or on demand: started by its first client, ending
    a minute after its last.
-   - bibli never installs or enables a service. Its packages may
+   - skwir never installs or enables a service. Its packages may
      recommend skwird.
-   - Where skwird is installed, bibli may start it on demand. That is a
-     helper ending with bibli, not a daemon (ADR-000). It amends
-     ADR-003's "none is ever started by bibli", for skwird alone.
+   - Where skwird is installed, skwir may start it on demand. That is a
+     helper ending with skwir, not a daemon (ADR-000). It amends
+     ADR-003's "none is ever started by skwir", for skwird alone.
 3. **Coverage, not hints.** Each answer says, for each root and each
    kind of fact (names, attributes), one of:
    - live since a time (nothing dropped, and applied up to a barrier the
@@ -60,7 +60,7 @@ may start skwird for the session).
    - not covered, and why.
 
    ADR-026 is amended to trust a proven coverage (its Consequences).
-4. **bibli keeps what a search means.**
+4. **skwir keeps what a search means.**
    - The query plugin compiles the terms skwird can answer: names,
      kinds, sizes, and times as instants from the user's calendar
      (ADR-017).
@@ -75,11 +75,11 @@ may start skwird for the session).
    - skwird never indexes private folders: it honours `.private` itself
      (ADR-044).
    - A system service answers each user only what that user could list.
-   - bibli still applies its own privacy rules to what skwird names,
+   - skwir still applies its own privacy rules to what skwird names,
      before an agent or a plugin from outside sees it.
 7. **A provider in the query plugin.**
    - It speaks the protocol through skwird's client crate, once that is
-     published: bibli builds from its lockfile, so no git dependency.
+     published: skwir builds from its lockfile, so no git dependency.
    - The core's hints gain coverage (ADR-026), so no plugin depends on
      another.
 

@@ -2,13 +2,13 @@
 # Debian's and Ubuntu's packages (ADR-040, ADR-041), made on the
 # distribution they are for, whose libraries they depend on: the programs
 # shipped (tools/package/programs) built for shipping, PDFium fetched
-# (tools/package/pdfium.sh), then cargo-deb, from crates/bibli/Cargo.toml's
-# [package.metadata.deb]: bibli, and bibli-media, bibli-poppler,
-# bibli-mermaid and bibli-mupdf (its variants).
+# (tools/package/pdfium.sh), then cargo-deb, from crates/skwir/Cargo.toml's
+# [package.metadata.deb]: skwir, and skwir-media, skwir-poppler,
+# skwir-mermaid and skwir-mupdf (its variants).
 #
 #     tools/package/deb.sh        # into target/debian/
 #
-# Needs rustup's Rust (a distribution's may be older than bibli needs),
+# Needs rustup's Rust (a distribution's may be older than skwir needs),
 # cargo-deb (`cargo install cargo-deb`), cargo-about (`cargo install
 # --locked cargo-about`, for each package's notices) and what
 # tools/package/linux/build-deps.debian lists.
@@ -31,7 +31,7 @@ esac
 cargo build --locked --profile dist $(sed 's/^/-p /' tools/package/programs)
 tools/package/notices.py
 tools/package/pdfium.sh "$platform" target/pdfium
-cargo deb --locked -p bibli --no-build
+cargo deb --locked -p skwir --no-build
 for variant in media poppler mermaid mupdf; do
-    cargo deb --locked -p bibli --no-build --variant "$variant"
+    cargo deb --locked -p skwir --no-build --variant "$variant"
 done

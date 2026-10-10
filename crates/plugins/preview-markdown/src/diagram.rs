@@ -1,10 +1,10 @@
 //! Mermaid diagrams in fenced code blocks (```` ```mermaid ````), drawn as
-//! the pictures they describe, when `bibli-mermaid-worker` is installed
-//! (`bibli_platform::diagram`). Its SVG is drawn like any drawing in a
+//! the pictures they describe, when `skwir-mermaid-worker` is installed
+//! (`skwir_platform::diagram`). Its SVG is drawn like any drawing in a
 //! document (`inspection::image`), on white: Mermaid's default theme is
 //! dark text on nothing, which a dark panel would swallow.
-use bibli_core::{CancelToken, thumbs::Image};
-use bibli_platform::{diagram, inspection};
+use skwir_core::{CancelToken, thumbs::Image};
+use skwir_platform::{diagram, inspection};
 
 /// The diagram `source` describes, or `None` when it cannot be drawn (no
 /// helper, a kind merman does not know, a mistake): the block stays code.

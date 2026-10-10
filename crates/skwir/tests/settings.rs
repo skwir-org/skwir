@@ -3,18 +3,18 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bibli_core::{App, app::AppConfig, command::Invocation, settings::SaveState};
+use skwir_core::{App, app::AppConfig, command::Invocation, settings::SaveState};
 
 #[test]
 fn changing_document_engine_refreshes_only_document_previews() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
     app.plugins.add(
-        Arc::new(bibli_plugin_preview_documents::PreviewPlugin::default()),
+        Arc::new(skwir_plugin_preview_documents::PreviewPlugin::default()),
         &app,
     );
     app.plugins.add(
-        Arc::new(bibli_plugin_preview_media::PreviewPlugin::default()),
+        Arc::new(skwir_plugin_preview_media::PreviewPlugin::default()),
         &app,
     );
     let revision = app.previews.revision();
@@ -63,15 +63,15 @@ fn changing_document_engine_refreshes_only_document_previews() {
 /// choices, or the player would follow a key nobody can set.
 #[test]
 fn the_player_reads_what_the_media_plugin_declares() {
-    use bibli_core::settings::SettingKind;
-    use bibli_ui::settings::{
+    use skwir_core::settings::SettingKind;
+    use skwir_ui::settings::{
         AUTOPLAY_DEFAULT, AUTOPLAY_KEY, CONTINUE_CHOICES, CONTINUE_KEY, KEEP_PLAYING_DEFAULT,
         KEEP_PLAYING_KEY,
     };
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
     app.plugins.add(
-        Arc::new(bibli_plugin_preview_media::PreviewPlugin::default()),
+        Arc::new(skwir_plugin_preview_media::PreviewPlugin::default()),
         &app,
     );
     let spec = |key: &str| {

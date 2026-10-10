@@ -13,14 +13,14 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use bibli_core::App;
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::plugin::{PluginInfo, RequirementStatus};
-use bibli_core::settings::{SaveState, SettingKind, SettingSpec};
 use gpui::{
     AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
     Subscription, Window,
 };
+use skwir_core::App;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::plugin::{PluginInfo, RequirementStatus};
+use skwir_core::settings::{SaveState, SettingKind, SettingSpec};
 use std::sync::Mutex;
 
 use crate::elements::popover::PopoverAnchor;
@@ -28,23 +28,23 @@ use crate::input::{InputEvent, TextInput};
 use crate::keymap::KeyHint;
 
 /// Settings namespaces that are not plugins, each a page of the dialog:
-/// what bibli does with files, how it looks, and how the preview reads.
+/// what skwir does with files, how it looks, and how the preview reads.
 /// A preference goes where its subject is: the plugin whose content it
 /// concerns has it on its page (an engine, the player of audio and video);
 /// one the shell applies to several plugins' content is a namespace of the
 /// shell's own, as `reading` is for the reader and reading mode, and the
 /// colors code is drawn in, shared by documents, books, comics, Markdown
-/// and the code view. `ui` is only how bibli looks.
+/// and the code view. `ui` is only how skwir looks.
 pub const CORE_OWNER: &str = "core";
 pub const UI_OWNER: &str = "ui";
 pub const READING_OWNER: &str = "reading";
 /// The stores notes are kept in (ADR-027), shared by several plugins.
-pub const NOTES_OWNER: &str = bibli_core::notes::SETTINGS;
-/// What leaves bibli (ADR-044): the private folders.
-pub const PRIVACY_OWNER: &str = bibli_core::permissions::SETTINGS;
+pub const NOTES_OWNER: &str = skwir_core::notes::SETTINGS;
+/// What leaves skwir (ADR-044): the private folders.
+pub const PRIVACY_OWNER: &str = skwir_core::permissions::SETTINGS;
 
 pub const THEME_KEY: &str = "ui.theme";
-/// The icon theme bibli draws with, by its folder's name; Automatic is the
+/// The icon theme skwir draws with, by its folder's name; Automatic is the
 /// desktop's (`icons::IconCache::set_theme`). The free desktops' only:
 /// macOS and Windows draw the system's own icons.
 pub const ICON_THEME_KEY: &str = "ui.icon_theme";
@@ -66,7 +66,7 @@ pub const READER_CONTINUOUS_KEY: &str = "reading.continuous";
 pub const READING_WIDTH_KEY: &str = "reading.width";
 /// Whether a book's position counts its printed pages (`ui.printed_pages`).
 pub const PRINTED_PAGES_KEY: &str = "reading.printed_pages";
-/// Whether code is drawn light or dark: Automatic is as bibli is
+/// Whether code is drawn light or dark: Automatic is as skwir is
 /// (`code_preview::CodeTheme::chosen`).
 pub const CODE_APPEARANCE_KEY: &str = "reading.code_appearance";
 /// The colors code is drawn in when it is light, and when it is dark
@@ -76,7 +76,7 @@ pub const CODE_DARK_KEY: &str = "reading.code_dark";
 /// The player's preferences. The audio and video plugin (`preview-media`)
 /// declares them, with the rest of what concerns playback; the shell's
 /// player reads them. With the plugin off there is no player, and they are
-/// gone with it. `crates/bibli/tests/settings.rs` holds the two to the
+/// gone with it. `crates/skwir/tests/settings.rs` holds the two to the
 /// same names and choices.
 /// Whether a track that starts to play keeps playing while you browse.
 pub const KEEP_PLAYING_KEY: &str = "preview-media.keep_playing";
@@ -100,7 +100,7 @@ pub const CONTINUE_CHOICES: [&str; 3] = [
 /// always a choice, said missing once the list shows it is not installed.
 pub fn icon_theme_spec(
     chosen: &str,
-    themes: Option<&[bibli_platform::icons::Theme]>,
+    themes: Option<&[skwir_platform::icons::Theme]>,
 ) -> SettingSpec {
     let mut choices = vec![(ICON_THEME_AUTO.to_owned(), "Automatic".to_owned())];
     if let Some(themes) = themes {
@@ -121,13 +121,13 @@ pub fn icon_theme_spec(
     SettingSpec::choice(
         ICON_THEME_KEY,
         "Icon theme",
-        "The icons bibli draws files, folders and places with. Automatic follows your desktop's choice.",
+        "The icons skwir draws files, folders and places with. Automatic follows your desktop's choice.",
         ICON_THEME_AUTO,
         &pairs,
     )
 }
 
-/// A look's code theme setting: bibli's own colors, bat's themes of that
+/// A look's code theme setting: skwir's own colors, bat's themes of that
 /// look, then those the user added to bat once read (`list_code_themes`),
 /// the one chosen always among them (`code_preview::choices`).
 pub fn code_theme_spec(
@@ -149,7 +149,7 @@ pub fn code_theme_spec(
         key,
         title,
         &format!(
-            "The colors of source files and of code in documents when code is {look}: while bibli is {look}, or always with Appearance set to {choice}. Default is bibli's own, on its {look} background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own."
+            "The colors of source files and of code in documents when code is {look}: while skwir is {look}, or always with Appearance set to {choice}. Default is skwir's own, on its {look} background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own."
         ),
         crate::code_preview::DEFAULT,
         &pairs,
@@ -163,7 +163,7 @@ pub fn code_theme_spec(
 pub(crate) fn list_code_themes(app: &Arc<App>) {
     let weak = app.weak();
     app.scheduler.spawn(
-        bibli_core::scheduler::Priority::Normal,
+        skwir_core::scheduler::Priority::Normal,
         "code-themes",
         app.lifetime().child(),
         move || {
@@ -183,16 +183,16 @@ pub(crate) fn list_code_themes(app: &Arc<App>) {
 /// setting again with them: when the settings open, where the list is
 /// read. Nothing where the system draws its own icons.
 pub(crate) fn list_icon_themes(app: &Arc<App>) {
-    if bibli_platform::system_icons::AVAILABLE {
+    if skwir_platform::system_icons::AVAILABLE {
         return;
     }
     let weak = app.weak();
     app.scheduler.spawn(
-        bibli_core::scheduler::Priority::Normal,
+        skwir_core::scheduler::Priority::Normal,
         "icon-themes",
         app.lifetime().child(),
         move || {
-            let themes = bibli_platform::icons::installed_themes();
+            let themes = skwir_platform::icons::installed_themes();
             let Some(app) = weak.upgrade() else { return };
             let chosen = app
                 .settings
@@ -224,14 +224,14 @@ pub fn declare(app: &App) {
         "auto",
         &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
     ));
-    if !bibli_platform::system_icons::AVAILABLE {
+    if !skwir_platform::system_icons::AVAILABLE {
         let chosen = app
             .settings
             .get::<String>(ICON_THEME_KEY)
             .unwrap_or_default();
         app.settings.declare(icon_theme_spec(&chosen, None));
         // Before anything is drawn, as the shell will say it again.
-        bibli_platform::icons::choose_theme(
+        skwir_platform::icons::choose_theme(
             Some(chosen.as_str()).filter(|c| *c != ICON_THEME_AUTO),
         );
     }
@@ -315,7 +315,7 @@ pub fn declare(app: &App) {
         SettingSpec::choice(
             CODE_APPEARANCE_KEY,
             "Appearance",
-            "Draw source files and code in documents light or dark. Automatic follows bibli's theme; Light or Dark keeps code in the theme chosen below for that look, with its gutter, selection and background, whatever bibli is.",
+            "Draw source files and code in documents light or dark. Automatic follows skwir's theme; Light or Dark keeps code in the theme chosen below for that look, with its gutter, selection and background, whatever skwir is.",
             "auto",
             &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
         )
@@ -445,7 +445,7 @@ static BUILTIN: [Builtin; 7] = [
         owner: Some(CORE_OWNER),
         title: "General",
         icon: "sliders",
-        intro: "How bibli handles files. Changes apply as you make them.",
+        intro: "How skwir handles files. Changes apply as you make them.",
         when_used: false,
     },
     Builtin {
@@ -454,7 +454,7 @@ static BUILTIN: [Builtin; 7] = [
         owner: Some(UI_OWNER),
         title: "Appearance",
         icon: "appearance",
-        intro: "How bibli looks.",
+        intro: "How skwir looks.",
         when_used: false,
     },
     Builtin {
@@ -482,7 +482,7 @@ static BUILTIN: [Builtin; 7] = [
         owner: Some(PRIVACY_OWNER),
         title: "Privacy",
         icon: "lock",
-        intro: "What leaves this machine. An agent driving bibli, and a plugin from outside bibli, never see a private folder: not its names, not what its files hold. What each plugin may do is said on its line of the Plugins page.",
+        intro: "What leaves this machine. An agent driving skwir, and a plugin from outside skwir, never see a private folder: not its names, not what its files hold. What each plugin may do is said on its line of the Plugins page.",
         when_used: false,
     },
     Builtin {
@@ -497,7 +497,7 @@ static BUILTIN: [Builtin; 7] = [
     Builtin {
         page: Page::Keyboard,
         name: "keyboard",
-        owner: Some(bibli_core::keymap::OWNER),
+        owner: Some(skwir_core::keymap::OWNER),
         title: "Keyboard",
         icon: "keyboard",
         intro: "Your shortcuts, then every shortcut in use, grouped by where it applies. Yours replace the others on the same keys.",
@@ -1167,7 +1167,7 @@ impl SettingsView {
             }
             Err(error) => self
                 .app
-                .notify(bibli_core::app::NotifyLevel::Error, format!("{error:#}")),
+                .notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}")),
         }
         cx.notify();
     }
@@ -1176,7 +1176,7 @@ impl SettingsView {
         let slot = Arc::clone(&self.probe);
         let weak = self.app.weak();
         self.app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Normal,
+            skwir_core::scheduler::Priority::Normal,
             "settings-requirements",
             self.app.lifetime().child(),
             move || {
@@ -1198,18 +1198,18 @@ impl SettingsView {
         };
         let weak = self.app.weak();
         self.app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Normal,
+            skwir_core::scheduler::Priority::Normal,
             "settings-open-file",
             self.app.lifetime().child(),
             move || {
-                use bibli_core::app::NotifyLevel;
+                use skwir_core::app::NotifyLevel;
                 let Some(app) = weak.upgrade() else { return };
                 if !path.is_file() {
                     app.notify(
                         NotifyLevel::Info,
                         "There is no settings file yet: every setting has its default value",
                     );
-                } else if let Err(error) = bibli_platform::open::open_path(&path) {
+                } else if let Err(error) = skwir_platform::open::open_path(&path) {
                     app.notify(NotifyLevel::Error, format!("{error:#}"));
                 }
             },
@@ -1394,7 +1394,7 @@ impl crate::shell::Shell {
 #[cfg(test)]
 mod tests {
     use super::{ICON_THEME_AUTO, Page, icon_theme_spec};
-    use bibli_platform::icons::Theme;
+    use skwir_platform::icons::Theme;
 
     #[test]
     fn the_icon_theme_is_automatic_or_one_installed_by_its_folder() {
@@ -1441,7 +1441,7 @@ mod tests {
         assert_eq!(Page::parse("ui"), Page::Appearance);
         assert_eq!(Page::parse("plugins"), Page::Plugins);
         assert_eq!(Page::parse("tags"), Page::Plugin("tags".into()));
-        assert_eq!(Page::of_owner(bibli_core::keymap::OWNER), Page::Keyboard);
+        assert_eq!(Page::of_owner(skwir_core::keymap::OWNER), Page::Keyboard);
         assert!(Page::Plugin("tags".into()).builtin().is_none());
     }
 }

@@ -6,15 +6,15 @@ mod common;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use bibli_core::app::App;
+use common::*;
+use proptest::prelude::*;
+use skwir_core::app::App;
 #[cfg(target_os = "linux")]
-use bibli_core::op::Restore;
-use bibli_core::op::{
+use skwir_core::op::Restore;
+use skwir_core::op::{
     Copy, EntryRef, ExecEvent, Executor, Mkdir, Move, Operation, Plan, Rename, StepContext,
     StepStatus, Swap, Trash,
 };
-use common::*;
-use proptest::prelude::*;
 
 /// Undoing a copy moves the copy to the trash. Point the freedesktop trash
 /// at a scratch directory beside the test trees (the home trash is used for
@@ -24,7 +24,7 @@ fn isolate_trash() {
     ONCE.call_once(|| {
         let data = dirs::home_dir()
             .expect("home")
-            .join(".cache/bibli-tests/xdg-data");
+            .join(".cache/skwir-tests/xdg-data");
         std::fs::create_dir_all(&data).expect("create test data home");
         // SAFETY: nextest runs each test in a process of its own, and this
         // runs before the test starts an app, so no other thread reads the
@@ -94,7 +94,7 @@ struct Aside {
     holds: bool,
 }
 
-impl bibli_core::companions::Companion for Aside {
+impl skwir_core::companions::Companion for Aside {
     fn id(&self) -> &'static str {
         "aside"
     }
@@ -258,7 +258,7 @@ proptest! {
     }
 }
 
-fn steps_share_an_entry(plan: &bibli_core::op::PlanData) -> bool {
+fn steps_share_an_entry(plan: &skwir_core::op::PlanData) -> bool {
     let mut ids: Vec<String> = plan
         .steps
         .iter()
@@ -345,7 +345,7 @@ fn entry_ref_follows_a_rename_and_rejects_a_replacement() {
     std::fs::remove_file(root.join("z")).unwrap();
     assert!(matches!(
         r.resolve(),
-        Err(bibli_core::op::ResolveError::Replaced { .. })
+        Err(skwir_core::op::ResolveError::Replaced { .. })
     ));
 }
 
@@ -356,7 +356,7 @@ fn entry_ref_follows_a_rename_and_rejects_a_replacement() {
 #[cfg(unix)]
 #[test]
 fn entry_ref_never_follows_a_file_to_another_of_its_names() {
-    use bibli_core::op::ResolveError;
+    use skwir_core::op::ResolveError;
     let tmp = Scratch::new();
     let root = tmp.path();
     std::fs::write(root.join("a.txt"), b"one file").unwrap();
@@ -372,7 +372,7 @@ fn entry_ref_never_follows_a_file_to_another_of_its_names() {
     assert!(matches!(b.resolve(), Err(ResolveError::Replaced { .. })));
     // Knowing nothing of the file's names, a reference resolves at its
     // path alone.
-    let id = bibli_core::fs::stat::id_of(&root.join("a.txt")).unwrap();
+    let id = skwir_core::fs::stat::id_of(&root.join("a.txt")).unwrap();
     let a = EntryRef::new(id, root.join("a.txt"));
     std::fs::rename(root.join("a.txt"), root.join("c.txt")).unwrap();
     assert!(matches!(a.resolve(), Err(ResolveError::Gone(_))));
@@ -384,7 +384,7 @@ fn entry_ref_never_follows_a_file_to_another_of_its_names() {
 #[cfg(unix)]
 #[test]
 fn entry_ref_follows_one_name_only_while_one_name_holds_it() {
-    use bibli_core::op::ResolveError;
+    use skwir_core::op::ResolveError;
     let tmp = Scratch::new();
     let root = tmp.path();
     std::fs::write(root.join("x"), b"x").unwrap();
@@ -418,7 +418,7 @@ fn trashing_or_deleting_a_name_gone_spares_the_files_other_name() {
         let step: Box<dyn Operation> = if how == "trash" {
             Box::new(Trash { entry })
         } else {
-            Box::new(bibli_core::op::Delete { entry })
+            Box::new(skwir_core::op::Delete { entry })
         };
         let plan = Plan::with_steps(how, vec![step]);
         std::fs::remove_file(root.join("b.txt")).unwrap();
@@ -521,7 +521,7 @@ fn a_copy_short_of_room_asks_whether_to_go_on() {
 
     app.apply_whole(plan());
     let asked = question();
-    assert_eq!(asked.asker, bibli_core::app::Asker::Room);
+    assert_eq!(asked.asker, skwir_core::app::Asker::Room);
     assert_eq!(
         asked.title,
         "Not enough room in “dest”: 1000 B needed, 10 B free"
@@ -559,7 +559,7 @@ fn deleting_one_name_of_a_file_says_it_stays_on_the_disk() {
         let ws = app.workspace.read();
         ws.pane(pane).unwrap().listing.ids().collect()
     };
-    app.dispatch(&bibli_core::command::Invocation::with_args(
+    app.dispatch(&skwir_core::command::Invocation::with_args(
         "hydrate",
         &serde_json::json!({ "ids": ids }),
     ))
@@ -572,7 +572,7 @@ fn deleting_one_name_of_a_file_says_it_stays_on_the_disk() {
         .unwrap()
         .listing
         .iter()
-        .any(|e| e.metadata.value(bibli_core::entry::keys::NLINK).is_none())
+        .any(|e| e.metadata.value(skwir_core::entry::keys::NLINK).is_none())
     {
         assert!(std::time::Instant::now() < deadline, "never stat-ed");
         app.pump();
@@ -597,8 +597,8 @@ fn deleting_one_name_of_a_file_says_it_stays_on_the_disk() {
 #[derive(Debug, Clone)]
 struct ActHere {
     executor: std::sync::Weak<Executor>,
-    plan: std::sync::Arc<std::sync::OnceLock<bibli_core::op::PlanId>>,
-    act: fn(&Executor, bibli_core::op::PlanId) -> bool,
+    plan: std::sync::Arc<std::sync::OnceLock<skwir_core::op::PlanId>>,
+    act: fn(&Executor, skwir_core::op::PlanId) -> bool,
     dir: PathBuf,
 }
 
@@ -609,7 +609,7 @@ impl Operation for ActHere {
     fn args(&self) -> serde_json::Value {
         serde_json::json!({})
     }
-    fn describe(&self) -> bibli_core::op::Change {
+    fn describe(&self) -> skwir_core::op::Change {
         Mkdir {
             path: self.dir.clone(),
         }
@@ -720,7 +720,7 @@ fn winding_down_stops_a_paused_copy_and_leaves_no_staging_folder() {
         std::fs::read_dir(dir)
             .unwrap()
             .flatten()
-            .any(|e| e.file_name().to_string_lossy().starts_with(".bibli-copy-"))
+            .any(|e| e.file_name().to_string_lossy().starts_with(".skwir-copy-"))
     };
     assert!(staged(&stick), "the copy is under way");
 
@@ -779,9 +779,9 @@ fn a_copy_and_a_new_run_sweep_what_copies_cut_short_left() {
     let root = tmp.path();
     let stick = root.join("stick");
     std::fs::create_dir(&stick).unwrap();
-    let left = left_by_a_copy(&stick, ".bibli-copy-AbC123");
-    // Another bibli still copying there: its lock held.
-    let running = stick.join(".bibli-copy-XyZ789");
+    let left = left_by_a_copy(&stick, ".skwir-copy-AbC123");
+    // Another skwir still copying there: its lock held.
+    let running = stick.join(".skwir-copy-XyZ789");
     std::fs::create_dir(&running).unwrap();
     let held = std::fs::File::create(running.join("lock")).unwrap();
     held.try_lock().unwrap();
@@ -803,8 +803,8 @@ fn a_copy_and_a_new_run_sweep_what_copies_cut_short_left() {
 
     // A run that ended mid-copy noted the folder in the cache: the next
     // one sweeps it as it starts.
-    let config = bibli_core::app::AppConfig::ephemeral(root);
-    let notes = bibli_core::cache::Cache::open(config.cache_root.clone())
+    let config = skwir_core::app::AppConfig::ephemeral(root);
+    let notes = skwir_core::cache::Cache::open(config.cache_root.clone())
         .namespace("staging")
         .folder("under-way");
     std::fs::create_dir_all(&notes).unwrap();
@@ -813,8 +813,8 @@ fn a_copy_and_a_new_run_sweep_what_copies_cut_short_left() {
         stick.as_os_str().as_encoded_bytes(),
     )
     .unwrap();
-    let left = left_by_a_copy(&stick, ".bibli-copy-DeF456");
-    let next = bibli_core::app::App::new(config).unwrap();
+    let left = left_by_a_copy(&stick, ".skwir-copy-DeF456");
+    let next = skwir_core::app::App::new(config).unwrap();
     assert!(next.scheduler.wait_idle(std::time::Duration::from_secs(10)));
     assert!(!left.exists() && !running.exists(), "both copies are over");
     assert!(!notes.join("copy-ended").exists());
@@ -1063,7 +1063,7 @@ fn a_copy_whose_companion_cannot_go_with_it_leaves_nothing() {
         new_name: None,
         preserve_attributes: true,
     };
-    let companions = std::sync::Arc::new(bibli_core::companions::Companions::default());
+    let companions = std::sync::Arc::new(skwir_core::companions::Companions::default());
     companions.register("test", std::sync::Arc::new(Aside { holds: false }));
     let ctx = StepContext::detached().with_companions(companions);
     assert_eq!(copy.check(&ctx), StepStatus::Pending { reversible: true });
@@ -1126,7 +1126,7 @@ fn copies_into_a_folder_share_one_staging_folder_that_goes_with_the_plan() {
                     .unwrap()
                     .file_name()
                     .to_string_lossy()
-                    .starts_with(".bibli-copy-")
+                    .starts_with(".skwir-copy-")
             })
             .count()
     };
@@ -1206,10 +1206,10 @@ fn a_cancelled_copy_stops_and_leaves_nothing_behind() {
         new_name: None,
         preserve_attributes: true,
     };
-    let cancel = bibli_core::cancel::CancelToken::new();
+    let cancel = skwir_core::cancel::CancelToken::new();
     cancel.cancel();
     let err = copy.apply(&StepContext::with_cancel(cancel)).unwrap_err();
-    assert!(err.is::<bibli_core::op::Cancelled>(), "{err:#}");
+    assert!(err.is::<skwir_core::op::Cancelled>(), "{err:#}");
     assert_eq!(std::fs::read_dir(root.join("dest")).unwrap().count(), 0);
 }
 
@@ -1321,9 +1321,9 @@ fn renaming_onto_a_hard_link_of_itself_conflicts() {
 
 /// A directory on another device than `reference`, if the machine has one.
 fn other_device(reference: &Path) -> Option<tempfile::TempDir> {
-    let here = bibli_core::fs::stat::id_of(reference)?.dev;
+    let here = skwir_core::fs::stat::id_of(reference)?.dev;
     ["/dev/shm", "/tmp"].into_iter().find_map(|candidate| {
-        let there = bibli_core::fs::stat::id_of(Path::new(candidate))?.dev;
+        let there = skwir_core::fs::stat::id_of(Path::new(candidate))?.dev;
         (there != here)
             .then(|| tempfile::tempdir_in(candidate).ok())
             .flatten()
@@ -1369,12 +1369,12 @@ fn observers_hear_what_holds_after_each_run_until_withdrawn() {
     let root = tmp.path();
     std::fs::create_dir(root.join("d")).unwrap();
     std::fs::write(root.join("a"), b"a").unwrap();
-    let app = bibli_core::app::App::new(bibli_core::app::AppConfig::ephemeral(root)).unwrap();
+    let app = skwir_core::app::App::new(skwir_core::app::AppConfig::ephemeral(root)).unwrap();
     let heard = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
     let sink = std::sync::Arc::clone(&heard);
     app.executor.observe(
         "test",
-        std::sync::Arc::new(move |changes: &[bibli_core::op::Change]| {
+        std::sync::Arc::new(move |changes: &[skwir_core::op::Change]| {
             sink.lock().push(changes.to_vec());
         }),
     );
@@ -1393,11 +1393,11 @@ fn observers_hear_what_holds_after_each_run_until_withdrawn() {
     );
     assert!(app.executor.undo_blocking(app.lifetime()).is_some());
     let expected = [
-        bibli_core::op::Change::Move {
+        skwir_core::op::Change::Move {
             from: root.join("a"),
             to: root.join("d/a"),
         },
-        bibli_core::op::Change::Move {
+        skwir_core::op::Change::Move {
             from: root.join("d/a"),
             to: root.join("a"),
         },
@@ -1423,13 +1423,13 @@ fn a_new_file_is_created_undone_and_never_undone_once_written_into() {
     navigate(&app, root);
     let name = "l’été d'un « fichier ».txt";
     let plan = match app
-        .dispatch(&bibli_core::command::Invocation::with_args(
+        .dispatch(&skwir_core::command::Invocation::with_args(
             "new_file",
             &serde_json::json!({ "name": name }),
         ))
         .unwrap()
     {
-        bibli_core::command::Outcome::Plan(plan) => plan,
+        skwir_core::command::Outcome::Plan(plan) => plan,
         other => panic!("expected a plan, got {other:?}"),
     };
     assert!(apply(&app, &plan).error.is_none());
@@ -1463,7 +1463,7 @@ fn a_new_file_never_replaces_what_is_there() {
     std::fs::write(root.join("taken"), "keep me").unwrap();
     let plan = Plan::with_steps(
         "new file",
-        vec![Box::new(bibli_core::op::NewFile {
+        vec![Box::new(skwir_core::op::NewFile {
             path: root.join("taken"),
         })],
     );
@@ -1507,7 +1507,7 @@ fn a_file_goes_with_its_companion_and_a_copy_takes_its_attributes_in() {
     assert!(r.error.is_none(), "{:?}", r.error);
     let copy = root.join("into/it's a.txt");
     assert_eq!(
-        bibli_core::fs::xattr::get(&copy, "user.xdg.tags")
+        skwir_core::fs::xattr::get(&copy, "user.xdg.tags")
             .unwrap()
             .as_deref(),
         Some(b"from the mac".as_slice())

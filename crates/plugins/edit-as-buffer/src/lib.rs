@@ -1,4 +1,4 @@
-//! bibli plugin: edit-as-buffer. The oil.nvim idea: the directory listing
+//! skwir plugin: edit-as-buffer. The oil.nvim idea: the directory listing
 //! becomes a text buffer in your editor; when you save and quit, the
 //! difference becomes a plan (renames, moves, new folders, trash) that is
 //! proposed for review, never applied on its own.
@@ -20,24 +20,24 @@ use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use bibli_core::CancelToken;
-use bibli_core::app::{App, NotifyLevel, PaneArg};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::FileId;
-use bibli_core::op::{
+use parking_lot::Mutex;
+use skwir_core::CancelToken;
+use skwir_core::app::{App, NotifyLevel, PaneArg};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::entry::FileId;
+use skwir_core::op::{
     EntryRef, Mkdir, Move, Operation, Plan, Rename, RenameOrderError, RenameRequest, Trash,
     order_renames, valid_file_name,
 };
-use bibli_core::plugin::Plugin;
-use bibli_core::registry::{KeyBinding, MenuItem};
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
-use parking_lot::Mutex;
+use skwir_core::plugin::Plugin;
+use skwir_core::registry::{KeyBinding, MenuItem};
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
 
 const ID: &str = "edit-as-buffer";
 
 const HEADER: &str = "\
-# bibli: edit this listing, save, and quit.
+# skwir: edit this listing, save, and quit.
 #   change a name            -> rename
 #   delete a line            -> move to trash
 #   name with a slash        -> move into that folder (created if needed)
@@ -180,7 +180,7 @@ fn parse_target(text: &str, line: usize) -> Result<Target, BufferError> {
     let mut parts: Vec<OsString> = text
         .split('/')
         .filter(|p| !p.is_empty())
-        .map(|p| bibli_core::os_path::from_bytes(unescape(p)))
+        .map(|p| skwir_core::os_path::from_bytes(unescape(p)))
         .collect();
     let Some(name) = parts.pop() else {
         return Err(invalid("a name cannot be empty".into()));
@@ -428,7 +428,7 @@ pub fn diff_buffer(
         }
         let parked = loop {
             parked_serial += 1;
-            let name = OsString::from(format!(".bibli-edit-{parked_serial}"));
+            let name = OsString::from(format!(".skwir-edit-{parked_serial}"));
             if !wanted.contains(name.as_os_str()) && !exists(&dir.join(&name)) {
                 break name;
             }
@@ -533,9 +533,9 @@ fn editor_argv(editor: &str, file: &Path) -> Vec<OsString> {
 /// user alone, in the runtime directory when there is one.
 fn buffer_file(text: &str) -> anyhow::Result<tempfile::TempPath> {
     use std::io::Write as _;
-    let dir = bibli_platform::xdg::runtime_dir().unwrap_or_else(std::env::temp_dir);
+    let dir = skwir_platform::xdg::runtime_dir().unwrap_or_else(std::env::temp_dir);
     let mut file = tempfile::Builder::new()
-        .prefix("bibli-edit-")
+        .prefix("skwir-edit-")
         .suffix(".txt")
         .tempfile_in(dir)?;
     file.write_all(text.as_bytes())?;
@@ -584,7 +584,7 @@ fn start_session(
     let argv = editor_argv(&editor(), &file);
     let weak = app.weak();
     let cwd = dir.clone();
-    bibli_platform::open::open_terminal_watched(&cwd, &argv, move |status| {
+    skwir_platform::open::open_terminal_watched(&cwd, &argv, move |status| {
         // The reaper thread only hands the result to a worker.
         let Some(app) = weak.upgrade() else { return };
         let weak = app.weak();
@@ -632,13 +632,13 @@ impl Plugin for EditAsBufferPlugin {
         "Edit the listing in your editor; the difference becomes a plan to review"
     }
 
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Files
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Files
     }
 
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[
             Capability::Read,
             Capability::Write,
             Capability::Programs,
@@ -697,7 +697,7 @@ mod tests {
 
     fn scratch() -> tempfile::TempDir {
         // Trashed in some tests: on the home filesystem, like the user's files.
-        let base = std::env::home_dir().unwrap().join(".cache/bibli-tests");
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         tempfile::tempdir_in(base).unwrap()
     }
@@ -722,7 +722,7 @@ mod tests {
     }
 
     fn apply(plan: &Plan, dir: &Path) -> Arc<App> {
-        let app = App::new(bibli_core::app::AppConfig::ephemeral(dir.join(".app"))).unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(dir.join(".app"))).unwrap();
         let r = app.executor.execute_blocking(plan, app.lifetime());
         assert!(r.error.is_none(), "{:?}", r.error);
         app
@@ -735,10 +735,10 @@ mod tests {
     #[test]
     fn buffer_format() {
         let b = to_buffer(&[
-            (bibli_core::FileId { dev: 1, ino: 1 }, "docs".into(), true),
-            (bibli_core::FileId { dev: 1, ino: 2 }, "a.txt".into(), false),
+            (skwir_core::FileId { dev: 1, ino: 1 }, "docs".into(), true),
+            (skwir_core::FileId { dev: 1, ino: 2 }, "a.txt".into(), false),
         ]);
-        assert!(b.starts_with("# bibli"));
+        assert!(b.starts_with("# skwir"));
         assert!(b.ends_with("   1  docs/\n   2  a.txt\n"));
     }
 
@@ -757,13 +757,13 @@ mod tests {
         .into_iter()
         .map(OsString::from)
         // A name that is no UTF-8: Unix's alone.
-        .chain(cfg!(unix).then(|| bibli_core::os_path::from_bytes(b"caf\xe9".to_vec())))
+        .chain(cfg!(unix).then(|| skwir_core::os_path::from_bytes(b"caf\xe9".to_vec())))
         .collect();
         for name in &names {
             let line = escape(name);
             assert!(!line.contains('\n') && line.trim() == line, "{line:?}");
             assert_eq!(
-                &bibli_core::os_path::from_bytes(unescape(&line)),
+                &skwir_core::os_path::from_bytes(unescape(&line)),
                 name,
                 "{line:?}"
             );
@@ -789,7 +789,7 @@ mod tests {
 
     #[test]
     fn diff_rename_move_delete_and_new_dir() {
-        if bibli_core::system::under_wine("trashing through the shell") {
+        if skwir_core::system::under_wine("trashing through the shell") {
             return;
         }
         let tmp = scratch();
@@ -973,11 +973,11 @@ mod tests {
         let dir = tmp.join("work");
         std::fs::create_dir(&dir).unwrap();
         std::fs::write(dir.join("one.txt"), b"1").unwrap();
-        let app = App::new(bibli_core::app::AppConfig::ephemeral(tmp.join("app"))).unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.join("app"))).unwrap();
         app.plugins
             .add(Arc::new(EditAsBufferPlugin::default()), &app);
         let pane = app.workspace.read().active_id();
-        app.navigate(pane, &bibli_core::Location::from_path(&dir))
+        app.navigate(pane, &skwir_core::Location::from_path(&dir))
             .unwrap();
         assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
         (app, dir)
@@ -1032,7 +1032,7 @@ mod tests {
         /// refused in words: never a panic.
         #[test]
         fn any_buffer_the_user_leaves_is_read_without_a_panic(text in proptest::prop_oneof![
-            bibli_core::testing::mutated_text(
+            skwir_core::testing::mutated_text(
                 "# a comment\n1  café.txt\n2  sub/\n3  \"a b\\\"c\".md\n  new folder/\n4  ../x\n"
             ),
             proptest::prelude::any::<String>(),

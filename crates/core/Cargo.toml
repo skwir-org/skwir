@@ -1,6 +1,6 @@
 [package]
-name = "bibli-core"
-description = "bibli core: entries, locations, commands, operations, plans, registries"
+name = "skwir-core"
+description = "skwir core: entries, locations, commands, operations, plans, registries"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true

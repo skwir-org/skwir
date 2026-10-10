@@ -21,13 +21,13 @@ pub use page::{Drawing, page, stated_size};
 use std::sync::Arc;
 
 use crate::inspection::{check, limits, read_bounded};
-use bibli_core::{
+use ego_tree::{NodeId, NodeRef, iter::Edge};
+use scraper::{ElementRef, Html, Node, node::Element};
+use skwir_core::{
     CancelToken,
     inspection::{Block, BlockKind, Picture, Run, Script},
     thumbs::Image,
 };
-use ego_tree::{NodeId, NodeRef, iter::Edge};
-use scraper::{ElementRef, Html, Node, node::Element};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Write,
@@ -859,8 +859,8 @@ fn local_path(base: &std::path::Path, href: &str) -> Option<std::path::PathBuf> 
     {
         return None;
     }
-    let base = bibli_core::os_path::canonical(base).ok()?;
-    let path = bibli_core::os_path::canonical(base.join(href.as_ref())).ok()?;
+    let base = skwir_core::os_path::canonical(base).ok()?;
+    let path = skwir_core::os_path::canonical(base.join(href.as_ref())).ok()?;
     path.starts_with(&base).then_some(path)
 }
 /// Resolve only local descendants of the document directory, including symlinks.
@@ -910,7 +910,7 @@ pub fn local_picture(base: &std::path::Path, href: &str, cancel: &CancelToken) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::inspection::Align;
+    use skwir_core::inspection::Align;
     #[test]
     fn semantic_text_does_not_include_active_content() {
         let blocks=html("<h1>Title</h1><p>A <strong>bold</strong> <a href='https://example.invalid'>link</a></p><script>secret()</script>", Markup::Html, &CancelToken::new(), pictures(|_|None)).unwrap().blocks;
@@ -921,7 +921,7 @@ mod tests {
 
     #[test]
     fn lists_tables_rules_and_centring_are_structure_not_typed_characters() {
-        use bibli_core::inspection::BlockKind;
+        use skwir_core::inspection::BlockKind;
         let source = r#"<h1 style="text-align: center">A Title</h1>
             <p><span style="font-style:italic">said</span> and <span style="font-weight: 700">done</span></p>
             <ol start="3"><li>three</li><li><p>four</p><p>still four</p><ul><li>inner</li></ul></li></ol>
@@ -1307,7 +1307,7 @@ mod tests {
     /// and small capitals marked, whether by tag or by class.
     #[test]
     fn scripts_and_small_capitals_are_runs() {
-        use bibli_core::inspection::Script;
+        use skwir_core::inspection::Script;
         let source = r#"<style>.nr { vertical-align: super; font-size: 0.75em }
             .sc { font-variant: small-caps } sup.flat { vertical-align: baseline }</style>
             <p>E = mc<sup>2</sup>, H<sub>2</sub>O, a note<a href="n.xhtml"><span class="nr">3</span></a>,

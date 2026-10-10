@@ -15,8 +15,8 @@
 //! for what is asked now (`Latest`): a new page, or a file read again,
 //! forgets what was asked before.
 use crate::{latest::Latest, preview::PreviewContent, shell::Shell};
-use bibli_core::{inspection::Picture, scheduler::Priority};
 use gpui::{Context, RenderImage, Window};
+use skwir_core::{inspection::Picture, scheduler::Priority};
 use std::{
     collections::{HashMap, HashSet},
     rc::Rc,

@@ -5,7 +5,7 @@ Status: accepted, 2026-09-19
 ## Decision
 
 Extend `preview-media` with a persistent, initially paused playback session.
-`bibli-media-worker` links GStreamer; the UI and platform adapter do not. The
+`skwir-media-worker` links GStreamer; the UI and platform adapter do not. The
 worker uses `playbin3` for decoding, audio/video synchronization, stream selection,
 subtitles, seeking and speed. Track changes re-preroll from READY with the desired
 streams, then restore position, rate and play state. This avoids racing dynamic

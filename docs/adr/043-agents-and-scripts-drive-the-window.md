@@ -6,20 +6,20 @@ Windows machine (PLAN.md records the deviation).
 
 ## Context
 
-Phase 6 gives bibli a command line and an MCP server, both "thin
+Phase 6 gives skwir a command line and an MCP server, both "thin
 consumers of the command registry", so that an external agent can drive
-bibli and finish with a plan the user reviews. The pieces exist: every
+skwir and finish with a plan the user reviews. The pieces exist: every
 action is a command with a JSON schema (`CommandRegistry::list`,
 `check`, `dispatch`); a command that changes files returns a `Plan`; a
 plan from anything but the user's own gesture goes to review
 (`App::propose`), shown in the window and applied with undo; a window's
 own command asked from elsewhere waits for the window
-(`App::request_front`). No process reaches another today: each `bibli`
+(`App::request_front`). No process reaches another today: each `skwir`
 builds its core and plugins and runs its window.
 
-An agent or a script could run a bibli of its own, without a window, or
+An agent or a script could run a skwir of its own, without a window, or
 reach the window the user has open. A plan is reviewed in the window,
-and applied there into the window's undo history; a bibli without a
+and applied there into the window's undo history; a skwir without a
 window can show no plan, and would keep an undo history and settings
 writes of its own beside the window's.
 
@@ -28,9 +28,9 @@ writes of its own beside the window's.
 1. **Agents and scripts drive the window.** A plugin, `control`, off by
    default, listens while it is on and the window runs, on a channel
    only the user reaches: a Unix socket in a folder of the user's alone
-   (`$XDG_RUNTIME_DIR/bibli/control.sock` on Linux, under the user's
+   (`$XDG_RUNTIME_DIR/skwir/control.sock` on Linux, under the user's
    `$TMPDIR` on macOS), a named pipe on Windows. No daemon: the channel
-   ends with the window, and with the plugin turned off. A second bibli
+   ends with the window, and with the plugin turned off. A second skwir
    finds it taken and does not listen.
 2. **It speaks MCP through `rmcp`**, the protocol's official Rust SDK,
    on a runtime of the plugin's own, on a thread started when the plugin
@@ -38,7 +38,7 @@ writes of its own beside the window's.
    (gpui's HTTP client, the map tiles), so `rmcp` adds itself alone. The
    core stays synchronous; a part that needs async owns its runtime, and
    one shared by several plugins would be a utility of
-   `bibli-platform`, not the core's (as ADR-021 says of an HTTP client).
+   `skwir-platform`, not the core's (as ADR-021 says of an HTTP client).
 3. **The tools are the commands.** Each command is a tool, with its
    declared description and argument schema; its dots are written `__`
    (`tags.edit` is `tags__edit`), which MCP clients accept and which
@@ -47,18 +47,18 @@ writes of its own beside the window's.
    review, and the tool answers once the user has: applied, with what
    applied and any error, or dismissed; or after a while, the plan still
    waiting. A value or a text for the clipboard is the tool's answer.
-4. **`bibli mcp`** is what an agent's configuration starts: it carries
+4. **`skwir mcp`** is what an agent's configuration starts: it carries
    the agent's standard input and output to the window's channel. With
-   no window listening it says to open bibli and turn Control on, and
+   no window listening it says to open skwir and turn Control on, and
    starts nothing.
-5. **`bibli cmd <name> [arguments]`** runs one command through the same
+5. **`skwir cmd <name> [arguments]`** runs one command through the same
    channel and prints its result as JSON. A plan is printed, or applied
    with `--apply`: run by the user, it is the user's own action, as a
    key is, applied whole and undoable in the window. The request says
-   so in its `_meta` (`bibli/plan`: `print` or `apply`; without it, a
+   so in its `_meta` (`skwir/plan`: `print` or `apply`; without it, a
    plan is proposed), which an agent's model, filling arguments, never
    sets. With no window listening, a command runs in a
-   bibli of its own without a window: one that reads answers, a plan is
+   skwir of its own without a window: one that reads answers, a plan is
    printed, or applied with `--apply`.
 6. **Off until the permission layer.** A program running as the user
    can use the channel, as it can the user's files, and an agent reads

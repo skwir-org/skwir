@@ -1,9 +1,9 @@
 //! Links found in plain text: what a reader would click if the text were a
 //! page (ADR-029).
 //!
-//! An address is found by its scheme, and only by the schemes bibli
+//! An address is found by its scheme, and only by the schemes skwir
 //! follows: `http`, `https` and `mailto` go to the desktop's browser and mail
-//! client, `file` into bibli. A name with a dot is never taken for a domain:
+//! client, `file` into skwir. A name with a dot is never taken for a domain:
 //! in a file manager `main.rs`, `setup.py` and `README.md` are files, though
 //! `.rs`, `.py` and `.md` are countries' domains. In a terminal the words of
 //! a line may also be paths (`paths`), which only the filesystem confirms
@@ -12,7 +12,7 @@
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
-use bibli_core::inspection::{Block, Run};
+use skwir_core::inspection::{Block, Run};
 
 /// The schemes found in text, as they are written before what follows.
 const SCHEMES: [&str; 4] = ["https://", "http://", "file://", "mailto:"];
@@ -121,7 +121,7 @@ pub fn urls(text: &str) -> Vec<Range<usize>> {
         // A text of megabytes is long to look through: a preview moved on
         // from stops here (its answer is not taken).
         colons += 1;
-        if colons.is_multiple_of(1024) && bibli_core::scheduler::job_cancelled() {
+        if colons.is_multiple_of(1024) && skwir_core::scheduler::job_cancelled() {
             break;
         }
         // The scheme is the letters right before the colon, and starts a
@@ -310,7 +310,7 @@ pub fn resolve(word: &str, base: &Path) -> Option<PathBuf> {
         return there(path.to_owned());
     }
     if let Some(rest) = word.strip_prefix("~/") {
-        return there(bibli_core::os_path::home()?.join(rest));
+        return there(skwir_core::os_path::home()?.join(rest));
     }
     if !base.is_absolute() {
         return None;
@@ -329,7 +329,7 @@ pub fn resolve(word: &str, base: &Path) -> Option<PathBuf> {
 pub fn link_block(block: &mut Block, found: bool) {
     // A preview moved on from links nothing more (its answer is not
     // taken): a document of many blocks stops here.
-    if bibli_core::scheduler::job_cancelled() {
+    if skwir_core::scheduler::job_cancelled() {
         return;
     }
     let addresses = urls(&block.text);
@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(found("HTTPS://EXAMPLE.ORG"), ["HTTPS://EXAMPLE.ORG"]);
         // Names with a dot are files, not domains.
         assert!(found("main.rs setup.py README.md www.example.org").is_empty());
-        // Schemes bibli does not follow, and schemes inside a word.
+        // Schemes skwir does not follow, and schemes inside a word.
         assert!(found("ssh://host ftp://host xhttps://a.b javascript:alert(1)").is_empty());
         // Nothing after the scheme.
         assert!(found("https:// http://. mailto: mailto:@x file://").is_empty());

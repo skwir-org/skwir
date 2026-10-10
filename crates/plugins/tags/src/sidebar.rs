@@ -9,15 +9,15 @@
 
 use std::sync::Arc;
 
-use bibli_core::app::App;
-use bibli_core::app::NotifyLevel;
-use bibli_core::command::Invocation;
-use bibli_core::location::Location;
-use bibli_core::metadata::{
+use parking_lot::Mutex;
+use skwir_core::app::App;
+use skwir_core::app::NotifyLevel;
+use skwir_core::command::Invocation;
+use skwir_core::location::Location;
+use skwir_core::metadata::{
     TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color, tag_lineage, tag_parent,
 };
-use bibli_core::registry::{Click, Place, Reorder};
-use parking_lot::Mutex;
+use skwir_core::registry::{Click, Place, Reorder};
 
 use crate::index::TagIndex;
 use crate::vocabulary::Vocabulary;
@@ -196,12 +196,12 @@ pub fn edit(
     saving: &Arc<Mutex<()>>,
     edit: Pin,
     undo: bool,
-    lifetime: &bibli_core::cancel::CancelToken,
+    lifetime: &skwir_core::cancel::CancelToken,
     then: impl FnOnce(&App) + Send + 'static,
 ) {
     let (saving, weak) = (Arc::clone(saving), app.weak());
     app.scheduler.spawn(
-        bibli_core::scheduler::Priority::Normal,
+        skwir_core::scheduler::Priority::Normal,
         "tags.pin",
         lifetime.child(),
         move || {

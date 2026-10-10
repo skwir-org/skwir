@@ -1,4 +1,4 @@
-//! Writing SVG for bibli's inert rasterizer (`inspection::drawing`), in
+//! Writing SVG for skwir's inert rasterizer (`inspection::drawing`), in
 //! the file's own unit, millimetres: numbers, text as `KiCad` places it,
 //! arcs through three points, and the bounds of what was drawn.
 use std::fmt::Write as _;

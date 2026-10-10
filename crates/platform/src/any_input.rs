@@ -7,8 +7,8 @@
 
 use std::path::Path;
 
-use bibli_core::testing::{bytes, mutated, mutated_text};
 use proptest::prelude::*;
+use skwir_core::testing::{bytes, mutated, mutated_text};
 
 const LINKS: &str = "see https://example.org/a_(b)?q=1#x, mailto:a@example.org and \
 \"src/main.rs:12:5\" or 'My Files/café.txt':3 then ~/notes.md and ./a\\ b.txt";
@@ -134,7 +134,7 @@ proptest! {
     fn a_package(input in prop_oneof![mutated(zip()), bytes(512)]) {
         let file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(file.path(), &input).unwrap();
-        let cancel = bibli_core::cancel::CancelToken::new();
+        let cancel = skwir_core::cancel::CancelToken::new();
         if let Ok(mut package) =
             crate::package::Package::open(file.path(), "This package", false, &cancel)
         {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run the vendored GPUI list and line wrapper tests without adding GPUI dev
-dependencies to bibli.
+dependencies to skwir.
 
 Covers our patches (item height hints, truncating the last clamped line,
 keyboard clicks needing their key-down)
@@ -13,7 +13,7 @@ import tempfile
 
 
 root = Path(__file__).resolve().parents[2]
-with tempfile.TemporaryDirectory(prefix="bibli-list-tests-") as temporary:
+with tempfile.TemporaryDirectory(prefix="skwir-list-tests-") as temporary:
     source = Path(temporary) / "gpui"
     shutil.copytree(root / "vendor/gpui", source)
     manifest = source / "Cargo.toml"

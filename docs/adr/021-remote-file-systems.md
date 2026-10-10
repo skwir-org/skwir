@@ -5,12 +5,12 @@ step below is planned and decided further when it starts.
 
 ## Context
 
-Bibli will open files that are not on a local disk: SFTP servers, SMB
+Skwir will open files that are not on a local disk: SFTP servers, SMB
 and WebDAV shares, S3 buckets, cloud drives. Each protocol is a client,
 an authentication scheme and a set of failures of its own; Dolphin and
-Nautilus reach them through KIO and GVfs, frameworks larger than bibli.
-Implementing them in bibli would put a network layer in the core and
-make bibli hold credentials.
+Nautilus reach them through KIO and GVfs, frameworks larger than skwir.
+Implementing them in skwir would put a network layer in the core and
+make skwir hold credentials.
 
 Other software already speaks these protocols and keeps the
 credentials. GVfs (`gio mount`) and sshfs present a remote as a local
@@ -20,24 +20,24 @@ ends (`rclone mount`) and also answers a JSON API over a socket
 jobs that report progress and can be stopped). Principle 4 says to use
 them.
 
-Bibli already meets part of this. The places plugin reads mountinfo and
+Skwir already meets part of this. The places plugin reads mountinfo and
 counts `fuse*` file systems as user data, though only under `/mnt`,
 `/media` and `/run/media`: GVfs mounts, under `/run/user/<uid>/gvfs`, and
 NFS and CIFS are not listed. The GTK bookmarks file keeps `sftp://`
-lines, which bibli preserves but cannot open. Plugins register their own
+lines, which skwir preserves but cannot open. Plugins register their own
 operation kinds (`op::OpRegistry` is owner-tagged), and locations have
 schemes with providers of their own (`query:`, `shelf:`).
 
 ## Decision
 
-- **Bibli implements no file-system protocol, and the core has no
+- **Skwir implements no file-system protocol, and the core has no
   network layer.** Remote files are reached through installed tools. A
   plugin that needs HTTP for something else keeps its client
   (`map-tiles`, ADR-020); a client two plugins share goes to
-  `bibli-platform` as a utility, not into the core as a contract.
-- **Bibli holds no credentials.** The keyring, GVfs and rclone's
+  `skwir-platform` as a utility, not into the core as a contract.
+- **Skwir holds no credentials.** The keyring, GVfs and rclone's
   configuration keep them; a prompt they need is theirs. A passphrase
-  bibli must pass on follows the rule for locked volumes (never stored,
+  skwir must pass on follows the rule for locked volumes (never stored,
   logged or put on a command line; its argument struct has no `Debug`).
 - **First, mounts.** A remote mounted by any tool is a folder:
   - The places plugin lists GVfs mounts and network file systems
@@ -47,12 +47,12 @@ schemes with providers of their own (`query:`, `shelf:`).
     navigating to its mount point, as `places.mount` does with udisks.
     rclone remotes (`rclone listremotes`) can be mounted the same way.
     Unmounting is the place's eject.
-  - A location on such a file system is **remote**: `bibli-platform`
+  - A location on such a file system is **remote**: `skwir-platform`
     reads it from mountinfo's type and the core carries it on the
     location, so every plugin can act on it. On a
     remote location, content is read only when asked: thumbnails and
     previews wait for the user, Usage asks before walking a tree. The
-    listing is read again on F5 and when bibli regains focus, because
+    listing is read again on F5 and when skwir regains focus, because
     the kernel does not report changes made on the server. Deleting says
     it is permanent where there is no Trash. Tags say they are
     unavailable where extended attributes are.
@@ -82,7 +82,7 @@ Behaviour follows the tools: rclone's and some FUSE file systems'
 inode numbers are made up and may change between mounts, so entry
 references on a remote fall back to their path hint and stable identity
 (principle 6) is weaker there. What a server supports (Trash, extended
-attributes, modification times, permissions) varies, and bibli reports
+attributes, modification times, permissions) varies, and skwir reports
 the difference rather than hiding it.
 
 The core stays free of protocols, clients and secrets. Nothing prevents

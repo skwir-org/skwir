@@ -9,19 +9,19 @@
 
 use std::path::Path;
 
-use bibli_core::app::App;
-use bibli_core::cancel::CancelToken;
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::keys;
-use bibli_core::location::Location;
-use bibli_core::metadata::{
+use skwir_core::app::App;
+use skwir_core::cancel::CancelToken;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::entry::keys;
+use skwir_core::location::Location;
+use skwir_core::metadata::{
     TAG_COLORS, TAG_EXCLUSIVE_SETTING, clean_tag, same_tag, tag_leaf, tag_parent,
 };
-use bibli_core::op::EntryRef;
-use bibli_core::os_path::PathArg;
-use bibli_core::registry::MenuItem;
-use bibli_core::workspace::PaneId;
-use bibli_platform::mime::Kind;
+use skwir_core::op::EntryRef;
+use skwir_core::os_path::PathArg;
+use skwir_core::registry::MenuItem;
+use skwir_core::workspace::PaneId;
+use skwir_platform::mime::Kind;
 
 use crate::location::{Address, SCHEME};
 
@@ -35,7 +35,7 @@ pub struct DropArgs {
     /// Files by where they are (another application's, the clipboard's;
     /// a script's or an agent's, by absolute path), instead of a pane's.
     #[serde(default)]
-    pub entries: Vec<bibli_core::op::EntryArg>,
+    pub entries: Vec<skwir_core::op::EntryArg>,
     /// They move: out of the tag they came from.
     #[serde(default, rename = "move")]
     pub moved: bool,
@@ -56,7 +56,7 @@ pub struct UntagArgs {
     /// The files to take out, by absolute path; the pane's selection
     /// (its files, and its tags, taken off every file) when omitted.
     #[serde(default)]
-    pub entries: Vec<bibli_core::op::EntryArg>,
+    pub entries: Vec<skwir_core::op::EntryArg>,
     #[serde(default)]
     pub pane: Option<PaneId>,
 }
@@ -174,15 +174,15 @@ pub fn selected_places(app: &App, pane: PaneId) -> Vec<String> {
 /// What taking a file out of `address` takes from it: its tag, or every
 /// tag within it where it lists everything within; `None` at the top,
 /// where it takes every tag.
-fn taken(address: &Address) -> Option<bibli_core::notes::TagChange> {
+fn taken(address: &Address) -> Option<skwir_core::notes::TagChange> {
     let tag = address.tag.clone()?;
     Some(if address.deep {
-        bibli_core::notes::TagChange {
+        skwir_core::notes::TagChange {
             within: vec![tag],
             ..Default::default()
         }
     } else {
-        bibli_core::notes::TagChange {
+        skwir_core::notes::TagChange {
             remove: vec![tag],
             ..Default::default()
         }
@@ -236,7 +236,7 @@ pub fn drop(
         (app.selected_refs(pane), selected_places(app, pane), from)
     } else {
         let from = a.from.as_deref().map(Location::parse);
-        (bibli_core::op::EntryArg::refs(a.entries)?, pasted, from)
+        (skwir_core::op::EntryArg::refs(a.entries)?, pasted, from)
     };
     // Tags dragged onto it go into it, on every file: a plan to review.
     let places: Vec<String> = places
@@ -264,7 +264,7 @@ pub fn drop(
     // What each file holds is read when the plan is applied: the tag of
     // the source taken (and what is under it, where it shows that), this
     // one given.
-    let change = bibli_core::notes::TagChange {
+    let change = skwir_core::notes::TagChange {
         add: vec![tag.clone()],
         exclusive,
         ..source.as_ref().and_then(taken).unwrap_or_default()
@@ -314,7 +314,7 @@ pub fn untag(
         }
         app.selected_refs(pane)
     } else {
-        bibli_core::op::EntryArg::refs(a.entries.clone())?
+        skwir_core::op::EntryArg::refs(a.entries.clone())?
     };
     if files.is_empty() {
         return Ok(Outcome::Done);
@@ -391,7 +391,7 @@ pub fn export(
     let dest = a.dest.into_inner();
     let (places, weak) = (std::sync::Arc::clone(places), app.weak());
     app.scheduler.spawn(
-        bibli_core::scheduler::Priority::Normal,
+        skwir_core::scheduler::Priority::Normal,
         "tags.export",
         app.lifetime().child(),
         move || {
@@ -400,19 +400,19 @@ pub fn export(
             let Some(made) = crate::location::export(&address, &files, &dest, Path::exists) else {
                 return;
             };
-            let mut steps: Vec<Box<dyn bibli_core::op::Operation>> = made
+            let mut steps: Vec<Box<dyn skwir_core::op::Operation>> = made
                 .folders
                 .iter()
                 .map(|path| {
-                    Box::new(bibli_core::op::Mkdir { path: path.clone() })
-                        as Box<dyn bibli_core::op::Operation>
+                    Box::new(skwir_core::op::Mkdir { path: path.clone() })
+                        as Box<dyn skwir_core::op::Operation>
                 })
                 .collect();
             for (from, folder, name) in made.copies {
                 let Some(entry) = EntryRef::from_path(&from) else {
                     continue;
                 };
-                let mut copy = bibli_core::op::Copy::from_settings(entry, folder, &app.settings);
+                let mut copy = skwir_core::op::Copy::from_settings(entry, folder, &app.settings);
                 if from.file_name() != Some(name.as_os_str()) {
                     copy.new_name = Some(name);
                 }
@@ -422,7 +422,7 @@ pub fn export(
                 || dest.display().to_string(),
                 |n| n.to_string_lossy().into_owned(),
             );
-            app.propose(bibli_core::op::Plan::with_steps(
+            app.propose(skwir_core::op::Plan::with_steps(
                 format!("copy the files tagged {tag} to {place}"),
                 steps,
             ));
@@ -545,12 +545,12 @@ pub fn browse(app: &App, a: &BrowseArgs) -> anyhow::Result<Outcome> {
             .and_then(|shown| app.trail(&shown))
             .and_then(|trail| trail.base);
         if let Some(folder) = back {
-            app.navigate(pane, &bibli_core::Location::from_path(folder))?;
+            app.navigate(pane, &skwir_core::Location::from_path(folder))?;
             return Ok(Outcome::Done);
         }
     }
     let folder = match &a.folder {
-        Some(folder) => Some(bibli_core::os_path::absolute(folder)?.to_owned()),
+        Some(folder) => Some(skwir_core::os_path::absolute(folder)?.to_owned()),
         None => app.pane_location(pane).and_then(|shown| {
             shown
                 .path()
@@ -564,7 +564,7 @@ pub fn browse(app: &App, a: &BrowseArgs) -> anyhow::Result<Outcome> {
 
 /// Whether a tag location is kept in the sidebar (`Keeper::keeps`): one
 /// tag of the home folder, not narrowed, its pin.
-pub fn keepable(location: &bibli_core::Location) -> bool {
+pub fn keepable(location: &skwir_core::Location) -> bool {
     pinned_tag(&crate::location::Address::parse(&location.rest)).is_some()
 }
 
@@ -613,7 +613,7 @@ pub struct TagMenuArgs {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
-    pub location: Option<bibli_core::os_path::PathArg>,
+    pub location: Option<skwir_core::os_path::PathArg>,
 }
 
 /// `tags.tag_menu`: a tag's menu where it is shown outside a tag location:

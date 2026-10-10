@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bibli_core::thumbs::Image;
+use skwir_core::thumbs::Image;
 
 /// Thumbnail size classes of the spec.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -47,16 +47,16 @@ impl ThumbSize {
     }
 
     /// The cache directory for a core size.
-    pub fn from_core(s: bibli_core::thumbs::ThumbSize) -> Self {
+    pub fn from_core(s: skwir_core::thumbs::ThumbSize) -> Self {
         match s {
-            bibli_core::thumbs::ThumbSize::Normal => ThumbSize::Normal,
-            bibli_core::thumbs::ThumbSize::Large => ThumbSize::Large,
+            skwir_core::thumbs::ThumbSize::Normal => ThumbSize::Normal,
+            skwir_core::thumbs::ThumbSize::Large => ThumbSize::Large,
         }
     }
 }
 
-/// The text chunk of a failure bibli wrote that stamps the tools it had.
-const TOOLS_CHUNK: &str = "X-Bibli-Tools";
+/// The text chunk of a failure skwir wrote that stamps the tools it had.
+const TOOLS_CHUNK: &str = "X-Skwir-Tools";
 
 /// The spec's cache key for an absolute path: the MD5 of its URI, escaped
 /// as `GLib` escapes it (`crate::uri::file_uri`).
@@ -131,9 +131,9 @@ impl ThumbCache {
         })
     }
 
-    /// Whether bibli made no thumbnail of `path` as it is now (its
+    /// Whether skwir made no thumbnail of `path` as it is now (its
     /// modification time), with the tools there are now (`tools`, a stamp
-    /// of them): remembered in the specification's `fail/bibli` folder,
+    /// of them): remembered in the specification's `fail/skwir` folder,
     /// so a file nothing can draw is not tried again at every launch, and
     /// is once a tool that might draw it is installed.
     pub fn failed(&self, path: &Path, tools: &str) -> bool {
@@ -166,7 +166,7 @@ impl ThumbCache {
     }
 
     fn fail_dir(&self) -> PathBuf {
-        self.root.join("fail").join("bibli")
+        self.root.join("fail").join("skwir")
     }
 
     /// Write `image` into the cache for `path` per the spec: PNG with
@@ -211,7 +211,7 @@ impl ThumbCache {
         // Created 0600 with a unique name: never readable by others, and two
         // stores of one key do not write into each other's file.
         let staged = tempfile::Builder::new()
-            .prefix(".bibli-")
+            .prefix(".skwir-")
             .suffix(".png")
             .tempfile_in(&dir)?;
         {
@@ -222,7 +222,7 @@ impl ThumbCache {
             enc.add_text_chunk("Thumb::URI".into(), crate::uri::file_uri(path))?;
             enc.add_text_chunk("Thumb::MTime".into(), secs.to_string())?;
             enc.add_text_chunk("Thumb::Size".into(), meta.len().to_string())?;
-            enc.add_text_chunk("Software".into(), "bibli".into())?;
+            enc.add_text_chunk("Software".into(), "skwir".into())?;
             if let Some(tools) = tools {
                 enc.add_text_chunk(TOOLS_CHUNK.into(), tools.into())?;
             }
@@ -320,7 +320,7 @@ mod tests {
             png_text_chunk(&dest, "Thumb::URI").as_deref(),
             Some(crate::uri::file_uri(&src).as_str())
         );
-        assert_eq!(png_text_chunk(&dest, "Software").as_deref(), Some("bibli"));
+        assert_eq!(png_text_chunk(&dest, "Software").as_deref(), Some("skwir"));
         assert_eq!(
             thumbs.lookup(&src, ThumbSize::Normal).as_deref(),
             Some(dest.as_path())
@@ -369,7 +369,7 @@ mod tests {
         assert!(
             cache
                 .path()
-                .join("thumbnails/fail/bibli")
+                .join("thumbnails/fail/skwir")
                 .join(format!("{}.png", key(&src)))
                 .is_file()
         );

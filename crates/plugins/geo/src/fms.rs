@@ -15,8 +15,8 @@
 //! STAR, an approach) are names only: their fixes are X-Plane's data.
 use std::io::BufRead;
 
-use bibli_core::CancelToken;
-use bibli_core::geo::WaypointKind;
+use skwir_core::CancelToken;
+use skwir_core::geo::WaypointKind;
 
 use crate::collect::{self, Collector};
 use crate::flight::{self, Ends, Route, Stop};
@@ -205,7 +205,7 @@ pub fn sniff(head: &[u8]) -> bool {
 pub(crate) mod tests {
     use super::*;
     use crate::collect::{Plan, PlanKind};
-    use bibli_core::geo::{Datum, LineKind};
+    use skwir_core::geo::{Datum, LineKind};
 
     pub(crate) const ELEVEN: &str = "I
 1100 Version
@@ -229,14 +229,14 @@ NUMENR 5
 0 ---- 0.000000 0.000000 0.000000\r\
 1 XBBB 100.000000 10.900000 20.900000\r";
 
-    fn read_str(text: &str) -> (bibli_core::geo::GeoDoc, Collector, Option<Damaged>) {
+    fn read_str(text: &str) -> (skwir_core::geo::GeoDoc, Collector, Option<Damaged>) {
         let mut c = Collector::new();
         let damaged = read(text.as_bytes(), &mut c, &CancelToken::new()).unwrap();
         let (doc, c) = c.finish();
         (doc, c, damaged)
     }
 
-    fn feet(p: &bibli_core::geo::Point) -> Option<f32> {
+    fn feet(p: &skwir_core::geo::Point) -> Option<f32> {
         p.altitude.map(|m| (m / flight::FOOT).round())
     }
 

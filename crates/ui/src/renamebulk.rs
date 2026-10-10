@@ -1,8 +1,8 @@
 //! Bulk rename dialog: template, regex, replacement, case, start; live
 //! preview from `rename_bulk.preview`; Enter applies `rename_bulk`.
 
-use bibli_core::command::{Invocation, Outcome};
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
+use skwir_core::command::{Invocation, Outcome};
 
 use crate::elements::clip::clipped;
 use crate::input::{InputEvent, TextInput};
@@ -38,7 +38,7 @@ pub struct BulkState {
     /// the one asked before is cancelled (`pending`): not worked out if
     /// it has not begun, stopped where it is if it has.
     asked: u64,
-    pending: Option<bibli_core::CancelToken>,
+    pending: Option<skwir_core::CancelToken>,
     /// The preview shown is the answer to the latest change.
     current: bool,
     count: usize,

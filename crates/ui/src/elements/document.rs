@@ -4,13 +4,13 @@
 
 use std::{rc::Rc, sync::Arc};
 
-use bibli_core::document::{PageContent, Rect};
 use gpui::{
     App, Bounds, ContentMask, Corners, DispatchPhase, Element, ElementId, GlobalElementId, Hitbox,
     HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, RenderImage, Style, Window, fill, point, px, relative,
     size,
 };
+use skwir_core::document::{PageContent, Rect};
 
 type Pointer = Rc<dyn Fn(&str, f32, f32, &mut Window, &mut App)>;
 

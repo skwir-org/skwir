@@ -1,4 +1,4 @@
-//! Inputs no file should hold, for tests of what reads files bibli did
+//! Inputs no file should hold, for tests of what reads files skwir did
 //! not write: arbitrary bytes, and a sample file mutated (bytes changed,
 //! characters of several bytes put where a parser expects ASCII, cut
 //! short). A mutated sample stays close to a real file, so it reaches

@@ -3,8 +3,8 @@
 use crate::inspection::{self, limits};
 use crate::sandbox::{self, Otherwise};
 use anyhow::Context;
-use bibli_core::CancelToken;
 use serde::Deserialize;
+use skwir_core::CancelToken;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
@@ -25,8 +25,8 @@ impl Member {
 }
 /// The helper. Plugins that require it name this, not the literals.
 pub const WORKER: crate::process::Worker = crate::process::Worker {
-    variable: "BIBLI_ARCHIVE_WORKER",
-    executable: "bibli-archive-worker",
+    variable: "SKWIR_ARCHIVE_WORKER",
+    executable: "skwir-archive-worker",
 };
 
 /// Where the helper is, if it is.
@@ -57,7 +57,7 @@ type ListingKey = (std::path::PathBuf, u64, u64, Option<std::time::SystemTime>);
 
 pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Arc<Listing>> {
     let key = std::fs::metadata(path).ok().map(|meta| {
-        let id = bibli_core::fs::stat::identity(path, &meta);
+        let id = skwir_core::fs::stat::identity(path, &meta);
         (
             path.to_path_buf(),
             id.map_or(0, |id| id.ino),

@@ -4,12 +4,12 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 
-use bibli_core::registry::{MenuItem, MenuSource};
-use bibli_platform::mime::{self, Kind, Mime};
 use gpui::{
     AnyElement, Context, FocusHandle, MouseButton, Pixels, Point, Window, anchored, deferred, div,
     prelude::*, px,
 };
+use skwir_core::registry::{MenuItem, MenuSource};
+use skwir_platform::mime::{self, Kind, Mime};
 
 use crate::elements::popover::PopoverAnchor;
 use crate::modal::FocusReturn;
@@ -103,7 +103,7 @@ impl SelectionCtx {
 /// Space-separated tokens, all of which must hold; a token of
 /// alternatives (`selection|folder`) holds when one of them does, and one
 /// after `!` when it does not (`!refs`). `None` always holds. `kind:` and
-/// `has:` ask `types` (`bibli_core::registry::MenuItem` has the
+/// `has:` ask `types` (`skwir_core::registry::MenuItem` has the
 /// vocabulary).
 pub fn when_holds(when: Option<&str>, ctx: SelectionCtx, types: &SelectionTypes) -> bool {
     when.is_none_or(|when| {
@@ -263,7 +263,7 @@ pub struct KeyboardAnchor {
 /// What a menu opened from the keyboard was opened in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuHost {
-    Pane(bibli_core::workspace::PaneId),
+    Pane(skwir_core::workspace::PaneId),
     Sidebar,
 }
 
@@ -446,7 +446,7 @@ impl Shell {
         }
         let command = source.command.clone().with("pane", self.pane);
         match self.app.dispatch(&command) {
-            Ok(bibli_core::command::Outcome::Value(value)) => {
+            Ok(skwir_core::command::Outcome::Value(value)) => {
                 match serde_json::from_value::<Answer>(value) {
                     Ok(answer) => answer.items,
                     Err(e) => {
@@ -478,7 +478,7 @@ impl Shell {
                 title,
                 icon,
                 order,
-                bibli_core::command::Invocation::new(command),
+                skwir_core::command::Invocation::new(command),
             )
         };
         let mut items = Vec::new();
@@ -521,13 +521,13 @@ impl Shell {
     /// (`cursor`) or the pane itself.
     pub fn menu_marker(
         &self,
-        pane: bibli_core::workspace::PaneId,
+        pane: skwir_core::workspace::PaneId,
         cursor: bool,
     ) -> Option<AnyElement> {
         self.host_marker(MenuHost::Pane(pane), cursor)
     }
 
-    pub fn menu_area_marker(&self, pane: bibli_core::workspace::PaneId) -> Option<AnyElement> {
+    pub fn menu_area_marker(&self, pane: skwir_core::workspace::PaneId) -> Option<AnyElement> {
         self.host_area_marker(MenuHost::Pane(pane))
     }
 
@@ -548,7 +548,7 @@ impl Shell {
     /// The menu of a tab of the strip.
     pub fn open_tab_menu(
         &mut self,
-        tab: bibli_core::workspace::TabId,
+        tab: skwir_core::workspace::TabId,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -560,19 +560,19 @@ impl Shell {
         let items = vec![
             item(
                 "New Tab",
-                bibli_core::command::Invocation::new("tab.new"),
+                skwir_core::command::Invocation::new("tab.new"),
                 200,
                 "tab-new",
             ),
             item(
                 "Reopen Closed Tab",
-                bibli_core::command::Invocation::new("tab.reopen"),
+                skwir_core::command::Invocation::new("tab.reopen"),
                 210,
                 "revert",
             ),
             item(
                 "Close Tab",
-                bibli_core::command::Invocation::with_args("tab.close", &tab_args),
+                skwir_core::command::Invocation::with_args("tab.close", &tab_args),
                 300,
                 "close",
             ),
@@ -649,7 +649,7 @@ impl Shell {
         if arranged.role.hides() {
             items.push(item(
                 "Hide From Sidebar",
-                bibli_core::command::Invocation::with_args(
+                skwir_core::command::Invocation::with_args(
                     "ui.sidebar_place",
                     &serde_json::json!({ "group": group, "key": key, "hidden": true }),
                 ),
@@ -723,7 +723,7 @@ impl Shell {
             .map(|(i, column)| MenuItem {
                 menu: "columns".into(),
                 title: column.label.to_owned(),
-                command: bibli_core::command::Invocation::with_args(
+                command: skwir_core::command::Invocation::with_args(
                     "ui.columns",
                     &serde_json::json!({ "key": column.setting }),
                 ),
@@ -738,7 +738,7 @@ impl Shell {
             "Reset widths",
             "revert",
             100,
-            bibli_core::command::Invocation::new("ui.columns_reset"),
+            skwir_core::command::Invocation::new("ui.columns_reset"),
         ));
         self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
@@ -759,7 +759,7 @@ impl Shell {
                 title,
                 icon,
                 order,
-                bibli_core::command::Invocation::with_args(name, &args),
+                skwir_core::command::Invocation::with_args(name, &args),
             )
         };
         let none = serde_json::json!({});
@@ -888,7 +888,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             Row::Item { index, nested } => {
                 let item = &menu.items[*index];
                 // Separator between order groups (hundreds digit), per the
-                // convention on `bibli_core::registry::MenuItem`.
+                // convention on `skwir_core::registry::MenuItem`.
                 let separated = !nested
                     && previous.is_some_and(|before| before.order / 100 != item.order / 100);
                 if !nested {
@@ -998,8 +998,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     use std::ffi::OsStr;
 
-    use bibli_core::command::Invocation;
-    use bibli_core::registry::{MenuItem, MenuSource};
+    use skwir_core::command::Invocation;
+    use skwir_core::registry::{MenuItem, MenuSource};
 
     use super::{Row, SelectionCtx, SelectionTypes, rows_of};
 

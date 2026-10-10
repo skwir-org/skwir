@@ -1,13 +1,13 @@
 //! CSV/TSV, JSON Lines, spreadsheet and SQLite tables streamed from the file
 //! a page at a time, every cell bounded.
-use bibli_core::{
+use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Row},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
     settings::SettingSpec,
 };
-use bibli_platform::inspection::{self, Encoding, limits};
+use skwir_platform::inspection::{self, Encoding, limits};
 use std::{io::Read, sync::Arc};
 
 const ID: &str = "preview-tables";
@@ -34,12 +34,12 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Show CSV, TSV and JSON Lines files, spreadsheets and SQLite databases as aligned tables"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read])
     }
     fn register(&self, app: &App) {
         app.settings.declare(SettingSpec::choice(
@@ -78,7 +78,7 @@ impl PreviewProvider for Provider {
         let extension = inspection::extension(&req.entry.path);
         if spreadsheet::EXTENSIONS.contains(&extension.as_str()) {
             return !(self.pages
-                && bibli_platform::preview::shown_as_pages(&req.entry.path, req.mime.as_deref()));
+                && skwir_platform::preview::shown_as_pages(&req.entry.path, req.mime.as_deref()));
         }
         matches!(extension.as_str(), "csv" | "tsv" | "jsonl" | "ndjson")
             || sqlite::EXTENSIONS.contains(&extension.as_str())
@@ -271,7 +271,7 @@ fn table(path: &std::path::Path, offset: u64, cancel: &CancelToken) -> anyhow::R
         .join(" · ");
     Ok(Inspection {
         details,
-        kind: bibli_core::inspection::InspectionKind::Table,
+        kind: skwir_core::inspection::InspectionKind::Table,
         title: if rows.is_empty() {
             "Table".into()
         } else {

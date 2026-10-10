@@ -8,8 +8,8 @@
 //! the coordinates of a continent at street zoom.
 use std::sync::Arc;
 
-use bibli_core::thumbs::Image;
-use bibli_core::tiles::{Palette, TileRequest};
+use skwir_core::thumbs::Image;
+use skwir_core::tiles::{Palette, TileRequest};
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 static DATA: &[u8] = include_bytes!("../data/natural-earth.bin");

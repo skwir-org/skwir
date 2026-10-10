@@ -7,10 +7,10 @@ mod common;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use bibli_core::command::Invocation;
-use bibli_core::workspace::{Pane, PaneId};
-use bibli_core::{App, EntryId, Location};
 use common::*;
+use skwir_core::command::Invocation;
+use skwir_core::workspace::{Pane, PaneId};
+use skwir_core::{App, EntryId, Location};
 
 fn wait(app: &App, pane: PaneId, done: impl Fn(&Pane) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -59,7 +59,7 @@ fn expand(app: &App, ids: &[EntryId], mode: &str) {
 fn opened_listing_complete(dir: &Path) -> impl Fn(&Pane) -> bool + '_ {
     move |p| {
         p.kept(&Location::from_path(dir))
-            .is_some_and(bibli_core::Listing::is_complete)
+            .is_some_and(skwir_core::Listing::is_complete)
     }
 }
 
@@ -198,7 +198,7 @@ fn held_under(dir: &Path) -> Vec<std::path::PathBuf> {
         .collect()
 }
 
-/// Before a volume is unmounted, bibli lets go of it: a pane showing a
+/// Before a volume is unmounted, skwir lets go of it: a pane showing a
 /// folder there goes elsewhere, and the folders it opened in place or kept
 /// there close, until nothing of the process holds the volume.
 #[cfg(target_os = "linux")]

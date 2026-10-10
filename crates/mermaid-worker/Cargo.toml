@@ -1,6 +1,6 @@
 [package]
-name = "bibli-mermaid-worker"
-description = "bibli helper: Mermaid diagrams laid out as SVG, in a process of its own"
+name = "skwir-mermaid-worker"
+description = "skwir helper: Mermaid diagrams laid out as SVG, in a process of its own"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true

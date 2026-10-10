@@ -2,15 +2,15 @@
 
 Status: accepted, 2026-10-09. Revises the archive rule of
 `docs/invariants/previews.md` ("member names are never extraction
-paths"), which held while bibli only previewed archives.
+paths"), which held while skwir only previewed archives.
 
 ## Context
 
 A drop asks what it does (`core.drop_asks`): Move, Copy and Link Here.
 Plugins may add rows to that menu (the registry's `drop` items), and the
-one every file manager offers there is Extract Here. bibli read archives
-only to preview them: `bibli-archive-worker` lists members within bounds
-and writes one member at a time under a name of bibli's (`member_file`),
+one every file manager offers there is Extract Here. skwir read archives
+only to preview them: `skwir-archive-worker` lists members within bounds
+and writes one member at a time under a name of skwir's (`member_file`),
 never under its own, so no member's name ever reached the filesystem.
 
 Extracting is the opposite: an archive's names become paths on disk. An

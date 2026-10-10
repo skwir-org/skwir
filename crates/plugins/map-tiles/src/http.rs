@@ -79,7 +79,7 @@ impl Http {
         })
     }
 
-    /// GET `url` with `headers`, which replace bibli's User-Agent when
+    /// GET `url` with `headers`, which replace skwir's User-Agent when
     /// they name one. A connection that fails is tried once more: a server
     /// closes idle ones, and the first request on one it closed fails.
     /// The first request to a server not connected to goes alone
@@ -244,7 +244,7 @@ mod tests {
         .unwrap()
         .with_root_certificates(roots)
         .with_no_client_auth();
-        Http::new(tls, "bibli/test").unwrap()
+        Http::new(tls, "skwir/test").unwrap()
     }
 
     #[tokio::test]
@@ -263,7 +263,7 @@ mod tests {
             let answer = request.await.unwrap();
             assert_eq!(answer.status, 200);
             assert_eq!(answer.version, hyper::Version::HTTP_2);
-            assert_eq!(answer.body, b"bibli/test");
+            assert_eq!(answer.body, b"skwir/test");
         }
         let took = started.elapsed();
         // Twelve tiles in about one server delay, not twelve (or six, on
@@ -274,7 +274,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_server_header_replaces_bibli_s_user_agent() {
+    async fn a_server_header_replaces_skwir_s_user_agent() {
         let (address, _, _) = server(Duration::ZERO).await;
         let answer = client()
             .get(
@@ -288,12 +288,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_certificate_the_client_does_not_trust_is_refused() {
-        if bibli_core::system::under_wine("Windows' certificate checks") {
+        if skwir_core::system::under_wine("Windows' certificate checks") {
             return;
         }
         let (address, _, _) = server(Duration::ZERO).await;
         // The system's authorities never signed the test's certificate.
-        let http = Http::system("bibli/test").unwrap();
+        let http = Http::system("skwir/test").unwrap();
         assert!(
             http.get(&format!("{address}/0/0/0.png"), &[])
                 .await

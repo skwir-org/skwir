@@ -1,6 +1,6 @@
 [package]
-name = "bibli-outside-netpbm"
-description = "A thumbnailer from outside bibli, as a WebAssembly module: Netpbm pictures (PPM, PGM), drawn small and given back as a PNG"
+name = "skwir-outside-netpbm"
+description = "A thumbnailer from outside skwir, as a WebAssembly module: Netpbm pictures (PPM, PGM), drawn small and given back as a PNG"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-bibli-plugin-api.workspace = true
+skwir-plugin-api.workspace = true
 
 [lints]
 workspace = true

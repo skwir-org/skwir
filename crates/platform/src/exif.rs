@@ -7,9 +7,9 @@
 //! facts are bounded like every other detail.
 use std::path::Path;
 
-use bibli_core::geo::LatLon;
-use bibli_core::inspection::Detail;
 use exif::{Exif, In, Tag, Value};
+use skwir_core::geo::LatLon;
+use skwir_core::inspection::Detail;
 
 use crate::inspection::{detail, limits};
 
@@ -573,9 +573,9 @@ mod tests {
         /// A picture's metadata as no camera writes it: never a panic.
         #[test]
         fn any_metadata_is_read_without_a_panic(raw in proptest::prop_oneof![
-            bibli_core::testing::mutated(tiff()),
-            bibli_core::testing::mutated(gps([45, 30, 0], true, [6, 15, 0], false, Some(b'A'))),
-            bibli_core::testing::bytes(512),
+            skwir_core::testing::mutated(tiff()),
+            skwir_core::testing::mutated(gps([45, 30, 0], true, [6, 15, 0], false, Some(b'A'))),
+            skwir_core::testing::bytes(512),
         ]) {
             if let Ok(exif) = exif::Reader::new().read_raw(raw) {
                 let _ = read(&exif);

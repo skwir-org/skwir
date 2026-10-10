@@ -1,5 +1,5 @@
 [package]
-name = "bibli-plugin-preview-playlists"
+name = "skwir-plugin-preview-playlists"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -7,8 +7,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
-bibli-platform.workspace = true
+skwir-core.workspace = true
+skwir-platform.workspace = true
 anyhow.workspace = true
 percent-encoding = "2"
 roxmltree = "0.21"

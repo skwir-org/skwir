@@ -3,13 +3,13 @@
 
 use std::collections::HashMap;
 
-use bibli_core::App;
-use bibli_core::keymap::UserBinding;
 use gpui::{Action, KeyBinding, Keystroke};
+use skwir_core::App;
+use skwir_core::keymap::UserBinding;
 
 /// The single action every key binding maps to.
 #[derive(Clone, Debug, PartialEq, Action)]
-#[action(namespace = bibli, no_json)]
+#[action(namespace = skwir, no_json)]
 pub struct RunCommand {
     pub name: String,
     pub args: serde_json::Value,
@@ -791,7 +791,7 @@ const PLACES: &[(&str, &str, &str)] = &[
     ("toolbar_button", "ToolbarButton", "Toolbars"),
     ("toolbar_popup", "ToolbarPopup", "Toolbars"),
     ("shortcuts", "Shortcuts", "Shortcut overview"),
-    ("about", "About", "About bibli"),
+    ("about", "About", "About skwir"),
     ("settings", "Settings", "Settings"),
     ("settings_nav", "SettingsNav", "Settings"),
     ("setting_control", "SettingControl", "Settings"),
@@ -1195,7 +1195,7 @@ pub fn keys_for_where<'a>(
 /// own, the schemes', the user's. A binding declared twice is listed once,
 /// in the higher of its layers.
 fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
-    let registered = |bindings: Vec<bibli_core::registry::KeyBinding>, layer| {
+    let registered = |bindings: Vec<skwir_core::registry::KeyBinding>, layer| {
         bindings.into_iter().map(move |b| Spec {
             keys: b.keys,
             command: Some((b.command.name.to_string(), b.command.args)),
@@ -1267,7 +1267,7 @@ fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
 /// not Delete's meaning in the sidebar. Any other binding as it is.
 fn like(spec: Spec, standard: &[Spec]) -> Vec<Spec> {
     let target = match &spec.command {
-        Some((name, args)) if name == bibli_core::keymap::LIKE => {
+        Some((name, args)) if name == skwir_core::keymap::LIKE => {
             args["keys"].as_str().unwrap_or_default().to_owned()
         }
         _ => return vec![spec],
@@ -1412,9 +1412,9 @@ mod tests {
         BUILTIN, BUILTIN_ARGS, KeyHint, Layer, Spec, context_label, context_of, display_keys,
         key_caps, keys_for_where, shadowed, specs, takes_a_character, valid_keys, zoom_specs,
     };
-    use bibli_core::command::Invocation;
-    use bibli_core::keymap::UserBinding;
-    use bibli_core::registry::KeyBinding;
+    use skwir_core::command::Invocation;
+    use skwir_core::keymap::UserBinding;
+    use skwir_core::registry::KeyBinding;
 
     fn spec(keys: &str, command: &str, when: Option<&str>, layer: Layer) -> Spec {
         Spec {
@@ -1449,7 +1449,7 @@ mod tests {
         let d = Spec {
             keys: "d".into(),
             command: Some((
-                bibli_core::keymap::LIKE.into(),
+                skwir_core::keymap::LIKE.into(),
                 serde_json::json!({"keys": "delete"}),
             )),
             context: context_of(Some("pane")),
@@ -1548,7 +1548,7 @@ mod tests {
     #[test]
     fn layers_stand_in_their_order() {
         let tmp = tempfile::tempdir().unwrap();
-        let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         let bind = |keys: &str, command: &str| KeyBinding {
             keys: keys.into(),
             command: Invocation::new(command),

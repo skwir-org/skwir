@@ -5,12 +5,12 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use bibli_core::EntryId;
-use bibli_core::entry::keys;
-use bibli_core::lru::ByteLru;
-use bibli_core::scheduler::Priority;
-use bibli_core::thumbs::{Image, ThumbRequest, ThumbSize, ThumbState};
 use gpui::RenderImage;
+use skwir_core::EntryId;
+use skwir_core::entry::keys;
+use skwir_core::lru::ByteLru;
+use skwir_core::scheduler::Priority;
+use skwir_core::thumbs::{Image, ThumbRequest, ThumbSize, ThumbState};
 use smallvec::SmallVec;
 
 use crate::shell::Shell;
@@ -28,7 +28,7 @@ pub enum ThumbView {
 /// (it ages out of the cache).
 /// A picture is of a file as a type (`thumbs::key`, ADR-049): every name
 /// of it that says that type, and every link to it, shows the same one.
-type Key = bibli_core::thumbs::Key;
+type Key = skwir_core::thumbs::Key;
 
 /// Converted pictures, bounded by bytes: the memory the thumbnails setting
 /// gives (`Thumbnails::budget`). What this frame and the one before drew is
@@ -103,11 +103,11 @@ pub fn page_image(
     width: u32,
     height: u32,
     pixels: Vec<u8>,
-    order: bibli_core::document::PixelOrder,
+    order: skwir_core::document::PixelOrder,
 ) -> Option<Arc<RenderImage>> {
     match order {
-        bibli_core::document::PixelOrder::Bgra => bgra_render_image(width, height, pixels),
-        bibli_core::document::PixelOrder::Rgba => owned_render_image(width, height, pixels),
+        skwir_core::document::PixelOrder::Bgra => bgra_render_image(width, height, pixels),
+        skwir_core::document::PixelOrder::Rgba => owned_render_image(width, height, pixels),
     }
 }
 
@@ -142,14 +142,14 @@ impl Shell {
             let mtime = e
                 .metadata
                 .value(keys::MODIFIED)
-                .and_then(bibli_core::Value::as_time);
+                .and_then(skwir_core::Value::as_time);
             // What is shown: a link's target, the entry's own file else,
             // as the type its name says.
             let shown = e.target.as_ref().map_or(e.file(), |t| t.id);
-            let typed = bibli_platform::mime::of_entry(e);
-            let key = bibli_core::thumbs::key(
+            let typed = skwir_platform::mime::of_entry(e);
+            let key = skwir_core::thumbs::key(
                 shown,
-                typed.as_ref().map(bibli_platform::mime::Mime::as_str),
+                typed.as_ref().map(skwir_platform::mime::Mime::as_str),
                 size,
                 mtime,
             );
@@ -189,14 +189,14 @@ impl Shell {
     /// at visible priority if needed.
     pub fn thumb_of(
         &mut self,
-        entry: bibli_core::op::EntryRef,
+        entry: skwir_core::op::EntryRef,
         mtime: Option<SystemTime>,
         size: ThumbSize,
     ) -> ThumbView {
         let type_named = entry
             .path
             .file_name()
-            .and_then(bibli_platform::mime::by_name)
+            .and_then(skwir_platform::mime::by_name)
             .map(|m| Arc::from(m.as_str()));
         let req = ThumbRequest {
             entry,
@@ -235,7 +235,7 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::FileId;
+    use skwir_core::FileId;
 
     fn img(px: u32) -> Arc<RenderImage> {
         to_render_image(&Image {
@@ -262,7 +262,7 @@ mod tests {
 
     /// A picture of a PNG file, as the tests keep them.
     fn key(file: FileId, mtime: Option<SystemTime>) -> Key {
-        bibli_core::thumbs::key(file, Some("image/png"), ThumbSize::Normal, mtime)
+        skwir_core::thumbs::key(file, Some("image/png"), ThumbSize::Normal, mtime)
     }
 
     #[test]

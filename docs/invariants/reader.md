@@ -2,8 +2,8 @@
 
 Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/mupdf-worker`, `crates/platform/src/document.rs`, `crates/ui/src/reader*.rs` or `crates/ui/src/elements/document.rs`. It is binding, like `AGENTS.md`.
 
-- Native PDF libraries load only in `bibli-pdf-worker` / `bibli-poppler-worker`
-  / `bibli-mupdf-worker`, never in the UI process. Every engine uses the same
+- Native PDF libraries load only in `skwir-pdf-worker` / `skwir-poppler-worker`
+  / `skwir-mupdf-worker`, never in the UI process. Every engine uses the same
   protocol/session manager, and `tools/pdf/check.py` runs the same fixtures on
   each. MuPDF is chosen explicitly, never by `auto` (ADR-014). A session
   whose pages are drawn by our own Rust code (a fixed-layout book's, a
@@ -28,11 +28,11 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
   `pdftoppm` only where none is: it is what macOS, Windows and a minimal
   Linux have (ADR-041). `PDFium`'s library is the one the settings name
   (`document::PdfiumChoice`, shared by the reader, the thumbnails and the
-  requirement's probe), else the one bibli's packages carry beside the
+  requirement's probe), else the one skwir's packages carry beside the
   PDFium helper (or in a Mac bundle's `Frameworks`), else the system's;
   every helper answers `--probe` (`process::probe`).
 - Protocol lines are `Tagged`: the greeting is reply 0 and request `n` gets
-  reply `n`, once, in order (`bibli_core::document::worker::serve`, shared by
+  reply `n`, once, in order (`skwir_core::document::worker::serve`, shared by
   both workers). A cancelled request sends `Cancel` and its answer is drained
   later; a worker is restarted only when it stays busy past a short grace,
   times out or breaks the protocol, never for a cancel or a page's `Error`.
@@ -110,4 +110,4 @@ Read this before touching `crates/pdf-worker`, `crates/poppler-worker`, `crates/
   errors directly; do not conceal malformed files by silently trying engines.
   Poppler provides the same reader features. CLI image fallback is for `auto`
   only when neither reader worker is available. Measurements must distinguish
-  renderer time from full UI latency and include child PSS, not only bibli PSS.
+  renderer time from full UI latency and include child PSS, not only skwir PSS.

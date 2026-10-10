@@ -4,18 +4,18 @@
 //! members wanted are read, each within the bound for binary input; the
 //! meshes are left alone.
 use crate::Found;
-use bibli_core::CancelToken;
-use bibli_platform::inspection::{self, limits};
-use bibli_platform::model::Asked;
 use quick_xml::events::Event;
+use skwir_core::CancelToken;
+use skwir_platform::inspection::{self, limits};
+use skwir_platform::model::Asked;
 use std::path::Path;
 
 /// The start of a model's XML read for its metadata, which comes before
 /// its resources (the meshes, megabytes of them).
 const MODEL_HEAD: u64 = 64 * 1024;
 
-/// A model's package, read as every package is (`bibli_platform::package`).
-pub(crate) type Archive = bibli_platform::package::Package;
+/// A model's package, read as every package is (`skwir_platform::package`).
+pub(crate) type Archive = skwir_platform::package::Package;
 
 pub(crate) fn open(path: &Path, cancel: &CancelToken) -> anyhow::Result<Archive> {
     Archive::open(path, "The package", false, cancel)
@@ -117,15 +117,15 @@ pub fn three_mf(
     }
     // No picture stored: the model drawn, and measured, by the helper.
     drop(archive);
-    let format = bibli_platform::model::MeshFormat::ThreeMf;
-    if bibli_platform::model::worker_path().is_none() {
+    let format = skwir_platform::model::MeshFormat::ThreeMf;
+    if skwir_platform::model::worker_path().is_none() {
         return Ok(Found {
             title: "3MF".into(),
             picture: None,
             details,
             notice: Some(format!(
                 "Install {} to draw models that store no picture",
-                bibli_platform::model::WORKER.executable
+                skwir_platform::model::WORKER.executable
             )),
         });
     }
@@ -138,7 +138,7 @@ pub fn three_mf(
             Ok(drawn)
         }
         // A thumbnail asked again once the helper has a turn.
-        Err(error) if error.is::<bibli_core::thumbs::Busy>() => Err(error),
+        Err(error) if error.is::<skwir_core::thumbs::Busy>() => Err(error),
         // What the package says is still worth reading.
         Err(error) => Ok(Found {
             title: "3MF".into(),

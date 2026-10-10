@@ -14,7 +14,7 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 
-use bibli_core::CancelToken;
+use skwir_core::CancelToken;
 
 use crate::inspection::{self, limits};
 

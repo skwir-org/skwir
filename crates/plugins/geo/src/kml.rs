@@ -5,8 +5,8 @@
 //! links to (`NetworkLink`, icons, overlays) is never fetched.
 use std::io::BufRead;
 
-use bibli_core::CancelToken;
-use bibli_core::geo::{Area, Datum, LatLon, LineKind, Point, Waypoint, WaypointKind};
+use skwir_core::CancelToken;
+use skwir_core::geo::{Area, Datum, LatLon, LineKind, Point, Waypoint, WaypointKind};
 
 use crate::collect::{self, Collector};
 use crate::xml::{self, Damaged, Tag};

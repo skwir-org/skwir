@@ -6,8 +6,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use bibli_core::App;
-use bibli_platform::mime::Mime;
+use skwir_core::App;
+use skwir_platform::mime::Mime;
 
 type Resolved = Vec<(String, Option<String>)>;
 
@@ -25,8 +25,8 @@ pub const BROKEN_LINK: &str = "Broken link";
 /// What an entry is called until the database's name for its type
 /// arrives: a pipe or a device by its kind (never by its name, which says
 /// nothing of it), a file by its extension (`fallback`).
-pub fn fallback_of(entry: &bibli_core::Entry) -> String {
-    use bibli_core::EntryKind;
+pub fn fallback_of(entry: &skwir_core::Entry) -> String {
+    use skwir_core::EntryKind;
     match entry.opens() {
         EntryKind::Fifo => "Pipe".to_owned(),
         EntryKind::Socket => "Socket".to_owned(),
@@ -79,7 +79,7 @@ impl TypeNames {
         let results = Arc::clone(&self.results);
         let weak = app.weak();
         app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Visible,
+            skwir_core::scheduler::Priority::Visible,
             "type-names",
             app.lifetime().child(),
             move || {

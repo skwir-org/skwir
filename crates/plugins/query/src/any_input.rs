@@ -1,8 +1,8 @@
 //! The query language given what no one types on purpose: a query
 //! mutated, and any text. It may refuse it; it never panics.
 
-use bibli_core::testing::mutated_text;
 use proptest::prelude::*;
+use skwir_core::testing::mutated_text;
 
 use crate::lang::{parse, parse_bytes};
 

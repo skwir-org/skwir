@@ -1,6 +1,6 @@
 //! macOS's own types, Uniform Type Identifiers (ADR-037): the type the
 //! system declares for an extension, its MIME name, what people call it,
-//! its extensions, and what it conforms to, read as bibli's kinds.
+//! its extensions, and what it conforms to, read as skwir's kinds.
 //! Compiled, never run (ADR-035: 5b runs it).
 
 use objc2::rc::{Retained, autoreleasepool};
@@ -11,7 +11,7 @@ use super::{Kind, Mime};
 
 pub const ASKED: bool = true;
 
-/// What a type conforming to each of these is, of bibli's kinds: the
+/// What a type conforming to each of these is, of skwir's kinds: the
 /// system's own groups (`UTCoreTypes`). What it leaves out (word
 /// processor files, Markdown as a document) the database's kinds add.
 const KINDS: [(&str, Kind); 13] = [

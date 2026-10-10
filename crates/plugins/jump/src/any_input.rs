@@ -1,8 +1,8 @@
 //! What the plugin reads of other programs (the desktop's recently used
 //! files, zoxide's list) given what no file should hold: never a panic.
 
-use bibli_core::testing::{bytes, mutated, mutated_text};
 use proptest::prelude::*;
+use skwir_core::testing::{bytes, mutated, mutated_text};
 
 const RECENT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <xbel version="1.0" xmlns:bookmark="http://www.freedesktop.org/standards/desktop-bookmarks"
@@ -22,7 +22,7 @@ proptest! {
 
     #[test]
     fn zoxide_s_list(input in prop_oneof![
-        mutated(&b"  12.5 /home/a/projects/bibli\n   3.0 /home/a/My Files/caf\xc3\xa9\n"[..]),
+        mutated(&b"  12.5 /home/a/projects/skwir\n   3.0 /home/a/My Files/caf\xc3\xa9\n"[..]),
         bytes(512),
     ]) {
         let _ = crate::zoxide::parse(&input);

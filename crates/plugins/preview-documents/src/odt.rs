@@ -2,10 +2,10 @@
 //! into blocks, each paragraph shaped by its styles and lists.
 use crate::blocks::{self, Builder, Look, Read, Shape, is_code, is_quote};
 use crate::package::{self, Package};
-use bibli_core::CancelToken;
-use bibli_core::inspection::{Align, Script};
-use bibli_platform::inspection::{self, Numbering, limits};
 use roxmltree::Node;
+use skwir_core::CancelToken;
+use skwir_core::inspection::{Align, Script};
+use skwir_platform::inspection::{self, Numbering, limits};
 use std::collections::HashMap;
 use std::path::Path;
 

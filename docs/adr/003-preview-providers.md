@@ -21,11 +21,11 @@ GPUI into plugins or loading office/PDF engines at application startup.
   UI's current preview. Image/text rendering remains in the existing UI code.
 - Use installed FFmpeg/ffprobe for video stills, and Poppler's `pdfinfo` and
   `pdftoppm` for PDF pages. This replaces the planned PDFium dependency for
-  Linux. No renderer library is loaded into bibli at idle.
+  Linux. No renderer library is loaded into skwir at idle.
 - Convert supported Office/OpenDocument files to PDF with installed
   LibreOffice. Reuse the PDF backend for pages, slides, and spreadsheet print
   layouts. Conversion does not provide an interactive spreadsheet grid.
-  (ADR-030 amends this: a text document can also be read as text, by bibli
+  (ADR-030 amends this: a text document can also be read as text, by skwir
   or by Pandoc, in the same sandbox.)
 - On Linux, Office conversion requires bubblewrap. Mount only the input,
   system runtime directories, and private scratch space; disable networking,
@@ -49,7 +49,7 @@ GPUI into plugins or loading office/PDF engines at application startup.
   times, executable metadata, requested page/time/size, and a format version.
   Trim each namespace to 128 MiB after storing a completed preview. Changed
   source files are rejected before publishing newly rendered output.
-- Keep GPUI images and controls in bibli-ui. Invalidate requests on pane,
+- Keep GPUI images and controls in skwir-ui. Invalidate requests on pane,
   entry, path, metadata, theme, and provider changes; reject stale generations,
   cancel on close/drop, and wake the UI only when results arrive. Reuse an
   existing desktop thumbnail while generating a larger preview.
@@ -60,7 +60,7 @@ Optional installed tools determine availability; missing tools produce an
 explanation in the preview panel. There is no persistent converter process,
 network service, or application database. New plugins add only descriptors and
 small state at startup; conversion resource costs are transient and measured
-separately from bibli's idle PSS.
+separately from skwir's idle PSS.
 
 Page navigation, zoom, and five-second video seeking are shell commands in the
 palette and preview controls. Video playback, selectable PDF text, password
@@ -94,9 +94,9 @@ asserts identical decoded pixels; these are backend timings, not end-to-end UI
 latencies or guarantees for every PDF. Reproduce with:
 
 ```
-cargo test --release -p bibli-platform real_scanned_pdf_fast_path_preserves_pixels -- --ignored --nocapture
+cargo test --release -p skwir-platform real_scanned_pdf_fast_path_preserves_pixels -- --ignored --nocapture
 ```
 
 Document preview debug logs include page, cache hit, render time, and total
-backend time, without file paths. Enable `RUST_LOG=bibli_platform::preview=debug`
+backend time, without file paths. Enable `RUST_LOG=skwir_platform::preview=debug`
 to investigate remaining document-specific delays.

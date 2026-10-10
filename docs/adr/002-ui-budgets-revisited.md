@@ -1,7 +1,7 @@
 # ADR-002: UI budgets revisited after Phase 2
 
 Status: accepted, 2026-09-18. Decision 1 amended by ADR-033 (2026-10-04):
-the idle budget counts bibli's own share, without the GPU driver's code.
+the idle budget counts skwir's own share, without the GPU driver's code.
 
 ## Context
 
@@ -44,7 +44,7 @@ non-blocking`. Our own window open and first render take about 40 ms.
    compositor and other GPU clients are not a cost this app adds to the
    system. The budget stays at 100 MB PSS idle with default plugins.
 2. **The binary restricts Vulkan driver loading to present vendors.** At
-   startup, before any GPU work, `bibli` sets `VK_LOADER_DRIVERS_DISABLE` for
+   startup, before any GPU work, `skwir` sets `VK_LOADER_DRIVERS_DISABLE` for
    ICDs whose hardware is absent (by PCI vendor in sysfs), never touching a
    value the user already set, and never disabling a driver for a vendor
    that is present or for virtio inside a VM.
@@ -57,7 +57,7 @@ non-blocking`. Our own window open and first render take about 40 ms.
 ## Consequences
 
 - ADR-000's table is superseded for those two rows by this record.
-- `bibli-bench` gains no new check for these: they are measured manually at
+- `skwir-bench` gains no new check for these: they are measured manually at
   each phase gate until the UI has an automated startup harness (Phase 8).
 
 ## Addendum, 2026-09-19: the idle memory gate
@@ -119,7 +119,7 @@ quiet machine: median 134.6 to 114.5 ms, maximum 144.9 to 131.0 ms. Our
 share read 28 to 56 ms over thirteen starts: the 50 ms holds on most, not
 all. The budgets are unchanged.
 
-Which GPU draws is the environment's, not bibli's: Blade takes the first
+Which GPU draws is the environment's, not skwir's: Blade takes the first
 device the Vulkan loader lists, in the order Mesa's device-select layer
 gives (`DRI_PRIME`, `MESA_VK_DEVICE_SELECT`). Choosing the integrated GPU
 would start faster on this machine and is not done for it (AGENTS.md, "No

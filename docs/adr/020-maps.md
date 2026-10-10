@@ -1,4 +1,4 @@
-# ADR-020: Maps, their backgrounds, and bibli's first network requests
+# ADR-020: Maps, their backgrounds, and skwir's first network requests
 
 Status: accepted, 2026-09-27. Previews on a map, their backgrounds and the
 Map view are built (steps A, B and C of `docs/PLAN.md`, "Maps").
@@ -14,7 +14,7 @@ with selection, opening and the preview working as in any other view.
 
 Tracks and markers are easy. The land and the streets under them are not.
 A map with nothing under its lines says little, and every usable map of
-the streets is served over the network, which bibli has never used. Tile
+the streets is served over the network, which skwir has never used. Tile
 requests say where the user looks, so for photos, where the user has
 been. This ADR decides how the network arrives for maps.
 
@@ -42,7 +42,7 @@ and no offline downloads. Access can be blocked without notice.
     map is drawn.
   - *OpenStreetMap*, off until the user chooses it
     (`map-tiles.source`). Requests follow the policy above: a User-Agent
-    that names bibli and its version, the attribution drawn on the map
+    that names skwir and its version, the attribution drawn on the map
     whenever one of its tiles is, caching headers honoured (7 days when
     there are none), `If-None-Match`/`If-Modified-Since` on expired tiles,
     only tiles in view, no offline download.
@@ -64,15 +64,15 @@ and no offline downloads. Access can be blocked without notice.
   two threads. The client is private
   to `map-tiles`. There is no network layer in the core: remote file
   systems come from installed tools (mounts, rclone; ADR-021), not from
-  protocols implemented in bibli. If a second plugin needs HTTP (a
-  model provider), the client moves to `bibli-platform`, a utility beside
+  protocols implemented in skwir. If a second plugin needs HTTP (a
+  model provider), the client moves to `skwir-platform`, a utility beside
   the others, not a contract.
 - **Caches**: downloaded tiles live in a namespace of the one deletable
-  cache (`bibli_core::cache`) with their validators, trimmed like ADR-003's
+  cache (`skwir_core::cache`) with their validators, trimmed like ADR-003's
   namespaces. The UI keeps a bounded set of decoded tiles, released when no
   map is shown. Nothing is loaded at startup.
 - **Projection**: Web Mercator, as every tile source uses, clamped at
-  ±85.0511°. Pure, tested math in `bibli-ui`'s map element. Size-dependent
+  ±85.0511°. Pure, tested math in `skwir-ui`'s map element. Size-dependent
   placement happens in prepaint. A line keeps its longitude continuous
   across the ±180° meridian (each point within half a world of the one
   before), so it is drawn across the meridian, never across the world.
@@ -91,7 +91,7 @@ and no offline downloads. Access can be blocked without notice.
 
 ## Consequences
 
-Bibli makes network requests for the first time, and only after the user
+Skwir makes network requests for the first time, and only after the user
 chose a network source. Until then, maps show the outline, which is enough
 to see a country or a region and not a street. The outline's data adds
 514 KB to the binary (Natural Earth 5.1.2: 1:110m below zoom 3, 1:50m
@@ -100,7 +100,7 @@ It is decoded when a map first needs it, in 7 ms, and kept, about 1 MB,
 while the plugin is enabled; a tile is drawn in 0.25 to 7 ms on a worker
 (release build, reference machine).
 
-The OSM server can refuse bibli at any time; the custom source is the way
+The OSM server can refuse skwir at any time; the custom source is the way
 out, and the outline remains. Offline street maps would come from a local
 PMTiles or MBTiles file, which the contract admits as another source.
 
@@ -126,10 +126,10 @@ need headers (a Referer the key is bound to, an Authorization).
   a dense screen; `{key}`. An unknown part, or `{s}` without subdomains, is
   refused when the server is saved.
 - **Headers** are sent with every request to that server: `User-Agent`
-  replaces bibli's, `Referer`, `Authorization` and the like as written.
+  replaces skwir's, `Referer`, `Authorization` and the like as written.
   What the HTTP layer writes itself (`Host`, `Content-Length`,
   `Connection`, the conditional headers…) is refused. OpenStreetMap's
-  built-in source takes none: its policy wants bibli's own User-Agent.
+  built-in source takes none: its policy wants skwir's own User-Agent.
 - **The API key lives in the keyring**, never in the settings: `{key}` in
   the address or a header is replaced when a request is made, on the
   download threads, which read the keyring once per server until the
@@ -239,7 +239,7 @@ a real network, and OpenStreetMap's own server.
 ## Addendum (2026-09-27): more formats, plans and missions
 
 - **Twelve more formats, each confirmed by its content.** Tracks: TCX,
-  FIT (a bounded decoder of bibli's own: every length checked, a damaged
+  FIT (a bounded decoder of skwir's own: every length checked, a damaged
   or cut file keeps what came before), IGC, NMEA. Flight plans: Garmin
   `.fpl`, Flight Simulator `.pln`, X-Plane `.fms`, Little Navmap
   `.lnmpln`. Drone missions: QGroundControl `.plan`, `MAVLink` `QGC WPL`
@@ -261,7 +261,7 @@ a real network, and OpenStreetMap's own server.
   on the worker with the map's shapes; a track's thumbnail is its lines
   drawn to scale on nothing, a fallback after the desktop's thumbnailers.
 - **A position leads to the map.** Pictures (EXIF) and videos (MP4 and
-  QuickTime location boxes, `bibli_platform::mp4`, read without the media
+  QuickTime location boxes, `skwir_platform::mp4`, read without the media
   data) show their position in Details with "Show on map": a Details row
   may carry a command (`inspection::Detail::action`), here `ui.view` to
   the Map view, which opens on the one file selected.

@@ -159,7 +159,7 @@ mod imp {
             state: Mutex::new(State::default()),
         }));
         std::thread::Builder::new()
-            .name("bibli-inotify".into())
+            .name("skwir-inotify".into())
             .spawn(move || run(inotify, hub))?;
         let _ = HUB.set(hub);
         Ok(hub)
@@ -358,7 +358,7 @@ mod imp {
             .map_err(std::io::Error::other)?;
         let dir: Arc<PathBuf> = Arc::new(dir.to_path_buf());
         std::thread::Builder::new()
-            .name("bibli-watch".into())
+            .name("skwir-watch".into())
             .spawn(move || coalesce(&raw_rx, &deliver, &dir, window, &cancel))?;
         Ok(WatchHandle {
             _inner: Box::new(watcher),

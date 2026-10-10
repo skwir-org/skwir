@@ -160,17 +160,17 @@ impl Shell {
 }
 
 /// What was remembered, if anything was.
-pub fn restore(app: &bibli_core::App) -> Option<Session> {
+pub fn restore(app: &skwir_core::App) -> Option<Session> {
     let session = app.settings.get::<Session>(SESSION_KEY)?;
     (session != Session::default()).then_some(session)
 }
 
-pub fn declare(app: &bibli_core::App) {
+pub fn declare(app: &skwir_core::App) {
     // The columns' widths were a setting of their own.
     app.settings
         .rename("ui.column_widths", &format!("{SESSION_KEY}.column_widths"));
     app.settings
-        .declare(bibli_core::settings::SettingSpec::data(
+        .declare(skwir_core::settings::SettingSpec::data(
             SESSION_KEY,
             "The last window's view, split, preview and timeline",
             toml::Value::Table(toml::map::Map::new()),

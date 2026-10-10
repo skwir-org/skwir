@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use bibli_core::app::App;
-use bibli_core::op::EntryRef;
+use skwir_core::app::App;
+use skwir_core::op::EntryRef;
 
 #[derive(serde::Deserialize)]
 struct Tags {

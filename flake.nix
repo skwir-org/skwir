@@ -1,5 +1,5 @@
 {
-  description = "bibli — experimental GPU-accelerated file manager in Rust";
+  description = "skwir — experimental GPU-accelerated file manager in Rust";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -64,7 +64,7 @@
           libiconv
         ];
 
-      # Optional native workers link these; bibli itself does not.
+      # Optional native workers link these; skwir itself does not.
       mediaPlugins = with pkgs.gst_all_1; [
         gst-plugins-base
         gst-plugins-good
@@ -139,18 +139,18 @@
             export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="clang"
             export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=mold"
           ''}
-          echo "bibli dev shell: $(rustc --version) | $(cargo --version)"
+          echo "skwir dev shell: $(rustc --version) | $(cargo --version)"
         '';
       };
 
       formatter = pkgs.nixpkgs-fmt;
       # Optional native reader runtime; the default shell keeps its dependency
-      # footprint. PDFium is dynamically loaded only by bibli-pdf-worker.
+      # footprint. PDFium is dynamically loaded only by skwir-pdf-worker.
       devShells.pdf = self.devShells.${system}.default.overrideAttrs (_: {
-        BIBLI_PDFIUM_LIBRARY = "${pkgs.pdfium}/lib/libpdfium${stdenv.hostPlatform.extensions.sharedLibrary}";
+        SKWIR_PDFIUM_LIBRARY = "${pkgs.pdfium}/lib/libpdfium${stdenv.hostPlatform.extensions.sharedLibrary}";
       });
-      # bibli and its helpers as `just dist` builds them, for Linux
-      # (Phase 5, step K): the helpers beside bibli, where it finds them,
+      # skwir and its helpers as `just dist` builds them, for Linux
+      # (Phase 5, step K): the helpers beside skwir, where it finds them,
       # and what wgpu and GStreamer load at run time on its path. Built
       # from the git tree: only tracked files are its source. The tests
       # need a session and fixtures of their own (`just test-all`), not run
@@ -162,8 +162,8 @@
         };
       in
         rustPlatform.buildRustPackage {
-          pname = "bibli";
-          version = "0.0.1";
+          pname = "skwir";
+          version = "0.1.0";
           src = self;
           cargoLock.lockFile = ./Cargo.lock;
           # The programs shipped, as every package lists them.
@@ -175,16 +175,16 @@
           nativeBuildInputs = [pkgs.pkg-config pkgs.cmake pkgs.clang pkgs.makeWrapper];
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
-            wrapProgram $out/bin/bibli \
+            wrapProgram $out/bin/skwir \
               --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath linuxRuntimeLibs} \
               --set-default GST_PLUGIN_SYSTEM_PATH_1_0 ${lib.makeSearchPath "lib/gstreamer-1.0" mediaPlugins}
           '';
           meta = {
             description = "An experimental file manager, GPU-drawn, for humans, scripts and agents";
-            # bibli's own; the Poppler and MuPDF readers, which link
+            # skwir's own; the Poppler and MuPDF readers, which link
             # libraries under the GPL and the AGPL (ADR-042).
             license = with lib.licenses; [asl20 gpl3Only agpl3Plus];
-            mainProgram = "bibli";
+            mainProgram = "skwir";
           };
         };
 

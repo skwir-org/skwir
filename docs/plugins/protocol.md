@@ -1,12 +1,12 @@
 # The plugin protocol, version 1
 
-What bibli and a plugin from outside say to each other (ADR-045,
-ADR-046, ADR-047). The types are `bibli_plugin_api::protocol`'s; a Rust
+What skwir and a plugin from outside say to each other (ADR-045,
+ADR-046, ADR-047). The types are `skwir_plugin_api::protocol`'s; a Rust
 plugin uses them, one in another language writes the same JSON.
 
 The protocol is experimental (ADR-047, its sixth point): until it is
 declared stable, a new version may change what an older one said, and
-bibli then stops speaking the older one; the release notes say so. A
+skwir then stops speaking the older one; the release notes say so. A
 manifest says which version its plugin speaks (`api`, 1 when it says
 nothing). Once it is stable, a plugin written for an older version
 runs unchanged and is never asked what its version did not have.
@@ -14,19 +14,19 @@ runs unchanged and is never asked what its version did not have.
 ## Transports
 
 - **A program**: JSON-RPC 2.0, one message per line (a line at most 64
-  MiB) on its standard input (bibli's messages) and standard output (the
-  plugin's). Its standard error goes to bibli's log.
-- **A module**: the world `bibli:plugin@0.1.0` (`crates/plugin-api/wit/plugin.wit`).
-  bibli calls the export `call(method, params)` with a method's name
+  MiB) on its standard input (skwir's messages) and standard output (the
+  plugin's). Its standard error goes to skwir's log.
+- **A module**: the world `skwir:plugin@0.1.0` (`crates/plugin-api/wit/plugin.wit`).
+  skwir calls the export `call(method, params)` with a method's name
   and its parameters as JSON text, and reads its answer as JSON text (or
   an error's message). The plugin calls the imports `read(file, offset,
   length)` and `log(level, message)`.
 
-One call at a time per plugin: bibli asks the next once one is
-answered. While answering, the plugin may ask bibli `read` and say
+One call at a time per plugin: skwir asks the next once one is
+answered. While answering, the plugin may ask skwir `read` and say
 `log`.
 
-## bibli asks
+## skwir asks
 
 ### `initialize` (a program, first)
 
@@ -34,8 +34,8 @@ answered. While answering, the plugin may ask bibli `read` and say
 { "api": 1, "capabilities": ["read"] }
 ```
 
-`api` is the newest version bibli speaks. Answer `{ "api": 1 }`, the
-version the plugin speaks; one bibli does not speak is refused.
+`api` is the newest version skwir speaks. Answer `{ "api": 1 }`, the
+version the plugin speaks; one skwir does not speak is refused.
 
 ### `field`
 
@@ -88,7 +88,7 @@ For a preview the manifest declares with `converts = true`:
 ```
 
 Answer `null` (nothing to show for this one), or a file of a format
-bibli shows, which it previews as it would that file: a PDF in the
+skwir shows, which it previews as it would that file: a PDF in the
 reader, a picture zoomed and fitted, audio or video in the player,
 Markdown, a table, a track on the map.
 
@@ -96,7 +96,7 @@ Markdown, a table, a track on the map.
 { "name": "sunset.png", "data": "<base64>" }
 ```
 
-bibli types it by its name and bytes, as any file, and keeps it in the
+skwir types it by its name and bytes, as any file, and keeps it in the
 plugin's folder of its cache under the file's version and the plugin's:
 it is asked again only when either changes. The file's own views stay
 its own: View as hex shows its bytes, not the converted file's. A link
@@ -108,8 +108,8 @@ The file must fit one message (about 48 MB once in base64).
 
 For a preview the manifest declares with `pages = true`: the file shown
 a page at a time, each a picture the plugin draws when it is shown, with
-its text where it lies (a document of a format bibli does not read, a
-file of several pictures). bibli reads it in its own reader, as it reads
+its text where it lies (a document of a format skwir does not read, a
+file of several pictures). skwir reads it in its own reader, as it reads
 a PDF: pages scrolled or turned, zoomed, their text selected, copied
 and searched, their links followed, its outline listed.
 
@@ -136,7 +136,7 @@ file), or:
 
 The text is runs (a word, a line) in reading order, each with the box it
 lies in as fractions of the page's width and height from its top left:
-bibli puts a space between two runs on one line and a line break between
+skwir puts a space between two runs on one line and a line break between
 lines, and searches it whatever the case. A run's `edges`, one a
 character, say where each starts across the page, so a selection follows
 each glyph; without them each character is an equal part of its run. A
@@ -144,15 +144,15 @@ link lies in such a box too, and leads to a page of the file or to an
 address, which is followed only when the plugin may use the network
 (`network`): otherwise the panel says why. The outline (headings, how
 deep, the page each starts on) is the file's, the same with any page:
-bibli reads it once, with how many pages there are. Without `width` and
+skwir reads it once, with how many pages there are. Without `width` and
 `height` the page is its picture's size. Every field but `pages` may be
 left out.
 
-bibli keeps what it is answered in the plugin's slot of its cache, under
+skwir keeps what it is answered in the plugin's slot of its cache, under
 the file's version and the plugin's: how many pages and the outline,
 each page's picture by the side drawn, its text and links apart; nothing
 is asked twice. With
-`converts` too, bibli asks `convert` first and reads in pages a file it
+`converts` too, skwir asks `convert` first and reads in pages a file it
 answers `null` for: the Netpbm plugin converts one picture to a PNG, and
 shows a file of several a picture a page. A preview that converts or
 shows pages is not asked `inspect`.
@@ -185,7 +185,7 @@ A plan needs the `write` capability.
 { "id": 7 }
 ```
 
-bibli stopped waiting for call 7; reads for it are refused from then on.
+skwir stopped waiting for call 7; reads for it are refused from then on.
 
 ## The plugin asks
 
@@ -210,5 +210,5 @@ for a plugin without the `read` capability.
 ## Errors
 
 A JSON-RPC error's `message` (a module: the `call`'s error) is what
-bibli says: a preview shows it where the page would be; a command's
+skwir says: a preview shows it where the page would be; a command's
 caller gets it.

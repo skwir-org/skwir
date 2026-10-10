@@ -123,7 +123,7 @@ a tag folder (Ctrl+D) pins its tag.
 - **A tag leaves as a folder**: a tag dropped or pasted in a real folder
   is copied there as a folder of its files, with a folder inside for
   each tag within it (a plan to review). That is how a tag goes onto a
-  stick or to someone without bibli.
+  stick or to someone without skwir.
 - **A tag's tile shows its pictures**: in the grid, a few of its latest,
   framed in its color, as an album does.
 - **The board**: an alternate view that opens every place (or folder) of

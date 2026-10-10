@@ -2,8 +2,8 @@
 """Compare persistent PDFium, Poppler and MuPDF workers with identical reader requests.
 
 Renderer timings include metadata extraction and pixel output/transfer, but
-exclude bibli's platform manager, GPUI upload and painting. Memory samples are
-child-process PSS, not bibli's total memory or peak RSS.
+exclude skwir's platform manager, GPUI upload and painting. Memory samples are
+child-process PSS, not skwir's total memory or peak RSS.
 """
 import argparse
 import json
@@ -66,7 +66,7 @@ def request(process, value):
 
 
 def sample(worker, library, pdf, work, side):
-    environment = dict(os.environ, BIBLI_PDFIUM_LIBRARY=str(library))
+    environment = dict(os.environ, SKWIR_PDFIUM_LIBRARY=str(library))
     start = time.perf_counter()
     process = subprocess.Popen([str(worker), str(pdf), str(work)], env=environment,
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -103,9 +103,9 @@ def sample(worker, library, pdf, work, side):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--worker", type=Path, default=Path("target/release/bibli-pdf-worker"))
-    parser.add_argument("--poppler-worker", type=Path, default=Path("target/release/bibli-poppler-worker"))
-    parser.add_argument("--mupdf-worker", type=Path, default=Path("target/release/bibli-mupdf-worker"))
+    parser.add_argument("--worker", type=Path, default=Path("target/release/skwir-pdf-worker"))
+    parser.add_argument("--poppler-worker", type=Path, default=Path("target/release/skwir-poppler-worker"))
+    parser.add_argument("--mupdf-worker", type=Path, default=Path("target/release/skwir-mupdf-worker"))
     parser.add_argument("--engines", default="pdfium,poppler,mupdf",
                         help="comma-separated engines to compare")
     parser.add_argument("--library", type=Path, required=True)
@@ -115,7 +115,7 @@ def main():
     if args.runs < 1 or not 64 <= args.side <= 2048:
         parser.error("runs must be positive and side must be between 64 and 2048")
     result = {"side": args.side, "runs": args.runs, "fixtures": {}}
-    with tempfile.TemporaryDirectory(prefix="bibli-pdf-compare-") as directory:
+    with tempfile.TemporaryDirectory(prefix="skwir-pdf-compare-") as directory:
         root = Path(directory)
         for kind in ["text", "vector", "scan"]:
             pdf = root / f"Synthetic {kind}.pdf"

@@ -2,26 +2,26 @@
 //!
 //! The bindings are yazi's default keymap (`yazi-config/preset/
 //! keymap-default.toml`, its `[mgr]` table), in its order, each running the
-//! command bibli has for it; they go to `Registry::schemes`, over the
+//! command skwir has for it; they go to `Registry::schemes`, over the
 //! shell's own keys and every plugin's. Moves follow the cursor
 //! (`ui.cursor` with `step: follow`), so what Space picks stays picked while
 //! the cursor moves, and `v` holds a range (`select_sweep`). What yazi binds
-//! and bibli has not (line modes, links, tasks, the trash as a place) is
+//! and skwir has not (line modes, links, tasks, the trash as a place) is
 //! left out; so are Left and Right, which keep each view's meaning (a grid
 //! moves sideways), and Tab, which moves the keyboard to the toolbar or the
 //! other pane.
 
 use std::path::Path;
 
-use bibli_core::app::App;
-use bibli_core::cancel::CancelToken;
-use bibli_core::command::Invocation;
-use bibli_core::keymap::LIKE;
-use bibli_core::os_path::PathArg;
-use bibli_core::plugin::{Category, Plugin};
-use bibli_core::registry::KeyBinding;
-use bibli_core::scheduler::Priority;
 use parking_lot::Mutex;
+use skwir_core::app::App;
+use skwir_core::cancel::CancelToken;
+use skwir_core::command::Invocation;
+use skwir_core::keymap::LIKE;
+use skwir_core::os_path::PathArg;
+use skwir_core::plugin::{Category, Plugin};
+use skwir_core::registry::KeyBinding;
+use skwir_core::scheduler::Priority;
 
 const ID: &str = "vim";
 
@@ -164,7 +164,7 @@ const KEYS: &[(&str, &str, &str, &str)] = &[
     ("Z", "ui.jump", "{}", "pane"),
     // Copying paths.
     ("c c", "shell.copy_paths", "{}", "pane selection"),
-    // Filtering is what bibli's search in a folder does.
+    // Filtering is what skwir's search in a folder does.
     ("f", "ui.search", "{}", "pane"),
     // Finding a name.
     ("/", "ui.find", "{}", "pane"),
@@ -210,7 +210,7 @@ const KEYS: &[(&str, &str, &str, &str)] = &[
     ("}", "tab.move", r#"{"delta":1}"#, "pane"),
     // Help.
     ("~", "ui.shortcuts", "{}", "pane"),
-    // Not yazi's: vim's undo, since bibli can take an operation back.
+    // Not yazi's: vim's undo, since skwir can take an operation back.
     ("u", "undo", "{}", "pane"),
 ];
 
@@ -242,7 +242,7 @@ fn bindings(downloads: Option<&Path>) -> Vec<KeyBinding> {
             binding(keys, command, &args, when)
         })
         .collect();
-    if let Some(config) = bibli_platform::xdg::config_home() {
+    if let Some(config) = skwir_platform::xdg::config_home() {
         out.push(go_to("g c", &config));
     }
     out.push(match downloads {
@@ -298,7 +298,7 @@ impl Plugin for VimPlugin {
             "vim-user-dirs",
             cancel.clone(),
             move || {
-                let downloads = bibli_platform::places::user_dirs()
+                let downloads = skwir_platform::places::user_dirs()
                     .into_iter()
                     .find(|dir| dir.kind == "download")
                     .map(|dir| dir.path);
@@ -335,7 +335,7 @@ mod tests {
     fn the_scheme_is_well_formed() {
         let mut seen = std::collections::HashSet::new();
         for (keys, command, args, when) in KEYS {
-            bibli_core::keymap::valid_keys(keys).unwrap();
+            skwir_core::keymap::valid_keys(keys).unwrap();
             let args: serde_json::Value = serde_json::from_str(args).unwrap();
             assert!(args.is_object(), "{keys}");
             assert!(when.starts_with("pane"), "{keys}: only the file list");

@@ -10,10 +10,10 @@
 //! picture's size, a document's pages, a film's length); and what the format
 //! itself told us (`Inspection::details`). Details never starts a scan.
 
-use bibli_core::command::Invocation;
-use bibli_core::entry::{Entry, Provenance, Value, keys};
-use bibli_core::op::EntryRef;
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
+use skwir_core::command::Invocation;
+use skwir_core::entry::{Entry, Provenance, Value, keys};
+use skwir_core::op::EntryRef;
 
 use crate::format;
 use crate::preview::PreviewContent;
@@ -67,7 +67,7 @@ impl Row {
     }
 
     /// A provider's fact, with its link.
-    fn of(detail: &bibli_core::inspection::Detail) -> Self {
+    fn of(detail: &skwir_core::inspection::Detail) -> Self {
         Row {
             actions: detail
                 .action
@@ -167,15 +167,15 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
     let target = serde_json::json!([EntryRef::new(entry.file(), path)]);
     let (valued, tags): (Vec<String>, Vec<String>) = crate::tags::tags_of(entry)
         .into_iter()
-        .partition(|t| bibli_core::metadata::exclusive_category(t, fields).is_some());
+        .partition(|t| skwir_core::metadata::exclusive_category(t, fields).is_some());
     let field_rows: Vec<Row> = valued
         .iter()
         .filter_map(|t| {
-            let field = bibli_core::metadata::exclusive_category(t, fields)?;
-            let value = bibli_core::metadata::tag_under(t, field)?.trim_start_matches('/');
+            let field = skwir_core::metadata::exclusive_category(t, fields)?;
+            let value = skwir_core::metadata::tag_under(t, field)?.trim_start_matches('/');
             Some(
                 Row::new(
-                    bibli_core::metadata::tag_leaf(field).to_owned(),
+                    skwir_core::metadata::tag_leaf(field).to_owned(),
                     value.to_owned(),
                 )
                 .action(
@@ -239,7 +239,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
         },
         Invocation::with_args("ui.ask", &ask),
     );
-    // A URL is opened only when asked, in the browser: bibli fetches
+    // A URL is opened only when asked, in the browser: skwir fetches
     // nothing a file names (ADR-020).
     let link = |label: &'static str, url: String| {
         let row = Row::new(label, url.clone());
@@ -339,17 +339,17 @@ pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: Option<&[Strin
     if let Some(uid) = uint(keys::UID) {
         permissions.push(Row::new(
             "Owner",
-            named(uid, bibli_platform::users::user(uid)),
+            named(uid, skwir_platform::users::user(uid)),
         ));
     }
     if let Some(gid) = uint(keys::GID) {
         permissions.push(Row::new(
             "Group",
-            named(gid, bibli_platform::users::group(gid)),
+            named(gid, skwir_platform::users::group(gid)),
         ));
     }
     if let Some(mode) = uint(keys::MODE) {
-        permissions.push(Row::new("Access", bibli_platform::users::mode(mode)));
+        permissions.push(Row::new("Access", skwir_platform::users::mode(mode)));
     }
     if let Some(links) = uint(keys::NLINK).filter(|links| *links > 1 && !entry.is_dir()) {
         permissions.push(Row::new("Hard links", links.to_string()));
@@ -724,13 +724,13 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::entry::{EntryId, EntryKind};
+    use skwir_core::entry::{EntryId, EntryKind};
 
     #[test]
     fn an_entry_says_what_it_knows_and_who_said_it() {
         let mut entry = Entry::new(
             EntryId {
-                file: bibli_core::FileId { dev: 1, ino: 2 },
+                file: skwir_core::FileId { dev: 1, ino: 2 },
                 at: 0,
             },
             "it's a café.txt",

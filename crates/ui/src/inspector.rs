@@ -5,10 +5,10 @@ use crate::{
     theme::Theme,
     toolbar::Button,
 };
-use bibli_core::inspection::{InspectRequest, Inspection, InspectionKind, Picture};
 use gpui::{
     AnyElement, Context, ListAlignment, ListState, RenderImage, Window, div, prelude::*, px,
 };
+use skwir_core::inspection::{InspectRequest, Inspection, InspectionKind, Picture};
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::Arc};
 pub struct Display {
     pub data: Arc<Inspection>,
@@ -25,8 +25,8 @@ pub struct Display {
     /// are asked with (`inspector_pictures`); `None` for text the panel read
     /// itself.
     pub origin: Option<(
-        bibli_core::preview::PreviewRequest,
-        bibli_core::inspection::InspectRequest,
+        skwir_core::preview::PreviewRequest,
+        skwir_core::inspection::InspectRequest,
     )>,
     /// A map's places, projected here on the worker (`map_preview`).
     pub map: Option<Arc<crate::elements::map::Shapes>>,
@@ -37,7 +37,7 @@ pub struct Display {
     /// block's in a document.
     pub code_bg: Option<[u8; 3]>,
     /// The look its code was colored for (`CodeTheme::dark`), whose
-    /// tokens it is drawn with whatever bibli's look (`Theme::in_look`).
+    /// tokens it is drawn with whatever skwir's look (`Theme::in_look`).
     pub code_dark: bool,
 }
 impl Display {
@@ -76,10 +76,10 @@ impl Display {
             // addresses are found before it is cut, so none is cut in two.
             if data.kind == InspectionKind::Text {
                 for block in data.blocks.iter_mut().filter(|block| !block.code) {
-                    bibli_platform::links::link_block(block, true);
+                    skwir_platform::links::link_block(block, true);
                 }
             }
-            data.blocks = bibli_core::inspection::split_blocks(data.blocks);
+            data.blocks = skwir_core::inspection::split_blocks(data.blocks);
         }
         for block in &mut data.blocks {
             let Some(palette) = palette.as_ref() else {
@@ -93,7 +93,7 @@ impl Display {
             block.runs = highlighter
                 .text(&block.text)
                 .into_iter()
-                .map(|run| bibli_core::inspection::Run { code: true, ..run })
+                .map(|run| skwir_core::inspection::Run { code: true, ..run })
                 .collect();
         }
         if data.kind == InspectionKind::Archive {
@@ -262,7 +262,7 @@ pub(crate) fn text_size_label(size: f32) -> String {
 /// The rows that are content, drawn after the blocks: a table's, an
 /// archive's, a message's attachments. A book's rows are its contents, a way
 /// through it that the Contents drawer shows, and none of its text.
-pub(crate) fn listed(data: &Inspection) -> &[bibli_core::inspection::Row] {
+pub(crate) fn listed(data: &Inspection) -> &[skwir_core::inspection::Row] {
     if data.kind == InspectionKind::Book {
         &[]
     } else {
@@ -2210,7 +2210,7 @@ pub fn content(
     let mut list_style = list_style;
     list_style.armed_link = shell.armed_link();
     list_style.labels = state.labels.as_ref().map(|labels| Rc::new(labels.shown()));
-    // Code in the look its colors are for, which may not be bibli's
+    // Code in the look its colors are for, which may not be skwir's
     // (`reading.code_appearance`), on the background its theme is for:
     // the code view whole, its gutter too, and a document's code blocks.
     let code_view = display.data.kind == InspectionKind::Code;
@@ -2717,7 +2717,7 @@ mod tests {
     }
 
     use super::*;
-    use bibli_core::inspection::{Block, Row};
+    use skwir_core::inspection::{Block, Row};
 
     fn archive() -> Display {
         let rows = [
@@ -2749,7 +2749,7 @@ mod tests {
 
     #[test]
     fn printed_pages_start_where_their_marks_are() {
-        use bibli_core::inspection::PrintedPage;
+        use skwir_core::inspection::PrintedPage;
         let page = |label: &str, section, target: &str| PrintedPage {
             label: label.into(),
             section,

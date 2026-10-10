@@ -1,10 +1,10 @@
-//! 3D meshes, read and drawn by `bibli-model-worker` in a process of its
+//! 3D meshes, read and drawn by `skwir-model-worker` in a process of its
 //! own: a model can hold millions of triangles, whose memory the helper
 //! gives back when it exits, and a reader that fails takes nothing with
 //! it. What comes back is what the mesh measures and its picture.
 use std::path::{Path, PathBuf};
 
-use bibli_core::{CancelToken, thumbs::Image};
+use skwir_core::{CancelToken, thumbs::Image};
 
 use crate::inspection::limits;
 
@@ -60,7 +60,7 @@ pub struct Drawn {
     pub measures: Measures,
 }
 
-/// The helper's executable: `BIBLI_MODEL_WORKER`, beside our binary, or
+/// The helper's executable: `SKWIR_MODEL_WORKER`, beside our binary, or
 /// on `PATH`, if it is there. Plugins that require it name this, not the
 /// literals; whether a model is read at all depends on it.
 pub fn worker_path() -> Option<PathBuf> {
@@ -69,8 +69,8 @@ pub fn worker_path() -> Option<PathBuf> {
 
 /// The helper. Plugins that require it name this, not the literals.
 pub const WORKER: crate::process::Worker = crate::process::Worker {
-    variable: "BIBLI_MODEL_WORKER",
-    executable: "bibli-model-worker",
+    variable: "SKWIR_MODEL_WORKER",
+    executable: "skwir-model-worker",
 };
 
 /// The files a glTF model at `path` keeps its buffers in, each with its
@@ -112,7 +112,7 @@ pub enum Asked {
     /// The preview of the file looked at: it waits.
     Preview,
     /// A thumbnail: with no turn free it answers
-    /// [`bibli_core::thumbs::Busy`], and its worker goes on with other
+    /// [`skwir_core::thumbs::Busy`], and its worker goes on with other
     /// files until one is.
     Thumbnail,
 }
@@ -132,7 +132,7 @@ pub fn draw(
         Asked::Thumbnail => Some(
             TURNS
                 .try_take()
-                .ok_or_else(|| bibli_core::thumbs::Busy::new(|then| TURNS.when_free(then)))?,
+                .ok_or_else(|| skwir_core::thumbs::Busy::new(|then| TURNS.when_free(then)))?,
         ),
     };
     let Some(_turn) = turn else {

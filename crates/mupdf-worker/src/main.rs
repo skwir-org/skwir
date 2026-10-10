@@ -16,12 +16,12 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use anyhow::Context;
-use bibli_core::document::{
+use mupdf::{Colorspace, Device, Document, Matrix, Page, Pixmap, Quad, TextPageFlags};
+use skwir_core::document::{
     CSS_PER_POINT, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE,
     Outline, PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, TextChar, WorkerReply,
     WorkerRequest, page_labels, worker,
 };
-use mupdf::{Colorspace, Device, Document, Matrix, Page, Pixmap, Quad, TextPageFlags};
 
 mod fonts;
 
@@ -31,16 +31,16 @@ const ENTRIES: usize = 4096;
 const DEPTH: u32 = 32;
 
 fn main() {
-    // `--build`, bibli asking which build of it this helper is, when a
+    // `--build`, skwir asking which build of it this helper is, when a
     // call of it failed (`platform::process::explain`).
     if std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == "--build")
     {
-        println!("{}", env!("BIBLI_BUILD"));
+        println!("{}", env!("SKWIR_BUILD"));
         return;
     }
-    // `--probe`, bibli's settings asking whether this helper works here
+    // `--probe`, skwir's settings asking whether this helper works here
     // (`platform::process::probe`): being started at all says its
     // libraries are there.
     if std::env::args_os()

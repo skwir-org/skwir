@@ -56,7 +56,7 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
             .name(format!("{name}-replies"))
             .spawn(move || {
                 let mut reader = BufReader::new(output);
-                while let Some(result) = bibli_core::jsonl::read(&mut reader, max_reply) {
+                while let Some(result) = skwir_core::jsonl::read(&mut reader, max_reply) {
                     let failed = result.is_err();
                     if tx.send(result).is_err() || failed {
                         break;
@@ -73,7 +73,7 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
     /// Write one request as one line in a single buffer, so a request is
     /// never left half written between two calls.
     pub(crate) fn send(&mut self, request: &impl Serialize) -> anyhow::Result<()> {
-        let line = bibli_core::jsonl::encode(request)?;
+        let line = skwir_core::jsonl::encode(request)?;
         self.input
             .write_all(&line)
             .context("worker is not reading its requests")

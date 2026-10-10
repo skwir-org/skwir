@@ -1,11 +1,11 @@
 //! Range-based hex viewer; whole-file searches stream and support cancellation.
-use bibli_core::{
+use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use bibli_platform::inspection::{self, HEX_ROW, check, limits, read};
+use skwir_platform::inspection::{self, HEX_ROW, check, limits, read};
 use std::{io::Read, sync::Arc};
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -18,12 +18,12 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Inspect any file as hexadecimal bytes"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read])
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
@@ -41,7 +41,7 @@ impl PreviewProvider for Provider {
         "preview-hex"
     }
     /// A request says `application/octet-stream` only once the bytes were
-    /// read and found binary (`bibli_platform::mime::by_content`): a name
+    /// read and found binary (`skwir_platform::mime::by_content`): a name
     /// the database does not know is not a claim (`mime::by_name` says
     /// nothing for it), so a `settings.cfg` of text is read as text.
     fn accepts(&self, req: &PreviewRequest) -> bool {
@@ -136,7 +136,7 @@ fn find(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::op::EntryRef;
+    use skwir_core::op::EntryRef;
 
     #[test]
     fn search_crosses_chunks_and_cancels() {

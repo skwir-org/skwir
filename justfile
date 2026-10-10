@@ -1,4 +1,4 @@
-# bibli task runner. Run `just` to list recipes.
+# skwir task runner. Run `just` to list recipes.
 
 default:
     @just --list
@@ -9,19 +9,19 @@ build:
 
 # Build the optional native workers (Poppler, MuPDF, GStreamer, libarchive).
 workers:
-    cargo build -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker
+    cargo build -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-media-worker -p skwir-archive-worker
 
 # Build everything, native workers included.
 build-all:
     cargo build --workspace
 
-# Build what is shipped: bibli and every helper, without debug info, into
-# target/dist (the `dist` profile). Helpers sit beside bibli, where it finds them.
+# Build what is shipped: skwir and every helper, without debug info, into
+# target/dist (the `dist` profile). Helpers sit beside skwir, where it finds them.
 dist:
     cargo build --profile dist $(sed 's/^/-p /' tools/package/programs)
 
-# Build the plugins from outside bibli this workspace holds as WebAssembly
-# modules, into target/plugins (ADR-046): BIBLI_PLUGIN_PATH=$PWD/target/plugins.
+# Build the plugins from outside skwir this workspace holds as WebAssembly
+# modules, into target/plugins (ADR-046): SKWIR_PLUGIN_PATH=$PWD/target/plugins.
 plugins:
     tools/plugins/build.sh
 
@@ -37,29 +37,29 @@ test-all:
 # on disk (tools/test/smoke.py): Xvfb and Mesa's software Vulkan come from
 # the flake's nixpkgs, so no display or GPU is needed.
 smoke:
-    cargo build --release -p bibli
+    cargo build --release -p skwir
     tools/test/smoke.py \
         --xvfb "$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#xorg.xorgserver)/bin/Xvfb" \
         --icd "$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#mesa)/share/vulkan/icd.d/lvp_icd.x86_64.json"
 
 # Exercise real Poppler with synthetic text, geometry and navigation fixtures.
 poppler-check:
-    cargo build -p bibli-poppler-worker
-    python3 tools/pdf/check.py --engine poppler --worker target/debug/bibli-poppler-worker
+    cargo build -p skwir-poppler-worker
+    python3 tools/pdf/check.py --engine poppler --worker target/debug/skwir-poppler-worker
 
 # Exercise MuPDF with the same synthetic fixtures (its first build compiles MuPDF).
 mupdf-check:
-    cargo build -p bibli-mupdf-worker
-    python3 tools/pdf/check.py --engine mupdf --worker target/debug/bibli-mupdf-worker
+    cargo build -p skwir-mupdf-worker
+    python3 tools/pdf/check.py --engine mupdf --worker target/debug/skwir-mupdf-worker
 
 # Exercise GStreamer playback using a synthetic two-track video and subtitles.
 media-check:
-    cargo build -p bibli-media-worker
+    cargo build -p skwir-media-worker
     python3 tools/media/check.py
 
 # Exercise audio and archive helpers against generated inputs outside the repo.
 previews-check:
-    cargo build -p bibli-media-worker -p bibli-archive-worker
+    cargo build -p skwir-media-worker -p skwir-archive-worker
     python3 tools/previews/check.py --temporary
 
 # Run the vendored Blade atlas regression tests with a real GPU context.
@@ -87,8 +87,8 @@ lint-all: && check-cross
 
 # Phase 5 (ADR-035): Zig is the C compiler of these builds, `target/cross`
 # their build directory (not incremental: checks, rarely rebuilt in a loop,
-# whose caches only fill the disk), and nothing is run. On macOS bibli-ui
-# and bibli are left out: gpui's Metal backend generates its bindings from
+# whose caches only fill the disk), and nothing is run. On macOS skwir-ui
+# and skwir are left out: gpui's Metal backend generates its bindings from
 # Apple's SDK.
 
 # Compile and lint the Windows and macOS builds from Linux.
@@ -100,13 +100,13 @@ check-windows:
 
 # Compile and lint the macOS build, but for the crates built on gpui.
 check-macos:
-    CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target aarch64-apple-darwin --all-targets --workspace --exclude bibli-ui --exclude bibli --exclude bibli-poppler-worker --exclude bibli-mupdf-worker --exclude bibli-media-worker --exclude bibli-archive-worker -- -D warnings
+    CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target aarch64-apple-darwin --all-targets --workspace --exclude skwir-ui --exclude skwir --exclude skwir-poppler-worker --exclude skwir-mupdf-worker --exclude skwir-media-worker --exclude skwir-archive-worker -- -D warnings
 
-# Run the Windows build's tests under Wine (args go to nextest: `-p bibli-core`).
+# Run the Windows build's tests under Wine (args go to nextest: `-p skwir-core`).
 test-windows *args:
     tools/cross/test-windows.sh {{args}}
 
-# Linux's package (Phase 5, step K): bibli and its helpers, by Nix, from the git tree.
+# Linux's package (Phase 5, step K): skwir and its helpers, by Nix, from the git tree.
 package-nix:
     nix build "git+file://{{justfile_directory()}}#default"
 
@@ -145,19 +145,19 @@ fmt:
 
 # Generate the synthetic benchmark trees under bench-data/ (idempotent).
 bench-gen *profiles:
-    cargo run --release -p bibli-bench -- gen {{profiles}}
+    cargo run --release -p skwir-bench -- gen {{profiles}}
 
 # Print raw filesystem measurements as JSON.
 bench-list *profiles:
-    cargo run --release -p bibli-bench -- list {{profiles}}
+    cargo run --release -p skwir-bench -- list {{profiles}}
 
 # Fail on any performance budget regression (what CI runs).
 bench-check:
-    cargo run --release -p bibli-bench -- check
+    cargo run --release -p skwir-bench -- check
 
-# Idle memory and first frame (ADR-033) on this display; close other bibli first.
+# Idle memory and first frame (ADR-033) on this display; close other skwir first.
 idle-pss:
-    cargo build --release -p bibli
+    cargo build --release -p skwir
     tools/measure/idle-pss.py
 
 # Build both toolkit spikes.
@@ -170,17 +170,17 @@ spike toolkit gpu="intel" rows="100000":
 
 # Run the app (release) on a directory, default: the current one.
 run dir=".":
-    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker -p bibli-model-worker -p bibli-module-worker
-    ./target/release/bibli {{dir}}
+    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-model-worker -p skwir-module-worker
+    ./target/release/skwir {{dir}}
 
 # Profile the app with samply (opens the Firefox Profiler UI when done).
 flame dir=".":
-    cargo build --release -p bibli -p bibli-pdf-worker -p bibli-poppler-worker -p bibli-mupdf-worker -p bibli-media-worker -p bibli-archive-worker -p bibli-mermaid-worker -p bibli-model-worker -p bibli-module-worker
-    samply record ./target/release/bibli {{dir}}
+    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-model-worker -p skwir-module-worker
+    samply record ./target/release/skwir {{dir}}
 
 # Profile a bench profile's listing with a flamegraph SVG.
 flame-bench profile="flat100k":
-    cargo flamegraph --release -p bibli-bench -o flamegraph-{{profile}}.svg -- list {{profile}}
+    cargo flamegraph --release -p skwir-bench -o flamegraph-{{profile}}.svg -- list {{profile}}
 
 # Watch and re-check on change.
 watch:

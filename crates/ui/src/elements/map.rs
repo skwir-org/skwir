@@ -1,4 +1,4 @@
-//! A map: what a file places on the Earth (`bibli_core::geo`), drawn in the
+//! A map: what a file places on the Earth (`skwir_core::geo`), drawn in the
 //! Web Mercator projection every tile source uses (ADR-020), over a
 //! graticule until there are tiles to draw under it.
 //!
@@ -20,8 +20,6 @@ use std::sync::Arc;
 
 use std::collections::{HashMap, HashSet};
 
-use bibli_core::EntryId;
-use bibli_core::geo::{BoundsBuilder, GeoDoc, LatLon, LineKind, WaypointKind};
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, CursorStyle, DispatchPhase, Element, ElementId,
     FillOptions, FillRule, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId,
@@ -29,6 +27,8 @@ use gpui::{
     PathBuilder, PathStyle, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Style,
     TextRun, Window, point, px, quad, relative, size,
 };
+use skwir_core::EntryId;
+use skwir_core::geo::{BoundsBuilder, GeoDoc, LatLon, LineKind, WaypointKind};
 
 pub use math::View;
 
@@ -47,7 +47,7 @@ pub mod math {
     use std::collections::HashMap;
 
     use super::{FIT_PADDING, MAX_ZOOM, POINT_ZOOM, TILE};
-    use bibli_core::geo::{EARTH_RADIUS, LatLon};
+    use skwir_core::geo::{EARTH_RADIUS, LatLon};
 
     /// The latitude where the square world ends.
     pub const MAX_LAT: f64 = 85.051_128_779_806_59;
@@ -458,7 +458,7 @@ pub struct Marker {
     /// The file it stands for, in the Map view: what a click selects.
     pub entry: Option<EntryId>,
     /// A picture's camera clock: markers spread around one place follow
-    /// it (`bibli_platform::exif::Taken::clock`).
+    /// it (`skwir_platform::exif::Taken::clock`).
     pub clock: Option<u64>,
 }
 
@@ -909,8 +909,8 @@ impl Map {
 /// them those of the file shown, when it holds some (a tile archive).
 pub struct TileLayer {
     pub store: Rc<RefCell<crate::map_tiles::TileStore>>,
-    pub palette: bibli_core::tiles::Palette,
-    pub file: Option<bibli_core::tiles::Layer>,
+    pub palette: skwir_core::tiles::Palette,
+    pub file: Option<skwir_core::tiles::Layer>,
     /// Follow the attribution's link.
     pub on_link: Rc<dyn Fn(String, &mut Window, &mut App)>,
 }
@@ -978,9 +978,9 @@ const SHALLOWER: u8 = 2;
 /// nothing in view.
 fn gather(
     store: &mut crate::map_tiles::TileStore,
-    file: Option<&bibli_core::tiles::Layer>,
-    info: &bibli_core::tiles::SourceInfo,
-    request: &dyn Fn(u8, u32, u32) -> bibli_core::tiles::TileRequest,
+    file: Option<&skwir_core::tiles::Layer>,
+    info: &skwir_core::tiles::SourceInfo,
+    request: &dyn Fn(u8, u32, u32) -> skwir_core::tiles::TileRequest,
     view: &View,
     size: (f64, f64),
     origin: gpui::Point<Pixels>,
@@ -993,7 +993,7 @@ fn gather(
         z = info.min_zoom;
     }
     let corners = (view.to_world((0., 0.), size), view.to_world(size, size));
-    let mut cover = bibli_core::tiles::cover(z, corners.0, corners.1);
+    let mut cover = skwir_core::tiles::cover(z, corners.0, corners.1);
     cover.retain(|&(x, y, _, _)| info.holds(z, x, y));
     if cover.is_empty() {
         return None;
@@ -1281,7 +1281,7 @@ impl Element for Map {
         if let Some(layer) = &self.tiles {
             let mut store = layer.store.borrow_mut();
             let scale = window.scale_factor().round().clamp(1., 2.) as u8;
-            let request = |z: u8, x: u32, y: u32| bibli_core::tiles::TileRequest {
+            let request = |z: u8, x: u32, y: u32| skwir_core::tiles::TileRequest {
                 z,
                 x,
                 y,
@@ -2266,12 +2266,12 @@ fn stroke(
 mod tests {
     use super::math::*;
     use super::*;
-    use bibli_core::geo::{BoundsBuilder, Line, Point as GeoPoint};
+    use skwir_core::geo::{BoundsBuilder, Line, Point as GeoPoint};
 
     fn place(n: u64, lat: f64, lon: f64) -> Place {
         Place {
             entry: EntryId {
-                file: bibli_core::FileId { dev: 1, ino: n },
+                file: skwir_core::FileId { dev: 1, ino: n },
                 at: 0,
             },
             at: LatLon::new(lat, lon).unwrap(),
@@ -2521,7 +2521,7 @@ mod tests {
     #[test]
     fn a_file_of_nothing_but_an_area_is_fitted_to_it() {
         let doc = |west: f64, east: f64| GeoDoc {
-            bounds: Some(bibli_core::geo::Bounds {
+            bounds: Some(skwir_core::geo::Bounds {
                 south: 44.,
                 north: 45.,
                 west,

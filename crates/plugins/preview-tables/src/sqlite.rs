@@ -9,12 +9,12 @@
 //! in the query: a text is cut there, a blob is only measured, so a row
 //! holding a film costs its size's digits. The request's cancellation
 //! interrupts SQLite between steps.
-use bibli_core::{
+use rusqlite::{Connection, OpenFlags, types::ValueRef};
+use skwir_core::{
     CancelToken,
     inspection::{Inspection, Row},
 };
-use bibli_platform::inspection::{self, limits};
-use rusqlite::{Connection, OpenFlags, types::ValueRef};
+use skwir_platform::inspection::{self, limits};
 use std::path::Path;
 
 pub const MIMES: [&str; 2] = ["application/vnd.sqlite3", "application/x-sqlite3"];
@@ -29,7 +29,7 @@ fn quoted(name: &str) -> String {
 }
 
 fn open(path: &Path, cancel: &CancelToken) -> anyhow::Result<Connection> {
-    let uri = format!("{}?immutable=1", bibli_platform::uri::file_uri(path));
+    let uri = format!("{}?immutable=1", skwir_platform::uri::file_uri(path));
     let connection = Connection::open_with_flags(
         uri,
         OpenFlags::SQLITE_OPEN_READ_ONLY
@@ -178,7 +178,7 @@ pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<I
     ]);
     Ok(Inspection {
         details,
-        kind: bibli_core::inspection::InspectionKind::Table,
+        kind: skwir_core::inspection::InspectionKind::Table,
         title: if rows.is_empty() {
             name.clone()
         } else {

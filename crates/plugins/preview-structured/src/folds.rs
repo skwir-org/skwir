@@ -1,6 +1,6 @@
 //! Fold boundaries come from parsers, never indentation guesses inside strings.
-use bibli_core::CancelToken;
-use bibli_platform::inspection::{check, limits};
+use skwir_core::CancelToken;
+use skwir_platform::inspection::{check, limits};
 use std::ops::Range;
 
 pub fn parse(

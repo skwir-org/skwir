@@ -1,4 +1,4 @@
-//! What bibli asks Windows itself (ADR-035): the drives, who the user
+//! What skwir asks Windows itself (ADR-035): the drives, who the user
 //! is, the types files are registered as (ADR-037). Written on Linux,
 //! compiled for Windows; not run under Wine for what Wine answers
 //! otherwise (its drives are a Linux machine's folders).
@@ -238,7 +238,7 @@ impl Job {
     }
 }
 
-/// The Credential Manager's generic credentials: bibli's secrets
+/// The Credential Manager's generic credentials: skwir's secrets
 /// (`crate::secrets`), each named `target`, its bytes the secret.
 pub mod credentials {
     use std::io;
@@ -530,20 +530,20 @@ mod tests {
     /// a user's Credential Manager.
     #[test]
     fn a_secret_goes_in_and_comes_out_of_the_credential_manager() {
-        if std::env::var_os("BIBLI_TEST_UNDER_WINE").is_none() {
+        if std::env::var_os("SKWIR_TEST_UNDER_WINE").is_none() {
             eprintln!("skipped: only in Wine's scratch prefix, never a user's keyring");
             return;
         }
-        let target = "bibli-test/map-tiles.servers/a1/key";
-        credentials::delete("bibli-test/*").unwrap();
+        let target = "skwir-test/map-tiles.servers/a1/key";
+        credentials::delete("skwir-test/*").unwrap();
         assert_eq!(credentials::read(target).unwrap(), None);
-        credentials::write(target, "bibli: a test", b"it's secret").unwrap();
-        credentials::write("bibli-test/map-tiles.servers/a1/other", "x", b"2").unwrap();
+        credentials::write(target, "skwir: a test", b"it's secret").unwrap();
+        credentials::write("skwir-test/map-tiles.servers/a1/other", "x", b"2").unwrap();
         assert_eq!(
             credentials::read(target).unwrap().as_deref(),
             Some(b"it's secret".as_slice())
         );
-        credentials::delete("bibli-test/map-tiles.servers/a1/*").unwrap();
+        credentials::delete("skwir-test/map-tiles.servers/a1/*").unwrap();
         assert_eq!(credentials::read(target).unwrap(), None);
     }
 }

@@ -8,14 +8,14 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use bibli_core::app::{App, NotifyLevel};
-use bibli_core::cancel::CancelToken;
-use bibli_core::entry::{Entry, Value, keys};
-use bibli_core::location::Location;
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
-use bibli_platform::calendar::{Calendar, date_string};
-use bibli_platform::mime;
+use skwir_core::app::{App, NotifyLevel};
+use skwir_core::cancel::CancelToken;
+use skwir_core::entry::{Entry, Value, keys};
+use skwir_core::location::Location;
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
+use skwir_platform::calendar::{Calendar, date_string};
+use skwir_platform::mime;
 
 use crate::{SCHEME, lang, location_for};
 
@@ -137,7 +137,7 @@ fn root_of(app: &App, pane: PaneId) -> anyhow::Result<PathBuf> {
 pub fn start(
     app: &App,
     pane: Option<PaneId>,
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     by: By,
     lifetime: &CancelToken,
 ) -> anyhow::Result<()> {
@@ -164,7 +164,7 @@ pub fn start(
             let mut entry = match known {
                 Some(entry) if entry.metadata.value(keys::SIZE).is_some() => entry,
                 _ => {
-                    let Some(entry) = bibli_core::fs::hydrate_path(&path, &app.metadata) else {
+                    let Some(entry) = skwir_core::fs::hydrate_path(&path, &app.metadata) else {
                         app.notify(
                             NotifyLevel::Error,
                             format!("“{}” cannot be read", name(&path)),

@@ -80,7 +80,7 @@ impl Index {
                 return Some(found);
             }
             // Hicolor, every theme's last parent, comes after the chosen
-            // one: before the themes bibli falls back to.
+            // one: before the themes skwir falls back to.
             if i == 0
                 && let Some(found) = self.find_in("hicolor", name, size, &mut visited)
             {

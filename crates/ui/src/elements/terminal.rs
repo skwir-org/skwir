@@ -15,15 +15,15 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use bibli_core::terminal::{
-    At, Attrs, Color, CursorShape, Input, Run, Screen, Size, Target, TerminalSession, Unit,
-};
 use gpui::{
     App, Bounds, CursorStyle, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
     ShapedLine, SharedString, StrikethroughStyle, Style, TextRun, UTF16Selection, UnderlineStyle,
     Window, point, px, relative, size,
+};
+use skwir_core::terminal::{
+    At, Attrs, Color, CursorShape, Input, Run, Screen, Size, Target, TerminalSession, Unit,
 };
 
 /// Between the panel's edges and the grid.
@@ -466,9 +466,9 @@ impl Element for TerminalGrid {
                                 col: first,
                                 cells,
                                 text: label.clone(),
-                                style: bibli_core::terminal::Style {
+                                style: skwir_core::terminal::Style {
                                     attrs: Attrs::BOLD,
-                                    ..bibli_core::terminal::Style::default()
+                                    ..skwir_core::terminal::Style::default()
                                 },
                             };
                             let shaped = self.shape(window, &run, self.colors.on_link, cell.width);

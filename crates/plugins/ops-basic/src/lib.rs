@@ -1,4 +1,4 @@
-//! bibli plugin: ops-basic. The default keymap and context menu, plus an
+//! skwir plugin: ops-basic. The default keymap and context menu, plus an
 //! in-app clipboard (copy / cut / paste as plans).
 //!
 //! # The `when` mini-language
@@ -16,7 +16,7 @@
 //! - `place`: every selected entry is a place, no file (a tag's)
 //! - `refs`, `drops`, `creates`: the location shown lists files kept
 //!   elsewhere, takes files dropped or pasted, makes new places
-//!   (`bibli_core::location::Verbs`)
+//!   (`skwir_core::location::Verbs`)
 //! - `!token`: the token does not hold
 //!
 //! Absent (`None`) means always. For key bindings the UI also filters by
@@ -26,13 +26,13 @@
 
 use std::sync::Arc;
 
-use bibli_core::app::{App, PaneArg, TargetsArgs};
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::op::{Change, Copy, EntryRef, Move, Operation, Plan};
-use bibli_core::plugin::Plugin;
-use bibli_core::registry::{KeyBinding, MenuItem};
-use bibli_core::workspace::PaneId;
 use parking_lot::Mutex;
+use skwir_core::app::{App, PaneArg, TargetsArgs};
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::op::{Change, Copy, EntryRef, Move, Operation, Plan};
+use skwir_core::plugin::Plugin;
+use skwir_core::registry::{KeyBinding, MenuItem};
+use skwir_core::workspace::PaneId;
 
 const ID: &str = "ops-basic";
 
@@ -42,10 +42,10 @@ struct Clipboard {
     cut: bool,
     /// Where they were cut or copied: a paste into a place that takes
     /// files (a tag's) is told, so a cut from another tag moves them.
-    from: Option<bibli_core::Location>,
+    from: Option<skwir_core::Location>,
     /// Places cut or copied (a tag's): pasted in a folder, copied there as
     /// their location says (`Verbs::export`); in a place, given to it.
-    places: Vec<bibli_core::Location>,
+    places: Vec<skwir_core::Location>,
 }
 
 /// The ops-basic plugin.
@@ -59,14 +59,14 @@ pub struct OpsBasicPlugin {
 fn take_selection(
     app: &App,
     pane: Option<PaneId>,
-    entries: Vec<bibli_core::op::EntryArg>,
-) -> anyhow::Result<(Vec<EntryRef>, Vec<bibli_core::Location>)> {
+    entries: Vec<skwir_core::op::EntryArg>,
+) -> anyhow::Result<(Vec<EntryRef>, Vec<skwir_core::Location>)> {
     if !entries.is_empty() {
-        return Ok((bibli_core::op::EntryArg::refs(entries)?, Vec::new()));
+        return Ok((skwir_core::op::EntryArg::refs(entries)?, Vec::new()));
     }
     let pane = app.pane_or_active(pane);
     let refs = app.selected_refs(pane);
-    let places: Vec<bibli_core::Location> = {
+    let places: Vec<skwir_core::Location> = {
         let ws = app.workspace.read();
         ws.pane(pane)
             .map(|p| {
@@ -78,7 +78,7 @@ fn take_selection(
             .unwrap_or_default()
     };
     if refs.is_empty() && places.is_empty() {
-        return Err(bibli_core::command::NothingSelected.into());
+        return Err(skwir_core::command::NothingSelected.into());
     }
     Ok((refs, places))
 }
@@ -86,7 +86,7 @@ fn take_selection(
 /// Where a copy or a cut takes its files from: the pane's location for
 /// its selection (a cut from a tag moves the files out of it), nowhere
 /// in particular for entries named by path.
-fn taken_from(app: &App, a: &TargetsArgs) -> Option<bibli_core::Location> {
+fn taken_from(app: &App, a: &TargetsArgs) -> Option<skwir_core::Location> {
     a.entries
         .is_empty()
         .then(|| app.pane_location(app.pane_or_active(a.pane)))
@@ -113,7 +113,7 @@ fn follow(clipboard: &Mutex<Clipboard>, changes: &[Change], app: &App) {
     }
     let before = c.entries.len();
     let cut = c.cut;
-    let follow = bibli_core::op::Follow::new(changes);
+    let follow = skwir_core::op::Follow::new(changes);
     c.entries.retain_mut(|entry| {
         let through = follow.through(&entry.path);
         match through.at {
@@ -157,7 +157,7 @@ fn paste(clipboard: &Mutex<Clipboard>, pane: Option<PaneId>, app: &App) -> anyho
                 export.args = serde_json::json!({});
             }
             export.args["dest"] =
-                serde_json::json!(bibli_core::os_path::PathArg::from(dest.as_path()));
+                serde_json::json!(skwir_core::os_path::PathArg::from(dest.as_path()));
             app.dispatch(&export)?;
         }
     }
@@ -306,7 +306,7 @@ const BINDINGS_ARGS: &[(&str, &str, &str)] = &[
 ];
 
 // Context menu items: (title, command, when, order). Order follows the
-// convention documented on `bibli_core::registry::MenuItem`: hundreds are
+// convention documented on `skwir_core::registry::MenuItem`: hundreds are
 // groups (0 open, 100 edit, 200 create, 300 destructive, 400 misc), the UI
 // draws a separator between groups. "Open" and "Open Terminal Here" are
 // contributed by the open-with plugin, which owns those commands.
@@ -386,13 +386,13 @@ impl Plugin for OpsBasicPlugin {
         "Default key bindings, context menu, and clipboard"
     }
 
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Files
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Files
     }
 
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Write, Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Write, Capability::Programs])
     }
     fn register(&self, app: &App) {
         let cb = Arc::clone(&self.clipboard);
@@ -512,8 +512,8 @@ impl Plugin for OpsBasicPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::app::AppConfig;
-    use bibli_core::location::Location;
+    use skwir_core::app::AppConfig;
+    use skwir_core::location::Location;
     use std::time::Duration;
 
     #[test]

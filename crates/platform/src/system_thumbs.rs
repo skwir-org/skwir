@@ -2,15 +2,15 @@
 //! Look's on macOS, the shell's thumbnail handlers' on Windows, for every
 //! format one is installed for (Office documents, RAW photos, HEIC,
 //! films, fonts…), as the Finder and Explorer show them. A provider of
-//! the Generate stage, after bibli's own decoder, where a Linux desktop's
+//! the Generate stage, after skwir's own decoder, where a Linux desktop's
 //! thumbnailers are (`thumb_providers::Thumbnailers`). Only a thumbnail:
-//! never the file's icon, which bibli draws from its type. Compiled on
+//! never the file's icon, which skwir draws from its type. Compiled on
 //! every system; on Linux it answers nothing.
 
 use std::path::Path;
 
-use bibli_core::cancel::CancelToken;
-use bibli_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
+use skwir_core::cancel::CancelToken;
+use skwir_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
 
 /// The system's thumbnails.
 #[derive(Debug, Clone, Copy, Default)]
@@ -351,10 +351,10 @@ mod tests {
             .save(&path)
             .unwrap();
         let req = ThumbRequest {
-            entry: bibli_core::op::EntryRef::from_path(&path).unwrap(),
+            entry: skwir_core::op::EntryRef::from_path(&path).unwrap(),
             mime: Some("image/png".into()),
             mtime: None,
-            size: bibli_core::thumbs::ThumbSize::Normal,
+            size: skwir_core::thumbs::ThumbSize::Normal,
         };
         let drawn = SystemThumbnails
             .thumbnail(&req, &CancelToken::new())
@@ -368,10 +368,10 @@ mod tests {
     fn folders_are_never_asked_for() {
         let dir = tempfile::tempdir().unwrap();
         let req = |mime: Option<&str>| ThumbRequest {
-            entry: bibli_core::op::EntryRef::from_path(dir.path()).unwrap(),
+            entry: skwir_core::op::EntryRef::from_path(dir.path()).unwrap(),
             mime: mime.map(Into::into),
             mtime: None,
-            size: bibli_core::thumbs::ThumbSize::Normal,
+            size: skwir_core::thumbs::ThumbSize::Normal,
         };
         assert!(!SystemThumbnails.accepts(&req(Some("inode/directory"))));
         assert_eq!(

@@ -4,11 +4,11 @@ Status: accepted, 2026-09-18. Supersedes ADR-004's image-only Poppler integratio
 
 ## Decision
 
-Add `bibli-poppler-worker`, using `poppler-rs` 0.25 and the installed
+Add `skwir-poppler-worker`, using `poppler-rs` 0.25 and the installed
 `poppler-glib` library with Cairo. Keep one document open for the session.
 The executable is optional at runtime, built by workspace and run recipes.
 Building it requires Poppler, GLib and Cairo development packages, supplied
-by the default Nix shell. Building `bibli` alone does not require them.
+by the default Nix shell. Building `skwir` alone does not require them.
 Neither worker is a dependency of the main binary. The default shell provides
 Poppler only; PDFium's optional runtime comes from the `pdf` shell, entered
 through a git-ignored `.envrc.local` containing `use flake .#pdf`.

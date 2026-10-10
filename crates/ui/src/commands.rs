@@ -7,10 +7,10 @@
 //! script) waits for the window (`App::request_front`) and runs when it
 //! next wakes, on the pane active then.
 
-use bibli_core::app::App;
-use bibli_core::command::{Effect, Invocation, NoArgs, Outcome};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
+use skwir_core::app::App;
+use skwir_core::command::{Effect, Invocation, NoArgs, Outcome};
 
 /// Who declares them.
 pub const OWNER: &str = "ui";
@@ -19,11 +19,11 @@ pub const OWNER: &str = "ui";
 /// through serde, to check what a command is given and to describe it.
 #[allow(dead_code)] // Fields are read by `Deserialize` and `JsonSchema` only.
 mod args {
-    use bibli_core::location::SortKey;
-    use bibli_core::op::EntryRef;
-    use bibli_core::os_path::PathArg;
     use schemars::JsonSchema;
     use serde::Deserialize;
+    use skwir_core::location::SortKey;
+    use skwir_core::op::EntryRef;
+    use skwir_core::os_path::PathArg;
 
     /// Arguments that depend on what the command is asked to do (its
     /// `action`, its `key`): any object.
@@ -810,8 +810,8 @@ pub fn declare_all(app: &App) {
     declare::<Close>(
         app,
         "ui.about",
-        "About bibli",
-        "Show bibli's version and licence, and what it runs on",
+        "About skwir",
+        "Show skwir's version and licence, and what it runs on",
     );
     declare::<Settings>(
         app,
@@ -1219,14 +1219,14 @@ pub fn declare_all(app: &App) {
 
 #[cfg(test)]
 mod tests {
-    use bibli_core::command::{CommandError, Effect, Invocation};
+    use skwir_core::command::{CommandError, Effect, Invocation};
 
     /// The lists of what an agent may run name only commands declared,
     /// and what answers the user's own dialogs is never an agent's.
     #[test]
     fn what_an_agent_may_run_of_the_window_is_named_and_the_rest_is_the_users() {
         let tmp = tempfile::tempdir().unwrap();
-        let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         super::declare_all(&app);
         for name in super::SHOWS.iter().chain(super::ACTS) {
             assert!(app.commands.get(name).is_some(), "{name} is declared");
@@ -1254,7 +1254,7 @@ mod tests {
     #[test]
     fn every_ui_command_the_shell_runs_is_declared_with_its_arguments() {
         let tmp = tempfile::tempdir().unwrap();
-        let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         super::declare_all(&app);
         let offered = crate::palette::ui_commands()
             .iter()

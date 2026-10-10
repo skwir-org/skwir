@@ -6,12 +6,12 @@
 
 use std::ops::Range;
 
-use bibli_core::SortKey;
-use bibli_core::entry::keys;
 use gpui::{
     AnyElement, Context, Div, MouseButton, MouseDownEvent, ScrollStrategy, Stateful,
     UniformListScrollHandle, Window, div, prelude::*, px, uniform_list,
 };
+use skwir_core::SortKey;
+use skwir_core::entry::keys;
 
 use crate::format;
 use crate::list::Step;
@@ -217,7 +217,7 @@ impl Shell {
         cx.notify();
         if let Err(error) = self
             .app
-            .dispatch(&bibli_core::command::Invocation::with_args(
+            .dispatch(&skwir_core::command::Invocation::with_args(
                 "settings.apply",
                 &serde_json::json!({ "changes": { key: shown.to_string() } }),
             ))
@@ -404,7 +404,7 @@ impl Shell {
                     let from = e
                         .metadata
                         .value(keys::TRASHED_FROM)
-                        .and_then(bibli_core::Value::as_str)
+                        .and_then(skwir_core::Value::as_str)
                         .map(std::path::PathBuf::from);
                     row.folder = from
                         .or_else(|| pane.path_of(id)?.parent().map(ToOwned::to_owned))
@@ -420,20 +420,20 @@ impl Shell {
                     row.rating = e
                         .metadata
                         .value(keys::RATING)
-                        .and_then(bibli_core::Value::as_u64);
+                        .and_then(skwir_core::Value::as_u64);
                 }
                 if columns[Detail::Size] {
                     row.size = match e
                         .metadata
                         .value(keys::SIZE)
-                        .and_then(bibli_core::Value::as_u64)
+                        .and_then(skwir_core::Value::as_u64)
                     {
                         Some(s) if !e.is_dir() => format::size(s),
                         // A place says how many files it holds.
                         _ => match e
                             .metadata
                             .value(keys::FILES)
-                            .and_then(bibli_core::Value::as_u64)
+                            .and_then(skwir_core::Value::as_u64)
                         {
                             Some(n) => {
                                 format::count(usize::try_from(n).unwrap_or(usize::MAX), "file")
@@ -446,21 +446,21 @@ impl Shell {
                     (row.modified, row.modified_exact) = date(
                         e.metadata
                             .value(keys::MODIFIED)
-                            .and_then(bibli_core::Value::as_time),
+                            .and_then(skwir_core::Value::as_time),
                     );
                 }
                 if columns[Detail::Deleted] {
                     (row.deleted, row.deleted_exact) = date(
                         e.metadata
                             .value(keys::TRASHED)
-                            .and_then(bibli_core::Value::as_time),
+                            .and_then(skwir_core::Value::as_time),
                     );
                 }
                 if columns[Detail::Type] {
                     row.kind = if e.is_place() {
                         e.metadata
                             .value(keys::PLACE_KIND)
-                            .and_then(bibli_core::Value::as_str)
+                            .and_then(skwir_core::Value::as_str)
                             .unwrap_or("Place")
                             .into()
                     } else if e.is_dir() {
@@ -469,7 +469,7 @@ impl Shell {
                         crate::typenames::BROKEN_LINK.into()
                     } else {
                         // Typed only where the column shows it.
-                        bibli_platform::mime::of_entry(e)
+                        skwir_platform::mime::of_entry(e)
                             .as_ref()
                             .and_then(|mime| self.type_names.get(mime))
                             .unwrap_or_else(|| crate::typenames::fallback_of(e).into())
@@ -923,7 +923,7 @@ impl PaneView for ListView {
             let Some(p) = ws.pane(shell.pane) else {
                 return false;
             };
-            let dir = p.entry(id).is_some_and(bibli_core::Entry::is_dir);
+            let dir = p.entry(id).is_some_and(skwir_core::Entry::is_dir);
             let open = dir && p.is_open_at(id);
             let depth = p.depth(id);
             let parent = (depth > 0)

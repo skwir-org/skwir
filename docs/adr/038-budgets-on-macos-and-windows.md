@@ -6,8 +6,8 @@ measurements are 5b's, on the machines.
 ## Context
 
 ADR-000 budgets idle memory and the first frame; ADR-033 made the
-memory budget bibli's own share: Linux's PSS without the pages of the
-GPU driver's code, which no change to bibli moves. `tools/measure/
+memory budget skwir's own share: Linux's PSS without the pages of the
+GPU driver's code, which no change to skwir moves. `tools/measure/
 idle-pss.py` reads `/proc/<pid>/smaps` and the shell's log line for the
 first frame. Neither exists on macOS or Windows, whose memory is
 counted otherwise:
@@ -24,7 +24,7 @@ counted otherwise:
   (`PROCESS_MEMORY_COUNTERS_EX2::PrivateWorkingSetSize`, what Task
   Manager shows as Memory) is the resident pages no other process
   shares: heap, stacks, written pages of mappings. The driver's code is
-  shared and so out of it; its private allocations for bibli are in.
+  shared and so out of it; its private allocations for skwir are in.
 
 None of these is Linux's own share. Each is what the system itself
 calls a program's cost, and each leaves the driver's shared code out
@@ -43,7 +43,7 @@ as ADR-033 does.
    differently, say), 5b records that in an amendment with the numbers,
    as ADR-033 did, and says what the budget is there.
 3. **The first frame is the same event everywhere:** from the process
-   start to the shell's log line of its first drawn frame, which bibli
+   start to the shell's log line of its first drawn frame, which skwir
    writes on every system; the minimum over runs, as ADR-000 has it.
 4. **The measuring script grows a reader per system** (in 5b, where it
    runs): `idle-pss.py` keeps Linux's, and reads `phys_footprint`

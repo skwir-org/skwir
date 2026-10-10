@@ -31,7 +31,7 @@ memory budget.
 - **System indexes are providers.** Tracker, Baloo, Recoll, Spotlight,
   Windows Search, and a Meilisearch instance the user already runs may
   serve the `content:` term when present. None is ever installed or
-  started by bibli.
+  started by skwir.
 
 ## Consequences
 
@@ -40,8 +40,8 @@ memory budget.
 - The `query` plugin gains a provider hook for the `content:` term so
   indexes and external services can answer it; the scan remains the
   fallback and the correctness reference in tests.
-- Index size and build time become measured quantities in `bibli-bench`
+- Index size and build time become measured quantities in `skwir-bench`
   when the plugin lands.
-- Amended (2026-10-10, ADR-050): bibli may start one system index,
+- Amended (2026-10-10, ADR-050): skwir may start one system index,
   skwird, for the session, where skwird is installed: a helper that ends
-  with bibli, not a daemon. It still installs and enables none.
+  with skwir, not a daemon. It still installs and enables none.

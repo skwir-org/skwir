@@ -9,7 +9,7 @@ members = [
     "crates/extend",
     "crates/plugins-outside/*",
     "crates/bench",
-    "crates/bibli",
+    "crates/skwir",
     "crates/alloc",
     "crates/pdf-worker",
     "crates/poppler-worker",
@@ -33,7 +33,7 @@ default-members = [
     "crates/extend",
     "crates/plugins-outside/*",
     "crates/bench",
-    "crates/bibli",
+    "crates/skwir",
     "crates/alloc",
     "crates/pdf-worker",
     "crates/mermaid-worker",
@@ -45,59 +45,60 @@ default-members = [
 exclude = ["spikes"]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 rust-version = "1.96"
-repository = "https://github.com/venator/bibli"
+repository = "https://github.com/skwir-org/skwir"
+homepage = "https://skwir.org"
 # None of them is published to crates.io; a crate meant for others (the
 # plugin API, once stable) says so itself.
 publish = false
 
 [workspace.dependencies]
-bibli-core = { path = "crates/core" }
-bibli-platform = { path = "crates/platform" }
-bibli-alloc = { path = "crates/alloc" }
-bibli-ui = { path = "crates/ui" }
-bibli-plugin-places = { path = "crates/plugins/places" }
-bibli-plugin-open-with = { path = "crates/plugins/open-with" }
-bibli-plugin-ops-basic = { path = "crates/plugins/ops-basic" }
-bibli-plugin-thumbnails = { path = "crates/plugins/thumbnails" }
-bibli-plugin-query = { path = "crates/plugins/query" }
-bibli-plugin-shelf = { path = "crates/plugins/shelf" }
-bibli-plugin-trash = { path = "crates/plugins/trash" }
-bibli-plugin-rename-bulk = { path = "crates/plugins/rename-bulk" }
-bibli-plugin-edit-as-buffer = { path = "crates/plugins/edit-as-buffer" }
-bibli-plugin-jump = { path = "crates/plugins/jump" }
-bibli-plugin-tags = { path = "crates/plugins/tags" }
-bibli-plugin-xmp = { path = "crates/plugins/xmp" }
-bibli-plugin-tagspaces = { path = "crates/plugins/tagspaces" }
-bibli-plugin-name-tags = { path = "crates/plugins/name-tags" }
-bibli-plugin-shell = { path = "crates/plugins/shell" }
-bibli-plugin-usage = { path = "crates/plugins/usage" }
-bibli-plugin-timeline = { path = "crates/plugins/timeline" }
-bibli-plugin-preview-media = { path = "crates/plugins/preview-media" }
-bibli-plugin-preview-hex = { path = "crates/plugins/preview-hex" }
-bibli-plugin-preview-markdown = { path = "crates/plugins/preview-markdown" }
-bibli-plugin-preview-archives = { path = "crates/plugins/preview-archives" }
-bibli-plugin-preview-epub = { path = "crates/plugins/preview-epub" }
-bibli-plugin-preview-tables = { path = "crates/plugins/preview-tables" }
-bibli-plugin-preview-playlists = { path = "crates/plugins/preview-playlists" }
-bibli-plugin-mpris = { path = "crates/plugins/mpris" }
-bibli-plugin-control = { path = "crates/plugins/control" }
-bibli-plugin-api = { path = "crates/plugin-api" }
-bibli-extend = { path = "crates/extend" }
-bibli-plugin-preview-structured = { path = "crates/plugins/preview-structured" }
-bibli-plugin-preview-fonts = { path = "crates/plugins/preview-fonts" }
-bibli-plugin-preview-models = { path = "crates/plugins/preview-models" }
-bibli-plugin-preview-circuits = { path = "crates/plugins/preview-circuits" }
-bibli-plugin-preview-email = { path = "crates/plugins/preview-email" }
-bibli-plugin-preview-comics = { path = "crates/plugins/preview-comics" }
-bibli-plugin-preview-documents = { path = "crates/plugins/preview-documents" }
-bibli-plugin-terminal = { path = "crates/plugins/terminal" }
-bibli-plugin-geo = { path = "crates/plugins/geo" }
-bibli-plugin-map-tiles = { path = "crates/plugins/map-tiles" }
-bibli-plugin-vim = { path = "crates/plugins/vim" }
+skwir-core = { path = "crates/core" }
+skwir-platform = { path = "crates/platform" }
+skwir-alloc = { path = "crates/alloc" }
+skwir-ui = { path = "crates/ui" }
+skwir-plugin-places = { path = "crates/plugins/places" }
+skwir-plugin-open-with = { path = "crates/plugins/open-with" }
+skwir-plugin-ops-basic = { path = "crates/plugins/ops-basic" }
+skwir-plugin-thumbnails = { path = "crates/plugins/thumbnails" }
+skwir-plugin-query = { path = "crates/plugins/query" }
+skwir-plugin-shelf = { path = "crates/plugins/shelf" }
+skwir-plugin-trash = { path = "crates/plugins/trash" }
+skwir-plugin-rename-bulk = { path = "crates/plugins/rename-bulk" }
+skwir-plugin-edit-as-buffer = { path = "crates/plugins/edit-as-buffer" }
+skwir-plugin-jump = { path = "crates/plugins/jump" }
+skwir-plugin-tags = { path = "crates/plugins/tags" }
+skwir-plugin-xmp = { path = "crates/plugins/xmp" }
+skwir-plugin-tagspaces = { path = "crates/plugins/tagspaces" }
+skwir-plugin-name-tags = { path = "crates/plugins/name-tags" }
+skwir-plugin-shell = { path = "crates/plugins/shell" }
+skwir-plugin-usage = { path = "crates/plugins/usage" }
+skwir-plugin-timeline = { path = "crates/plugins/timeline" }
+skwir-plugin-preview-media = { path = "crates/plugins/preview-media" }
+skwir-plugin-preview-hex = { path = "crates/plugins/preview-hex" }
+skwir-plugin-preview-markdown = { path = "crates/plugins/preview-markdown" }
+skwir-plugin-preview-archives = { path = "crates/plugins/preview-archives" }
+skwir-plugin-preview-epub = { path = "crates/plugins/preview-epub" }
+skwir-plugin-preview-tables = { path = "crates/plugins/preview-tables" }
+skwir-plugin-preview-playlists = { path = "crates/plugins/preview-playlists" }
+skwir-plugin-mpris = { path = "crates/plugins/mpris" }
+skwir-plugin-control = { path = "crates/plugins/control" }
+skwir-plugin-api = { path = "crates/plugin-api" }
+skwir-extend = { path = "crates/extend" }
+skwir-plugin-preview-structured = { path = "crates/plugins/preview-structured" }
+skwir-plugin-preview-fonts = { path = "crates/plugins/preview-fonts" }
+skwir-plugin-preview-models = { path = "crates/plugins/preview-models" }
+skwir-plugin-preview-circuits = { path = "crates/plugins/preview-circuits" }
+skwir-plugin-preview-email = { path = "crates/plugins/preview-email" }
+skwir-plugin-preview-comics = { path = "crates/plugins/preview-comics" }
+skwir-plugin-preview-documents = { path = "crates/plugins/preview-documents" }
+skwir-plugin-terminal = { path = "crates/plugins/terminal" }
+skwir-plugin-geo = { path = "crates/plugins/geo" }
+skwir-plugin-map-tiles = { path = "crates/plugins/map-tiles" }
+skwir-plugin-vim = { path = "crates/plugins/vim" }
 
 # UI toolkit (ADR-001). Pinned exactly: the API moves between releases.
 gpui = "=0.2.2"
@@ -133,7 +134,7 @@ jpeg-decoder = { version = "0.3", default-features = false }
 png = "0.17"
 crossbeam-channel = "0.5"
 parking_lot = "0.12"
-# Pinned: bibli-alloc sets two options by their number in the compiled
+# Pinned: skwir-alloc sets two options by their number in the compiled
 # mimalloc's enum (ADR-011); an upgrade is deliberate and its test re-run.
 mimalloc = { version = "=0.1.52", default-features = false }
 libmimalloc-sys = { version = "=0.1.49", default-features = false, features = ["extended"] }
@@ -187,9 +188,9 @@ codegen-units = 4
 [profile.bench]
 inherits = "release"
 
-# The module helper (`bibli-module-worker`, ADR-046) compiles a plugin's
+# The module helper (`skwir-module-worker`, ADR-046) compiles a plugin's
 # module with Cranelift when it starts: unoptimized, that takes seconds
-# where it takes a fraction of one, longer than bibli waits for a helper
+# where it takes a fraction of one, longer than skwir waits for a helper
 # to start (a test starts it unoptimized). Only the helper uses these.
 [profile.dev.package.cranelift-codegen]
 opt-level = 2
@@ -214,8 +215,8 @@ inherits = "release"
 debug = false
 strip = "debuginfo"
 
-# Vendored gpui 0.2.2 and xdg-mime 0.4.0 with bibli's patches (see each
-# one's README.bibli.md). Remove an entry and its directory once its
+# Vendored gpui 0.2.2 and xdg-mime 0.4.0 with skwir's patches (see each
+# one's README.skwir.md). Remove an entry and its directory once its
 # patches are upstream.
 [patch.crates-io]
 gpui = { path = "vendor/gpui" }

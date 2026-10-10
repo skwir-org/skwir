@@ -1,16 +1,16 @@
 //! A Word or `OpenDocument` file is a zip of parts, read as every package
-//! is (`bibli_platform::package`: bounded, members by normalized name),
+//! is (`skwir_platform::package`: bounded, members by normalized name),
 //! its part names compared without case as Word's are.
-use bibli_core::CancelToken;
-use bibli_platform::inspection::{self, limits};
-pub(crate) use bibli_platform::package::{is_zip, normalize};
+use skwir_core::CancelToken;
+use skwir_platform::inspection::{self, limits};
+pub(crate) use skwir_platform::package::{is_zip, normalize};
 use std::path::Path;
 
-pub(crate) struct Package(bibli_platform::package::Package);
+pub(crate) struct Package(skwir_platform::package::Package);
 
 impl Package {
     pub(crate) fn open(path: &Path, cancel: &CancelToken) -> anyhow::Result<Self> {
-        bibli_platform::package::Package::open(path, "The document", true, cancel).map(Self)
+        skwir_platform::package::Package::open(path, "The document", true, cancel).map(Self)
     }
 
     pub(crate) fn has(&self, name: &str) -> bool {
@@ -45,8 +45,8 @@ impl Package {
     /// A picture the document names by member in a part not shown: in
     /// its place, unread. Each turn to another part read every picture of
     /// the document for its size, a 256 KB head each, a drawing whole.
-    pub(crate) fn unread_picture(name: &str) -> Option<bibli_core::inspection::Picture> {
-        Some(bibli_core::inspection::Picture::Later {
+    pub(crate) fn unread_picture(name: &str) -> Option<skwir_core::inspection::Picture> {
+        Some(skwir_core::inspection::Picture::Later {
             key: normalize(name)?,
             width: 1,
             height: 1,
@@ -59,14 +59,14 @@ impl Package {
         &mut self,
         name: &str,
         cancel: &CancelToken,
-    ) -> Option<bibli_core::inspection::Picture> {
+    ) -> Option<skwir_core::inspection::Picture> {
         let key = normalize(name)?;
         let head = self.0.head(&key, limits::PICTURE_HEADER)?;
         let (width, height) = inspection::picture_size(&head).or_else(|| {
             let whole = self.read(&key, "Embedded image", cancel).ok()?;
             inspection::picture_size(&whole)
         })?;
-        Some(bibli_core::inspection::Picture::Later { key, width, height })
+        Some(skwir_core::inspection::Picture::Later { key, width, height })
     }
 }
 

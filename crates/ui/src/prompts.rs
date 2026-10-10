@@ -2,9 +2,9 @@
 //! question; finding a name; a passphrase) and the confirmation of what
 //! Undo cannot take back, or of quitting while a plan runs.
 
-use bibli_core::Plan;
-use bibli_core::command::Invocation;
 use gpui::{AnyElement, Context, Entity, FocusHandle, Subscription, Window, div, prelude::*, px};
+use skwir_core::Plan;
+use skwir_core::command::Invocation;
 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
@@ -27,11 +27,11 @@ pub enum PromptKind {
     /// `/`: a name in the pane, found as it is typed from where the cursor
     /// was (`origin`), after it or, `backward`, before it.
     Find {
-        origin: Option<bibli_core::EntryId>,
+        origin: Option<skwir_core::EntryId>,
         backward: bool,
     },
     InspectJump {
-        pane: bibli_core::workspace::PaneId,
+        pane: skwir_core::workspace::PaneId,
         generation: u64,
     },
     /// `ui.ask`: the text completes a command (`PromptState::ask`).

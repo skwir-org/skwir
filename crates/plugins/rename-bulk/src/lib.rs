@@ -1,4 +1,4 @@
-//! bibli plugin: rename-bulk. Turn a selection plus a rename spec into a
+//! skwir plugin: rename-bulk. Turn a selection plus a rename spec into a
 //! plan of renames that is safe to apply in order, even when new names
 //! collide with old ones (swaps and chains).
 //!
@@ -20,15 +20,15 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::time::SystemTime;
 
-use bibli_core::app::App;
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::entry::{Value, keys};
-use bibli_core::op::{
+use skwir_core::app::App;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::entry::{Value, keys};
+use skwir_core::op::{
     Change, EntryRef, Operation, Plan, RenameOrderError, RenameRequest, order_renames,
 };
-use bibli_core::plugin::Plugin;
-use bibli_core::registry::{KeyBinding, MenuItem};
-use bibli_core::workspace::PaneId;
+use skwir_core::plugin::Plugin;
+use skwir_core::registry::{KeyBinding, MenuItem};
+use skwir_core::workspace::PaneId;
 
 const ID: &str = "rename-bulk";
 
@@ -267,7 +267,7 @@ pub fn new_names(items: &[Item], spec: &RenameSpec) -> Result<Vec<OsString>, Bul
     let replacement = spec.replacement.clone().unwrap_or_default();
     let mut out = Vec::with_capacity(items.len());
     for (i, (entry, original, mtime)) in items.iter().enumerate() {
-        if i % LOOK_EVERY == 0 && bibli_core::scheduler::job_cancelled() {
+        if i % LOOK_EVERY == 0 && skwir_core::scheduler::job_cancelled() {
             return Err(BulkRenameError::Cancelled);
         }
         let name = original.to_string_lossy();
@@ -316,7 +316,7 @@ pub fn plan_bulk_rename_in(
         return Err(BulkRenameError::Empty);
     }
     let new = new_names(items, spec)?;
-    if bibli_core::scheduler::job_cancelled() {
+    if skwir_core::scheduler::job_cancelled() {
         return Err(BulkRenameError::Cancelled);
     }
     let requests: Vec<RenameRequest> = items
@@ -384,7 +384,7 @@ struct Args {
     /// The files to rename, by absolute path, in this order; the pane's
     /// selection, in its order, when omitted.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     #[serde(flatten)]
     spec: RenameSpec,
 }
@@ -414,10 +414,10 @@ fn plan_bulk(app: &App, a: Args) -> anyhow::Result<BulkRename> {
 /// as a listing shows them (a link's, what it leads to), and a target
 /// taken when a file not among them is there.
 fn plan_named(
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
     spec: &RenameSpec,
 ) -> anyhow::Result<BulkRename> {
-    let items: Vec<Item> = bibli_core::op::EntryArg::refs(entries)?
+    let items: Vec<Item> = skwir_core::op::EntryArg::refs(entries)?
         .into_iter()
         .map(|r| {
             let name = r.path.file_name().unwrap_or_default().to_owned();
@@ -452,7 +452,7 @@ fn plan_selection(
         .pane(pane)
         .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
     anyhow::ensure!(p.open.is_some(), "pane has no open location");
-    let dir = p.location().and_then(bibli_core::Location::path);
+    let dir = p.location().and_then(skwir_core::Location::path);
     let mut items = Vec::new();
     // In the order shown, folders opened in place included.
     for id in p.order().iter().copied() {
@@ -471,7 +471,7 @@ fn plan_selection(
         ));
     }
     if items.is_empty() {
-        return Err(bibli_core::command::NothingSelected.into());
+        return Err(skwir_core::command::NothingSelected.into());
     }
     let exists = |path: &Path| {
         dir.as_deref().is_some_and(|dir| path.parent() == Some(dir))
@@ -500,13 +500,13 @@ impl Plugin for RenameBulkPlugin {
         "Rename the selection from a template, a regex, and case rules"
     }
 
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Files
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Files
     }
 
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Write])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Write])
     }
     fn register(&self, app: &App) {
         app.commands.register::<Args, _>(
@@ -573,7 +573,7 @@ impl Plugin for RenameBulkPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::entry::FileId;
+    use skwir_core::entry::FileId;
     use std::sync::Arc;
 
     fn item(name: &str) -> Item {
@@ -771,7 +771,7 @@ mod tests {
             std::fs::write(&p, n.as_bytes()).unwrap();
             items.push((EntryRef::from_path(&p).unwrap(), (*n).into(), None));
         }
-        let app = App::new(bibli_core::app::AppConfig::ephemeral(
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(
             tmp.path().join("app"),
         ))
         .unwrap();
@@ -846,7 +846,7 @@ mod tests {
         let (tmp, _items, app) = setup(&["x1.txt", "x2.txt"]);
         app.plugins.add(Arc::new(RenameBulkPlugin), &app);
         let pane = app.workspace.read().active_id();
-        app.navigate(pane, &bibli_core::Location::from_path(tmp.path()))
+        app.navigate(pane, &skwir_core::Location::from_path(tmp.path()))
             .unwrap();
         assert!(app.pump_until_complete(pane, std::time::Duration::from_secs(5)));
         app.dispatch(&Invocation::new("select_all")).unwrap();

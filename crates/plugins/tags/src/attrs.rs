@@ -7,9 +7,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use bibli_core::entry::{Entry, Metadata, Provenance, Value, keys};
-use bibli_core::metadata::MetadataProvider;
-use bibli_core::notes::{NoteStores, Notes};
+use skwir_core::entry::{Entry, Metadata, Provenance, Value, keys};
+use skwir_core::metadata::MetadataProvider;
+use skwir_core::notes::{NoteStores, Notes};
 
 use crate::vocabulary::Vocabulary;
 
@@ -82,7 +82,7 @@ impl MetadataProvider for AttributesProvider {
     fn fill_listed(
         &self,
         dir: &Path,
-        listed: &bibli_core::metadata::Listed<'_>,
+        listed: &skwir_core::metadata::Listed<'_>,
         entries: &mut [Entry],
     ) {
         self.fill_with(dir, Some(listed), entries);
@@ -93,11 +93,11 @@ impl AttributesProvider {
     fn fill_with(
         &self,
         dir: &Path,
-        listed: Option<&bibli_core::metadata::Listed<'_>>,
+        listed: Option<&skwir_core::metadata::Listed<'_>>,
         entries: &mut [Entry],
     ) {
         let policy = self.stores.policy();
-        let files: Vec<bibli_core::notes::Named<'_>> = entries
+        let files: Vec<skwir_core::notes::Named<'_>> = entries
             .iter()
             .map(|e| (e.name.as_os_str(), Some(e.id), e.is_dir()))
             .collect();

@@ -1,25 +1,25 @@
-//! The bibli binary. Wires the core, the plugins, and the UI shell (Phase 2).
+//! The skwir binary. Wires the core, the plugins, and the UI shell (Phase 2).
 
 mod gpu;
 
 use std::time::Instant;
 
-use bibli_core::app::AppConfig;
-use bibli_core::{App, Location};
+use skwir_core::app::AppConfig;
+use skwir_core::{App, Location};
 
 fn main() -> anyhow::Result<()> {
     let started = Instant::now();
     // Before anything allocates much: freed memory goes back (ADR-011),
     // and a worker idle after its jobs gives back what they left.
-    bibli_alloc::tune();
-    bibli_core::scheduler::release_when_idle(bibli_alloc::collect);
+    skwir_alloc::tune();
+    skwir_core::scheduler::release_when_idle(skwir_alloc::collect);
     // Which build this is, for a helper's failure to say when the helper
     // is of another (`process::explain`).
-    bibli_platform::process::set_build(env!("BIBLI_BUILD"));
-    // `bibli mcp` and `bibli cmd` (ADR-043), before anything logs: their
+    skwir_platform::process::set_build(env!("SKWIR_BUILD"));
+    // `skwir mcp` and `skwir cmd` (ADR-043), before anything logs: their
     // standard output is the protocol, or the JSON a script reads.
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-    if let Some(code) = bibli::cli::run(&args) {
+    if let Some(code) = skwir::cli::run(&args) {
         std::process::exit(code);
     }
     // Before any GPU work: keep the Vulkan loader from mapping drivers for
@@ -39,7 +39,7 @@ fn main() -> anyhow::Result<()> {
 
     // Plugins: each registers its commands, bindings, menus, and places, and
     // can be toggled at runtime through `plugins.<id>.enabled` in settings.
-    for plugin in bibli::plugins() {
+    for plugin in skwir::plugins() {
         app.plugins.add(plugin, &app);
     }
 
@@ -57,12 +57,12 @@ fn main() -> anyhow::Result<()> {
                 Some(folder(arg.into()))
             }
         }
-        None => match bibli_core::tabs::last_tabs(&app.settings) {
+        None => match skwir_core::tabs::last_tabs(&app.settings) {
             Some(saved) if app.restore_tabs(&saved) => None,
             _ => {
                 let home =
-                    bibli_core::os_path::home().unwrap_or_else(|| std::path::PathBuf::from("/"));
-                Some(folder(bibli_core::settings::startup_folder(
+                    skwir_core::os_path::home().unwrap_or_else(|| std::path::PathBuf::from("/"));
+                Some(folder(skwir_core::settings::startup_folder(
                     &app.settings,
                     &home,
                 )))
@@ -72,5 +72,5 @@ fn main() -> anyhow::Result<()> {
     // The folder is not logged: it can come from a preference, and paths
     // are private.
     tracing::info!("starting");
-    bibli_ui::run_from(app, initial, started)
+    skwir_ui::run_from(app, initial, started)
 }

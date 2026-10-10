@@ -6,9 +6,9 @@
 //! own and takes no focus: it goes with what it removes, and a focused
 //! element that goes takes the keyboard with it.
 
-use bibli_core::command::Invocation;
-use bibli_core::workspace::PaneId;
 use gpui::{Context, Div, SharedString, Stateful, div, prelude::*, px};
+use skwir_core::command::Invocation;
+use skwir_core::workspace::PaneId;
 
 use crate::shell::Shell;
 use crate::theme::Theme;

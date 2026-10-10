@@ -5,14 +5,14 @@
 mod diagram;
 mod markdown;
 mod notebook;
-use bibli_core::{
+use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use bibli_platform::mime::Types;
-use bibli_platform::{inspection, rich_preview};
+use skwir_platform::mime::Types;
+use skwir_platform::{inspection, rich_preview};
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -25,15 +25,15 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Read Markdown and HTML files and Jupyter notebooks as documents, with headings, tables, code, Mermaid diagrams and local images; switch to the source at any time. HTML is inert: no scripts, fonts or remote content"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
-        vec![bibli_platform::diagram::WORKER.requirement("Mermaid diagrams drawn in Markdown")]
+    fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
+        vec![skwir_platform::diagram::WORKER.requirement("Mermaid diagrams drawn in Markdown")]
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
@@ -111,7 +111,7 @@ impl PreviewProvider for Provider {
         _view: &InspectRequest,
         key: &str,
         cancel: &CancelToken,
-    ) -> anyhow::Result<Option<bibli_core::thumbs::Image>> {
+    ) -> anyhow::Result<Option<skwir_core::thumbs::Image>> {
         let path = req.entry.resolve()?;
         if key.starts_with(notebook::OUTPUT) && format_of(req) == Some(Format::Notebook) {
             return Ok(notebook::decoded(&notebook::read(&path, cancel)?, key));
@@ -218,7 +218,7 @@ mod tests {
     fn formats_are_known_by_type() {
         let format = |name: &str| {
             format_of(&PreviewRequest {
-                entry: bibli_core::op::EntryRef::new(bibli_core::FileId { dev: 1, ino: 1 }, name),
+                entry: skwir_core::op::EntryRef::new(skwir_core::FileId { dev: 1, ino: 1 }, name),
                 mime: None,
                 page: 1,
                 seconds: None,
@@ -239,7 +239,7 @@ mod tests {
         let path = dir.path().join(name);
         std::fs::write(&path, bytes).unwrap();
         let request = PreviewRequest {
-            entry: bibli_core::op::EntryRef::from_path(&path).unwrap(),
+            entry: skwir_core::op::EntryRef::from_path(&path).unwrap(),
             mime: Some("text/markdown".into()),
             page: 1,
             seconds: None,
@@ -339,7 +339,7 @@ mod tests {
             .blocks
             .iter()
             .find_map(|block| match &block.picture {
-                Some(bibli_core::inspection::Picture::Later {
+                Some(skwir_core::inspection::Picture::Later {
                     key,
                     width: 1,
                     height: 1,
@@ -348,7 +348,7 @@ mod tests {
             })
             .expect("the plot is named for later");
         let request = PreviewRequest {
-            entry: bibli_core::op::EntryRef::from_path(&path).unwrap(),
+            entry: skwir_core::op::EntryRef::from_path(&path).unwrap(),
             mime: Some("application/x-ipynb+json".into()),
             page: 1,
             seconds: None,

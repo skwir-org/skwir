@@ -1,13 +1,13 @@
-//! Netpbm pictures from outside bibli (ADR-045, ADR-046, ADR-047): any
-//! of the six kinds (`P1` to `P6`) read through bibli, drawn to fit the
+//! Netpbm pictures from outside skwir (ADR-045, ADR-046, ADR-047): any
+//! of the six kinds (`P1` to `P6`) read through skwir, drawn to fit the
 //! size asked (nearest pixel) for a thumbnail; previewed as the PNG it
-//! makes of the picture, which bibli shows as any picture, or, for a
+//! makes of the picture, which skwir shows as any picture, or, for a
 //! file of several pictures one after another, a page each, drawn when
 //! shown. Every PNG is one this module writes itself: a module has no
 //! libraries but its own.
 
-use bibli_plugin_api::guest::{Host, Page, Plugin};
-use bibli_plugin_api::protocol::{ConvertParams, PageParams, ThumbnailParams};
+use skwir_plugin_api::guest::{Host, Page, Plugin};
+use skwir_plugin_api::protocol::{ConvertParams, PageParams, ThumbnailParams};
 
 /// The largest picture read: its header and its pixels.
 const LIMIT: u64 = 64 * 1024 * 1024;
@@ -341,7 +341,7 @@ fn crc32(bytes: &[u8]) -> u32 {
     !crc
 }
 
-bibli_plugin_api::export!(Netpbm);
+skwir_plugin_api::export!(Netpbm);
 
 #[cfg(test)]
 mod tests {

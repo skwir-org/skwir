@@ -1,6 +1,6 @@
 [package]
-name = "bibli-bench"
-description = "bibli: synthetic-tree generator and performance regression checks"
+name = "skwir-bench"
+description = "skwir: synthetic-tree generator and performance regression checks"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -8,24 +8,24 @@ license.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "bibli-bench"
+name = "skwir-bench"
 path = "src/main.rs"
 
 [features]
 default = ["mimalloc"]
 # The tuned mimalloc of ADR-011; build without it to profile with heaptrack.
-mimalloc = ["bibli-alloc/mimalloc"]
+mimalloc = ["skwir-alloc/mimalloc"]
 
 [dependencies]
-bibli-alloc.workspace = true
-bibli-core.workspace = true
-bibli-platform.workspace = true
-bibli-plugin-query.workspace = true
-bibli-plugin-tags.workspace = true
-bibli-plugin-xmp.workspace = true
-bibli-plugin-tagspaces.workspace = true
-bibli-plugin-name-tags.workspace = true
-bibli-plugin-usage.workspace = true
+skwir-alloc.workspace = true
+skwir-core.workspace = true
+skwir-platform.workspace = true
+skwir-plugin-query.workspace = true
+skwir-plugin-tags.workspace = true
+skwir-plugin-xmp.workspace = true
+skwir-plugin-tagspaces.workspace = true
+skwir-plugin-name-tags.workspace = true
+skwir-plugin-usage.workspace = true
 tempfile.workspace = true
 anyhow.workspace = true
 clap.workspace = true

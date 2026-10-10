@@ -8,10 +8,10 @@
 use std::path::Path;
 
 use anyhow::Context;
-use bibli_core::CancelToken;
-use bibli_core::geo::Bounds;
 use parking_lot::Mutex;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, types::ValueRef};
+use skwir_core::CancelToken;
+use skwir_core::geo::Bounds;
 
 use crate::archive::{About, Archive, Compression, Format, TILE_INFLATED, inflate};
 
@@ -30,7 +30,7 @@ const STEPS: i32 = 1000;
 
 impl MbTiles {
     pub(crate) fn open(path: &Path, cancel: &CancelToken) -> anyhow::Result<MbTiles> {
-        let uri = format!("{}?immutable=1", bibli_platform::uri::file_uri(path));
+        let uri = format!("{}?immutable=1", skwir_platform::uri::file_uri(path));
         let connection = Connection::open_with_flags(
             uri,
             OpenFlags::SQLITE_OPEN_READ_ONLY

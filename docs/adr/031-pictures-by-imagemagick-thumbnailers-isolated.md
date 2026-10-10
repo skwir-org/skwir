@@ -4,7 +4,7 @@ Status: accepted, 2026-10-03.
 
 ## Context
 
-bibli decodes the common pictures in the process, in pure Rust (PNG,
+skwir decodes the common pictures in the process, in pure Rust (PNG,
 JPEG, GIF, WebP, TIFF, OpenEXR…). Any other picture (HEIC, AVIF, JPEG
 XL, a camera's raw file, a Photoshop or GIMP image) is drawn by the
 desktop's thumbnailer for its type, for the grid and for the preview
@@ -23,7 +23,7 @@ Three ways of reading more were weighed:
 - **KDE's thumbnailers.** They are Qt plugins loaded by KIO's thumbnail
   worker, with no command to call: using them means a helper in C++
   linked to Qt and KDE Frameworks, for one desktop. What Dolphin draws
-  is already shared: it writes the freedesktop cache bibli reads first.
+  is already shared: it writes the freedesktop cache skwir reads first.
 - **ImageMagick.** Often installed where no matching thumbnailer is, and
   it reads what its build links: on the reference machine 259 formats,
   AVIF, HEIC, JPEG XL, JPEG 2000, raw files (LibRaw), PSD, XCF and DjVu
@@ -34,21 +34,21 @@ Three ways of reading more were weighed:
   long: formats that run scripts, read other files or addresses, or call
   other programs.
 
-Separately, the desktop's thumbnailers ran with bibli's own rights:
+Separately, the desktop's thumbnailers ran with skwir's own rights:
 every file, the network, the session. GNOME has run them inside
-bubblewrap since 3.26; bibli has had the same sandbox since ADR-030.
+bubblewrap since 3.26; skwir has had the same sandbox since ADR-030.
 
 ## Decision
 
 ### ImageMagick, the last resort
 
 A provider of a stage of its own, `Stage::LastResort`, after every
-other: the cache, bibli's decoders and the desktop's thumbnailers
+other: the cache, skwir's decoders and the desktop's thumbnailers
 (`Generate`), and the renderers plugins keep for their formats
-(`Fallback`, a DXF drawing's among them). The preview of a picture bibli
+(`Fallback`, a DXF drawing's among them). The preview of a picture skwir
 does not decode asks the desktop's thumbnailer first, then ImageMagick.
 
-It takes an `image/*` file bibli does not decode itself when ImageMagick
+It takes an `image/*` file skwir does not decode itself when ImageMagick
 reads its format. The format is the MIME database's answer, not a list
 kept beside it: the type's globs (`image/x-canon-cr2` is `*.cr2`, the
 format `CR2`), the file's own extension first when it is one of them,
@@ -61,7 +61,7 @@ the file's pixels are never asked for, whatever the type says
 (`magick::REFUSED`: PostScript and PDF, vector and scripted drawings,
 text, web pages, video, the network, the screen).
 
-It runs only isolated (`bibli_platform::sandbox`): without bubblewrap
+It runs only isolated (`skwir_platform::sandbox`): without bubblewrap
 it takes nothing. Each run writes its own security policy into its
 private folder and points ImageMagick at it:
 
@@ -77,7 +77,7 @@ workers: each holds a picture's pixels in floating point, a
 when it is cancelled. The first frame or page is drawn (a GIMP image
 flattened, its layers being frames), turned upright, in sRGB, shrunk by
 averaging to the size asked (`-scale`, 0.3 s cheaper than a filtered
-resize at 1024 pixels) and written as 8-bit PAM, which bibli reads
+resize at 1024 pixels) and written as 8-bit PAM, which skwir reads
 back within the bounds it reads a thumbnailer's output.
 
 A switch turns it off (`thumbnails.imagemagick`, Thumbnails, on by

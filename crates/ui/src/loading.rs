@@ -1,7 +1,7 @@
 //! One delayed wake per listing, including listings waiting for a drive to wake.
 use crate::shell::Shell;
-use bibli_core::{location::OpenLocation, workspace::PaneId};
 use gpui::{Context, Task};
+use skwir_core::{location::OpenLocation, workspace::PaneId};
 use std::{sync::Arc, time::Duration};
 
 #[derive(Default)]

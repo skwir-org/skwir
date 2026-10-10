@@ -4,7 +4,7 @@ Status: accepted, 2026-09-18
 
 ## Context
 
-bibli is an experimental file manager. The plan in `docs/PLAN.md` lists the
+skwir is an experimental file manager. The plan in `docs/PLAN.md` lists the
 principles; this record makes them binding and attaches numbers so that
 "fast" and "light" are checked by CI rather than argued about.
 
@@ -22,7 +22,7 @@ principles; this record makes them binding and attaches numbers so that
 4. **Harness the environment.** Reuse OS thumbnails, icon themes, the MIME
    database, bookmarks, existing indexes, and installed tools before building
    our own.
-5. **Small core.** Only what two plugins must agree on lives in `bibli-core`.
+5. **Small core.** Only what two plugins must agree on lives in `skwir-core`.
    Everything else is a plugin with a runtime toggle.
 6. **Agent-ready from the first commit.** Commands are serializable data.
    Mutations are plans reviewed before apply. Entries have stable identity.

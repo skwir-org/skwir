@@ -5,14 +5,14 @@ crate carries it (its copyright lines included). The MIT, BSD, ISC and
 Zlib licences ask for their notices in a program's distribution.
 
     tools/package/notices.py            # into target/notices/<package>/THIRD-PARTY-NOTICES
-    tools/package/notices.py a b        # programs a and b apart, the rest bibli's
+    tools/package/notices.py a b        # programs a and b apart, the rest skwir's
 
 Needs cargo-about (in the dev shell; `cargo install --locked cargo-about`
 elsewhere) and the crates fetched: it reads them offline, as the build
 left them. Which programs a package ships is tools/package/programs: the
 ones shipped apart (the arguments, else tools/package/optional) each a
-package of its own (`bibli-<name>-worker` in `bibli-<name>`), the others
-`bibli`'s.
+package of its own (`skwir-<name>-worker` in `skwir-<name>`), the others
+`skwir`'s.
 """
 
 import json
@@ -32,20 +32,20 @@ def lines(name):
 
 
 def packages(apart):
-    out = {"bibli": []}
+    out = {"skwir": []}
     for program in lines("programs"):
         if program in apart:
             name = program.removesuffix("-worker")
             out.setdefault(name, []).append(program)
         else:
-            out["bibli"].append(program)
+            out["skwir"].append(program)
     return out
 
 
 def manifest(program):
-    """The crate a program is built from: `bibli` is crates/bibli, a
-    helper `bibli-x-worker` crates/x-worker."""
-    folder = "bibli" if program == "bibli" else program.removeprefix("bibli-")
+    """The crate a program is built from: `skwir` is crates/skwir, a
+    helper `skwir-x-worker` crates/x-worker."""
+    folder = "skwir" if program == "skwir" else program.removeprefix("skwir-")
     path = ROOT / "crates" / folder / "Cargo.toml"
     if not path.exists():
         sys.exit(f"no crate for {program}: {path}")
@@ -77,13 +77,13 @@ def notices(package, programs):
     for program in programs:
         for key, crates in licences(program).items():
             merged.setdefault(key, set()).update(crates)
-    ours = {c for crates in merged.values() for c in crates if c.split()[0].startswith("bibli")}
+    ours = {c for crates in merged.values() for c in crates if c.split()[0].startswith("skwir")}
     out = [
         f"Third-party software in {package}",
         "",
         *textwrap.wrap(
             f"The programs of this package ({', '.join(programs)}) are built from "
-            "bibli's own code, under the package's licence, and the crates below, "
+            "skwir's own code, under the package's licence, and the crates below, "
             "each under the licence it is listed with, whose text follows.",
             72,
             break_on_hyphens=False,

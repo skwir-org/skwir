@@ -19,18 +19,18 @@ The first release, for Linux.
   of a folder as text, and what agents and plugins propose reviewed
   before they run.
 - **Previews**: text and code, Markdown, tables, structured files, PDFs
-  in bibli's reader, office documents, books, comics, e-mails,
+  in skwir's reader, office documents, books, comics, e-mails,
   notebooks, pictures, audio and video, fonts, 3D models, circuit boards,
   maps and tracks, archives, and any file's bytes.
 - **Views of data**: disk usage, a timeline, a map.
 - **A terminal** that follows the folder shown.
-- **Agents and scripts** (off by default): `bibli cmd` and `bibli mcp`,
+- **Agents and scripts** (off by default): `skwir cmd` and `skwir mcp`,
   with the permission layer between them and your files; private
   folders never leave the machine.
-- **Plugins from outside bibli**, as WebAssembly modules or isolated
+- **Plugins from outside skwir**, as WebAssembly modules or isolated
   programs. Their protocol is experimental: it may change before it is
   declared stable.
 
 Known limits: macOS and Windows builds compile but have not run
 ([how to help](docs/HELP-WANTED.md)); there is no screen reader support
-yet (the toolkit has none); Undo lasts while bibli runs.
+yet (the toolkit has none); Undo lasts while skwir runs.

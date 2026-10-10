@@ -14,8 +14,8 @@
 //! shared with the other mission formats in `mission`.
 use std::io::BufRead;
 
-use bibli_core::CancelToken;
-use bibli_core::geo::{Area, Datum, LatLon, Waypoint, WaypointKind};
+use skwir_core::CancelToken;
+use skwir_core::geo::{Area, Datum, LatLon, Waypoint, WaypointKind};
 
 use crate::collect::{self, Collector, Plan, PlanKind};
 use crate::mission::{Item, Position, Route, circle, fence_name, frame_datum};
@@ -217,7 +217,7 @@ pub fn read<R: BufRead>(
 pub(crate) mod tests {
     use super::*;
     use crate::mission::CIRCLE_POINTS;
-    use bibli_core::geo::LineKind;
+    use skwir_core::geo::LineKind;
 
     fn at(lat: f64, lon: f64) -> LatLon {
         LatLon::new(lat, lon).unwrap()

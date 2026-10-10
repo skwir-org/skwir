@@ -5,9 +5,9 @@
 //! alike and needs no layout of its own. A picture an output drew is named
 //! for later (`OUTPUT`) and decoded again from the notebook when it is seen.
 use base64::Engine as _;
-use bibli_core::{CancelToken, inspection::Picture, thumbs::Image};
-use bibli_platform::inspection::{self, limits};
 use serde_json::Value;
+use skwir_core::{CancelToken, inspection::Picture, thumbs::Image};
+use skwir_platform::inspection::{self, limits};
 use std::fmt::Write as _;
 use std::path::Path;
 

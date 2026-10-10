@@ -1,6 +1,6 @@
 [package]
-name = "bibli-pdf-worker"
-description = "On-demand PDFium document worker for bibli"
+name = "skwir-pdf-worker"
+description = "On-demand PDFium document worker for skwir"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
+skwir-core.workspace = true
 anyhow.workspace = true
 pdfium-render = { version = "=0.8.35", default-features = false, features = ["pdfium_6721"] }
 

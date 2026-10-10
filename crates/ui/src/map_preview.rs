@@ -11,8 +11,8 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use bibli_core::tiles::Layer;
 use gpui::{AnyElement, Context, MouseButton, Window, div, prelude::*};
+use skwir_core::tiles::Layer;
 
 use crate::elements::map::{self, Colors, Handles, Shapes, View};
 use crate::inspector::Display;
@@ -72,7 +72,7 @@ pub fn element(
         file,
         // The attribution's link reaches the desktop as every address does.
         on_link: Rc::new(move |url: String, _: &mut Window, _: &mut gpui::App| {
-            app.request_front(bibli_core::command::Invocation::with_args(
+            app.request_front(skwir_core::command::Invocation::with_args(
                 "ui.open_url",
                 &serde_json::json!({ "url": url }),
             ));
@@ -393,13 +393,13 @@ impl Shell {
         );
         let app = self.app.clone();
         self.app.scheduler.spawn(
-            bibli_core::scheduler::Priority::Visible,
+            skwir_core::scheduler::Priority::Visible,
             "map-open",
             self.app.lifetime().child(),
             move || {
-                if let Err(error) = bibli_platform::open::open_geo_uri(&uri) {
+                if let Err(error) = skwir_platform::open::open_geo_uri(&uri) {
                     app.notify(
-                        bibli_core::app::NotifyLevel::Error,
+                        skwir_core::app::NotifyLevel::Error,
                         format!("No application opens map locations: {error}"),
                     );
                 }

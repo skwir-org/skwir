@@ -1,10 +1,10 @@
-//! Mermaid diagrams, laid out by `bibli-mermaid-worker` in a process of its
-//! own: the layout engine is large, and bibli carries it only where the
+//! Mermaid diagrams, laid out by `skwir-mermaid-worker` in a process of its
+//! own: the layout engine is large, and skwir carries it only where the
 //! helper is installed. What comes back is SVG made for resvg, drawn like
 //! any drawing in a document (`inspection::image`).
 use std::path::{Path, PathBuf};
 
-use bibli_core::CancelToken;
+use skwir_core::CancelToken;
 
 use crate::inspection::limits;
 
@@ -13,8 +13,8 @@ pub const SOURCE: usize = 64 * 1024;
 
 /// The helper. Plugins that require it name this, not the literals.
 pub const WORKER: crate::process::Worker = crate::process::Worker {
-    variable: "BIBLI_MERMAID_WORKER",
-    executable: "bibli-mermaid-worker",
+    variable: "SKWIR_MERMAID_WORKER",
+    executable: "skwir-mermaid-worker",
 };
 
 /// Where the helper is, if it is.

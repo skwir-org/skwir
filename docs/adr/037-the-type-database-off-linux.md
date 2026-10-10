@@ -3,12 +3,12 @@
 Status: accepted, 2026-10-06 (Phase 5, step E; ADR-035). Proposed
 2026-10-05 with three options; the user chose: the system's own type
 registry when it can answer, shared-mime-info as the fallback.
-Amended the same day by ADR-042: bibli is under Apache-2.0 alone, which
-changes nothing here (the database stays data beside bibli).
+Amended the same day by ADR-042: skwir is under Apache-2.0 alone, which
+changes nothing here (the database stays data beside skwir).
 
 ## Context
 
-bibli types files with the desktop's database, shared-mime-info: by
+skwir types files with the desktop's database, shared-mime-info: by
 name (globs, weights, case), by content (magic, where a name is
 ambiguous), with its aliases, its hierarchy (`subclass-of`, which
 `kind:` and every provider's "takes files by type" rely on) and its
@@ -23,12 +23,12 @@ but read no bytes; Windows' registry maps an extension to a
 `Content Type` and a coarse `PerceivedType`, names it in Explorer's
 words, and has no hierarchy and no content sniffing worth the name
 (`FindMimeFromData` knows a few dozen web types). shared-mime-info's
-data is GPL-2.0-or-later, bibli MIT or Apache-2.0: it can be shipped
-beside bibli as data of its own (as every Linux distribution ships it
+data is GPL-2.0-or-later, skwir MIT or Apache-2.0: it can be shipped
+beside skwir as data of its own (as every Linux distribution ships it
 beside programs that read it), never built into it.
 
 The options were: (1) ship the database and read only it; (2) map
-each system's types onto bibli's and ship no GPL data; (3) a small
+each system's types onto skwir's and ship no GPL data; (3) a small
 permissive table.
 
 ## Decision
@@ -68,8 +68,8 @@ permissive table.
    - *Its hierarchy* (`lineage`) is the database's: macOS's
      conformance graph is mostly types without MIME names
      (`public.data`, `public.content`), Windows has none.
-2. **macOS and Windows packages carry the database** beside bibli as a
-   folder of its own (`share/mime`): only the compiled files bibli
+2. **macOS and Windows packages carry the database** beside skwir as a
+   folder of its own (`share/mime`): only the compiled files skwir
    reads, 180 KB (43 KB compressed), without the per-type XML (each
    type's name in every language, 7 MB installed), since there the
    system names types; with its licence and a note of where its source
@@ -80,7 +80,7 @@ permissive table.
    `update-mime-database` (`tools/package/mime-database.sh`; the dev
    shell has the program, a Mac Homebrew's), so what ships is always
    what the repository holds. Linux packages carry none: the desktop's
-   is the system's registry there. bibli finds it beside the program,
+   is the system's registry there. skwir finds it beside the program,
    a bundle's `Resources/share`, Homebrew's, or `$XDG_DATA_DIRS`, the
    first found.
 3. **The reader runs everywhere**: `xdg-mime` is vendored
@@ -95,7 +95,7 @@ permissive table.
 - A file can have another type on macOS or Windows than on Linux, and
   `kind:` can group a type otherwise there: what that system's other
   applications say, which is ADR-000's fourth principle. An extension
-  some program registered wrongly is typed wrongly in bibli too, as
+  some program registered wrongly is typed wrongly in skwir too, as
   in Explorer.
 - Without the database (a build run from source with none installed)
   macOS and Windows still type files by name and name them, but read

@@ -1,4 +1,4 @@
-//! bibli UI shell on GPUI (ADR-001).
+//! skwir UI shell on GPUI (ADR-001).
 //!
 //! The shell owns no file state: it reads the core's workspace during render
 //! and mutates only through commands. It re-renders when the core wakes it,
@@ -93,11 +93,11 @@ mod weight;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bibli_core::{App, Location};
 use gpui::{
     Application, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, font,
     prelude::*, px, size,
 };
+use skwir_core::{App, Location};
 
 use crate::shell::Shell;
 
@@ -153,11 +153,11 @@ fn pick_font(cx: &gpui::App, candidates: &[&'static str], label: &str) -> Shared
 }
 
 /// Dev-only PNG/JPEG decoder used to exercise the views before the platform
-/// providers exist. Enabled with `--features bibli-ui/dev-thumbs`.
+/// providers exist. Enabled with `--features skwir-ui/dev-thumbs`.
 #[cfg(feature = "dev-thumbs")]
 mod dev_thumbs {
-    use bibli_core::CancelToken;
-    use bibli_core::thumbs::{Image, ThumbRequest, ThumbnailProvider};
+    use skwir_core::CancelToken;
+    use skwir_core::thumbs::{Image, ThumbRequest, ThumbnailProvider};
 
     pub struct DevDecoder;
 
@@ -176,7 +176,7 @@ mod dev_thumbs {
             cancel: &CancelToken,
         ) -> anyhow::Result<Option<Image>> {
             let img =
-                bibli_platform::picture::decode(bibli_platform::picture::open(&req.entry.path)?)?;
+                skwir_platform::picture::decode(skwir_platform::picture::open(&req.entry.path)?)?;
             if cancel.is_cancelled() {
                 return Ok(None);
             }
@@ -199,7 +199,7 @@ pub fn run(app: Arc<App>, initial: Option<Location>) -> anyhow::Result<()> {
 /// Like [`run`], with the instant the process started, for first-frame timing.
 pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> anyhow::Result<()> {
     // Commands that may wait move their waiting off this thread.
-    bibli_core::scheduler::mark_window_thread(&app.scheduler);
+    skwir_core::scheduler::mark_window_thread(&app.scheduler);
     let (wake_tx, wake_rx) = flume::bounded::<()>(1);
     app.set_waker(Some(Arc::new(move || {
         let _ = wake_tx.try_send(());
@@ -232,11 +232,11 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
             let mono_font = pick_font(cx, MONO_CANDIDATES, "mono");
             tracing::debug!(ms = started.elapsed().as_millis() as u64, "font picked");
             let keymap =
-                keymap::install(&app, bibli_core::keymap::user_bindings(&app.settings), cx);
+                keymap::install(&app, skwir_core::keymap::user_bindings(&app.settings), cx);
             // A key that begins a binding of several strokes waits for the
             // next as long as it takes; `sequence.rs` shows what can follow.
             cx.set_key_sequence_timeout(None);
-            // Debug aid: `RUST_LOG=bibli_ui=trace` shows every keystroke GPUI saw.
+            // Debug aid: `RUST_LOG=skwir_ui=trace` shows every keystroke GPUI saw.
             cx.observe_keystrokes(|ev, _, _| {
                 tracing::trace!(keystroke = %ev.keystroke.unparse(), "keystroke");
             })
@@ -267,10 +267,10 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
                         titlebar: Some(TitlebarOptions {
-                            title: Some("bibli".into()),
+                            title: Some("skwir".into()),
                             ..Default::default()
                         }),
-                        app_id: Some("bibli".into()),
+                        app_id: Some("org.skwir.skwir".into()),
                         ..Default::default()
                     },
                     |window, cx| {
@@ -319,5 +319,5 @@ fn wind_down(app: &App) {
 
 /// Note where the window is, for "open the folders and tabs left open".
 pub(crate) fn remember_location(app: &App) {
-    bibli_core::tabs::remember(app);
+    skwir_core::tabs::remember(app);
 }

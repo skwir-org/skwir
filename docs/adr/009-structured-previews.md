@@ -44,7 +44,7 @@ email uses mail-parser (MIT/Apache-2.0), and font
 specimens use fontdue (MIT/Apache-2.0/Zlib) with ttf-parser. Fonts are rasterized on
 workers, never installed or registered permanently with the UI font system.
 
-Archive and comic previews invoke bibli-archive-worker, the only binary linked to
+Archive and comic previews invoke skwir-archive-worker, the only binary linked to
 libarchive (BSD). It lists structured metadata and streams a selected regular
 member to a fixed private output filename. It never uses archive member names as
 filesystem output paths, follows symlinks or extracts an entire archive. Archive
@@ -54,7 +54,7 @@ No 7-Zip fallback is added without an observed compatibility need.
 
 ## Bounds and limitations
 
-Every bound below is a named constant in `bibli_platform::inspection::limits`,
+Every bound below is a named constant in `skwir_platform::inspection::limits`,
 the single place plugins, helpers and the archive worker (which receives its
 bounds as command-line arguments) take them from. Container member and mail
 attachment byte views share the hexadecimal plugin's row formatting.
@@ -95,7 +95,7 @@ attachment byte views share the hexadecimal plugin's row formatting.
   drawing pass paints at most sixteen canvases' worth of pixels, so a malformed
   outline is skipped rather than allocated. Font collections show their first
   face. Email attachment lists show at most 100 attachments. No mail is sent.
-- These bounds constrain bibli-owned work; they are not OS resource limits on
+- These bounds constrain skwir-owned work; they are not OS resource limits on
   native libraries. Optional helpers may be omitted by packagers. Disabling a
   plugin withdraws its UI contribution; compiled Rust parsers remain in the binary.
 

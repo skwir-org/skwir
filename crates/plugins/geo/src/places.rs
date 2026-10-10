@@ -11,7 +11,7 @@
 //! - The `cities1000` list of `GeoNames` (CC BY 4.0, about 160 000 places
 //!   of more than 1 000 people: 2.9 MB packed, 4.2 MB once decoded), which
 //!   the user may install at
-//!   `$XDG_DATA_HOME/bibli/places/geonames.bin` or under a directory of
+//!   `$XDG_DATA_HOME/skwir/places/geonames.bin` or under a directory of
 //!   `$XDG_DATA_DIRS`. When one of those files reads, it is used instead of
 //!   the embedded places, not beside them: it holds every town Natural
 //!   Earth has, at a finer scale, and two lists of one town would name it
@@ -25,13 +25,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bibli_core::geo::{EARTH_RADIUS, LatLon};
 use parking_lot::Mutex;
+use skwir_core::geo::{EARTH_RADIUS, LatLon};
 
 static EMBEDDED: &[u8] = include_bytes!("../data/places.bin");
 const MAGIC: &[u8] = b"BPL1";
 /// Where an installed `GeoNames` file is, under a data directory.
-const INSTALLED: &str = "bibli/places/geonames.bin";
+const INSTALLED: &str = "skwir/places/geonames.bin";
 /// Coordinates are kept in 1e-5 degrees (about a metre).
 const UNIT: f64 = 1e-5;
 const PER_DEGREE: i32 = 100_000;
@@ -113,7 +113,7 @@ fn index() -> Arc<Index> {
 
 /// Where an installed `GeoNames` file may be, in the order they are tried.
 fn installed() -> Vec<PathBuf> {
-    bibli_platform::xdg::data_search()
+    skwir_platform::xdg::data_search()
         .into_iter()
         .map(|dir| dir.join(INSTALLED))
         .collect()

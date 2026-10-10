@@ -1,4 +1,4 @@
-// Which build of bibli this program is (`BIBLI_BUILD`).
+// Which build of skwir this program is (`SKWIR_BUILD`).
 include!("../../tools/build/identity.rs");
 
 fn main() {

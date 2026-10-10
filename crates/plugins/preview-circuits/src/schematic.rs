@@ -870,7 +870,7 @@ fn release(generator: Option<&str>, version: Option<u64>) -> Option<String> {
 }
 
 /// A schematic sheet: its picture and what it holds.
-pub fn schematic(text: &str, cancel: &bibli_core::CancelToken) -> anyhow::Result<Found> {
+pub fn schematic(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Found> {
     let (mut reader, head) = Reader::open(text)?;
     anyhow::ensure!(head == "kicad_sch", "Not a KiCad schematic");
     let mut canvas = Canvas::new(None);
@@ -895,7 +895,7 @@ pub fn schematic(text: &str, cancel: &bibli_core::CancelToken) -> anyhow::Result
     while let Some(node) = reader.next_item()? {
         read += 1;
         if read.is_multiple_of(256) {
-            bibli_platform::inspection::check(cancel)?;
+            skwir_platform::inspection::check(cancel)?;
         }
         item(&mut canvas, &mut facts, &node, &symbols);
     }
@@ -967,7 +967,7 @@ pub fn library(text: &str) -> anyhow::Result<Found> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::CancelToken;
+    use skwir_core::CancelToken;
 
     const SCHEMATIC: &str = r##"(kicad_sch (version 20250114) (generator "eeschema") (generator_version "9.0")
         (paper "A4")
@@ -1025,7 +1025,7 @@ mod tests {
                 "Sheets: 1"
             ]
         );
-        let drawn = bibli_platform::inspection::drawing(svg.as_bytes(), Some(400)).unwrap();
+        let drawn = skwir_platform::inspection::drawing(svg.as_bytes(), Some(400)).unwrap();
         assert_eq!(drawn.width.max(drawn.height), 400);
     }
 

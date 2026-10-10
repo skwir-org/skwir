@@ -1,8 +1,8 @@
-//! bibli plugin: thumbnails. Registers, in order, the freedesktop cache
+//! skwir plugin: thumbnails. Registers, in order, the freedesktop cache
 //! (read and write-back), the in-process image decoder, the desktop's
 //! installed thumbnailers, and `ImageMagick` as the last resort, into the
 //! core thumbnail service. The same thumbnailers, then `ImageMagick`,
-//! preview the pictures bibli does not decode (`Pictures`). Thumbnailers
+//! preview the pictures skwir does not decode (`Pictures`). Thumbnailers
 //! and `ImageMagick` run isolated (ADR-031).
 //!
 //! Settings: `thumbnails.write_cache` (bool, default true),
@@ -12,16 +12,16 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use bibli_core::App;
-use bibli_core::cancel::CancelToken;
-use bibli_core::plugin::{Plugin, Requirement};
-use bibli_core::preview::{Preview, PreviewInfo, PreviewProvider, PreviewRequest};
-use bibli_core::scheduler::Priority;
-use bibli_core::settings::SettingSpec;
-use bibli_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
-use bibli_platform::magick::Magick;
-use bibli_platform::thumb_providers::{self, FreedesktopCache, ImageDecoder, Thumbnailers};
-use bibli_platform::thumbnails::{ThumbCache, ThumbSize};
+use skwir_core::App;
+use skwir_core::cancel::CancelToken;
+use skwir_core::plugin::{Plugin, Requirement};
+use skwir_core::preview::{Preview, PreviewInfo, PreviewProvider, PreviewRequest};
+use skwir_core::scheduler::Priority;
+use skwir_core::settings::SettingSpec;
+use skwir_core::thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider};
+use skwir_platform::magick::Magick;
+use skwir_platform::thumb_providers::{self, FreedesktopCache, ImageDecoder, Thumbnailers};
+use skwir_platform::thumbnails::{ThumbCache, ThumbSize};
 
 const ID: &str = "thumbnails";
 const WRITE_CACHE: &str = "thumbnails.write_cache";
@@ -101,11 +101,11 @@ impl ThumbnailProvider for Converted {
 fn mime_of(req: &ThumbRequest) -> Option<String> {
     match &req.mime {
         Some(mime) => Some(mime.to_string()),
-        None => bibli_platform::mime::by_name(req.entry.path.file_name()?).map(|m| m.0),
+        None => skwir_platform::mime::by_name(req.entry.path.file_name()?).map(|m| m.0),
     }
 }
 
-/// Pictures bibli does not decode itself (HEIF, AVIF, JPEG XL, a camera's
+/// Pictures skwir does not decode itself (HEIF, AVIF, JPEG XL, a camera's
 /// raw file) previewed as the desktop's thumbnailer draws them, else as
 /// `ImageMagick` does, at the largest size the thumbnail cache knows, and
 /// kept there like any thumbnail so the next look, and other applications,
@@ -155,7 +155,7 @@ impl PreviewProvider for Pictures {
         // Only a picture has a camera's size to read.
         let written = mime
             .starts_with("image/")
-            .then(|| bibli_platform::exif::dimensions(&path))
+            .then(|| skwir_platform::exif::dimensions(&path))
             .flatten();
         let (width, height) = own_size(written, (image.width, image.height));
         Ok(Preview {
@@ -172,9 +172,9 @@ impl PreviewProvider for Pictures {
 fn pictured(mime: &str) -> bool {
     mime.starts_with("image/")
         || mime.starts_with("model/")
-        || bibli_platform::mime::is_kind(
-            &bibli_platform::mime::Mime(mime.to_owned()),
-            bibli_platform::mime::Kind::Image,
+        || skwir_platform::mime::is_kind(
+            &skwir_platform::mime::Mime(mime.to_owned()),
+            skwir_platform::mime::Kind::Image,
         )
 }
 
@@ -270,10 +270,10 @@ impl ThumbnailsPlugin {
         app.thumbnails.register(ID, Arc::new(ImageDecoder));
         // The system's own (Quick Look, the Windows shell; ADR-041), where
         // a Linux desktop's thumbnailers are.
-        if bibli_platform::system_thumbs::AVAILABLE {
+        if skwir_platform::system_thumbs::AVAILABLE {
             app.thumbnails.register(
                 ID,
-                Arc::new(bibli_platform::system_thumbs::SystemThumbnails),
+                Arc::new(skwir_platform::system_thumbs::SystemThumbnails),
             );
         }
         app.thumbnails.register(
@@ -310,8 +310,8 @@ impl Plugin for ThumbnailsPlugin {
         "Thumbnails from the desktop cache, an image decoder, installed thumbnailers and ImageMagick"
     }
 
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
 
     fn requirements(&self) -> Vec<Requirement> {
@@ -320,7 +320,7 @@ impl Plugin for ThumbnailsPlugin {
             "Pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, raw files…)",
         )]
         .into_iter()
-        .chain(bibli_platform::sandbox::PROGRAM.map(|program| {
+        .chain(skwir_platform::sandbox::PROGRAM.map(|program| {
             Requirement::program(program, "Thumbnailers and ImageMagick run isolated")
         }))
         .collect()
@@ -337,9 +337,9 @@ impl Plugin for ThumbnailsPlugin {
         }
     }
 
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
     }
     fn register(&self, app: &App) {
         app.settings.declare(SettingSpec::toggle(
@@ -399,10 +399,10 @@ impl Plugin for ThumbnailsPlugin {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
-    use bibli_core::app::AppConfig;
-    use bibli_core::op::EntryRef;
-    use bibli_core::scheduler::{Priority, Scheduler};
-    use bibli_core::thumbs::{
+    use skwir_core::app::AppConfig;
+    use skwir_core::op::EntryRef;
+    use skwir_core::scheduler::{Priority, Scheduler};
+    use skwir_core::thumbs::{
         Image, ThumbRequest, ThumbSize, ThumbState, ThumbnailProvider, Thumbnails,
     };
     use std::path::PathBuf;
@@ -448,7 +448,7 @@ mod tests {
                 .starts_with(&["freedesktop-cache", "image-decoder"])
         );
 
-        let src = bibli_core::os_path::canonical(images.join("img-00042.png")).unwrap();
+        let src = skwir_core::os_path::canonical(images.join("img-00042.png")).unwrap();
         let req = ThumbRequest {
             entry: EntryRef::from_path(&src).unwrap(),
             mime: None,
@@ -461,14 +461,14 @@ mod tests {
         let cached = cache
             .path()
             .join("thumbnails/normal")
-            .join(format!("{}.png", bibli_platform::thumbnails::key(&src)));
+            .join(format!("{}.png", skwir_platform::thumbnails::key(&src)));
         assert!(
             cached.exists(),
             "generated thumbnail was written back to the cache"
         );
         assert_eq!(
-            bibli_platform::thumbnails::png_text_chunk(&cached, "Software").as_deref(),
-            Some("bibli")
+            skwir_platform::thumbnails::png_text_chunk(&cached, "Software").as_deref(),
+            Some("skwir")
         );
         assert!(app.plugins.set_enabled(ID, false, &app));
         assert!(app.thumbnails.provider_ids().is_empty());
@@ -487,7 +487,7 @@ mod tests {
         fn thumbnail(
             &self,
             req: &ThumbRequest,
-            _: &bibli_core::CancelToken,
+            _: &skwir_core::CancelToken,
         ) -> anyhow::Result<Option<Image>> {
             std::thread::sleep(Duration::from_millis(3));
             self.0.lock().push(req.entry.id.ino);
@@ -505,7 +505,7 @@ mod tests {
         let slow = Arc::new(Slow(parking_lot::Mutex::new(Vec::new())));
         t.register("test", slow.clone());
         let req = |ino: u64| ThumbRequest {
-            entry: EntryRef::new(bibli_core::FileId { dev: 1, ino }, format!("/x/{ino}")),
+            entry: EntryRef::new(skwir_core::FileId { dev: 1, ino }, format!("/x/{ino}")),
             mime: None,
             mtime: None,
             size: ThumbSize::Normal,
@@ -539,8 +539,8 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_picture_bibli_cannot_decode_is_previewed_as_its_thumbnailer_draws_it() {
-        use bibli_platform::thumb_providers::ThumbnailerEntry;
+    fn a_picture_skwir_cannot_decode_is_previewed_as_its_thumbnailer_draws_it() {
+        use skwir_platform::thumb_providers::ThumbnailerEntry;
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         // A "HEIF" photo that is a PNG inside, and a thumbnailer that
@@ -580,7 +580,7 @@ mod tests {
         };
         assert!(
             !pictures.accepts(&request("image/png")),
-            "bibli decodes a PNG itself"
+            "skwir decodes a PNG itself"
         );
         assert!(!pictures.accepts(&request("image/jxl")), "nothing draws it");
         assert!(
@@ -611,9 +611,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn imagemagick_draws_last_what_no_thumbnailer_could() {
-        use bibli_platform::thumb_providers::ThumbnailerEntry;
+        use skwir_platform::thumb_providers::ThumbnailerEntry;
         use std::os::unix::fs::PermissionsExt;
-        if !bibli_platform::sandbox::available() {
+        if !skwir_platform::sandbox::available() {
             eprintln!("bubblewrap cannot isolate here");
             return;
         }

@@ -1,4 +1,4 @@
-//! bibli plugin: shelf. Collect entries from any location into a tray, then
+//! skwir plugin: shelf. Collect entries from any location into a tray, then
 //! move, copy, or trash them all at once into wherever you are. The shelf is
 //! also a virtual location (`shelf:`) so any view can show it.
 
@@ -7,22 +7,22 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
-use bibli_core::app::{App, PaneArg};
-use bibli_core::command::{Invocation, NoArgs, Outcome};
-use bibli_core::entry::{Entry, EntryId, EntryKind};
-use bibli_core::fs::hydrate_paths;
-use bibli_core::fs::stat::stat_path;
-use bibli_core::location::{
+use crossbeam_channel::Receiver;
+use parking_lot::Mutex;
+use skwir_core::app::{App, PaneArg};
+use skwir_core::command::{Invocation, NoArgs, Outcome};
+use skwir_core::entry::{Entry, EntryId, EntryKind};
+use skwir_core::fs::hydrate_paths;
+use skwir_core::fs::stat::stat_path;
+use skwir_core::location::{
     EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
     Tool, ToolPane, Verb, Verbs,
 };
-use bibli_core::op::{Change, Copy, EntryRef, Move, Operation, Plan, Trash};
-use bibli_core::plugin::Plugin;
-use bibli_core::registry::{KeyBinding, MenuItem, Place};
-use bibli_core::scheduler::Priority;
-use bibli_core::workspace::PaneId;
-use crossbeam_channel::Receiver;
-use parking_lot::Mutex;
+use skwir_core::op::{Change, Copy, EntryRef, Move, Operation, Plan, Trash};
+use skwir_core::plugin::Plugin;
+use skwir_core::registry::{KeyBinding, MenuItem, Place};
+use skwir_core::scheduler::Priority;
+use skwir_core::workspace::PaneId;
 
 const ID: &str = "shelf";
 /// The location scheme of the virtual shelf listing.
@@ -36,9 +36,9 @@ pub const TALLY: &str = "shelf.items";
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ShelfItem {
     pub id: EntryId,
-    #[serde(with = "bibli_core::os_path")]
+    #[serde(with = "skwir_core::os_path")]
     pub path: PathBuf,
-    #[serde(with = "bibli_core::os_path")]
+    #[serde(with = "skwir_core::os_path")]
     pub name: OsString,
     /// As the listing it came from knew it; a stat refines it.
     #[serde(skip)]
@@ -74,7 +74,7 @@ impl State {
             app.tallies.set(
                 ID,
                 TALLY,
-                bibli_core::tally::Tally {
+                skwir_core::tally::Tally {
                     label: TITLE.into(),
                     count: self.items.len() as u64,
                     open: Some(Invocation::new("shelf.open")),
@@ -119,7 +119,7 @@ struct AddArgs {
     /// or the clipboard's, pasted; a script's or an agent's, by absolute
     /// path), instead of a pane's.
     #[serde(default)]
-    entries: Vec<bibli_core::op::EntryArg>,
+    entries: Vec<skwir_core::op::EntryArg>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -179,7 +179,7 @@ fn follow(state: &Arc<Mutex<State>>, changes: &[Change], app: &App) {
     let mut gone = Vec::new();
     let mut renamed = Vec::new();
     let mut moved = Vec::new();
-    let follow = bibli_core::op::Follow::new(changes);
+    let follow = skwir_core::op::Follow::new(changes);
     for item in &mut s.items {
         let Some(path) = follow.through(&item.path).at else {
             gone.push(item.id);
@@ -269,7 +269,7 @@ fn selection_items(
         ids.to_vec()
     };
     if chosen.is_empty() {
-        return Err(bibli_core::command::NothingSelected.into());
+        return Err(skwir_core::command::NothingSelected.into());
     }
     Ok(chosen
         .into_iter()
@@ -389,7 +389,7 @@ impl OpenLocation for ShelfLocation {
             return;
         }
         // A job for each slice, side by side on the workers.
-        for items in items.chunks(bibli_core::fs::HYDRATE_JOB) {
+        for items in items.chunks(skwir_core::fs::HYDRATE_JOB) {
             let items = items.to_vec();
             let sink = self.sink.clone();
             let metadata = Arc::clone(&self.ctx.metadata);
@@ -530,13 +530,13 @@ impl Plugin for ShelfPlugin {
         "Collect entries from anywhere and move, copy, or trash them together"
     }
 
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Files
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Files
     }
 
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Write])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Write])
     }
     fn register(&self, app: &App) {
         {
@@ -571,7 +571,7 @@ impl Plugin for ShelfPlugin {
                 let items = if a.entries.is_empty() {
                     selection_items(app, app.pane_or_active(a.pane), &a.ids)?
                 } else {
-                    bibli_core::op::EntryArg::refs(a.entries)?
+                    skwir_core::op::EntryArg::refs(a.entries)?
                         .iter()
                         .filter_map(dropped_item)
                         .collect()
@@ -736,12 +736,12 @@ impl Plugin for ShelfPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::app::AppConfig;
+    use skwir_core::app::AppConfig;
     use std::time::Duration;
 
     fn setup() -> (tempfile::TempDir, Arc<App>, PaneId, PathBuf) {
         // Trashed in a test: on the home filesystem, like the user's files.
-        let base = std::env::home_dir().unwrap().join(".cache/bibli-tests");
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         let tmp = tempfile::tempdir_in(base).unwrap();
         let src = tmp.path().join("src");
@@ -842,7 +842,7 @@ mod tests {
 
     #[test]
     fn move_here_plan_moves_files_and_skips_items_already_there() {
-        if bibli_core::system::under_wine("trashing through the shell") {
+        if skwir_core::system::under_wine("trashing through the shell") {
             return;
         }
         let (tmp, app, pane, src) = setup();
@@ -902,13 +902,13 @@ mod tests {
         select(&app, pane, &["a.txt"]);
         app.dispatch(&Invocation::new("shelf.add")).unwrap();
         let open = app.open_location(&Location::parse("shelf:")).unwrap();
-        let mut listing = bibli_core::Listing::default();
+        let mut listing = skwir_core::Listing::default();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !listing.is_complete() {
             listing.apply(open.events().recv_deadline(deadline).unwrap());
         }
         let stranger = EntryId {
-            file: bibli_core::FileId { dev: 0, ino: 1 },
+            file: skwir_core::FileId { dev: 0, ino: 1 },
             at: 0,
         };
         let v = value(
@@ -930,7 +930,7 @@ mod tests {
         let shelf = Location::parse("shelf:");
         // It reads as one place in the address, under its own glyph.
         let crumbs = app.trail(&shelf).unwrap().crumbs;
-        assert_eq!(crumbs, [bibli_core::Crumb::new("Shelf", shelf.clone())]);
+        assert_eq!(crumbs, [skwir_core::Crumb::new("Shelf", shelf.clone())]);
         assert_eq!(app.location_icon(&shelf), Some("shelf"));
         // Its buttons put its files in the other pane's folder.
         let tools: Vec<_> = app
@@ -944,16 +944,16 @@ mod tests {
             [
                 (
                     "shelf.move_here".to_owned(),
-                    bibli_core::ToolPane::OtherFolder
+                    skwir_core::ToolPane::OtherFolder
                 ),
                 (
                     "shelf.copy_here".to_owned(),
-                    bibli_core::ToolPane::OtherFolder
+                    skwir_core::ToolPane::OtherFolder
                 ),
             ]
         );
         let open = app.open_location(&shelf).unwrap();
-        let mut listing = bibli_core::Listing::default();
+        let mut listing = skwir_core::Listing::default();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !listing.is_complete() {
             listing.apply(open.events().recv_deadline(deadline).unwrap());

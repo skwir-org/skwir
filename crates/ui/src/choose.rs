@@ -16,9 +16,9 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bibli_core::command::{Invocation, Outcome};
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
 use serde::Deserialize;
+use skwir_core::command::{Invocation, Outcome};
 
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;

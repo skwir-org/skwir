@@ -1,16 +1,16 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: bibli
-Source: https://github.com/venator/bibli
-Comment: bibli-poppler-worker, bibli's own code (Apache-2.0), links
+Upstream-Name: skwir
+Source: https://github.com/skwir-org/skwir
+Comment: skwir-poppler-worker, skwir's own code (Apache-2.0), links
  Poppler, whose core is under the GPL version 2 or 3 and the rest under
  version 2 or later: code under the Apache License can join it only
  under the GPL version 3, so the program is distributed under it
- (ADR-042), its source being bibli's repository and Poppler's. bibli
+ (ADR-042), its source being skwir's repository and Poppler's. skwir
  itself links neither: it speaks to it over its worker protocol
  (ADR-005).
 
 Files: *
-Copyright: The bibli authors; the Poppler developers
+Copyright: The skwir authors; the Poppler developers
 License: GPL-3
 
 License: GPL-3

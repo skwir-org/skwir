@@ -18,13 +18,13 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bibli_core::command::Invocation;
-use bibli_core::thumbs::ThumbSize;
-use bibli_core::{EntryId, Location};
 use gpui::{
     AnyElement, Context, ExternalPaths, ScrollHandle, ScrollStrategy, UniformListScrollHandle,
     Window, div, img, prelude::*, px, uniform_list,
 };
+use skwir_core::command::Invocation;
+use skwir_core::thumbs::ThumbSize;
+use skwir_core::{EntryId, Location};
 
 use crate::dnd;
 use crate::shell::Shell;
@@ -73,7 +73,7 @@ pub struct BoardView {
     columns_of: Option<(ColumnsOf, Vec<Column>, Vec<EntryId>, u64)>,
 }
 
-type ColumnsOf = (u64, u64, u64, bibli_core::SortSpec, u64, u64);
+type ColumnsOf = (u64, u64, u64, skwir_core::SortSpec, u64, u64);
 
 impl BoardView {
     /// The column drawn holding `id`, and its card there; `None` for the
@@ -141,8 +141,8 @@ impl BoardView {
             };
             let color = e
                 .metadata
-                .value(bibli_core::entry::keys::PLACE_TAG)
-                .and_then(bibli_core::Value::as_str)
+                .value(skwir_core::entry::keys::PLACE_TAG)
+                .and_then(skwir_core::Value::as_str)
                 .map(|tag| shell.tag_colors.of(tag));
             let opened = pane.expanded().iter().find(|o| o.at == id);
             if opened.is_none() {

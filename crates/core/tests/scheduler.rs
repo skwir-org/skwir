@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use bibli_core::cancel::CancelToken;
-use bibli_core::scheduler::{Priority, Scheduler};
+use skwir_core::cancel::CancelToken;
+use skwir_core::scheduler::{Priority, Scheduler};
 
 #[test]
 fn a_panicking_job_leaves_the_pool_able_to_run_later_jobs() {

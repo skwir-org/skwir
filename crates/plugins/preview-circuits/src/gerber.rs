@@ -785,7 +785,7 @@ pub struct Drawn {
 }
 
 /// A Gerber file drawn; `name` guesses its layer when it says nothing.
-pub fn draw(text: &str, name: &str, cancel: &bibli_core::CancelToken) -> anyhow::Result<Drawn> {
+pub fn draw(text: &str, name: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Drawn> {
     let mut format = Format {
         integers: 3,
         decimals: 6,
@@ -825,7 +825,7 @@ pub fn draw(text: &str, name: &str, cancel: &bibli_core::CancelToken) -> anyhow:
         }
         statements += 1;
         if statements.is_multiple_of(65_536) {
-            bibli_platform::inspection::check(cancel)?;
+            skwir_platform::inspection::check(cancel)?;
         }
         if bytes[i] == b'%' {
             let end = text[i + 1..].find('%').map_or(bytes.len(), |e| i + 1 + e);
@@ -1242,7 +1242,7 @@ fn finish(image: &Image) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::CancelToken;
+    use skwir_core::CancelToken;
 
     #[test]
     fn a_kicad_layer_with_a_macro_a_region_and_clear_polarity() {
@@ -1268,7 +1268,7 @@ G36*\nX0Y10000000D02*\nX10000000Y10000000D01*\nX10000000Y20000000D01*\nX0Y200000
                 ("Apertures".to_owned(), "2".to_owned())
             ]
         );
-        let raster = bibli_platform::inspection::drawing(svg.as_bytes(), Some(200)).unwrap();
+        let raster = skwir_platform::inspection::drawing(svg.as_bytes(), Some(200)).unwrap();
         assert_eq!(raster.width.max(raster.height), 200);
     }
 

@@ -14,9 +14,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bibli_core::CancelToken;
-use bibli_core::tiles::{Layer, NoTile, Palette, SourceInfo, TileRequest, Tiles};
 use gpui::RenderImage;
+use skwir_core::CancelToken;
+use skwir_core::tiles::{Layer, NoTile, Palette, SourceInfo, TileRequest, Tiles};
 
 /// How long a tile that failed is left blank before it is asked again.
 const RETRY: std::time::Duration = std::time::Duration::from_secs(30);
@@ -68,7 +68,7 @@ pub struct Failure {
 
 /// How long a view waited for its tiles: from the first frame that lacked
 /// one to the first that had them all. Traced at debug level
-/// (`RUST_LOG=bibli_ui::map_tiles=debug`), the measure of this module.
+/// (`RUST_LOG=skwir_ui::map_tiles=debug`), the measure of this module.
 struct Waiting {
     since: std::time::Instant,
     asked: usize,
@@ -98,7 +98,7 @@ impl Backgrounds {
 
 pub struct TileStore {
     tiles: Arc<Tiles>,
-    wake: bibli_core::location::Waker,
+    wake: skwir_core::location::Waker,
     tx: flume::Sender<Arrival>,
     rx: flume::Receiver<Arrival>,
     entries: HashMap<Key, Entry>,
@@ -109,7 +109,7 @@ pub struct TileStore {
     /// Let go, waiting for a window to evict their atlas entries.
     evicted: Vec<Arc<RenderImage>>,
     info: Option<(u64, Option<SourceInfo>, Option<Backgrounds>)>,
-    app: Arc<bibli_core::App>,
+    app: Arc<skwir_core::App>,
     /// Why the last tile failed, until someone says so.
     pub failure: Option<Failure>,
     /// A view waiting for tiles, measured until it has them all.
@@ -122,7 +122,7 @@ pub struct TileStore {
 }
 
 impl TileStore {
-    pub fn new(app: &Arc<bibli_core::App>) -> TileStore {
+    pub fn new(app: &Arc<skwir_core::App>) -> TileStore {
         let (tx, rx) = flume::unbounded();
         TileStore {
             tiles: Arc::clone(&app.tiles),
@@ -163,7 +163,7 @@ impl TileStore {
             .and_then(|key| {
                 let spec = self.app.settings.spec(key)?;
                 let current = self.app.settings.text(key).unwrap_or_else(|| {
-                    bibli_core::settings::SettingSpec::format_value(&spec.default)
+                    skwir_core::settings::SettingSpec::format_value(&spec.default)
                 });
                 let choices = spec
                     .constraints

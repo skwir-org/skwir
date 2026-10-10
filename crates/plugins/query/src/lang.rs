@@ -35,7 +35,7 @@
 //! (`image`, `video`, `audio`, `document`, `spreadsheet`, `presentation`,
 //! `text`, `archive`, `font`, `program`, `folder`; plurals and synonyms
 //! such as `music` or `photos` too), several separated by commas:
-//! `kind:image,video`. See [`bibli_platform::mime::Kind`].
+//! `kind:image,video`. See [`skwir_platform::mime::Kind`].
 //!
 //! Links: a link is matched as what it opens, as it is shown. `type:`,
 //! `kind:`, `mime:`, the sizes and times, `content:` and the places are
@@ -75,10 +75,10 @@ use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bibli_core::entry::{EntryKind, Metadata, Value, keys};
-use bibli_platform::calendar::{Calendar, Period, civil_day};
 use globset::{Glob, GlobMatcher};
 use grep_regex::RegexMatcher;
+use skwir_core::entry::{EntryKind, Metadata, Value, keys};
+use skwir_platform::calendar::{Calendar, Period, civil_day};
 
 /// A parsed query: the boolean expression plus walk options.
 #[derive(Clone, Debug)]
@@ -218,7 +218,7 @@ pub enum Term {
     Type(KindSel),
     Mime(GlobMatcher, String),
     /// Any of these kinds.
-    Kind(Vec<bibli_platform::mime::Kind>),
+    Kind(Vec<skwir_platform::mime::Kind>),
     Size {
         min: Option<u64>,
         max: Option<u64>,
@@ -248,7 +248,7 @@ pub enum Term {
     Content(ContentPat),
     /// Within `radius` metres of `at`.
     Near {
-        at: bibli_core::geo::LatLon,
+        at: skwir_core::geo::LatLon,
         radius: f64,
         text: String,
     },
@@ -512,7 +512,7 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
     }
     let root_given = root.is_some();
     let root =
-        root.unwrap_or_else(|| bibli_core::os_path::home().unwrap_or_else(|| PathBuf::from("/")));
+        root.unwrap_or_else(|| skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/")));
     Ok(Query {
         expr,
         root,
@@ -529,15 +529,15 @@ fn expand_root(w: &Word) -> PathBuf {
     let v = &w.value[..];
     if !w.quoted
         && (v == b"~" || v.starts_with(b"~/") || (cfg!(windows) && v.starts_with(b"~\\")))
-        && let Some(home) = bibli_core::os_path::home()
+        && let Some(home) = skwir_core::os_path::home()
     {
         return if v == b"~" {
             home
         } else {
-            home.join(bibli_core::os_path::from_bytes(v[2..].to_vec()))
+            home.join(skwir_core::os_path::from_bytes(v[2..].to_vec()))
         };
     }
-    PathBuf::from(bibli_core::os_path::from_bytes(v.to_vec()))
+    PathBuf::from(skwir_core::os_path::from_bytes(v.to_vec()))
 }
 
 fn parse_bool(v: &str) -> Result<bool, ParseError> {
@@ -671,7 +671,7 @@ impl Parser<'_> {
             "kind" => {
                 let mut kinds = Vec::new();
                 for word in v.split(',').filter(|w| !w.is_empty()) {
-                    let kind = bibli_platform::mime::Kind::from_name(word).ok_or_else(|| {
+                    let kind = skwir_platform::mime::Kind::from_name(word).ok_or_else(|| {
                         ParseError(format!("kind: expects {}, got `{word}`", kind_words()))
                     })?;
                     if !kinds.contains(&kind) {
@@ -768,7 +768,7 @@ fn parse_near(v: &str) -> Result<Term, ParseError> {
         "near",
         "a latitude and a longitude, such as 45.1,6.2",
     )?;
-    let at = bibli_core::geo::LatLon::new(values[0], values[1])
+    let at = skwir_core::geo::LatLon::new(values[0], values[1])
         .filter(|_| (-90. ..=90.).contains(&values[0]))
         .ok_or_else(|| ParseError(format!("near: `{point}` is not a place")))?;
     let (radius, written) = match distance {
@@ -810,7 +810,7 @@ fn parse_inside(v: &str) -> Result<Term, ParseError> {
 
 /// The words `kind:` takes, for an error message.
 fn kind_words() -> String {
-    let words: Vec<&str> = bibli_platform::mime::Kind::ALL
+    let words: Vec<&str> = skwir_platform::mime::Kind::ALL
         .iter()
         .map(|k| k.name())
         .collect();
@@ -1383,8 +1383,8 @@ impl Query {
 /// (`near:`, `inside:`), on the search's worker, and the search's token.
 #[derive(Clone, Copy)]
 pub struct Late<'a> {
-    pub fields: &'a bibli_core::fields::Fields,
-    pub cancel: &'a bibli_core::CancelToken,
+    pub fields: &'a skwir_core::fields::Fields,
+    pub cancel: &'a skwir_core::CancelToken,
 }
 
 /// What the matcher looks at. `metadata` is `None` before stat.
@@ -1428,7 +1428,7 @@ impl<'a> Candidate<'a> {
     }
 
     /// A stat-ed entry: a link is matched as what it leads to.
-    pub fn of_entry(entry: &'a bibli_core::Entry, path: &'a Path) -> Self {
+    pub fn of_entry(entry: &'a skwir_core::Entry, path: &'a Path) -> Self {
         Candidate {
             opens: Some((entry.opens(), entry.type_name())),
             ..Candidate::new(&entry.name, entry.kind, path, Some(&entry.metadata))
@@ -1443,12 +1443,12 @@ impl<'a> Candidate<'a> {
     }
 
     /// Where the file says it was made, read now.
-    fn position(&self) -> Option<bibli_core::geo::LatLon> {
+    fn position(&self) -> Option<skwir_core::geo::LatLon> {
         let late = self.late?;
         late.fields
             .get(keys::POSITION, self.path, late.cancel)
             .as_ref()
-            .and_then(bibli_core::geo::LatLon::from_value)
+            .and_then(skwir_core::geo::LatLon::from_value)
     }
 
     /// The verdict of a term that reads a file, for what is not one (or
@@ -1514,12 +1514,12 @@ impl Term {
                 Some((kind, name)) => yes_no(match kind.inode_type() {
                     Some(inode) => g.is_match(inode),
                     None => {
-                        bibli_platform::mime::by_name(name).is_some_and(|m| g.is_match(m.as_str()))
+                        skwir_platform::mime::by_name(name).is_some_and(|m| g.is_match(m.as_str()))
                     }
                 }),
             },
             Term::Kind(kinds) => {
-                use bibli_platform::mime::{Kind, is_kind};
+                use skwir_platform::mime::{Kind, is_kind};
                 match c.opens {
                     None => Verdict::Unknown,
                     Some((EntryKind::Directory, _)) => yes_no(kinds.contains(&Kind::Folder)),
@@ -1529,7 +1529,7 @@ impl Term {
                         Verdict::No
                     }
                     Some((_, name)) => yes_no(
-                        bibli_platform::mime::by_name(name)
+                        skwir_platform::mime::by_name(name)
                             .is_some_and(|m| kinds.iter().any(|k| is_kind(&m, *k))),
                     ),
                 }
@@ -1573,7 +1573,7 @@ impl Term {
                 // A category holds the tags within it.
                 yes_no(tags.iter().any(|v| {
                     v.as_str()
-                        .is_some_and(|s| bibli_core::metadata::tag_within(s, tag))
+                        .is_some_and(|s| skwir_core::metadata::tag_within(s, tag))
                 }))
             }
             Term::Comment(text) => {
@@ -1617,7 +1617,7 @@ impl Term {
 
 impl Term {
     /// Whether a place term holds a position; false for any other term.
-    fn holds(&self, at: bibli_core::geo::LatLon) -> bool {
+    fn holds(&self, at: skwir_core::geo::LatLon) -> bool {
         match self {
             Term::Near {
                 at: center, radius, ..
@@ -1691,7 +1691,7 @@ pub const CONTENT_LIMIT: u64 = 8 << 20;
 /// anything that is not a regular file once opened (a FIFO would block) never do.
 pub fn content_matches(path: &Path, pat: &ContentPat) -> bool {
     use grep_searcher::{BinaryDetection, SearcherBuilder, sinks};
-    let Ok(file) = bibli_platform::file::open_regular(path) else {
+    let Ok(file) = skwir_platform::file::open_regular(path) else {
         return false;
     };
     if file.metadata().map_or(true, |m| m.len() > CONTENT_LIMIT) {
@@ -1715,8 +1715,8 @@ pub fn content_matches(path: &Path, pat: &ContentPat) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::entry::Provenance;
-    use bibli_platform::calendar::{Weekday, days_from_civil};
+    use skwir_core::entry::Provenance;
+    use skwir_platform::calendar::{Weekday, days_from_civil};
     use std::time::Duration;
 
     /// Parse on a UTC calendar with weeks from Monday: what these tests
@@ -1740,7 +1740,7 @@ mod tests {
 
     /// Answers `position` from a text file holding `lat,lon`.
     struct Written;
-    impl bibli_core::fields::FieldProvider for Written {
+    impl skwir_core::fields::FieldProvider for Written {
         fn id(&self) -> &'static str {
             "written"
         }
@@ -1754,12 +1754,12 @@ mod tests {
             &self,
             _: &str,
             path: &Path,
-            _: &bibli_core::CancelToken,
+            _: &skwir_core::CancelToken,
         ) -> anyhow::Result<Option<Value>> {
             let text = std::fs::read_to_string(path)?;
             let (lat, lon) = text.trim().split_once(',').unwrap();
-            Ok(bibli_core::geo::LatLon::new(lat.parse()?, lon.parse()?)
-                .map(bibli_core::geo::LatLon::to_value))
+            Ok(skwir_core::geo::LatLon::new(lat.parse()?, lon.parse()?)
+                .map(skwir_core::geo::LatLon::to_value))
         }
     }
 
@@ -1797,9 +1797,9 @@ mod tests {
     #[test]
     fn places_hold_the_files_that_say_they_were_made_there() {
         let tmp = tempfile::tempdir().unwrap();
-        let fields = bibli_core::fields::Fields::default();
+        let fields = skwir_core::fields::Fields::default();
         fields.register("test", std::sync::Arc::new(Written));
-        let cancel = bibli_core::CancelToken::new();
+        let cancel = skwir_core::CancelToken::new();
         let late = Late {
             fields: &fields,
             cancel: &cancel,
@@ -2007,7 +2007,7 @@ mod tests {
     fn options_are_extracted() {
         let p = q("foo in:~ depth:3 hidden:yes case:sensitive");
         assert!(p.root_given);
-        assert_eq!(Some(p.root), bibli_core::os_path::home());
+        assert_eq!(Some(p.root), skwir_core::os_path::home());
         assert_eq!(p.depth, Some(3));
         assert!(p.hidden && p.case_sensitive);
         let p = q("foo");

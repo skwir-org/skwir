@@ -12,7 +12,7 @@ use crate::profiles::Profile;
 const EXTS: [&str; 8] = ["txt", "rs", "png", "pdf", "md", "jpg", "toml", "log"];
 
 fn marker(dir: &Path) -> PathBuf {
-    dir.join(".bibli-bench-complete")
+    dir.join(".skwir-bench-complete")
 }
 
 /// Generate `profile` under `root` unless a completion marker already exists.
@@ -60,13 +60,13 @@ fn tag(dir: &Path, profile: Profile) -> Result<()> {
         Profile::Deep1m => 1000,
         Profile::Flat100k => return Ok(()),
     };
-    let done = dir.join(".bibli-bench-tagged");
+    let done = dir.join(".skwir-bench-tagged");
     if done.exists() {
         return Ok(());
     }
-    let probe = dir.join(".bibli-bench-probe");
+    let probe = dir.join(".skwir-bench-probe");
     fs::write(&probe, b"")?;
-    let supported = bibli_core::fs::xattr::set(&probe, "user.xdg.tags", TAG.as_bytes()).is_ok();
+    let supported = skwir_core::fs::xattr::set(&probe, "user.xdg.tags", TAG.as_bytes()).is_ok();
     fs::remove_file(&probe)?;
     if !supported {
         eprintln!(
@@ -87,15 +87,15 @@ fn tag(dir: &Path, profile: Profile) -> Result<()> {
             } else {
                 format!("{TAG},odd")
             };
-            bibli_core::fs::xattr::set(path, "user.xdg.tags", tags.as_bytes())?;
+            skwir_core::fs::xattr::set(path, "user.xdg.tags", tags.as_bytes())?;
             if profile == Profile::Images10k {
                 let rating = (i / every) % 10 + 1;
-                bibli_core::fs::xattr::set(
+                skwir_core::fs::xattr::set(
                     path,
                     "user.baloo.rating",
                     rating.to_string().as_bytes(),
                 )?;
-                bibli_core::fs::xattr::set(path, "user.xdg.comment", b"a synthetic comment")?;
+                skwir_core::fs::xattr::set(path, "user.xdg.comment", b"a synthetic comment")?;
             }
             Ok(())
         })?;

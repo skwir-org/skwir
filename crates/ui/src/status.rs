@@ -33,7 +33,7 @@ impl Shell {
     /// A command failed. Nothing selected, reached from the palette or a
     /// menu, is a hint rather than a failure.
     pub fn report_error(&mut self, error: &anyhow::Error, cx: &mut Context<Self>) {
-        if bibli_core::command::is_nothing_selected(error) {
+        if skwir_core::command::is_nothing_selected(error) {
             self.set_status(crate::shell::NOTHING_SELECTED, false, cx);
         } else {
             self.set_status(format!("{error:#}"), true, cx);

@@ -77,7 +77,7 @@ pub enum FieldKind {
     /// A secret kept in the desktop's keyring, never in the settings: the
     /// field holds only [`SECRET_STORED`] or nothing, and the keyring item
     /// is found by the setting's key, the record's id and the field's key
-    /// (`bibli_platform::secrets`).
+    /// (`skwir_platform::secrets`).
     Secret,
 }
 
@@ -778,12 +778,12 @@ fn set_aside(path: &Path) -> std::io::Result<PathBuf> {
 }
 
 impl Settings {
-    /// The system's settings file of bibli's
-    /// (`$XDG_CONFIG_HOME/bibli/settings.toml` on Linux): in
+    /// The system's settings file of skwir's
+    /// (`$XDG_CONFIG_HOME/skwir/settings.toml` on Linux): in
     /// `crate::folders::config`.
     pub fn default_path() -> PathBuf {
         crate::folders::config()
-            .unwrap_or_else(|| std::env::temp_dir().join("bibli"))
+            .unwrap_or_else(|| std::env::temp_dir().join("skwir"))
             .join("settings.toml")
     }
 
@@ -800,7 +800,7 @@ impl Settings {
         }
     }
 
-    /// Load from `path`; a missing file yields empty settings. bibli always
+    /// Load from `path`; a missing file yields empty settings. skwir always
     /// starts: a file that is no TOML (edited by hand, say) is set aside
     /// under a name of its own, never written over, and the defaults are
     /// used; one that cannot be read or set aside leaves the settings in
@@ -822,7 +822,7 @@ impl Settings {
                     match set_aside(&path) {
                         Ok(aside) => {
                             problem = Some(format!(
-                                "Your settings could not be read ({why}), so bibli started with its \
+                                "Your settings could not be read ({why}), so skwir started with its \
                                  defaults. The file was kept beside them as “{}”.",
                                 aside.file_name().unwrap_or_default().display()
                             ));
@@ -830,7 +830,7 @@ impl Settings {
                         Err(error) => {
                             saved_to = None;
                             problem = Some(format!(
-                                "Your settings could not be read ({why}), so bibli started with its \
+                                "Your settings could not be read ({why}), so skwir started with its \
                                  defaults, and saves nothing until “{}” is fixed or removed ({}).",
                                 path.display(),
                                 crate::op::io_words(&error)
@@ -844,7 +844,7 @@ impl Settings {
             Err(error) => {
                 saved_to = None;
                 problem = Some(format!(
-                    "Your settings could not be read ({}), so bibli started with its defaults, \
+                    "Your settings could not be read ({}), so skwir started with its defaults, \
                      and saves nothing this time.",
                     crate::op::io_words(&error)
                 ));

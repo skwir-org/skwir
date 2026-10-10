@@ -16,7 +16,7 @@ const SELINUX: &str = "security.selinux";
 /// The facts of `path` beyond its mode, each with its label, in the
 /// order Details shows them; nothing for a file that has none.
 pub fn facts(path: &Path) -> Vec<(&'static str, String)> {
-    let Ok(names) = bibli_core::fs::xattr::list_deref(path) else {
+    let Ok(names) = skwir_core::fs::xattr::list_deref(path) else {
         return Vec::new();
     };
     let names: Vec<String> = names
@@ -27,7 +27,7 @@ pub fn facts(path: &Path) -> Vec<(&'static str, String)> {
         names
             .iter()
             .any(|n| n == name)
-            .then(|| bibli_core::fs::xattr::get_deref(path, name).ok().flatten())
+            .then(|| skwir_core::fs::xattr::get_deref(path, name).ok().flatten())
             .flatten()
     };
     let mut out = Vec::new();
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn an_acl_set_on_a_real_file_is_read_back() {
-        let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         let tmp = tempfile::Builder::new()
             .prefix("access-")
@@ -290,7 +290,7 @@ mod tests {
             (0x10, 4, NONE),
             (0x20, 4, NONE),
         ]);
-        if bibli_core::fs::xattr::set(&file, ACL_ACCESS, &list).is_err() {
+        if skwir_core::fs::xattr::set(&file, ACL_ACCESS, &list).is_err() {
             eprintln!("skipped: no POSIX ACLs here");
             return;
         }

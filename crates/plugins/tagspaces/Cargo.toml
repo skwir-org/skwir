@@ -1,6 +1,6 @@
 [package]
-name = "bibli-plugin-tagspaces"
-description = "bibli plugin: TagSpaces sidecars as a notes store, its index as a search hint"
+name = "skwir-plugin-tagspaces"
+description = "skwir plugin: TagSpaces sidecars as a notes store, its index as a search hint"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
+skwir-core.workspace = true
 parking_lot.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

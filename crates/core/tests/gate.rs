@@ -5,9 +5,9 @@ mod common;
 
 use std::time::Duration;
 
-use bibli_core::command::{Invocation, Outcome};
-use bibli_core::op::{ExecEvent, StepStatus};
 use common::*;
+use skwir_core::command::{Invocation, Outcome};
+use skwir_core::op::{ExecEvent, StepStatus};
 
 #[test]
 fn list_select_rename_trash_undo_through_commands_only() {
@@ -59,17 +59,17 @@ fn list_select_rename_trash_undo_through_commands_only() {
             assert_eq!(
                 notes
                     .metadata
-                    .value(bibli_core::entry::keys::SIZE)
-                    .and_then(bibli_core::Value::as_u64),
+                    .value(skwir_core::entry::keys::SIZE)
+                    .and_then(skwir_core::Value::as_u64),
                 Some(5)
             );
             assert_eq!(
                 notes
                     .metadata
-                    .get(bibli_core::entry::keys::SIZE)
+                    .get(skwir_core::entry::keys::SIZE)
                     .unwrap()
                     .provenance,
-                bibli_core::Provenance::Filesystem
+                skwir_core::Provenance::Filesystem
             );
             break;
         }
@@ -155,7 +155,7 @@ fn list_select_rename_trash_undo_through_commands_only() {
 
     // Applying the same plan again is a no-op.
     let again = app.executor.execute_blocking(
-        &bibli_core::op::Plan::from_data(&data, &app.ops).unwrap(),
+        &skwir_core::op::Plan::from_data(&data, &app.ops).unwrap(),
         app.lifetime(),
     );
     assert_eq!((again.applied, again.skipped), (0, 1));
@@ -211,7 +211,7 @@ fn list_select_rename_trash_undo_through_commands_only() {
 }
 
 /// Drain stale executor events, dispatch, then wait for this dispatch's plan to finish.
-fn dispatch_and_wait(app: &bibli_core::App, inv: &Invocation) {
+fn dispatch_and_wait(app: &skwir_core::App, inv: &Invocation) {
     let rx = app.executor.events();
     while rx.try_recv().is_ok() {}
     // A plan is the caller's to apply, as the shell applies the user's.
@@ -231,7 +231,7 @@ fn dispatch_and_wait(app: &bibli_core::App, inv: &Invocation) {
     panic!("executor never finished");
 }
 
-fn wait_for_name(app: &bibli_core::App, name: &str) -> bibli_core::EntryId {
+fn wait_for_name(app: &skwir_core::App, name: &str) -> skwir_core::EntryId {
     let pane = active(app);
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {

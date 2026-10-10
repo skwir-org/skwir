@@ -1,14 +1,14 @@
 //! CBZ/CBR comic books in the document reader, their pages read through
 //! libarchive one at a time, without extracting the archive; and their
 //! covers as thumbnails.
-use bibli_core::{
+use skwir_core::{
     App, CancelToken,
     document::{DocumentInfo, DocumentPage, DocumentSession, PageContent, PixelOrder, SearchHit},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
-use bibli_platform::{archive, inspection, mime, thumb_providers};
+use skwir_platform::{archive, inspection, mime, thumb_providers};
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -21,19 +21,19 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Read CBZ and CBR comic books, continuously or a page at a time, and show their covers"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+    fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![
             archive::WORKER
                 .requirement("Reading the pages of a comic book")
                 .required(),
         ]
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
     }
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
@@ -55,7 +55,7 @@ fn pages(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Vec<arc
         .filter(|member| is_page(member))
         .cloned()
         .collect();
-    pages.sort_by_cached_key(|m| bibli_core::collate::sort_key(m.name.as_ref()));
+    pages.sort_by_cached_key(|m| skwir_core::collate::sort_key(m.name.as_ref()));
     anyhow::ensure!(!pages.is_empty(), "Comic contains no supported images");
     Ok(pages)
 }
@@ -74,7 +74,7 @@ impl ThumbnailProvider for Cover {
     }
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
         let path = req.entry.resolve()?;
-        bibli_platform::thumb_providers::ensure_file(&path)?;
+        skwir_platform::thumb_providers::ensure_file(&path)?;
         let first = pages(&path, cancel)?.swap_remove(0);
         let cover = inspection::picture(&archive::read(&path, &first, cancel)?, req.size.pixels())?;
         Ok(Some(Image {
@@ -237,7 +237,7 @@ mod tests {
         .into_iter()
         .filter(is_page)
         .collect();
-        pages.sort_by_cached_key(|m| bibli_core::collate::sort_key(m.name.as_ref()));
+        pages.sort_by_cached_key(|m| skwir_core::collate::sort_key(m.name.as_ref()));
         let names: Vec<_> = pages.iter().map(|m| m.name.as_str()).collect();
         assert_eq!(
             names,

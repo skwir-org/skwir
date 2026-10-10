@@ -1,5 +1,5 @@
 //! Mermaid diagrams laid out as SVG, in a process of its own: the layout
-//! engine is large, and bibli pays for it on disk only where this helper
+//! engine is large, and skwir pays for it on disk only where this helper
 //! is installed. Reads a diagram's source on standard input and writes the
 //! SVG on standard output, made for resvg (labels as SVG text, nothing
 //! that could read a file or a URL). Anything else is an exit status of 1
@@ -13,16 +13,16 @@ const SOURCE: u64 = 64 * 1024;
 const DEADLINE: Duration = Duration::from_secs(5);
 
 fn main() {
-    // `--build`, bibli asking which build of it this helper is, when a
+    // `--build`, skwir asking which build of it this helper is, when a
     // call of it failed (`platform::process::explain`).
     if std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == "--build")
     {
-        println!("{}", env!("BIBLI_BUILD"));
+        println!("{}", env!("SKWIR_BUILD"));
         return;
     }
-    // `--probe`, bibli's settings asking whether this helper works here
+    // `--probe`, skwir's settings asking whether this helper works here
     // (`platform::process::probe`): being started at all says its
     // libraries are there.
     if std::env::args_os()

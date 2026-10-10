@@ -1,5 +1,5 @@
 [package]
-name = "bibli-plugin-preview-models"
+name = "skwir-plugin-preview-models"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -7,8 +7,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bibli-core.workspace = true
-bibli-platform.workspace = true
+skwir-core.workspace = true
+skwir-platform.workspace = true
 anyhow.workspace = true
 image.workspace = true
 # Blender files saved compressed: gzip before 3.0, Zstandard since. Both
@@ -24,7 +24,7 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std", "si
 
 [dev-dependencies]
 # 3MF packages and FreeCAD documents are zips (read by
-# `bibli_platform::package`); the tests write some.
+# `skwir_platform::package`); the tests write some.
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 tempfile.workspace = true
 

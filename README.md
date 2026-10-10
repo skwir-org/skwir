@@ -1,10 +1,10 @@
-# bibli
+# skwir
 
 A file manager that stays fast whatever the folder, light on the machine,
 keeps no database of its own, and is driven the same way by people,
 scripts and AI agents.
 
-bibli is written in Rust on a GPU-accelerated toolkit (gpui, Zed's).
+skwir is written in Rust on a GPU-accelerated toolkit (gpui, Zed's).
 Version 0.1 is for Linux (Wayland or X11, with Vulkan). Its code for macOS
 and Windows is written and compiles, but has not run on either yet: see
 [how to help](docs/HELP-WANTED.md).
@@ -17,7 +17,7 @@ and Windows is written and compiles, but has not run on either yet: see
 - **Changes are plans.** A batch rename, an edit of the listing as text, or
   anything an agent proposes is shown as steps to review before it runs.
   Every operation has an inverse: Undo and Redo reach everything.
-- **Nothing runs behind your back.** No daemon, no index of its own. bibli
+- **Nothing runs behind your back.** No daemon, no index of its own. skwir
   reuses what the desktop already has (thumbnails, icons, the type
   database, bookmarks, recent files, installed tools) and keeps one cache
   you can delete at any time.
@@ -33,13 +33,13 @@ and Windows is written and compiles, but has not run on either yet: see
 ## Installing
 
 **Packages** for Debian and Ubuntu (`.deb`) and Fedora (`.rpm`) come with
-each release, and Arch's are in the AUR. `bibli` is the program with its
+each release, and Arch's are in the AUR. `skwir` is the program with its
 PDF, archive and 3D-model helpers; the others are optional:
 
-- `bibli-media`: audio and video, through GStreamer.
-- `bibli-poppler`: PDFs through Poppler (under the GPL), beside PDFium.
-- `bibli-mermaid`: Mermaid diagrams in Markdown.
-- `bibli-mupdf`: PDFs and books laid out in pages through MuPDF (under
+- `skwir-media`: audio and video, through GStreamer.
+- `skwir-poppler`: PDFs through Poppler (under the GPL), beside PDFium.
+- `skwir-mermaid`: Mermaid diagrams in Markdown.
+- `skwir-mupdf`: PDFs and books laid out in pages through MuPDF (under
   the AGPL).
 
 **From source**, with Rust 1.96 or later and the libraries `flake.nix`
@@ -47,7 +47,7 @@ lists (the Nix flake has everything):
 
 ```
 direnv allow                # or: nix develop
-just run ~/Documents        # or: cargo run --release -p bibli -- ~/Documents
+just run ~/Documents        # or: cargo run --release -p skwir -- ~/Documents
 ```
 
 ## First steps
@@ -75,24 +75,24 @@ Turn on **Agents and scripts** in Settings › Plugins and the open window
 listens on a channel only your account reaches. It is off by default,
 since any program running as you can then use it.
 
-- **Scripts:** `bibli cmd <command> [<arguments as JSON>]` runs one
-  command and prints its result as JSON (`bibli cmd entries` lists what
+- **Scripts:** `skwir cmd <command> [<arguments as JSON>]` runs one
+  command and prints its result as JSON (`skwir cmd entries` lists what
   the active pane shows). A command that changes files prints its plan;
   `--apply` applies it as your own action, undoable in the window.
-- **Agents:** an MCP client starts `bibli mcp` (for Claude Code: `claude
-  mcp add bibli -- bibli mcp`). Every command is a tool. What an agent
+- **Agents:** an MCP client starts `skwir mcp` (for Claude Code: `claude
+  mcp add skwir -- skwir mcp`). Every command is a tool. What an agent
   would change is proposed in the window for your review; a command that
   acts without a plan waits for you to allow it.
 
 **Private folders** (Settings › Privacy) never leave this machine: an
 agent never sees their names nor what they hold, and a plugin from
-outside bibli is never handed them. `~/.ssh`, `~/.gnupg` and the like are
+outside skwir is never handed them. `~/.ssh`, `~/.gnupg` and the like are
 private from the start, and so is any folder holding a file named
 `.private`.
 
-## Plugins from outside bibli
+## Plugins from outside skwir
 
-A plugin can live outside bibli's code: a folder with a `plugin.toml` and
+A plugin can live outside skwir's code: a folder with a `plugin.toml` and
 a WebAssembly module, or a program speaking a small protocol of JSON
 lines. It provides fields, thumbnails, previews and commands. It stays
 off until you turn it on in Settings › Plugins, which says what it may
@@ -113,10 +113,10 @@ in 0.1: [writing a plugin](docs/plugins/README.md).
 
 ## License
 
-bibli is under the Apache License 2.0 ([`LICENSE`](LICENSE)), and so is
+skwir is under the Apache License 2.0 ([`LICENSE`](LICENSE)), and so is
 what is contributed to it (the licence's section 5). The Poppler and
 MuPDF readers are programs of their own that link libraries under the GPL
 and the AGPL: distributed, they are under the GPL version 3 and the AGPL
-version 3; bibli itself links neither ([ADR-042](docs/adr/042-apache-2.0.md)).
+version 3; skwir itself links neither ([ADR-042](docs/adr/042-apache-2.0.md)).
 Each package carries the notices of the crates its programs are built
 from (`THIRD-PARTY-NOTICES`).

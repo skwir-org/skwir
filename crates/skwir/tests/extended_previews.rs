@@ -1,5 +1,5 @@
 //! Synthetic integration tests exercise provider selection and runtime withdrawal.
-use bibli_core::{
+use skwir_core::{
     App, CancelToken,
     app::AppConfig,
     inspection::{BlockKind, InspectRequest, Inspection, InspectionKind},
@@ -14,12 +14,12 @@ use common::synthetic_png;
 fn app(root: &Path) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(root.join("state"))).unwrap();
     for plugin in [
-        Arc::new(bibli_plugin_preview_markdown::PreviewPlugin) as Arc<dyn Plugin>,
-        Arc::new(bibli_plugin_preview_tables::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_structured::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_email::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_epub::PreviewPlugin),
-        Arc::new(bibli_plugin_preview_hex::PreviewPlugin),
+        Arc::new(skwir_plugin_preview_markdown::PreviewPlugin) as Arc<dyn Plugin>,
+        Arc::new(skwir_plugin_preview_tables::PreviewPlugin),
+        Arc::new(skwir_plugin_preview_structured::PreviewPlugin),
+        Arc::new(skwir_plugin_preview_email::PreviewPlugin),
+        Arc::new(skwir_plugin_preview_epub::PreviewPlugin),
+        Arc::new(skwir_plugin_preview_hex::PreviewPlugin),
     ] {
         app.plugins.add(plugin, &app);
     }
@@ -32,7 +32,7 @@ fn app(root: &Path) -> Arc<App> {
 /// (`ui/src/preview.rs`): by its name, and its bytes where the name is
 /// ambiguous.
 fn request(path: &Path) -> PreviewRequest {
-    let mime = bibli_platform::mime::identify(path.file_name().unwrap(), path);
+    let mime = skwir_platform::mime::identify(path.file_name().unwrap(), path);
     PreviewRequest {
         entry: EntryRef::from_path(path).unwrap(),
         mime: mime.map(|mime| mime.0),
@@ -51,7 +51,7 @@ fn try_inspect(app: &App, path: &Path, view: &InspectRequest) -> Option<Inspecti
         .unwrap()
         .or_else(|| {
             view.source
-                .then(|| bibli_platform::inspection::source(path, view.offset, &cancel).unwrap())
+                .then(|| skwir_platform::inspection::source(path, view.offset, &cancel).unwrap())
         })
 }
 fn inspect(app: &App, path: &Path, view: &InspectRequest) -> Inspection {
@@ -64,7 +64,7 @@ fn asf_media_ownership_precedes_hex_fallback_but_allows_explicit_hex() {
     std::fs::write(&path, b"synthetic container marker").unwrap();
     let app = app(tmp.path());
     app.plugins.add(
-        Arc::new(bibli_plugin_preview_media::PreviewPlugin::default()),
+        Arc::new(skwir_plugin_preview_media::PreviewPlugin::default()),
         &app,
     );
     // Windows Media by its name, though its bytes are no film.
@@ -181,7 +181,7 @@ fn csv_quoted_newlines_and_structured_code() {
         let path = tmp.path().join(name);
         std::fs::write(&path, source).unwrap();
         let code = inspect(&app, &path, &InspectRequest::default());
-        assert_eq!(code.kind, bibli_core::inspection::InspectionKind::Code);
+        assert_eq!(code.kind, skwir_core::inspection::InspectionKind::Code);
         assert!(code.blocks.iter().all(|block| block.code));
         assert!(!code.folds.is_empty());
         assert!(code.plain_text().contains("items"));
@@ -393,9 +393,9 @@ fn epub_chapters_source_navigation_and_disable() {
 
 /// Every preview plugin the binary wires, in the order it wires them.
 fn preview_plugins() -> Vec<Arc<dyn Plugin>> {
-    bibli::plugins()
+    skwir::plugins()
         .into_iter()
-        .filter(|p| p.category() == bibli_core::plugin::Category::Previews)
+        .filter(|p| p.category() == skwir_core::plugin::Category::Previews)
         .collect()
 }
 
@@ -516,7 +516,7 @@ fn font_specimens_render_and_search_sets_the_sample() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_preview_fonts::PreviewPlugin), &app);
+        .add(Arc::new(skwir_plugin_preview_fonts::PreviewPlugin), &app);
     let path = tmp.path().join("Synthetic face.ttf");
     std::fs::write(&path, b"not a font at all").unwrap();
     let request = request(&path);
@@ -538,29 +538,29 @@ fn font_specimens_render_and_search_sets_the_sample() {
 }
 
 /// An uncompressed RGB PNG built without an encoder dependency.
-/// The libarchive helper: `BIBLI_ARCHIVE_WORKER`, else the one built into
+/// The libarchive helper: `SKWIR_ARCHIVE_WORKER`, else the one built into
 /// the target directory this test runs from (wherever `CARGO_TARGET_DIR`
 /// put it: the test binary sits in its `deps`).
 fn archive_worker() -> Option<std::path::PathBuf> {
-    if let Some(path) = std::env::var_os("BIBLI_ARCHIVE_WORKER") {
+    if let Some(path) = std::env::var_os("SKWIR_ARCHIVE_WORKER") {
         return Some(path.into());
     }
     let exe = std::env::current_exe().ok()?;
-    let built = exe.parent()?.parent()?.join("bibli-archive-worker");
+    let built = exe.parent()?.parent()?.join("skwir-archive-worker");
     built.is_file().then_some(built)
 }
 
 /// Needs the libarchive helper (`just workers` builds it). Without it the
-/// test says so and passes, unless `BIBLI_REQUIRE_WORKERS` is set, as it
+/// test says so and passes, unless `SKWIR_REQUIRE_WORKERS` is set, as it
 /// should be wherever the workers are built: there a missing helper is a
 /// failure, not a skip.
 fn with_archive_worker() -> bool {
     let Some(worker) = archive_worker() else {
         assert!(
-            std::env::var_os("BIBLI_REQUIRE_WORKERS").is_none(),
-            "bibli-archive-worker is not built"
+            std::env::var_os("SKWIR_REQUIRE_WORKERS").is_none(),
+            "skwir-archive-worker is not built"
         );
-        eprintln!("skipped: bibli-archive-worker is not built");
+        eprintln!("skipped: skwir-archive-worker is not built");
         return false;
     };
     // The helper path is process-wide; tests in this binary run in separate
@@ -568,7 +568,7 @@ fn with_archive_worker() -> bool {
     // SAFETY: no other thread of this test process reads the environment.
     #[allow(unsafe_code)]
     unsafe {
-        std::env::set_var("BIBLI_ARCHIVE_WORKER", &worker);
+        std::env::set_var("SKWIR_ARCHIVE_WORKER", &worker);
     }
     true
 }
@@ -576,7 +576,7 @@ fn with_archive_worker() -> bool {
 fn archives_app(root: &Path) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(root.join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_preview_archives::PreviewPlugin), &app);
+        .add(Arc::new(skwir_plugin_preview_archives::PreviewPlugin), &app);
     app
 }
 
@@ -626,7 +626,7 @@ fn archive_members_are_written_out_under_our_names() {
     let listing = inspect(&app, &path, &InspectRequest::default());
     assert_eq!(
         listing.kind,
-        bibli_core::inspection::InspectionKind::Archive
+        skwir_core::inspection::InspectionKind::Archive
     );
     assert!(listing.notice.is_empty(), "{}", listing.notice);
     assert!(
@@ -703,7 +703,7 @@ fn compressed_files_and_long_archives_are_listed() {
     assert_eq!(std::fs::read(&member.path).unwrap(), b"GET / 200\n");
 
     let many = tmp.path().join("Synthetic many.zip");
-    let names: Vec<String> = (0..=bibli_platform::inspection::limits::CONTAINER_MEMBERS)
+    let names: Vec<String> = (0..=skwir_platform::inspection::limits::CONTAINER_MEMBERS)
         .map(|i| format!("f{i}.txt"))
         .collect();
     let entries: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), &b""[..])).collect();
@@ -711,7 +711,7 @@ fn compressed_files_and_long_archives_are_listed() {
     let listing = inspect(&app, &many, &InspectRequest::default());
     assert_eq!(
         listing.rows.len(),
-        bibli_platform::inspection::limits::CONTAINER_MEMBERS
+        skwir_platform::inspection::limits::CONTAINER_MEMBERS
     );
     assert!(
         listing.notice.starts_with("First 4000 members"),
@@ -731,7 +731,7 @@ fn a_comic_is_a_document_of_pages() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_preview_comics::PreviewPlugin), &app);
+        .add(Arc::new(skwir_plugin_preview_comics::PreviewPlugin), &app);
     let path = tmp.path().join("Synthetic comic's pages.cbz");
     // Within one stored deflate block, as `synthetic_png` writes them.
     let (big, small) = (synthetic_png(120, 180), synthetic_png(30, 40));
@@ -773,15 +773,15 @@ fn a_comic_is_a_document_of_pages() {
 /// numbers, and what a Mac left beside the pages is no page.
 #[test]
 fn a_comic_cover_is_its_first_page() {
-    use bibli_core::scheduler::Priority;
-    use bibli_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
+    use skwir_core::scheduler::Priority;
+    use skwir_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
     if !with_archive_worker() {
         return;
     }
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(bibli_plugin_preview_comics::PreviewPlugin), &app);
+        .add(Arc::new(skwir_plugin_preview_comics::PreviewPlugin), &app);
     let path = tmp.path().join("Synthetic issue n\u{b0} 2.cbz");
     let (first, later) = (synthetic_png(4, 6), synthetic_png(6, 4));
     write_zip(

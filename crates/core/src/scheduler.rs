@@ -139,7 +139,7 @@ impl Scheduler {
         for i in 0..workers {
             let inner = Arc::clone(&inner);
             std::thread::Builder::new()
-                .name(format!("bibli-worker-{i}"))
+                .name(format!("skwir-worker-{i}"))
                 .stack_size(WORKER_STACK)
                 .spawn(move || worker(&inner))
                 .expect("spawn worker");
@@ -228,8 +228,8 @@ pub fn job_cancelled() -> bool {
         .unwrap_or(false)
 }
 
-/// Whether a window marked its thread: else bibli runs without one (a
-/// script's `bibli cmd`, a test), and nothing applies what listings send
+/// Whether a window marked its thread: else skwir runs without one (a
+/// script's `skwir cmd`, a test), and nothing applies what listings send
 /// unless the caller does.
 static HAS_WINDOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -271,13 +271,13 @@ pub fn let_go<T: Send + 'static>(value: T) {
     inner.cv.notify_one();
 }
 
-/// Whether bibli has a window, whose thread applies what listings send.
+/// Whether skwir has a window, whose thread applies what listings send.
 pub fn has_window() -> bool {
     HAS_WINDOW.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Whether the calling thread is the window's: a command that may wait
-/// (a plugin from outside bibli answering, ADR-045) moves its waiting to
+/// (a plugin from outside skwir answering, ADR-045) moves its waiting to
 /// a worker there, and waits where it is anywhere else (an agent's call,
 /// a script's, a worker's).
 pub fn on_window_thread() -> bool {
@@ -293,7 +293,7 @@ static RELEASE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
 const RELEASE_AFTER: Duration = Duration::from_secs(1);
 
 /// Have each worker, once idle for a moment after running a job, call
-/// `release` (`bibli_alloc::collect`): an allocator may keep what a thread
+/// `release` (`skwir_alloc::collect`): an allocator may keep what a thread
 /// freed until that thread allocates again, and a worker can wait for its
 /// next job for hours. Process-wide, as the allocator is; set once, by the
 /// binary, before or after the scheduler starts.
@@ -543,6 +543,6 @@ mod tests {
             });
         });
         let dropped_on = rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(dropped_on.as_deref(), Some("bibli-worker-0"));
+        assert_eq!(dropped_on.as_deref(), Some("skwir-worker-0"));
     }
 }

@@ -7,8 +7,8 @@
 //! blocks before the first block of G-code.
 use crate::Found;
 use base64::Engine as _;
-use bibli_core::CancelToken;
-use bibli_platform::inspection::{self, limits};
+use skwir_core::CancelToken;
+use skwir_platform::inspection::{self, limits};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 

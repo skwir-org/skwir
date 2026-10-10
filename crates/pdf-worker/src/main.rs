@@ -5,24 +5,24 @@
 use std::path::Path;
 
 use anyhow::Context;
-use bibli_core::document::{
+use pdfium_render::prelude::*;
+use skwir_core::document::{
     CSS_PER_POINT, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE,
     Outline, PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, TextChar, WorkerReply,
     WorkerRequest, page_labels, worker,
 };
-use pdfium_render::prelude::*;
 
 fn main() {
-    // `--build`, bibli asking which build of it this helper is, when a
+    // `--build`, skwir asking which build of it this helper is, when a
     // call of it failed (`platform::process::explain`).
     if std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == "--build")
     {
-        println!("{}", env!("BIBLI_BUILD"));
+        println!("{}", env!("SKWIR_BUILD"));
         return;
     }
-    // `--probe`, bibli's settings asking whether this helper works here
+    // `--probe`, skwir's settings asking whether this helper works here
     // (`platform::process::probe`): PDFium's library, which it opens
     // itself, is there.
     if std::env::args_os()
@@ -40,11 +40,11 @@ fn main() {
     }
 }
 
-/// `PDFium`'s library: the one named (`BIBLI_PDFIUM_LIBRARY`: the
+/// `PDFium`'s library: the one named (`SKWIR_PDFIUM_LIBRARY`: the
 /// settings'), else the one a package carries for this helper (ADR-041),
 /// else the system's.
 fn bindings() -> Result<Box<dyn PdfiumLibraryBindings>, PdfiumError> {
-    if let Some(path) = std::env::var_os("BIBLI_PDFIUM_LIBRARY") {
+    if let Some(path) = std::env::var_os("SKWIR_PDFIUM_LIBRARY") {
         return Pdfium::bind_to_library(path);
     }
     let carried = std::env::current_exe().ok().and_then(|program| {
@@ -60,7 +60,7 @@ fn bindings() -> Result<Box<dyn PdfiumLibraryBindings>, PdfiumError> {
 
 /// Where a package puts `PDFium`'s library, named `library` as this system
 /// names it (`libpdfium.so`, `libpdfium.dylib`, `pdfium.dll`), for a
-/// helper in `folder`: beside it (Linux's /usr/lib/bibli, Windows'
+/// helper in `folder`: beside it (Linux's /usr/lib/skwir, Windows'
 /// program folder), and a Mac bundle's `Frameworks` beside its `MacOS`.
 fn carried(folder: &Path, library: &std::ffi::OsStr) -> [std::path::PathBuf; 2] {
     let frameworks = folder.parent().map_or_else(
@@ -333,15 +333,15 @@ mod tests {
 
     #[test]
     fn a_packages_pdfium_is_beside_the_helper_or_in_a_macs_frameworks() {
-        let at = super::carried(Path::new("/usr/lib/bibli"), OsStr::new("libpdfium.so"));
-        assert_eq!(at[0], Path::new("/usr/lib/bibli/libpdfium.so"));
+        let at = super::carried(Path::new("/usr/lib/skwir"), OsStr::new("libpdfium.so"));
+        assert_eq!(at[0], Path::new("/usr/lib/skwir/libpdfium.so"));
         let at = super::carried(
-            Path::new("/Applications/bibli.app/Contents/MacOS"),
+            Path::new("/Applications/skwir.app/Contents/MacOS"),
             OsStr::new("libpdfium.dylib"),
         );
         assert_eq!(
             at[1],
-            Path::new("/Applications/bibli.app/Contents/Frameworks/libpdfium.dylib")
+            Path::new("/Applications/skwir.app/Contents/Frameworks/libpdfium.dylib")
         );
     }
 }

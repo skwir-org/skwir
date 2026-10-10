@@ -1,4 +1,4 @@
-//! bibli plugin: 3D models, drawings and prints, shown by the picture their
+//! skwir plugin: 3D models, drawings and prints, shown by the picture their
 //! own application stored in them, with what the file says of itself in
 //! Details. A Blender file, a 3MF package, a `FreeCAD` document, a DWG
 //! drawing, a `SketchUp` or Rhino model and a G-code print each carry one;
@@ -6,7 +6,7 @@
 //! its entities (`dxf`), which most never picture, and G-code that stores
 //! none from its moves (`toolpath`). A mesh that carries none (STL, OBJ, PLY,
 //! OFF, glTF, a 3MF its slicer did not picture) is drawn by a helper of its
-//! own, `bibli-model-worker`, and measured. The same pictures are the
+//! own, `skwir-model-worker`, and measured. The same pictures are the
 //! grid's thumbnails, after any thumbnailer the desktop installed for
 //! these files.
 mod blend;
@@ -19,15 +19,15 @@ mod rhino;
 mod sketchup;
 mod toolpath;
 
-use bibli_core::{
+use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
-use bibli_platform::inspection::{self, limits};
-use bibli_platform::model::{Asked, MeshFormat};
+use skwir_platform::inspection::{self, limits};
+use skwir_platform::model::{Asked, MeshFormat};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -45,18 +45,18 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> &'static str {
         "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings, G-code toolpaths and STL, OBJ, PLY, OFF and glTF models; print time, filament, size, volume and version in Details"
     }
-    fn category(&self) -> bibli_core::plugin::Category {
-        bibli_core::plugin::Category::Previews
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Previews
     }
-    fn requirements(&self) -> Vec<bibli_core::plugin::Requirement> {
+    fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![
-            bibli_platform::model::WORKER
+            skwir_platform::model::WORKER
                 .requirement("3D models without a stored picture drawn and measured"),
         ]
     }
-    fn capabilities(&self) -> bibli_core::permissions::Capabilities {
-        use bibli_core::permissions::Capability;
-        bibli_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
+    fn capabilities(&self) -> skwir_core::permissions::Capabilities {
+        use skwir_core::permissions::Capability;
+        skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
     }
     fn register(&self, app: &App) {
         app.previews.register(ID, Arc::new(Provider));
@@ -135,7 +135,7 @@ impl Format {
     /// installed, so a thumbnailer the desktop has (f3d) can show it
     /// instead. Asked on a worker, never while drawing.
     fn available(self) -> bool {
-        !matches!(self, Format::Mesh(_)) || bibli_platform::model::worker_path().is_some()
+        !matches!(self, Format::Mesh(_)) || skwir_platform::model::worker_path().is_some()
     }
 
     /// Text a reader can switch to.
@@ -152,7 +152,7 @@ impl Format {
         asked: Asked,
         cancel: &CancelToken,
     ) -> anyhow::Result<Found> {
-        bibli_platform::thumb_providers::ensure_file(path)?;
+        skwir_platform::thumb_providers::ensure_file(path)?;
         match self {
             Format::Blend => blend::read(path, side, cancel),
             Format::Gcode => gcode::text(path, side, cancel),
@@ -253,7 +253,7 @@ impl PreviewProvider for Provider {
         let details = found
             .details
             .into_iter()
-            .map(|(label, value)| bibli_core::inspection::Detail::new(label, value))
+            .map(|(label, value)| skwir_core::inspection::Detail::new(label, value))
             .collect();
         Ok(Some(match found.picture {
             Some(picture) => Inspection {
@@ -339,7 +339,7 @@ impl ThumbnailProvider for Pictures {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bibli_core::op::EntryRef;
+    use skwir_core::op::EntryRef;
 
     fn request(path: &Path) -> PreviewRequest {
         PreviewRequest {
@@ -458,30 +458,30 @@ mod tests {
         assert_eq!(data.notice, "No picture is stored in this file");
         assert_eq!(data.details[0].value, "DWG 2000");
     }
-    /// Point `BIBLI_MODEL_WORKER` at `worker`. Tests run in processes of
+    /// Point `SKWIR_MODEL_WORKER` at `worker`. Tests run in processes of
     /// their own under nextest, so the variable reaches no other test.
     fn use_worker(worker: &Path) {
         // SAFETY: no other thread of this test process reads the environment.
         #[allow(unsafe_code)]
         unsafe {
-            std::env::set_var("BIBLI_MODEL_WORKER", worker);
+            std::env::set_var("SKWIR_MODEL_WORKER", worker);
         }
     }
 
     /// The helper built into the target directory this test runs from
     /// (the test binary sits in its `deps`). Without it the test says so
-    /// and passes, unless `BIBLI_REQUIRE_WORKERS` is set.
+    /// and passes, unless `SKWIR_REQUIRE_WORKERS` is set.
     fn with_model_worker() -> bool {
         let built = std::env::current_exe()
             .ok()
-            .and_then(|exe| Some(exe.parent()?.parent()?.join("bibli-model-worker")))
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-model-worker")))
             .filter(|path| path.is_file());
         let Some(worker) = built else {
             assert!(
-                std::env::var_os("BIBLI_REQUIRE_WORKERS").is_none(),
-                "bibli-model-worker is not built"
+                std::env::var_os("SKWIR_REQUIRE_WORKERS").is_none(),
+                "skwir-model-worker is not built"
             );
-            eprintln!("skipped: bibli-model-worker is not built");
+            eprintln!("skipped: skwir-model-worker is not built");
             return false;
         };
         use_worker(&worker);
@@ -553,7 +553,7 @@ mod tests {
                     entry: request.entry.clone(),
                     mime: None,
                     mtime: None,
-                    size: bibli_core::thumbs::ThumbSize::Normal,
+                    size: skwir_core::thumbs::ThumbSize::Normal,
                 },
                 &CancelToken::new(),
             )
@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn without_its_helper_a_mesh_is_left_to_the_desktop() {
-        use_worker(Path::new("/nonexistent/bibli-model-worker"));
+        use_worker(Path::new("/nonexistent/skwir-model-worker"));
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cube.stl");
         std::fs::write(&path, cube_stl()).unwrap();
@@ -606,7 +606,7 @@ mod tests {
             .unwrap();
         assert!(data.image.is_none());
         assert!(
-            data.notice.contains("bibli-model-worker"),
+            data.notice.contains("skwir-model-worker"),
             "{}",
             data.notice
         );

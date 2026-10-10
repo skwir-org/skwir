@@ -1,6 +1,6 @@
 //! What the flight plan readers share (`fpl`, `pln`, `fms`, `lnmpln`):
 //! the route they build, how they name its stops, and feet.
-use bibli_core::geo::{Datum, LatLon, LineKind, Point, Waypoint, WaypointKind};
+use skwir_core::geo::{Datum, LatLon, LineKind, Point, Waypoint, WaypointKind};
 
 use crate::collect::{self, Collector, Plan, PlanKind};
 

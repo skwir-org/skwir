@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use bibli_core::cancel::CancelToken;
-use bibli_core::entry::keys;
-use bibli_core::hints::HintProvider;
+use skwir_core::cancel::CancelToken;
+use skwir_core::entry::keys;
+use skwir_core::hints::HintProvider;
 
 /// The index as a hint provider.
 pub struct Learned(pub Arc<crate::index::TagIndex>);
@@ -53,7 +53,7 @@ impl Baloo {
     fn search_program(&self) -> Option<PathBuf> {
         let config = match &self.private {
             Some(private) => private.config.clone(),
-            None => bibli_platform::xdg::config_home()?.join("baloofilerc"),
+            None => skwir_platform::xdg::config_home()?.join("baloofilerc"),
         };
         let text = std::fs::read_to_string(config).ok()?;
         if !indexing_enabled(&text) {
@@ -61,7 +61,7 @@ impl Baloo {
         }
         ["baloosearch6", "baloosearch"]
             .into_iter()
-            .find_map(bibli_core::os_path::find_program)
+            .find_map(skwir_core::os_path::find_program)
     }
 }
 
@@ -92,7 +92,7 @@ fn baloo_paths(stdout: &[u8]) -> Vec<PathBuf> {
     stdout
         .split(|b| *b == b'\n')
         .filter(|line| line.starts_with(b"/"))
-        .map(|line| PathBuf::from(bibli_core::os_path::from_bytes(line.to_vec())))
+        .map(|line| PathBuf::from(skwir_core::os_path::from_bytes(line.to_vec())))
         .collect()
 }
 
@@ -117,7 +117,7 @@ impl HintProvider for Baloo {
         if let Some(private) = &self.private {
             command.env("XDG_DATA_HOME", &private.data_home);
         }
-        match bibli_platform::process::run(&mut command, cancel, BALOO_TIMEOUT) {
+        match skwir_platform::process::run(&mut command, cancel, BALOO_TIMEOUT) {
             Ok(stdout) => Some(baloo_paths(&stdout)),
             Err(error) => {
                 tracing::debug!(%error, "tags: Baloo did not answer");
@@ -160,11 +160,11 @@ impl HintProvider for Spotlight {
         if key != keys::TAGS {
             return None;
         }
-        let program = bibli_core::os_path::find_program("mdfind")?;
+        let program = skwir_core::os_path::find_program("mdfind")?;
         let query = spotlight_query(value)?;
         let mut command = std::process::Command::new(program);
         command.arg("-onlyin").arg(root).arg(query);
-        match bibli_platform::process::run(&mut command, cancel, SPOTLIGHT_TIMEOUT) {
+        match skwir_platform::process::run(&mut command, cancel, SPOTLIGHT_TIMEOUT) {
             // One absolute path a line, as Baloo's.
             Ok(stdout) => Some(baloo_paths(&stdout)),
             Err(error) => {
@@ -182,13 +182,13 @@ mod tests {
     /// Against a real Baloo of its own: a private D-Bus session, settings
     /// and index in a temporary directory, indexing only the fixture.
     /// Needs `baloo_file`, `baloosearch6` and `dbus-run-session`:
-    /// `cargo nextest run -p bibli-plugin-tags --run-ignored only baloo`.
+    /// `cargo nextest run -p skwir-plugin-tags --run-ignored only baloo`.
     #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "starts a private Baloo"]
     fn a_private_baloo_names_the_tagged_files() {
         use std::os::unix::process::CommandExt;
-        let search = bibli_core::os_path::find_program("baloosearch6").expect("baloosearch6");
+        let search = skwir_core::os_path::find_program("baloosearch6").expect("baloosearch6");
         let daemon = std::fs::canonicalize(&search)
             .ok()
             .and_then(|real| Some(real.parent()?.parent()?.join("libexec/kf6/baloo_file")))
@@ -203,7 +203,7 @@ mod tests {
                 .find(|p| p.exists())
             })
             .expect("baloo_file");
-        let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         let tmp = tempfile::Builder::new()
             .prefix("baloo-")
@@ -220,7 +220,7 @@ mod tests {
         ] {
             std::fs::write(&path, b"x").unwrap();
             if let Some(tags) = tags {
-                bibli_core::fs::xattr::set(&path, "user.xdg.tags", tags.as_bytes()).unwrap();
+                skwir_core::fs::xattr::set(&path, "user.xdg.tags", tags.as_bytes()).unwrap();
             }
         }
         let (config, data, cache, run) = (

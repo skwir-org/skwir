@@ -1,6 +1,6 @@
-# A thumbnailer from outside bibli (ADR-045, ADR-046): binary Netpbm
+# A thumbnailer from outside skwir (ADR-045, ADR-046): binary Netpbm
 # pictures drawn small, as a WebAssembly module that reads them through
-# bibli and answers a PNG.
+# skwir and answers a PNG.
 id = "netpbm"
 title = "Netpbm pictures"
 description = "Thumbnails and previews of PPM and PGM pictures, from a WebAssembly module"
@@ -14,7 +14,7 @@ module = "netpbm.wasm"
 [[thumbnails]]
 types = ["image/x-portable-pixmap", "image/x-portable-graymap"]
 
-# Previewed as the PNG it makes of them, by bibli's own picture view:
+# Previewed as the PNG it makes of them, by skwir's own picture view:
 # zoomed, fitted, compared as any picture is; a file of several
 # pictures one after another, a page each.
 [[previews]]

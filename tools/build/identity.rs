@@ -1,21 +1,21 @@
-// Which build of bibli a program is, `BIBLI_BUILD` to its code: bibli
+// Which build of skwir a program is, `SKWIR_BUILD` to its code: skwir
 // and each of its helpers include this in their build script and say it,
 // a helper when asked with `--build`, so that a helper of another build
-// can be named when a call of it fails (`bibli_platform::process::explain`).
+// can be named when a call of it fails (`skwir_platform::process::explain`).
 //
 // The version, and in a release build (what is run and shipped) the
 // commit it was built from: a debug build (the tests) is not built again
 // for a commit, and a release build only once per commit. Outside a git
 // checkout (a source archive, Nix's build) the version alone.
 
-/// Tell the crate being built its `BIBLI_BUILD`.
+/// Tell the crate being built its `SKWIR_BUILD`.
 fn emit_build() {
     println!("cargo::rerun-if-changed=build.rs");
     let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
     let release = std::env::var("PROFILE").is_ok_and(|profile| profile == "release");
     match release.then(commit).flatten() {
-        Some(commit) => println!("cargo::rustc-env=BIBLI_BUILD={version}+{commit}"),
-        None => println!("cargo::rustc-env=BIBLI_BUILD={version}"),
+        Some(commit) => println!("cargo::rustc-env=SKWIR_BUILD={version}+{commit}"),
+        None => println!("cargo::rustc-env=SKWIR_BUILD={version}"),
     }
 }
 

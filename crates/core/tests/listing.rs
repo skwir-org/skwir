@@ -4,9 +4,9 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use bibli_core::location::{ListingEvent, Location};
-use bibli_core::scheduler::Priority;
 use common::*;
+use skwir_core::location::{ListingEvent, Location};
+use skwir_core::scheduler::Priority;
 
 const N: usize = 20_000;
 
@@ -33,7 +33,7 @@ fn listing_streams_without_blocking_the_caller() {
     };
     assert!(!batch.is_empty() && batch.len() <= 1024);
 
-    let mut listing = bibli_core::Listing::default();
+    let mut listing = skwir_core::Listing::default();
     listing.apply(ListingEvent::Added(batch));
     let deadline = Instant::now() + Duration::from_secs(10);
     while !listing.is_complete() {
@@ -110,19 +110,19 @@ fn watcher_reports_create_rename_and_delete() {
 
 /// The entry the pane lists under `name`.
 fn listed(
-    app: &bibli_core::App,
-    pane: bibli_core::workspace::PaneId,
+    app: &skwir_core::App,
+    pane: skwir_core::workspace::PaneId,
     name: &str,
-) -> bibli_core::Entry {
+) -> skwir_core::Entry {
     let ws = app.workspace.read();
     let listing = &ws.pane(pane).unwrap().listing;
     listing.find_by_name(name.as_ref()).unwrap().clone()
 }
 
 fn selected(
-    app: &bibli_core::App,
-    pane: bibli_core::workspace::PaneId,
-) -> Vec<bibli_core::EntryId> {
+    app: &skwir_core::App,
+    pane: skwir_core::workspace::PaneId,
+) -> Vec<skwir_core::EntryId> {
     app.workspace
         .read()
         .pane(pane)
@@ -178,9 +178,9 @@ fn two_names_of_one_file_are_two_entries() {
 }
 
 fn wait(
-    app: &bibli_core::App,
-    pane: bibli_core::workspace::PaneId,
-    pred: impl Fn(&bibli_core::Listing) -> bool,
+    app: &skwir_core::App,
+    pane: skwir_core::workspace::PaneId,
+    pred: impl Fn(&skwir_core::Listing) -> bool,
 ) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -198,7 +198,7 @@ fn wait(
 
 #[test]
 fn pending_opens_report_errors_asynchronously_and_can_be_replaced() {
-    use bibli_core::{App, app::AppConfig, cancel::CancelToken, command::Invocation};
+    use skwir_core::{App, app::AppConfig, cancel::CancelToken, command::Invocation};
     let tmp = tempfile::tempdir().unwrap();
     let config = AppConfig {
         workers: 1,
@@ -302,7 +302,7 @@ fn forward_returns_where_back_came_from_and_a_new_navigation_forgets_it() {
     }
     let app = app(tmp.path());
     let pane = app.workspace.read().active_id();
-    let at = |app: &bibli_core::App| {
+    let at = |app: &skwir_core::App| {
         app.workspace
             .read()
             .pane(pane)
@@ -312,7 +312,7 @@ fn forward_returns_where_back_came_from_and_a_new_navigation_forgets_it() {
             .path()
     };
     let go = |path: &std::path::Path| {
-        app.dispatch(&bibli_core::command::Invocation::with_args(
+        app.dispatch(&skwir_core::command::Invocation::with_args(
             "navigate",
             &serde_json::json!({ "location": path }),
         ))
@@ -320,23 +320,23 @@ fn forward_returns_where_back_came_from_and_a_new_navigation_forgets_it() {
     };
     go(&first);
     go(&second);
-    app.dispatch(&bibli_core::command::Invocation::new("forward"))
+    app.dispatch(&skwir_core::command::Invocation::new("forward"))
         .unwrap();
     assert_eq!(
         at(&app),
         Some(second.clone()),
         "nothing ahead: forward stays"
     );
-    app.dispatch(&bibli_core::command::Invocation::new("back"))
+    app.dispatch(&skwir_core::command::Invocation::new("back"))
         .unwrap();
     assert_eq!(at(&app), Some(first.clone()));
-    app.dispatch(&bibli_core::command::Invocation::new("forward"))
+    app.dispatch(&skwir_core::command::Invocation::new("forward"))
         .unwrap();
     assert_eq!(at(&app), Some(second.clone()));
-    app.dispatch(&bibli_core::command::Invocation::new("back"))
+    app.dispatch(&skwir_core::command::Invocation::new("back"))
         .unwrap();
     go(&third);
-    app.dispatch(&bibli_core::command::Invocation::new("forward"))
+    app.dispatch(&skwir_core::command::Invocation::new("forward"))
         .unwrap();
     assert_eq!(
         at(&app),
@@ -347,7 +347,7 @@ fn forward_returns_where_back_came_from_and_a_new_navigation_forgets_it() {
     // first, third, second.
     go(&second);
     let steps = |name: &str, steps: usize| {
-        app.dispatch(&bibli_core::command::Invocation::with_args(
+        app.dispatch(&skwir_core::command::Invocation::with_args(
             name,
             &serde_json::json!({ "steps": steps }),
         ))
@@ -362,10 +362,10 @@ fn forward_returns_where_back_came_from_and_a_new_navigation_forgets_it() {
 }
 
 fn entry_id(
-    app: &bibli_core::App,
-    pane: bibli_core::workspace::PaneId,
+    app: &skwir_core::App,
+    pane: skwir_core::workspace::PaneId,
     name: &str,
-) -> bibli_core::EntryId {
+) -> skwir_core::EntryId {
     app.workspace
         .read()
         .pane(pane)
@@ -378,7 +378,7 @@ fn entry_id(
 
 #[test]
 fn a_refresh_keeps_metadata_and_restats() {
-    use bibli_core::command::Invocation;
+    use skwir_core::command::Invocation;
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("r");
     std::fs::create_dir(&dir).unwrap();
@@ -406,10 +406,10 @@ fn a_refresh_keeps_metadata_and_restats() {
     std::fs::write(dir.join("a"), b"grown").unwrap();
     app.dispatch(&Invocation::new("refresh")).unwrap();
     let a = entry_id(&app, pane, "a");
-    let size = |l: &bibli_core::Listing| {
+    let size = |l: &skwir_core::Listing| {
         l.get(a)
-            .and_then(|e| e.metadata.value(bibli_core::entry::keys::SIZE))
-            .and_then(bibli_core::Value::as_u64)
+            .and_then(|e| e.metadata.value(skwir_core::entry::keys::SIZE))
+            .and_then(skwir_core::Value::as_u64)
     };
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -466,8 +466,8 @@ fn a_listing_follows_its_folder_when_it_moves_and_says_when_it_is_gone() {
 #[cfg(unix)]
 #[test]
 fn folders_whose_names_are_not_utf8_can_be_reached() {
-    use bibli_core::command::Invocation;
-    use bibli_core::os_path::PathArg;
+    use skwir_core::command::Invocation;
+    use skwir_core::os_path::PathArg;
     use std::os::unix::ffi::OsStrExt;
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
@@ -497,7 +497,7 @@ fn folders_whose_names_are_not_utf8_can_be_reached() {
 
 #[test]
 fn virtual_locations_hydrate_by_path_in_one_batch() {
-    use bibli_core::location::OpenContext;
+    use skwir_core::location::OpenContext;
     let tmp = tempfile::tempdir().unwrap();
     let (a, b) = (tmp.path().join("a"), tmp.path().join("sub"));
     std::fs::write(&a, b"123").unwrap();
@@ -514,11 +514,11 @@ fn virtual_locations_hydrate_by_path_in_one_batch() {
         companions: std::sync::Arc::clone(&app.companions),
     };
     let (sink, rx) = ctx.channel();
-    let id = |ino| bibli_core::EntryId {
-        file: bibli_core::FileId { dev: 0, ino },
+    let id = |ino| skwir_core::EntryId {
+        file: skwir_core::FileId { dev: 0, ino },
         at: 0,
     };
-    let gone = bibli_core::fs::hydrate_paths(
+    let gone = skwir_core::fs::hydrate_paths(
         &[
             (id(1), a.clone()),
             (id(2), b.clone()),
@@ -605,7 +605,7 @@ fn a_filter_shows_only_names_holding_it_until_the_pane_shows_another_folder() {
     let app = app(tmp.path());
     let pane = active(&app);
     navigate(&app, &dir);
-    let shown = |app: &bibli_core::App| -> Vec<String> {
+    let shown = |app: &skwir_core::App| -> Vec<String> {
         let ws = app.workspace.read();
         let p = ws.pane(pane).unwrap();
         let mut names: Vec<String> = p
@@ -617,7 +617,7 @@ fn a_filter_shows_only_names_holding_it_until_the_pane_shows_another_folder() {
         names
     };
     let filter = |text: Option<&str>| {
-        app.dispatch(&bibli_core::command::Invocation::with_args(
+        app.dispatch(&skwir_core::command::Invocation::with_args(
             "filter",
             &serde_json::json!({ "text": text }),
         ))
@@ -640,7 +640,7 @@ fn a_filter_shows_only_names_holding_it_until_the_pane_shows_another_folder() {
             .is_empty()
     );
     // Select all takes what is shown, nothing hidden by the filter.
-    app.dispatch(&bibli_core::command::Invocation::new("select_all"))
+    app.dispatch(&skwir_core::command::Invocation::new("select_all"))
         .unwrap();
     assert_eq!(app.workspace.read().pane(pane).unwrap().selection.len(), 3);
     // A capital asks for that case.
@@ -658,7 +658,7 @@ fn a_filter_shows_only_names_holding_it_until_the_pane_shows_another_folder() {
 #[cfg(unix)]
 #[test]
 fn a_link_is_listed_as_what_it_leads_to() {
-    use bibli_core::entry::{EntryKind, Value, keys};
+    use skwir_core::entry::{EntryKind, Value, keys};
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("links");
     std::fs::create_dir_all(dir.join("real folder")).unwrap();
@@ -672,19 +672,19 @@ fn a_link_is_listed_as_what_it_leads_to() {
     let app = app(tmp.path());
 
     let open = app.open_location(&Location::from_path(&dir)).unwrap();
-    let mut listing = bibli_core::Listing::default();
+    let mut listing = skwir_core::Listing::default();
     let deadline = Instant::now() + Duration::from_secs(10);
     while !listing.is_complete() {
         listing.apply(open.events().recv_deadline(deadline).expect("listing"));
     }
-    let find = |listing: &bibli_core::Listing, name: &str| {
+    let find = |listing: &skwir_core::Listing, name: &str| {
         listing
             .iter()
             .find(|e| e.name == name)
             .unwrap_or_else(|| panic!("{name} listed"))
             .clone()
     };
-    let kind = |e: &bibli_core::Entry| e.target.as_ref().map(|target| target.kind);
+    let kind = |e: &skwir_core::Entry| e.target.as_ref().map(|target| target.kind);
     let folder = find(&listing, "a folder link");
     assert_eq!(
         folder.kind,
@@ -699,7 +699,7 @@ fn a_link_is_listed_as_what_it_leads_to() {
     assert_eq!(file.type_name(), "a note's text.txt");
     // What is read to show it is the file itself, named by its own
     // identity: a reference to it resolves.
-    let note = bibli_core::os_path::canonical(dir.join("a note's text.txt")).unwrap();
+    let note = skwir_core::os_path::canonical(dir.join("a note's text.txt")).unwrap();
     let content = file.content(&dir.join("a file link")).unwrap();
     assert_eq!(content.path, note);
     assert_eq!(content.resolve().unwrap(), note);
@@ -720,7 +720,7 @@ fn a_link_is_listed_as_what_it_leads_to() {
     // Folders sort first, and a link to one with them, from the first
     // listing: rows off screen are never hydrated.
     let order: Vec<_> = listing
-        .sorted(bibli_core::location::SortSpec::default())
+        .sorted(skwir_core::location::SortSpec::default())
         .iter()
         .map(|id| {
             listing
@@ -749,7 +749,7 @@ fn a_link_is_listed_as_what_it_leads_to() {
     let folder = listing.get(folder.id).unwrap();
     assert_eq!(folder.kind, EntryKind::Symlink);
     assert_eq!(kind(folder), Some(EntryKind::Directory));
-    let size = |e: &bibli_core::Entry| e.metadata.value(keys::SIZE).and_then(Value::as_u64);
+    let size = |e: &skwir_core::Entry| e.metadata.value(keys::SIZE).and_then(Value::as_u64);
     let file = listing.get(file.id).unwrap();
     assert_eq!(size(file), Some(17), "the text's size, not the link's");
     assert_eq!(file.type_name(), "a note's text.txt");
@@ -761,7 +761,7 @@ fn a_link_is_listed_as_what_it_leads_to() {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_pipe_or_a_socket_is_listed_as_what_it_is_and_never_read() {
-    use bibli_core::entry::EntryKind;
+    use skwir_core::entry::EntryKind;
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("special");
     std::fs::create_dir_all(&dir).unwrap();
@@ -779,7 +779,7 @@ fn a_pipe_or_a_socket_is_listed_as_what_it_is_and_never_read() {
     let app = app(tmp.path());
 
     let open = app.open_location(&Location::from_path(&dir)).unwrap();
-    let mut listing = bibli_core::Listing::default();
+    let mut listing = skwir_core::Listing::default();
     let deadline = Instant::now() + Duration::from_secs(10);
     while !listing.is_complete() {
         listing.apply(open.events().recv_deadline(deadline).expect("listing"));
@@ -808,7 +808,7 @@ fn a_pipe_or_a_socket_is_listed_as_what_it_is_and_never_read() {
     assert!(!link.is_dir() && !link.is_broken_link());
 
     // A device, as a stat reads it.
-    let null = bibli_core::fs::stat_path(std::path::Path::new("/dev/null")).unwrap();
+    let null = skwir_core::fs::stat_path(std::path::Path::new("/dev/null")).unwrap();
     assert_eq!(null.kind, EntryKind::CharDevice);
     assert_eq!(null.inode_type(), Some("inode/chardevice"));
     assert_eq!(null.content(std::path::Path::new("/dev/null")), None);
@@ -834,7 +834,7 @@ fn a_folder_whose_own_attributes_change_says_so() {
         .unwrap()
         .listing
         .itself_version();
-    bibli_core::fs::xattr::set(&dir, "user.xdg.tags", b"holiday").unwrap();
+    skwir_core::fs::xattr::set(&dir, "user.xdg.tags", b"holiday").unwrap();
     wait(&app, pane, |l| l.itself_version() != before);
     let ws = app.workspace.read();
     let listing = &ws.pane(pane).unwrap().listing;
@@ -845,8 +845,8 @@ fn a_folder_whose_own_attributes_change_says_so() {
 /// then filled by the metadata providers, the root included.
 #[test]
 fn a_path_read_alone_is_filled_by_the_providers() {
-    use bibli_core::entry::{Entry, Provenance, Value};
-    use bibli_core::metadata::MetadataProvider;
+    use skwir_core::entry::{Entry, Provenance, Value};
+    use skwir_core::metadata::MetadataProvider;
     struct Probe;
     impl MetadataProvider for Probe {
         fn id(&self) -> &'static str {
@@ -866,7 +866,7 @@ fn a_path_read_alone_is_filled_by_the_providers() {
     let app = app(tmp.path());
     app.metadata.register("probe", std::sync::Arc::new(Probe));
     for path in [dir.as_path(), std::path::Path::new("/")] {
-        let entry = bibli_core::fs::hydrate_path(path, &app.metadata).unwrap();
+        let entry = skwir_core::fs::hydrate_path(path, &app.metadata).unwrap();
         assert!(entry.is_dir() && entry.metadata.is_hydrated());
         assert_eq!(
             entry.metadata.value("probe.seen"),
@@ -875,13 +875,13 @@ fn a_path_read_alone_is_filled_by_the_providers() {
             path.display()
         );
     }
-    assert!(bibli_core::fs::hydrate_path(&dir.join("missing"), &app.metadata).is_none());
+    assert!(skwir_core::fs::hydrate_path(&dir.join("missing"), &app.metadata).is_none());
 }
 
 /// `._x` as the companion of `x`.
 struct Aside;
 
-impl bibli_core::companions::Companion for Aside {
+impl skwir_core::companions::Companion for Aside {
     fn id(&self) -> &'static str {
         "aside"
     }
@@ -900,8 +900,8 @@ impl bibli_core::companions::Companion for Aside {
 /// is a change to the file's, and the file is read again.
 #[test]
 fn a_file_whose_companion_changes_is_read_again() {
-    use bibli_core::entry::{Entry, Provenance, Value};
-    use bibli_core::metadata::MetadataProvider;
+    use skwir_core::entry::{Entry, Provenance, Value};
+    use skwir_core::metadata::MetadataProvider;
     use std::sync::atomic::{AtomicU64, Ordering};
     /// Counts how many times it read each file.
     #[derive(Default)]
@@ -929,11 +929,11 @@ fn a_file_whose_companion_changes_is_read_again() {
     app.companions.register("test", std::sync::Arc::new(Aside));
     let pane = active(&app);
     navigate(&app, &dir);
-    let reads = |l: &bibli_core::Listing| {
+    let reads = |l: &skwir_core::Listing| {
         l.find_by_name("it's a.txt".as_ref())
             .and_then(|e| e.metadata.value("count.reads").cloned())
     };
-    let hydrated = |l: &bibli_core::Listing| reads(l).is_some();
+    let hydrated = |l: &skwir_core::Listing| reads(l).is_some();
     let ids: Vec<_> = app
         .workspace
         .read()
@@ -942,7 +942,7 @@ fn a_file_whose_companion_changes_is_read_again() {
         .listing
         .ids()
         .collect();
-    app.dispatch(&bibli_core::command::Invocation::with_args(
+    app.dispatch(&skwir_core::command::Invocation::with_args(
         "hydrate",
         &serde_json::json!({ "ids": ids, "pane": pane }),
     ))

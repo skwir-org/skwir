@@ -1,10 +1,10 @@
 //! Embedded playback controls. Only the session manager touches media I/O.
 use crate::{preview::PreviewContent, shell::Shell, theme::Theme, toolbar::Button};
-use bibli_core::media::{Control, Frame, MediaSession, Playback};
 use gpui::{
     AnimationExt, AnyElement, Bounds, Context, FocusHandle, MouseButton, Pixels, RenderImage,
     Window, div, prelude::*, px,
 };
+use skwir_core::media::{Control, Frame, MediaSession, Playback};
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 
 #[derive(Default)]
@@ -56,7 +56,7 @@ pub struct MediaState {
     /// Ends this preview's media worker. A reader's lifetime ends with the
     /// preview; a session that is pinned must not, so it has its own, which
     /// the pin takes with it (`release_lifetime`).
-    lifetime: bibli_core::CancelToken,
+    lifetime: skwir_core::CancelToken,
     /// The colour of the cover shown, by image: worked out once, when the
     /// cover changes, not per frame.
     tint: std::cell::Cell<Option<(gpui::ImageId, Option<gpui::Hsla>)>>,
@@ -123,18 +123,18 @@ impl MediaState {
     }
 
     /// The lifetime the next session of this preview is opened with.
-    pub(crate) fn lifetime(&self) -> bibli_core::CancelToken {
+    pub(crate) fn lifetime(&self) -> skwir_core::CancelToken {
         self.lifetime.clone()
     }
 
     /// Hand the session's lifetime to the pin: this preview going away no
     /// longer ends it.
-    pub(crate) fn release_lifetime(&mut self) -> bibli_core::CancelToken {
+    pub(crate) fn release_lifetime(&mut self) -> skwir_core::CancelToken {
         std::mem::take(&mut self.lifetime)
     }
 
     /// Take a lifetime back from the pin: the session is this preview's again.
-    pub(crate) fn adopt_lifetime(&mut self, lifetime: bibli_core::CancelToken) {
+    pub(crate) fn adopt_lifetime(&mut self, lifetime: skwir_core::CancelToken) {
         self.lifetime = lifetime;
     }
 }
@@ -168,9 +168,9 @@ impl Shell {
     /// between cannot turn a step into a jump to whatever took their place.
     pub(crate) fn media_neighbours(
         &self,
-        id: bibli_core::EntryId,
+        id: skwir_core::EntryId,
         kind: &str,
-    ) -> (Option<bibli_core::EntryId>, Option<bibli_core::EntryId>) {
+    ) -> (Option<skwir_core::EntryId>, Option<skwir_core::EntryId>) {
         let sorted = self.ui().list.sorted.clone();
         let Some(here) = sorted.iter().position(|entry| *entry == id) else {
             return (None, None);
@@ -198,7 +198,7 @@ impl Shell {
     /// Another file of the kind shown, drawn at random from the pane: what
     /// a shuffle goes on with when nothing is pinned. Worked out on a step,
     /// never while painting.
-    fn random_track(&self) -> Option<bibli_core::EntryId> {
+    fn random_track(&self) -> Option<skwir_core::EntryId> {
         let (kind, here) = (self.media_kind()?, self.preview.entry_id()?);
         let ws = self.app.workspace.read();
         let pane = ws.pane(self.pane)?;
@@ -221,7 +221,7 @@ impl Shell {
     }
 
     /// The entry of the pane the panel previews whose file is `path`.
-    pub(crate) fn listed(&self, path: &std::path::Path) -> Option<bibli_core::EntryId> {
+    pub(crate) fn listed(&self, path: &std::path::Path) -> Option<skwir_core::EntryId> {
         let pane = self.preview.pane()?;
         let ui = self.panes.iter().find(|ui| ui.id == pane)?;
         let ws = self.app.workspace.read();
@@ -264,7 +264,7 @@ impl Shell {
     /// while the panel shows the pinned track, so the panel and the dock
     /// walk one order; else one at random for Next in a shuffle, else the
     /// neighbour.
-    fn step_target(&self, delta: i64) -> Option<bibli_core::EntryId> {
+    fn step_target(&self, delta: i64) -> Option<skwir_core::EntryId> {
         let mode = self.prefs.player.continue_with;
         if let Some(pinned) = self
             .player
@@ -368,7 +368,7 @@ impl Shell {
         let mut frame = update.frame.filter(|_| !hand_over);
         if !matches!(self.preview.media.poster, Poster::Dismissed) {
             if matches!(self.preview.media.poster, Poster::Waiting) {
-                use bibli_core::thumbs::ThumbState;
+                use skwir_core::thumbs::ThumbState;
                 match self.video_thumbnail() {
                     ThumbState::Ready(image) => {
                         if let Some(render) = crate::thumbs::to_render_image(&image) {
@@ -409,7 +409,7 @@ impl Shell {
             // draws it.
             if let Some(PreviewContent::Image {
                 image: shown,
-                detail: Some(bibli_core::preview::PreviewInfo::Video { .. }),
+                detail: Some(skwir_core::preview::PreviewInfo::Video { .. }),
                 ..
             }) = &self.preview.content
             {
@@ -421,7 +421,7 @@ impl Shell {
                     image,
                     width,
                     height,
-                    detail: Some(bibli_core::preview::PreviewInfo::Video {
+                    detail: Some(skwir_core::preview::PreviewInfo::Video {
                         seconds: state.position,
                         duration: state.duration,
                     }),
@@ -447,7 +447,7 @@ impl Shell {
                 self.unpin_dead();
             }
             self.preview.media.session = None;
-            self.preview.media.state.status = bibli_core::media::PlaybackStatus::Paused;
+            self.preview.media.state.status = skwir_core::media::PlaybackStatus::Paused;
             // The player's key context follows its focus handle; return keys
             // to the peek overlay or the pane instead of a dead player.
             if let Some(focus) = self.preview.media.focus.take()
@@ -531,7 +531,7 @@ impl Shell {
                     return;
                 };
                 let (playing, video) = (!pinned.state.playing(), pinned.video);
-                self.player_request(bibli_core::playing::PlayerRequest::PlayPause, window, cx);
+                self.player_request(skwir_core::playing::PlayerRequest::PlayPause, window, cx);
                 if double && video {
                     self.player_fullscreen(window, cx);
                 }
@@ -901,8 +901,8 @@ pub fn surface(
 }
 
 /// A file of the kind a player steps through (`audio/`, `video/`).
-pub(crate) fn is_track(entry: &bibli_core::Entry, kind: &str) -> bool {
-    bibli_platform::mime::of_entry(entry).is_some_and(|mime| mime.as_str().starts_with(kind))
+pub(crate) fn is_track(entry: &skwir_core::Entry, kind: &str) -> bool {
+    skwir_platform::mime::of_entry(entry).is_some_and(|mime| mime.as_str().starts_with(kind))
 }
 
 /// A full-window canvas, independent of the preview card's chrome and zoom.

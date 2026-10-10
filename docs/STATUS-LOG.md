@@ -12,7 +12,7 @@ no trace in any registry and to re-enable; the trait surface did not change for 
 three plugins written (jump, tags, shell). Idle PSS with all plugins is 99.9 MB (budget 100).
 Deviations recorded: the plan's `search` item is folded into `query`; `view-dual` is a UI
 feature (per-pane state in the shell) rather than a crate; the UI surfaces (review modal,
-prompts, treemap, timeline strip) live in `bibli-ui` per the Phase 3 decision; `edit-as-buffer`
+prompts, treemap, timeline strip) live in `skwir-ui` per the Phase 3 decision; `edit-as-buffer`
 uses `$VISUAL`/`$EDITOR` in a terminal instead of an in-app editor; query results are not
 cached across opens (walk is fast, content search dominates); the query language's date parser
 and the timeline's calendar math are duplicated (candidate for a shared crate); earlier
@@ -51,7 +51,7 @@ Office formats. UI checks exercised selection/copy, search, outlines, internal
 links, rotation, and grid/list scrolling with synthetic inputs. The historical
 UI memory budget remains an open gate; measurements include the child process
 and are recorded separately from filesystem microbenchmarks. After 50 page
-turns, bibli plus PDFium measured about 201 MiB PSS versus 177 MiB with Poppler;
+turns, skwir plus PDFium measured about 201 MiB PSS versus 177 MiB with Poppler;
 both stabilized across turns. Fresh idle was 115–117 MiB, still above target.
 Continuous document follow-up (2026-09-19): PDFium and Poppler share a toolbar
 switch between single-page and continuous scrolling, also available as
@@ -78,7 +78,7 @@ Saved-query collections remain managed by query commands. The `settings.apply`
 command validates whole batches and atomically persists only edited keys on a
 worker before publishing values; failures retain the draft. Document and thumbnail
 providers refresh through an explicit plugin settings hook, so engine changes
-apply without restarting bibli. This adds one defaulted method to the Phase 4
+apply without restarting skwir. This adds one defaulted method to the Phase 4
 plugin trait. The dialog uses the existing shell rather than a separate native
 window and does not yet expose plugin enable/disable controls. Lint and 126
 default tests pass, including failed-save recovery, batch validation, queued
@@ -91,7 +91,7 @@ opening and closing Settings in a fresh release window on four synthetic files,
 PSS was 106.9 MiB and idle CPU sampled 0.8% of one core over five seconds. The
 historical 100 MB UI memory gate remains open.
 
-Poppler reader follow-up (ADR-005): a separate `bibli-poppler-worker` keeps
+Poppler reader follow-up (ADR-005): a separate `skwir-poppler-worker` keeps
 Poppler/GLib/Cairo outside the UI process and implements the same document
 protocol as PDFium. Both engines share the session manager, reader controls,
 selection/copy, search, links and outlines, including converted Office PDFs.
@@ -105,7 +105,7 @@ Validation: lint, 126 default tests and five installed-renderer tests pass,
 including nine Office formats with both readers. Real UI checks covered copy,
 search/rotation, outlines, links and grid/list scrolling. Microbenchmarks pass
 on an isolated rerun (an initial image listing sample missed by 135 µs; budgets
-are unchanged). After 50 page turns, combined bibli/worker PSS stabilized near
+are unchanged). After 50 page turns, combined skwir/worker PSS stabilized near
 185 MiB for Poppler and 191 MiB for PDFium; closing either preview reaped its
 worker. Equivalent-feature timing ranges, CPU/PSS and measurement limitations
 are recorded in `docs/pdf-comparison.md`. The existing UI memory gate stays open.
@@ -178,7 +178,7 @@ affected branches and ancestor totals; unavailable monitoring uses an explicit
 stale warning and periodic revalidation. Generations and cancellation prevent
 superseded requests publishing, and plugin disable releases worker resources.
 Ctrl+R forces recalculation without changing the existing split-pane F5 copy
-binding. Toolkit-dependent rendering stays bundled in `bibli-ui`; an external
+binding. Toolkit-dependent rendering stays bundled in `skwir-ui`; an external
 view SDK remains deferred. Lint and 139 tests pass (five optional native tests
 skipped), including cache reuse, deep mutations, watch expansion/root replacement,
 event bounds, eviction, alias replacement, symlink cycles, cancellation and view

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Build the plugins from outside bibli this workspace holds
+# Build the plugins from outside skwir this workspace holds
 # (crates/plugins-outside/*, ADR-046) as WebAssembly modules, each into a
 # folder of target/plugins as an installed plugin is laid out: its
 # plugin.toml beside the module it names. Try them with
-#   BIBLI_PLUGIN_PATH=$PWD/target/plugins just run
-# or copy a folder into ~/.local/share/bibli/plugins.
+#   SKWIR_PLUGIN_PATH=$PWD/target/plugins just run
+# or copy a folder into ~/.local/share/skwir/plugins.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 out="$root/target/plugins"

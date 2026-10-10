@@ -24,9 +24,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use parking_lot::{Condvar, Mutex};
 
-use bibli_core::app::App;
-use bibli_core::cancel::CancelToken;
-use bibli_core::entry::{EntryId, FileId};
+use skwir_core::app::App;
+use skwir_core::cancel::CancelToken;
+use skwir_core::entry::{EntryId, FileId};
 
 use crate::index::{TagIndex, stable_hash};
 
@@ -57,7 +57,7 @@ fn folder_key(dev: u64, ino: u64, path: &Path) -> u64 {
 
 fn changed_since(path: &Path, meta: &std::fs::Metadata, since: Option<SystemTime>) -> bool {
     let Some(since) = since else { return true };
-    bibli_core::fs::stat::changed(path, meta).is_none_or(|changed| changed >= since)
+    skwir_core::fs::stat::changed(path, meta).is_none_or(|changed| changed >= since)
 }
 
 fn hidden(name: &OsStr) -> bool {
@@ -165,7 +165,7 @@ struct Walk<'a> {
     index: &'a Arc<TagIndex>,
     covered: Option<SystemTime>,
     known_dirs: &'a HashSet<u64>,
-    policy: bibli_core::notes::Policy,
+    policy: skwir_core::notes::Policy,
     cancel: &'a CancelToken,
     /// The folders to read, and how many threads are reading one: once
     /// none is left and none is read, the walk is done.
@@ -215,7 +215,7 @@ impl Walk<'_> {
             .devices
             .lock()
             .entry(dev)
-            .or_insert_with(|| bibli_platform::filesystem::change_times_tell(dir))
+            .or_insert_with(|| skwir_platform::filesystem::change_times_tell(dir))
     }
 
     /// Read `dir`'s files that need it, and say the folders it holds.
@@ -230,7 +230,7 @@ impl Walk<'_> {
         let (app, covered) = (self.app, self.covered);
         self.folders.fetch_add(1, Ordering::Relaxed);
         // Off Unix a folder is known by its path alone (ADR-035).
-        let id = bibli_core::fs::stat::identity(dir, &meta).unwrap_or(FileId { dev: 0, ino: 0 });
+        let id = skwir_core::fs::stat::identity(dir, &meta).unwrap_or(FileId { dev: 0, ino: 0 });
         let key = folder_key(id.dev, id.ino, dir);
         self.seen_dirs.lock().push(key);
         // Read whole: on a first count, a folder not seen here before, or
@@ -296,13 +296,13 @@ impl Walk<'_> {
             }
         }
         if !read.is_empty() {
-            let named: Vec<bibli_core::notes::Named<'_>> = read
+            let named: Vec<skwir_core::notes::Named<'_>> = read
                 .iter()
                 .map(|(name, meta)| {
                     (
                         name.as_os_str(),
                         // As the folder's listing names the entry.
-                        bibli_core::fs::stat::identity(&dir.join(name), meta)
+                        skwir_core::fs::stat::identity(&dir.join(name), meta)
                             .map(|file| EntryId::in_folder(file, id, name)),
                         meta.is_dir(),
                     )
@@ -332,8 +332,8 @@ impl Walk<'_> {
 #[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use super::{hidden, run};
-    use bibli_core::app::{App, AppConfig};
-    use bibli_core::cancel::CancelToken;
+    use skwir_core::app::{App, AppConfig};
+    use skwir_core::cancel::CancelToken;
     use std::ffi::OsStr;
     use std::sync::Arc;
 
@@ -343,7 +343,7 @@ mod tests {
     }
 
     fn home_tempdir() -> tempfile::TempDir {
-        let base = dirs::home_dir().unwrap().join(".cache").join("bibli-tests");
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         tempfile::Builder::new()
             .prefix("tags-count-")
@@ -360,7 +360,7 @@ mod tests {
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::create_dir_all(tmp.path().join("outside/deep")).unwrap();
         let tag = |p: &std::path::Path, v: &str| {
-            bibli_core::fs::xattr::set(p, "user.xdg.tags", v.as_bytes()).unwrap();
+            skwir_core::fs::xattr::set(p, "user.xdg.tags", v.as_bytes()).unwrap();
         };
         for name in ["a", "b", "sub/c"] {
             std::fs::write(root.join(name), b"x").unwrap();
