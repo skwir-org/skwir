@@ -350,6 +350,28 @@ pub struct Entry {
     /// Mac's `UF_HIDDEN` flag. Read where the listing or a stat says it;
     /// a name starting with a dot hides too ([`Entry::is_hidden`]).
     pub hidden: bool,
+    /// Its name's order key, worked out as its provider sends it.
+    pub(crate) name_key: NameKey,
+}
+
+/// The order key of an entry's name (`collate::sort_key`), worked out on
+/// the provider's thread as it sends a batch (`EventSink::send`), so the
+/// window's thread does not as the listing takes it: half a microsecond a
+/// name, 50 ms a hundred thousand. A cache of the name, never part of what
+/// an entry is: equal whatever it holds, and taken by the listing.
+#[derive(Clone, Default)]
+pub(crate) struct NameKey(pub(crate) Option<Box<[u8]>>);
+
+impl PartialEq for NameKey {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for NameKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NameKey")
+    }
 }
 
 impl Entry {
@@ -361,6 +383,7 @@ impl Entry {
             target: None,
             metadata: Metadata::default(),
             hidden: false,
+            name_key: NameKey::default(),
         }
     }
 

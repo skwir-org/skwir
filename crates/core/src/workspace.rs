@@ -387,6 +387,26 @@ fn opened<'a>(
     })
 }
 
+/// Each entry of the folders opened in place, by the opened folder and
+/// the kept listing that hold it: indexes into `Pane::expanded` and
+/// `Pane::kept`, the shallowest first where several hold one.
+struct OpenedIndex(HashMap<EntryId, (usize, usize)>);
+
+impl OpenedIndex {
+    fn of(kept: &[Kept], expanded: &[Opened]) -> Self {
+        let mut held = HashMap::new();
+        for (e, o) in expanded.iter().enumerate() {
+            let Some(k) = kept.iter().position(|k| k.location == o.location) else {
+                continue;
+            };
+            for entry in kept[k].listing.iter() {
+                held.entry(entry.id).or_insert((e, k));
+            }
+        }
+        OpenedIndex(held)
+    }
+}
+
 /// The order last computed for a pane with folders opened in place, and
 /// what it was computed from: the orders of the listings it interleaves
 /// (compared by identity, as `Listing::sorted` keeps one until it changes)
@@ -420,6 +440,11 @@ pub struct Pane {
     /// The listing's names when the reveal last looked for its name: it
     /// looks again only once they change, not at every pump.
     reveal_looked: Option<u64>,
+    /// Which opened folder holds each entry the pane shows beside its own
+    /// listing's, made when first asked and forgotten when the folders
+    /// opened, the listings kept or theirs change: asked for every row
+    /// drawn, a deep tree's lookups searched every opened folder.
+    opened_index: parking_lot::Mutex<Option<OpenedIndex>>,
     /// The selection a dormant pane had, given back once its listing is
     /// complete again (see [`Pane::suspend`]).
     restore: Option<Selection>,
@@ -569,6 +594,7 @@ impl Pane {
             history_pos: 0,
             reveal: None,
             reveal_looked: None,
+            opened_index: parking_lot::Mutex::new(None),
             restore: None,
             expanded: Vec::new(),
             expanded_version: 0,
@@ -722,6 +748,7 @@ impl Pane {
         self.reveal = None;
         // Each closes as it drops.
         self.kept.clear();
+        self.opened_moved();
         self.left = None;
     }
 
@@ -793,7 +820,9 @@ impl Pane {
             return self.left.take().map(Kept::into_shown);
         }
         let i = self.kept.iter().position(|k| &k.location == location)?;
-        Some(self.kept.remove(i).into_shown())
+        let kept = self.kept.remove(i);
+        self.opened_moved();
+        Some(kept.into_shown())
     }
 
     /// Keep exactly the locations of `wanted` (the one shown aside): the
@@ -812,6 +841,7 @@ impl Pane {
             self.kept.push(left);
         }
         self.kept.retain(|k| wanted.contains(&k.location));
+        self.opened_moved();
         let shown = self.location().cloned();
         wanted
             .into_iter()
@@ -840,6 +870,7 @@ impl Pane {
 
     pub(crate) fn add_kept(&mut self, open: Arc<dyn OpenLocation>, listing: Listing) {
         self.kept.push(Kept::new(open, listing));
+        self.opened_moved();
     }
 
     /// Whether anything is kept or waiting to be: `keep_only` has work.
@@ -946,6 +977,7 @@ impl Pane {
         }
         if opened > 0 {
             self.tree_version += 1;
+            self.opened_moved();
         }
         if self.open.is_none() {
             return 0;
@@ -990,6 +1022,27 @@ impl Pane {
     fn expanded_changed(&mut self) {
         self.expanded_version += 1;
         self.tree_version += 1;
+        self.opened_moved();
+    }
+
+    /// The folders opened, the listings kept or theirs changed: which
+    /// holds which entry is made again when next asked.
+    fn opened_moved(&self) {
+        self.opened_index.lock().take();
+    }
+
+    /// The opened folder, and its kept listing, holding entry `id`.
+    fn opened_of(&self, id: EntryId) -> Option<(&Opened, &Kept)> {
+        if self.expanded.is_empty() {
+            return None;
+        }
+        let (e, k) = *self
+            .opened_index
+            .lock()
+            .get_or_insert_with(|| OpenedIndex::of(&self.kept, &self.expanded))
+            .0
+            .get(&id)?;
+        Some((self.expanded.get(e)?, self.kept.get(k)?))
     }
 
     /// The folders opened in place under the one shown.
@@ -1022,7 +1075,7 @@ impl Pane {
         let within = if self.listing.get(at).is_some() {
             None
         } else {
-            match opened(&self.kept, &self.expanded).find(|(_, k)| k.listing.get(at).is_some()) {
+            match self.opened_of(at) {
                 Some((o, _)) => Some(o.location.clone()),
                 None => return false,
             }
@@ -1100,6 +1153,7 @@ impl Pane {
             self.left = None;
         }
         self.kept.retain(|k| !under(k));
+        self.opened_moved();
     }
 
     /// Close every folder opened in place.
@@ -1117,7 +1171,7 @@ impl Pane {
     pub fn entry(&self, id: EntryId) -> Option<&Entry> {
         self.listing
             .get(id)
-            .or_else(|| opened(&self.kept, &self.expanded).find_map(|(_, k)| k.listing.get(id)))
+            .or_else(|| self.opened_of(id).and_then(|(_, k)| k.listing.get(id)))
     }
 
     /// The listing (`Listing::id`) that holds entry `id`: the shown one's,
@@ -1130,18 +1184,14 @@ impl Pane {
         if self.listing.get(id).is_some() {
             return self.location();
         }
-        opened(&self.kept, &self.expanded)
-            .find(|(_, k)| k.listing.get(id).is_some())
-            .map(|(o, _)| &o.location)
+        self.opened_of(id).map(|(o, _)| &o.location)
     }
 
     pub fn listing_of(&self, id: EntryId) -> Option<u64> {
         if self.listing.get(id).is_some() {
             return Some(self.listing.id());
         }
-        opened(&self.kept, &self.expanded)
-            .find(|(_, k)| k.listing.get(id).is_some())
-            .map(|(_, k)| k.listing.id())
+        self.opened_of(id).map(|(_, k)| k.listing.id())
     }
 
     /// Where an entry of an opened folder lives. `None` for the shown
@@ -1151,8 +1201,7 @@ impl Pane {
         if self.expanded.is_empty() || self.listing.get(id).is_some() {
             return None;
         }
-        let (o, k) =
-            opened(&self.kept, &self.expanded).find(|(_, k)| k.listing.get(id).is_some())?;
+        let (o, k) = self.opened_of(id)?;
         match o.location.path() {
             Some(dir) => k.listing.get(id).map(|e| dir.join(&e.name)),
             None => k.open.as_ref()?.path_of(id),
@@ -1177,8 +1226,7 @@ impl Pane {
         if self.listing.get(id).is_some() {
             return self.open.as_ref()?.location_of(id);
         }
-        opened(&self.kept, &self.expanded)
-            .find(|(_, k)| k.listing.get(id).is_some())
+        self.opened_of(id)
             .and_then(|(_, k)| k.open.as_ref()?.location_of(id))
     }
 
@@ -1199,9 +1247,7 @@ impl Pane {
         if self.expanded.is_empty() || self.listing.get(id).is_some() {
             return 0;
         }
-        let Some((o, _)) =
-            opened(&self.kept, &self.expanded).find(|(_, k)| k.listing.get(id).is_some())
-        else {
+        let Some((o, _)) = self.opened_of(id) else {
             return 0;
         };
         let mut depth = 1;
@@ -1238,8 +1284,7 @@ impl Pane {
             let open = if self.listing.get(id).is_some() {
                 self.open.as_ref()
             } else {
-                opened(&self.kept, &self.expanded)
-                    .find(|(_, k)| k.listing.get(id).is_some())
+                self.opened_of(id)
                     .and_then(|(_, k)| k.open.as_ref())
                     .or(self.open.as_ref())
             };

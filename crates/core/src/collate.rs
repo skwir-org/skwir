@@ -53,19 +53,33 @@ pub fn sort_key(name: &OsStr) -> Box<[u8]> {
     let text = name.to_string_lossy();
     let raw = name.as_encoded_bytes();
     let mut key = Vec::with_capacity(raw.len() * 2 + 1);
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c.is_ascii_digit() {
-            let mut digits = String::from(c);
-            while let Some(d) = chars.next_if(char::is_ascii_digit) {
-                digits.push(d);
+    // Digits are ASCII: a run of them is sliced from the text as it is,
+    // never copied into a string of its own.
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        let b = bytes[at];
+        if b.is_ascii_digit() {
+            let start = at;
+            while bytes.get(at).is_some_and(u8::is_ascii_digit) {
+                at += 1;
             }
-            let significant = digits.trim_start_matches('0');
+            let digits = &bytes[start..at];
+            let zeros = digits.iter().take_while(|&&d| d == b'0').count();
+            let significant = &digits[zeros..];
             key.push(b'0');
             key.push(u8::try_from(significant.len()).unwrap_or(u8::MAX));
-            key.extend_from_slice(significant.as_bytes());
+            key.extend_from_slice(significant);
+        } else if b.is_ascii() {
+            key.push(b.to_ascii_lowercase());
+            at += 1;
         } else {
+            let c = text[at..]
+                .chars()
+                .next()
+                .unwrap_or(char::REPLACEMENT_CHARACTER);
             fold(c, &mut key);
+            at += c.len_utf8();
         }
     }
     // Ties (case, accents, leading zeros) are broken by the name itself.

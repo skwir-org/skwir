@@ -251,7 +251,15 @@ pub struct EventSink {
 
 impl EventSink {
     /// Queue an event. Returns false if the receiver is gone.
-    pub fn send(&self, event: ListingEvent) -> bool {
+    pub fn send(&self, mut event: ListingEvent) -> bool {
+        // The order key of each name arriving, worked out here, on the
+        // provider's thread, rather than on the window's as the listing
+        // takes them (`Entry::name_key`).
+        if let ListingEvent::Added(batch) = &mut event {
+            for entry in batch {
+                entry.name_key.0 = Some(crate::collate::sort_key(&entry.name));
+            }
+        }
         let ok = self.tx.send(event).is_ok();
         if let Some(w) = &self.waker {
             w();
@@ -706,8 +714,12 @@ struct Slot {
 }
 
 impl Slot {
-    fn new(entry: Entry, companions: Option<&crate::companions::Companions>) -> Self {
-        let key = crate::collate::sort_key(&entry.name);
+    fn new(mut entry: Entry, companions: Option<&crate::companions::Companions>) -> Self {
+        let key = entry
+            .name_key
+            .0
+            .take()
+            .unwrap_or_else(|| crate::collate::sort_key(&entry.name));
         let beside = companions.and_then(|c| {
             if c.is_folder(&entry.name) {
                 Some(OsString::new())
@@ -963,8 +975,9 @@ impl Listing {
                         }
                     }
                 }
-                if ids.len() > 16 {
-                    // One pass instead of an O(n) shift per id.
+                if ids.len() > 1 {
+                    // One pass instead of an O(n) shift per id: one id is
+                    // one shift, as long as the pass.
                     let gone: std::collections::HashSet<EntryId> = ids.into_iter().collect();
                     self.entries.retain(|id, _| !gone.contains(id));
                 } else {
@@ -1039,6 +1052,8 @@ impl Listing {
                     }
                     *slot.get_mut() = replaced;
                 } else {
+                    // Its slot keeps the key it has.
+                    e.name_key.0 = None;
                     slot.get_mut().entry = e;
                 }
                 delta.any = true;
