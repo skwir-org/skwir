@@ -421,7 +421,7 @@ pub mod math {
 }
 
 /// A file's places, projected once, on the worker that received them.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Shapes {
     pub lines: Vec<ShapeLine>,
     /// Polygons: an outer ring, then its holes.
@@ -431,7 +431,7 @@ pub struct Shapes {
     pub bounds: Option<math::Rect>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ShapeLine {
     pub kind: LineKind,
     pub segments: Vec<Vec<(f64, f64)>>,
@@ -450,7 +450,7 @@ pub enum MarkerKind {
     Track,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Marker {
     pub at: (f64, f64),
     pub label: SharedString,
@@ -598,15 +598,33 @@ impl Shapes {
 
     /// The files the Map view places: a marker each, at a picture's
     /// position or where a track starts, and the tracks' lines.
-    pub fn places(places: &[Place]) -> Shapes {
+    pub fn places(places: &[&Place]) -> Shapes {
         let mut bounds = BoundsBuilder::default();
         for place in places {
             bounds.add(place.at);
         }
+        let mut shapes = Shapes::default();
+        shapes.add_places(&bounds, places);
+        shapes
+    }
+
+    /// Add `places` to the Map view's shapes, `bounds` holding them and
+    /// every place before, in place: each marker stands on the copy of the
+    /// world nearest the center of all of them, as [`Shapes::places`] puts
+    /// it, and the shapes' bounds are the markers'. `false`, nothing
+    /// changed, when a marker drawn would no longer be on that copy (a set
+    /// spread over half the world): the shapes are made again.
+    pub fn add_places(&mut self, bounds: &BoundsBuilder, places: &[&Place]) -> bool {
         let Some(center) = bounds.finish().map(|b| math::project(b.center()).0) else {
-            return Shapes::default();
+            return places.is_empty();
         };
-        let mut rect: Option<math::Rect> = None;
+        if self
+            .bounds
+            .is_some_and(|r| r.x0 < center - 0.5 || r.x1 > center + 0.5)
+        {
+            return false;
+        }
+        let rect = &mut self.bounds;
         let mut grow = |(x, y): (f64, f64)| {
             let r = rect.get_or_insert(math::Rect {
                 x0: x,
@@ -619,14 +637,13 @@ impl Shapes {
             r.y0 = r.y0.min(y);
             r.y1 = r.y1.max(y);
         };
-        let mut lines = Vec::new();
-        let mut markers = Vec::with_capacity(places.len());
+        self.markers.reserve(places.len());
         for place in places {
             let (x, y) = math::project(place.at);
             let at = (beside(x, center), y);
             grow(at);
             let track = !place.line.is_empty();
-            markers.push(Marker {
+            self.markers.push(Marker {
                 at,
                 label: place.name.clone(),
                 kind: if track {
@@ -654,18 +671,13 @@ impl Shapes {
                             .collect()
                     })
                     .collect();
-                lines.push(ShapeLine {
+                self.lines.push(ShapeLine {
                     kind: LineKind::Track,
                     segments,
                 });
             }
         }
-        Shapes {
-            lines,
-            areas: Vec::new(),
-            markers,
-            bounds: rect,
-        }
+        true
     }
 }
 
@@ -2107,6 +2119,45 @@ mod tests {
     use super::math::*;
     use super::*;
     use bibli_core::geo::{BoundsBuilder, Line, Point as GeoPoint};
+
+    fn place(n: u64, lat: f64, lon: f64) -> Place {
+        Place {
+            entry: EntryId { dev: 1, ino: n },
+            at: LatLon::new(lat, lon).unwrap(),
+            name: format!("{n}.jpg").into(),
+            line: Vec::new(),
+            clock: None,
+        }
+    }
+
+    #[test]
+    fn places_added_in_batches_stand_where_all_at_once_would() {
+        // Across the antimeridian: Fiji's islands, then one more east.
+        let all = [
+            place(1, -17.7, 177.4),
+            place(2, -16.5, 179.9),
+            place(3, -18.1, -179.8),
+            place(4, -17.0, -178.5),
+        ];
+        let refs: Vec<&Place> = all.iter().collect();
+        let whole = Shapes::places(&refs);
+        let mut grown = Shapes::places(&refs[..2]);
+        let mut bounds = BoundsBuilder::default();
+        for place in &refs {
+            bounds.add(place.at);
+        }
+        assert!(grown.add_places(&bounds, &refs[2..]));
+        let at = |s: &Shapes| s.markers.iter().map(|m| m.at).collect::<Vec<_>>();
+        assert_eq!(at(&grown), at(&whole));
+        assert_eq!(grown.bounds, whole.bounds);
+        // A set spread over half the world would move a marker drawn:
+        // nothing changes, to be made again.
+        let far = place(5, 51.5, -0.1);
+        let before = at(&grown);
+        bounds.add(far.at);
+        assert!(!grown.add_places(&bounds, &[&far]));
+        assert_eq!(at(&grown), before);
+    }
 
     fn at(lat: f64, lon: f64) -> LatLon {
         LatLon::new(lat, lon).unwrap()

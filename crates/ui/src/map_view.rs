@@ -87,6 +87,10 @@ pub struct MapView {
     /// when drawn last.
     shapes: Arc<Shapes>,
     shown: Arc<[EntryId]>,
+    /// `shown` as a set, and what holds the places drawn: the places a
+    /// batch adds are added to the shapes, not all of them drawn again.
+    shown_set: HashSet<EntryId>,
+    bounds: bibli_core::geo::BoundsBuilder,
     counts: (usize, usize, usize, bool),
     selection: (u64, Arc<HashSet<EntryId>>),
     /// The file the map opens on, once it is placed: the one selected
@@ -106,6 +110,7 @@ impl MapView {
         // drawn follow, with nothing asked again.
         if !Arc::ptr_eq(&shell.ui().list.sorted, &self.shown) {
             self.shown = Arc::clone(&shell.ui().list.sorted);
+            self.shown_set = self.shown.iter().copied().collect();
             self.redraw();
         }
         let source = self.source.get_or_insert_with(|| {
@@ -133,14 +138,17 @@ impl MapView {
         let Some(mut points) = ask(shell, self.places.len(), cx) else {
             return;
         };
+        let mut again = false;
         if points.generation != self.generation {
             // Another scan: everything again.
             self.generation = points.generation;
             self.places.clear();
+            again = true;
             if let Some(all) = ask(shell, 0, cx) {
                 points = all;
             }
         }
+        let added = self.places.len();
         let names: Vec<SharedString> = {
             let ws = shell.app.workspace.read();
             let pane = ws.pane(pane);
@@ -182,19 +190,46 @@ impl MapView {
             points.candidates,
             points.complete,
         );
-        self.redraw();
+        if again {
+            self.redraw();
+        } else {
+            self.add(added);
+        }
     }
 
     /// The shapes of the places of the files the pane shows.
     fn redraw(&mut self) {
-        let shown: HashSet<EntryId> = self.shown.iter().copied().collect();
-        let places: Vec<Place> = self
+        let places: Vec<&Place> = self
             .places
             .iter()
-            .filter(|place| shown.contains(&place.entry))
-            .cloned()
+            .filter(|place| self.shown_set.contains(&place.entry))
             .collect();
+        self.bounds = bibli_core::geo::BoundsBuilder::default();
+        for place in &places {
+            self.bounds.add(place.at);
+        }
         self.shapes = Arc::new(Shapes::places(&places));
+    }
+
+    /// The places from `from` on, received just now, added to the shapes
+    /// drawn: in place, unless a marker drawn would move with them.
+    fn add(&mut self, from: usize) {
+        let new: Vec<&Place> = self.places[from..]
+            .iter()
+            .filter(|place| self.shown_set.contains(&place.entry))
+            .collect();
+        if new.is_empty() {
+            return;
+        }
+        let mut bounds = self.bounds.clone();
+        for place in &new {
+            bounds.add(place.at);
+        }
+        if Arc::make_mut(&mut self.shapes).add_places(&bounds, &new) {
+            self.bounds = bounds;
+        } else {
+            self.redraw();
+        }
     }
 
     /// What the header says about the scan.
