@@ -417,6 +417,9 @@ pub struct Pane {
     /// A name to select once the listing has it, and whether it is still
     /// coming once the listing is complete; see [`Pane::reveal`].
     reveal: Option<(OsString, bool)>,
+    /// The listing's names when the reveal last looked for its name: it
+    /// looks again only once they change, not at every pump.
+    reveal_looked: Option<u64>,
     /// The selection a dormant pane had, given back once its listing is
     /// complete again (see [`Pane::suspend`]).
     restore: Option<Selection>,
@@ -565,6 +568,7 @@ impl Pane {
             history: Vec::new(),
             history_pos: 0,
             reveal: None,
+            reveal_looked: None,
             restore: None,
             expanded: Vec::new(),
             expanded_version: 0,
@@ -870,6 +874,7 @@ impl Pane {
     /// completes without that name.
     pub fn reveal(&mut self, name: OsString) {
         self.reveal = Some((name, false));
+        self.reveal_looked = None;
         self.take_reveal();
     }
 
@@ -878,6 +883,7 @@ impl Pane {
     /// until it is listed or the pane shows another location.
     pub fn reveal_coming(&mut self, name: OsString) {
         self.reveal = Some((name, true));
+        self.reveal_looked = None;
         self.take_reveal();
     }
 
@@ -885,7 +891,15 @@ impl Pane {
         let Some((name, coming)) = &self.reveal else {
             return;
         };
-        if let Some(id) = self.listing.find_by_name(name).map(|e| e.id) {
+        let names = Some(self.listing.names_version());
+        let looked = std::mem::replace(&mut self.reveal_looked, names) == names;
+        if looked && !self.listing.is_complete() {
+            return;
+        }
+        if let Some(id) = (!looked)
+            .then(|| self.listing.find_by_name(name).map(|e| e.id))
+            .flatten()
+        {
             self.selection.set([id]);
             self.reveal = None;
         } else if self.listing.is_complete() && !coming {
@@ -906,23 +920,36 @@ impl Pane {
         self.open.as_ref().map(|o| o.location())
     }
 
-    /// Apply pending listing events, for at most `budget` each, the kept
-    /// locations' too. Returns how many changed the shown listing;
-    /// `backlog` says whether some are still waiting.
+    /// Apply pending listing events, the kept locations' too, for at most
+    /// `budget` in all: the listing shown first, the kept ones with what
+    /// it left. Returns how many changed the shown listing; `backlog`
+    /// says whether some are still waiting.
     pub fn pump(&mut self, budget: std::time::Duration) -> usize {
+        let deadline = std::time::Instant::now() + budget;
+        let n = match &self.open {
+            Some(open) => {
+                let rx = open.events().clone();
+                self.listing.drain(&rx, budget)
+            }
+            None => 0,
+        };
         let mut opened = 0;
         for kept in &mut self.kept {
-            let n = kept.pump(budget);
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            let applied = kept.pump(left);
             if self.expanded.iter().any(|o| o.location == kept.location) {
-                opened += n;
+                opened += applied;
             }
         }
         if opened > 0 {
             self.tree_version += 1;
         }
-        let Some(open) = &self.open else { return 0 };
-        let rx = open.events().clone();
-        let n = self.listing.drain(&rx, budget);
+        if self.open.is_none() {
+            return 0;
+        }
         if n + opened > 0 {
             self.retain_shown();
         }
