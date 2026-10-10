@@ -14,7 +14,10 @@ pub struct Entry {
 }
 
 /// The drawer over the left of the content. Choosing an entry goes there and
-/// closes the drawer with `close`, the command that toggles it.
+/// closes the drawer with `close`, the command that toggles it. Only the
+/// rows in view are built (`uniform_list`): a document's outline of
+/// thousands of entries built every row, its tooltip and its listeners,
+/// at every frame the drawer was open.
 pub fn drawer(
     entries: Vec<Entry>,
     close: (&'static str, serde_json::Value),
@@ -22,49 +25,42 @@ pub fn drawer(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let mut list = div()
-        .id("outline-list")
-        .tab_group()
-        .flex_1()
-        .min_h_0()
-        .overflow_y_scroll()
-        .p_2();
-    if entries.is_empty() {
-        list = list.child(div().text_color(theme.text_muted).child("No contents"));
-    }
-    for (index, entry) in entries.into_iter().enumerate() {
-        let (command, closing) = (entry.command, close.clone());
-        let (title, clip) = crate::elements::clip::text(entry.title);
-        list = list.child(
-            div()
-                .id(("outline-entry", index))
-                .optional_tooltip(clip.tooltip(None, shell.font.clone()))
-                .pl(px(entry.depth.min(12) as f32 * 10. + 8.))
-                .py_1()
-                .rounded_md()
-                .truncate()
-                .when(command.is_some(), |d| {
-                    d.cursor_pointer()
-                        .tab_index(0)
-                        .key_context("ToolbarButton")
-                        .hover(|s| s.bg(theme.hover))
-                        .focus(|s| s.bg(theme.selection_bg))
-                })
-                .child(title)
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    if let Some((name, args)) = &command {
-                        shell.run(name, args.clone(), window, cx);
-                        shell.run(closing.0, closing.1.clone(), window, cx);
-                    }
-                }))
-                .on_action(cx.listener(|_, action: &crate::keymap::RunCommand, _, cx| {
-                    // Activation comes from GPUI's key-up click, as in toolbar::Button.
-                    if action.name != "ui.toolbar_activate" {
-                        cx.propagate();
-                    }
-                })),
-        );
-    }
+    let list: AnyElement = if entries.is_empty() {
+        div()
+            .p_2()
+            .text_color(theme.text_muted)
+            .child("No contents")
+            .into_any_element()
+    } else {
+        let count = entries.len();
+        let (entries, closing) = (std::rc::Rc::new(entries), close.clone());
+        div()
+            .id("outline-list")
+            .tab_group()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(
+                gpui::uniform_list(
+                    "outline-rows",
+                    count,
+                    cx.processor(
+                        move |shell: &mut Shell, range: std::ops::Range<usize>, _, cx| {
+                            let theme = cx.global::<Theme>().clone();
+                            range
+                                .map(|index| {
+                                    row(&entries[index], index, &closing, shell, &theme, cx)
+                                })
+                                .collect::<Vec<_>>()
+                        },
+                    ),
+                )
+                .flex_1()
+                .p_2(),
+            )
+            .into_any_element()
+    };
     gpui::deferred(
         div()
             .absolute()
@@ -98,4 +94,45 @@ pub fn drawer(
     )
     .with_priority(1)
     .into_any_element()
+}
+
+/// One entry of the drawer.
+fn row(
+    entry: &Entry,
+    index: usize,
+    close: &(&'static str, serde_json::Value),
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let (command, closing) = (entry.command.clone(), close.clone());
+    let (title, clip) = crate::elements::clip::text(entry.title.clone());
+    div()
+        .id(("outline-entry", index))
+        .optional_tooltip(clip.tooltip(None, shell.font.clone()))
+        .pl(px(entry.depth.min(12) as f32 * 10. + 8.))
+        .py_1()
+        .rounded_md()
+        .truncate()
+        .when(command.is_some(), |d| {
+            d.cursor_pointer()
+                .tab_index(0)
+                .key_context("ToolbarButton")
+                .hover(|s| s.bg(theme.hover))
+                .focus(|s| s.bg(theme.selection_bg))
+        })
+        .child(title)
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            if let Some((name, args)) = &command {
+                shell.run(name, args.clone(), window, cx);
+                shell.run(closing.0, closing.1.clone(), window, cx);
+            }
+        }))
+        .on_action(cx.listener(|_, action: &crate::keymap::RunCommand, _, cx| {
+            // Activation comes from GPUI's key-up click, as in toolbar::Button.
+            if action.name != "ui.toolbar_activate" {
+                cx.propagate();
+            }
+        }))
+        .into_any_element()
 }

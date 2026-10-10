@@ -590,6 +590,13 @@ pub fn render(
                 .push(moves.before.clone());
         }
     }
+    // Shared by every gap of the group: each gap copied the whole order,
+    // the square of the group's places each frame.
+    let orders: HashMap<(String, String), std::sync::Arc<[serde_json::Value]>> = orders
+        .into_iter()
+        .map(|(mover, order)| (mover, order.into()))
+        .collect();
+    let no_order: std::sync::Arc<[serde_json::Value]> = std::sync::Arc::new([]);
 
     let drop_tint = theme.drop_target;
     let mut column = div()
@@ -699,7 +706,7 @@ pub fn render(
         let order = moves
             .as_ref()
             .and_then(|moves| orders.get(&mover(&place.group, moves)))
-            .map_or(&[][..], Vec::as_slice);
+            .unwrap_or(&no_order);
         if let Some(color) = color {
             let mut pill = pill(i, &place, color, is_current, at_cursor, &font, cx)
                 .children(shell.host_marker(MenuHost::Sidebar, menu_here));
@@ -1232,7 +1239,7 @@ fn movable_pill(
     pill: gpui::Stateful<gpui::Div>,
     label: String,
     drag: PlaceDrag,
-    order: &[serde_json::Value],
+    order: &std::sync::Arc<[serde_json::Value]>,
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
     let (moves, index) = (drag.mover(), drag.index);
@@ -1265,7 +1272,7 @@ fn movable_row(
     row: gpui::Stateful<gpui::Div>,
     label: String,
     drag: PlaceDrag,
-    order: &[serde_json::Value],
+    order: &std::sync::Arc<[serde_json::Value]>,
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
     let (moves, index) = (drag.mover().unwrap_or_default(), drag.index);
@@ -1283,14 +1290,14 @@ fn movable_row(
 /// top or bottom, a pill's left or right). Its hitbox does not block the
 /// place's own clicks.
 fn gap(
-    order: &[serde_json::Value],
+    order: &std::sync::Arc<[serde_json::Value]>,
     moves: &(String, String),
     before: usize,
     side: Edge,
     cx: &mut Context<Shell>,
 ) -> gpui::Div {
     let edge = cx.global::<Theme>().accent;
-    let order = order.to_vec();
+    let order = std::sync::Arc::clone(order);
     let (shown, dropped) = (moves.clone(), moves.clone());
     let zone = div().absolute();
     let zone = match side {

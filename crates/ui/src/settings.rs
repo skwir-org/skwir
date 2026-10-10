@@ -559,6 +559,10 @@ pub struct SettingsView {
     pub(crate) app: Arc<App>,
     pub(crate) font: SharedString,
     pub(crate) key_hints: Vec<KeyHint>,
+    /// Each of `key_hints`' place and command as the Keyboard page says
+    /// them, worked out when they are set: asked for every row of every
+    /// frame, a command's title was a search of the shell's commands.
+    pub(crate) key_words: Vec<(String, String)>,
     pub(crate) page: Page,
     pub(crate) search: Entity<TextInput>,
     pub(crate) rows: Vec<Row>,
@@ -599,6 +603,19 @@ pub struct SettingsView {
 
 impl EventEmitter<SettingsEvent> for SettingsView {}
 
+/// What the Keyboard page says of each binding: its place and its command.
+fn key_words(app: &App, hints: &[KeyHint]) -> Vec<(String, String)> {
+    hints
+        .iter()
+        .map(|hint| {
+            (
+                crate::keymap::context_label(&hint.context),
+                crate::keymap::title_of(app, hint),
+            )
+        })
+        .collect()
+}
+
 impl SettingsView {
     pub fn new(
         app: Arc<App>,
@@ -632,6 +649,7 @@ impl SettingsView {
             plugins: app.plugins.list(),
             settings_revision: app.settings.revision(),
             plugins_revision: app.plugins.revision(),
+            key_words: key_words(&app, &key_hints),
             app,
             font,
             key_hints,
@@ -694,6 +712,7 @@ impl SettingsView {
     /// The keymap changed while the dialog is open (a shortcut saved here,
     /// a plugin turned on or off).
     pub fn set_key_hints(&mut self, hints: Vec<KeyHint>, cx: &mut Context<Self>) {
+        self.key_words = key_words(&self.app, &hints);
         self.key_hints = hints;
         cx.notify();
     }

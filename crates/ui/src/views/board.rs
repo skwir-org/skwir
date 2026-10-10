@@ -39,6 +39,7 @@ const CARD_H: f32 = 48.0;
 const PICTURE: f32 = 36.0;
 
 /// One column: what it lists, where it leads, and its cards.
+#[derive(Clone)]
 struct Column {
     /// Its entry in the place shown; `None` for the place's own files.
     at: Option<EntryId>,
@@ -66,7 +67,13 @@ pub struct BoardView {
     /// Every column shown since the board showed this place: one emptied
     /// is still drawn, empty, to take cards back.
     seen: Vec<(String, Location, Option<PathBuf>, Option<usize>)>,
+    /// The columns worked out last, and what they were worked out of (the
+    /// listing as it was, the folders opened, the sort, the filter, the
+    /// settings for tags' colors): every frame walked the whole place.
+    columns_of: Option<(ColumnsOf, Vec<Column>, Vec<EntryId>, u64)>,
 }
+
+type ColumnsOf = (u64, u64, u64, bibli_core::SortSpec, u64, u64);
 
 impl BoardView {
     /// The column drawn holding `id`, and its card there; `None` for the
@@ -83,6 +90,31 @@ impl BoardView {
     /// The columns of the place `shell` shows, and those not open yet;
     /// those it showed and that went, empty.
     fn columns(&mut self, shell: &Shell) -> (Vec<Column>, Vec<EntryId>, u64) {
+        let of = {
+            let ws = shell.app.workspace.read();
+            let Some(pane) = ws.pane(shell.pane) else {
+                return (Vec::new(), Vec::new(), 0);
+            };
+            (
+                pane.listing.id(),
+                pane.listing.version(),
+                pane.tree_version(),
+                pane.sort,
+                pane.filter_version(),
+                shell.app.settings.revision(),
+            )
+        };
+        if let Some((at, columns, missing, listing)) = &self.columns_of
+            && *at == of
+        {
+            return (columns.clone(), missing.clone(), *listing);
+        }
+        let worked = self.work_out_columns(shell);
+        self.columns_of = Some((of, worked.0.clone(), worked.1.clone(), worked.2));
+        worked
+    }
+
+    fn work_out_columns(&mut self, shell: &Shell) -> (Vec<Column>, Vec<EntryId>, u64) {
         let ws = shell.app.workspace.read();
         let Some(pane) = ws.pane(shell.pane) else {
             return (Vec::new(), Vec::new(), 0);
@@ -251,14 +283,11 @@ fn column(
 
 /// What the cards of `ids` show, read under the lock.
 fn cards(shell: &mut Shell, ids: &[EntryId]) -> Vec<Card> {
-    let index: HashMap<EntryId, usize> = shell
-        .ui()
-        .list
-        .sorted
+    // Each card's place in the pane's order, from the list's map: each
+    // column walked the whole order for its few cards, every frame.
+    let index: HashMap<EntryId, usize> = ids
         .iter()
-        .enumerate()
-        .filter(|(_, id)| ids.contains(id))
-        .map(|(ix, id)| (*id, ix))
+        .filter_map(|id| Some((*id, shell.ui().list.index_of(*id)?)))
         .collect();
     let app = Arc::clone(&shell.app);
     let ws = app.workspace.read();

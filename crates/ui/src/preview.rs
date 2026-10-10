@@ -3023,12 +3023,14 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                 .flex_1()
                 .min_h_0()
                 .children(crate::inspector::notice(display).map(|text| notice_strip(text, theme)))
-                .child(crate::inspector::content(shell, view, theme, cx))
-                .children(
-                    Some(())
-                        .filter(|()| interactive)
-                        .and_then(|()| crate::inspector::outline_drawer(shell, view, theme, cx)),
-                )
+                // Under peek, which shows the same inspection, the panel's
+                // copy leaves its list out: one list state drawn at two
+                // widths measured its rows again twice a frame, and each
+                // copy's pictures cancelled the other's.
+                .when(interactive, |d| {
+                    d.child(crate::inspector::content(shell, view, theme, cx))
+                        .children(crate::inspector::outline_drawer(shell, view, theme, cx))
+                })
                 .into_any_element()
         }
         // A wait that has lasted shows the file's thumbnail, where its

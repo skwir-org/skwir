@@ -22,34 +22,54 @@ pub enum LineKind {
     Conflict,
 }
 
+/// The lines the dialog shows at most.
+const SHOWN: usize = 60;
+
 /// One line per step: the change, a status label, and its kind.
-pub fn lines(diff: &PlanDiff) -> Vec<(String, &'static str, LineKind)> {
-    diff.steps
-        .iter()
-        .map(|(change, status)| match status {
-            StepStatus::Pending { reversible: true } => {
-                (change.to_string(), "pending", LineKind::Pending)
-            }
-            StepStatus::Pending { reversible: false } => (
-                change.to_string(),
-                "pending, not undoable",
-                LineKind::Pending,
-            ),
-            StepStatus::AlreadyDone => (change.to_string(), "already done", LineKind::Done),
-            StepStatus::Conflict { reason } => (
-                format!("{change} — {reason}"),
-                "conflict",
-                LineKind::Conflict,
-            ),
-        })
-        .collect()
+pub fn lines(diff: &PlanDiff) -> impl Iterator<Item = (String, &'static str, LineKind)> + '_ {
+    diff.steps.iter().map(|(change, status)| match status {
+        StepStatus::Pending { reversible: true } => {
+            (change.to_string(), "pending", LineKind::Pending)
+        }
+        StepStatus::Pending { reversible: false } => (
+            change.to_string(),
+            "pending, not undoable",
+            LineKind::Pending,
+        ),
+        StepStatus::AlreadyDone => (change.to_string(), "already done", LineKind::Done),
+        StepStatus::Conflict { reason } => (
+            format!("{change} — {reason}"),
+            "conflict",
+            LineKind::Conflict,
+        ),
+    })
+}
+
+/// A plan's dry run as the dialog shows it, made once when it is done:
+/// its first lines and whether it applies. Made in every frame, a plan of
+/// ten thousand steps formatted each one to show sixty.
+pub struct Checked {
+    lines: Vec<(String, &'static str, LineKind)>,
+    applicable: bool,
+}
+
+impl Checked {
+    fn of(diff: &PlanDiff) -> Self {
+        Checked {
+            lines: lines(diff).take(SHOWN).collect(),
+            applicable: !diff
+                .steps
+                .iter()
+                .any(|(_, status)| matches!(status, StepStatus::Conflict { .. })),
+        }
+    }
 }
 
 /// What waits for the user's answer.
 pub enum Review {
     /// A proposed plan, with its dry run once a worker has done it (it
     /// stats every step's files).
-    Plan { plan: Plan, diff: Option<PlanDiff> },
+    Plan { plan: Plan, diff: Option<Checked> },
     /// A question: an agent asks to run a command that acts.
     Question(Question),
 }
@@ -57,12 +77,7 @@ pub enum Review {
 impl Review {
     fn applicable(&self) -> Option<bool> {
         match self {
-            Review::Plan { diff, .. } => diff.as_ref().map(|diff| {
-                !diff
-                    .steps
-                    .iter()
-                    .any(|(_, status)| matches!(status, StepStatus::Conflict { .. }))
-            }),
+            Review::Plan { diff, .. } => diff.as_ref().map(|checked| checked.applicable),
             Review::Question(_) => Some(true),
         }
     }
@@ -90,7 +105,7 @@ impl Shell {
             self.reviews.push_back(Review::Plan { plan, diff: None });
             self.off_thread(
                 "review-diff",
-                move || dry.diff(&companions),
+                move || Checked::of(&dry.diff(&companions)),
                 move |this, done, _, cx| {
                     let waiting = this.reviews.iter_mut().find_map(|r| match r {
                         Review::Plan { plan, diff } if plan.id == id => Some(diff),
@@ -308,13 +323,13 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
 fn plan_lines(
     shell: &Shell,
     mut list: gpui::Div,
-    diff: Option<&PlanDiff>,
+    diff: Option<&Checked>,
     steps: usize,
     theme: &Theme,
 ) -> gpui::Div {
     match diff {
-        Some(diff) => {
-            for (i, (text, status, kind)) in lines(diff).into_iter().take(60).enumerate() {
+        Some(checked) => {
+            for (i, (text, status, kind)) in checked.lines.iter().cloned().enumerate() {
                 let color = match kind {
                     LineKind::Pending => theme.text,
                     LineKind::Done => theme.text_muted,
@@ -342,11 +357,11 @@ fn plan_lines(
             );
         }
     }
-    if steps > 60 {
+    if steps > SHOWN {
         list = list.child(
             div()
                 .text_color(theme.text_muted)
-                .child(format!("… and {} more steps", steps - 60)),
+                .child(format!("… and {} more steps", steps - SHOWN)),
         );
     }
     list
@@ -391,7 +406,7 @@ mod tests {
                 ),
             ],
         };
-        let l = lines(&diff);
+        let l: Vec<_> = lines(&diff).collect();
         assert_eq!(
             l[0],
             ("rename /a/x -> /a/y".into(), "pending", LineKind::Pending)

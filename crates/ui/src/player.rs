@@ -292,6 +292,11 @@ pub struct PlayerState {
     /// while drawing). A film's frames would otherwise stay in it, a
     /// texture each, for as long as it plays.
     retired: Vec<Arc<RenderImage>>,
+    /// The track being opened for the pin, and the cover being drawn: a
+    /// newer one cancels them, where each track skipped started a player
+    /// of its own and drew its cover.
+    opening: Option<CancelToken>,
+    covering: Option<CancelToken>,
 }
 
 impl Default for PlayerState {
@@ -318,6 +323,8 @@ impl Default for PlayerState {
             flash: None,
             fullscreen_wanted: false,
             focus: None,
+            opening: None,
+            covering: None,
         }
     }
 }
@@ -609,11 +616,14 @@ impl Shell {
             self.player.tx.clone(),
             self.app.waker_handle(),
         );
-        self.app.scheduler.spawn(
-            Priority::Visible,
-            "player-open",
-            self.app.lifetime().child(),
-            move || {
+        let job = self.app.lifetime().child();
+        if let Some(before) = self.player.opening.replace(job.clone()) {
+            before.cancel();
+        }
+        self.app
+            .scheduler
+            .spawn(Priority::Visible, "player-open", job.clone(), move || {
+                // The session's own: it outlives this job once opened.
                 let lifetime = CancelToken::new();
                 // A link plays, and is typed as, what it leads to.
                 let session = bibli_core::fs::content_path(&path)
@@ -631,6 +641,11 @@ impl Shell {
                         };
                         previews.open_media(&request, &lifetime, wake.clone())
                     });
+                // Skipped while it opened: let go of at once.
+                if job.is_cancelled() {
+                    lifetime.cancel();
+                    return;
+                }
                 let _ = tx.send(Opened {
                     generation,
                     path,
@@ -638,8 +653,7 @@ impl Shell {
                     session,
                 });
                 wake();
-            },
-        );
+            });
     }
 
     /// Step the pin's queue. Without a pin, or while the panel shows it, the
@@ -675,10 +689,14 @@ impl Shell {
             .root()
             .join(COVERS)
             .join(std::process::id().to_string());
+        let job = self.app.lifetime().child();
+        if let Some(before) = self.player.covering.replace(job.clone()) {
+            before.cancel();
+        }
         self.app.scheduler.spawn(
             Priority::Background,
             "player-cover",
-            self.app.lifetime().child(),
+            job.clone(),
             move || {
                 let cover = || -> Option<(PathBuf, bibli_core::thumbs::Image)> {
                     let content = bibli_core::fs::content_path(&track)?;
@@ -691,7 +709,7 @@ impl Shell {
                         max_side: 512,
                         text_size: None,
                     };
-                    let image = previews.render(&request, &CancelToken::new()).ok()??.image;
+                    let image = previews.render(&request, &job).ok()??.image;
                     let picture =
                         image::RgbaImage::from_raw(image.width, image.height, image.rgba.to_vec())?;
                     std::fs::create_dir_all(&directory).ok()?;
@@ -703,7 +721,7 @@ impl Shell {
                     picture.save(&file).ok()?;
                     Some((file, image))
                 };
-                if let Some((file, image)) = cover() {
+                if let Some((file, image)) = cover().filter(|_| !job.is_cancelled()) {
                     let _ = tx.send((track, file, image));
                     wake();
                 }

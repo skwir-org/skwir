@@ -690,6 +690,15 @@ pub(crate) fn surface(
         on_pointer: Rc::new(move |phase, x, y, window, cx| {
             if let Some(entity) = entity.upgrade() {
                 entity.update(cx, |shell, cx| {
+                    // Every page shown hears every left drag in the window:
+                    // one that began elsewhere is none of its business, and
+                    // running the command drew the window again for each.
+                    let reader = &shell.preview.reader;
+                    if phase != "down"
+                        && (reader.selection_page != Some(number) || reader.down.is_none())
+                    {
+                        return;
+                    }
                     shell.run(
                         "ui.reader_pointer",
                         serde_json::json!({"phase":phase,"page":number,"x":x,"y":y}),

@@ -104,10 +104,6 @@ fn spec_matches(query: &str, spec: &SettingSpec, owner_title: &str) -> bool {
 }
 
 impl SettingsView {
-    fn command_title(&self, hint: &KeyHint) -> String {
-        crate::keymap::title_of(&self.app, hint)
-    }
-
     pub(crate) fn stop(
         &mut self,
         focus: &gpui::FocusHandle,
@@ -808,7 +804,7 @@ impl SettingsView {
         items.push(row.into_any_element());
     }
 
-    fn binding_row(&self, hint: &KeyHint, edge: Edge, theme: &Theme) -> AnyElement {
+    fn binding_row(&self, hint: &KeyHint, title: &str, edge: Edge, theme: &Theme) -> AnyElement {
         let mut keys = div().flex().flex_none().items_center().gap(px(10.));
         for stroke in crate::keymap::key_caps(&hint.keys) {
             let mut caps = div().flex().items_center().gap(px(3.));
@@ -828,7 +824,7 @@ impl SettingsView {
                     .flex_1()
                     .min_w_0()
                     .truncate(),
-                self.command_title(hint),
+                title.to_owned(),
                 self.font.clone(),
             ))
             .when(hint.layer == crate::keymap::Layer::User, |row| {
@@ -967,31 +963,31 @@ impl SettingsView {
     }
 
     fn page_keyboard(&self, query: &str, items: &mut Vec<AnyElement>, theme: &Theme) -> usize {
-        let mut hints: Vec<(String, &KeyHint)> = self
+        let mut hints: Vec<(&str, &str, &KeyHint)> = self
             .key_hints
             .iter()
-            .map(|hint| (crate::keymap::context_label(&hint.context), hint))
-            .filter(|(context, hint)| {
-                query.is_empty()
-                    || matches(query, &[context, &hint.keys, &self.command_title(hint)])
+            .zip(&self.key_words)
+            .map(|(hint, (context, title))| (context.as_str(), title.as_str(), hint))
+            .filter(|(context, title, hint)| {
+                query.is_empty() || matches(query, &[context, &hint.keys, title])
             })
             .collect();
         // "Anywhere" first, then places alphabetically; stable within a place.
-        hints.sort_by_key(|(context, _)| (context != "Anywhere", context.clone()));
+        hints.sort_by_key(|(context, _, _)| (*context != "Anywhere", *context));
         let mut start = 0;
         while start < hints.len() {
             let end = hints[start..]
                 .iter()
-                .position(|(context, _)| *context != hints[start].0)
+                .position(|(context, _, _)| *context != hints[start].0)
                 .map_or(hints.len(), |offset| start + offset);
-            Self::caption(items, hints[start].0.clone(), theme);
+            Self::caption(items, hints[start].0.to_owned(), theme);
             let group = &hints[start..end];
-            for (index, (_, hint)) in group.iter().enumerate() {
+            for (index, (_, title, hint)) in group.iter().enumerate() {
                 let edge = Edge {
                     first: index == 0,
                     last: index + 1 == group.len(),
                 };
-                items.push(self.binding_row(hint, edge, theme));
+                items.push(self.binding_row(hint, title, edge, theme));
             }
             start = end;
         }

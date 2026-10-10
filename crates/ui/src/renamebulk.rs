@@ -22,14 +22,23 @@ const FIELDS: [(&str, &str); 4] = [
     ("Start", "1"),
 ];
 
+/// The renames the preview shows at most.
+const SHOWN: usize = 40;
+
 pub struct BulkState {
     pub inputs: Vec<Entity<TextInput>>,
     pub case: usize,
     pub focused: usize,
+    /// The first names the preview shows (`SHOWN`), and how many renames
+    /// there are in all.
     pub preview: Vec<(String, String)>,
+    renamed: usize,
     pub error: Option<String>,
-    /// Advances with each change; only the latest preview is shown.
+    /// Advances with each change; only the latest preview is shown, and
+    /// one asked for meanwhile is not worked out (`latest`, which the
+    /// worker reads).
     asked: u64,
+    latest: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// The preview shown is the answer to the latest change.
     current: bool,
     count: usize,
@@ -102,8 +111,10 @@ impl Shell {
             case: 0,
             focused: 0,
             preview: Vec::new(),
+            renamed: 0,
             error: None,
             asked: 0,
+            latest: std::sync::Arc::default(),
             current: false,
             count,
             back,
@@ -153,34 +164,48 @@ impl Shell {
         b.asked += 1;
         b.current = false;
         let asked = b.asked;
+        b.latest.store(asked, std::sync::atomic::Ordering::Release);
+        let latest = std::sync::Arc::clone(&b.latest);
         let app = std::sync::Arc::clone(&self.app);
         self.off_thread(
             "rename-bulk-preview",
-            move || app.dispatch(&Invocation::with_args("rename_bulk.preview", &spec)),
+            move || {
+                // Typed past while it waited: not worked out.
+                if latest.load(std::sync::atomic::Ordering::Acquire) != asked {
+                    return None;
+                }
+                // What the dialog shows, read here: the window's thread
+                // unpacked every rename to show forty.
+                Some(
+                    match app.dispatch(&Invocation::with_args("rename_bulk.preview", &spec)) {
+                        Ok(Outcome::Value(v)) => {
+                            let all = v.as_array().map_or(&[][..], Vec::as_slice);
+                            let shown = all
+                                .iter()
+                                .take(SHOWN)
+                                .filter_map(|x| {
+                                    Some((
+                                        x.get("from")?.as_str()?.to_owned(),
+                                        x.get("to")?.as_str()?.to_owned(),
+                                    ))
+                                })
+                                .collect();
+                            (shown, all.len(), None)
+                        }
+                        Ok(_) => (Vec::new(), 0, None),
+                        Err(e) => (Vec::new(), 0, Some(format!("{e:#}"))),
+                    },
+                )
+            },
             move |this, result, _, cx| {
+                let Some((preview, renamed, error)) = result else {
+                    return;
+                };
                 let Some(b) = this.bulk.as_mut().filter(|b| b.asked == asked) else {
                     return;
                 };
-                let (preview, error) = match result {
-                    Ok(Outcome::Value(v)) => (
-                        v.as_array()
-                            .map(|a| {
-                                a.iter()
-                                    .filter_map(|x| {
-                                        Some((
-                                            x.get("from")?.as_str()?.to_owned(),
-                                            x.get("to")?.as_str()?.to_owned(),
-                                        ))
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        None,
-                    ),
-                    Ok(_) => (Vec::new(), None),
-                    Err(e) => (Vec::new(), Some(format!("{e:#}"))),
-                };
                 b.preview = preview;
+                b.renamed = renamed;
                 b.error = error;
                 b.current = true;
                 cx.notify();
@@ -278,7 +303,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .text_xs()
         .font_family(shell.mono_font.clone());
     let font = shell.mono_font.clone();
-    for (i, (from, to)) in b.preview.iter().take(40).enumerate() {
+    for (i, (from, to)) in b.preview.iter().enumerate() {
         list = list.child(
             div()
                 .flex()
@@ -301,11 +326,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 )),
         );
     }
-    if b.preview.len() > 40 {
+    if b.renamed > b.preview.len() {
         list = list.child(
             div()
                 .text_color(theme.text_muted)
-                .child(format!("… {} more", b.preview.len() - 40)),
+                .child(format!("… {} more", b.renamed - b.preview.len())),
         );
     }
     let panel = modal::panel(720., &theme)

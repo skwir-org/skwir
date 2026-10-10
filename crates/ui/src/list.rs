@@ -66,11 +66,7 @@ fn nav_of(to: &str) -> Option<Nav> {
 /// Whether `name` matches what `/` looks for: anywhere in the name, case
 /// ignored unless the pattern has a capital (yazi's smart case).
 pub fn find_matches(name: &str, pattern: &str) -> bool {
-    if pattern.chars().any(char::is_uppercase) {
-        name.contains(pattern)
-    } else {
-        name.to_lowercase().contains(&pattern.to_lowercase())
-    }
+    bibli_core::workspace::NameFilter::new(pattern).holds(std::ffi::OsStr::new(name))
 }
 
 /// How long a pause ends a name being typed.
@@ -126,6 +122,10 @@ pub struct ListState {
     /// Entry ids in display order, from the core's cached sort.
     pub sorted: std::sync::Arc<[EntryId]>,
     sorted_at: Option<(u64, u64, SortSpec, u64)>,
+    /// Where each of `sorted` is, made the first time it is asked for after
+    /// the order changed (`index_of`): a card or a cursor found its place by
+    /// walking the whole order.
+    positions: std::cell::OnceCell<HashMap<EntryId, usize>>,
     /// Hydration requested and not yet answered. Kept for as long as the
     /// pane holds the same listing: an answer arrives as an update that
     /// hydrates the entry (or removes it), so nothing asked for needs asking
@@ -166,6 +166,7 @@ impl Default for ListState {
         ListState {
             sorted: std::sync::Arc::from([]),
             sorted_at: None,
+            positions: std::cell::OnceCell::new(),
             pending_hydrate: HashMap::new(),
             listing: None,
             removed: 0,
@@ -211,6 +212,7 @@ impl ListState {
         }
         self.sorted = pane.order();
         self.sorted_at = Some(at);
+        self.positions = std::cell::OnceCell::new();
         true
     }
 
@@ -221,6 +223,7 @@ impl ListState {
     fn reset(&mut self) {
         self.sorted = std::sync::Arc::from([]);
         self.sorted_at = None;
+        self.positions = std::cell::OnceCell::new();
         self.pending_hydrate.clear();
         self.sort_hydrated = None;
         self.selection_hydrated = None;
@@ -233,7 +236,20 @@ impl ListState {
     }
 
     pub fn index_of(&self, id: EntryId) -> Option<usize> {
-        self.sorted.iter().position(|x| *x == id)
+        // A short order is walked: a map is no cheaper to make.
+        if self.sorted.len() <= 64 {
+            return self.sorted.iter().position(|x| *x == id);
+        }
+        self.positions
+            .get_or_init(|| {
+                self.sorted
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, id)| (*id, ix))
+                    .collect()
+            })
+            .get(&id)
+            .copied()
     }
 }
 
@@ -648,6 +664,9 @@ impl Shell {
         let start = from
             .or(pane.selection.cursor)
             .and_then(|c| sorted.iter().position(|id| *id == c));
+        // The pattern folded once, and a name compared without a copy of
+        // its own: lowercasing both for each entry at each keystroke.
+        let filter = bibli_core::workspace::NameFilter::new(pattern);
         (1..=len)
             .map(|step| match (start, backward) {
                 (Some(s), false) => (s + step) % len,
@@ -657,7 +676,7 @@ impl Shell {
             })
             .find(|ix| {
                 pane.entry(sorted[*ix])
-                    .is_some_and(|e| find_matches(&e.name_str(), pattern))
+                    .is_some_and(|e| filter.holds(&e.name))
             })
     }
 
