@@ -1,11 +1,13 @@
 //! Virtual source lines. Fold coordinates stay in the provider's logical lines.
 //!
-//! Code is colored with bat's grammars and themes. Unless the Reading page
-//! chooses a theme for the look bibli has (`CodeTheme`), the colors are
-//! bibli's own: base16 Ocean's, on bibli's background. A theme chosen,
-//! one of bat's or one its user added to bat (`bat::themes_dir`), brings
-//! the background it is meant for, and its bold and italic: not its
-//! underline, which in bibli is a link's.
+//! Code is colored with bat's grammars and themes, in bibli's look or the
+//! one the Reading page keeps it in (`reading.code_appearance`). Unless
+//! the page chooses a theme for that look (`CodeTheme`), the colors are
+//! bibli's own: base16 Ocean's, on that look's background. A theme
+//! chosen, one of bat's or one its user added to bat (`bat::themes_dir`),
+//! brings the background it is meant for, and its bold and italic: not
+//! its underline, which in bibli is a link's. Code in a look that is not
+//! bibli's is drawn with that look's tokens (`Theme::in_look`).
 use crate::{inspector_text::Selection, shell::Shell, theme::Theme};
 use bibli_core::{
     inspection::{Inspection, Run},
@@ -74,11 +76,14 @@ const BAT: [(Bat, &str, bool); 29] = [
     (Bat::Zenburn, "Zenburn", true),
 ];
 
-/// The colors code is drawn in, as chosen for the look bibli has
-/// (`Theme::code`, read with the theme). A preview is highlighted with
-/// it, so a new choice shows the file again (`preview::Version`).
+/// The colors code is drawn in and the look they are for, as the
+/// settings choose them while bibli has its look (`Theme::code`, read
+/// with the theme). A preview is highlighted with it, so a new choice
+/// shows the file again (`preview::Version`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeTheme {
+    /// Whether code is drawn dark: bibli's look, unless
+    /// `reading.code_appearance` keeps code in one.
     pub dark: bool,
     /// bat's name for the theme, the name of a theme the user added to
     /// bat, or [`DEFAULT`].
@@ -94,8 +99,19 @@ impl CodeTheme {
         }
     }
 
-    /// The theme the settings choose for a look.
-    pub fn chosen(app: &bibli_core::App, dark: bool) -> Self {
+    /// The theme the settings choose while bibli is dark, or light: the
+    /// look `reading.code_appearance` keeps code in, Automatic following
+    /// bibli's, and the theme chosen for that look.
+    pub fn chosen(app: &bibli_core::App, bibli_dark: bool) -> Self {
+        let dark = match app
+            .settings
+            .get::<String>(crate::settings::CODE_APPEARANCE_KEY)
+            .as_deref()
+        {
+            Some("light") => false,
+            Some("dark") => true,
+            _ => bibli_dark,
+        };
         let key = if dark {
             crate::settings::CODE_DARK_KEY
         } else {
@@ -685,6 +701,66 @@ mod tests {
         assert!(runs.iter().all(|run| !run.underline), "{runs:?}");
         // A name no theme has any more is drawn in bibli's own colors.
         assert_eq!(theme(true, "Taken out of bat's folder").background, None);
+    }
+
+    /// Code is as light or dark as bibli unless the settings keep it in a
+    /// look, and wears the theme chosen for the look it is in.
+    #[test]
+    fn code_is_in_bibli_s_look_unless_the_settings_keep_it_in_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = bibli_core::App::new(bibli_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::settings::declare(&app);
+        app.settings
+            .set(crate::settings::CODE_LIGHT_KEY, "GitHub".into());
+        app.settings
+            .set(crate::settings::CODE_DARK_KEY, "Dracula".into());
+        let chosen = |bibli_dark| {
+            let code = CodeTheme::chosen(&app, bibli_dark);
+            (code.dark, code.name.to_string())
+        };
+        let (light, dark) = ((false, "GitHub".to_owned()), (true, "Dracula".to_owned()));
+        assert_eq!((chosen(false), chosen(true)), (light.clone(), dark.clone()));
+        app.settings
+            .set(crate::settings::CODE_APPEARANCE_KEY, "light".into());
+        assert_eq!(
+            (chosen(false), chosen(true)),
+            (light.clone(), light.clone())
+        );
+        app.settings
+            .set(crate::settings::CODE_APPEARANCE_KEY, "dark".into());
+        assert_eq!((chosen(false), chosen(true)), (dark.clone(), dark));
+        app.settings
+            .set(crate::settings::CODE_APPEARANCE_KEY, "auto".into());
+        assert_eq!(chosen(false), light);
+    }
+
+    /// Code kept in the other look is drawn with that look's tokens, its
+    /// sizes and measure those of the document around it.
+    #[test]
+    fn code_in_the_other_look_is_drawn_with_its_tokens() {
+        let dark = Theme::dark();
+        assert!(matches!(dark.in_look(true), std::borrow::Cow::Borrowed(_)));
+        let light = dark.in_look(false);
+        assert!(!light.is_dark);
+        assert_eq!(
+            (light.bg, light.text),
+            (Theme::light().bg, Theme::light().text)
+        );
+        assert_eq!(light.code, dark.code, "what code is drawn in stays");
+        let document = crate::markdown::MarkdownStyle::new(&dark, 16., true, Some(42.));
+        let code = document.drawn_in(&light);
+        assert_eq!(
+            (code.text, code.selection_bg, code.code_bg),
+            (light.text, light.selection_bg, light.code_bg)
+        );
+        assert_eq!(
+            (code.code_size, code.measure, code.line_height),
+            (document.code_size, document.measure, document.line_height)
+        );
+        assert_eq!(document.code().text, dark.text, "no look of its own");
+        let mut document = document;
+        document.code_look = Some(std::rc::Rc::new(code));
+        assert_eq!(document.code().text, light.text);
     }
 
     #[test]

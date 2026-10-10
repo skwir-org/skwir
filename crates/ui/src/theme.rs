@@ -8,8 +8,10 @@
 //!   letterbox around a picture or a page). `code_bg` sets a code block or a
 //!   table header apart on `bg`, unless the code theme chosen brings its
 //!   own background (`code`, `code_preview::Palette`), `zebra` tints
-//!   alternate rows. `text_muted`
-//!   is for secondary facts (line numbers, captions), never for the data.
+//!   alternate rows. Code kept in the other look
+//!   (`reading.code_appearance`) is drawn with that look's tokens
+//!   (`in_look`). `text_muted` is for secondary facts (line numbers,
+//!   captions), never for the data.
 //! - color: the fields of [`Theme`]. State colors are tokens too: `hover` for
 //!   whatever is under the pointer, `selection_*` for what is chosen,
 //!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
@@ -112,8 +114,8 @@ pub struct Theme {
     /// whose backgrounds are close to ours.
     pub terminal: [Hsla; 16],
     pub is_dark: bool,
-    /// The colors code is drawn in for this look: bibli's own unless the
-    /// Reading page chooses a theme (`code_preview::CodeTheme`).
+    /// The colors code is drawn in and their look: bibli's own colors and
+    /// look unless the Reading page chooses (`code_preview::CodeTheme`).
     pub code: crate::code_preview::CodeTheme,
 }
 
@@ -302,6 +304,18 @@ impl Theme {
     /// sidebar, the last of the address's trail.
     pub fn tag_shown(&self, index: usize) -> Hsla {
         self.tag(index).opacity(0.45)
+    }
+
+    /// The tokens of the look `dark` names: these, or the other look's,
+    /// which code kept in it is drawn with (`reading.code_appearance`): its
+    /// gutter, its selection, the background bibli's own colors are on.
+    pub fn in_look(&self, dark: bool) -> std::borrow::Cow<'_, Theme> {
+        if dark == self.is_dark {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut other = if dark { Theme::dark() } else { Theme::light() };
+        other.code = self.code.clone();
+        std::borrow::Cow::Owned(other)
     }
 
     /// The `ui.theme` preference, falling back to the desktop's appearance.

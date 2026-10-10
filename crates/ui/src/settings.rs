@@ -66,8 +66,11 @@ pub const READER_CONTINUOUS_KEY: &str = "reading.continuous";
 pub const READING_WIDTH_KEY: &str = "reading.width";
 /// Whether a book's position counts its printed pages (`ui.printed_pages`).
 pub const PRINTED_PAGES_KEY: &str = "reading.printed_pages";
-/// The colors code is drawn in while bibli is light, and while it is
-/// dark (`code_preview::CodeTheme`).
+/// Whether code is drawn light or dark: Automatic is as bibli is
+/// (`code_preview::CodeTheme::chosen`).
+pub const CODE_APPEARANCE_KEY: &str = "reading.code_appearance";
+/// The colors code is drawn in when it is light, and when it is dark
+/// (`code_preview::CodeTheme`).
 pub const CODE_LIGHT_KEY: &str = "reading.code_light";
 pub const CODE_DARK_KEY: &str = "reading.code_dark";
 /// The player's preferences. The audio and video plugin (`preview-media`)
@@ -137,16 +140,16 @@ pub fn code_theme_spec(
         .iter()
         .map(|(value, label)| (value.as_str(), label.as_str()))
         .collect();
-    let (key, title, look) = if dark {
-        (CODE_DARK_KEY, "Dark theme", "dark")
+    let (key, title, look, choice) = if dark {
+        (CODE_DARK_KEY, "Dark theme", "dark", "Dark")
     } else {
-        (CODE_LIGHT_KEY, "Light theme", "light")
+        (CODE_LIGHT_KEY, "Light theme", "light", "Light")
     };
     SettingSpec::choice(
         key,
         title,
         &format!(
-            "The colors of source files and of code in documents while bibli is {look}. Default is bibli's own, on its background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own."
+            "The colors of source files and of code in documents when code is {look}: while bibli is {look}, or always with Appearance set to {choice}. Default is bibli's own, on its {look} background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own."
         ),
         crate::code_preview::DEFAULT,
         &pairs,
@@ -307,6 +310,16 @@ pub fn declare(app: &App) {
             false,
         )
         .section("Pages"),
+    );
+    app.settings.declare(
+        SettingSpec::choice(
+            CODE_APPEARANCE_KEY,
+            "Appearance",
+            "Draw source files and code in documents light or dark. Automatic follows bibli's theme; Light or Dark keeps code in the theme chosen below for that look, with its gutter, selection and background, whatever bibli is.",
+            "auto",
+            &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
+        )
+        .section("Code"),
     );
     for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
         let chosen = app.settings.get::<String>(key).unwrap_or_default();

@@ -226,7 +226,7 @@ still to come are in `docs/preview-frame.md`.
   pane, entry, path and the providers (`PreviewKey`); a new one of those is
   another preview and nothing of the last survives. The file's date, size
   and the colors its code is drawn in (`code_preview::CodeTheme`: the
-  theme's look and the code theme chosen for it) are its `Version`: when
+  look code is in and the code theme chosen for it) are its `Version`: when
   they change the same request is asked again (`Shell::preview_changed`)
   and the reader stays where they were: page, zoom, find field, folds,
   selection and place. A live player keeps playing, and a theme change
@@ -241,7 +241,13 @@ still to come are in `docs/preview-frame.md`.
   background is a code theme's: one chosen on the Reading page brings the
   background its colors are meant for, which the code view and a code
   block are drawn on (`Display::code_bg`); a look lists only the themes
-  of its own lightness, so the tokens drawn over it still read.
+  of its own lightness, so the tokens drawn over it still read. Code
+  kept in the look bibli is not in (`reading.code_appearance`) is drawn
+  with that look's tokens, read from the look it was colored for
+  (`Display::code_dark`, `Theme::in_look`): the code view whole, its
+  gutter, selection and the background Default is on, and a document's
+  code blocks (`MarkdownStyle::code`), never bibli's tokens over colors
+  meant for the other look.
 - **One toolbar.** A preview never builds a row: it lists its tools in
   `preview_bar::Bar`, each in a slot, and the bar lays them out. Left to right:
   a member's name under its container's view (`Slot::Title`, see below) ·
@@ -556,9 +562,11 @@ still to come are in `docs/preview-frame.md`.
   prepared runs and visible indices. Copy must retain empty selected lines.
 - Code is colored with bat's grammars and themes (two-face), through the
   one `code_preview::Highlighter`, for the code view and every document's
-  code blocks. Default is bibli's own colors (base16 Ocean's, on bibli's
-  background, no font styles); a theme chosen (`reading.code_light`,
-  `reading.code_dark`) is one of bat's, or one the user added to bat,
-  read from bat's folder (`bat::themes_dir`, as `bat cache --build`
-  finds them) on a worker at start and when the settings open, and
-  taking the place of bat's of the same name as in bat.
+  code blocks, light or dark as bibli is unless
+  `reading.code_appearance` keeps it in one. Default is bibli's own
+  colors (base16 Ocean's, on that look's background, no font styles); a
+  theme chosen (`reading.code_light`, `reading.code_dark`) is one of
+  bat's, or one the user added to bat, read from bat's folder
+  (`bat::themes_dir`, as `bat cache --build` finds them) on a worker at
+  start and when the settings open, and taking the place of bat's of the
+  same name as in bat.

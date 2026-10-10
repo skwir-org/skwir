@@ -36,6 +36,9 @@ pub struct Display {
     /// brings one (`code_preview::Palette`): the code view's, and a code
     /// block's in a document.
     pub code_bg: Option<[u8; 3]>,
+    /// The look its code was colored for (`CodeTheme::dark`), whose
+    /// tokens it is drawn with whatever bibli's look (`Theme::in_look`).
+    pub code_dark: bool,
 }
 impl Display {
     pub fn new(mut data: Inspection, code: &crate::code_preview::CodeTheme) -> Self {
@@ -155,6 +158,7 @@ impl Display {
             folded: Arc::new(folded),
             origin: None,
             code_bg: palette.and_then(|palette| palette.background),
+            code_dark: code.dark,
         }
     }
     /// The next block or row (blocks first, then rows offset by the block
@@ -2190,7 +2194,6 @@ pub fn content(
     ]));
     let header_font = hex_font.clone();
     let pane = shell.pane;
-    let list_theme = theme.clone();
     let list_style = crate::markdown::MarkdownStyle::new(
         theme,
         font_size,
@@ -2205,12 +2208,35 @@ pub fn content(
         .then(|| crate::note_popover::popover(shell, &list_style, theme, cx))
         .flatten();
     let mut list_style = list_style;
-    // A document's code blocks on the background their theme is for.
-    if let Some(background) = display.code_bg {
-        list_style.code_bg = crate::code_preview::color(background);
-    }
     list_style.armed_link = shell.armed_link();
     list_style.labels = state.labels.as_ref().map(|labels| Rc::new(labels.shown()));
+    // Code in the look its colors are for, which may not be bibli's
+    // (`reading.code_appearance`), on the background its theme is for:
+    // the code view whole, its gutter too, and a document's code blocks.
+    let code_view = display.data.kind == InspectionKind::Code;
+    let code_theme = theme.in_look(display.code_dark);
+    let other_look = code_theme.is_dark != theme.is_dark;
+    let mut code_style = if other_look {
+        list_style.drawn_in(&code_theme)
+    } else {
+        list_style.clone()
+    };
+    if let Some(background) = display.code_bg {
+        code_style.code_bg = crate::code_preview::color(background);
+    }
+    let code_bg = display
+        .code_bg
+        .map(crate::code_preview::color)
+        .or_else(|| other_look.then_some(code_theme.bg))
+        .filter(|_| code_view);
+    let code_text = code_theme.text;
+    let list_theme = if code_view {
+        list_style = code_style;
+        code_theme.into_owned()
+    } else {
+        list_style.code_look = Some(Rc::new(code_style));
+        theme.clone()
+    };
     let measure = list_style.measure;
     let entity = cx.entity().downgrade();
     let ui_font = shell.font.clone();
@@ -2504,11 +2530,6 @@ pub fn content(
         }
         body = body.child(header);
     }
-    // The code view on the background its theme is for, its gutter too.
-    let code_bg = display
-        .code_bg
-        .filter(|_| display.data.kind == InspectionKind::Code)
-        .map(crate::code_preview::color);
     // A document read at full width is hard to follow: in reading mode the
     // column stops at a comfortable measure and sits in the middle of the
     // pane. This is a maximum, not a measurement: a narrow pane keeps all of
@@ -2521,6 +2542,7 @@ pub fn content(
             .flex()
             .justify_center()
             .when_some(code_bg, gpui::Styled::bg)
+            .when(code_view, |d| d.text_color(code_text))
             .child(
                 div()
                     .w_full()

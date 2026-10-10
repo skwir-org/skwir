@@ -71,6 +71,10 @@ pub struct MarkdownStyle {
     pub labels: Option<std::rc::Rc<std::collections::HashMap<usize, Vec<(usize, SharedString)>>>>,
     /// A label's text, on `link`.
     pub label_text: Hsla,
+    /// What a code block is drawn with, when not this: its theme's
+    /// background, and the tokens of the look `reading.code_appearance`
+    /// keeps code in (`code`).
+    pub code_look: Option<std::rc::Rc<MarkdownStyle>>,
 }
 
 /// The widest a reading column may be, in ems of its text, for a
@@ -134,7 +138,24 @@ impl MarkdownStyle {
             armed_link: None,
             labels: None,
             label_text: theme.on_fill,
+            code_look: None,
         }
+    }
+
+    /// This style in the colors of `theme`, a look of its own, its sizes,
+    /// measure and links kept: what code in that look is drawn with.
+    pub fn drawn_in(&self, theme: &Theme) -> Self {
+        Self {
+            measure: self.measure,
+            armed_link: self.armed_link.clone(),
+            labels: self.labels.clone(),
+            ..Self::new(theme, self.body_size, self.reading, None)
+        }
+    }
+
+    /// What a code block is drawn with (`code_look`).
+    pub fn code(&self) -> &Self {
+        self.code_look.as_deref().unwrap_or(self)
     }
 
     pub fn heading_size(&self, level: u8) -> f32 {
@@ -360,11 +381,13 @@ fn code_box(
     pane: PaneId,
     entity: WeakEntity<crate::shell::Shell>,
 ) -> AnyElement {
+    let style = style.code();
     let text = inspector_text::render(block, index, selection, style, pane, entity);
     let mut container = div()
         .flex_1()
         .min_w_0()
         .bg(style.code_bg)
+        .text_color(style.text)
         .rounded_md()
         .border_1()
         .border_color(style.border)
