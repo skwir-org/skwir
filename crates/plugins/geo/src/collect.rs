@@ -118,9 +118,14 @@ impl Collector {
         }
     }
 
-    /// Start a line; the points that follow belong to it.
+    /// Start a line; the points that follow belong to it. Lines count
+    /// toward the bound segments have: a file of empty tracks
+    /// (`<trk/>` over and over) is full there too.
     pub fn line(&mut self, name: String, kind: LineKind, datum: Datum) -> usize {
         self.end_segment();
+        if self.doc.lines.len() >= MAX_SEGMENTS {
+            self.full = true;
+        }
         if self.full && !self.doc.lines.is_empty() {
             return self.doc.lines.len() - 1;
         }
@@ -422,6 +427,18 @@ mod tests {
             .sum();
         assert!(kept <= MAX_POINTS, "{kept}");
         assert_eq!(c.routes.points, lines * 3, "every point still counted");
+    }
+
+    /// Empty tracks over and over (`<trk/>`) keep no more lines than
+    /// segments are kept.
+    #[test]
+    fn empty_lines_stay_bounded() {
+        let mut c = Collector::new();
+        for _ in 0..MAX_SEGMENTS * 3 {
+            c.line("Empty".into(), LineKind::Track, Datum::Sea);
+        }
+        let (doc, _) = c.finish();
+        assert!(doc.lines.len() <= MAX_SEGMENTS, "{}", doc.lines.len());
     }
 
     #[test]
