@@ -58,6 +58,11 @@ jobs:
             /usr/local/.ghcup /opt/hostedtoolcache /usr/local/share/boost \
             /usr/share/swift /usr/local/share/powershell /usr/local/julia*
           df -h /
+      - name: User namespaces
+        # Ubuntu's AppArmor refuses them to unprivileged programs, and
+        # bubblewrap, which isolates skwir's helpers and plugins, needs
+        # them (as it has them on the distributions skwir runs on).
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - uses: actions/checkout@v7
         with:
           # Nix reads the flake from git, which a shallow clone confuses.
