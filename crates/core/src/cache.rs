@@ -97,11 +97,14 @@ impl CacheSlot {
     /// earlier run left counts). A trim lists and stats every file of the
     /// namespace: after every write, a search through a document of a
     /// thousand pages not kept yet listed the folder a thousand times.
-    /// Worker-only, as `trim_to_bytes`.
+    /// A write counts the blocks it takes (`stat::BLOCK`): a record of a
+    /// few bytes costs one. Worker-only, as `trim_to_bytes`.
     pub fn trim_soon(&self, written: u64, budget: u64) {
         static WRITTEN: std::sync::LazyLock<
             parking_lot::Mutex<std::collections::HashMap<PathBuf, u64>>,
         > = std::sync::LazyLock::new(Default::default);
+        let block = crate::fs::stat::BLOCK;
+        let written = written.div_ceil(block).max(1).saturating_mul(block);
         let due = {
             let mut all = WRITTEN.lock();
             let since = all.entry(self.dir.clone()).or_insert(u64::MAX / 2);
@@ -117,8 +120,11 @@ impl CacheSlot {
         }
     }
 
-    /// Bound this namespace's disk usage by removing its oldest files.
-    /// Worker-only maintenance; never call from render or command dispatch.
+    /// Bound this namespace's disk usage by removing its oldest files,
+    /// each counted as what it takes on the volume (`stat::allocated`): a
+    /// namespace of small records takes a block each, many times what
+    /// their bytes add up to. Worker-only maintenance; never call from
+    /// render or command dispatch.
     /// Another process may be writing and trimming the same cache: a file
     /// or bucket that vanishes mid-walk is skipped, not an error.
     pub fn trim_to_bytes(&self, budget: u64) -> std::io::Result<()> {
@@ -146,8 +152,9 @@ impl CacheSlot {
                 let Ok(modified) = metadata.modified() else {
                     continue;
                 };
-                total = total.saturating_add(metadata.len());
-                files.push((modified, metadata.len(), file.path()));
+                let taken = crate::fs::stat::allocated(&metadata);
+                total = total.saturating_add(taken);
+                files.push((modified, taken, file.path()));
             }
         }
         files.sort_by_key(|(time, _, _)| *time);

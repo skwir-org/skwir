@@ -4,13 +4,16 @@
 //! workers and handed to the view a batch at a time.
 //!
 //! `geo.scan { pane }` starts, or keeps, the scan of what the pane lists:
-//! a folder, a search, a timeline's bucket alike. It takes a snapshot of
-//! the listing under the lock and returns; choosing the candidates, reading
-//! their positions and publishing happen on workers. A scan follows the
-//! pane's location lifetime, so navigating away cancels it. What a file
-//! says is kept by its identity (device, inode, size, modification time),
-//! in memory and in the deletable cache, so a folder seen before is placed
-//! at once. `geo.points { pane, since }` hands over what was found after
+//! a folder, a search, a timeline's bucket alike. It notes which listing
+//! and returns; reading it (a slice at a time, what was looked at left
+//! out), choosing the candidates, reading their positions and publishing
+//! happen on workers. A scan follows the pane's location lifetime, so
+//! navigating away cancels it. What a file says is kept by its identity
+//! (device, inode, size, modification time), in memory and in the
+//! deletable cache, so a folder seen before is placed at once: a picture's
+//! position and clock are fields (`position.rs`), kept by the core with
+//! what a search by place reads; a track's line is kept here. A file the
+//! listing has stat-ed already is not stat-ed again. `geo.points { pane, since }` hands over what was found after
 //! the first `since` points: each point travels once, however many
 //! thousand pictures a scan finds.
 //!
@@ -30,6 +33,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use bibli_core::cache::CacheSlot;
+use bibli_core::entry::{Value, keys};
 use bibli_core::geo::LatLon;
 use bibli_core::location::OpenLocation;
 use bibli_core::map_points::{Batch, MapSource, Placed};
@@ -39,17 +43,20 @@ use bibli_core::{App, CancelToken, EntryId};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-/// Workers one scan is spread over.
-/// What the positions kept in the cache may take: each is a small file, a
+/// What the tracks kept in the cache may take: each is a small file, a
 /// record per version of a file, so the disk holds a block of each.
 const CACHE_BYTES: u64 = 8 << 20;
+/// Workers one scan is spread over.
 const WORKERS: usize = 4;
 /// New points are published at most this often while a scan runs.
 const PUBLISH: Duration = Duration::from_millis(200);
 /// Points of a track's line in the view: its shape at the scale of a
 /// folder of trips, not every turn.
 const LINE_POINTS: usize = 400;
-/// Files remembered in memory; beyond, the cache on disk answers.
+/// The entries of a listing a scan's worker reads under one hold of the
+/// workspace's lock.
+const SLICE: usize = 1024;
+/// Tracks remembered in memory; beyond, the cache on disk answers.
 const REMEMBERED: usize = 200_000;
 /// What the cache keeps about a file; a change of `Found` changes it.
 const FOUND_VERSION: u32 = 2;
@@ -64,10 +71,22 @@ struct Found {
     clock: Option<u64>,
 }
 
-/// A file to look at: its entry and its path.
+/// A file to look at: its entry, its path, and its size and modification
+/// time (in nanoseconds since 1970) when the listing knows them: no link,
+/// stat-ed already.
 struct Candidate {
     id: EntryId,
     path: Option<PathBuf>,
+    known: Option<(u64, u64)>,
+}
+
+/// An entry listed and not looked at yet: its name, where a link leads,
+/// and what the listing knows of it (`Candidate::known`).
+struct Listed {
+    id: EntryId,
+    name: OsString,
+    target: Option<PathBuf>,
+    known: Option<(u64, u64)>,
 }
 
 /// What was listed: the location, its listing, the versions of its names
@@ -92,6 +111,9 @@ struct Scan {
     looked: HashSet<EntryId>,
     candidates: usize,
     listed: usize,
+    /// The listing's removals when it started (`Listing::removed_version`):
+    /// one that goes on from it with none since keeps all it holds.
+    removed: u64,
     complete: bool,
     cancel: CancelToken,
     published: Instant,
@@ -228,6 +250,59 @@ fn track(path: &Path, cancel: &CancelToken) -> Found {
     }
 }
 
+/// What `pane`'s listing `listing` lists that `skip` does not hold, read
+/// a slice at a time, each under a hold of the lock of its own: a folder
+/// streaming is scanned again at each slice, which read every entry on the
+/// window's thread. A link is read, and typed, as what it leads to; a
+/// folder, a pipe, a device or a link that leads nowhere has nothing to
+/// read. Another listing in the pane by now has a scan of its own.
+fn to_look_at(
+    app: &App,
+    pane: PaneId,
+    listing: u64,
+    skip: &HashSet<EntryId>,
+    cancel: &CancelToken,
+) -> Vec<Listed> {
+    let mut entries = Vec::new();
+    let mut at = 0;
+    while !cancel.is_cancelled() {
+        let ws = app.workspace.read();
+        let Some(p) = ws.pane(pane).filter(|p| p.listing.id() == listing) else {
+            break;
+        };
+        let end = (at + SLICE).min(p.listing.len());
+        if at >= end {
+            break;
+        }
+        entries.extend(
+            (at..end)
+                .filter_map(|i| p.listing.get_index(i))
+                .filter(|entry| entry.inode_type().is_none() && !skip.contains(&entry.id))
+                .map(|entry| {
+                    let target = entry.target.as_ref().and_then(|t| t.path.clone());
+                    let size = entry.metadata.value(keys::SIZE).and_then(Value::as_u64);
+                    let modified = entry
+                        .metadata
+                        .value(keys::MODIFIED)
+                        .and_then(Value::as_time)
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
+                    let known = size
+                        .zip(modified)
+                        .filter(|_| entry.kind == bibli_core::EntryKind::File);
+                    Listed {
+                        id: entry.id,
+                        name: entry.name.clone(),
+                        target,
+                        known,
+                    }
+                }),
+        );
+        at = end;
+    }
+    entries
+}
+
 /// What a pane's Map view draws, read where it is kept.
 impl MapSource for Scanner {
     fn points(&self, pane: PaneId, since: usize, withheld: &HashSet<EntryId>) -> Option<Batch> {
@@ -255,7 +330,7 @@ impl Scanner {
 
     /// Scan what `pane` lists, unless it is being scanned already.
     pub fn scan(self: &Arc<Self>, app: &App, pane: PaneId) -> anyhow::Result<()> {
-        let (source, candidates, open, dir, lifetime, listed, start) = {
+        let (source, open, dir, lifetime, listed, removed, start) = {
             let ws = app.workspace.read();
             let pane_ref = ws
                 .pane(pane)
@@ -286,10 +361,15 @@ impl Scanner {
                         // What is still listed of what was looked at, taken
                         // from the scan this one replaces below: copied,
                         // every point found was copied at each slice of a
-                        // folder streaming.
+                        // folder streaming. A folder streaming only gains
+                        // entries: with nothing taken out since, all of it
+                        // is, and it is not walked at each slice.
+                        let gone = shown.removed != listing.removed_version();
                         let mut placed = std::mem::take(&mut shown.placed);
                         let before = placed.len();
-                        placed.retain(|p| listing.get(p.id).is_some());
+                        if gone {
+                            placed.retain(|p| listing.get(p.id).is_some());
+                        }
                         let kept = (placed.len() == before).then_some(shown.generation);
                         // Held by no worker by now (they read it as they
                         // start), so not copied.
@@ -297,29 +377,21 @@ impl Scanner {
                         let mut looked =
                             Arc::try_unwrap(before).unwrap_or_else(|shared| (*shared).clone());
                         looked.extend(shown.looked.drain());
-                        looked.retain(|&id| listing.get(id).is_some());
+                        if gone {
+                            looked.retain(|&id| listing.get(id).is_some());
+                        }
                         Start::Resume(placed, looked, kept)
                     }
                 }
                 _ => Start::Fresh,
             };
-            // A link is read, and typed, as what it leads to; a folder, a
-            // pipe, a device or a link that leads nowhere has nothing to read.
-            let candidates: Vec<(EntryId, OsString, Option<PathBuf>)> = listing
-                .iter()
-                .filter(|entry| entry.inode_type().is_none())
-                .map(|entry| {
-                    let target = entry.target.as_ref().and_then(|t| t.path.clone());
-                    (entry.id, entry.name.clone(), target)
-                })
-                .collect();
             (
                 source,
-                candidates,
                 pane_ref.open.clone(),
                 pane_ref.location().and_then(bibli_core::Location::path),
                 pane_ref.location_lifetime(),
                 listing.len(),
+                listing.removed_version(),
                 start,
             )
         };
@@ -346,6 +418,7 @@ impl Scanner {
             Start::Quiet => (Vec::new(), HashSet::new(), true),
         };
         let skip: Arc<HashSet<EntryId>> = Arc::new(looked);
+        let listing = source.1;
         let scan = Scan {
             source,
             id,
@@ -355,6 +428,7 @@ impl Scanner {
             looked: HashSet::new(),
             candidates: 0,
             listed,
+            removed,
             complete: false,
             cancel: cancel.clone(),
             published: Instant::now(),
@@ -378,17 +452,21 @@ impl Scanner {
         if !quiet {
             self.changed();
         }
-        // Which files can say where they are is for a worker to find: the
-        // MIME database is asked by name, and a search's entries for their
-        // path.
+        // Which files can say where they are is for a worker to find: what
+        // is listed and not looked at yet, the MIME database asked by name,
+        // and a search's entries for their path.
         let this = Arc::clone(self);
         let token = cancel.clone();
         app.scheduler
             .spawn(Priority::Normal, "geo-candidates", cancel, move || {
+                let Some(app) = this.app.upgrade() else {
+                    return;
+                };
+                let entries = to_look_at(&app, pane, listing, &skip, &token);
                 this.start(
                     pane,
                     id,
-                    candidates,
+                    entries,
                     &skip,
                     open.as_deref(),
                     dir.as_deref(),
@@ -403,7 +481,7 @@ impl Scanner {
         self: &Arc<Self>,
         pane: PaneId,
         scan_id: u64,
-        entries: Vec<(EntryId, OsString, Option<PathBuf>)>,
+        entries: Vec<Listed>,
         skip: &HashSet<EntryId>,
         open: Option<&dyn OpenLocation>,
         dir: Option<&Path>,
@@ -411,13 +489,19 @@ impl Scanner {
     ) {
         let candidates: Vec<(Candidate, Kind)> = entries
             .into_iter()
-            .filter_map(|(id, name, target)| {
+            .filter_map(|listed| {
+                let Listed {
+                    id,
+                    name,
+                    target,
+                    known,
+                } = listed;
                 let kind = readable(target.as_deref().and_then(Path::file_name).unwrap_or(&name))?;
                 let path = target.or_else(|| match &dir {
                     Some(dir) => Some(dir.join(&name)),
                     None => open.and_then(|o| o.path_of(id)),
                 });
-                Some((Candidate { id, path }, kind))
+                Some((Candidate { id, path, known }, kind))
             })
             .collect();
         let count = candidates.len();
@@ -541,13 +625,46 @@ impl Scanner {
     /// What `candidate` says about where it is: remembered, cached, or read.
     fn find(&self, candidate: &Candidate, kind: Kind, cancel: &CancelToken) -> Option<Found> {
         let path = candidate.path.as_deref()?;
-        let metadata = std::fs::metadata(path).ok()?;
-        let modified = metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
-        let identity = (candidate.id, metadata.len(), modified);
+        if kind != Kind::Track {
+            // A picture's or a video's position and clock are fields, read
+            // together and kept by the core (`position.rs`).
+            let app = self.app.upgrade()?;
+            let known = candidate
+                .known
+                .map(|(len, modified)| (candidate.id.dev, candidate.id.ino, len, modified));
+            let mut said = app
+                .fields
+                .get_all(
+                    &[keys::POSITION, crate::position::CLOCK],
+                    path,
+                    known,
+                    cancel,
+                )
+                .into_iter();
+            let (at, clock) = (said.next().flatten(), said.next().flatten());
+            if cancel.is_cancelled() {
+                return None;
+            }
+            return Some(Found {
+                at: at
+                    .as_ref()
+                    .and_then(LatLon::from_value)
+                    .map(|at| [at.lat, at.lon]),
+                line: Vec::new(),
+                clock: clock.as_ref().and_then(Value::as_u64),
+            });
+        }
+        let identity = if let Some((len, modified)) = candidate.known {
+            (candidate.id, len, modified)
+        } else {
+            let metadata = std::fs::metadata(path).ok()?;
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
+            (candidate.id, metadata.len(), modified)
+        };
         if let Some(found) = self.remembered.lock().get(&identity) {
             return Some(found.clone());
         }
@@ -561,21 +678,7 @@ impl Scanner {
             .get(key.as_bytes())
             .and_then(|bytes| serde_json::from_slice::<Found>(&bytes).ok())
             .unwrap_or_else(|| {
-                let found = match kind {
-                    Kind::Picture | Kind::Video => {
-                        let taken = if kind == Kind::Video {
-                            bibli_platform::mp4::taken(path)
-                        } else {
-                            bibli_platform::exif::taken(path)
-                        };
-                        Found {
-                            at: taken.at.map(|at| [at.lat, at.lon]),
-                            line: Vec::new(),
-                            clock: taken.clock,
-                        }
-                    }
-                    Kind::Track => track(path, cancel),
-                };
+                let found = track(path, cancel);
                 if !cancel.is_cancelled()
                     && let Ok(bytes) = serde_json::to_vec(&found)
                 {
@@ -583,7 +686,7 @@ impl Scanner {
                         // Bounded: a record per version of every file
                         // ever looked at, else.
                         Ok(()) => self.cache.trim_soon(bytes.len() as u64, CACHE_BYTES),
-                        Err(error) => tracing::debug!(%error, "geo: keeping a position"),
+                        Err(error) => tracing::debug!(%error, "geo: keeping a track"),
                     }
                 }
                 found

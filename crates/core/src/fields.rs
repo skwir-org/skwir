@@ -5,11 +5,14 @@
 //! with `near:` and Details want it.
 //!
 //! A plugin registers a [`FieldProvider`] for the keys it answers; a
-//! caller on a worker asks [`Fields::get`] for a key of a file. The answer,
-//! a value or nothing, is kept by the file's identity (device, inode,
-//! size, modification time to the nanosecond) in memory and in the
-//! deletable cache, so a file is read once until it changes. Nothing here
-//! runs on the UI thread or per frame.
+//! caller on a worker asks [`Fields::get`] for a key of a file, or
+//! [`Fields::get_all`] for several, which a provider answers from one read
+//! of the file. The answer, a value or nothing, is kept by the file's
+//! identity (device, inode, size, modification time to the nanosecond) in
+//! memory and in the deletable cache, bounded (`KEPT_BYTES`), so a file is
+//! read once until it changes; one whose identity the caller knows (a
+//! listing's) is not stat-ed. Nothing here runs on the UI thread or per
+//! frame.
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::Path;
@@ -24,6 +27,8 @@ use crate::entry::Value;
 
 /// Answers remembered in memory; beyond, the cache on disk answers.
 const REMEMBERED: usize = 100_000;
+/// What the answers kept on disk may take.
+const KEPT_BYTES: u64 = 16 << 20;
 
 /// Reads one or more fields of files, when asked.
 pub trait FieldProvider: Send + Sync {
@@ -52,10 +57,25 @@ pub trait FieldProvider: Send + Sync {
     /// What the file at `path` says of `key`, read now, on a worker.
     /// `Ok(None)` when it says nothing; an error is kept as nothing too.
     fn read(&self, key: &str, path: &Path, cancel: &CancelToken) -> anyhow::Result<Option<Value>>;
+    /// What the file says of each of `keys`, in their order: a provider
+    /// whose keys come from one read of the file (a picture's position and
+    /// its clock) reads it once. Each key apart, by default.
+    fn read_keys(
+        &self,
+        keys: &[&str],
+        path: &Path,
+        cancel: &CancelToken,
+    ) -> Vec<anyhow::Result<Option<Value>>> {
+        keys.iter()
+            .map(|key| self.read(key, path, cancel))
+            .collect()
+    }
 }
 
-/// A file's identity: its answers hold while it is the same.
-type Identity = (u64, u64, u64, u64);
+/// A file's identity: its answers hold while it is the same. Its device
+/// and inode, its size, and when it was modified, in nanoseconds since
+/// 1970.
+pub type Identity = (u64, u64, u64, u64);
 
 #[derive(Default)]
 pub struct Fields {
@@ -160,69 +180,127 @@ impl Fields {
     /// `None` when no provider answers it, the file says nothing, or it
     /// cannot be read.
     pub fn get(&self, key: &str, path: &Path, cancel: &CancelToken) -> Option<Value> {
+        self.get_all(&[key], path, None, cancel).pop().flatten()
+    }
+
+    /// The values of `keys` for the file at `path`, in their order, as
+    /// [`Fields::get`] says each: those one provider answers are read
+    /// together ([`FieldProvider::read_keys`]). With `known`, the caller
+    /// says the file's identity, and that `path` is a file and no link (a
+    /// listing's entry, stat-ed already): the file is not stat-ed again.
+    pub fn get_all(
+        &self,
+        keys: &[&str],
+        path: &Path,
+        known: Option<Identity>,
+        cancel: &CancelToken,
+    ) -> Vec<Option<Value>> {
+        let mut answers = vec![None; keys.len()];
         // A link is asked as what it leads to, which is what is read.
-        let content = crate::fs::content_path(path)?;
-        let provider = self.provider(key, content.file_name()?)?;
-        let meta = std::fs::metadata(path).ok()?;
-        if !meta.is_file() {
-            return None;
-        }
-        let modified = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
-        let id = crate::fs::stat::identity(path, &meta)?;
-        let identity = (id.dev, id.ino, meta.len(), modified);
-        let memory_key: (Arc<str>, Identity) = (key.into(), identity);
-        if let Some(value) = self.remembered.lock().get(&memory_key) {
-            return value.clone();
-        }
-        let disk_key = format!(
-            "{key}:{}:{}:{}:{}:{}:{}",
-            provider.id(),
-            provider.version(),
-            identity.0,
-            identity.1,
-            identity.2,
-            identity.3
-        );
-        let kept = self
-            .cache
-            .as_ref()
-            .and_then(|cache| cache.get(disk_key.as_bytes()))
-            .and_then(|bytes| serde_json::from_slice::<Option<Value>>(&bytes).ok());
-        let value = if let Some(value) = kept {
-            value
+        let (content, identity) = if let Some(identity) = known {
+            (std::borrow::Cow::Borrowed(path), identity)
         } else {
-            {
-                let value = match provider.read(key, path, cancel) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        tracing::debug!(%error, key, "field not read");
-                        None
-                    }
-                };
-                // A read cut short by a cancel says nothing of the file.
-                if cancel.is_cancelled() {
-                    return None;
-                }
+            let (Some(content), Some(identity)) =
+                (crate::fs::content_path(path), identity_of(path))
+            else {
+                return answers;
+            };
+            (content, identity)
+        };
+        let Some(name) = content.file_name() else {
+            return answers;
+        };
+        // Each key remembered, kept, or to read, with the others its
+        // provider answers.
+        let mut asked: Vec<(Arc<dyn FieldProvider>, Vec<usize>)> = Vec::new();
+        for (i, key) in keys.iter().enumerate() {
+            let Some(provider) = self.provider(key, name) else {
+                continue;
+            };
+            let memory_key: (Arc<str>, Identity) = ((*key).into(), identity);
+            if let Some(value) = self.remembered.lock().get(&memory_key) {
+                answers[i].clone_from(value);
+                continue;
+            }
+            let kept = self
+                .cache
+                .as_ref()
+                .and_then(|cache| cache.get(disk_key(key, &*provider, identity).as_bytes()))
+                .and_then(|bytes| serde_json::from_slice::<Option<Value>>(&bytes).ok());
+            if let Some(value) = kept {
+                self.remember(memory_key, value.clone());
+                answers[i] = value;
+                continue;
+            }
+            match asked.iter_mut().find(|(p, _)| p.id() == provider.id()) {
+                Some((_, at)) => at.push(i),
+                None => asked.push((provider, vec![i])),
+            }
+        }
+        for (provider, at) in asked {
+            let read: Vec<&str> = at.iter().map(|&i| keys[i]).collect();
+            let values = provider.read_keys(&read, path, cancel);
+            // A read cut short by a cancel says nothing of the file.
+            if cancel.is_cancelled() {
+                return answers;
+            }
+            for (&i, value) in at.iter().zip(values) {
+                let key = keys[i];
+                let value = value.unwrap_or_else(|error| {
+                    tracing::debug!(%error, key, "field not read");
+                    None
+                });
                 if let Some(cache) = &self.cache
                     && let Ok(bytes) = serde_json::to_vec(&value)
-                    && let Err(error) = cache.put(disk_key.as_bytes(), &bytes)
                 {
-                    tracing::debug!(%error, "field not kept");
+                    match cache.put(disk_key(key, &*provider, identity).as_bytes(), &bytes) {
+                        Ok(()) => cache.trim_soon(bytes.len() as u64, KEPT_BYTES),
+                        Err(error) => tracing::debug!(%error, "field not kept"),
+                    }
                 }
-                value
+                self.remember((key.into(), identity), value.clone());
+                answers[i] = value;
             }
-        };
+        }
+        answers
+    }
+
+    fn remember(&self, key: (Arc<str>, Identity), value: Option<Value>) {
         let mut remembered = self.remembered.lock();
         if remembered.len() >= REMEMBERED {
             remembered.clear();
         }
-        remembered.insert(memory_key, value.clone());
-        value
+        remembered.insert(key, value);
     }
+}
+
+/// The identity of the file at `path`, through a link: `None` for what is
+/// no file, or cannot be stat-ed.
+fn identity_of(path: &Path) -> Option<Identity> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
+    let id = crate::fs::stat::identity(path, &meta)?;
+    Some((id.dev, id.ino, meta.len(), modified))
+}
+
+/// Where the answer of `provider` for `key` of a file is kept on disk.
+fn disk_key(key: &str, provider: &dyn FieldProvider, identity: Identity) -> String {
+    format!(
+        "{key}:{}:{}:{}:{}:{}:{}",
+        provider.id(),
+        provider.version(),
+        identity.0,
+        identity.1,
+        identity.2,
+        identity.3
+    )
 }
 
 #[cfg(test)]
@@ -292,6 +370,91 @@ mod tests {
             Some(Value::UInt(3))
         );
         assert_eq!(reads.load(Ordering::SeqCst), 3);
+    }
+
+    /// Answers `test.first` and `test.last`, the file's first and last
+    /// word, from one read, counting its reads.
+    struct Ends(Arc<AtomicUsize>);
+    impl FieldProvider for Ends {
+        fn id(&self) -> &'static str {
+            "ends"
+        }
+        fn keys(&self) -> &'static [&'static str] {
+            &["test.first", "test.last"]
+        }
+        fn accepts(&self, _: &str, name: &OsStr) -> bool {
+            name.to_string_lossy().ends_with(".txt")
+        }
+        fn read(
+            &self,
+            key: &str,
+            path: &Path,
+            cancel: &CancelToken,
+        ) -> anyhow::Result<Option<Value>> {
+            self.read_keys(&[key], path, cancel).pop().unwrap()
+        }
+        fn read_keys(
+            &self,
+            keys: &[&str],
+            path: &Path,
+            _: &CancelToken,
+        ) -> Vec<anyhow::Result<Option<Value>>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            let text = std::fs::read_to_string(path).unwrap_or_default();
+            let words: Vec<&str> = text.split_whitespace().collect();
+            keys.iter()
+                .map(|key| {
+                    let word = if *key == "test.first" {
+                        words.first()
+                    } else {
+                        words.last()
+                    };
+                    Ok(word.map(|w| Value::Text((*w).into())))
+                })
+                .collect()
+        }
+    }
+
+    #[test]
+    fn keys_of_one_provider_are_read_together_and_a_known_file_is_not_stat_ed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fields =
+            Fields::new(crate::cache::Cache::new(tmp.path().join("cache")).namespace("fields"));
+        let reads = Arc::new(AtomicUsize::new(0));
+        fields.register("test", Arc::new(Ends(Arc::clone(&reads))));
+        let note = tmp.path().join("it's a note.txt");
+        std::fs::write(&note, "first then last").unwrap();
+        let cancel = CancelToken::new();
+        let text = |w: &str| Some(Value::Text(w.into()));
+        let both = ["test.first", "test.last", "test.unknown"];
+        assert_eq!(
+            fields.get_all(&both, &note, None, &cancel),
+            [text("first"), text("last"), None]
+        );
+        assert_eq!(reads.load(Ordering::SeqCst), 1, "one read for both");
+        // Its identity said, the file is neither stat-ed nor read again:
+        // gone from where it was, it is still answered.
+        let meta = std::fs::metadata(&note).unwrap();
+        let id = crate::fs::stat::identity(&note, &meta).unwrap();
+        let modified = meta
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let known = (id.dev, id.ino, meta.len(), u64::try_from(modified).unwrap());
+        let moved = tmp.path().join("moved.txt");
+        std::fs::rename(&note, &moved).unwrap();
+        assert_eq!(
+            fields.get_all(&["test.last"], &note, Some(known), &cancel),
+            [text("last")]
+        );
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            fields.get("test.first", &note, &cancel),
+            None,
+            "stat-ed: gone"
+        );
     }
 
     #[test]

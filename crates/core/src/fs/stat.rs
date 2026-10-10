@@ -74,6 +74,24 @@ pub fn changed(path: &Path, meta: &std::fs::Metadata) -> Option<SystemTime> {
     }
 }
 
+/// What the file whose metadata is `meta` takes on its volume: its blocks
+/// where the system says them (Unix), else its length to the next 4 KiB,
+/// a volume's usual block. A record of a few bytes costs a block.
+pub fn allocated(meta: &std::fs::Metadata) -> u64 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta.blocks().saturating_mul(512)
+    }
+    #[cfg(not(unix))]
+    {
+        meta.len().div_ceil(BLOCK).saturating_mul(BLOCK)
+    }
+}
+
+/// A volume's usual block: what a file of a few bytes takes on it.
+pub const BLOCK: u64 = 4096;
+
 /// The identity of the file at `path`, as [`id_of`] says it, its
 /// metadata `meta` read already: through a link when `meta` says it is
 /// no link (the file a link leads to), the link's own otherwise. Unix
