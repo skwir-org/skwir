@@ -180,7 +180,7 @@ mod imp {
 
     fn gtk_setting(file: &str) -> Option<String> {
         let path = crate::xdg::config_home()?.join(file);
-        let text = std::fs::read_to_string(path).ok()?;
+        let text = crate::file::read_regular_text(&path, crate::file::DESKTOP_FILE).ok()?;
         crate::keyfile::entries(&text)
             .find(|(group, key, _)| *group == "Settings" && *key == "gtk-icon-theme-name")
             .map(|(_, _, value)| value.trim().to_owned())
@@ -285,7 +285,10 @@ mod imp {
                 {
                     continue;
                 }
-                let Ok(text) = std::fs::read_to_string(entry.path().join("index.theme")) else {
+                let Ok(text) = crate::file::read_regular_text(
+                    &entry.path().join("index.theme"),
+                    crate::file::DESKTOP_FILE,
+                ) else {
                     continue;
                 };
                 let field = |wanted: &str| {
@@ -346,7 +349,10 @@ mod imp {
                 &["get", schema, "icon-theme"],
             )?),
             Chosen::Kde => {
-                let text = std::fs::read_to_string(crate::xdg::config_home()?.join("kdeglobals"));
+                let text = crate::file::read_regular_text(
+                    &crate::xdg::config_home()?.join("kdeglobals"),
+                    crate::file::DESKTOP_FILE,
+                );
                 Some(kde_theme(text.ok().as_deref()))
             }
             Chosen::Xfce => printed(

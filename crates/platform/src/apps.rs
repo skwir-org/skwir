@@ -208,7 +208,8 @@ impl Catalog {
                 if !seen.insert(id.clone()) {
                     continue;
                 }
-                let Ok(text) = std::fs::read_to_string(&path) else {
+                let Ok(text) = crate::file::read_regular_text(&path, crate::file::DESKTOP_FILE)
+                else {
                     continue;
                 };
                 let Some(app) = parse_entry(&id, &path, &text, locale, desktops) else {
@@ -227,7 +228,7 @@ impl Catalog {
             }
         }
         for list in lists {
-            let Ok(text) = std::fs::read_to_string(list) else {
+            let Ok(text) = crate::file::read_regular_text(list, crate::file::DESKTOP_FILE) else {
                 continue;
             };
             catalog.read_list(&text);
@@ -694,7 +695,7 @@ impl AssociationEdit {
     pub fn make_default_in(lists: &[PathBuf], mime: &str, app: &str) -> anyhow::Result<Self> {
         let mut texts = Vec::new();
         for list in lists {
-            let text = match std::fs::read_to_string(list) {
+            let text = match crate::file::read_regular_text(list, crate::file::DESKTOP_FILE) {
                 Ok(text) => text,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
                 Err(e) => return Err(anyhow::anyhow!("{}: {e}", list.display())),

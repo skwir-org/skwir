@@ -209,9 +209,10 @@ impl Theme {
             .map(|base| base.join(name))
             .filter(|copy| copy.is_dir())
             .collect();
-        let text = copies
-            .iter()
-            .find_map(|copy| std::fs::read_to_string(copy.join("index.theme")).ok())?;
+        let text = copies.iter().find_map(|copy| {
+            crate::file::read_regular_text(&copy.join("index.theme"), crate::file::DESKTOP_FILE)
+                .ok()
+        })?;
         let (folders, parents) = parse_index(&text);
         let at: HashMap<&str, u16> = folders
             .iter()

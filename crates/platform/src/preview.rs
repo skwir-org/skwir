@@ -564,7 +564,11 @@ impl PreviewProvider for DocumentPreviews {
             Some((dir, pdf))
         };
         for engine in available {
-            let scratch = tempfile::tempdir()?;
+            // Its pages pass through memory, as every other session's: a
+            // page written to a disk's temporary folder was written out to
+            // the disk each time (a converted document's PDF, a few
+            // megabytes, is copied in with them).
+            let scratch = crate::file::memory_dir("bibli-pages-")?;
             let pdf = match &converted {
                 None => source.clone(),
                 Some((_, converted)) => {

@@ -77,6 +77,12 @@ pub fn rewrite<T>(
     Ok(Some(value))
 }
 
+/// The most a desktop's own file read here may hold (a desktop entry, a
+/// `mimeapps.list`, an icon theme's `index.theme`, a toolkit's settings):
+/// far above any made by hand or by a tool, so one that is larger is no
+/// such file.
+pub const DESKTOP_FILE: u64 = 4 << 20;
+
 /// A private folder for what a helper hands bibli and is read at once (a
 /// video's frames, a document's pages): in memory through `/dev/shm` where
 /// that exists and is writable, else the ordinary temporary folder, which
