@@ -32,6 +32,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use bibli_core::cache::CacheSlot;
 use bibli_core::geo::LatLon;
 use bibli_core::location::OpenLocation;
+use bibli_core::map_points::{Batch, MapSource, Placed};
 use bibli_core::scheduler::Priority;
 use bibli_core::workspace::PaneId;
 use bibli_core::{App, CancelToken, EntryId};
@@ -52,22 +53,6 @@ const LINE_POINTS: usize = 400;
 const REMEMBERED: usize = 200_000;
 /// What the cache keeps about a file; a change of `Found` changes it.
 const FOUND_VERSION: u32 = 2;
-
-/// A file placed on the map.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Placed {
-    pub id: EntryId,
-    pub lat: f64,
-    pub lon: f64,
-    /// A track's line, thinned: segments of `[lat, lon]`. Empty for a
-    /// picture.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub line: Vec<Vec<[f64; 2]>>,
-    /// A picture's camera clock (`bibli_platform::exif::Taken::clock`):
-    /// the order of pictures taken at one place.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub clock: Option<u64>,
-}
 
 /// What a file says about where it is, kept by its identity.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -101,13 +86,26 @@ struct Scan {
     generation: u64,
     placed: Vec<Placed>,
     /// Files looked at, placed or not, of those that could say where they
-    /// are.
+    /// are: by the scans it went on from, which it skips (its workers
+    /// share the set as they start), and by itself. None is in both.
+    before: Arc<HashSet<EntryId>>,
     looked: HashSet<EntryId>,
     candidates: usize,
     listed: usize,
     complete: bool,
     cancel: CancelToken,
     published: Instant,
+}
+
+impl Scan {
+    /// How many files it, and the scans it went on from, looked at.
+    fn looked_count(&self) -> usize {
+        self.before.len() + self.looked.len()
+    }
+
+    fn has_looked(&self, id: EntryId) -> bool {
+        self.before.contains(&id) || self.looked.contains(&id)
+    }
 }
 
 /// A pane's scans: the one the view shows, and the one looking at the
@@ -139,23 +137,6 @@ enum Start {
     Resume(Vec<Placed>, HashSet<EntryId>, Option<u64>),
     /// The same listing, its scan finished: look again beside it.
     Quiet,
-}
-
-#[derive(Serialize)]
-pub struct Batch {
-    pub generation: u64,
-    /// The points after the first `since` of this generation.
-    pub points: Vec<Placed>,
-    /// How many points there are in all.
-    pub placed: usize,
-    pub looked: usize,
-    pub candidates: usize,
-    pub listed: usize,
-    /// Every file of the whole listing was looked at.
-    pub complete: bool,
-    /// The files are being looked at again beside what this says; it is
-    /// replaced only if something moved.
-    pub rechecking: bool,
 }
 
 pub struct Scanner {
@@ -247,6 +228,13 @@ fn track(path: &Path, cancel: &CancelToken) -> Found {
     }
 }
 
+/// What a pane's Map view draws, read where it is kept.
+impl MapSource for Scanner {
+    fn points(&self, pane: PaneId, since: usize, withheld: &HashSet<EntryId>) -> Option<Batch> {
+        self.batch(pane, since, withheld)
+    }
+}
+
 impl Scanner {
     pub fn new(app: &App, revision: Arc<AtomicU64>) -> Scanner {
         Scanner {
@@ -303,7 +291,12 @@ impl Scanner {
                         let before = placed.len();
                         placed.retain(|p| listing.get(p.id).is_some());
                         let kept = (placed.len() == before).then_some(shown.generation);
-                        let mut looked = std::mem::take(&mut shown.looked);
+                        // Held by no worker by now (they read it as they
+                        // start), so not copied.
+                        let before = std::mem::take(&mut shown.before);
+                        let mut looked =
+                            Arc::try_unwrap(before).unwrap_or_else(|shared| (*shared).clone());
+                        looked.extend(shown.looked.drain());
                         looked.retain(|&id| listing.get(id).is_some());
                         Start::Resume(placed, looked, kept)
                     }
@@ -352,13 +345,14 @@ impl Scanner {
             Start::Resume(placed, looked, _) => (placed, looked, false),
             Start::Quiet => (Vec::new(), HashSet::new(), true),
         };
-        let skip: Arc<HashSet<EntryId>> = Arc::new(looked.clone());
+        let skip: Arc<HashSet<EntryId>> = Arc::new(looked);
         let scan = Scan {
             source,
             id,
             generation,
             placed,
-            looked,
+            before: Arc::clone(&skip),
+            looked: HashSet::new(),
             candidates: 0,
             listed,
             complete: false,
@@ -611,7 +605,7 @@ impl Scanner {
     ///
     /// Without the files `withheld` (an agent's call, `App::withheld`), as
     /// if the pane did not list them: their places and their counts.
-    pub fn points(&self, pane: PaneId, since: usize, withheld: &HashSet<EntryId>) -> Option<Batch> {
+    pub fn batch(&self, pane: PaneId, since: usize, withheld: &HashSet<EntryId>) -> Option<Batch> {
         let scans = self.scans.lock();
         let scans = scans.get(&pane)?;
         let scan = &scans.shown;
@@ -621,8 +615,9 @@ impl Scanner {
             .filter(|p| !withheld.contains(&p.id))
             .collect();
         let looked = scan
-            .looked
+            .before
             .iter()
+            .chain(&scan.looked)
             .filter(|id| withheld.contains(id))
             .count();
         Some(Batch {
@@ -634,7 +629,7 @@ impl Scanner {
                 .map(|p| (*p).clone())
                 .collect(),
             placed: placed.len(),
-            looked: scan.looked.len() - looked,
+            looked: scan.looked_count() - looked,
             candidates: scan.candidates.saturating_sub(looked),
             listed: scan.listed.saturating_sub(withheld.len()),
             complete: scan.complete,
@@ -662,7 +657,10 @@ impl Scanner {
 /// Whether two scans placed the same files at the same places, and looked
 /// at as many.
 fn same_places(a: &Scan, b: &Scan) -> bool {
-    if a.placed.len() != b.placed.len() || a.looked != b.looked {
+    if a.placed.len() != b.placed.len()
+        || a.looked_count() != b.looked_count()
+        || !a.before.iter().chain(&a.looked).all(|id| b.has_looked(*id))
+    {
         return false;
     }
     let before: HashMap<EntryId, &Placed> = a.placed.iter().map(|p| (p.id, p)).collect();

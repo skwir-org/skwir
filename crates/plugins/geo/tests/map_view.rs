@@ -137,6 +137,10 @@ fn a_folder_s_pictures_and_tracks_are_placed_once_each() {
     );
     assert_eq!(walk["line"][0].as_array().unwrap().len(), 3);
 
+    // The Map view reads the same batch where it is kept, typed.
+    let typed = app.maps.points(pane, 0).expect("the window's points");
+    assert_eq!(serde_json::to_value(&typed).unwrap(), found);
+
     // Each point travels once.
     let after = points(&app, pane, 2);
     assert_eq!(after["points"], json!([]));

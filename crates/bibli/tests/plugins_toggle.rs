@@ -46,6 +46,8 @@ struct Snapshot {
     terminals: Option<String>,
     /// Who draws map backgrounds.
     tiles: Option<String>,
+    /// Who places a pane's files on its map.
+    maps: Option<String>,
 }
 
 /// What is registered once the jobs the plugins started have ended: the
@@ -102,6 +104,7 @@ fn snapshot(app: &App) -> Snapshot {
         player: app.player.listeners(),
         terminals: app.terminals.owner(),
         tiles: app.tiles.owner(),
+        maps: app.maps.owner(),
     }
 }
 

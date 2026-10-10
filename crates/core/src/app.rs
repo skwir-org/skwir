@@ -132,6 +132,8 @@ pub struct App {
     pub previews: Arc<crate::preview::Previews>,
     /// Where map backgrounds come from (the map-tiles plugin, ADR-020).
     pub tiles: Arc<crate::tiles::Tiles>,
+    /// The files a pane's Map view places (the geo plugin).
+    pub maps: Arc<crate::map_points::MapSources>,
     /// Plans proposed for review (by plugins whose work finishes later, or by
     /// agents). The UI drains them with `take_proposals`.
     proposals: parking_lot::Mutex<Vec<Plan>>,
@@ -188,6 +190,7 @@ impl App {
             companions: Arc::new(crate::companions::Companions::gated(Arc::clone(&gate))),
             previews: Arc::new(crate::preview::Previews::default()),
             tiles: Arc::new(crate::tiles::Tiles::default()),
+            maps: Arc::new(crate::map_points::MapSources::default()),
             proposals: parking_lot::Mutex::new(Vec::new()),
             questions: parking_lot::Mutex::new(Vec::new()),
             answers: parking_lot::Mutex::new(HashMap::new()),
@@ -403,6 +406,7 @@ impl App {
         self.tallies.unregister_owner(owner);
         self.terminals.unregister_owner(owner);
         self.tiles.unregister_owner(owner);
+        self.maps.unregister_owner(owner);
         self.registry.remove_owner(owner);
         self.providers.write().retain(|_, (o, _)| &**o != owner);
         for spec in self.settings.schema() {

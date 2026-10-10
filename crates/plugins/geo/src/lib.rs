@@ -176,6 +176,12 @@ impl Plugin for GeoPlugin {
             },
         )
         .shows();
+        // The Map view reads the points where they are kept; scripts and
+        // agents ask `geo.points` for the same batch.
+        app.maps.register(
+            ID,
+            Arc::clone(&scanner) as Arc<dyn bibli_core::map_points::MapSource>,
+        );
         let points = Arc::clone(&scanner);
         app.commands.register::<PointsArgs, _>(
             ID,
@@ -184,7 +190,7 @@ impl Plugin for GeoPlugin {
             "The pictures and tracks of what a pane lists that were placed on the map, after the first `since`",
             move |args, app| {
                 let pane = app.pane_or_active(args.pane);
-                let found = points.points(pane, args.since, &app.withheld(pane));
+                let found = points.batch(pane, args.since, &app.withheld(pane));
                 Ok(Outcome::Value(serde_json::to_value(found)?))
             },
         )

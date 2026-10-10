@@ -24,7 +24,6 @@ use bibli_core::EntryId;
 use bibli_core::geo::LatLon;
 use bibli_core::thumbs::ThumbSize;
 use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*};
-use serde::Deserialize;
 
 use crate::elements::map::{self, Handles, Pick, Picking, Place, Shapes, View};
 use crate::shell::Shell;
@@ -45,27 +44,6 @@ const FOCUS_ZOOM: f64 = 15.;
 /// most while the next location's scan has placed nothing yet: a folder
 /// of notes after another does not blink.
 const HOLD: std::time::Duration = std::time::Duration::from_millis(250);
-
-#[derive(Deserialize)]
-struct Placed {
-    id: EntryId,
-    lat: f64,
-    lon: f64,
-    #[serde(default)]
-    line: Vec<Vec<[f64; 2]>>,
-    #[serde(default)]
-    clock: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct Batch {
-    generation: u64,
-    points: Vec<Placed>,
-    placed: usize,
-    looked: usize,
-    candidates: usize,
-    complete: bool,
-}
 
 #[derive(Default)]
 pub struct MapView {
@@ -104,7 +82,7 @@ pub struct MapView {
 
 impl MapView {
     /// Take what the scan found since the last batch.
-    fn receive(&mut self, shell: &mut Shell, cx: &mut Context<Shell>) {
+    fn receive(&mut self, shell: &mut Shell) {
         let pane = shell.pane;
         // The pane shows other files (a filter, a narrowing): the places
         // drawn follow, with nothing asked again.
@@ -126,16 +104,9 @@ impl MapView {
             return;
         }
         self.seen = Some(revision);
-        let ask = |shell: &mut Shell, since: usize, cx: &mut Context<Shell>| {
-            shell
-                .query_value(
-                    "geo.points",
-                    serde_json::json!({ "pane": pane, "since": since }),
-                    cx,
-                )
-                .and_then(|value| serde_json::from_value::<Batch>(value).ok())
-        };
-        let Some(mut points) = ask(shell, self.places.len(), cx) else {
+        // Read where the plugin keeps them, as they are.
+        let ask = |shell: &Shell, since: usize| shell.app.maps.points(pane, since);
+        let Some(mut points) = ask(shell, self.places.len()) else {
             return;
         };
         let mut again = false;
@@ -144,7 +115,7 @@ impl MapView {
             self.generation = points.generation;
             self.places.clear();
             again = true;
-            if let Some(all) = ask(shell, 0, cx) {
+            if let Some(all) = ask(shell, 0) {
                 points = all;
             }
         }
@@ -375,7 +346,7 @@ impl PaneView for MapView {
                 shell.set_status(format!("{error:#}"), true, cx);
             }
         }
-        self.receive(shell, cx);
+        self.receive(shell);
         if let Some(entry) = self.focus {
             if let Some(place) = self.places.iter().find(|p| p.entry == entry) {
                 let (x, y) = map::math::project(place.at);

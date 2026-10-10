@@ -42,6 +42,7 @@ pub mod jsonl;
 pub mod keymap;
 pub mod location;
 pub mod lru;
+pub mod map_points;
 pub mod media;
 pub mod metadata;
 pub mod notes;
