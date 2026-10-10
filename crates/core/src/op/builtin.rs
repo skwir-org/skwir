@@ -1332,12 +1332,12 @@ impl super::Effect for Trash {
             .into_iter()
             .map(|f| f.path)
             .collect();
-        let at = sys::trash_item(&src, ctx)
+        let at = trash_item(ctx, &src)
             .with_context(|| format!("“{}” could not be moved to the trash", display_name(&src)))?;
         // Each an item of the trash of its own, restored with the file.
         let mut landed = Vec::new();
         for companion in companions {
-            if let Ok(Some(at)) = sys::trash_item(&companion, ctx) {
+            if let Ok(Some(at)) = trash_item(ctx, &companion) {
                 landed.push(Landed {
                     at: PathArg(at),
                     from: PathArg(companion),
@@ -1349,6 +1349,65 @@ impl super::Effect for Trash {
             item: at.map(PathArg),
             landed,
         })))
+    }
+}
+
+/// Put `path` in the trash, and say where it went where only the system
+/// can tell (`sys::trash_item`). On Linux the plan puts it there itself,
+/// its trash found once (`put_trash`), and one going to a trash on
+/// another filesystem is moved there as any move across volumes is.
+fn trash_item(ctx: &StepContext, path: &Path) -> anyhow::Result<Option<PathBuf>> {
+    #[cfg(target_os = "linux")]
+    {
+        match ctx.trashes().put(path)? {
+            super::put_trash::Put::Done => Ok(None),
+            super::put_trash::Put::Across { item, info } => {
+                if let Err(error) = move_entry(ctx, path, &item, &[]) {
+                    let _ = std::fs::remove_file(&info);
+                    return Err(error);
+                }
+                Ok(None)
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = ctx;
+        Ok(sys::trash_item(path)?)
+    }
+}
+
+/// Put `item` of the trash back where it came from, its record gone. On
+/// Linux moved as any move is, across filesystems too (an item of a
+/// subvolume's file is in the home trash): the crate only renames, and
+/// left an empty file where its rename failed.
+// Handed to the crate whole where it restores it.
+#[cfg_attr(target_os = "linux", allow(clippy::needless_pass_by_value))]
+fn restore_listed(ctx: &StepContext, item: trash::TrashItem) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let info = PathBuf::from(&item.id);
+        let file = item_of_info(&info)
+            .ok_or_else(|| anyhow::anyhow!("“{}” is no trash's record", display_name(&info)))?;
+        let to = item.original_path();
+        std::fs::create_dir_all(&item.original_parent)?;
+        anyhow::ensure!(
+            !exists(&to),
+            "“{}” is there again: rename or move it first",
+            display_name(&to)
+        );
+        move_entry(ctx, &file, &to, &[])?;
+        if let Err(error) = std::fs::remove_file(&info)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(error.into());
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = ctx;
+        Ok(sys::trash_restore(vec![item])?)
     }
 }
 
@@ -1704,7 +1763,13 @@ struct Merged {
 /// Move what the trashed folder `from` holds into the folder `into`: each
 /// file or folder whose place is free, whole; into a folder that is there,
 /// what it holds. `rel` is where both are in the folders merged.
-fn merge(from: &Path, into: &Path, rel: &Path, merged: &mut Merged) -> anyhow::Result<()> {
+fn merge(
+    ctx: &StepContext,
+    from: &Path,
+    into: &Path,
+    rel: &Path,
+    merged: &mut Merged,
+) -> anyhow::Result<()> {
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -1715,9 +1780,9 @@ fn merge(from: &Path, into: &Path, rel: &Path, merged: &mut Merged) -> anyhow::R
                 "“{}” is there again: rename or move it first",
                 display_name(&dest)
             );
-            merge(&entry.path(), &dest, &inner, merged)?;
+            merge(ctx, &entry.path(), &dest, &inner, merged)?;
         } else {
-            rename_noreplace(&entry.path(), &dest)?;
+            move_entry(ctx, &entry.path(), &dest, &[])?;
             merged.moved.push(inner);
         }
     }
@@ -1812,7 +1877,7 @@ impl super::Effect for Restore {
                 })
             };
             ctx.trash_taken(info);
-            let mut unmerge = merge_restore(&item, info, &self.path)?;
+            let mut unmerge = merge_restore(ctx, &item, info, &self.path)?;
             for (n, found) in with {
                 if let Ok(back) = Untrashed::take(ctx, &record_of_listed(&found), &places[n]) {
                     unmerge.companions.push(back);
@@ -1826,7 +1891,7 @@ impl super::Effect for Restore {
             .context("the trash could not be read")?
             .ok_or_else(|| anyhow::anyhow!("“{}” is not in the trash", display_name(&self.path)))?;
         let when = item.time_deleted;
-        sys::trash_restore(vec![item])
+        restore_listed(ctx, item)
             .with_context(|| format!("“{}” could not be restored", display_name(&self.path)))?;
         // The companions trashed with it, where their places are free.
         let places = companion_places(ctx, &self.path);
@@ -1835,8 +1900,8 @@ impl super::Effect for Restore {
                 .into_iter()
                 .map(|(_, item)| item)
                 .collect();
-        if !found.is_empty() {
-            let _ = sys::trash_restore(found);
+        for item in found {
+            let _ = restore_listed(ctx, item);
         }
         let r = EntryRef::from_path(&self.path).ok_or_else(|| {
             anyhow::anyhow!(
@@ -1853,12 +1918,17 @@ impl super::Effect for Restore {
 /// folders and its `.trashinfo` go, as a restore takes them. Undone, the
 /// files that moved go back into it (`Unmerge`); nothing else of the
 /// folder there leaves it. Its companions are the caller's.
-fn merge_restore(item: &Path, info: &Path, path: &Path) -> anyhow::Result<Unmerge> {
+fn merge_restore(
+    ctx: &StepContext,
+    item: &Path,
+    info: &Path,
+    path: &Path,
+) -> anyhow::Result<Unmerge> {
     let mut merged = Merged::default();
-    if let Err(e) = merge(item, path, Path::new(""), &mut merged) {
+    if let Err(e) = merge(ctx, item, path, Path::new(""), &mut merged) {
         // Back as it was: the trash keeps the folder whole.
         for inner in merged.moved.iter().rev() {
-            let _ = rename_noreplace(&path.join(inner), &item.join(inner));
+            let _ = move_entry(ctx, &path.join(inner), &item.join(inner), &[]);
         }
         return Err(e.context(format!("“{}” could not be restored", display_name(path))));
     }
@@ -1960,7 +2030,7 @@ impl super::Effect for Unmerge {
                 if let Some(dir) = back.parent() {
                     std::fs::create_dir_all(dir)?;
                 }
-                rename_noreplace(&now, &back)?;
+                move_entry(ctx, &now, &back, &[])?;
             }
         }
         if !self.info.exists() {

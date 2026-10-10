@@ -1500,3 +1500,72 @@ fn a_plan_that_makes_a_folder_and_fills_it_is_no_conflict() {
     apply(&app, &plan);
     assert!(made.join("inner").is_dir() && made.join("a").is_file());
 }
+
+/// A file of a btrfs subvolume of the filesystem the home trash is on
+/// goes to the home trash across filesystems, as the trash crate sent it,
+/// moved as any move across volumes is, and its undo brings it back the
+/// same way: the crate's restore only renamed, and left an empty file
+/// where it failed. Skipped where no subvolume can be made (another
+/// filesystem, no `btrfs`).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_subvolume_s_files_go_to_the_home_trash_and_back_across_filesystems() {
+    use std::os::unix::fs::MetadataExt;
+    let tmp = home_tempdir();
+    let sub = tmp.path().join("it's a subvolume");
+    let made = std::process::Command::new("btrfs")
+        .args(["subvolume", "create"])
+        .arg(&sub)
+        .output()
+        .is_ok_and(|out| out.status.success());
+    let data = std::path::PathBuf::from(std::env::var_os("XDG_DATA_HOME").unwrap());
+    std::fs::create_dir_all(&data).unwrap();
+    if !made || std::fs::metadata(&sub).unwrap().dev() == std::fs::metadata(&data).unwrap().dev() {
+        eprintln!("skipped: no btrfs subvolume beside the test's data folder");
+        return;
+    }
+    let file = sub.join("café notes.txt");
+    std::fs::write(&file, "words").unwrap();
+    let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    let folder = sub.join("a folder");
+    std::fs::create_dir_all(folder.join("inner")).unwrap();
+    std::fs::write(folder.join("inner/x.txt"), "x").unwrap();
+    std::os::unix::fs::symlink("inner/x.txt", folder.join("link")).unwrap();
+    let app = app(&tmp.path().join("state"));
+    apply(
+        &app,
+        &Plan::with_steps(
+            "trash",
+            vec![
+                Box::new(Trash {
+                    entry: EntryRef::from_path(&file).unwrap(),
+                }),
+                Box::new(Trash {
+                    entry: EntryRef::from_path(&folder).unwrap(),
+                }),
+            ],
+        ),
+    );
+    assert!(!file.exists() && !folder.exists(), "the originals went");
+    let (_, item) = trashed(&file).expect("in the home trash");
+    assert!(item.starts_with(&data), "{}", item.display());
+    let r = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(r.error.is_none(), "{:?}", r.error);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "words");
+    assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), old);
+    assert_eq!(
+        std::fs::read_link(folder.join("link")).unwrap(),
+        Path::new("inner/x.txt")
+    );
+    assert!(trashed(&file).is_none(), "its record went with it");
+    std::fs::remove_file(&file).unwrap();
+    std::fs::remove_dir_all(&folder).unwrap();
+    // An empty subvolume is removed as a folder by its owner.
+    let _ = std::fs::remove_dir(&sub);
+}

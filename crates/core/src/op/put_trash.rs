@@ -1,18 +1,20 @@
-//! Putting a file in the trash on Linux as the `trash` crate does
-//! (freedesktop.org's trash specification), its trash found as the crate
-//! finds it, but the mount table read, and the home trash and each folder
-//! resolved, once for a plan rather than once for each file: of the 410 µs
-//! the crate took to trash a file, 290 went to finding again where.
+//! Putting a file in the trash on Linux (freedesktop.org's trash
+//! specification) where the `trash` crate puts it, but with the mount
+//! table read, and the home trash and each folder resolved, once for a
+//! plan rather than once for each file: of the 410 µs the crate took to
+//! trash a file, 290 went to finding again where.
 //!
 //! The crate's way: a file whose volume (the longest mount point holding
 //! its resolved path) is the home trash's goes to the home trash; another
 //! to its volume's `.Trash/<uid>` when that is a real folder with the
-//! sticky bit and the user's folder in it, else to `.Trash-<uid>`, made if
-//! missing. Its record is written first, under the first name free (`a`,
-//! `a.2`…), then the file renamed onto it without replacing anything.
-//! Whatever the crate does otherwise (a copy where a rename cannot go: a
-//! volume refusing a trash folder, a subvolume of the home folder's
-//! filesystem) is left to the crate, file by file.
+//! sticky bit and the user's folder is in it, else to `.Trash-<uid>`,
+//! made if missing, and to the home trash when the volume refuses it
+//! that. Its record is written first, under the first name free (`a`,
+//! `a.2`…), then the file renamed onto it without replacing anything. One
+//! a rename cannot take there (another filesystem: a subvolume of the
+//! home folder's, a volume refusing a trash folder) is left for the step
+//! to move as any move across volumes is (`builtin::move_entry`), its
+//! name and record kept for it.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -26,39 +28,46 @@ use std::path::{Path, PathBuf};
 #[derive(Default)]
 pub(super) struct Trashes(RefCell<Option<Known>>);
 
+/// A file put in the trash, or to be.
+pub(super) enum Put {
+    Done,
+    /// Its place in the trash, on another filesystem, for the step to
+    /// move it to (nothing is there yet), and its record, written: removed
+    /// if the move fails.
+    Across {
+        item: PathBuf,
+        info: PathBuf,
+    },
+}
+
 struct Known {
-    /// Every mount point, the longest first.
+    /// Every mount point, the longest first: none when the system says
+    /// nothing of them (no `/proc`), every file then on one filesystem.
     mounts: Vec<PathBuf>,
-    /// The home trash, resolved, and the mount point holding it.
-    home: PathBuf,
-    home_top: Option<PathBuf>,
+    /// The home trash, resolved, and the mount point holding it: `None`
+    /// with neither `$XDG_DATA_HOME` nor `$HOME`.
+    home: Option<(PathBuf, PathBuf)>,
     /// Folders resolved, by the path they were given as.
     folders: HashMap<PathBuf, PathBuf>,
-    /// The trash of each mount point, ready (its `files` and `info` made),
-    /// or `None` where the crate is left to find one.
-    trashes: HashMap<PathBuf, Option<PathBuf>>,
+    /// The trash of each mount point, its `files` and `info` made.
+    trashes: HashMap<PathBuf, PathBuf>,
 }
 
 impl Trashes {
-    /// Put the file at `path` in the trash: `false` where the crate is to
-    /// do it, nothing changed.
-    pub(super) fn put(&self, path: &Path) -> bool {
+    /// Put the file at `path` in the trash, or say where it goes.
+    pub(super) fn put(&self, path: &Path) -> io::Result<Put> {
         let mut known = self.0.borrow_mut();
-        if known.is_none() {
-            *known = Known::new();
-        }
-        let Some(known) = known.as_mut() else {
-            return false;
-        };
+        let known = known.get_or_insert_with(Known::new);
         let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
-            return false;
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the top of a filesystem cannot be put in the trash",
+            ));
         };
         let folder = if let Some(resolved) = known.folders.get(folder) {
             resolved.clone()
         } else {
-            let Ok(resolved) = resolved_or_above(folder) else {
-                return false;
-            };
+            let resolved = resolved_or_above(folder)?;
             known.folders.insert(folder.to_owned(), resolved.clone());
             resolved
         };
@@ -67,41 +76,61 @@ impl Trashes {
         let trash = if let Some(trash) = known.trashes.get(&top) {
             trash.clone()
         } else {
-            let trash = if Some(&top) == known.home_top.as_ref() {
-                Some(known.home.clone())
-            } else {
-                volume_trash(&top)
+            let home = || {
+                known
+                    .home
+                    .as_ref()
+                    .map(|(home, _)| home.clone())
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::NotFound,
+                            "there is no home folder for its trash",
+                        )
+                    })
             };
-            let ready = trash.filter(|trash| {
-                std::fs::create_dir_all(trash.join("files")).is_ok()
-                    && std::fs::create_dir_all(trash.join("info")).is_ok()
-            });
-            known.trashes.insert(top, ready.clone());
-            ready
+            let trash = if known.home.as_ref().map(|(_, top)| top) == Some(&top) {
+                home()?
+            } else {
+                match volume_trash(&top) {
+                    Ok(trash) => trash,
+                    // Refused a trash folder of its own: the home trash, as
+                    // the crate and the specification have it.
+                    Err(error) if error.kind() == io::ErrorKind::PermissionDenied => home()?,
+                    Err(error) => return Err(error),
+                }
+            };
+            std::fs::create_dir_all(trash.join("files"))?;
+            std::fs::create_dir_all(trash.join("info"))?;
+            known.trashes.insert(top, trash.clone());
+            trash
         };
-        trash.is_some_and(|trash| put_in(&path, &trash))
+        put_in(&path, &trash)
     }
 }
 
 impl Known {
-    fn new() -> Option<Known> {
-        let mut mounts: Vec<PathBuf> =
-            crate::fs::volume::mountinfo(&std::fs::read("/proc/self/mountinfo").ok()?)
-                .into_iter()
-                .map(|mount| mount.point)
-                .filter(|point| !point.as_os_str().is_empty())
-                .collect();
+    fn new() -> Known {
+        let mut mounts: Vec<PathBuf> = std::fs::read("/proc/self/mountinfo")
+            .map(|text| crate::fs::volume::mountinfo(&text))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|mount| mount.point)
+            .filter(|point| !point.as_os_str().is_empty())
+            .collect();
         mounts.sort_by_key(|point| std::cmp::Reverse(point.as_os_str().len()));
-        let home = resolved_or_above(&home_trash()?).ok()?;
         let mut known = Known {
             mounts,
-            home,
-            home_top: None,
+            home: None,
             folders: HashMap::new(),
             trashes: HashMap::new(),
         };
-        known.home_top = Some(known.top_of(&known.home.clone()));
-        Some(known)
+        known.home = home_trash()
+            .and_then(|home| resolved_or_above(&home).ok())
+            .map(|home| {
+                let top = known.top_of(&home);
+                (home, top)
+            });
+        known
     }
 
     /// The mount point holding `path`, the root when none says so.
@@ -150,8 +179,8 @@ fn resolved_or_above(path: &Path) -> io::Result<PathBuf> {
 
 /// A volume's trash for this user, at its top `top`: `.Trash/<uid>` when
 /// the volume keeps a shared trash and the user's folder is in it, else
-/// `.Trash-<uid>`, made if missing. `None` when neither can be had.
-fn volume_trash(top: &Path) -> Option<PathBuf> {
+/// `.Trash-<uid>`, made if missing.
+fn volume_trash(top: &Path) -> io::Result<PathBuf> {
     let uid = rustix::process::getuid().as_raw();
     let shared = top.join(".Trash");
     // A link is not the volume's shared trash, nor one without the sticky
@@ -159,23 +188,21 @@ fn volume_trash(top: &Path) -> Option<PathBuf> {
     if std::fs::symlink_metadata(&shared).is_ok_and(|m| m.is_dir() && m.mode() & 0o1000 != 0) {
         let own = shared.join(uid.to_string());
         if own.is_dir() {
-            return Some(own);
+            return Ok(own);
         }
     }
     let own = top.join(format!(".Trash-{uid}"));
     if !own.is_dir() {
-        std::fs::create_dir(&own).ok()?;
+        std::fs::create_dir(&own)?;
     }
-    Some(own)
+    Ok(own)
 }
 
 /// Put the file at `path` (resolved) in the trash `trash`: its record
 /// first, under the first name free there, then the file renamed onto it.
-/// `false`, nothing left behind, for anything but a name taken: the crate
-/// tries, and says what went wrong in its words.
-fn put_in(path: &Path, trash: &Path) -> bool {
+fn put_in(path: &Path, trash: &Path) -> io::Result<Put> {
     let Some(name) = path.file_name() else {
-        return false;
+        return Err(io::ErrorKind::InvalidInput.into());
     };
     let record = record(path);
     for n in 1usize.. {
@@ -193,34 +220,57 @@ fn put_in(path: &Path, trash: &Path) -> bool {
         {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(_) => return false,
+            Err(error) => return Err(error),
         };
-        if file.write_all(record.as_bytes()).is_err() {
+        if let Err(error) = file.write_all(record.as_bytes()) {
             drop(file);
             let _ = std::fs::remove_file(&info);
-            return false;
+            return Err(error);
         }
         drop(file);
         let item = trash.join("files").join(&named);
-        match rustix::fs::renameat_with(
-            rustix::fs::CWD,
-            path,
-            rustix::fs::CWD,
-            &item,
-            rustix::fs::RenameFlags::NOREPLACE,
-        ) {
-            Ok(()) => return true,
+        match renamed(path, &item) {
+            Ok(()) => return Ok(Put::Done),
+            Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                return Ok(Put::Across { item, info });
+            }
             Err(error) => {
                 let _ = std::fs::remove_file(&info);
-                // Another filesystem (the crate copies), or one that cannot
-                // rename without replacing: the crate's way.
-                if error != rustix::io::Errno::EXIST {
-                    return false;
+                if error.kind() != io::ErrorKind::AlreadyExists {
+                    return Err(error);
                 }
             }
         }
     }
-    false
+    Err(io::ErrorKind::AlreadyExists.into())
+}
+
+/// Rename `from` to `to`, never replacing what is there (`AlreadyExists`).
+fn renamed(from: &Path, to: &Path) -> io::Result<()> {
+    match rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        from,
+        rustix::fs::CWD,
+        to,
+        rustix::fs::RenameFlags::NOREPLACE,
+    ) {
+        // A filesystem that cannot rename without replacing: a placeholder
+        // made new holds the name, then the rename takes its place.
+        Err(rustix::io::Errno::INVAL | rustix::io::Errno::NOSYS) => {
+            if std::fs::symlink_metadata(from)?.is_dir() {
+                std::fs::create_dir(to)?;
+            } else {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(to)?;
+            }
+            std::fs::rename(from, to).inspect_err(|_| {
+                let _ = std::fs::remove_dir(to).or_else(|_| std::fs::remove_file(to));
+            })
+        }
+        other => other.map_err(io::Error::from),
+    }
 }
 
 /// The record of the file at `path` put in the trash now: its path, every
@@ -279,7 +329,7 @@ mod tests {
             let path = tmp.path().join(folder).join("it's a.txt");
             std::fs::create_dir(path.parent().unwrap()).unwrap();
             std::fs::write(&path, body).unwrap();
-            assert!(put_in(&path, &trash));
+            assert!(matches!(put_in(&path, &trash).unwrap(), Put::Done));
             assert!(!path.exists());
         }
         let read = |name: &str| std::fs::read_to_string(trash.join(name)).unwrap();

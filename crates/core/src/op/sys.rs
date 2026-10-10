@@ -490,14 +490,10 @@ pub(super) fn open_to_owner(current: &Permissions) -> bool {
 /// Put `path` in the trash, and say where it went where only the system
 /// can tell (macOS: `trashItemAtURL`'s resulting path, kept for undo, the
 /// Mac's trash keeping no record of where an item came from); `None`
-/// where the trash's own records say it (freedesktop, Windows). On Linux
-/// the trash a plan puts files in is found once (`put_trash`).
-pub(super) fn trash_item(
-    path: &Path,
-    ctx: &super::context::StepContext,
-) -> Result<Option<std::path::PathBuf>, trash::Error> {
-    #[cfg(not(target_os = "linux"))]
-    let _ = ctx;
+/// where the trash's own records say it (Windows). Linux's is the plan's
+/// own (`builtin::trash_item`).
+#[cfg(not(target_os = "linux"))]
+pub(super) fn trash_item(path: &Path) -> Result<Option<std::path::PathBuf>, trash::Error> {
     #[cfg(target_os = "macos")]
     {
         use objc2_foundation::{NSFileManager, NSString, NSURL};
@@ -513,10 +509,6 @@ pub(super) fn trash_item(
         Ok(landed
             .and_then(|url| url.path())
             .map(|p| std::path::PathBuf::from(p.to_string())))
-    }
-    #[cfg(target_os = "linux")]
-    if ctx.trashes().put(path) {
-        return Ok(None);
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -538,7 +530,9 @@ pub(super) fn trash_list() -> Result<Vec<trash::TrashItem>, trash::Error> {
     }
 }
 
-/// Put `items` of the trash back where they came from.
+/// Put `items` of the trash back where they came from. Linux's is the
+/// plan's own (`builtin::restore_listed`).
+#[cfg(not(target_os = "linux"))]
 #[cfg_attr(target_os = "macos", allow(clippy::needless_pass_by_value))]
 pub(super) fn trash_restore(items: Vec<trash::TrashItem>) -> Result<(), trash::Error> {
     #[cfg(not(target_os = "macos"))]
