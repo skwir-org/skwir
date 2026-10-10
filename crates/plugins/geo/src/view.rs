@@ -19,7 +19,9 @@
 //! already looked at, so the markers stay while a large folder streams.
 //! Once it has finished, what it found stays shown while the files are
 //! looked at again beside it (`Scans::next`), and is replaced at once,
-//! under a new generation, only if something moved.
+//! under a new generation, only if something moved. A scan resumed keeps
+//! the generation of the one before while it took nothing away: the view
+//! is handed only what it adds.
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -92,6 +94,10 @@ type Source = (String, u64, u64, u64, bool);
 /// A pane's scan.
 struct Scan {
     source: Source,
+    /// Which scan this is: what its workers find goes to it alone.
+    id: u64,
+    /// What the view is told: its points are the first ones of the
+    /// generation's.
     generation: u64,
     placed: Vec<Placed>,
     /// Files looked at, placed or not, of those that could say where they
@@ -129,8 +135,8 @@ enum Start {
     /// Another listing: nothing of the last scan holds.
     Fresh,
     /// The same listing, its scan not finished: go on from what it looked
-    /// at.
-    Resume(Vec<Placed>, HashSet<EntryId>),
+    /// at, under its generation when none of its points went.
+    Resume(Vec<Placed>, HashSet<EntryId>, Option<u64>),
     /// The same listing, its scan finished: look again beside it.
     Quiet,
 }
@@ -290,19 +296,20 @@ impl Scanner {
                         Start::Quiet
                     } else {
                         // What is still listed of what was looked at.
-                        let placed = shown
+                        let placed: Vec<Placed> = shown
                             .placed
                             .iter()
                             .filter(|p| listing.get(p.id).is_some())
                             .cloned()
                             .collect();
+                        let kept = (placed.len() == shown.placed.len()).then_some(shown.generation);
                         let looked = shown
                             .looked
                             .iter()
                             .copied()
                             .filter(|&id| listing.get(id).is_some())
                             .collect();
-                        Start::Resume(placed, looked)
+                        Start::Resume(placed, looked, kept)
                     }
                 }
                 _ => Start::Fresh,
@@ -328,9 +335,14 @@ impl Scanner {
             )
         };
         let cancel = app.lifetime().child().linked(&lifetime);
-        let generation = self.generations.fetch_add(1, Ordering::Relaxed);
+        let id = self.generations.fetch_add(1, Ordering::Relaxed);
+        let generation = match &start {
+            Start::Resume(_, _, Some(kept)) => *kept,
+            _ => id,
+        };
         tracing::debug!(
             pane = pane.0,
+            id,
             generation,
             start = match &start {
                 Start::Fresh => "fresh",
@@ -341,12 +353,13 @@ impl Scanner {
         );
         let (placed, looked, quiet) = match start {
             Start::Fresh => (Vec::new(), HashSet::new(), false),
-            Start::Resume(placed, looked) => (placed, looked, false),
+            Start::Resume(placed, looked, _) => (placed, looked, false),
             Start::Quiet => (Vec::new(), HashSet::new(), true),
         };
         let skip: Arc<HashSet<EntryId>> = Arc::new(looked.clone());
         let scan = Scan {
             source,
+            id,
             generation,
             placed,
             looked,
@@ -384,7 +397,7 @@ impl Scanner {
             .spawn(Priority::Normal, "geo-candidates", cancel, move || {
                 this.start(
                     pane,
-                    generation,
+                    id,
                     candidates,
                     &skip,
                     open.as_deref(),
@@ -399,7 +412,7 @@ impl Scanner {
     fn start(
         self: &Arc<Self>,
         pane: PaneId,
-        generation: u64,
+        scan_id: u64,
         entries: Vec<(EntryId, OsString, Option<PathBuf>)>,
         skip: &HashSet<EntryId>,
         open: Option<&dyn OpenLocation>,
@@ -418,7 +431,7 @@ impl Scanner {
             })
             .collect();
         let count = candidates.len();
-        let Some(shown) = self.update(pane, generation, |scan| scan.candidates = count) else {
+        let Some(shown) = self.update(pane, scan_id, |scan| scan.candidates = count) else {
             return;
         };
         let candidates: Arc<Vec<(Candidate, Kind)>> = Arc::new(
@@ -431,7 +444,7 @@ impl Scanner {
             self.changed();
         }
         if candidates.is_empty() {
-            self.finish(pane, generation);
+            self.finish(pane, scan_id);
             return;
         }
         let left = Arc::new(AtomicU64::new(WORKERS as u64));
@@ -467,7 +480,7 @@ impl Scanner {
                             })
                         });
                         let mut publish = false;
-                        let Some(shown) = this.update(pane, generation, |scan| {
+                        let Some(shown) = this.update(pane, scan_id, |scan| {
                             scan.looked.insert(candidate.id);
                             scan.placed.extend(placed);
                             if scan.published.elapsed() >= PUBLISH {
@@ -482,45 +495,40 @@ impl Scanner {
                         }
                     }
                     if left.fetch_sub(1, Ordering::AcqRel) == 1 {
-                        this.finish(pane, generation);
+                        this.finish(pane, scan_id);
                     }
                 },
             );
         }
     }
 
-    /// Change the scan of `pane` if it is still `generation`: whether it
+    /// Change the scan of `pane` if it is still scan `id`: whether it
     /// is the one shown, or `None` when another scan replaced it.
-    fn update(
-        &self,
-        pane: PaneId,
-        generation: u64,
-        change: impl FnOnce(&mut Scan),
-    ) -> Option<bool> {
+    fn update(&self, pane: PaneId, id: u64, change: impl FnOnce(&mut Scan)) -> Option<bool> {
         let mut scans = self.scans.lock();
         let scans = scans.get_mut(&pane)?;
-        if scans.shown.generation == generation {
+        if scans.shown.id == id {
             change(&mut scans.shown);
             return Some(true);
         }
-        let next = scans.next.as_mut().filter(|n| n.generation == generation)?;
+        let next = scans.next.as_mut().filter(|n| n.id == id)?;
         change(next);
         Some(false)
     }
 
-    /// The scan `generation` of `pane` ended. One that looked again beside
+    /// The scan `id` of `pane` ended. One that looked again beside
     /// the one shown replaces it if something moved, and otherwise goes
     /// without a word.
-    fn finish(&self, pane: PaneId, generation: u64) {
+    fn finish(&self, pane: PaneId, id: u64) {
         let news = {
             let mut scans = self.scans.lock();
             let Some(scans) = scans.get_mut(&pane) else {
                 return;
             };
-            if scans.shown.generation == generation {
+            if scans.shown.id == id {
                 scans.shown.complete = scans.shown.source.4;
                 true
-            } else if let Some(mut next) = scans.next.take_if(|n| n.generation == generation) {
+            } else if let Some(mut next) = scans.next.take_if(|n| n.id == id) {
                 next.complete = next.source.4;
                 if same_places(&scans.shown, &next) {
                     scans.shown.source = next.source;
@@ -534,7 +542,7 @@ impl Scanner {
                 false
             }
         };
-        tracing::debug!(pane = pane.0, generation, news, "geo: scan finished");
+        tracing::debug!(pane = pane.0, id, news, "geo: scan finished");
         if news {
             self.changed();
         }

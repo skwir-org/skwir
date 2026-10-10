@@ -103,7 +103,8 @@ fn a_folder_s_pictures_and_tracks_are_placed_once_each() {
     // folder's, however soon it ends.
     app.dispatch(&Invocation::with_args("geo.scan", &json!({ "pane": pane })))
         .unwrap();
-    assert_eq!(points(&app, pane, 0)["complete"], false);
+    let early = points(&app, pane, 0);
+    assert_eq!(early["complete"], false);
     assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
     let id_of = |name: &str| {
         let ws = app.workspace.read();
@@ -112,6 +113,9 @@ fn a_folder_s_pictures_and_tracks_are_placed_once_each() {
     };
 
     let found = scan(&app, pane);
+    // It went on from the early scan, which took nothing away: the view
+    // keeps what it was handed, and is handed only what was added.
+    assert_eq!(found["generation"], early["generation"], "{found}");
     // The text file is not looked at; the picture without a fix is looked
     // at and not placed.
     assert_eq!(found["candidates"], 3, "{found}");
