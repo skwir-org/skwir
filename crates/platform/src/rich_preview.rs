@@ -26,7 +26,10 @@ use bibli_core::{
 };
 use ego_tree::{NodeId, NodeRef, iter::Edge};
 use scraper::{ElementRef, Html, Node, node::Element};
-use std::{collections::HashSet, fmt::Write};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Write,
+};
 use style::{Display, Sheets, Style};
 
 /// A page read for its structure.
@@ -163,7 +166,18 @@ pub fn html(
                             skip = Some(node.id());
                             continue;
                         }
-                        let context = parent.enter(node, e, style);
+                        // A list's items are numbered as the walk meets
+                        // them: counting each one's siblings before it was
+                        // quadratic, a list of a million items a hang.
+                        let item = if e.name() == "li" {
+                            let count =
+                                walk.items.entry(node.parent().map(|p| p.id())).or_default();
+                            *count = count.saturating_add(1);
+                            *count - 1
+                        } else {
+                            0
+                        };
+                        let context = parent.enter(node, e, style, item);
                         walk.anchor(&context, e, node.id());
                         if walk.open(&context, node, e, &mut resources) {
                             skip = Some(node.id());
@@ -208,6 +222,7 @@ fn document(source: &str, markup: Markup) -> Html {
 /// `<style>` elements.
 fn stylesheets(doc: &Html, resources: &mut impl Resources) -> Sheets {
     let mut sheets = Sheets::new();
+    let mut linked = HashSet::new();
     for node in doc.tree.root().descendants() {
         let Some(element) = ElementRef::wrap(node) else {
             continue;
@@ -225,7 +240,11 @@ fn stylesheets(doc: &Html, resources: &mut impl Resources) -> Sheets {
                         && !kinds.any(|k| k.eq_ignore_ascii_case("alternate"))
                 }) =>
             {
+                // One linked again is read once, none once the CSS read
+                // fills what is taken of it.
                 if let Some(href) = e.attr("href")
+                    && !sheets.full()
+                    && linked.insert(href.to_owned())
                     && let Some(css) = resources.stylesheet(href)
                 {
                     let base = href.split(['#', '?']).next().unwrap_or(href);
@@ -301,7 +320,8 @@ impl Default for Context {
     }
 }
 impl Context {
-    fn enter(&self, node: NodeRef<'_, Node>, e: &Element, style: Style) -> Self {
+    /// `item` is the element's place among its list's items, for a `li`.
+    fn enter(&self, node: NodeRef<'_, Node>, e: &Element, style: Style, item: u32) -> Self {
         let mut context = self.clone();
         context.style = style;
         let name = e.name();
@@ -336,14 +356,9 @@ impl Context {
                 context.list = Some((numbering, start));
             }
             "li" => {
-                let before = node
-                    .prev_siblings()
-                    .filter(|n| n.value().as_element().is_some_and(|e| e.name() == "li"))
-                    .count();
                 let marker = match context.list {
                     Some((Some(numbering), start)) => {
-                        let n = start.saturating_add(u32::try_from(before).unwrap_or(u32::MAX));
-                        format!("{}.", numbering.number(n))
+                        format!("{}.", numbering.number(start.saturating_add(item)))
                     }
                     _ => "•".into(),
                 };
@@ -417,6 +432,8 @@ struct Walk {
     /// List items that already got their marker: it belongs to the first
     /// block of an item, not to every paragraph inside it.
     marked: HashSet<NodeId>,
+    /// How many items each list met so far, by the list's node.
+    items: HashMap<Option<NodeId>, u32>,
     /// Link targets waiting for the next block that has content.
     pending: Vec<String>,
     /// SVG drawings rasterized with the page.
@@ -845,11 +862,18 @@ pub fn local_image(base: &std::path::Path, href: &str, cancel: &CancelToken) -> 
 /// header.
 pub fn local_picture(base: &std::path::Path, href: &str, cancel: &CancelToken) -> Option<Picture> {
     let path = local_path(base, href)?;
-    let head = crate::inspection::read(&path, 0, limits::PICTURE_HEADER, cancel).ok()?;
-    let (width, height) = crate::inspection::picture_size(&head).or_else(|| {
-        let whole = read_bounded(&path, limits::BINARY_INPUT, "Embedded image", cancel).ok()?;
-        crate::inspection::picture_size(&whole)
-    })?;
+    // A photo's size is found by seeking to its frame; another picture's
+    // read from its head, or from all of it.
+    let (width, height) = crate::exif::jpeg_size(&path)
+        .and_then(|(width, height)| crate::inspection::shown_size(width, height))
+        .or_else(|| {
+            let head = crate::inspection::read(&path, 0, limits::PICTURE_HEADER, cancel).ok()?;
+            crate::inspection::picture_size(&head).or_else(|| {
+                let whole =
+                    read_bounded(&path, limits::BINARY_INPUT, "Embedded image", cancel).ok()?;
+                crate::inspection::picture_size(&whole)
+            })
+        })?;
     Some(Picture::Later {
         key: href.to_owned(),
         width,

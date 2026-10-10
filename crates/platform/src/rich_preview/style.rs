@@ -162,6 +162,7 @@ enum Origin {
     Inline,
 }
 
+#[derive(Clone)]
 struct Rule {
     selector: Selector<Simple>,
     declarations: Arc<[Declaration]>,
@@ -194,9 +195,25 @@ pub struct FontFace {
 }
 impl Sheets {
     pub fn new() -> Self {
+        // The built-in rules, parsed once: a Markdown file parsed them
+        // again for each block of HTML it holds.
+        static USER_AGENT_RULES: std::sync::OnceLock<Vec<Rule>> = std::sync::OnceLock::new();
+        let rules = USER_AGENT_RULES.get_or_init(|| {
+            let mut sheets = Self::default();
+            sheets.parse(USER_AGENT, Origin::UserAgent, "");
+            sheets.rules
+        });
         let mut sheets = Self::default();
-        sheets.parse(USER_AGENT, Origin::UserAgent, "");
+        for rule in rules {
+            sheets.insert(rule.clone());
+        }
         sheets
+    }
+
+    /// Whether the document's CSS read so far fills what is read of it: a
+    /// stylesheet more is not read.
+    pub fn full(&self) -> bool {
+        self.bytes >= limits::TEXT_INPUT
     }
     /// Add one of the document's stylesheets, found at `base` (the folder
     /// of a linked sheet relative to the page, empty for a `<style>`). Past

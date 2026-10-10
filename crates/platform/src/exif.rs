@@ -13,14 +13,173 @@ use exif::{Exif, In, Tag, Value};
 
 use crate::inspection::{detail, limits};
 
-/// The container's metadata, if it has any.
+/// What is read of a TIFF-based file (a camera's raw file, a scan) for its
+/// metadata: its first directories and what they hold are at its start.
+const TIFF_HEAD: u64 = 1 << 20;
+
+/// The container's metadata, if it has any, found by seeking past what is
+/// not it: the reader's own way read a raw file whole, every chunk of a
+/// PNG and a JPEG's scan to its end, up to 16 MB a picture (a first map
+/// of a thousand raw files read 16 GB).
 fn metadata(path: &Path) -> Option<Exif> {
-    let file = crate::file::open_regular(path).ok()?;
-    // The reader seeks to the metadata and stops; the bound is for a segment
-    // that lies about its size.
-    let mut reader =
-        std::io::BufReader::new(std::io::Read::take(file, limits::BINARY_INPUT as u64));
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = crate::file::open_regular(path).ok()?;
+    let mut head = [0u8; 8];
+    let read = file.read(&mut head).ok()?;
+    let head = &head[..read];
+    if head.starts_with(&[0xFF, 0xD8]) {
+        return raw(jpeg_exif(&mut file)?, false);
+    }
+    if head.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return raw(png_exif(&mut file)?, false);
+    }
+    file.seek(SeekFrom::Start(0)).ok()?;
+    if head.starts_with(b"II*\0") || head.starts_with(b"MM\0*") {
+        // What its directories point past the head (a maker's notes, the
+        // strips' table) is left out, the rest read.
+        let mut prefix = Vec::new();
+        file.take(TIFF_HEAD).read_to_end(&mut prefix).ok()?;
+        return raw(prefix, true);
+    }
+    // HEIF and WebP: the reader seeks to the metadata and stops; the bound
+    // is for a segment that lies about its size.
+    let mut reader = std::io::BufReader::new(file.take(limits::BINARY_INPUT as u64));
     exif::Reader::new().read_from_container(&mut reader).ok()
+}
+
+/// The metadata of `tiff`, the Exif's own TIFF data; with `partial`, what
+/// could be read of it.
+fn raw(tiff: Vec<u8>, partial: bool) -> Option<Exif> {
+    let mut reader = exif::Reader::new();
+    reader.continue_on_error(partial);
+    match reader.read_raw(tiff) {
+        Ok(exif) => Some(exif),
+        Err(error) if partial => error.distill_partial_result(|_| {}).ok(),
+        Err(_) => None,
+    }
+}
+
+/// The next byte of `file`.
+fn byte(file: &mut impl std::io::Read) -> Option<u8> {
+    let mut b = [0u8];
+    file.read_exact(&mut b).ok().map(|()| b[0])
+}
+
+/// A JPEG's Exif (its APP1 `Exif` segment's TIFF data): its segments
+/// walked, each skipped by its length, up to its frame.
+fn jpeg_exif(file: &mut (impl std::io::Read + std::io::Seek)) -> Option<Vec<u8>> {
+    jpeg_head(file).0
+}
+
+/// A JPEG's Exif and its frame's width and height, as written: its
+/// segments walked from its start, each skipped by its length, up to its
+/// frame header (the metadata comes before it).
+fn jpeg_head(
+    file: &mut (impl std::io::Read + std::io::Seek),
+) -> (Option<Vec<u8>>, Option<(u32, u32)>) {
+    use std::io::SeekFrom;
+    let mut exif = None;
+    let walked = (|| -> Option<(u32, u32)> {
+        file.seek(SeekFrom::Start(2)).ok()?;
+        loop {
+            if byte(file)? != 0xFF {
+                return None;
+            }
+            // Fill bytes before a marker.
+            let mut marker = byte(file)?;
+            while marker == 0xFF {
+                marker = byte(file)?;
+            }
+            match marker {
+                0x01 | 0xD0..=0xD8 => continue,
+                // The scan, or the end, before any frame.
+                0xD9 | 0xDA => return None,
+                _ => {}
+            }
+            let length = u16::from_be_bytes([byte(file)?, byte(file)?]);
+            let body = usize::from(length.checked_sub(2)?);
+            match marker {
+                0xE1 if exif.is_none() => {
+                    let mut data = vec![0; body];
+                    file.read_exact(&mut data).ok()?;
+                    if data.starts_with(b"Exif\0\0") {
+                        exif = Some(data.split_off(6));
+                    }
+                }
+                // A frame header (not DHT, JPG, DAC): its precision, then
+                // its height and width.
+                0xC0..=0xCF if !matches!(marker, 0xC4 | 0xC8 | 0xCC) => {
+                    let mut frame = [0u8; 5];
+                    file.read_exact(&mut frame).ok()?;
+                    let height = u16::from_be_bytes([frame[1], frame[2]]);
+                    let width = u16::from_be_bytes([frame[3], frame[4]]);
+                    return Some((u32::from(width), u32::from(height)));
+                }
+                _ => {
+                    file.seek(SeekFrom::Current(i64::try_from(body).ok()?))
+                        .ok()?;
+                }
+            }
+        }
+    })();
+    (exif, walked)
+}
+
+/// A JPEG's width and height once turned as its metadata says, read by
+/// seeking from segment to segment: a document's photos were each read
+/// 256 KB to learn their size. `None` for another format, or one whose
+/// header is not found that way.
+pub fn jpeg_size(path: &Path) -> Option<(u32, u32)> {
+    use std::io::Read;
+    let mut file = crate::file::open_regular(path).ok()?;
+    let mut soi = [0u8; 2];
+    file.read_exact(&mut soi).ok()?;
+    if soi != [0xFF, 0xD8] {
+        return None;
+    }
+    let (exif, size) = jpeg_head(&mut file);
+    let (width, height) = size.filter(|(w, h)| *w > 0 && *h > 0)?;
+    let turned = exif
+        .and_then(|tiff| raw(tiff, true))
+        .and_then(|exif| {
+            exif.get_field(Tag::Orientation, In::PRIMARY)?
+                .value
+                .get_uint(0)
+        })
+        .is_some_and(|orientation| (5..=8).contains(&orientation));
+    Some(if turned {
+        (height, width)
+    } else {
+        (width, height)
+    })
+}
+
+/// A PNG's Exif (its `eXIf` chunk): its chunks walked, each skipped by its
+/// length, up to its end.
+fn png_exif(file: &mut (impl std::io::Read + std::io::Seek)) -> Option<Vec<u8>> {
+    use std::io::SeekFrom;
+    file.seek(SeekFrom::Start(8)).ok()?;
+    loop {
+        let mut head = [0u8; 8];
+        file.read_exact(&mut head).ok()?;
+        let length = u32::from_be_bytes([head[0], head[1], head[2], head[3]]);
+        match &head[4..] {
+            b"eXIf" => {
+                let length = usize::try_from(length).ok()?;
+                if length > limits::BINARY_INPUT {
+                    return None;
+                }
+                let mut data = vec![0; length];
+                file.read_exact(&mut data).ok()?;
+                return Some(data);
+            }
+            b"IEND" => return None,
+            // Its data and its check skipped.
+            _ => {
+                file.seek(SeekFrom::Current(i64::from(length) + 4)).ok()?;
+            }
+        }
+    }
 }
 
 /// The facts worth a row, in the order they are shown.
@@ -212,6 +371,105 @@ mod tests {
         data.extend(1u32.to_le_bytes());
         data.extend(250u32.to_le_bytes());
         data
+    }
+
+    /// The metadata is found in a JPEG past other segments, in a PNG after
+    /// its image data, and at the head of a large TIFF, without reading
+    /// what follows it.
+    #[test]
+    fn the_metadata_is_found_in_each_container() {
+        let camera = |path: &Path| {
+            metadata(path).map(|exif| {
+                read(&exif)
+                    .into_iter()
+                    .find(|d| d.label == "Camera")
+                    .map(|d| d.value)
+            })
+        };
+        let dir = tempfile::tempdir().unwrap();
+        // SOI, a JFIF APP0, the Exif APP1, then a scan and the end.
+        let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+        jpeg.extend(b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0");
+        let tiff = tiff();
+        let app1 = u16::try_from(2 + 6 + tiff.len()).unwrap();
+        jpeg.extend([0xFF, 0xE1]);
+        jpeg.extend(app1.to_be_bytes());
+        jpeg.extend(b"Exif\0\0");
+        jpeg.extend(&tiff);
+        jpeg.extend([0xFF, 0xDA, 0x00, 0x02]);
+        jpeg.extend(vec![0x55; 4096]);
+        jpeg.extend([0xFF, 0xD9]);
+        std::fs::write(dir.path().join("a.jpg"), &jpeg).unwrap();
+        assert_eq!(
+            camera(&dir.path().join("a.jpg")),
+            Some(Some("Acme One".into()))
+        );
+        // A PNG: IHDR, IDAT, then eXIf and IEND (checks left zero).
+        let chunk = |kind: &[u8], data: &[u8]| {
+            let mut out = u32::try_from(data.len()).unwrap().to_be_bytes().to_vec();
+            out.extend(kind);
+            out.extend(data);
+            out.extend([0; 4]);
+            out
+        };
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend(chunk(b"IHDR", &[0; 13]));
+        png.extend(chunk(b"IDAT", &[0x77; 8192]));
+        png.extend(chunk(b"eXIf", &tiff));
+        png.extend(chunk(b"IEND", &[]));
+        std::fs::write(dir.path().join("a.png"), &png).unwrap();
+        assert_eq!(
+            camera(&dir.path().join("a.png")),
+            Some(Some("Acme One".into()))
+        );
+        // A TIFF far larger than what is read of it.
+        let mut large = tiff.clone();
+        large.resize(3 << 20, 0);
+        std::fs::write(dir.path().join("a.tif"), &large).unwrap();
+        assert_eq!(
+            camera(&dir.path().join("a.tif")),
+            Some(Some("Acme One".into()))
+        );
+        // A JPEG without metadata.
+        std::fs::write(
+            dir.path().join("b.jpg"),
+            [0xFF, 0xD8, 0xFF, 0xDA, 0, 2, 0xFF, 0xD9],
+        )
+        .unwrap();
+        assert!(metadata(&dir.path().join("b.jpg")).is_none());
+    }
+
+    /// A JPEG's size is read from its frame header, turned when its
+    /// metadata says it stands on a side.
+    #[test]
+    fn a_jpeg_s_size_is_read_from_its_frame_and_turned() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut jpeg = Vec::new();
+        image::RgbImage::from_pixel(30, 20, image::Rgb([1, 2, 3]))
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpeg),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        std::fs::write(dir.path().join("flat.jpg"), &jpeg).unwrap();
+        assert_eq!(jpeg_size(&dir.path().join("flat.jpg")), Some((30, 20)));
+        // Orientation 6 (turned a quarter), in an Exif segment after SOI.
+        let mut tiff = b"II*\0\x08\0\0\0".to_vec();
+        tiff.extend(1u16.to_le_bytes());
+        tiff.extend(0x0112u16.to_le_bytes());
+        tiff.extend(3u16.to_le_bytes());
+        tiff.extend(1u32.to_le_bytes());
+        tiff.extend([6, 0, 0, 0]);
+        tiff.extend(0u32.to_le_bytes());
+        let mut standing = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        standing.extend(u16::try_from(2 + 6 + tiff.len()).unwrap().to_be_bytes());
+        standing.extend(b"Exif\0\0");
+        standing.extend(&tiff);
+        standing.extend(&jpeg[2..]);
+        std::fs::write(dir.path().join("standing.jpg"), &standing).unwrap();
+        assert_eq!(jpeg_size(&dir.path().join("standing.jpg")), Some((20, 30)));
+        std::fs::write(dir.path().join("not.jpg"), b"\x89PNG").unwrap();
+        assert_eq!(jpeg_size(&dir.path().join("not.jpg")), None);
     }
 
     #[test]

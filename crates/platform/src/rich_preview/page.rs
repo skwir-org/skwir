@@ -68,7 +68,7 @@ pub fn page(
     };
     let own = (drawn.width, drawn.height);
     let side = side.clamp(64, bibli_core::document::MAX_SIDE);
-    render(canvas, drawn, side).map(|(width, height, rgba)| {
+    render(canvas, drawn, side, cancel).map(|(width, height, rgba)| {
         Some(Drawing {
             width,
             height,
@@ -81,9 +81,14 @@ pub fn page(
 /// What a page draws, in paint order: SVG fragments, which resvg draws with
 /// the page's fonts, and the pictures between them, which are decoded here
 /// (resvg is built without its own decoders, as gpui links it).
+/// The pictures a page draws at most, however many times each is used.
+const PICTURE_USES: usize = 1024;
+
 #[derive(Default)]
 struct Canvas {
     layers: Vec<Layer>,
+    /// The pictures drawn so far (`PICTURE_USES`).
+    pictures: usize,
     /// The opacity groups open in the fragment being written: a picture
     /// closes them and the next fragment opens them again.
     groups: Vec<f32>,
@@ -128,6 +133,11 @@ impl Canvas {
         self.groups.pop();
     }
     fn picture(&mut self, key: String, rect: [f32; 4], transform: [f32; 6]) {
+        // A page's pictures drawn at most: each a layer of its own.
+        if self.pictures >= PICTURE_USES {
+            return;
+        }
+        self.pictures += 1;
         let open = self.groups.len();
         for _ in 0..open {
             self.svg().push_str("</g>");
@@ -150,7 +160,7 @@ impl Canvas {
 struct Drawn {
     width: f32,
     height: f32,
-    fonts: fontdb::Database,
+    fonts: Arc<fontdb::Database>,
     pictures: HashMap<String, Arc<Vec<u8>>>,
 }
 
@@ -176,6 +186,7 @@ fn layout(
         canvas: Canvas::default(),
         pictures: HashMap::new(),
         measuring: 0,
+        measured: HashMap::new(),
         text: 0,
         cancel,
     };
@@ -271,6 +282,11 @@ struct Layout<'a, R> {
     pictures: HashMap<String, Arc<Vec<u8>>>,
     /// Nonzero while boxes are measured rather than drawn.
     measuring: u32,
+    /// What each box measured, by its node, its width and its containing
+    /// block: a box measured before it is laid out, inside one measured
+    /// too, was measured again at every level, two to the power of the
+    /// depth.
+    measured: HashMap<(ego_tree::NodeId, [u32; 5]), Extent>,
     text: usize,
     cancel: &'a CancelToken,
 }
@@ -462,10 +478,19 @@ impl<R: Resources> Layout<'_, R> {
         cb: Rect,
         depth: usize,
     ) -> anyhow::Result<Extent> {
+        let key = (
+            node.id(),
+            [at.width, cb.x, cb.y, cb.w, cb.h].map(f32::to_bits),
+        );
+        if let Some(extent) = self.measured.get(&key) {
+            return Ok(*extent);
+        }
         self.measuring += 1;
         let extent = self.children(node, style, at, cb, IDENTITY, depth);
         self.measuring -= 1;
-        extent
+        let extent = extent?;
+        self.measured.insert(key, extent);
+        Ok(extent)
     }
 
     fn open_group(&mut self, style: &PageStyle) -> bool {
@@ -1078,7 +1103,10 @@ enum Piece {
 /// names them and renamed to the family the CSS gives them, and the
 /// system's for the rest.
 struct Fonts {
-    db: fontdb::Database,
+    /// The system's, shared, made a page's own only when the page brings
+    /// fonts of its own (`load`): copied for every page drawn, the whole
+    /// list of the system's faces was.
+    db: Arc<fontdb::Database>,
     faces: Vec<super::style::FontFace>,
     loaded: Vec<String>,
     metrics: HashMap<fontdb::ID, Metrics>,
@@ -1121,7 +1149,7 @@ impl Fonts {
     fn new(faces: Vec<super::style::FontFace>) -> Self {
         Self {
             // The system's, for text whose book brings no font.
-            db: crate::inspection::system_fonts().as_ref().clone(),
+            db: Arc::clone(crate::inspection::system_fonts()),
             faces,
             loaded: Vec::new(),
             metrics: HashMap::new(),
@@ -1204,14 +1232,13 @@ impl Fonts {
             let Some(bytes) = face.src.iter().find_map(|src| resources.file(src)) else {
                 continue;
             };
-            let ids = self
-                .db
-                .load_font_source(fontdb::Source::Binary(Arc::new(bytes)));
+            let db = Arc::make_mut(&mut self.db);
+            let ids = db.load_font_source(fontdb::Source::Binary(Arc::new(bytes)));
             for id in ids {
-                let Some(mut info) = self.db.face(id).cloned() else {
+                let Some(mut info) = db.face(id).cloned() else {
                     continue;
                 };
-                self.db.remove_face(id);
+                db.remove_face(id);
                 info.families = vec![(family.to_owned(), fontdb::Language::English_UnitedStates)];
                 info.weight = if face.bold {
                     fontdb::Weight::BOLD
@@ -1223,7 +1250,7 @@ impl Fonts {
                 } else {
                     fontdb::Style::Normal
                 };
-                self.db.push_face_info(info);
+                db.push_face_info(info);
             }
         }
     }
@@ -1299,12 +1326,19 @@ fn attribute(value: &str) -> String {
 
 /// Draw the page with `side` pixels on its longer side, on white paper,
 /// layer by layer: its width, height and pixels.
-fn render(canvas: Canvas, drawn: Drawn, side: u32) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+/// Its layers are drawn until `cancel`; a picture used several times is
+/// decoded once (within `DECODED_BYTES`).
+fn render(
+    canvas: Canvas,
+    drawn: Drawn,
+    side: u32,
+    cancel: &CancelToken,
+) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     let scale = side as f32 / drawn.width.max(drawn.height);
     let width = (drawn.width * scale).round().max(1.) as u32;
     let height = (drawn.height * scale).round().max(1.) as u32;
     let mut options = usvg::Options {
-        fontdb: Arc::new(drawn.fonts),
+        fontdb: drawn.fonts,
         ..usvg::Options::default()
     };
     options.image_href_resolver.resolve_string = std::boxed::Box::new(|_, _| None);
@@ -1312,7 +1346,10 @@ fn render(canvas: Canvas, drawn: Drawn, side: u32) -> anyhow::Result<(u32, u32, 
         tiny_skia::Pixmap::new(width, height).ok_or_else(|| anyhow::anyhow!("page has no size"))?;
     pixmap.fill(tiny_skia::Color::WHITE);
     let view = tiny_skia::Transform::from_scale(scale, scale);
+    let mut decoded: HashMap<String, Option<image::DynamicImage>> = HashMap::new();
+    let mut decoded_bytes = 0usize;
     for layer in canvas.layers {
+        check(cancel)?;
         match layer {
             Layer::Svg(fragment) => {
                 if fragment.trim().is_empty() {
@@ -1334,8 +1371,24 @@ fn render(canvas: Canvas, drawn: Drawn, side: u32) -> anyhow::Result<(u32, u32, 
                 transform,
                 opacity,
             } => {
-                if let Some(bytes) = drawn.pictures.get(&key) {
-                    draw(&mut pixmap, bytes, rect, transform, opacity, view);
+                let Some(bytes) = drawn.pictures.get(&key) else {
+                    continue;
+                };
+                if let Some(picture) = decoded.get(&key) {
+                    if let Some(picture) = picture {
+                        draw(&mut pixmap, picture.clone(), rect, transform, opacity, view);
+                    }
+                    continue;
+                }
+                let picture = decode_picture(bytes);
+                if let Some(picture) = &picture {
+                    draw(&mut pixmap, picture.clone(), rect, transform, opacity, view);
+                }
+                // Kept for its next use, within the bound.
+                let held = picture.as_ref().map_or(0, |p| p.as_bytes().len());
+                if decoded_bytes + held <= DECODED_BYTES {
+                    decoded_bytes += held;
+                    decoded.insert(key, picture);
                 }
             }
         }
@@ -1351,16 +1404,11 @@ fn render(canvas: Canvas, drawn: Drawn, side: u32) -> anyhow::Result<(u32, u32, 
     Ok((width, height, rgba))
 }
 
-/// Draw a picture into `rect` under `transform`: decoded within the bounds
-/// of every embedded picture, and first shrunk to about the size it covers.
-fn draw(
-    pixmap: &mut tiny_skia::Pixmap,
-    bytes: &[u8],
-    [x, y, width, height]: [f32; 4],
-    transform: [f32; 6],
-    opacity: f32,
-    view: tiny_skia::Transform,
-) -> Option<()> {
+/// Pictures decoded kept for their next use on a page, at most.
+const DECODED_BYTES: usize = 64 << 20;
+
+/// A picture decoded within the bounds of every embedded picture.
+fn decode_picture(bytes: &[u8]) -> Option<image::DynamicImage> {
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .ok()?;
@@ -1369,7 +1417,19 @@ fn draw(
     bounds.max_image_height = Some(limits::IMAGE_SIDE);
     bounds.max_alloc = Some(limits::IMAGE_ALLOC);
     reader.limits(bounds);
-    let mut picture = crate::picture::decode(reader).ok()?;
+    crate::picture::decode(reader).ok()
+}
+
+/// Draw a picture into `rect` under `transform`, first shrunk to about the
+/// size it covers.
+fn draw(
+    pixmap: &mut tiny_skia::Pixmap,
+    mut picture: image::DynamicImage,
+    [x, y, width, height]: [f32; 4],
+    transform: [f32; 6],
+    opacity: f32,
+    view: tiny_skia::Transform,
+) -> Option<()> {
     let [a, b, c, d, e, f] = transform;
     let place = view
         .pre_concat(tiny_skia::Transform::from_row(a, b, c, d, e, f))
@@ -1640,7 +1700,7 @@ mod tests {
     fn the_page_is_drawn_with_the_books_font_over_its_picture() {
         let (canvas, drawn) = laid_out(CONVERTED, &mut files());
         // The 200 × 100 page drawn with 800 pixels on its longer side.
-        let (width, height, rgba) = render(canvas, drawn, 800).unwrap();
+        let (width, height, rgba) = render(canvas, drawn, 800, &CancelToken::new()).unwrap();
         assert_eq!((width, height), (800, 400));
         let at = |x: u32, y: u32| {
             let i = ((y * width + x) * 4) as usize;

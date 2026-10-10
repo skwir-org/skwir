@@ -465,6 +465,12 @@ pub fn picture_size(bytes: &[u8]) -> Option<(u32, u32)> {
         )
         .ok()?
     };
+    shown_size(width, height)
+}
+
+/// The size a picture of `width` by `height` is shown at, within the
+/// display side; `None` for a size no picture shown can have.
+pub fn shown_size(width: u32, height: u32) -> Option<(u32, u32)> {
     (width > 0 && height > 0 && width <= limits::IMAGE_SIDE && height <= limits::IMAGE_SIDE)
         .then(|| shown(width, height, limits::IMAGE_DISPLAY_SIDE))
 }

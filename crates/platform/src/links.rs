@@ -60,12 +60,23 @@ fn ends_address(c: char) -> bool {
 /// a closing bracket it does not open (`(see https://a.b/c)`, while
 /// Wikipedia's `…/Rust_(language)` keeps its own).
 fn trim_end(address: &str) -> &str {
+    // The brackets counted once, and as they are dropped: counted again
+    // for each one dropped, a run of them was quadratic.
+    let count = |c: char| address.matches(c).count().cast_signed();
+    let mut parens = count('(') - count(')');
+    let mut brackets = count('[') - count(']');
     let mut address = address;
     while let Some(last) = address.chars().next_back() {
         let drop = match last {
             '.' | ',' | ':' | ';' | '!' | '?' | '\'' | '*' => true,
-            ')' => address.matches('(').count() < address.matches(')').count(),
-            ']' => address.matches('[').count() < address.matches(']').count(),
+            ')' if parens < 0 => {
+                parens += 1;
+                true
+            }
+            ']' if brackets < 0 => {
+                brackets += 1;
+                true
+            }
             _ => false,
         };
         if !drop {
@@ -91,10 +102,19 @@ fn complete(scheme: &str, rest: &str) -> bool {
     }
 }
 
+/// The longest an address is taken to be, after its scheme: about what
+/// browsers take.
+const ADDRESS_MOST: usize = 2048;
+
 /// The addresses in `text`, as byte ranges, in order.
 pub fn urls(text: &str) -> Vec<Range<usize>> {
     let mut found = Vec::new();
     let mut from = 0;
+    // The end of the address last looked for, and where that look began:
+    // any colon between them ends there too (`ends_address` is a
+    // character's), where each colon of a long run (`mailto:` without an
+    // `@`, over and over) looked for its end again.
+    let mut ending: Option<(usize, usize)> = None;
     while let Some(colon) = text[from..].find(':').map(|i| from + i) {
         from = colon + 1;
         // The scheme is the letters right before the colon, and starts a
@@ -120,9 +140,22 @@ pub fn urls(text: &str) -> Vec<Range<usize>> {
             continue;
         };
         let body = start + scheme.len();
-        let end = text[body..]
-            .find(ends_address)
-            .map_or(text.len(), |i| body + i);
+        let end = match ending {
+            Some((looked, end)) if looked <= body && body <= end => end,
+            _ => {
+                let end = text[body..]
+                    .find(ends_address)
+                    .map_or(text.len(), |i| body + i);
+                ending = Some((body, end));
+                end
+            }
+        };
+        // No longer than an address can be: each colon of a long run looks
+        // at so much at most, however long the run.
+        let mut end = end.min(body + ADDRESS_MOST);
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
         let end = start + trim_end(&text[start..end]).len();
         if end > body && complete(scheme, &text[body..end]) {
             found.push(start..end);
@@ -353,6 +386,28 @@ mod tests {
 
     fn found(text: &str) -> Vec<&str> {
         urls(text).into_iter().map(|r| &text[r]).collect()
+    }
+
+    /// Text made to be slow (a run of schemes without addresses, an
+    /// address followed by a run of brackets) is read in time linear in
+    /// its length: each colon looks at an address's length at most.
+    #[test]
+    fn crafted_runs_are_read_in_linear_time() {
+        let schemes = "mailto:".repeat(20_000);
+        let started = std::time::Instant::now();
+        assert!(found(&schemes).is_empty());
+        let brackets = format!("https://example.org/a{}", ")".repeat(20_000));
+        assert_eq!(found(&brackets), ["https://example.org/a"]);
+        let balanced = "see (https://en.wikipedia.org/wiki/Rust_(language)).";
+        assert_eq!(
+            found(balanced),
+            ["https://en.wikipedia.org/wiki/Rust_(language)"]
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

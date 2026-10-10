@@ -399,15 +399,23 @@ pub(crate) fn converted_pdf(
     source: &Path,
     into: &Path,
 ) -> anyhow::Result<Option<PathBuf>> {
+    use std::io::{Read as _, Seek as _};
     let Ok(office) = process::required("libreoffice") else {
         return Ok(None);
     };
     let key = conversion_key(&fingerprint_of(id, source)?, &office)?;
-    let Some(bytes) = cache.get(&key).filter(|b| b.starts_with(b"%PDF-")) else {
+    let Some(mut kept) = cache.open(&key) else {
         return Ok(None);
     };
+    let mut magic = [0u8; 5];
+    if kept.read_exact(&mut magic).is_err() || &magic != b"%PDF-" {
+        return Ok(None);
+    }
+    kept.rewind()?;
+    // Copied file to file, which the kernel does: read whole, a conversion
+    // of up to 64 MB was held in memory for every thumbnail.
     let pdf = into.join("document.pdf");
-    std::fs::write(&pdf, bytes)?;
+    std::io::copy(&mut kept, &mut std::fs::File::create(&pdf)?)?;
     Ok(Some(pdf))
 }
 

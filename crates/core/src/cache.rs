@@ -186,6 +186,12 @@ impl CacheSlot {
         std::fs::read(self.path_for(key)).ok()
     }
 
+    /// The value of `key` as a file opened, to be read in parts or copied
+    /// whole without holding it in memory.
+    pub fn open(&self, key: &[u8]) -> Option<std::fs::File> {
+        crate::fs::file::open_regular(&self.path_for(key)).ok()
+    }
+
     /// Write atomically (a uniquely named temp file, then a rename) so
     /// readers never see a partial value and concurrent writers never share
     /// a temp file.
