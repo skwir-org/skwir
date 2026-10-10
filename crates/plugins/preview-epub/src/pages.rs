@@ -9,8 +9,8 @@ use std::{path::PathBuf, sync::Arc};
 use bibli_core::{
     CancelToken,
     document::{
-        DocumentInfo, DocumentPage, DocumentSession, MAX_HITS, Outline, PageContent, SearchHit,
-        page_labels,
+        DocumentInfo, DocumentPage, DocumentSession, MAX_HITS, Outline, PageContent, PixelOrder,
+        SearchHit, page_labels,
     },
     inspection::Picture,
 };
@@ -210,7 +210,8 @@ impl DocumentSession for FixedBook {
         Ok(DocumentPage {
             width: drawing.width,
             height: drawing.height,
-            rgba: drawing.rgba,
+            pixels: drawing.rgba,
+            order: PixelOrder::Rgba,
             content: Arc::new(PageContent {
                 page: number,
                 width: drawing.own.0,

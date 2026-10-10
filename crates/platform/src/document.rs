@@ -191,7 +191,7 @@ pub fn first_page(
         return Ok(Some(bibli_core::thumbs::Image {
             width: page.width,
             height: page.height,
-            rgba: page.rgba.into(),
+            rgba: page.into_rgba().into(),
         }));
     }
     Ok(None)
@@ -419,6 +419,7 @@ impl Manager {
                 content,
                 width,
                 height,
+                order,
             } => {
                 anyhow::ensure!(
                     width > 0 && height > 0 && width <= MAX_SIDE && height <= MAX_SIDE,
@@ -434,17 +435,18 @@ impl Manager {
                 // Read as a file, no more than the page: the worker reads
                 // an untrusted document, and what it leaves could be a pipe.
                 let pixels = self.launch.scratch.join(PIXELS_FILE);
-                let rgba = crate::file::read_regular(&pixels, bytes)?;
+                let read = crate::file::read_regular(&pixels, bytes)?;
                 // Read: emptied, so a page kept in memory (`memory_dir`) is
                 // not held twice until the next.
                 if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&pixels) {
                     let _ = file.set_len(0);
                 }
-                anyhow::ensure!(rgba.len() as u64 == bytes, "invalid document bitmap length");
+                anyhow::ensure!(read.len() as u64 == bytes, "invalid document bitmap length");
                 Ok(Response::Page(DocumentPage {
                     width,
                     height,
-                    rgba,
+                    pixels: read,
+                    order,
                     content: Arc::new(content),
                 }))
             }

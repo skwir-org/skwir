@@ -4,8 +4,8 @@ use std::path::Path;
 
 use anyhow::Context;
 use bibli_core::document::{
-    CSS_PER_POINT, DocumentInfo, MAX_HITS, MAX_SIDE, PIXELS_FILE, PageContent, Rect, SearchHit,
-    WorkerReply, WorkerRequest, page_labels, worker,
+    CSS_PER_POINT, DocumentInfo, MAX_HITS, MAX_SIDE, PIXELS_FILE, PageContent, PixelOrder, Rect,
+    SearchHit, WorkerReply, WorkerRequest, page_labels, worker,
 };
 use cairo::{Context as CairoContext, Format, ImageSurface};
 use poppler::{Document, Page};
@@ -110,20 +110,17 @@ fn render(
         context.status()?;
     }
     // Cairo ARGB32 is native-endian and premultiplied. Painting opaque white
-    // first makes alpha 255, so this becomes straight RGBA without unpremultiply.
+    // first makes alpha 255, so it is straight BGRA on a little-endian
+    // machine, the window's order, written as it is.
     surface.flush();
     let stride = usize::try_from(surface.stride())?;
     let mut output = BufWriter::new(std::fs::File::create(scratch.join(PIXELS_FILE))?);
     for row in surface.data()?.chunks_exact_mut(stride) {
         let row = &mut row[..usize::try_from(width)? * 4];
-        for pixel in row.as_chunks_mut::<4>().0 {
-            let argb = u32::from_ne_bytes(*pixel);
-            *pixel = [
-                (argb >> 16) as u8,
-                (argb >> 8) as u8,
-                argb as u8,
-                (argb >> 24) as u8,
-            ];
+        if cfg!(target_endian = "big") {
+            for pixel in row.as_chunks_mut::<4>().0 {
+                *pixel = u32::from_ne_bytes(*pixel).to_le_bytes();
+            }
         }
         output.write_all(row)?;
     }
@@ -142,6 +139,7 @@ fn render(
         },
         width,
         height,
+        order: PixelOrder::Bgra,
     })
 }
 

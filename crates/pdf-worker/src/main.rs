@@ -7,8 +7,8 @@ use std::path::Path;
 use anyhow::Context;
 use bibli_core::document::{
     CSS_PER_POINT, Destination, DocumentInfo, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE, Outline,
-    PIXELS_FILE, PageContent, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, page_labels,
-    worker,
+    PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest,
+    page_labels, worker,
 };
 use pdfium_render::prelude::*;
 
@@ -181,13 +181,27 @@ fn render(
     let number = number.clamp(1, u32::from(document.pages().len()));
     let page = document.pages().get(u16::try_from(number - 1)?)?;
     let side = i32::try_from(side.clamp(64, MAX_SIDE))?;
+    // BGRA, PDFium's own order and the window's: pdfium-render asks for
+    // the reverse unless told.
     let config = PdfRenderConfig::new()
         .set_target_width(side)
-        .set_maximum_height(side);
+        .set_maximum_height(side)
+        .set_reverse_byte_order(false);
     let bitmap = page.render_with_config(&config)?;
     let width = u32::try_from(bitmap.width())?;
     let height = u32::try_from(bitmap.height())?;
-    std::fs::write(scratch.join(PIXELS_FILE), bitmap.as_rgba_bytes())?;
+    // Written as it was drawn, but for a bitmap of another layout.
+    let raw = bitmap.as_raw_bytes();
+    let four = matches!(
+        bitmap.format(),
+        Ok(PdfBitmapFormat::BGRA | PdfBitmapFormat::BGRx)
+    );
+    let (pixels, order) = if four && raw.len() as u64 == u64::from(width) * u64::from(height) * 4 {
+        (raw, PixelOrder::Bgra)
+    } else {
+        (bitmap.as_rgba_bytes(), PixelOrder::Rgba)
+    };
+    std::fs::write(scratch.join(PIXELS_FILE), pixels)?;
     // Text is what can be selected on the page; the pixels are already
     // rendered. A page whose text cannot be read, or holds more than the
     // protocol carries, is shown without selectable text rather than lost.
@@ -252,6 +266,7 @@ fn render(
         },
         width,
         height,
+        order,
     })
 }
 

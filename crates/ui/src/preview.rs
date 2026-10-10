@@ -1871,10 +1871,11 @@ impl Shell {
                         let content = session
                             .render(request.page, page_side, &cancel)
                             .and_then(|page| {
-                                let image = crate::thumbs::owned_render_image(
+                                let image = crate::thumbs::page_image(
                                     page.width,
                                     page.height,
-                                    page.rgba,
+                                    page.pixels,
+                                    page.order,
                                 )
                                 .ok_or_else(|| anyhow::anyhow!("invalid document bitmap"))?;
                                 Ok(PreviewContent::Image {

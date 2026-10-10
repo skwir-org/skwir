@@ -18,8 +18,8 @@ use std::path::Path;
 use anyhow::Context;
 use bibli_core::document::{
     CSS_PER_POINT, Destination, DocumentInfo, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE, Outline,
-    PIXELS_FILE, PageContent, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, page_labels,
-    worker,
+    PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest,
+    page_labels, worker,
 };
 use mupdf::{Colorspace, Device, Document, Matrix, Page, Pixmap, Quad, TextPageFlags};
 
@@ -224,8 +224,9 @@ fn render(
     let mut row = Vec::with_capacity(width as usize * 4);
     for samples in pixmap.samples().chunks(stride).take(height as usize) {
         row.clear();
+        // In the window's order.
         for rgb in samples[..columns].as_chunks::<3>().0 {
-            row.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+            row.extend_from_slice(&[rgb[2], rgb[1], rgb[0], 255]);
         }
         output.write_all(&row)?;
     }
@@ -240,6 +241,7 @@ fn render(
         },
         width,
         height,
+        order: PixelOrder::Bgra,
     })
 }
 

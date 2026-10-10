@@ -92,6 +92,26 @@ pub fn owned_render_image(width: u32, height: u32, mut buf: Vec<u8>) -> Option<A
     for p in buf.as_chunks_mut::<4>().0 {
         p.swap(0, 2);
     }
+    bgra_render_image(width, height, buf)
+}
+
+/// A document's page as GPUI draws it: one an engine drew in BGRA, the
+/// window's order, as it came.
+pub fn page_image(
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+    order: bibli_core::document::PixelOrder,
+) -> Option<Arc<RenderImage>> {
+    match order {
+        bibli_core::document::PixelOrder::Bgra => bgra_render_image(width, height, pixels),
+        bibli_core::document::PixelOrder::Rgba => owned_render_image(width, height, pixels),
+    }
+}
+
+/// `buf`, BGRA already, as GPUI's image (whose frames say RGBA and hold
+/// BGRA).
+fn bgra_render_image(width: u32, height: u32, buf: Vec<u8>) -> Option<Arc<RenderImage>> {
     let buffer = image::RgbaImage::from_raw(width, height, buf)?;
     Some(Arc::new(RenderImage::new(SmallVec::from_buf([
         image::Frame::new(buffer),

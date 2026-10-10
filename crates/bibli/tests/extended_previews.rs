@@ -762,7 +762,7 @@ fn a_comic_is_a_document_of_pages() {
     let page = comic.render(1, 90, &cancel).unwrap();
     assert_eq!((page.width, page.height), (60, 90));
     assert_eq!((page.content.width, page.content.height), (120., 180.));
-    assert_eq!(page.rgba.len(), 60 * 90 * 4);
+    assert_eq!(page.pixels.len(), 60 * 90 * 4);
     let second = comic.render(2, 300, &cancel).unwrap();
     assert_eq!((second.width, second.height), (30, 40), "never enlarged");
     assert_eq!(comic.render(3, 4096, &cancel).unwrap().height, 180);

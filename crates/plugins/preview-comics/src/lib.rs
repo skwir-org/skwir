@@ -3,7 +3,7 @@
 //! covers as thumbnails.
 use bibli_core::{
     App, CancelToken,
-    document::{DocumentInfo, DocumentPage, DocumentSession, PageContent, SearchHit},
+    document::{DocumentInfo, DocumentPage, DocumentSession, PageContent, PixelOrder, SearchHit},
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
@@ -166,7 +166,8 @@ impl DocumentSession for Comic {
         Ok(DocumentPage {
             width: decoded.width,
             height: decoded.height,
-            rgba: decoded.rgba,
+            pixels: decoded.rgba,
+            order: PixelOrder::Rgba,
             content: Arc::new(PageContent {
                 page: number,
                 width: decoded.own.0 as f32,

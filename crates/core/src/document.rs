@@ -103,10 +103,35 @@ pub struct PageContent {
 pub struct DocumentPage {
     pub width: u32,
     pub height: u32,
-    /// A single owned buffer transfers from the manager to the UI worker.
-    /// Avoid an Arc conversion and another full-page copy for channel swizzling.
-    pub rgba: Vec<u8>,
+    /// Four bytes a pixel, in `order`. A single owned buffer transfers
+    /// from the manager to the UI worker: no Arc conversion, and no
+    /// full-page copy to swizzle.
+    pub pixels: Vec<u8>,
+    pub order: PixelOrder,
     pub content: Arc<PageContent>,
+}
+
+impl DocumentPage {
+    /// The page's pixels in RGBA order, for what is not the window.
+    pub fn into_rgba(self) -> Vec<u8> {
+        let mut pixels = self.pixels;
+        if self.order == PixelOrder::Bgra {
+            for pixel in pixels.as_chunks_mut::<4>().0 {
+                pixel.swap(0, 2);
+            }
+        }
+        pixels
+    }
+}
+
+/// The order of a page's four bytes a pixel. An engine says the one it
+/// draws in (`PDFium` and Cairo draw BGRA, the order the window shows), so
+/// no page is turned into the other order on the way and back again.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PixelOrder {
+    #[default]
+    Rgba,
+    Bgra,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -176,6 +201,9 @@ pub enum WorkerReply {
         content: PageContent,
         width: u32,
         height: u32,
+        /// What a helper that says nothing writes is RGBA.
+        #[serde(default)]
+        order: PixelOrder,
     },
     Matches(Vec<SearchHit>),
     Located(Option<u32>),

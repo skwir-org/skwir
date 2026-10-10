@@ -1399,7 +1399,7 @@ mod tests {
             let drawn = book.render(1, side, &cancel).unwrap();
             assert_eq!(drawn.height, side, "drawn at the side asked");
             assert_eq!(drawn.width * 4, side * 3);
-            assert_eq!(drawn.rgba.len() as u32, drawn.width * drawn.height * 4);
+            assert_eq!(drawn.pixels.len() as u32, drawn.width * drawn.height * 4);
             assert_eq!((drawn.content.width, drawn.content.height), (300., 400.));
             assert!(
                 drawn.content.chars.is_empty(),

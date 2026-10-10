@@ -513,10 +513,14 @@ impl Shell {
                 let result = session
                     .render(number, side, &cancel)
                     .and_then(|page| {
-                        let bytes = page.rgba.len();
-                        let image =
-                            crate::thumbs::owned_render_image(page.width, page.height, page.rgba)
-                                .ok_or_else(|| anyhow::anyhow!("invalid document bitmap"))?;
+                        let bytes = page.pixels.len();
+                        let image = crate::thumbs::page_image(
+                            page.width,
+                            page.height,
+                            page.pixels,
+                            page.order,
+                        )
+                        .ok_or_else(|| anyhow::anyhow!("invalid document bitmap"))?;
                         Ok(CachedPage {
                             image,
                             content: page.content,

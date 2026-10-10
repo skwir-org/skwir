@@ -116,6 +116,8 @@ def main():
                     assert "needle alpha beta" in "".join(char["text"] for char in page["chars"])
                     pixels = (root / "page.rgba").read_bytes()
                     assert len(pixels) == width * height * 4
+                    # Every engine draws in the window's order.
+                    assert rendered.get("order") == "Bgra", rendered.get("order")
                     for char in page["chars"]:
                         if char["text"].strip():
                             assert has_ink(pixels, width, height, char["bounds"]), char

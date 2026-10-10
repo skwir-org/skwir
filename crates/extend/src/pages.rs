@@ -13,7 +13,7 @@ use std::sync::Arc;
 use bibli_core::cache::CacheSlot;
 use bibli_core::document::{
     Destination, DocumentInfo, DocumentPage, DocumentSession, Link, MAX_PAGE_SIZE, Outline,
-    PageContent, Rect, SearchHit, TextChar,
+    PageContent, PixelOrder, Rect, SearchHit, TextChar,
 };
 use bibli_core::permissions::Capability;
 use bibli_core::{CancelToken, EntryId};
@@ -290,7 +290,8 @@ impl DocumentSession for Pages {
         Ok(DocumentPage {
             width: decoded.width,
             height: decoded.height,
-            rgba: decoded.rgba,
+            pixels: decoded.rgba,
+            order: PixelOrder::Rgba,
             content: Arc::new(PageContent {
                 page,
                 width: width.min(MAX_PAGE_SIZE),

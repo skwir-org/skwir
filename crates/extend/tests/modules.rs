@@ -521,11 +521,11 @@ fn a_file_of_several_pictures_is_previewed_a_page_at_a_time() {
     let first = pages.render(1, 64, &cancel).unwrap();
     assert_eq!((first.width, first.height), (40, 10));
     assert_eq!((first.content.width, first.content.height), (40., 10.));
-    assert_eq!(&first.rgba[..4], &[255, 0, 0, 255]);
+    assert_eq!(&first.pixels[..4], &[255, 0, 0, 255]);
     assert!(first.content.chars.is_empty(), "a picture has no text");
     let second = pages.render(2, 64, &cancel).unwrap();
     assert_eq!((second.width, second.height), (20, 20));
-    assert_eq!(&second.rgba[..4], &[128, 128, 128, 255]);
+    assert_eq!(&second.pixels[..4], &[128, 128, 128, 255]);
     assert!(format!("{:#}", pages.render(3, 64, &cancel).unwrap_err()).contains("no page 3"));
     assert!(pages.search("anything", &cancel).unwrap().is_empty());
     // A file of one picture is shown as its PNG, not as pages.
