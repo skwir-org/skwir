@@ -370,11 +370,15 @@ pub fn parse(
                 // A diagram is part of the page, like a drawing in HTML:
                 // drawn with it, a few per page; past them, or when it
                 // cannot be drawn, it stays the code it is written in.
+                // Every one tried counts, drawn or not: a page of diagrams
+                // that fail ran the helper for each, its deadline each time.
                 if current.language.as_deref() == Some("mermaid")
                     && diagrams < limits::EMBEDDED_IMAGES
-                    && let Some(image) = crate::diagram::mermaid(&current.text, cancel)
+                    && let Some(image) = {
+                        diagrams += 1;
+                        crate::diagram::mermaid(&current.text, cancel)
+                    }
                 {
-                    diagrams += 1;
                     current.text.clear();
                     current.code = false;
                     current.language = None;

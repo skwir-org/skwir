@@ -3,7 +3,6 @@
 //! helper is installed. What comes back is SVG made for resvg, drawn like
 //! any drawing in a document (`inspection::image`).
 use std::path::PathBuf;
-use std::process::Command;
 
 use bibli_core::CancelToken;
 
@@ -28,8 +27,16 @@ pub fn worker_path() -> Option<PathBuf> {
 pub fn mermaid(source: &str, cancel: &CancelToken) -> anyhow::Result<String> {
     anyhow::ensure!(source.len() <= SOURCE, "The diagram is too long to draw");
     let worker = WORKER.require("draw diagrams")?;
+    // Isolated as the other helpers reading what a file holds are: the
+    // diagram, a page's text, comes on its standard input, and is the
+    // input it may read too.
+    let work = tempfile::tempdir()?;
+    let input = work.path().join("diagram.mmd");
+    std::fs::write(&input, source)?;
+    let mut run =
+        crate::sandbox::untrusted(&worker, &input, work.path(), crate::sandbox::Otherwise::Run)?;
     let finished = crate::process::run_to_exit(
-        &mut Command::new(worker),
+        &mut run.command,
         Some(source.as_bytes()),
         cancel,
         limits::HELPER_TIMEOUT,
