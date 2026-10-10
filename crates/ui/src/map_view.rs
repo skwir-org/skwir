@@ -68,6 +68,11 @@ pub struct MapView {
     /// `shown` as a set, and what holds the places drawn: the places a
     /// batch adds are added to the shapes, not all of them drawn again.
     shown_set: HashSet<EntryId>,
+    /// Which files `shown` holds: the listing, its names, and what the
+    /// pane shows of them (hidden files, the filter and the narrowing, the
+    /// folders opened). Another order of the same key holds the same
+    /// files, but where a narrowing shows files as their metadata tells.
+    shown_of: Option<(u64, u64, bool, u64, u64)>,
     bounds: bibli_core::geo::BoundsBuilder,
     counts: (usize, usize, usize, bool),
     selection: (u64, Arc<HashSet<EntryId>>),
@@ -85,11 +90,34 @@ impl MapView {
     fn receive(&mut self, shell: &mut Shell) {
         let pane = shell.pane;
         // The pane shows other files (a filter, a narrowing): the places
-        // drawn follow, with nothing asked again.
+        // drawn follow, with nothing asked again. The same files sorted
+        // again (a sort by date, as dates come in) draw nothing again.
         if !Arc::ptr_eq(&shell.ui().list.sorted, &self.shown) {
-            self.shown = Arc::clone(&shell.ui().list.sorted);
-            self.shown_set = self.shown.iter().copied().collect();
-            self.redraw();
+            let sorted = Arc::clone(&shell.ui().list.sorted);
+            let (of, narrowed) = {
+                let ws = shell.app.workspace.read();
+                ws.pane(pane).map_or((None, false), |p| {
+                    (
+                        Some((
+                            p.listing.id(),
+                            p.listing.names_version(),
+                            p.sort.show_hidden,
+                            p.filter_version(),
+                            p.tree_version(),
+                        )),
+                        p.narrowed().is_some(),
+                    )
+                })
+            };
+            let same = of.is_some() && of == self.shown_of && !narrowed
+                || sorted.len() == self.shown_set.len()
+                    && sorted.iter().all(|id| self.shown_set.contains(id));
+            self.shown = sorted;
+            self.shown_of = of;
+            if !same {
+                self.shown_set = self.shown.iter().copied().collect();
+                self.redraw();
+            }
         }
         let source = self.source.get_or_insert_with(|| {
             shell
@@ -506,7 +534,15 @@ impl PaneView for MapView {
                                     "replace"
                                 },
                             ),
-                            Pick::Cluster(ids, _) | Pick::Band(ids) => (
+                            Pick::Cluster(ids, _) => (
+                                ids.to_vec(),
+                                if modifiers.secondary() {
+                                    "add"
+                                } else {
+                                    "replace"
+                                },
+                            ),
+                            Pick::Band(ids) => (
                                 ids,
                                 if modifiers.secondary() {
                                     "add"

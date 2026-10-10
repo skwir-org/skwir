@@ -686,7 +686,7 @@ impl Shapes {
 pub enum Pick {
     Entry(EntryId),
     /// Markers merged into one: its files, and what they cover.
-    Cluster(Vec<EntryId>, math::Rect),
+    Cluster(Arc<[EntryId]>, math::Rect),
     /// The files a Shift+drag rectangle held.
     Band(Vec<EntryId>),
     Nothing,
@@ -775,11 +775,96 @@ pub struct Handles {
 /// pixels at one zoom, so a pan moves the groups and never forms them
 /// again, worked out once per markers, zoom, copy of the world and bubble
 /// opened. Grouped again at every frame, through a map of every marker's
-/// cell, a map of a hundred thousand photos took a frame's time.
+/// cell, a map of a hundred thousand photos took a frame's time. What a
+/// frame reads of a group is worked out with it (where its markers are,
+/// their centre, which groups hold a file selected), so a frame takes a
+/// group whole in view, or out of it, without a look at its markers, and
+/// looks at each only in a group the map's edge cuts.
 struct Clustered {
     key: [u64; 6],
-    /// Each group's markers, by their index in `Shapes::markers`.
-    groups: Vec<Vec<u32>>,
+    groups: Vec<Group>,
+    /// The groups holding a file selected, and the selection they were
+    /// told for (`Picking::selected`, the same while it does not change).
+    selected: Option<(Arc<HashSet<EntryId>>, HashSet<usize>)>,
+}
+
+impl Clustered {
+    /// Tell which groups hold a file of `selected`, when it is another
+    /// selection than the one told last.
+    fn select(&mut self, selected: &Arc<HashSet<EntryId>>) {
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|(told, _)| Arc::ptr_eq(told, selected))
+        {
+            return;
+        }
+        let groups = self
+            .groups
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| g.members.iter().any(|m| selected.contains(&m.entry)))
+            .map(|(i, _)| i)
+            .collect();
+        self.selected = Some((Arc::clone(selected), groups));
+    }
+}
+
+/// A file's marker in a group: which marker, its file, and where it is in
+/// pixels from where the world's origin is drawn, at the group's zoom.
+#[derive(Clone, Copy)]
+struct Member {
+    marker: u32,
+    entry: EntryId,
+    at: (f32, f32),
+}
+
+/// A group of markers: them, their files (what a click on it picks), the
+/// box around them and the sum of where they are, its centre that over
+/// how many.
+struct Group {
+    members: Rc<[Member]>,
+    entries: Arc<[EntryId]>,
+    low: (f32, f32),
+    high: (f32, f32),
+    sum: (f64, f64),
+}
+
+impl Group {
+    fn of(members: Vec<Member>) -> Group {
+        let (mut low, mut high) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
+        let mut sum = (0f64, 0f64);
+        for m in &members {
+            low = (low.0.min(m.at.0), low.1.min(m.at.1));
+            high = (high.0.max(m.at.0), high.1.max(m.at.1));
+            sum = (sum.0 + f64::from(m.at.0), sum.1 + f64::from(m.at.1));
+        }
+        Group {
+            entries: members.iter().map(|m| m.entry).collect(),
+            members: members.into(),
+            low,
+            high,
+            sum,
+        }
+    }
+}
+
+/// A group drawn this frame: all its members, or those the map's edge
+/// leaves in view, with their box and sum.
+struct InView {
+    group: usize,
+    whole: bool,
+    members: Rc<[Member]>,
+    low: (f32, f32),
+    high: (f32, f32),
+    sum: (f64, f64),
+}
+
+/// Where a rectangle can find files this frame: a marker, or a group's,
+/// each where the world's origin is drawn plus its own pixels.
+enum Placed {
+    One(EntryId, gpui::Point<Pixels>),
+    Group(Rc<[Member]>, gpui::Point<Pixels>),
 }
 
 impl Handles {
@@ -1046,7 +1131,7 @@ pub struct Prepaint {
     clusters: Vec<Cluster>,
     hits: Vec<Hit>,
     /// Where each file's marker is, for a rectangle to hold.
-    placed: Vec<(EntryId, gpui::Point<Pixels>)>,
+    placed: Vec<Placed>,
     /// `Handles::mark`, on screen.
     mark: Option<gpui::Point<Pixels>>,
     scale: (f64, Option<ShapedLine>),
@@ -1315,17 +1400,13 @@ impl Element for Map {
         let reach = bounds.dilate(px(SPREAD_MARGIN));
         let mut dots = Vec::new();
         let mut named = Vec::new();
-        // Files' markers (the Map view): the file, where, what, its name
-        // and its clock. Those near enough to be spread into view too.
-        let mut files: Vec<File> = Vec::new();
+        let picking = self.picking.is_some();
+        // Markers no click picks (a file's own places): each where it is.
         for marker in &self.shapes.markers {
-            let p = at((marker.at.0 + offset, marker.at.1));
-            if let (Some(entry), Some(_)) = (marker.entry, &self.picking) {
-                if reach.contains(&p) {
-                    files.push((entry, p, marker.kind, marker.label.clone(), marker.clock));
-                }
+            if picking && marker.entry.is_some() {
                 continue;
             }
+            let p = at((marker.at.0 + offset, marker.at.1));
             if !inside(p) {
                 continue;
             }
@@ -1340,20 +1421,41 @@ impl Element for Map {
                 named.push((p, marker.label.clone()));
             }
         }
-        // Spread: every file with `Map::spread` while they are not so many
-        // that spirals would cover the map, else a bubble opened in place.
-        let spread_all = self.spread && files.len() <= SPREAD_MOST;
-        let (mut spread, clustered): (Vec<File>, Vec<File>) = {
+        // Files' markers (the Map view) spread: every file with
+        // `Map::spread` while they are not so many that spirals would cover
+        // the map, else those of a bubble opened in place. Only then is
+        // each marker looked at; the others are their groups'.
+        let mut spread: Vec<File> = Vec::new();
+        let mut spread_all = false;
+        if picking {
             let opened = self.handles.opened.borrow();
-            files
-                .into_iter()
-                .partition(|file| spread_all || opened.contains(&file.0))
-        };
+            if self.spread || !opened.is_empty() {
+                let mut near = 0usize;
+                for marker in &self.shapes.markers {
+                    let Some(entry) = marker.entry else { continue };
+                    let p = at((marker.at.0 + offset, marker.at.1));
+                    if !reach.contains(&p) {
+                        continue;
+                    }
+                    near += 1;
+                    if self.spread && near <= SPREAD_MOST || opened.contains(&entry) {
+                        spread.push((entry, p, marker.kind, marker.label.clone(), marker.clock));
+                    }
+                }
+                spread_all = self.spread && near <= SPREAD_MOST;
+                if !spread_all {
+                    spread.retain(|file| opened.contains(&file.0));
+                }
+            }
+        }
         // The others close together merge, as map libraries do
         // (`Clustered`): each group's members in view are drawn as one.
-        let mut groups: Vec<Vec<File>> = Vec::new();
-        if !clustered.is_empty() {
-            drop(clustered);
+        let mut shown: Vec<InView> = Vec::new();
+        // Where the world's origin is drawn: a marker's pixels from it are
+        // the same however the map is panned.
+        let zero = at((offset, 0.));
+        let mut cache = self.handles.clusters.borrow_mut();
+        if let Some(picking) = self.picking.as_ref().filter(|_| !spread_all) {
             let opened = self.handles.opened.borrow();
             let opened_stamp = opened.iter().fold(opened.len() as u64, |stamp, id| {
                 stamp ^ id.ino ^ id.dev.rotate_left(32)
@@ -1372,13 +1474,8 @@ impl Element for Map {
                 offset.to_bits(),
                 opened_stamp,
             ];
-            let mut cache = self.handles.clusters.borrow_mut();
             if cache.as_ref().is_none_or(|c| c.key != key) {
-                // Where the world's origin is drawn: a marker's pixels from
-                // it are the same however the map is panned.
-                let zero = at((offset, 0.));
-                let mut found: Vec<Vec<u32>> = Vec::new();
-                let mut leaders: Vec<gpui::Point<Pixels>> = Vec::new();
+                let mut found: Vec<Vec<Member>> = Vec::new();
                 let mut seeds: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
                 for (n, marker) in self.shapes.markers.iter().enumerate() {
                     let Some(entry) = marker.entry else { continue };
@@ -1386,9 +1483,10 @@ impl Element for Map {
                         continue;
                     }
                     let local = at((marker.at.0 + offset, marker.at.1)) - zero;
+                    let local = (f32::from(local.x), f32::from(local.y));
                     let cell = (
-                        (f32::from(local.x) / CLUSTER).floor() as i32,
-                        (f32::from(local.y) / CLUSTER).floor() as i32,
+                        (local.0 / CLUSTER).floor() as i32,
+                        (local.1 / CLUSTER).floor() as i32,
                     );
                     let near = (-1..=1)
                         .flat_map(|dx| (-1..=1).map(move |dy| (cell.0 + dx, cell.1 + dy)))
@@ -1396,37 +1494,71 @@ impl Element for Map {
                         .flatten()
                         .copied()
                         .find(|&g| {
-                            let d = leaders[g] - local;
-                            f32::from(d.x).hypot(f32::from(d.y)) < CLUSTER
+                            let leader = found[g][0].at;
+                            (leader.0 - local.0).hypot(leader.1 - local.1) < CLUSTER
                         });
-                    let n = u32::try_from(n).unwrap_or(u32::MAX);
+                    let member = Member {
+                        marker: u32::try_from(n).unwrap_or(u32::MAX),
+                        entry,
+                        at: local,
+                    };
                     if let Some(g) = near {
-                        found[g].push(n);
+                        found[g].push(member);
                     } else {
                         seeds.entry(cell).or_default().push(found.len());
-                        leaders.push(local);
-                        found.push(vec![n]);
+                        found.push(vec![member]);
                     }
                 }
-                *cache = Some(Clustered { key, groups: found });
+                *cache = Some(Clustered {
+                    key,
+                    groups: found.into_iter().map(Group::of).collect(),
+                    selected: None,
+                });
             }
-            // Each group, of its members in view: the files clustered are
-            // those neither spread nor in a bubble opened, which the groups
-            // hold.
-            if let Some(cache) = cache.as_ref() {
-                for members in &cache.groups {
-                    let group: Vec<File> = members
-                        .iter()
-                        .filter_map(|&n| {
-                            let marker = self.shapes.markers.get(n as usize)?;
-                            let p = at((marker.at.0 + offset, marker.at.1));
-                            let entry = marker.entry.filter(|_| inside(p))?;
-                            Some((entry, p, marker.kind, marker.label.clone(), marker.clock))
-                        })
-                        .collect();
-                    if !group.is_empty() {
-                        groups.push(group);
+            if let Some(cache) = cache.as_mut() {
+                cache.select(&picking.selected);
+                // Each group, of its members in view: whole, as it was
+                // worked out, or, cut by the map's edge, its members in
+                // view looked at one by one.
+                for (g, group) in cache.groups.iter().enumerate() {
+                    let low = zero + point(px(group.low.0), px(group.low.1));
+                    let high = zero + point(px(group.high.0), px(group.high.1));
+                    if high.x < bounds.left()
+                        || high.y < bounds.top()
+                        || low.x >= bounds.right()
+                        || low.y >= bounds.bottom()
+                    {
+                        continue;
                     }
+                    if inside(low) && inside(high) {
+                        shown.push(InView {
+                            group: g,
+                            whole: true,
+                            members: Rc::clone(&group.members),
+                            low: group.low,
+                            high: group.high,
+                            sum: group.sum,
+                        });
+                        continue;
+                    }
+                    let members: Rc<[Member]> = group
+                        .members
+                        .iter()
+                        .filter(|m| inside(zero + point(px(m.at.0), px(m.at.1))))
+                        .copied()
+                        .collect();
+                    if members.is_empty() {
+                        continue;
+                    }
+                    let some = Group::of(members.to_vec());
+                    shown.push(InView {
+                        group: g,
+                        whole: false,
+                        members,
+                        low: some.low,
+                        high: some.high,
+                        sum: some.sum,
+                    });
                 }
             }
         }
@@ -1435,83 +1567,91 @@ impl Element for Map {
         let mut placed = Vec::new();
         let (mut leaders, mut anchors) = (Vec::new(), Vec::new());
         if let Some(picking) = &self.picking {
-            let alone = groups.iter().filter(|members| members.len() == 1).count();
-            let mut cells = groups;
+            let alone = shown.iter().filter(|g| g.members.len() == 1).count();
+            let selected_groups = cache.as_ref().and_then(|c| c.selected.as_ref());
+            let first = |g: &InView| {
+                let at = g.members[0].at;
+                (at.1, at.0)
+            };
             // Drawn top to bottom, so a lower marker overlaps a higher one.
-            cells.sort_by(|a, b| {
-                (f32::from(a[0].1.y), f32::from(a[0].1.x))
-                    .partial_cmp(&(f32::from(b[0].1.y), f32::from(b[0].1.x)))
+            shown.sort_by(|a, b| {
+                first(a)
+                    .partial_cmp(&first(b))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            for members in cells {
-                placed.extend(members.iter().map(|(entry, p, ..)| (*entry, *p)));
-                let selected = members
-                    .iter()
-                    .any(|(entry, ..)| picking.selected.contains(entry));
-                if let [(entry, p, kind, label, _)] = members.as_slice() {
-                    let picture = (*kind == MarkerKind::Picture && alone <= THUMBS)
-                        .then(|| (picking.thumb)(*entry, window, cx))
+            for group in shown {
+                placed.push(Placed::Group(Rc::clone(&group.members), zero));
+                let selected = if group.whole {
+                    selected_groups.is_some_and(|(_, groups)| groups.contains(&group.group))
+                } else {
+                    group
+                        .members
+                        .iter()
+                        .any(|m| picking.selected.contains(&m.entry))
+                };
+                if let [one] = &*group.members {
+                    let Some(marker) = self.shapes.markers.get(one.marker as usize) else {
+                        continue;
+                    };
+                    let p = zero + point(px(one.at.0), px(one.at.1));
+                    let picture = (marker.kind == MarkerKind::Picture && alone <= THUMBS)
+                        .then(|| (picking.thumb)(one.entry, window, cx))
                         .flatten();
                     let radius = if picture.is_some() { THUMB / 2. } else { 7. };
                     dots.push(Dot {
-                        at: *p,
-                        kind: *kind,
+                        at: p,
+                        kind: marker.kind,
                         selected,
                         picture,
                         side: THUMB,
                     });
                     hits.push(Hit {
-                        at: *p,
+                        at: p,
                         radius,
-                        pick: Pick::Entry(*entry),
+                        pick: Pick::Entry(one.entry),
                     });
-                    if selected && !label.is_empty() {
-                        named.push((*p + point(px(radius - 6.), px(0.)), label.clone()));
+                    if selected && !marker.label.is_empty() {
+                        named.push((p + point(px(radius - 6.), px(0.)), marker.label.clone()));
                     }
                     continue;
                 }
-                let n = members.len() as f32;
-                let (sx, sy) = members.iter().fold((0f32, 0f32), |(x, y), (_, p, ..)| {
-                    (x + f32::from(p.x), y + f32::from(p.y))
-                });
-                let centre = point(px(sx / n), px(sy / n));
-                let text: SharedString = if members.len() > 999 {
-                    format!("{}k", members.len() / 1000).into()
+                let n = group.members.len();
+                let centre = zero
+                    + point(
+                        px((group.sum.0 / n as f64) as f32),
+                        px((group.sum.1 / n as f64) as f32),
+                    );
+                let text: SharedString = if n > 999 {
+                    format!("{}k", n / 1000).into()
                 } else {
-                    members.len().to_string().into()
+                    n.to_string().into()
                 };
                 let radius = 11. + 2. * (text.len() as f32);
-                let mut rect: Option<math::Rect> = None;
-                for (_, p, ..) in &members {
-                    let (x, y) = view.to_world(
-                        (
-                            f64::from(f32::from(p.x - origin.x)),
-                            f64::from(f32::from(p.y - origin.y)),
-                        ),
-                        size,
-                    );
-                    let r = rect.get_or_insert(math::Rect {
-                        x0: x,
-                        y0: y,
-                        x1: x,
-                        y1: y,
-                    });
-                    r.x0 = r.x0.min(x);
-                    r.x1 = r.x1.max(x);
-                    r.y0 = r.y0.min(y);
-                    r.y1 = r.y1.max(y);
-                }
+                // What its markers cover in the world, for a click to fit.
+                let world = |local: (f32, f32)| {
+                    let p = zero + point(px(local.0), px(local.1)) - origin;
+                    view.to_world((f64::from(f32::from(p.x)), f64::from(f32::from(p.y))), size)
+                };
+                let ((x0, y0), (x1, y1)) = (world(group.low), world(group.high));
+                let files: Arc<[EntryId]> = if group.whole {
+                    cache.as_ref().map_or_else(
+                        || group.members.iter().map(|m| m.entry).collect(),
+                        |c| Arc::clone(&c.groups[group.group].entries),
+                    )
+                } else {
+                    group.members.iter().map(|m| m.entry).collect()
+                };
                 hits.push(Hit {
                     at: centre,
                     radius,
                     pick: Pick::Cluster(
-                        members.iter().map(|(entry, ..)| *entry).collect(),
-                        rect.unwrap_or(math::Rect {
-                            x0: 0.,
-                            y0: 0.,
-                            x1: 0.,
-                            y1: 0.,
-                        }),
+                        files,
+                        math::Rect {
+                            x0: x0.min(x1),
+                            y0: y0.min(y1),
+                            x1: x0.max(x1),
+                            y1: y0.max(y1),
+                        },
                     ),
                 });
                 clusters.push(Cluster {
@@ -1574,7 +1714,7 @@ impl Element for Map {
                         radius,
                         pick: Pick::Entry(*entry),
                     });
-                    placed.push((*entry, at));
+                    placed.push(Placed::One(*entry, at));
                     if selected && !label.is_empty() {
                         named.push((at + point(px(radius - 6.), px(0.)), label.clone()));
                     }
@@ -1938,7 +2078,7 @@ impl Element for Map {
                 .map(|h| (h.at, h.radius, h.pick.clone()))
                 .collect(),
         );
-        let placed: Rc<Vec<(EntryId, gpui::Point<Pixels>)>> = Rc::new(prepaint.placed.clone());
+        let placed: Rc<Vec<Placed>> = Rc::new(std::mem::take(&mut prepaint.placed));
         let on_pick = self.picking.as_ref().map(|p| Rc::clone(&p.on_pick));
         let (handles, hit) = (self.handles.clone(), hitbox.clone());
         let banding = on_pick.is_some();
@@ -1996,11 +2136,19 @@ impl Element for Map {
                     point(from.x.min(to.x), from.y.min(to.y)),
                     point(from.x.max(to.x), from.y.max(to.y)),
                 );
-                let held: Vec<EntryId> = placed
-                    .iter()
-                    .filter(|(_, p)| band.contains(p))
-                    .map(|(entry, _)| *entry)
-                    .collect();
+                let mut held: Vec<EntryId> = Vec::new();
+                for placed in placed.iter() {
+                    match placed {
+                        Placed::One(entry, p) if band.contains(p) => held.push(*entry),
+                        Placed::One(..) => {}
+                        Placed::Group(members, zero) => held.extend(
+                            members
+                                .iter()
+                                .filter(|m| band.contains(&(*zero + point(px(m.at.0), px(m.at.1)))))
+                                .map(|m| m.entry),
+                        ),
+                    }
+                }
                 if let Some(on_pick) = &on_pick {
                     on_pick(Pick::Band(held), event.modifiers, 1, window, cx);
                 }
