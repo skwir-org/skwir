@@ -643,7 +643,7 @@ pub fn popup_panel(
 const ROW: &str = "row";
 
 /// The room around a popup's rows, which a row brought into view keeps.
-const POPUP_PAD: f32 = 8.;
+pub(crate) const POPUP_PAD: f32 = 8.;
 
 /// The row of the open popup the keyboard just reached
 /// (`Shell::reveal_focused_row`), and the scroll of the popup drawing it

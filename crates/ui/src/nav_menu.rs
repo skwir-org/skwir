@@ -19,8 +19,12 @@ use std::path::{Path, PathBuf};
 
 use bibli_core::os_path::PathArg;
 use bibli_core::workspace::PaneId;
-use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*};
+use gpui::{
+    AnyElement, Context, FocusHandle, Pixels, ScrollStrategy, SharedString,
+    UniformListScrollHandle, Window, div, prelude::*, px,
+};
 
+use crate::keymap::RunCommand;
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::toolbar::{self, Button, Popup};
@@ -64,12 +68,81 @@ struct NavRow {
     rule: bool,
 }
 
+/// A row's height in the menu: its button, and the gap above it where
+/// the line of a row with `rule` is drawn. The same for every row, so
+/// only those in view are drawn (`uniform_list`): a folder's menu of
+/// five hundred folders built every row at every frame it was open.
+const ROW: f32 = 34.;
+
 /// The open menu of places.
 pub struct NavMenu {
     pub pane: PaneId,
     pub what: NavWhat,
     rows: Vec<NavRow>,
     popup: Popup,
+    /// Each row's focus: the keyboard goes to a row not drawn yet, once
+    /// scrolled to (`Shell::walk_nav_menu`).
+    focus: Vec<FocusHandle>,
+    scroll: UniformListScrollHandle,
+    /// As wide as its widest row, measured once as it opened.
+    width: Pixels,
+}
+
+impl NavMenu {
+    fn new(
+        pane: PaneId,
+        what: NavWhat,
+        rows: Vec<NavRow>,
+        font: &SharedString,
+        window: &mut Window,
+        cx: &mut Context<Shell>,
+    ) -> Self {
+        let width = width_of(&rows, font, window);
+        let focus = rows.iter().map(|_| cx.focus_handle()).collect();
+        NavMenu {
+            pane,
+            what,
+            rows,
+            popup: Popup::new("nav", window, cx),
+            focus,
+            scroll: UniformListScrollHandle::new(),
+            width,
+        }
+    }
+}
+
+/// The width of a menu of `rows`: its widest label, shaped in `font` as
+/// a menu row draws it, with what a row and the popup add around it,
+/// from 200 to 360 pixels as the menu was.
+fn width_of(rows: &[NavRow], font: &SharedString, window: &mut Window) -> Pixels {
+    let size = window.rem_size() * 0.75;
+    let font = gpui::font(font.clone());
+    let widest = rows
+        .iter()
+        .map(|row| {
+            let run = gpui::TextRun {
+                len: row.label.len(),
+                font: font.clone(),
+                color: gpui::black(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+                position: gpui::RunPosition::Baseline,
+            };
+            let label = window
+                .text_system()
+                .shape_line(row.label.clone(), size, &[run], None)
+                .width;
+            label + px(12. * row.depth as f32)
+        })
+        .fold(
+            px(0.),
+            |widest, width| if width > widest { width } else { widest },
+        );
+    // The icon and the gap after it, the row's padding and edge, the
+    // popup's padding and edge, and a pixel of slack.
+    let around = 16. + 10. + 2. * 8. + 2. + 2. * toolbar::POPUP_PAD + 2. + 1.;
+    (widest + px(around)).clamp(px(200.), px(360.))
 }
 
 impl Shell {
@@ -140,12 +213,8 @@ impl Shell {
                 rule: false,
             })
             .collect();
-        self.nav_menu = Some(NavMenu {
-            pane,
-            what,
-            rows,
-            popup: Popup::new("nav", window, cx),
-        });
+        let font = self.font.clone();
+        self.nav_menu = Some(NavMenu::new(pane, what, rows, &font, window, cx));
     }
 
     /// `ui.subfolder_menu { location, current }`: the folders inside
@@ -200,12 +269,15 @@ impl Shell {
                 };
                 let rows = inside_rows(&shell.app, &of, inside, current.as_ref());
                 shell.close_nav_menu(window);
-                shell.nav_menu = Some(NavMenu {
+                let font = shell.font.clone();
+                shell.nav_menu = Some(NavMenu::new(
                     pane,
-                    what: NavWhat::Subfolders { of },
+                    NavWhat::Subfolders { of },
                     rows,
-                    popup: Popup::new("nav", window, cx),
-                });
+                    &font,
+                    window,
+                    cx,
+                ));
                 cx.notify();
             },
             window,
@@ -249,12 +321,15 @@ impl Shell {
         if rows.is_empty() {
             return;
         }
-        self.nav_menu = Some(NavMenu {
-            pane: self.pane,
-            what: NavWhat::Parents { of },
+        let (pane, font) = (self.pane, self.font.clone());
+        self.nav_menu = Some(NavMenu::new(
+            pane,
+            NavWhat::Parents { of },
             rows,
-            popup: Popup::new("nav", window, cx),
-        });
+            &font,
+            window,
+            cx,
+        ));
     }
 
     /// The rows of what is above `of` in the active pane's trail, `of`
@@ -411,16 +486,43 @@ pub fn panel(shell: &Shell, pane: PaneId, cx: &mut Context<Shell>) -> Option<Any
         NavWhat::Subfolders { .. } => "ui.subfolder_menu",
         NavWhat::Parents { .. } => "ui.parents_menu",
     };
-    let mut panel = toolbar::popup_panel(&menu.popup, close, &theme, cx)
-        .w_auto()
-        .min_w(gpui::px(200.))
-        .max_w(gpui::px(360.));
-    for (i, row) in menu.rows.iter().enumerate() {
-        if row.rule {
-            panel = panel.child(div().my_1().h(gpui::px(1.)).bg(theme.border));
-        }
-        panel = panel.child(
-            Button::new(
+    let rows = gpui::uniform_list(
+        "nav-rows",
+        menu.rows.len(),
+        cx.processor(
+            move |shell: &mut Shell, range: std::ops::Range<usize>, _, cx| {
+                shell.with_pane(pane, |shell| rows(shell, range, cx))
+            },
+        ),
+    )
+    .track_scroll(menu.scroll.clone())
+    .flex_1()
+    .min_h_0();
+    // As tall as its rows, shrunk to the room the popover has below its
+    // anchor: the list fills it, and draws the rows that fit.
+    let tall = ROW * menu.rows.len() as f32 + 2. * toolbar::POPUP_PAD + 2.;
+    let panel = toolbar::popup_panel(&menu.popup, close, &theme, cx)
+        .w(menu.width)
+        .h(px(tall))
+        .on_action(cx.listener(move |shell, action: &RunCommand, window, cx| {
+            if !shell.walk_nav_menu(pane, &action.name, window, cx) {
+                cx.propagate();
+            }
+        }))
+        .child(rows);
+    Some(panel.into_any_element())
+}
+
+/// The menu's rows in `range`, the only ones drawn.
+fn rows(shell: &Shell, range: std::ops::Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyElement> {
+    let Some(menu) = shell.nav_menu.as_ref() else {
+        return Vec::new();
+    };
+    let border = cx.global::<Theme>().border;
+    range
+        .filter_map(|i| {
+            let (row, focus) = (menu.rows.get(i)?, menu.focus.get(i)?);
+            let button = Button::new(
                 SharedString::from(format!("nav-{i}")),
                 row.icon,
                 row.tip.clone(),
@@ -432,12 +534,77 @@ pub fn panel(shell: &Shell, pane: PaneId, cx: &mut Context<Shell>) -> Option<Any
             .active(row.current)
             .enabled(row.enabled)
             .render(shell, cx)
-            .when(row.depth > 0, |d| {
-                d.pl(gpui::px(8. + 12. * row.depth as f32))
-            }),
-        );
+            .track_focus(focus)
+            .when(row.depth > 0, |d| d.pl(px(8. + 12. * row.depth as f32)));
+            Some(
+                div()
+                    .relative()
+                    .h(px(ROW))
+                    .pt(px(ROW - 30.))
+                    .when(row.rule, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .top(px(1.5))
+                                .left_0()
+                                .right_0()
+                                .h(px(1.))
+                                .bg(border),
+                        )
+                    })
+                    .child(button)
+                    .into_any_element(),
+            )
+        })
+        .collect()
+}
+
+impl Shell {
+    /// The arrows, Tab, Home and End in the open menu of places: the row
+    /// they reach (wrapping around, passing the rows that cannot be
+    /// chosen), scrolled into view and given the keyboard. Only the rows
+    /// in view are drawn, so GPUI's tab order, which the other popups
+    /// walk, knows none beyond them. Whether `command` was one of those.
+    fn walk_nav_menu(
+        &mut self,
+        pane: PaneId,
+        command: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(menu) = self.nav_menu.as_ref().filter(|m| m.pane == pane) else {
+            return false;
+        };
+        let stops: Vec<usize> = (0..menu.rows.len())
+            .filter(|&i| menu.rows[i].enabled)
+            .collect();
+        let Some(last) = stops.len().checked_sub(1) else {
+            return false;
+        };
+        let here = menu
+            .focus
+            .iter()
+            .position(|focus| focus.is_focused(window))
+            .and_then(|row| stops.iter().position(|&stop| stop == row));
+        let (to, strategy) = match command {
+            "ui.toolbar_next" => (
+                here.map_or(0, |h| if h == last { 0 } else { h + 1 }),
+                ScrollStrategy::Bottom,
+            ),
+            "ui.toolbar_prev" => (
+                here.map_or(last, |h| h.checked_sub(1).unwrap_or(last)),
+                ScrollStrategy::Top,
+            ),
+            "ui.toolbar_first" => (0, ScrollStrategy::Top),
+            "ui.toolbar_last" => (last, ScrollStrategy::Bottom),
+            _ => return false,
+        };
+        let row = stops[to];
+        menu.scroll.scroll_to_item(row, strategy);
+        window.focus(&menu.focus[row]);
+        cx.notify();
+        true
     }
-    Some(panel.into_any_element())
 }
 
 #[cfg(test)]
