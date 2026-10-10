@@ -109,7 +109,7 @@ mod sys {
     pub(super) use super::read_link_at;
     use rustix::fs::{AtFlags, StatxFlags};
 
-    use super::{Dir, EntryId, OsStr, Path, Stat, kind_of, time};
+    use super::{Dir, EntryId, OsStr, Path, PathBuf, Stat, kind_of, time};
 
     fn of(st: &rustix::fs::Statx) -> Stat {
         Stat {
@@ -145,12 +145,50 @@ mod sys {
         } else {
             AtFlags::SYMLINK_NOFOLLOW
         };
-        let asked = if all {
+        Ok(of(&rustix::fs::statx(dir.fd(), name, flags, asked(all))?))
+    }
+
+    /// With `all` everything, else the type and the identity alone.
+    fn asked(all: bool) -> StatxFlags {
+        if all {
             StatxFlags::BASIC_STATS | StatxFlags::BTIME
         } else {
             StatxFlags::TYPE | StatxFlags::INO
-        };
-        Ok(of(&rustix::fs::statx(dir.fd(), name, flags, asked)?))
+        }
+    }
+
+    /// What the link `name` in `dir` finally leads to, as `stat_at`
+    /// following it says, and where that is. One descriptor of it
+    /// (`O_PATH`, which opens no file: a pipe's or a device's neither)
+    /// tells both, the kernel saying where (`/proc/self/fd`), in four
+    /// calls where `realpath` makes one or two per folder of the path.
+    pub(super) fn follow_at(
+        dir: &Dir,
+        name: &OsStr,
+        all: bool,
+    ) -> std::io::Result<(Stat, Option<PathBuf>)> {
+        use rustix::fs::{Mode, OFlags};
+        use std::os::fd::AsRawFd;
+        let fd = rustix::fs::openat(
+            dir.fd(),
+            name,
+            OFlags::PATH | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        let st = of(&rustix::fs::statx(
+            &fd,
+            c"",
+            AtFlags::EMPTY_PATH,
+            asked(all),
+        )?);
+        let at = std::fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd()))
+            .ok()
+            .filter(|at| {
+                at.is_absolute() && !at.as_os_str().as_encoded_bytes().ends_with(b" (deleted)")
+            });
+        // Where the kernel cannot say (no `/proc`), the path walked.
+        let at = at.or_else(|| super::resolved(dir, name));
+        Ok((st, at))
     }
 
     pub(super) fn id_of(path: &Path) -> Option<EntryId> {
@@ -262,15 +300,30 @@ mod sys {
 /// when it leads nowhere. Only the type and the identity are asked of
 /// what is there.
 pub fn follow(dir: &Dir, name: &OsStr) -> Option<LinkTarget> {
-    let st = sys::stat_at(dir, name, true, false).ok()?;
-    Some(target_of(dir, name, &st))
+    let (st, path) = followed(dir, name, false)?;
+    Some(target_of(&st, path))
 }
 
-fn target_of(dir: &Dir, name: &OsStr, st: &Stat) -> LinkTarget {
+fn target_of(st: &Stat, path: Option<PathBuf>) -> LinkTarget {
     LinkTarget {
         kind: st.kind,
         id: st.id,
-        path: resolved(dir, name),
+        path,
+    }
+}
+
+/// What the link `name` in `dir` finally leads to (with `all`
+/// everything said of it, else its type and identity), and where that
+/// is: `None` when it leads nowhere.
+fn followed(dir: &Dir, name: &OsStr, all: bool) -> Option<(Stat, Option<PathBuf>)> {
+    #[cfg(target_os = "linux")]
+    {
+        sys::follow_at(dir, name, all).ok()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let st = sys::stat_at(dir, name, true, all).ok()?;
+        Some((st, resolved(dir, name)))
     }
 }
 
@@ -318,9 +371,10 @@ pub fn stat_entry(dir: &Dir, entry: &mut Entry) -> bool {
     entry.kind = own.kind;
     entry.hidden = own.hidden;
     let followed = (entry.kind == EntryKind::Symlink)
-        .then(|| sys::stat_at(dir, name, true, true).ok())
+        .then(|| followed(dir, name, true))
         .flatten();
-    entry.target = followed.as_ref().map(|st| target_of(dir, name, st));
+    let (followed, path) = followed.unzip();
+    entry.target = followed.as_ref().map(|st| target_of(st, path.flatten()));
     let st = followed.as_ref().unwrap_or(&own);
     let m = &mut entry.metadata;
     let p = Provenance::Filesystem;
