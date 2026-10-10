@@ -40,7 +40,8 @@ pub enum SettingKind {
     Text,
     /// A filesystem path; editors offer completion or a picker.
     Path,
-    /// A program or command line.
+    /// A program to run: its name, looked for on the `PATH`, or its path.
+    /// Run alone, never as a command line: `bash -l` is no program.
     Command,
     /// Application data managed by its owning commands, not by editors.
     Data,
@@ -254,8 +255,19 @@ impl SettingSpec {
         spec
     }
 
+    /// A program to run (`SettingKind::Command`): a value with words after
+    /// a name is refused, which would not start (`bash -l`), saying why. A
+    /// path may hold spaces.
     pub fn command(key: &str, title: &str, description: &str, default: &str) -> Self {
-        let mut spec = Self::text(key, title, description, default);
+        let mut spec = Self::text(key, title, description, default).validate_with(|value| {
+            let program = value.as_str().unwrap_or_default().trim();
+            anyhow::ensure!(
+                !program.contains(char::is_whitespace)
+                    || std::path::Path::new(program).is_absolute(),
+                "Give the program alone, without arguments: “bash”, not “bash -l”"
+            );
+            Ok(())
+        });
         spec.kind = SettingKind::Command;
         spec
     }
