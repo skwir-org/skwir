@@ -2581,8 +2581,11 @@ Steps, each with what was found and what is left:
    build before the rename missed as much, alternated with it).
    `idle-pss` on Xvfb with software Vulkan (the session's display is
    the user's): own share 76.0 MiB (median of three, budget 100), idle
-   CPU 0.0 %; the first frame on the session's display, on a quiet
-   machine, is still to measure.
+   CPU 0.0 %. On the session's display (the user's, 2026-10-11,
+   `just idle-pss`): own share 94.8 MiB (median of three, budget 100;
+   91.1 on 2026-10-07, GPU buffers 19.6 of it), first frame 136 to
+   151 ms (median 145.2; within ADR-002's 150 by ADR-000's rule, the
+   least of the runs, one of three above it), idle CPU 0.2 to 0.4 %.
 7. **Clean**: every `#[allow]` given its reason or removed (18 of
    `dead_code`), unused dependencies, `proc-macro-error2` (which a
    future Rust refuses), the largest files split where it helps the
