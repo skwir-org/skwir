@@ -239,6 +239,9 @@ pub struct Shell {
     pub(crate) unsaved: std::collections::BTreeMap<&'static str, String>,
     /// How the user arranged the sidebar's groups (`ui.sidebar_section`).
     pub sidebar_sections: crate::sidebar::Sections,
+    /// The places as the user arranged them, and the places' revision
+    /// and arrangement they were arranged for (`Shell::arranged_places`).
+    pub(crate) arranged_places: std::cell::RefCell<Option<crate::sidebar::ArrangedAt>>,
     /// The folders the sidebar shows, where trails start.
     pub roots: crate::sidebar::Roots,
     /// Which detail columns the list shows (`views::list::COLUMNS`), as
@@ -530,6 +533,7 @@ impl Shell {
             unsaved: std::collections::BTreeMap::new(),
             backlog: false,
             sidebar_sections: crate::sidebar::Sections::default(),
+            arranged_places: std::cell::RefCell::default(),
             roots: crate::sidebar::Roots::default(),
             columns: crate::views::list::PerColumn(
                 crate::views::list::COLUMNS

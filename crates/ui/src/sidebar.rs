@@ -193,7 +193,7 @@ impl Keys {
 
 /// What is drawn, in order: each group's header, then its shown places
 /// unless it is folded.
-fn drawn_items(places: &[Arranged], sections: &Sections) -> Vec<Item> {
+fn drawn_items(places: &[&Arranged], sections: &Sections) -> Vec<Item> {
     let mut items = Vec::new();
     for arranged in places {
         let group = &arranged.place.group;
@@ -294,6 +294,35 @@ pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
             }
         })
         .collect()
+}
+
+/// The places arranged (`arrange`) for a revision of the places and an
+/// arrangement of them.
+pub(crate) type ArrangedAt = (u64, Sections, std::sync::Arc<[Arranged]>);
+
+impl Shell {
+    /// Every place as the user arranged them (`arrange`), kept until the
+    /// places or their arrangement change: the sidebar draws them at
+    /// every frame, and arranging copies and sorts every place.
+    pub fn arranged_places(&self) -> std::sync::Arc<[Arranged]> {
+        let revision = self.app.registry.places.revision();
+        let mut kept = self.arranged_places.borrow_mut();
+        if let Some((at, sections, arranged)) = kept.as_ref()
+            && *at == revision
+            && *sections == self.sidebar_sections
+        {
+            return std::sync::Arc::clone(arranged);
+        }
+        // Read after the revision: a change meanwhile arranges again.
+        let arranged: std::sync::Arc<[Arranged]> =
+            arrange(self.app.registry.places.all(), &self.sidebar_sections).into();
+        *kept = Some((
+            revision,
+            self.sidebar_sections.clone(),
+            std::sync::Arc::clone(&arranged),
+        ));
+        arranged
+    }
 }
 
 /// A folder the sidebar shows, where a trail starts (`address::crumbs`):
@@ -543,8 +572,9 @@ pub fn render(
     // user arranged them (`arrange`). A group whose places are all hidden
     // keeps its header, whose menu shows them again.
     let sections = shell.sidebar_sections.clone();
-    let places: Vec<Arranged> = arrange(shell.app.registry.places.all(), &sections)
-        .into_iter()
+    let arranged = shell.arranged_places();
+    let places: Vec<&Arranged> = arranged
+        .iter()
         .filter(|a| !sections.hidden.contains(&a.place.group))
         .collect();
     let groups: Vec<String> = sections.arranged(
@@ -676,7 +706,7 @@ pub fn render(
         if folded || !shown {
             continue;
         }
-        let item = Item::of(&place);
+        let item = Item::of(place);
         let at_cursor = cursor.as_ref() == Some(&item);
         let menu_here = marked.as_ref() == Some(&item);
         let is_current = place.location.to_string() == current;
@@ -708,7 +738,7 @@ pub fn render(
             .and_then(|moves| orders.get(&mover(&place.group, moves)))
             .unwrap_or(&no_order);
         if let Some(color) = color {
-            let mut pill = pill(i, &place, color, is_current, at_cursor, &font, cx)
+            let mut pill = pill(i, place, color, is_current, at_cursor, &font, cx)
                 .children(shell.host_marker(MenuHost::Sidebar, menu_here));
             pill = takes_drops(pill, &place.location, gives.is_some(), cx);
             if drag.reorder.is_some() || drag.gives.is_some() {
@@ -721,7 +751,7 @@ pub fn render(
         }
         column = wrap_pills(column, &mut pills, &mut children);
         // Present but not mounted: clicking mounts it (or asks to unlock it).
-        let open = open_invocation(&place);
+        let open = open_invocation(place);
         let waiting = place.unavailable.is_some();
         // Its owner is working on it (unlocking, mounting, unmounting): an
         // hourglass in place of its icon, still, as nothing here animates,
@@ -854,7 +884,7 @@ pub fn render(
             // The middle button opens it in a tab behind the one shown;
             // not again while its owner works on it, as a click.
             .when(busy.is_none(), |row| {
-                let tab = open_in_tab(&place);
+                let tab = open_in_tab(place);
                 row.on_mouse_down(
                     MouseButton::Middle,
                     cx.listener(move |this, _, window, cx| {
@@ -1404,9 +1434,10 @@ impl Shell {
     /// The place of `group` named `key` (`Place::key`), as the user
     /// arranged it.
     pub fn sidebar_place_of(&self, group: &str, key: &str) -> Option<Arranged> {
-        arrange(self.app.registry.places.all(), &self.sidebar_sections)
-            .into_iter()
+        self.arranged_places()
+            .iter()
             .find(|a| a.place.group == group && a.place.key() == key)
+            .cloned()
     }
 
     /// What renames the place: its owner's command for one kept or
@@ -1447,15 +1478,15 @@ impl Shell {
         let moves = arranged.moves.as_ref()?;
         let group = &arranged.place.group;
         let along = mover(group, moves);
-        let order: Vec<serde_json::Value> =
-            arrange(self.app.registry.places.all(), &self.sidebar_sections)
-                .into_iter()
-                .filter(|a| a.shown)
-                .filter_map(|a| {
-                    let m = a.moves?;
-                    (mover(&a.place.group, &m) == along).then_some(m.before)
-                })
-                .collect();
+        let order: Vec<serde_json::Value> = self
+            .arranged_places()
+            .iter()
+            .filter(|a| a.shown)
+            .filter_map(|a| {
+                let m = a.moves.as_ref()?;
+                (mover(&a.place.group, m) == along).then(|| m.before.clone())
+            })
+            .collect();
         let at = order.iter().position(|b| *b == moves.before)?;
         let to = at
             .checked_add_signed(delta)
@@ -1538,12 +1569,12 @@ impl Shell {
                 self.set_status(kept, true, cx);
                 return;
             }
-            let present: Vec<String> =
-                arrange(self.app.registry.places.all(), &self.sidebar_sections)
-                    .into_iter()
-                    .filter(|a| a.place.group == group && a.role == Role::Offered)
-                    .map(|a| a.place.key())
-                    .collect();
+            let present: Vec<String> = self
+                .arranged_places()
+                .iter()
+                .filter(|a| a.place.group == group && a.role == Role::Offered)
+                .map(|a| a.place.key())
+                .collect();
             self.sidebar_sections
                 .move_place(&group, &key, before.as_str(), &present);
         } else if let Some(title) = args.get("title") {
