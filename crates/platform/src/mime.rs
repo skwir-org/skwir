@@ -64,7 +64,31 @@ impl fmt::Display for Mime {
 /// database hands the ties back in no particular order. What such a file
 /// really holds is for [`identify`] to say, where the bytes can be read.
 pub fn by_name(name: &OsStr) -> Option<Mime> {
-    database::representative(candidates(name))
+    // The names this thread typed lately: the rows a frame draws (their
+    // icons, the Type column, the thumbnails asked) are typed again at
+    // every frame, and a name several types claim (`.ogg`, `.ts`) costs
+    // the database a comparison of each with each. The database does not
+    // change while bibli runs. Forgotten whole when full.
+    const KEPT: usize = 4096;
+    thread_local! {
+        static TYPED: std::cell::RefCell<std::collections::HashMap<std::ffi::OsString, Option<Mime>>> =
+            std::cell::RefCell::default();
+    }
+    let typed = |name: &OsStr| database::representative(candidates(name));
+    TYPED
+        .try_with(|kept| {
+            if let Some(found) = kept.borrow().get(name) {
+                return found.clone();
+            }
+            let found = typed(name);
+            let mut kept = kept.borrow_mut();
+            if kept.len() >= KEPT {
+                kept.clear();
+            }
+            kept.insert(name.to_owned(), found.clone());
+            found
+        })
+        .unwrap_or_else(|_| typed(name))
 }
 
 /// The type an entry of a listing is shown as. No I/O. What it is whatever
@@ -92,8 +116,9 @@ const ASKED: usize = 256;
 
 /// [`by_name`] for many names at once (a selection), in their order.
 ///
-/// The database takes about 13 µs a name (a release build, 2026-10-06),
-/// so a large selection cannot be asked name by name on the UI thread.
+/// The database takes about 1.2 µs a name since its globs are indexed (a
+/// release build, 2026-10-09; 13 µs before), so a selection of a hundred
+/// thousand names still cannot be asked name by name on the UI thread.
 /// Up to `EXACT` names are each asked as they are; beyond, a name is asked
 /// once per suffix from its first dot (`.jpg`, `.tar.gz`), as any file with
 /// that suffix would be, so a name only a whole-name pattern knows

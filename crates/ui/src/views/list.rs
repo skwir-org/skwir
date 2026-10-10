@@ -382,9 +382,6 @@ impl Shell {
             let (Some(e), Some(look)) = (pane.entry(id), self.look(pane, id, icon_px)) else {
                 continue;
             };
-            let mime = (!e.is_dir())
-                .then(|| bibli_platform::mime::of_entry(e))
-                .flatten();
             let mut row = RowData {
                 ix,
                 look,
@@ -471,7 +468,9 @@ impl Shell {
                     } else if e.is_broken_link() {
                         crate::typenames::BROKEN_LINK.into()
                     } else {
-                        mime.as_ref()
+                        // Typed only where the column shows it.
+                        bibli_platform::mime::of_entry(e)
+                            .as_ref()
                             .and_then(|mime| self.type_names.get(mime))
                             .unwrap_or_else(|| crate::typenames::fallback_of(e).into())
                     };

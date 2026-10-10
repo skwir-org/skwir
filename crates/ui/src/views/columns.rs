@@ -339,8 +339,10 @@ impl PaneView for ColumnsView {
                         return Arc::from([]);
                     };
                     let ids = listing.sorted(spec);
-                    if !a.shown_child && a.looked_at != Some(listing.version()) {
-                        a.looked_at = Some(listing.version());
+                    // Looked for again only when its names change: every
+                    // batch of metadata moved the listing's version.
+                    if !a.shown_child && a.looked_at != Some(listing.names_version()) {
+                        a.looked_at = Some(listing.names_version());
                         if let Some(ix) = ids
                             .iter()
                             .position(|id| listing.get(*id).is_some_and(|e| e.name == a.child))
