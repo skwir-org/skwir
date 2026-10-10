@@ -20,7 +20,10 @@ gets what it did not declare, a way around a plan's review) goes to
 ## Building and checking
 
 The dev environment is the Nix flake (`nix develop`, or `direnv allow`);
-without Nix, Rust 1.96 or later and the libraries `flake.nix` lists.
+without Nix, Rust 1.96 or later and the libraries `flake.nix` lists. The
+checks run the Rust `rust-toolchain.toml` pins, which rustup installs by
+itself; moving the pin is a change of its own, with what the new clippy
+asks.
 
 ```
 just build          # skwir without its native helpers

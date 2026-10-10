@@ -1458,7 +1458,11 @@ are about to touch, in full:
 
 ## Build, test, lint
 
-The dev environment is the Nix flake (`flake.nix`, loaded by direnv). Inside it:
+The dev environment is the Nix flake (`flake.nix`, loaded by direnv). Its
+Rust is the one `rust-toolchain.toml` pins, which rustup follows too (CI's
+macOS and Windows jobs): every check runs one Rust, and a new release's
+lints arrive only with the commit that moves the pin and fixes them.
+Inside it:
 
 ```
 just build          cargo build (default members: no native workers)

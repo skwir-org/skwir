@@ -1,0 +1,7 @@
+# The Rust every check runs (ADR-035's three systems, CI's jobs, the dev
+# shell): the flake reads this channel and rustup follows it, so a new
+# release's lints arrive only with the commit that moves it and fixes
+# them. The oldest Rust that builds skwir is `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]
