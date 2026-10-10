@@ -22,13 +22,13 @@ debian)
     DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends $(cat "$here/build-deps.debian")
     rust
     command -v cargo-deb >/dev/null || cargo install --locked cargo-deb
-    command -v cargo-about >/dev/null || cargo install --locked cargo-about
+    command -v cargo-about >/dev/null || cargo install --locked --features cli cargo-about
     ;;
 fedora)
     dnf -y -q install --setopt=install_weak_deps=False $(cat "$here/build-deps.fedora")
     rust
     command -v cargo-generate-rpm >/dev/null || cargo install --locked cargo-generate-rpm
-    command -v cargo-about >/dev/null || cargo install --locked cargo-about
+    command -v cargo-about >/dev/null || cargo install --locked --features cli cargo-about
     ;;
 arch)
     pacman -Syu --noconfirm --needed base-devel $(bash -c '. "$1"; printf "%s\n" "${makedepends[@]}" "${depends[@]}"' _ "$here/../aur/PKGBUILD")

@@ -7,8 +7,8 @@ Zlib licences ask for their notices in a program's distribution.
     tools/package/notices.py            # into target/notices/<package>/THIRD-PARTY-NOTICES
     tools/package/notices.py a b        # programs a and b apart, the rest skwir's
 
-Needs cargo-about (in the dev shell; `cargo install --locked cargo-about`
-elsewhere) and the crates fetched: it reads them offline, as the build
+Needs cargo-about (in the dev shell; `cargo install --locked --features
+cli cargo-about` elsewhere: its program is behind `cli` since 0.9) and the crates fetched: it reads them offline, as the build
 left them. Which programs a package ships is tools/package/programs: the
 ones shipped apart (the arguments, else tools/package/optional) each a
 package of its own (`skwir-<name>-worker` in `skwir-<name>`), the others

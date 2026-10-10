@@ -10,8 +10,9 @@
 #
 # Needs rustup's Rust (a distribution's may be older than skwir needs),
 # cargo-generate-rpm (`cargo install cargo-generate-rpm`), cargo-about
-# (`cargo install --locked cargo-about`, for each package's notices) and what
-# tools/package/linux/build-deps.fedora lists (named as Fedora names them).
+# (`cargo install --locked --features cli cargo-about`, for each package's
+# notices) and what tools/package/linux/build-deps.fedora lists (named as
+# Fedora names them).
 set -eu
 cd "$(dirname "$0")/../.."
 if ! command -v cargo-generate-rpm >/dev/null; then
@@ -19,7 +20,7 @@ if ! command -v cargo-generate-rpm >/dev/null; then
     exit 1
 fi
 if ! command -v cargo-about >/dev/null; then
-    echo "cargo-about is needed: cargo install --locked cargo-about" >&2
+    echo "cargo-about is needed: cargo install --locked --features cli cargo-about" >&2
     exit 1
 fi
 case "$(uname -m)" in
