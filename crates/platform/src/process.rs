@@ -350,6 +350,8 @@ impl ExitSignal {
     }
 
     /// Wait until the child exits, or `at_most` passes.
+    // Elsewhere than on Linux the signal holds nothing to wait on.
+    #[cfg_attr(not(target_os = "linux"), allow(clippy::unused_self))]
     fn wait(&self, at_most: Duration) {
         #[cfg(target_os = "linux")]
         if let Some(pidfd) = &self.pidfd {

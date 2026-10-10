@@ -945,6 +945,9 @@ fn copy_sparse(
             } else {
                 sys::copy_range_at(sf, df, from, want)?
             };
+            // Without Unix the buffer's branch only ends the copy, which
+            // reads as a let-else there, and as none here.
+            #[cfg_attr(not(unix), allow(clippy::manual_let_else))]
             let n = if let Some(n @ 1..) = kernel {
                 n
             } else {

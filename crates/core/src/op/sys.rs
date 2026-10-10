@@ -200,6 +200,7 @@ pub(super) fn next_data(file: &File, from: u64) -> io::Result<Option<(u64, u64)>
 }
 
 /// [`copy_range`] at `at` in both files, leaving their offsets alone.
+#[cfg_attr(not(target_os = "linux"), allow(clippy::unnecessary_wraps))]
 pub(super) fn copy_range_at(
     src: &File,
     dst: &File,
