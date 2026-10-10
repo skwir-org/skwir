@@ -73,9 +73,13 @@ pub struct Node {
     #[serde(default)]
     pub other_modified: i64,
     /// A file's number of links (`st_nlink`): one with several is counted
-    /// once where they meet. 0 for a folder.
-    #[serde(skip)]
+    /// once where they meet, and its other names are said. 0 for a folder.
+    #[serde(default)]
     pub nlink: u64,
+    /// Of a folder: what the files in it with names outside it take on
+    /// disk, which deleting it would not free (ADR-049).
+    #[serde(default)]
+    pub shared: u64,
     /// Of a folder: the files with several links found under it whose
     /// other links may be outside it, so that a folder above holding
     /// more of them counts each once (`worker::add_contents`). Not sent.
@@ -88,6 +92,14 @@ pub struct Node {
 /// dropped: no folder above can find it again.
 #[derive(Clone, Debug, Default)]
 pub struct Links(pub(crate) HashMap<bibli_core::FileId, Linked>);
+
+impl Links {
+    /// What the files held take on disk: their names found are not all
+    /// their names, so deleting what holds them frees none of it.
+    pub(crate) fn shared(&self) -> u64 {
+        self.0.values().map(|l| l.alloc).sum()
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Linked {

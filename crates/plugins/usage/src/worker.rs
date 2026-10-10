@@ -442,6 +442,7 @@ impl Progress {
             replace_pending(&mut tree, branch.clone());
         }
         // Shown, never cached: the links stay with the tree being counted.
+        tree.shared = self.tree.links.shared();
         tree.links = Arc::default();
         trim(&mut tree);
         tree
@@ -737,6 +738,7 @@ impl<'a> Scanner<'a> {
         trim(&mut node);
         reclaim_whole(&mut node);
         own_time(&mut node, self.root_modified);
+        node.shared = node.links.shared();
         node.incomplete = self.errors > 0
             || node.other_incomplete > 0
             || node.children.iter().any(|child| child.incomplete);
@@ -989,6 +991,7 @@ impl<'a> Scanner<'a> {
         trim(&mut node);
         reclaim_whole(&mut node);
         own_time(&mut node, modified);
+        node.shared = node.links.shared();
         node.incomplete = self.errors != initial_errors;
         if !node.incomplete && covered && self.unmonitored == initial_unmonitored && self.caching {
             self.cache.insert(node.clone());
@@ -2375,6 +2378,11 @@ mod tests {
         assert_eq!(result.size, 1005);
         assert_eq!(result.alloc, alloc("photos/a.bin") + alloc("own.txt"));
         assert_eq!(result.files, 4, "every name is an item");
+        // Deleting a folder frees what has no name outside it (ADR-049):
+        // `photos` and `backup` each share the file, the root does not.
+        assert_eq!(child("photos").shared, alloc("photos/a.bin"));
+        assert_eq!(child("backup").shared, alloc("photos/a.bin"));
+        assert_eq!(result.shared, 0);
         // What was shown while counting never said more than there is.
         while let Ok(update) = updates.try_recv() {
             assert!(update.size <= result.size, "{} counted so far", update.size);

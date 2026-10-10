@@ -315,17 +315,9 @@ fn selection_bytes(
     let (bytes, unknown_at) = if let Some(at) = pane.selected_unknown_from(from) {
         (None, at)
     } else {
-        let bytes = pane
-            .selection
-            .iter()
-            .filter_map(|id| pane.entry(id))
-            .filter(|e| !e.is_dir())
-            .filter_map(|e| {
-                e.metadata
-                    .value(bibli_core::entry::keys::SIZE)
-                    .and_then(bibli_core::Value::as_u64)
-            })
-            .sum();
+        // Each file once: its names selected (hard links) are one file.
+        let bytes =
+            bibli_core::entry::weight(pane.selection.iter().filter_map(|id| pane.entry(id)));
         (Some(bytes), 0)
     };
     last.set(Some(SelectionBytes {

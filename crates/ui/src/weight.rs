@@ -171,31 +171,26 @@ enum Listed {
 }
 
 /// What the files the pane shows weigh, once each has its metadata,
-/// looking for one without from `unknown_at` on.
+/// looking for one without from `unknown_at` on: each file once, its
+/// names (hard links) one file (`entry::weight`).
 fn listed_bytes(p: &bibli_core::workspace::Pane, unknown_at: usize) -> Listed {
     if let Some(at) = p.file_unknown_from(unknown_at) {
         return Listed::Unknown(at);
     }
-    Listed::Bytes(
-        p.order()
-            .iter()
-            .filter_map(|id| p.entry(*id))
-            .filter(|e| !e.is_dir())
-            .filter_map(|e| {
-                e.metadata
-                    .value(bibli_core::entry::keys::SIZE)
-                    .and_then(bibli_core::Value::as_u64)
-            })
-            .sum(),
-    )
+    Listed::Bytes(bibli_core::entry::weight(
+        p.order().iter().filter_map(|id| p.entry(*id)),
+    ))
 }
 
 /// The files in `dir` a pane shows, added up: what is not a folder, names
 /// starting with a dot only when `hidden`, those holding `filter`. Links
-/// count as themselves, as the listing sizes them. `None` once cancelled,
-/// or when the folder cannot be read.
+/// count as themselves, as the listing sizes them. A file of several
+/// names (hard links) counts once (ADR-049), where the system says how
+/// many names a file has. `None` once cancelled, or when the folder
+/// cannot be read.
 fn weigh(dir: &Path, hidden: bool, filter: Option<&str>, cancel: &CancelToken) -> Option<u64> {
     let mut bytes = 0u64;
+    let mut linked = std::collections::HashSet::new();
     let filter = filter.map(bibli_core::workspace::NameFilter::new);
     for entry in std::fs::read_dir(dir).ok()? {
         if cancel.is_cancelled() {
@@ -211,11 +206,29 @@ fn weigh(dir: &Path, hidden: bool, filter: Option<&str>, cancel: &CancelToken) -
         }
         // Not followed: a link weighs what the listing says it does.
         match entry.metadata() {
-            Ok(meta) if !meta.is_dir() => bytes = bytes.saturating_add(meta.len()),
+            Ok(meta) if !meta.is_dir() && once(&meta, &mut linked) => {
+                bytes = bytes.saturating_add(meta.len());
+            }
             _ => {}
         }
     }
     Some(bytes)
+}
+
+/// Whether a file `meta` says has several names is met here for the first
+/// time: each is counted once. Where the system says nothing of names
+/// (`std` on Windows), every name counts.
+fn once(meta: &std::fs::Metadata, linked: &mut std::collections::HashSet<(u64, u64)>) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta.nlink() <= 1 || linked.insert((meta.dev(), meta.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (meta, linked);
+        true
+    }
 }
 
 #[cfg(test)]
@@ -238,6 +251,12 @@ mod tests {
         assert_eq!(weigh(dir, true, None, &token), Some(325));
         // The name filter, as the pane applies it.
         assert_eq!(weigh(dir, false, Some("rep"), &token), Some(300));
+        // Two names of one file (hard links) weigh the file once (ADR-049).
+        #[cfg(unix)]
+        {
+            std::fs::hard_link(dir.join("notes.md"), dir.join("notes again.md")).unwrap();
+            assert_eq!(weigh(dir, false, None, &token), Some(320));
+        }
         token.cancel();
         assert_eq!(weigh(dir, false, None, &token), None);
         assert_eq!(

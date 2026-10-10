@@ -2,8 +2,9 @@
 
 Status: accepted, 2026-10-10. Revises ADR-000's principle 6 ("entries
 have stable identity: device + inode") and ADR-036's first point: the
-device and the inode are the identity of a file, not of a row. Points 1,
-2, 3 and 7 are built; the others are the plan in Consequences.
+device and the inode are the identity of a file, not of a row. Points 1
+to 4 and 7 are built (4 but where a deletion asks); the others are the
+plan in Consequences.
 
 ## Context
 
@@ -137,6 +138,16 @@ sizes mean rather than estimate extents, a filesystem tool's work.
   folder's listing does, so its selection is the pane's. Tested by
   `two_names_of_one_file_are_two_entries` (listing),
   `a_file_found_under_several_names_is_a_result_under_each` (query) and
-  the pending paste's test. Left: a thumbnail's key is its file's
-  without the type it was made for, so `x.jpg` and its link `x.bin`
-  share one; points 4, 5 and 6.
+  the pending paste's test. Then point 4: a folder's weight in the
+  footer (added up from its listing, or read by a worker, which asks the
+  system how many names each file has), the selection's size and Usage's
+  selected files count each file once (`entry::weight`); Usage keeps,
+  for each folder, what its files with names outside it take on disk
+  (`Node::shared`), and says what deleting a folder frees where that is
+  less, and of a file that it is one of several names. Left: a
+  thumbnail's key is its file's without the type it was made for, so
+  `x.jpg` and its link `x.bin` share one; what a deletion frees, said in
+  its question (Delete for good, Empty Trash), which needs each file's
+  names counted off the window's thread; two folders selected in Usage
+  that share a file each count it (a row keeps no table of its links);
+  points 5 and 6.

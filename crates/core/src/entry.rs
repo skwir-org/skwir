@@ -116,6 +116,18 @@ impl EntryId {
     }
 }
 
+/// What `entries` weigh together, each file once (ADR-049): the sizes of
+/// those that are no folder (`Entry::weighed`), where two names of one
+/// file (hard links), or a file and a link to it, are one file.
+pub fn weight<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> u64 {
+    let mut seen = std::collections::HashSet::new();
+    entries
+        .into_iter()
+        .filter_map(Entry::weighed)
+        .filter(|(file, _)| seen.insert(*file))
+        .fold(0, |sum, (_, size)| sum.saturating_add(size))
+}
+
 /// FNV-1a of `parts`: a name's hash, the same in every process.
 fn fnv(parts: &[&[u8]]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -464,6 +476,17 @@ impl Entry {
         self.id.file
     }
 
+    /// The file this entry's size is of, and that size (`keys::SIZE`): a
+    /// link's target's, as a listing sizes it. `None` for a folder, whose
+    /// own size says nothing of what it holds, and before a stat.
+    pub fn weighed(&self) -> Option<(FileId, u64)> {
+        if self.is_dir() {
+            return None;
+        }
+        let size = self.metadata.value(keys::SIZE).and_then(Value::as_u64)?;
+        Some((self.target.as_ref().map_or(self.file(), |t| t.id), size))
+    }
+
     /// Whether the entry is left out while hidden files are: its name
     /// starts with a dot, or the system marks it hidden.
     pub fn is_hidden(&self) -> bool {
@@ -564,5 +587,42 @@ impl Entry {
     /// A link whose target is missing (or cannot be reached).
     pub fn is_broken_link(&self) -> bool {
         self.is_link() && self.target.is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sized(file: u64, at: u64, size: u64, kind: EntryKind) -> Entry {
+        let mut e = Entry::new(
+            EntryId {
+                file: FileId { dev: 1, ino: file },
+                at,
+            },
+            format!("{file}-{at}"),
+            kind,
+        );
+        e.metadata
+            .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
+        e
+    }
+
+    /// Two names of one file, and a link to it, weigh the file once; a
+    /// folder's own size is no weight (ADR-049).
+    #[test]
+    fn what_entries_weigh_counts_each_file_once() {
+        let a = sized(1, 1, 100, EntryKind::File);
+        let b = sized(1, 2, 100, EntryKind::File);
+        let other = sized(2, 1, 50, EntryKind::File);
+        let folder = sized(3, 1, 4096, EntryKind::Directory);
+        let mut link = sized(4, 1, 100, EntryKind::Symlink);
+        link.target = Some(LinkTarget {
+            kind: EntryKind::File,
+            id: a.file(),
+            path: None,
+        });
+        assert_eq!(weight([&a, &b, &other, &folder, &link]), 150);
+        assert_eq!(weight([&other]), 50);
     }
 }

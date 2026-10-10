@@ -126,6 +126,13 @@ pub struct Node {
     /// Its bytes that caches and trashes hold.
     #[serde(default)]
     pub reclaimable: u64,
+    /// A file's number of names (hard links); 0 for a folder.
+    #[serde(default)]
+    pub nlink: u64,
+    /// Of a folder: what its files with names outside it take on disk,
+    /// which deleting it would not free (ADR-049).
+    #[serde(default)]
+    pub shared: u64,
     pub children: Vec<Node>,
     pub other_alloc: u64,
     #[serde(default)]
@@ -315,6 +322,26 @@ fn sizes(size: u64, alloc: u64) -> String {
     } else {
         format!("{size} · {alloc} on disk")
     }
+}
+
+/// What deleting `node` would free, where its names say it is less than
+/// it takes (ADR-049): a folder holding files with names outside it, a
+/// file with other names.
+fn names_said(node: &Node) -> Option<String> {
+    if node.is_dir {
+        (node.shared > 0).then(|| freed(node))
+    } else {
+        (node.nlink > 1).then(|| format!("one of {} names of its file", node.nlink))
+    }
+}
+
+/// What deleting a folder frees: what it takes on disk but for its files
+/// with names outside it.
+fn freed(node: &Node) -> String {
+    format!(
+        "{} freed if deleted",
+        format::size(node.alloc.saturating_sub(node.shared))
+    )
 }
 
 /// `24%` of `whole`; `<1%` for a speck.
@@ -533,6 +560,7 @@ impl Build<'_> {
             Mode::Size | Mode::Files => {}
         }
         parts.extend(reclaim_said(node, outer.and_then(|o| o.within)));
+        parts.extend(names_said(node));
         if outer.is_some() {
             parts.push("double-click to go there".into());
         }
@@ -770,10 +798,14 @@ impl PaneView for UsageView {
         let Some(tree) = status.tree.as_ref().filter(|tree| !tree.incomplete) else {
             return Some(Weighs::default());
         };
+        // A file of several names selected under each counts once; two
+        // folders sharing one each count it, as each holds it.
         let selected = shell.app.workspace.read().pane(shell.pane).and_then(|p| {
+            let mut files = std::collections::HashSet::new();
             p.selection.iter().try_fold(0, |sum, id| {
                 let child = tree.children.iter().find(|c| c.id == Some(id))?;
-                Some(sum + child.size)
+                let once = child.is_dir || files.insert(id.file);
+                Some(sum + if once { child.size } else { 0 })
             })
         });
         Some(Weighs {
@@ -815,8 +847,13 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                     return "Calculating sizes…".into();
                 }
                 let reclaimable = s.tree.as_ref().map_or(0, |n| n.reclaimable.min(n.alloc));
+                let freed = s
+                    .tree
+                    .as_ref()
+                    .filter(|n| n.shared > 0)
+                    .map_or(String::new(), |n| format!(" · {}", freed(n)));
                 format!(
-                    "{}{} · {} · {}{}{}",
+                    "{}{} · {} · {}{}{}{}",
                     if s.tree.as_ref().is_some_and(|n| n.incomplete) {
                         "Counted so far: "
                     } else {
@@ -830,6 +867,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                     } else {
                         String::new()
                     },
+                    freed,
                     if s.updating { " · updating…" } else { "" }
                 )
             },
@@ -1259,6 +1297,36 @@ mod tests {
             ["Videos", ".cache", "notes", "3 other items"]
         );
         assert!(items[0].children.is_empty(), "one level drawn");
+    }
+
+    /// What deleting frees is said where names outside make it less than
+    /// what is taken, and a file of several names says so (ADR-049).
+    #[test]
+    fn what_deleting_frees_is_said_when_it_is_less() {
+        let folder = Node {
+            is_dir: true,
+            alloc: 10_000,
+            shared: 4096,
+            ..Node::default()
+        };
+        assert_eq!(
+            names_said(&folder),
+            Some(format!("{} freed if deleted", format::size(5904)))
+        );
+        let alone = Node {
+            is_dir: true,
+            alloc: 10_000,
+            ..Node::default()
+        };
+        assert_eq!(names_said(&alone), None);
+        let file = Node {
+            nlink: 3,
+            ..Node::default()
+        };
+        assert_eq!(
+            names_said(&file).as_deref(),
+            Some("one of 3 names of its file")
+        );
     }
 
     #[test]
