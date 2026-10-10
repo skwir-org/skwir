@@ -53,6 +53,23 @@ pub fn is_removable(path: &Path) -> bool {
     removable
 }
 
+/// The bytes free for the user on the volume `path` is on, as the system
+/// says (`statvfs`'s blocks available, Windows' bytes free to the caller):
+/// what a copy there may write. `None` when it cannot say. A network share
+/// may say 0, or more than there is: a copy asks rather than refuses
+/// (`op::room`). I/O: a worker's.
+pub fn free(path: &Path) -> Option<u64> {
+    #[cfg(unix)]
+    {
+        let st = rustix::fs::statvfs(path).ok()?;
+        Some(st.f_bavail.saturating_mul(st.f_frsize))
+    }
+    #[cfg(windows)]
+    {
+        super::win::free_space(path)
+    }
+}
+
 /// [`is_removable`] where only Linux is read yet: never known.
 #[cfg(not(target_os = "linux"))]
 pub fn is_removable(_: &Path) -> bool {

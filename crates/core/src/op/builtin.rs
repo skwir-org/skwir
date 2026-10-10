@@ -318,6 +318,15 @@ impl super::Effect for Move {
             to: self.target(&self.entry.path),
         }
     }
+    /// Its bytes, when it goes to another filesystem: there a move is a
+    /// copy (`move_entry`); within one it renames, writing nothing.
+    fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
+        let src = self.entry.resolve().ok()?;
+        if id_of(&src)?.dev == id_of(&self.dest_dir)?.dev {
+            return None;
+        }
+        Some((self.dest_dir.clone(), tree_size(&src, ctx).ok()?))
+    }
     fn check(&self, ctx: &StepContext) -> StepStatus {
         if !ctx.is_folder(&self.dest_dir) {
             return conflict(format!(
@@ -590,6 +599,10 @@ impl super::Effect for Copy {
             from: self.entry.path.clone(),
             to: self.target(&self.entry.path),
         }
+    }
+    fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
+        let src = self.entry.resolve().ok()?;
+        Some((self.dest_dir.clone(), tree_size(&src, ctx).ok()?))
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
         if let Some(invalid) = self.new_name.as_deref().and_then(invalid_name) {

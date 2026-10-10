@@ -4,7 +4,7 @@
 //! in the same queue and is answered the same way: Allow or Refuse.
 
 use bibli_core::Plan;
-use bibli_core::app::Question;
+use bibli_core::app::{Asker, Question};
 use bibli_core::op::{PlanDiff, StepStatus};
 use gpui::{AnyElement, Context, FocusHandle, Window, div, prelude::*, px};
 
@@ -165,7 +165,11 @@ impl Shell {
                 // Checked again when its turn comes: all or nothing.
                 Some(Review::Plan { plan, .. }) => self.app.apply_whole(plan),
                 Some(Review::Question(question)) if !self.app.answer(question.id, true) => {
-                    self.set_status("The agent stopped waiting: nothing was run", false, cx);
+                    let said = match question.asker {
+                        Asker::Agent => "The agent stopped waiting: nothing was run",
+                        Asker::Room => "The copy stopped waiting: nothing was copied",
+                    };
+                    self.set_status(said, false, cx);
                 }
                 Some(Review::Question(_)) | None => {}
             },
@@ -189,7 +193,11 @@ impl Shell {
             }
             Some(Review::Question(question)) => {
                 self.app.answer(question.id, false);
-                self.set_status("Refused: the agent was told", false, cx);
+                let said = match question.asker {
+                    Asker::Agent => "Refused: the agent was told",
+                    Asker::Room => "Cancelled: nothing was copied",
+                };
+                self.set_status(said, false, cx);
             }
             None => return,
         }
@@ -240,24 +248,33 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 "Apply",
             )
         }
-        Review::Question(question) => (
-            question.title.clone(),
-            more.trim_start_matches(" · ").to_owned(),
-            Some(
-                "It acts without a plan to review: allow it this once, or refuse and the agent is told."
-                    .to_owned(),
-            ),
-            question
-                .detail
-                .lines()
-                .take(40)
-                .fold(list, |list, line| {
+        Review::Question(question) => {
+            let (note, hint, refuse, allow) = match question.asker {
+                Asker::Agent => (
+                    "It acts without a plan to review: allow it this once, or refuse and the agent is told.",
+                    "Enter allows it once, Escape refuses",
+                    "Refuse",
+                    "Allow",
+                ),
+                Asker::Room => (
+                    "Nothing is copied until you answer.",
+                    "Enter copies anyway, Escape cancels",
+                    "Cancel",
+                    "Copy anyway",
+                ),
+            };
+            (
+                question.title.clone(),
+                more.trim_start_matches(" · ").to_owned(),
+                Some(note.to_owned()),
+                question.detail.lines().take(40).fold(list, |list, line| {
                     list.child(div().text_color(theme.text).child(line.to_owned()))
                 }),
-            "Enter allows it once, Escape refuses",
-            "Refuse",
-            "Allow",
-        ),
+                hint,
+                refuse,
+                allow,
+            )
+        }
     };
     let panel = modal::panel(720., &theme)
         .p_3()

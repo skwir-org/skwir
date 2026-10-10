@@ -2,9 +2,8 @@
 
 Status: accepted, 2026-10-10. Revises ADR-000's principle 6 ("entries
 have stable identity: device + inode") and ADR-036's first point: the
-device and the inode are the identity of a file, not of a row. Points 1
-to 5 and 7 are built (4 but where a deletion asks); point 6 is the plan
-in Consequences.
+device and the inode are the identity of a file, not of a row. Every
+point is built, 4 but where a deletion asks (Consequences).
 
 ## Context
 
@@ -157,4 +156,14 @@ sizes mean rather than estimate extents, a filesystem tool's work.
   that keeps none) copies the data. Tested by
   `a_copy_keeps_the_links_among_what_it_copies`. On Windows `std` says
   nothing of a file's names: there each name is copied, as before.
-  Left: point 6.
+  Then point 6: a plan the user asked for as one action
+  (`Executor::execute_whole`) adds up, after its conflicts are checked,
+  what its copies and its moves to another filesystem will write
+  (`Operation::writes`) by the volume they write to, against what each
+  says is free (`fs::volume::free`), and when one has too little asks
+  whether to go on (`op::room`; the review's question, Cancel or Copy
+  anyway, `app::Asker::Room`), refusing it with what it needs and what
+  is free otherwise. Tested by `a_copy_short_of_room_asks_whether_to_go_on`
+  and `room`'s own. Its cost: a copy's sources are walked once more
+  before it starts, to size them. Not asked of a trash onto another
+  volume (a volume without a trash of its own, rare).

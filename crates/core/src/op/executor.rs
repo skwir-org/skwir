@@ -11,6 +11,7 @@
 //! those draw what is on screen.
 
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant, SystemTime};
@@ -260,7 +261,21 @@ pub struct Executor {
     /// Plans someone waits for (`watch`): answered when their run
     /// finishes, or when they are dismissed.
     watched: Mutex<std::collections::HashMap<PlanId, Sender<Verdict>>>,
+    /// What a volume has free (`fs::volume::free`; a test's own).
+    free: Mutex<Free>,
+    /// Asks the user whether a plan short of room goes on anyway
+    /// (`set_room_asker`): its answer comes on the channel. None asks:
+    /// such a plan is refused.
+    room_asker: Mutex<Option<RoomAsker>>,
 }
+
+/// What a volume has free, by a folder on it.
+pub type Free = Arc<dyn Fn(&Path) -> Option<u64> + Send + Sync>;
+
+/// Asks whether the plan titled so, short of room (`room::Short`), goes
+/// on anyway; answers on the channel, true to go on.
+pub type RoomAsker =
+    Arc<dyn Fn(&str, &super::room::Short) -> crossbeam_channel::Receiver<bool> + Send + Sync>;
 
 /// A plan being applied: what stops it, what holds it, what it moved.
 struct Active {
@@ -310,7 +325,46 @@ impl Executor {
             companions: Mutex::new(Arc::default()),
             under_way: Mutex::new(None),
             watched: Mutex::new(std::collections::HashMap::new()),
+            free: Mutex::new(Arc::new(crate::fs::volume::free)),
+            room_asker: Mutex::new(None),
         })
+    }
+
+    /// Ask the user, through `asker`, whether a plan short of room where it
+    /// writes goes on anyway (ADR-049): the window's question.
+    pub fn set_room_asker(&self, asker: Option<RoomAsker>) {
+        *self.room_asker.lock() = asker;
+    }
+
+    /// What a volume has free, as `free` says: for a test.
+    pub fn set_free(&self, free: Free) {
+        *self.free.lock() = free;
+    }
+
+    /// Why `plan`, asked for as one action, does not go on for want of
+    /// room: `None` when it has room, or the user said to go on. Waits for
+    /// the answer, Cancel answering no.
+    fn short_of_room(&self, plan: &Plan, cancel: &CancelToken) -> Option<String> {
+        let free = Arc::clone(&self.free.lock());
+        let ctx = StepContext::with_cancel(cancel.clone());
+        let short = super::room::short(&plan.steps, &ctx, &*free, cancel)?;
+        let asker = self.room_asker.lock().clone();
+        let Some(asker) = asker else {
+            return Some(short.said());
+        };
+        let answer = asker(&plan.title, &short);
+        loop {
+            match answer.recv_timeout(Duration::from_millis(100)) {
+                Ok(true) => return None,
+                Ok(false) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    return Some(short.said());
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) if cancel.is_cancelled() => {
+                    return Some(short.said());
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+            }
+        }
     }
 
     /// Answer `reply` once the plan `id` has run: what it did. Its first
@@ -679,12 +733,18 @@ impl Executor {
                 Work::Execute { plan, whole } => {
                     let whole = whole && !job.cancel.is_cancelled();
                     let companions = Arc::clone(&self.companions.lock());
-                    Some(
-                        match whole.then(|| first_conflict(&plan, &companions)).flatten() {
-                            Some(reason) => self.refuse(&plan, reason),
-                            None => self.run_execute(&plan, &job.cancel),
-                        },
-                    )
+                    // A conflict anywhere, or too little room where it
+                    // writes and the user not going on, applies nothing.
+                    let refused = whole
+                        .then(|| {
+                            first_conflict(&plan, &companions)
+                                .or_else(|| self.short_of_room(&plan, &job.cancel))
+                        })
+                        .flatten();
+                    Some(match refused {
+                        Some(reason) => self.refuse(&plan, reason),
+                        None => self.run_execute(&plan, &job.cancel),
+                    })
                 }
                 Work::Replay(direction) => self.replay(direction, &job.cancel),
             };

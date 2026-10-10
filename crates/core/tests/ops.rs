@@ -486,6 +486,60 @@ fn a_copy_keeps_the_links_among_what_it_copies() {
     assert_eq!(links("alone/a.jpg"), 1, "a copy of its own");
 }
 
+/// A copy the user asked for, short of room where it writes, asks first
+/// whether to go on (ADR-049): cancelled, nothing is copied and the plan
+/// says why; told to go on, it copies.
+#[test]
+fn a_copy_short_of_room_asks_whether_to_go_on() {
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    std::fs::create_dir_all(root.join("dest")).unwrap();
+    std::fs::write(root.join("a.bin"), [0u8; 1000]).unwrap();
+    let app = app(tmp.path());
+    app.executor.set_free(std::sync::Arc::new(|_| Some(10)));
+    let plan = || {
+        Plan::with_steps(
+            "copy “a.bin”",
+            vec![Box::new(Copy {
+                entry: EntryRef::from_path(root.join("a.bin")).unwrap(),
+                dest_dir: root.join("dest"),
+                new_name: None,
+                preserve_attributes: true,
+            }) as Box<dyn Operation>],
+        )
+    };
+    let question = || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Some(q) = app.take_questions().pop() {
+                return q;
+            }
+            assert!(std::time::Instant::now() < deadline, "never asked");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+
+    app.apply_whole(plan());
+    let asked = question();
+    assert_eq!(asked.asker, bibli_core::app::Asker::Room);
+    assert_eq!(
+        asked.title,
+        "Not enough room in “dest”: 1000 B needed, 10 B free"
+    );
+    app.answer(asked.id, false);
+    let events = events_until(&app, |e| matches!(e, ExecEvent::Finished { .. }));
+    assert!(matches!(
+        events.last(),
+        Some(ExecEvent::Finished { applied: 0, error: Some(e), .. }) if e.starts_with("Not enough room")
+    ));
+    assert!(!root.join("dest/a.bin").exists(), "nothing copied");
+
+    app.apply_whole(plan());
+    app.answer(question().id, true);
+    events_until(&app, |e| matches!(e, ExecEvent::Finished { .. }));
+    assert_eq!(std::fs::read(root.join("dest/a.bin")).unwrap().len(), 1000);
+}
+
 /// A step that cancels or pauses its own plan while it runs, so the test
 /// needs no timing.
 #[derive(Debug, Clone)]

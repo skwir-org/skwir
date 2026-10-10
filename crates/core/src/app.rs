@@ -33,7 +33,7 @@ pub enum NotifyLevel {
     Error,
 }
 
-/// A question for the user, Allow or Deny (`App::ask`).
+/// A question for the user, yes or no (`App::ask`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Question {
     pub id: u64,
@@ -41,6 +41,18 @@ pub struct Question {
     pub title: String,
     /// What it would do, in full: the command and its arguments.
     pub detail: String,
+    /// Who waits for the answer: what the answers say.
+    pub asker: Asker,
+}
+
+/// Who waits for a question's answer, which says how it is answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asker {
+    /// An agent asking to run a command (ADR-044): Refuse or Allow.
+    Agent,
+    /// A plan short of room where it writes (ADR-049): Cancel, or copy
+    /// anyway.
+    Room,
 }
 
 /// A message from background work for the UI.
@@ -233,6 +245,21 @@ impl App {
                 });
             app.notes.keep_snapshots(app.cache.namespace("notes"));
             app.executor.set_companions(Arc::clone(&app.companions));
+            // A plan short of room asks the user whether to go on anyway.
+            let asking = Arc::downgrade(&app);
+            app.executor.set_room_asker(Some(Arc::new(
+                move |title: &str, short: &op::room::Short| match asking.upgrade() {
+                    Some(app) => {
+                        let detail = format!(
+                            "{title}: a drive, a network share above all, may say it has \
+                             less room than it has. Copy anyway, or cancel and make room."
+                        );
+                        app.ask_as(Asker::Room, short.said(), detail).1
+                    }
+                    // Gone: no one answers, so nothing is copied.
+                    None => crossbeam_channel::bounded(0).1,
+                },
+            )));
             // What a run that ended mid-copy left is swept as this one
             // starts, out of its way.
             let under_way =
@@ -857,6 +884,16 @@ impl App {
         title: impl Into<String>,
         detail: impl Into<String>,
     ) -> (u64, crossbeam_channel::Receiver<bool>) {
+        self.ask_as(Asker::Agent, title, detail)
+    }
+
+    /// [`App::ask`], for `asker`.
+    pub fn ask_as(
+        &self,
+        asker: Asker,
+        title: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> (u64, crossbeam_channel::Receiver<bool>) {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (reply, answer) = crossbeam_channel::bounded(1);
@@ -865,6 +902,7 @@ impl App {
             id,
             title: title.into(),
             detail: detail.into(),
+            asker,
         });
         self.wake();
         (id, answer)

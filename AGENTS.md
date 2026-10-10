@@ -839,6 +839,12 @@ current source before assuming a planned crate, command, or API exists.
   for good. A step Undo cannot take back
   (`Operation::undoable`: deleting for good) makes its plan ask before a
   gesture applies it (`Shell::apply_user_plan`), whatever the gesture.
+  A plan the user asked for as one action (`Executor::execute_whole`)
+  checks the room it writes into before it starts: what its steps will
+  write (`Operation::writes`: a copy, a move to another filesystem, a
+  file of several names once) against what each volume says is free
+  (`op::room`), and asks whether to go on when one has too little (a
+  network share may say less than it has), never refusing unasked.
 - **Search chips.** A pane showing a search draws it in its address field
   as pills (`search_bar.rs`): where it looks first, then each facet
   `query.describe` says is set, then "+ Filter", which lists the facets

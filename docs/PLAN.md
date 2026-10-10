@@ -2484,8 +2484,8 @@ Steps, each with what was found and what is left:
    so is the first: a row per name (`FileId` and `EntryId`, a rename
    sent as one), and space counted per file (the footer, the selection,
    Usage, which says what deleting frees), and copies keep the hard
-   links among what they carry. Left before the release: a free-space
-   check.
+   links among what they carry, and a copy short of room asks before
+   it starts.
 5. **What users keep from 0.1 on**: settings keys and values, the
    window's session, saved searches, pins, the cache's layout (versioned,
    or thrown away whole), so that later versions read them. Done

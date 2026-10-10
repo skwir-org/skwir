@@ -375,6 +375,22 @@ impl Iterator for Listing {
     }
 }
 
+/// The bytes free to the caller on the volume `path` is on.
+pub(crate) fn free_space(path: &Path) -> Option<u64> {
+    let mut free = 0u64;
+    // SAFETY: a NUL-ended path and a place for the one number asked; the
+    // others are not asked (null).
+    let ok = unsafe {
+        fs::GetDiskFreeSpaceExW(
+            wide(path).as_ptr(),
+            &raw mut free,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(free)
+}
+
 /// `path` as Windows takes it: UTF-16, ending in a NUL.
 fn wide(path: &Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;

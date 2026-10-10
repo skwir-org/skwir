@@ -15,6 +15,7 @@ mod pace;
 #[cfg(target_os = "linux")]
 mod put_trash;
 pub mod records;
+pub mod room;
 pub mod staging;
 mod sys;
 
@@ -502,6 +503,15 @@ pub trait Operation: Send + Sync + fmt::Debug {
     fn held(&self) -> usize {
         0
     }
+    /// The folder it will write into, and how many bytes it will write
+    /// there, as it will count them (`ctx`'s files of several names once):
+    /// what the plan's room is checked against (`room::short`). `None` for
+    /// what writes no file's bytes. Reads what it would copy: on the plan's
+    /// thread.
+    fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
+        let _ = ctx;
+        None
+    }
 }
 
 impl Clone for Box<dyn Operation> {
@@ -523,6 +533,11 @@ pub trait Effect: Send + Sync + fmt::Debug {
     /// `Operation::undoable`.
     fn undoable(&self) -> bool {
         true
+    }
+    /// `Operation::writes`.
+    fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
+        let _ = ctx;
+        None
     }
 }
 
@@ -554,6 +569,9 @@ impl<T: Kind> Operation for T {
     }
     fn undoable(&self) -> bool {
         Effect::undoable(self)
+    }
+    fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
+        Effect::writes(self, ctx)
     }
 }
 

@@ -850,20 +850,8 @@ pub fn count(n: usize) -> Option<String> {
     (n > 0).then(|| n.to_string())
 }
 /// A size the way the file list shows one: `512 B`, `1.5 KB`, `3.2 GB`, in
-/// binary multiples.
-pub fn size(bytes: u64) -> String {
-    const UNITS: [&str; 6] = ["B", "KB", "MB", "GB", "TB", "PB"];
-    if bytes < 1024 {
-        return format!("{bytes} B");
-    }
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    format!("{value:.1} {}", UNITS[unit])
-}
+/// binary multiples (the core's, which its own words use too).
+pub use bibli_core::fs::size_said as size;
 pub fn extension(path: &Path) -> String {
     path.extension()
         .unwrap_or_default()
