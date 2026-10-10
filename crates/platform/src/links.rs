@@ -115,8 +115,15 @@ pub fn urls(text: &str) -> Vec<Range<usize>> {
     // character's), where each colon of a long run (`mailto:` without an
     // `@`, over and over) looked for its end again.
     let mut ending: Option<(usize, usize)> = None;
+    let mut colons = 0usize;
     while let Some(colon) = text[from..].find(':').map(|i| from + i) {
         from = colon + 1;
+        // A text of megabytes is long to look through: a preview moved on
+        // from stops here (its answer is not taken).
+        colons += 1;
+        if colons.is_multiple_of(1024) && bibli_core::scheduler::job_cancelled() {
+            break;
+        }
         // The scheme is the letters right before the colon, and starts a
         // word: `xhttp://` is not `http://`.
         let start = text[..colon]
@@ -315,11 +322,16 @@ pub fn resolve(word: &str, base: &Path) -> Option<PathBuf> {
     base.ancestors().find_map(|dir| there(dir.join(path)))
 }
 
-/// Give `block` the addresses in its text as links/// Give `block` the addresses in its text as links, where no run links
+/// Give `block` the addresses in its text as links, where no run links
 /// already or is code: a link the text was written with stays as it was.
 /// `found` says how they are followed (`Run::found`): with Ctrl in raw
 /// text, where a click selects; on a click in a document read as a page.
 pub fn link_block(block: &mut Block, found: bool) {
+    // A preview moved on from links nothing more (its answer is not
+    // taken): a document of many blocks stops here.
+    if bibli_core::scheduler::job_cancelled() {
+        return;
+    }
     let addresses = urls(&block.text);
     if addresses.is_empty() {
         return;

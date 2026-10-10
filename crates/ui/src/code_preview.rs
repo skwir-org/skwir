@@ -353,7 +353,12 @@ impl<'a> Highlighter<'a> {
 pub(crate) fn highlight(data: &mut Inspection, palette: &Palette) {
     let language = data.blocks.first().and_then(|b| b.language.clone());
     let mut highlighter = Highlighter::new(language.as_deref(), palette);
-    for block in &mut data.blocks {
+    for (line, block) in data.blocks.iter_mut().enumerate() {
+        // A preview moved on from is not colored further: its answer is
+        // not taken.
+        if line % 256 == 0 && bibli_core::scheduler::job_cancelled() {
+            return;
+        }
         block.runs = highlighter.line(&block.text);
         bibli_platform::links::link_block(block, true);
     }
