@@ -501,10 +501,7 @@ fn read(
         Format::GeoJson => {
             let bytes =
                 inspection::read_bounded(path, limits::BINARY_INPUT, "This GeoJSON file", cancel)?;
-            let document: serde_json::Value = serde_json::from_slice(&bytes)
-                .map_err(|error| anyhow::anyhow!("Not valid GeoJSON: {error}"))?;
-            inspection::check(cancel)?;
-            geojson::read(&document, into, cancel)?;
+            geojson::read(&bytes, into, cancel)?;
             None
         }
     };

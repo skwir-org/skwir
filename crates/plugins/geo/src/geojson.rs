@@ -1,8 +1,10 @@
 //! `GeoJSON` (RFC 7946): features and bare geometries. Lines are routes
 //! unless their feature gives each point a time (`coordTimes`, which
 //! converters from GPX and KML write), and then they are tracks.
+use bibli_core::CancelToken;
 use bibli_core::geo::{Area, Datum, LatLon, LineKind, Point, Waypoint, WaypointKind};
-use serde_json::Value;
+use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
+use serde_json::{Map, Value};
 
 use crate::collect::{self, Collector};
 
@@ -58,32 +60,106 @@ fn name(properties: Option<&Value>) -> String {
         .to_owned()
 }
 
-/// The places `document` holds, into `into`; stopped between features once
-/// `cancel` fires (a file of road segments holds hundreds of thousands).
-pub fn read(
-    document: &Value,
-    into: &mut Collector,
-    cancel: &bibli_core::CancelToken,
-) -> anyhow::Result<()> {
-    match document.get("type").and_then(Value::as_str) {
-        Some("FeatureCollection") => {
-            for (n, feature) in document
-                .get("features")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .enumerate()
-            {
-                if n.is_multiple_of(256) {
-                    bibli_platform::inspection::check(cancel)?;
-                }
-                read_feature(feature, into);
-            }
+/// The places the `GeoJSON` text `bytes` holds, into `into`, a feature
+/// at a time: a collection is never held whole as values, which took six
+/// to ten times the file on each worker scanning (a file of road
+/// segments holds hundreds of thousands). Stopped between features once
+/// `cancel` fires.
+pub fn read(bytes: &[u8], into: &mut Collector, cancel: &CancelToken) -> anyhow::Result<()> {
+    let mut reading = Reading {
+        into,
+        cancel,
+        cancelled: false,
+    };
+    let mut text = serde_json::Deserializer::from_slice(bytes);
+    let rest = serde::Deserializer::deserialize_map(&mut text, Top(&mut reading))
+        .and_then(|rest| text.end().map(|()| rest));
+    let rest = match rest {
+        Ok(rest) => rest,
+        Err(_) if reading.cancelled => {
+            bibli_platform::inspection::check(cancel)?;
+            anyhow::bail!("preview cancelled")
         }
-        Some("Feature") => read_feature(document, into),
-        _ => geometry(document, "", None, into, 0),
+        Err(error) => anyhow::bail!("Not valid GeoJSON: {error}"),
+    };
+    let rest = Value::Object(rest);
+    match rest.get("type").and_then(Value::as_str) {
+        // Its features were read as they came.
+        Some("FeatureCollection") => {}
+        Some("Feature") => read_feature(&rest, reading.into),
+        _ => geometry(&rest, "", None, reading.into, 0),
     }
     Ok(())
+}
+
+/// Where a document's features go as they are read.
+struct Reading<'a, 'c> {
+    into: &'a mut Collector,
+    cancel: &'c CancelToken,
+    /// Whether the reading stopped for `cancel`, not for the text.
+    cancelled: bool,
+}
+
+/// The document's object: its features read one by one, everything else
+/// kept as values (a feature's or a geometry's own members, small).
+struct Top<'r, 'a, 'c>(&'r mut Reading<'a, 'c>);
+
+impl<'de> Visitor<'de> for Top<'_, '_, '_> {
+    type Value = Map<String, Value>;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a GeoJSON object")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut rest = Map::new();
+        while let Some(key) = map.next_key::<String>()? {
+            let collection = rest
+                .get("type")
+                .is_none_or(|kind| kind == "FeatureCollection");
+            if key == "features" && collection {
+                map.next_value_seed(Features(&mut *self.0))?;
+            } else {
+                let value = map.next_value::<Value>()?;
+                rest.insert(key, value);
+            }
+        }
+        Ok(rest)
+    }
+}
+
+/// A collection's features, each read into the collector as it is
+/// parsed, then let go of.
+struct Features<'r, 'a, 'c>(&'r mut Reading<'a, 'c>);
+
+impl<'de> DeserializeSeed<'de> for Features<'_, '_, '_> {
+    type Value = ();
+
+    fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de> Visitor<'de> for Features<'_, '_, '_> {
+    type Value = ();
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a list of features")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
+        for n in 0usize.. {
+            if n.is_multiple_of(256) && self.0.cancel.is_cancelled() {
+                self.0.cancelled = true;
+                return Err(serde::de::Error::custom("cancelled"));
+            }
+            let Some(feature) = seq.next_element::<Value>()? else {
+                break;
+            };
+            read_feature(&feature, self.0.into);
+        }
+        Ok(())
+    }
 }
 
 fn read_feature(feature: &Value, into: &mut Collector) {
@@ -205,8 +281,7 @@ mod tests {
 
     #[test]
     fn a_feature_collection_gives_its_features() {
-        let document: Value = serde_json::from_str(
-            r#"{"type":"FeatureCollection","features":[
+        let document = br#"{"type":"FeatureCollection","features":[
               {"type":"Feature","properties":{"name":"Spring"},
                "geometry":{"type":"Point","coordinates":[6.0,45.0,1200]}},
               {"type":"Feature","properties":{"name":"Path"},
@@ -215,11 +290,9 @@ mod tests {
                "geometry":{"type":"LineString","coordinates":[[6.0,45.0,100],[6.0,45.001,104]]}},
               {"type":"Feature","properties":{},
                "geometry":{"type":"MultiPolygon","coordinates":[[[[6,45],[6.1,45],[6.1,45.1],[6,45]]]]}}
-            ]}"#,
-        )
-        .unwrap();
+            ]}"#;
         let mut c = Collector::new();
-        read(&document, &mut c, &bibli_core::CancelToken::new()).unwrap();
+        read(document, &mut c, &CancelToken::new()).unwrap();
         let (doc, c) = c.finish();
         assert_eq!(doc.waypoints[0].name, "Spring");
         assert_eq!(doc.lines[0].kind, LineKind::Route);
@@ -232,11 +305,37 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_geometry_is_read_too() {
-        let document: Value =
-            serde_json::from_str(r#"{"type":"Point","coordinates":[-170.5,-10.25]}"#).unwrap();
+    fn features_are_read_as_they_come_and_a_cancel_stops_them() {
+        // The type said after the features, as some writers order them.
+        let document = br#"{"features":[
+              {"type":"Feature","properties":{"name":"A"},"geometry":{"type":"Point","coordinates":[6,45]}},
+              {"type":"Feature","properties":{"name":"B"},"geometry":{"type":"Point","coordinates":[7,46]}}
+            ],"type":"FeatureCollection"}"#;
         let mut c = Collector::new();
-        read(&document, &mut c, &bibli_core::CancelToken::new()).unwrap();
+        read(document, &mut c, &CancelToken::new()).unwrap();
+        let (doc, _) = c.finish();
+        let names: Vec<_> = doc.waypoints.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, ["A", "B"]);
+
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let mut c = Collector::new();
+        assert!(read(document, &mut c, &cancel).is_err());
+        assert!(c.finish().0.waypoints.is_empty());
+
+        let mut c = Collector::new();
+        let error = read(b"[1, 2]", &mut c, &CancelToken::new()).unwrap_err();
+        assert!(
+            error.to_string().starts_with("Not valid GeoJSON"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_bare_geometry_is_read_too() {
+        let document = br#"{"type":"Point","coordinates":[-170.5,-10.25]}"#;
+        let mut c = Collector::new();
+        read(document, &mut c, &CancelToken::new()).unwrap();
         let (doc, _) = c.finish();
         assert_eq!(doc.waypoints[0].at, LatLon::new(-10.25, -170.5).unwrap());
     }
