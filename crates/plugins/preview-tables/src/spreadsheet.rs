@@ -87,6 +87,40 @@ impl Book {
     }
 }
 
+/// A workbook as it is: where, its length and its time.
+type Version = (std::path::PathBuf, u64, Option<std::time::SystemTime>);
+
+fn version_of(path: &Path) -> Option<Version> {
+    std::fs::metadata(path)
+        .ok()
+        .map(|meta| (path.to_path_buf(), meta.len(), meta.modified().ok()))
+}
+
+/// The rows and the columns of the sheets walked whole, by workbook as
+/// it is and sheet: a page turned in one of them reads the sheet down to
+/// the page's last row and stops (a sheet's rows are in order in its
+/// file), rather than walking every cell again to count them.
+static SIZES: std::sync::Mutex<Vec<(Version, String, (u64, u32))>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn sizes() -> std::sync::MutexGuard<'static, Vec<(Version, String, (u64, u32))>> {
+    SIZES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// What stops a walk at the page's end.
+#[derive(Debug)]
+struct PageRead;
+
+impl std::fmt::Display for PageRead {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the page is read")
+    }
+}
+
+impl std::error::Error for PageRead {}
+
 /// Inflate every part calamine may read, counting, before it reads any:
 /// at most `limit` bytes together.
 fn bounded(path: &Path, limit: u64, cancel: &CancelToken) -> anyhow::Result<()> {
@@ -221,13 +255,24 @@ pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<I
         .min(sheets.len() - 1);
     let first = offset % SHEET;
     let page = limits::TABLE_ROWS as u64;
+    let version = version_of(path);
+    let known = version.as_ref().and_then(|version| {
+        sizes()
+            .iter()
+            .find(|(v, name, _)| v == version && *name == sheets[sheet])
+            .map(|(_, _, size)| *size)
+    });
     let mut grid: Vec<Vec<String>> = Vec::new();
     let (mut rows, mut columns) = (0u64, 0u32);
     let (mut seen, mut cut) = (0usize, 0usize);
-    book.cells(&sheets[sheet], |(row, column), value| {
+    let walked = book.cells(&sheets[sheet], |(row, column), value| {
         seen += 1;
         if seen.is_multiple_of(4096) {
             inspection::check(cancel)?;
+        }
+        // Its size known, the sheet is read no further than the page.
+        if known.is_some() && u64::from(row) >= first + page {
+            return Err(PageRead.into());
         }
         if matches!(value, DataRef::Empty) {
             return Ok(());
@@ -247,7 +292,21 @@ pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<I
             cells[column as usize] = crate::bounded_cell(&text(value), &mut cut);
         }
         Ok(())
-    })?;
+    });
+    match walked {
+        Err(error) if error.is::<PageRead>() => {}
+        walked => walked?,
+    }
+    if let Some((all_rows, all_columns)) = known {
+        (rows, columns) = (all_rows, all_columns);
+    } else if let Some(version) = version {
+        let mut kept = sizes();
+        kept.retain(|(v, name, _)| v.0 != version.0 || *name != sheets[sheet]);
+        if kept.len() >= 64 {
+            kept.remove(0);
+        }
+        kept.push((version, sheets[sheet].clone(), (rows, columns)));
+    }
     let shown = (columns as usize).min(limits::TABLE_COLUMNS);
     let last = rows.min(first + page);
     grid.resize_with(last.saturating_sub(first) as usize, Vec::new);
@@ -434,6 +493,26 @@ mod tests {
         assert_eq!(fact(&data, "Rows").as_deref(), Some("1000000"));
         assert_eq!(fact(&data, "Columns").as_deref(), Some("16384"));
         assert_eq!(fact(&data, "Sheets").as_deref(), Some("2"));
+        // Turned to again, the page is read alone, its sheet's size known.
+        let again = table(&path, 0, &cancel).unwrap();
+        let cells = |data: &Inspection| -> Vec<Vec<String>> {
+            data.rows.iter().map(|row| row.cells.clone()).collect()
+        };
+        assert_eq!(cells(&again), cells(&data));
+        assert_eq!(
+            (
+                fact(&again, "Rows"),
+                fact(&again, "Columns"),
+                again.notice,
+                again.next
+            ),
+            (
+                fact(&data, "Rows"),
+                fact(&data, "Columns"),
+                data.notice.clone(),
+                data.next
+            )
+        );
 
         // The last page of the sheet, then the next sheet from its top.
         let last = table(&path, 999_900, &cancel).unwrap();
