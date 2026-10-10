@@ -754,6 +754,20 @@ pub struct Handles {
     pub mark: Rc<Cell<Option<LatLon>>>,
     /// The profile's point under the pointer.
     pub profile_hover: Rc<Cell<Option<usize>>>,
+    /// The file markers grouped at the zoom drawn last (`Clustered`).
+    clusters: Rc<RefCell<Option<Clustered>>>,
+}
+
+/// File markers grouped as map libraries group them, each joining the
+/// group whose first marker is within `CLUSTER` pixels: in the world's
+/// pixels at one zoom, so a pan moves the groups and never forms them
+/// again, worked out once per markers, zoom, copy of the world and bubble
+/// opened. Grouped again at every frame, through a map of every marker's
+/// cell, a map of a hundred thousand photos took a frame's time.
+struct Clustered {
+    key: [u64; 6],
+    /// Each group's markers, by their index in `Shapes::markers`.
+    groups: Vec<Vec<u32>>,
 }
 
 impl Handles {
@@ -1323,32 +1337,85 @@ impl Element for Map {
                 .into_iter()
                 .partition(|file| spread_all || opened.contains(&file.0))
         };
-        // The others close together merge, as map libraries do: each joins
-        // the group whose first marker is within `CLUSTER` pixels, looked
-        // for in its cell and the eight around it, or starts one.
-        // Recomputed as the view moves.
+        // The others close together merge, as map libraries do
+        // (`Clustered`): each group's members in view are drawn as one.
         let mut groups: Vec<Vec<File>> = Vec::new();
-        let mut seeds: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
-        for file in clustered.into_iter().filter(|file| inside(file.1)) {
-            let local = file.1 - origin;
-            let cell = (
-                (f32::from(local.x) / CLUSTER).floor() as i32,
-                (f32::from(local.y) / CLUSTER).floor() as i32,
-            );
-            let near = (-1..=1)
-                .flat_map(|dx| (-1..=1).map(move |dy| (cell.0 + dx, cell.1 + dy)))
-                .filter_map(|c| seeds.get(&c))
-                .flatten()
-                .copied()
-                .find(|&g| {
-                    let d = groups[g][0].1 - file.1;
-                    f32::from(d.x).hypot(f32::from(d.y)) < CLUSTER
-                });
-            if let Some(g) = near {
-                groups[g].push(file);
-            } else {
-                seeds.entry(cell).or_default().push(groups.len());
-                groups.push(vec![file]);
+        if !clustered.is_empty() {
+            drop(clustered);
+            let opened = self.handles.opened.borrow();
+            let opened_stamp = opened.iter().fold(opened.len() as u64, |stamp, id| {
+                stamp ^ id.ino ^ id.dev.rotate_left(32)
+            });
+            // The markers by their address, and, should new ones be made
+            // where old ones were, by how many and where the ends are.
+            let markers = &self.shapes.markers;
+            let ends = |marker: Option<&Marker>| {
+                marker.map_or(0, |m| m.at.0.to_bits() ^ m.at.1.to_bits().rotate_left(17))
+            };
+            let key = [
+                Arc::as_ptr(&self.shapes) as usize as u64,
+                markers.len() as u64,
+                ends(markers.first()) ^ ends(markers.last()).rotate_left(29),
+                view.zoom.to_bits(),
+                offset.to_bits(),
+                opened_stamp,
+            ];
+            let mut cache = self.handles.clusters.borrow_mut();
+            if cache.as_ref().is_none_or(|c| c.key != key) {
+                // Where the world's origin is drawn: a marker's pixels from
+                // it are the same however the map is panned.
+                let zero = at((offset, 0.));
+                let mut found: Vec<Vec<u32>> = Vec::new();
+                let mut leaders: Vec<gpui::Point<Pixels>> = Vec::new();
+                let mut seeds: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+                for (n, marker) in self.shapes.markers.iter().enumerate() {
+                    let Some(entry) = marker.entry else { continue };
+                    if opened.contains(&entry) {
+                        continue;
+                    }
+                    let local = at((marker.at.0 + offset, marker.at.1)) - zero;
+                    let cell = (
+                        (f32::from(local.x) / CLUSTER).floor() as i32,
+                        (f32::from(local.y) / CLUSTER).floor() as i32,
+                    );
+                    let near = (-1..=1)
+                        .flat_map(|dx| (-1..=1).map(move |dy| (cell.0 + dx, cell.1 + dy)))
+                        .filter_map(|c| seeds.get(&c))
+                        .flatten()
+                        .copied()
+                        .find(|&g| {
+                            let d = leaders[g] - local;
+                            f32::from(d.x).hypot(f32::from(d.y)) < CLUSTER
+                        });
+                    let n = u32::try_from(n).unwrap_or(u32::MAX);
+                    if let Some(g) = near {
+                        found[g].push(n);
+                    } else {
+                        seeds.entry(cell).or_default().push(found.len());
+                        leaders.push(local);
+                        found.push(vec![n]);
+                    }
+                }
+                *cache = Some(Clustered { key, groups: found });
+            }
+            // Each group, of its members in view: the files clustered are
+            // those neither spread nor in a bubble opened, which the groups
+            // hold.
+            if let Some(cache) = cache.as_ref() {
+                for members in &cache.groups {
+                    let group: Vec<File> = members
+                        .iter()
+                        .filter_map(|&n| {
+                            let marker = self.shapes.markers.get(n as usize)?;
+                            let p = at((marker.at.0 + offset, marker.at.1));
+                            let entry = marker.entry.filter(|_| inside(p))?;
+                            Some((entry, p, marker.kind, marker.label.clone(), marker.clock))
+                        })
+                        .collect();
+                    if !group.is_empty() {
+                        groups.push(group);
+                    }
+                }
             }
         }
         let mut clusters = Vec::new();
