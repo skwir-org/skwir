@@ -21,6 +21,7 @@ mimalloc = ["bibli-alloc/mimalloc"]
 [dependencies]
 bibli-alloc.workspace = true
 bibli-core.workspace = true
+bibli-platform.workspace = true
 bibli-plugin-places.workspace = true
 bibli-plugin-open-with.workspace = true
 bibli-plugin-ops-basic.workspace = true
@@ -72,7 +73,6 @@ workspace = true
 toml.workspace = true
 bibli-core = { workspace = true, features = ["testing"] }
 proptest.workspace = true
-bibli-platform.workspace = true
 tempfile.workspace = true
 dirs.workspace = true
 serde_json.workspace = true

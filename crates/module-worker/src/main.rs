@@ -41,6 +41,12 @@ const GUEST: &str = "bibli:plugin/guest@0.1.0";
 
 fn main() {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    // `--build`, bibli asking which build of it this helper is, when a
+    // call of it failed (`platform::process::explain`).
+    if args.first().is_some_and(|arg| arg == "--build") {
+        println!("{}", env!("BIBLI_BUILD"));
+        return;
+    }
     // `--probe`, bibli's settings asking whether this helper works here:
     // being started at all says its libraries are there.
     if args.first().is_some_and(|arg| arg == "--probe") {

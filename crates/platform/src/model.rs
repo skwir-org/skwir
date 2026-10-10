@@ -138,6 +138,18 @@ pub fn draw(
     let Some(_turn) = turn else {
         anyhow::bail!("cancelled");
     };
+    draw_with(&worker, path, format, side, cancel)
+        .map_err(|error| crate::process::explain(&worker, cancel, error))
+}
+
+/// [`draw`] by the helper at `worker`, its turn taken.
+fn draw_with(
+    worker: &Path,
+    path: &Path,
+    format: MeshFormat,
+    side: u32,
+    cancel: &CancelToken,
+) -> anyhow::Result<Drawn> {
     let work = tempfile::tempdir()?;
     // A glTF's buffers may be files beside it: the helper reads them where
     // it reads the model.
@@ -147,7 +159,7 @@ pub fn draw(
         Vec::new()
     };
     let mut run = crate::sandbox::untrusted_beside(
-        &worker,
+        worker,
         path,
         &beside,
         work.path(),

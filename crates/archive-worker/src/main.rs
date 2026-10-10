@@ -205,6 +205,12 @@ mod native {
                     extract = true;
                     continue;
                 }
+                // One it does not know is refused, never taken for the
+                // archive or a member: a bibli newer than this helper
+                // asking what it cannot do says so.
+                Some(option) if option.starts_with("--") => {
+                    anyhow::bail!("unknown option {option}");
+                }
                 _ => {
                     positional.push(arg);
                     continue;
@@ -549,6 +555,15 @@ mod native {
     }
 }
 fn main() {
+    // `--build`, bibli asking which build of it this helper is, when a
+    // call of it failed (`platform::process::explain`).
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "--build")
+    {
+        println!("{}", env!("BIBLI_BUILD"));
+        return;
+    }
     // `--probe`, bibli's settings asking whether this helper works here
     // (`platform::process::probe`): being started at all says its
     // libraries are there.
@@ -602,5 +617,20 @@ mod tests {
         let whole = parse_args(args(&["a.zip", "--extract", "--stem", "a"])).unwrap();
         assert!(whole.extract && whole.member.is_none());
         assert!(parse_args(args(&["a.zip", "3", "--extract"])).is_err());
+    }
+    #[test]
+    fn an_option_it_does_not_know_is_refused_by_its_name() {
+        let Err(error) = parse_args(args(&[
+            "a.zip",
+            "--members",
+            "10",
+            "--names",
+            "2048",
+            "--later",
+            "27",
+        ])) else {
+            panic!("an option it does not know was taken");
+        };
+        assert_eq!(error.to_string(), "unknown option --later");
     }
 }

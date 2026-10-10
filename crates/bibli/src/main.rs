@@ -13,6 +13,9 @@ fn main() -> anyhow::Result<()> {
     // and a worker idle after its jobs gives back what they left.
     bibli_alloc::tune();
     bibli_core::scheduler::release_when_idle(bibli_alloc::collect);
+    // Which build this is, for a helper's failure to say when the helper
+    // is of another (`process::explain`).
+    bibli_platform::process::set_build(env!("BIBLI_BUILD"));
     // `bibli mcp` and `bibli cmd` (ADR-043), before anything logs: their
     // standard output is the protocol, or the JSON a script reads.
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();

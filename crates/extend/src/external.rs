@@ -258,20 +258,34 @@ impl Runner {
         let broken = answer
             .as_ref()
             .is_err_and(anyhow::Error::is::<crate::process::Broken>);
-        let turn_off = {
+        let (turn_off, stopped) = {
             let mut watch = self.watch.lock();
+            // Turned off while it was asked, before this call could.
+            let stopped = watch.off;
             watch.broken = if broken { watch.broken + 1 } else { 0 };
-            (watch.broken >= BROKEN_AT_MOST && !watch.off)
+            let turn_off = (watch.broken >= BROKEN_AT_MOST && !watch.off)
                 .then(|| {
                     watch.off = true;
                     watch.app.as_ref().and_then(std::sync::Weak::upgrade)
                 })
-                .flatten()
+                .flatten();
+            (turn_off, stopped)
         };
         if let Some(app) = turn_off {
             self.turned_off(&app);
         }
-        answer
+        match answer {
+            // A module's failure may be its helper's, of another build of
+            // bibli: said after it. A program of the plugin's own is never
+            // asked which build it is.
+            Err(error) if !stopped && matches!(self.kind, Kind::Module(_)) => {
+                Err(match crate::MODULE_WORKER.find() {
+                    Some(helper) => bibli_platform::process::explain(&helper, call.token(), error),
+                    None => error,
+                })
+            }
+            answer => answer,
+        }
     }
 
     /// Turn the plugin off, its program having broken again and again,

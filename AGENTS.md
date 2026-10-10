@@ -1339,7 +1339,14 @@ docs/              PLAN.md (plan and current status), STATUS-LOG.md, adr/,
   (PDFium's library, GStreamer's playback plugins) and exits 0 when it
   can work, and one whose linked libraries are missing never starts, so
   it is not installed where only its program is. A new helper answers
-  `--probe` too (each has a test of it).
+  `--probe` too (each has a test of it), and `--build` with the build of
+  bibli it is (`BIBLI_BUILD`: the version, and in a release build the
+  commit, from `tools/build/identity.rs`, which its build script
+  includes). bibli asks that only when a call of the helper failed
+  (`process::explain`) and then says, after the failure, that a helper of
+  another build may be why: never refused for it, since most calls work
+  all the same. A new kind of call of a helper explains its failures so,
+  where they are reported, never a cancellation.
 - `ui.settings` takes `{ "key": "plugin.option" }` or `{ "page": "plugins" }`.
   Report a problem whose remedy is a setting with `App::notify_about_setting`
   (or `Shell::set_status_about`); its toast links to it.
@@ -1451,7 +1458,8 @@ A new helper program is listed in `tools/package/programs` (and in
 `tools/package/optional` when a package of its own holds it), in the
 packages' file lists (`crates/bibli/Cargo.toml`'s metadata, the
 PKGBUILD) and the macOS and Windows scripts where it ships, and answers
-`--probe` (ADR-040, ADR-041).
+`--probe` (ADR-040, ADR-041) and `--build` (its `build.rs` includes
+`tools/build/identity.rs`).
 
 Without an active dev shell, use `nix develop --command just <recipe>`, as CI
 does. `spikes/` is a separate workspace and is not covered by the root checks.

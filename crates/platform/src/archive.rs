@@ -83,8 +83,13 @@ pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Arc<Listing>> {
 }
 
 fn read_listing(path: &Path, cancel: &CancelToken) -> anyhow::Result<Listing> {
+    let worker = worker()?;
+    read_listing_with(&worker, path, cancel)
+        .map_err(|error| crate::process::explain(&worker, cancel, error))
+}
+fn read_listing_with(worker: &Path, path: &Path, cancel: &CancelToken) -> anyhow::Result<Listing> {
     let work = tempfile::tempdir()?;
-    let mut run = sandbox::untrusted(&worker()?, path, work.path(), Otherwise::Run)?;
+    let mut run = sandbox::untrusted(worker, path, work.path(), Otherwise::Run)?;
     run.command
         .arg(&run.input)
         .args(stem(path))
@@ -149,18 +154,22 @@ fn write_member(
     let (Some(into), Some(name)) = (output.parent(), output.file_name()) else {
         anyhow::bail!("Nowhere to write the member");
     };
-    let mut run = sandbox::untrusted(&worker()?, path, into, Otherwise::Run)?;
-    run.command
-        .arg(&run.input)
-        .args(stem(path))
-        .arg(member.index.to_string())
-        .arg(run.work.join(name))
-        .arg("--name")
-        .arg(&member.name)
-        .arg("--bytes")
-        .arg(limits::BINARY_INPUT.to_string());
-    crate::process::run(&mut run.command, cancel, limits::HELPER_TIMEOUT)?;
-    Ok(())
+    let worker = worker()?;
+    let written = || -> anyhow::Result<()> {
+        let mut run = sandbox::untrusted(&worker, path, into, Otherwise::Run)?;
+        run.command
+            .arg(&run.input)
+            .args(stem(path))
+            .arg(member.index.to_string())
+            .arg(run.work.join(name))
+            .arg("--name")
+            .arg(&member.name)
+            .arg("--bytes")
+            .arg(limits::BINARY_INPUT.to_string());
+        crate::process::run(&mut run.command, cancel, limits::HELPER_TIMEOUT)?;
+        Ok(())
+    };
+    written().map_err(|error| crate::process::explain(&worker, cancel, error))
 }
 /// Write one member of an archive as a file of its own, named by
 /// `member_file` after the last component of its name.
@@ -212,10 +221,22 @@ pub fn extract_all(
     path: &Path,
     into: &Path,
     cancel: &CancelToken,
+    read: impl FnMut(u64),
+    held: impl Fn() -> bool,
+) -> anyhow::Result<()> {
+    let worker = worker()?;
+    extract_all_with(&worker, path, into, cancel, read, held)
+        .map_err(|error| crate::process::explain(&worker, cancel, error))
+}
+fn extract_all_with(
+    worker: &Path,
+    path: &Path,
+    into: &Path,
+    cancel: &CancelToken,
     mut read: impl FnMut(u64),
     held: impl Fn() -> bool,
 ) -> anyhow::Result<()> {
-    let mut run = sandbox::untrusted(&worker()?, path, into, Otherwise::Run)?;
+    let mut run = sandbox::untrusted(worker, path, into, Otherwise::Run)?;
     run.command
         .arg(&run.input)
         .args(stem(path))

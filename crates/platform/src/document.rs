@@ -241,15 +241,27 @@ impl WorkerSession {
                     setup,
                     isolate,
                 };
-                let setup = || -> anyhow::Result<(Worker, DocumentInfo, FileVersion)> {
-                    let version = file_version(&source)?;
+                let started = || -> anyhow::Result<(Worker, DocumentInfo)> {
                     let (worker, greeting) = Worker::start(&launch, &lifetime)?;
                     match greeting {
-                        WorkerReply::Ready(info) if info.pages > 0 => Ok((worker, info, version)),
+                        WorkerReply::Ready(info) if info.pages > 0 => Ok((worker, info)),
                         WorkerReply::Unavailable(message) => Err(Unavailable(message).into()),
                         WorkerReply::Error(message) => anyhow::bail!("{message}"),
                         _ => anyhow::bail!("invalid document worker greeting"),
                     }
+                };
+                let setup = || -> anyhow::Result<(Worker, DocumentInfo, FileVersion)> {
+                    let version = file_version(&source)?;
+                    // An engine without its library is no failure of
+                    // its helper: the next engine is tried.
+                    let (worker, info) = started().map_err(|error| {
+                        if error.is::<Unavailable>() {
+                            error
+                        } else {
+                            crate::process::explain(&launch.executable, &lifetime, error)
+                        }
+                    })?;
+                    Ok((worker, info, version))
                 };
                 match setup() {
                     Ok((worker, info, version)) => {
@@ -415,10 +427,20 @@ impl Manager {
                 // Timed out, exited or broke the protocol: a new one serves
                 // the next request.
                 self.worker = None;
-                return Err(error);
+                return Err(crate::process::explain(
+                    &self.launch.executable,
+                    &cancel,
+                    error,
+                ));
             }
         };
         self.unchanged()?;
+        self.read(reply)
+            .map_err(|error| crate::process::explain(&self.launch.executable, &cancel, error))
+    }
+
+    /// What the helper answered a request, as a response.
+    fn read(&self, reply: WorkerReply) -> anyhow::Result<Response> {
         match reply {
             WorkerReply::Page {
                 content,

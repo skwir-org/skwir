@@ -97,6 +97,126 @@ pub fn probe(path: &Path, envs: &[(&str, &std::ffi::OsStr)]) -> bool {
     }
 }
 
+/// Which build of bibli this program is (`BIBLI_BUILD`, which its build
+/// script sets, `tools/build/identity.rs`), told by the binary as it
+/// starts (`set_build`) so that this crate is not built again for each
+/// commit. Untold (a test), no failure is explained (`explain`).
+static BUILD: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// Say which build of bibli this program is: once, as it starts.
+pub fn set_build(build: &'static str) {
+    let _ = BUILD.set(build);
+}
+
+/// How long a helper may take to answer `--build`, the first thing it
+/// answers: only one older than the question, taking it for its input,
+/// does anything else.
+const BUILD_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// `error`, from a call of the helper at `helper`, and after it what may
+/// explain it: the helper is of another build of bibli than this one, as
+/// it says when asked with `--build`, or older than the question, saying
+/// nothing. A helper is never refused for it, since most calls work all
+/// the same: only a failure says so. A call `cancel`led, a helper of this
+/// build, one that could not answer (its libraries missing) and a program
+/// that does not say its build (`set_build`) leave `error` as it is.
+/// Asks once per helper file (`build_of`): call from a worker.
+pub fn explain(helper: &Path, cancel: &CancelToken, error: anyhow::Error) -> anyhow::Error {
+    explain_as(BUILD.get().copied(), helper, cancel, error)
+}
+
+/// [`explain`], this program being of the build `ours`.
+fn explain_as(
+    ours: Option<&str>,
+    helper: &Path,
+    cancel: &CancelToken,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    let Some(ours) = ours else {
+        return error;
+    };
+    if cancel.is_cancelled() {
+        return error;
+    }
+    let build = match build_of(helper) {
+        Said::Build(theirs) if theirs == ours => return error,
+        Said::Unknown => return error,
+        Said::Build(theirs) => format!("another build of bibli ({theirs}; bibli is {ours})"),
+        Said::Nothing => "an older build of bibli".to_owned(),
+    };
+    let name = helper
+        .file_name()
+        .unwrap_or(helper.as_os_str())
+        .to_string_lossy();
+    // The failure first, whole, as it would read without this: one line
+    // where it is shown.
+    let failure = format!("{error:#}");
+    anyhow::anyhow!(
+        "{}. {name} is from {build}, which may be why: rebuild or reinstall it",
+        failure.trim_end_matches('.')
+    )
+}
+
+/// What a helper said when asked `--build`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Said {
+    /// The build it is of.
+    Build(String),
+    /// Nothing that is one: it ran and took the question for its input,
+    /// a helper older than the question.
+    Nothing,
+    /// It could not answer: its libraries missing (the loader's 127, a
+    /// missing DLL's status), killed, or too slow.
+    Unknown,
+}
+
+/// What the helper at `path` says to `--build`, asked once per file as it
+/// is: one built again is asked again.
+fn build_of(path: &Path) -> Said {
+    type Asked = Vec<(PathBuf, Option<std::time::SystemTime>, Said)>;
+    static ASKED: parking_lot::Mutex<Asked> = parking_lot::const_mutex(Vec::new());
+    let modified = std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok();
+    if let Some((.., said)) = ASKED
+        .lock()
+        .iter()
+        .find(|(asked, at, _)| asked == path && *at == modified)
+    {
+        return said.clone();
+    }
+    let said = ask_build(path);
+    let mut asked = ASKED.lock();
+    asked.retain(|(asked, ..)| asked != path);
+    asked.push((path.to_owned(), modified, said.clone()));
+    said
+}
+
+/// [`build_of`], asked.
+fn ask_build(path: &Path) -> Said {
+    // Windows' STATUS_DLL_NOT_FOUND, 0xC0000135, as the exit code reads it.
+    const DLL_NOT_FOUND: i32 = -1_073_741_515;
+    let mut command = Command::new(path);
+    command.arg("--build");
+    let Ok(finished) = run_to_exit(&mut command, None, &CancelToken::new(), BUILD_TIMEOUT) else {
+        return Said::Unknown;
+    };
+    if matches!(finished.status.code(), None | Some(127 | DLL_NOT_FOUND)) {
+        return Said::Unknown;
+    }
+    let said = String::from_utf8_lossy(&finished.stdout);
+    let build = said.trim_end_matches(['\r', '\n']);
+    let is_build = (1..=64).contains(&build.len())
+        && build
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"+.-".contains(&byte));
+    if finished.status.success() && is_build {
+        Said::Build(build.to_owned())
+    } else {
+        Said::Nothing
+    }
+}
+
 /// Where bibli's helpers are, from the folder its program is in: beside
 /// it (a build, `just dist`, a Mac's bundle, Windows' installer, the Nix
 /// package), else where a Linux package keeps a program's private
@@ -820,6 +940,87 @@ mod tests {
             &[("BIBLI_TEST_TOLD", std::ffi::OsStr::new("/x/libpdfium.so"))]
         ));
         assert!(!probe(&dir.path().join("absent"), &[]));
+    }
+
+    /// A helper's failure says after it that the helper is of another
+    /// build, or of one older than the question, as the helper answers
+    /// `--build`; of this build, unable to answer, or the call cancelled,
+    /// the failure is as it was.
+    #[cfg(unix)]
+    #[test]
+    fn a_failure_says_when_its_helper_is_of_another_build() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let helper = |name: &str, body: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let says = |build: &str| format!(r#"[ "$1" = --build ] && echo {build} && exit 0; exit 1"#);
+        let explained = |ours: Option<&str>, path: &Path, cancel: &CancelToken| {
+            let failure = anyhow::anyhow!("invalid digit found in string").context("bwrap failed");
+            format!("{:#}", explain_as(ours, path, cancel, failure))
+        };
+        let live = CancelToken::new();
+        let same = helper("bibli-same-worker", &says("0.1.0+d264e57ab367"));
+        assert_eq!(
+            explained(Some("0.1.0+d264e57ab367"), &same, &live),
+            "bwrap failed: invalid digit found in string"
+        );
+        let other = helper("bibli-other-worker", &says("0.1.0+a5d0b7a1c2d3"));
+        assert_eq!(
+            explained(Some("0.1.0+d264e57ab367"), &other, &live),
+            "bwrap failed: invalid digit found in string. bibli-other-worker is from \
+             another build of bibli (0.1.0+a5d0b7a1c2d3; bibli is 0.1.0+d264e57ab367), \
+             which may be why: rebuild or reinstall it"
+        );
+        // An older helper takes the question for its input, and fails or
+        // answers something else.
+        let older = helper(
+            "bibli-older-worker",
+            "echo 'missing --members bounds' >&2; exit 1",
+        );
+        let chatty = helper(
+            "bibli-chatty-worker",
+            r#"echo '{"id":0,"body":{"Error":"x"}}'"#,
+        );
+        for path in [&older, &chatty] {
+            assert!(
+                explained(Some("0.1.0"), path, &live).ends_with(
+                    "is from an older build of bibli, which may be why: rebuild or reinstall it"
+                ),
+                "{}",
+                path.display()
+            );
+        }
+        // Its libraries missing, it could not answer at all.
+        let unloadable = helper("bibli-unloadable-worker", "exit 127");
+        let alone = "bwrap failed: invalid digit found in string";
+        assert_eq!(explained(Some("0.1.0"), &unloadable, &live), alone);
+        assert_eq!(
+            explained(Some("0.1.0"), &dir.path().join("absent"), &live),
+            alone
+        );
+        // Cancelled, or this program untold of its build: nothing asked.
+        let cancelled = CancelToken::new();
+        cancelled.cancel();
+        assert_eq!(explained(Some("0.1.0"), &other, &cancelled), alone);
+        assert_eq!(explained(None, &other, &live), alone);
+        // Built again, a helper is asked again.
+        std::fs::write(
+            &other,
+            format!("#!/bin/sh\n{}\n", says("0.1.0+d264e57ab367")),
+        )
+        .unwrap();
+        let later = std::time::SystemTime::now() + Duration::from_secs(1);
+        std::fs::File::options()
+            .write(true)
+            .open(&other)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        assert_eq!(explained(Some("0.1.0+d264e57ab367"), &other, &live), alone);
     }
 
     #[test]

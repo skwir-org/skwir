@@ -215,6 +215,7 @@ impl WorkerSession {
         std::thread::Builder::new()
             .name("bibli-video-session".into())
             .spawn(move || {
+                let helper = executable.clone();
                 let result = manage(
                     executable,
                     path,
@@ -225,6 +226,7 @@ impl WorkerSession {
                     &startup,
                 );
                 if let Err(error) = result {
+                    let error = crate::process::explain(&helper, &manager_lifetime, error);
                     let message = format!("{error:#}");
                     let _ = startup.try_send(Err(anyhow::anyhow!("{message}")));
                     if !manager_lifetime.is_cancelled() {

@@ -2,7 +2,7 @@
 //! own: the layout engine is large, and bibli carries it only where the
 //! helper is installed. What comes back is SVG made for resvg, drawn like
 //! any drawing in a document (`inspection::image`).
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bibli_core::CancelToken;
 
@@ -27,6 +27,11 @@ pub fn worker_path() -> Option<PathBuf> {
 pub fn mermaid(source: &str, cancel: &CancelToken) -> anyhow::Result<String> {
     anyhow::ensure!(source.len() <= SOURCE, "The diagram is too long to draw");
     let worker = WORKER.require("draw diagrams")?;
+    drawn(&worker, source, cancel).map_err(|error| crate::process::explain(&worker, cancel, error))
+}
+
+/// [`mermaid`], drawn by the helper at `worker`.
+fn drawn(worker: &Path, source: &str, cancel: &CancelToken) -> anyhow::Result<String> {
     // Isolated as the other helpers reading what a file holds are: the
     // diagram, a page's text, comes on its standard input, and is the
     // input it may read too.
@@ -34,7 +39,7 @@ pub fn mermaid(source: &str, cancel: &CancelToken) -> anyhow::Result<String> {
     let input = work.path().join("diagram.mmd");
     std::fs::write(&input, source)?;
     let mut run =
-        crate::sandbox::untrusted(&worker, &input, work.path(), crate::sandbox::Otherwise::Run)?;
+        crate::sandbox::untrusted(worker, &input, work.path(), crate::sandbox::Otherwise::Run)?;
     let finished = crate::process::run_to_exit(
         &mut run.command,
         Some(source.as_bytes()),

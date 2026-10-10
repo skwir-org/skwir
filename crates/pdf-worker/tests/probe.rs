@@ -1,4 +1,6 @@
-//! `--probe`, what bibli's settings ask of a helper (`platform::process::probe`).
+//! `--probe`, what bibli's settings ask of a helper (`platform::process::probe`),
+//! and `--build`, what bibli asks of one whose call failed
+//! (`platform::process::explain`).
 
 use std::process::Command;
 
@@ -55,5 +57,18 @@ fn the_library_beside_it_is_found_without_a_setting() {
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn asked_it_says_its_build_alone() {
+    let output = Command::new(env!("CARGO_BIN_EXE_bibli-pdf-worker"))
+        .arg("--build")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("{}\n", env!("BIBLI_BUILD"))
     );
 }
