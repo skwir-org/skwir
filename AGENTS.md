@@ -439,6 +439,7 @@ just test-windows          the Windows build's tests under Wine (args go to next
 just bench-check           generate bench-data/ on demand and enforce budgets
 just idle-pss              idle memory and first frame on this display (ADR-033)
 just smoke                 the release window on an X display of its own (CI)
+just screenshots           the README's screenshots, made again (docs/images)
 just deny / notices        dependency licences and advisories; third-party notices
 just plugins               build the plugins from outside as modules (target/plugins)
 just package-nix/deb/rpm/aur, package-try <distro>   Linux packages (ADR-040)

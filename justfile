@@ -42,6 +42,13 @@ smoke:
         --xvfb "$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#xorg.xorgserver)/bin/Xvfb" \
         --icd "$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#mesa)/share/vulkan/icd.d/lvp_icd.x86_64.json"
 
+# Run after the window changes, and look at docs/images/ before committing
+# (tools/screenshots/readme.py: an X display of its own, synthetic files).
+# Make the README's screenshots again, light and dark.
+screenshots *args:
+    cargo build --release -p skwir
+    tools/screenshots/readme.py {{args}}
+
 # Exercise real Poppler with synthetic text, geometry and navigation fixtures.
 poppler-check:
     cargo build -p skwir-poppler-worker
