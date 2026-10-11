@@ -1,103 +1,117 @@
 # ADR-009: Optional content preview plugins
 
-Status: accepted, 2026-09-19
+Status: accepted, 2026-09-19. Amended by ADR-012 (reading mode applies the
+CSS that says how text reads) and ADR-016 (audio joins `preview-media`).
+Archive extraction, a plan step, is ADR-048. Area rules:
+`docs/invariants/previews.md`.
+
+## Context
+
+Beyond images, text, PDFs and video, users preview audio, raw bytes,
+Markdown, archives, EPUB, tables, structured data, fonts, email and comics,
+each a parser of untrusted input. Each preview must stay optional, keep GPUI
+out of plugins, bound skwir's work, and not embed a browser before its costs
+are measured.
 
 ## Decision
 
-Keep audio, hexadecimal, Markdown, archive, EPUB, table, structured-data, font,
-email and comic previews independently registered runtime plugins. All use the
-existing owner-tagged preview registry, cancellation and invalidation boundary.
-Format-specific providers have priority over the hexadecimal fallback, even after
-disable/re-enable. Explicit presentation selection can request the hex provider
-for any regular file. Plugin disable cancels in-flight inspection work too.
+### Plugins and the inspection result
 
-Add a toolkit-independent inspection result alongside bitmap, PDF and playback
-sessions: semantic text blocks and inline spans, rows with hierarchy/member keys,
-embedded images, source availability and section navigation. Providers run on
-scheduler workers. GPUI owns virtualized rendering, navigation commands, copy,
-search, font size and expansion state; plugins never import GPUI. This is not an
-HTML renderer in core, nor a replacement for the existing PDF/media session APIs.
+- Audio, hex, Markdown, archive, EPUB, table, structured-data, font, email
+  and comic previews are independently registered plugins on the owner-tagged
+  preview registry, with its cancellation and invalidation. Disabling one
+  cancels its inspections in flight.
+- Format-specific providers outrank the hex fallback, even after
+  disable/re-enable; an explicit presentation choice can ask hex for any
+  regular file.
+- A toolkit-independent **inspection** result sits beside bitmaps and the PDF
+  and playback sessions: semantic text blocks with inline spans, rows with
+  hierarchy and member keys, embedded images, source availability, section
+  navigation. Providers run on scheduler workers.
+- GPUI owns virtualized rendering, navigation commands, copy, search, font
+  size and expansion; plugins never import GPUI. Not an HTML renderer in
+  core, and not a replacement for the PDF and media sessions.
 
-Audio reuses the optional GStreamer worker. The pipeline publishes bounded tag
-strings and 32 spectrum bins, at most one update per 50 ms of audio. The UI draws
-the spectrum without a timer. Audio-only pipelines exclude attached cover streams
-from video playback; cover extraction uses FFmpeg separately. Covers persist when
-playback starts. No second playback engine or full-file waveform analysis is added.
+### Formats
 
-Markdown uses pulldown-cmark (MIT). Markdown, EPUB and email share an inert native
-reading-mode HTML adapter using scraper/html5ever (ISC/MIT/Apache-2.0). It exposes
-headings, paragraphs, lists, inline emphasis, links, code and images; it does not
-execute scripts, apply publisher CSS, run browser layout or fetch remote assets.
-(ADR-012 amends this: the part of a document's CSS that says how text reads is
-applied; layout, fonts and colours are still not.)
-EPUB parsing uses rbook (Apache-2.0). Its parser and ZIP dependency require Rust
-1.88, now declared by the EPUB plugin and application; the Nix shell already uses
-newer Rust. Other crates retain their existing minimum. Prefer this limited reading mode over embedding
-a browser before its resource and platform integration costs are measured.
-litehtml remains an alternative to evaluate for CSS fidelity, not a bundled dependency.
+- **Audio** reuses the GStreamer worker: bounded tag strings and 32 spectrum
+  bins, at most one update per 50 ms of audio, drawn without a timer.
+  Audio-only pipelines keep cover streams out of video playback; FFmpeg
+  extracts covers, which stay once playback starts. No second engine, no
+  whole-file waveform.
+- **Reading mode.** Markdown: pulldown-cmark (MIT). Markdown, EPUB and email
+  share an inert native HTML adapter on scraper/html5ever
+  (ISC/MIT/Apache-2.0): headings, paragraphs, lists, emphasis, links, code,
+  images. No scripts, publisher CSS, browser layout or remote fetches.
+  (ADR-012: CSS that says how text reads is applied; layout, fonts and
+  colours are not.)
+- **EPUB**: rbook (Apache-2.0); its parser and ZIP dependency need Rust 1.88,
+  which `preview-epub` declares.
+- **Data.** CSV: csv (MIT/Unlicense). JSON: serde_json. TOML: toml_edit spans
+  (MIT/Apache-2.0, the 0.25 release `toml` already pulls). YAML: yaml-rust2
+  events (MIT/Apache-2.0; yaml-rust is unmaintained, RUSTSEC-2024-0320).
+  Email: mail-parser (MIT/Apache-2.0).
+- **Fonts**: fontdue (MIT/Apache-2.0/Zlib) with ttf-parser, rasterized on
+  workers, never installed or registered permanently with the UI.
+- **Archives and comics** go through `skwir-archive-worker`, the only binary
+  linked to libarchive (BSD). It lists metadata and streams one regular member
+  to a fixed private file. It never uses member names as output paths,
+  follows symlinks or extracts a whole archive.
 
-CSV uses csv (MIT/Unlicense), JSON uses serde_json, TOML uses toml_edit source
-spans (MIT/Apache-2.0, the same 0.25 release the workspace's `toml` already
-pulls), YAML uses yaml-rust2 parser events (MIT/Apache-2.0; yaml-rust is
-unmaintained, RUSTSEC-2024-0320),
-email uses mail-parser (MIT/Apache-2.0), and font
-specimens use fontdue (MIT/Apache-2.0/Zlib) with ttf-parser. Fonts are rasterized on
-workers, never installed or registered permanently with the UI font system.
+Alternatives: a browser engine (not before its resource and platform costs
+are measured); litehtml (to evaluate for CSS fidelity, not bundled); a 7-Zip
+fallback (not without an observed compatibility need).
 
-Archive and comic previews invoke skwir-archive-worker, the only binary linked to
-libarchive (BSD). It lists structured metadata and streams a selected regular
-member to a fixed private output filename. It never uses archive member names as
-filesystem output paths, follows symlinks or extracts an entire archive. Archive
-member and email attachment previews currently show images, text or bytes. A
-persistent nested PDF/video session is not part of this initial container viewer.
-No 7-Zip fallback is added without an observed compatibility need.
+### Bounds
 
-## Bounds and limitations
+Every bound is a constant in `skwir_platform::inspection::limits`, the one
+source for plugins, helpers and the archive worker (given them as
+arguments).
 
-Every bound below is a named constant in `skwir_platform::inspection::limits`,
-the single place plugins, helpers and the archive worker (which receives its
-bounds as command-line arguments) take them from. Container member and mail
-attachment byte views share the hexadecimal plugin's row formatting.
+| Area | Bound |
+|------|-------|
+| Hex view | 4096-byte sections; search streams bounded chunks, checking cancellation |
+| Source mode | 32 KiB sections |
+| Parsed text, table, structured input | 2 MiB |
+| Tables | 500 rows per section, 64 columns, 1024 characters per cell (longer marked shortened) |
+| Code | 10000 lines, 64 levels, 4096 bytes per line; JSON 10000 nodes |
+| Rich content | 2000 blocks; 8 images decoded with the page (ADR-012: re-readable pictures decode on view, 64 MiB cache) |
+| EPUB | 4000 resources, 128 MiB declared expansion, 16 MiB decompressed per resource |
+| Archives | 4000 members, 256 KiB of names, 16 MiB per member, 15 s per helper call; helper output derived from the name bound (JSON escaping can sextuple a byte) |
+| Font, email input | 16 MiB |
+| Fonts | 16–16384 units per em; outlines within eight ems; each glyph checked against the 1000 × 650 canvas; at most sixteen canvases of pixels per pass |
+| Email attachments listed | 100 |
 
-- Hexadecimal display reads 4096-byte sections; search streams bounded chunks and
-  checks cancellation. It is read-only. A search reports the exact match byte as
-  its position so a repeated Find resumes after it; a book search resumes at the
-  next chapter and reveals the first matching block. Source mode reads 32 KiB sections.
-- Parsed text/table/structured inputs are bounded to 2 MiB. Tables show 500 rows
-  per section, at most 64 columns and 1024 characters per cell (longer cells are
-  marked shortened). Code previews are capped at 10000 lines / 64 levels, with 4096 bytes per
-  line; JSON formatting also caps nodes at 10000. Invalid or oversized input
-  falls back to paginated source. Fold ranges refer to logical source lines,
-  come from parser spans/events, and are nested or disjoint. JSON is formatted;
-  TOML/YAML retain comments, ordering and indentation. Highlighting maintains
-  parser state across lines on a worker; the UI virtualizes visible lines.
-- Rich content is limited to 2000 semantic blocks and eight images decoded with
-  the page; pictures a provider can read again are decoded as they come into
-  view instead, within a 64 MiB cache (ADR-012).
-  Local Markdown images must resolve within its directory, including symlinks.
-  Email images resolve only embedded content IDs. EPUB resources remain inside
-  the container. Declared sizes are advisory: a deflate stream can inflate past
-  what the central directory states, so every byte decompressed from an EPUB
-  passes through one bounded reader, and rbook parses only an in-memory package
-  (container.xml, the OPF and its contents documents) assembled from those
-  bounded reads; it never opens the file itself.
-- EPUB containers are capped at 4000 resources / 128 MiB declared expansion with
-  16 MiB actually decompressed per resource. Chapters load on demand. This does
-  not implement DRM, scripting, fixed-layout EPUB or full CSS fidelity.
-- Archive listings are capped at 4000 members / 256 KiB of member names, member
-  output at 16 MiB and each helper operation at 15 seconds; the helper's captured
-  output cap derives from the name bound (JSON escaping can sextuple a byte). Encrypted members
-  report that an external archive application is needed. Solid archives and
-  compressed tar can require sequential decompression on every member request.
-- Font input and email input are bounded to 16 MiB. Fonts must declare 16–16384
-  units per em and outline bounds within eight ems; each glyph bitmap is checked
-  against the specimen canvas (1000 × 650 pixels) before rasterization and a
-  drawing pass paints at most sixteen canvases' worth of pixels, so a malformed
-  outline is skipped rather than allocated. Font collections show their first
-  face. Email attachment lists show at most 100 attachments. No mail is sent.
-- These bounds constrain skwir-owned work; they are not OS resource limits on
-  native libraries. Optional helpers may be omitted by packagers. Disabling a
-  plugin withdraws its UI contribution; compiled Rust parsers remain in the binary.
+- The hex view is read-only; container members and attachments shown as
+  bytes use its rows. A hex search reports the exact match byte, so Find
+  again resumes after it; a book search resumes at the next chapter and
+  reveals the first matching block.
+- Invalid or oversized structured input falls back to paginated source. Fold
+  ranges are logical source lines from parser spans or events, nested or
+  disjoint. JSON is formatted; TOML and YAML keep comments, order and
+  indentation. Highlighting keeps parser state across lines on a worker; the
+  UI virtualizes lines.
+- Local Markdown images must resolve inside its directory, symlinks included;
+  email images only from embedded content IDs; EPUB resources inside the
+  container.
+- Declared sizes are advisory (deflate can inflate past the central
+  directory). Every byte decompressed from an EPUB passes one bounded reader,
+  and rbook parses only an in-memory package (container.xml, the OPF, its
+  contents documents) built from those reads, never the file itself. Chapters
+  load on demand.
+- A malformed font outline is skipped, not allocated. A font collection shows
+  its first face. No mail is ever sent.
 
-All fixtures and native-check inputs are synthetic. Current validation is recorded
-in docs/PLAN.md; filesystem benchmark budgets do not measure preview UI latency.
+## Consequences
+
+- The bounds limit skwir's own work, not native libraries' resources.
+- Packagers may omit the helpers. Disabling a plugin withdraws its UI; its
+  Rust parsers stay compiled in.
+- Archive members and attachments preview as images, text or bytes, with no
+  nested PDF or video session. Encrypted members point to an external archive
+  application. Solid archives and compressed tar may decompress sequentially
+  for every member request.
+- EPUB: no DRM, scripting, fixed layout (later: ADR-013) or full CSS
+  fidelity.
+- Fixtures and native-check inputs are synthetic. Validation is in
+  `docs/PLAN.md`; the filesystem budgets do not measure preview latency.

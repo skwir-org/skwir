@@ -1,66 +1,92 @@
 # Writing a plugin for skwir
 
-A plugin from outside skwir is a folder: a `plugin.toml` that says what
-the plugin is, and what runs it, a **WebAssembly module** (ADR-046) or a
-**program** (ADR-045). skwir finds it in a folder of plugins, lists it on
-Settings › Plugins with what it may do, and runs it once the user turns
-it on. It provides any of:
+A plugin from outside skwir is a folder holding a `plugin.toml` and what
+runs it: a **WebAssembly module** (ADR-046) or a **program** (ADR-045).
+skwir finds it in a plugin folder, lists it on Settings › Plugins with what
+it may do, and runs it once the user turns it on. It can provide:
 
 - **fields** shown in Details (a text's word count, a format's version);
-- **thumbnails** of the files of some types;
-- **previews**: text, code, hexadecimal rows or a table, a page at a
-  time; any file skwir shows (a PDF, a picture, Markdown, audio,
-  video…), made of the file and shown by skwir's own preview of it; or
-  pages, each a picture drawn when it is shown with its text and links
-  where they lie, read in skwir's reader (selected, copied, searched,
-  followed, its outline listed);
+- **thumbnails** for files of some types;
+- **previews**, one of:
+  - an inspection: text, code, hexadecimal rows or a table, a page at a
+    time;
+  - a converted file skwir already shows (a PDF, a picture, Markdown,
+    audio, video…), displayed by skwir's own preview of it;
+  - pages: each a picture drawn on demand, with its text and links where
+    they lie, read in skwir's reader (select, copy, search, follow links,
+    outline);
 - **commands**, in the palette and for scripts and agents, answering a
   value, a text for the clipboard, or a plan of changes to files.
 
-Views stay skwir's: a plugin provides data, skwir draws it.
+skwir draws everything: a plugin provides data, never a view.
+
+The protocol is experimental (ADR-047): until declared stable, a new
+version may change what an older one said. The spec is
+[`protocol.md`](protocol.md).
 
 ## Start from the template
 
 `crates/plugins-outside/template` is a working plugin (a word count, as a
-field and a command) that builds both ways. Copy it, rename the package
-and the `id`, and change `src/lib.rs`:
+field and a command) that builds both as a module and as a program.
 
-```rust
-use skwir_plugin_api::guest::{Host, Plugin};
-use skwir_plugin_api::protocol::FieldParams;
-use serde_json::{Value, json};
+1. Copy it to `crates/plugins-outside/<name>`. `skwir-plugin-api` is not
+   on crates.io, so build inside the skwir workspace, which includes every
+   folder there.
+2. Rename the package in `Cargo.toml` and the `id` in `plugin.toml`.
+3. Write `src/lib.rs`:
 
-#[derive(Default)]
-pub struct Mine;
+   ```rust
+   use serde_json::{Value, json};
+   use skwir_plugin_api::guest::{Host, Plugin};
+   use skwir_plugin_api::protocol::FieldParams;
 
-impl Plugin for Mine {
-    fn field(&self, host: &dyn Host, params: FieldParams) -> Result<Option<Value>, String> {
-        let head = host.read(params.file.handle, 0, 4096)?;
-        Ok(Some(json!(head.len())))
-    }
-}
+   #[derive(Default)]
+   pub struct Mine;
 
-skwir_plugin_api::export!(Mine);
-```
+   impl Plugin for Mine {
+       fn field(&self, host: &dyn Host, params: FieldParams) -> Result<Option<Value>, String> {
+           let head = host.read(params.file.handle, 0, 4096)?;
+           Ok(Some(json!(head.len())))
+       }
+   }
 
-`Plugin` has one method per kind of thing a plugin provides (`field`,
-`thumbnail`, `inspect`, `convert`, `page`, `command`), each with a default that has nothing
-to say: implement those the manifest declares. A file comes as a
-`protocol::File`: its name, its path (to show), its type and size, and a
-`handle` to read its bytes with, valid while the call is answered.
+   skwir_plugin_api::export!(Mine);
+   ```
 
-`crates/plugins-outside/netpbm` draws thumbnails and previews pictures
-as the PNG it makes of them (a file of several, a picture a page), and `crates/plugins-outside/preview-hex` is
-a preview (the built-in hexadecimal one, again as a module).
+4. Build with `just plugins` (needs the `wasm32-unknown-unknown` target:
+   the Nix dev shell has it; with rustup,
+   `rustup target add wasm32-unknown-unknown`). Each plugin lands in
+   `target/plugins/<id>`, laid out as an installed one.
+5. Run skwir with it, then turn it on in Settings › Plugins:
 
-Build the workspace's plugins with `just plugins`: each lands in
-`target/plugins/<id>` as an installed plugin is laid out. Try them with
+   ```
+   SKWIR_PLUGIN_PATH=$PWD/target/plugins just run
+   ```
 
-```
-SKWIR_PLUGIN_PATH=$PWD/target/plugins just run
-```
+`Plugin` has one method per kind of contribution. Each defaults to having
+nothing to say (`command` defaults to an error), so implement only what the
+manifest declares:
 
-then Settings › Plugins, and turn it on.
+| Method | Declared by | Returns |
+| --- | --- | --- |
+| `field` | `[[fields]]` | `Option<Value>` |
+| `thumbnail` | `[[thumbnails]]` | PNG bytes, or `None` |
+| `inspect` | `[[previews]]` | `Option<Inspection>` |
+| `convert` | `[[previews]]` with `converts = true` | `(name, bytes)`, or `None` |
+| `page` | `[[previews]]` with `pages = true` | `Option<Page>` |
+| `command` | `[[commands]]` | `CommandAnswer` |
+
+A file arrives as a `protocol::File`: its `name`, its `path` (for display
+only), its `mime` type and `size` when known, and a `handle`. Read its bytes
+with `host.read(handle, offset, length)`, at most 4 MiB per read; the
+handle is valid only while the call is being answered.
+
+More examples:
+
+- `crates/plugins-outside/netpbm`: thumbnails, and previews converted to
+  PNG (a file of several pictures shown one picture a page).
+- `crates/plugins-outside/preview-hex`: the built-in hexadecimal preview,
+  again as a module.
 
 ## The manifest
 
@@ -68,9 +94,9 @@ then Settings › Plugins, and turn it on.
 id = "word-count"            # lowercase, digits, dashes: names its commands and fields
 title = "Word count"
 description = "How many words a text holds, in Details"
-category = "files"           # browsing, files, previews or desktop
+category = "files"           # browsing, files (default), previews or desktop
 capabilities = ["read"]      # read, write, network, programs
-api = 1                      # the protocol's version it speaks (1 when not said)
+api = 1                      # the protocol version it speaks (default 1)
 
 [run]
 module = "word_count.wasm"   # or: program = "bin/word-count", args = [...]
@@ -85,7 +111,7 @@ types = ["image/x-portable-anymap"]
 
 [[previews]]
 types = ["application/octet-stream"]
-priority = -100              # higher is tried first
+priority = -100              # higher is tried first (default 0); a fallback is negative
 shows_bytes = false          # true: the view every file offers (View as hex)
 converts = false             # true: answers `convert`, a file skwir shows
 pages = false                # true: answers `page`, a picture and its text a page
@@ -94,57 +120,128 @@ pages = false                # true: answers `page`, a picture and its text a pa
 name = "word-count.count"    # under the id
 title = "Count words"
 description = "How many words the files hold"
-effect = "reads"             # reads, shows, plans or acts (what an agent may run)
+effect = "reads"             # reads, shows, plans or acts (default): what an agent may run
 arguments = { type = "object", properties = { minimum = { type = "integer" } } }
 ```
 
-A command also takes `entries` (absolute paths) and `pane`: the files it
-acts on, which skwir resolves and hands it as `File`s, the pane's
-selection when none is named.
+skwir refuses a manifest (and logs why) unless:
+
+- `id` is 2 to 64 characters: lowercase letters, digits and dashes,
+  starting with a letter;
+- every field `key` and command `name` is `<id>.<something>`;
+- `[run]` names exactly one of `module` and `program` (paths relative to
+  the plugin's folder);
+- `api` is a version skwir speaks (1 today);
+- a module does not ask for `network`;
+- a command with `effect = "plans"` comes with the `write` capability;
+- `arguments`, when given, is a JSON schema of type `object`;
+- every field, thumbnail and preview lists its `types`;
+- a `shows_bytes` preview neither `converts` nor shows `pages`;
+- it has no unknown keys.
+
+A command also takes `entries` (absolute paths) and `pane`. skwir resolves
+the files and hands them to the plugin as `File`s: the ones named, else the
+pane's selection.
 
 ## What a plugin may do
 
-Nothing it does not declare (ADR-044):
+Only what it declares (ADR-044):
 
-- **`read`**: read the bytes of the files a call names, through
-  `Host::read`. Nothing else of the user's is in reach, whichever the
-  capabilities: a module has no files at all, a program runs isolated.
-- **`write`**: answer a command with a plan. A plan is steps on the
-  call's files by handle (`rename`, `trash`, `move` and `copy` into an
-  absolute folder) or `mkdir` an absolute folder. skwir shows it for
-  review before anything changes; a plan from a plugin run from the
-  window is always reviewed.
-- **`network`**: a program may use the network. A module cannot.
-- **`programs`**: a program may start others, isolated as it is.
+| Capability | Allows |
+| --- | --- |
+| `read` | Reading the bytes of the files a call names, through `Host::read`. |
+| `write` | Answering a command with a plan: steps on the call's files by handle (`rename`, `trash`, `move` or `copy` into an absolute folder) or `mkdir` of an absolute folder. skwir shows the plan for review before anything changes; a plan from a plugin run from the window is always reviewed. |
+| `network` | A program may use the network. A module cannot. |
+| `programs` | A program may start other programs, isolated as it is. |
 
-A **private folder** (Settings › Privacy: `~/.ssh` and its like, and any
-folder holding a `.private` file) is never handed to a plugin from
-outside: its fields say nothing there, its previews say the file is
-private, its commands are refused.
+Whatever the capabilities, nothing else of the user's is in reach: a module
+has no files at all, and a program runs isolated. A link in a converted
+file or a page is followed only when the plugin has `network`.
+
+A **private folder** (Settings › Privacy: `~/.ssh` and the like, and any
+folder holding a `.private` file) is never handed to a plugin from outside:
+its fields say nothing there, its previews say the file is private, and its
+commands are refused.
 
 ## A module or a program
 
-A **module** (`[run] module`) is the safest and the simplest to ship:
-built for `wasm32-unknown-unknown` with `skwir_plugin_api::export!`, it
-reaches nothing but `read` and `log`, on every system. skwir runs it in
-a helper of its own (`skwir-module-worker`, installed with skwir), and
-each call has a bound on its work and memory. The helper compiles the
-module the first time and keeps it compiled in skwir's cache
-(`~/.cache/skwir/<id>/module`), so a new version of the module is
-compiled again on its own.
+A **module** (`[run] module`) is the safest and simplest to ship. Build it
+for `wasm32-unknown-unknown` with `skwir_plugin_api::export!`. It reaches
+only skwir's two imports, `read` and `log`: no files, no clock, no network,
+on every system.
 
-A **program** (`[run] program`) can be written in any language that
-reads and writes lines of JSON on its standard input and output: the
-protocol is in `protocol.md`. A Rust program serves its `Plugin` with
-`skwir_plugin_api::guest::stdio::serve` (the template's `main.rs`).
-skwir starts it isolated (bubblewrap on Linux; it does not run where
-nothing can isolate it, as on Windows today), one call at a time, and
-ends it once idle.
+- It runs in `skwir-module-worker`, a helper installed with skwir and
+  isolated where the system can.
+- Each call is bounded: 20 billion units of Wasmtime fuel (about one
+  instruction each, a few seconds of work) and 256 MiB of memory. A module
+  that traps is instantiated again for the next call.
+- The helper compiles the module on first start and keeps it compiled in
+  the plugin's cache folder (`~/.cache/skwir/1/<id>/module` on Linux); a new
+  version of the module is compiled again.
+
+A **program** (`[run] program`) can be written in any language that reads
+and writes JSON lines on standard input and output (see `protocol.md`). A
+Rust program serves its `Plugin` with `skwir_plugin_api::guest::stdio::serve`
+(the template's `main.rs`).
+
+- skwir starts it isolated when first asked: bubblewrap on Linux,
+  `sandbox-exec` on macOS (compiled, never run). Where nothing can isolate
+  it, as on Windows today, it does not run.
+- Inside: the system's programs and libraries (read-only), the plugin's own
+  folder (read-only), and a fresh writable `/work` (its `HOME` is
+  `/work/home`, `XDG_CACHE_HOME` is `/work/cache`), deleted when the program
+  ends; a private `/tmp`; no `DISPLAY`, `WAYLAND_DISPLAY` or D-Bus session;
+  no network without `network`.
+
+Both run one call at a time, under the same limits (a module's helper is
+started as a program):
+
+| Limit | Value |
+| --- | --- |
+| Ready after start (`initialize`) | 10 s |
+| Answer to a call | 30 s |
+| Idle before it is ended | 30 s (also ended when turned off, and with skwir) |
+| Restart after a failed start | not before 10 s |
+| Breaks in a row before the plugin is turned off | 3 (no answer in time, stopped, or protocol broken; the user is told) |
+
+## Testing and debugging
+
+- **Unit tests.** Implement `Host` over bytes in memory and call your
+  methods directly: the template's `tests` module does this with `Text`.
+  Run them with `cargo nextest run -p <package>`.
+- **The JSON.** `guest::answer(&plugin, &host, method, params)` returns
+  exactly what skwir would receive (`plugin-api`'s own tests use it).
+- **A program by hand.** Build it (`cargo build -p skwir-outside-template`)
+  and send it one JSON-RPC message per line:
+
+  ```
+  echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"api":1,"capabilities":["read"]}}' \
+    | target/debug/skwir-outside-template
+  ```
+
+  It answers `{"jsonrpc":"2.0","id":1,"result":{"api":1}}`.
+- **End to end.** `crates/extend/tests/` (`modules.rs`, `programs.rs`)
+  installs workspace plugins in a plugin folder, as a user would, and drives
+  them through skwir.
+- **Logs.** A plugin's `log` lines go to skwir's log (the terminal skwir was
+  started from; level set by `RUST_LOG`, default `info`) as `plugin: …`, cut
+  to 500 characters: `error` and `warn` at warn, `info` at info, `debug` at
+  debug. A program's standard error is logged line by line at debug, with
+  the plugin's id. To see debug lines:
+  `RUST_LOG=info,skwir_extend=debug just run`.
 
 ## Installing
 
-Put the folder in `~/.local/share/skwir/plugins/` (or the system's data
-folder's `skwir/plugins/`), restart skwir, and turn the plugin on in
-Settings › Plugins, where its line says what it may do and where it is.
-An id another plugin has, or a manifest that does not hold together, is
-left out; the log says why.
+Put the plugin's folder in one of these, searched in order:
+
+1. `~/.local/share/skwir/plugins/` (the user's data folder);
+2. `skwir/plugins/` in each of the system's data folders
+   (`$XDG_DATA_DIRS`);
+3. the absolute folders in `SKWIR_PLUGIN_PATH` (separated as in `PATH`;
+   relative ones are ignored).
+
+Every subfolder holding a `plugin.toml` is a plugin. Then restart skwir
+(plugins are found at startup) and turn the plugin on in Settings ›
+Plugins, where its line says what it may do and where it is. A plugin whose
+id is taken (by a built-in plugin, or one found earlier) or whose manifest
+does not hold together is left out, with a warning in the log saying why.

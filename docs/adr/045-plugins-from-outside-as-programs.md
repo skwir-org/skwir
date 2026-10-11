@@ -1,69 +1,63 @@
 # ADR-045: Plugins from outside skwir, and those that run as programs
 
 Status: accepted, 2026-10-07 (Phase 6, "Level 2, external processes").
+Built on Linux; macOS compiled only; Windows runs none.
 
 ## Context
 
-Every plugin so far is a crate of the workspace, built into the binary.
-Phase 6 opens the plugin system beyond the repository: Level 2 is "a
-small line-delimited protocol (LSP-style) for provider processes", used
-first for thumbnailers and external tools. Level 1, WebAssembly modules
-(ADR-046), speaks to the same plugins through another transport, so the
-two share what a plugin from outside is.
+All plugins were workspace crates. Phase 6's Level 2 is "a small
+line-delimited protocol (LSP-style) for provider processes", first for
+thumbnailers and external tools. Level 1 (WebAssembly, ADR-046) speaks
+to the same plugins over another transport, so both share what a
+plugin from outside is.
 
 ## Decision
 
 1. **A plugin from outside is a folder** with a `plugin.toml`
-   (`skwir_plugin_api::Manifest`): its id (a namespace for its commands
-   and fields), title, category, the capabilities it needs (ADR-044),
-   what it provides (fields shown in Details, thumbnails, previews,
-   commands, each for the MIME types it names) and how it runs, a
-   `module` (ADR-046) or a `program`, inside its folder. skwir looks in
-   `skwir/plugins` of the user's and the system's data folders, then in
-   `SKWIR_PLUGIN_PATH`. A plugin whose manifest does not hold together,
-   or whose id another has, is left out and the log says why.
-2. **It is a plugin like the others** (`skwir_extend::External`): listed
-   on the Plugins page with what it may do and its folder, off until the
-   user turns it on, its contributions withdrawn when turned off. Its
-   commands are in the registry with the schema its manifest gives
-   (`CommandRegistry::register_dynamic`) and the effect it declares, so
-   the palette, scripts and agents reach them like any.
-3. **The protocol** (`skwir_plugin_api::protocol`,
-   `docs/plugins/protocol.md`): JSON-RPC 2.0, one message per line, on
-   the program's standard input and output. skwir asks `initialize`,
-   then `field`, `thumbnail`, `inspect` and `command`; the plugin asks
-   back `read` and says `log`. One call at a time; `$/cancel` when skwir
+   (`skwir_plugin_api::Manifest`): id (namespace of its commands and
+   fields), title, category, capabilities (ADR-044), what it provides
+   per MIME type (Details fields, thumbnails, previews, commands), and a
+   `module` (ADR-046) or `program` inside the folder. skwir looks in
+   `skwir/plugins` under the user's and system's data folders, then
+   `SKWIR_PLUGIN_PATH`. An inconsistent manifest or a taken id is left
+   out, with the reason logged.
+2. **It is a plugin like the others** (`skwir_extend::External`): on the
+   Plugins page with its capabilities and folder, off until turned on,
+   contributions withdrawn when off. Its commands enter the registry
+   with the manifest's schema (`CommandRegistry::register_dynamic`) and
+   effect, reachable from palette, scripts and agents.
+3. **Protocol** (`skwir_plugin_api::protocol`,
+   `docs/plugins/protocol.md`): JSON-RPC 2.0, one message per line on
+   stdin/stdout. skwir sends `initialize`, `field`, `thumbnail`,
+   `inspect`, `command` (ADR-047 adds `convert`, `page`); the plugin
+   sends `read` and `log`. One call at a time; `$/cancel` when skwir
    stops waiting.
-4. **Files by handle.** A call names its files by handle; the plugin
-   reads their bytes through `read`, which skwir answers only for a file
-   of that call, only with the `read` capability, and never for a private
-   file, which is never in a call. Nothing else of the user's is in
-   reach.
-5. **Isolated.** The program runs in bubblewrap on Linux
-   (`sandbox::plugin`): the system's programs and libraries and its own
-   folder readable, a working folder writable, no network unless it
-   declares `network`, and it dies with skwir. Where nothing can isolate
-   it, it does not run. It starts when first asked and ends once idle 30
-   seconds, when turned off, or with skwir: no daemon.
-6. **Answers.** A plan a command answers is built from the plugin's
-   steps on its files (rename, trash, move, copy, make a folder), needs
-   `write`, and is proposed for review when the command was run from the
-   window: a plan from code skwir does not ship is always reviewed there.
-   Asked from the window, a command's answer is waited for on a worker
-   (`scheduler::on_window_thread`), a value or a text said in a
+4. **Files by handle.** The plugin reads bytes through `read`, answered
+   only for a file of the current call, only with `read`, never for a
+   private file (never in a call). Nothing else of the user's is
+   reachable.
+5. **Isolated or not run.** On Linux, bubblewrap (`sandbox::plugin`):
+   system programs, libraries and its own folder readable, a working
+   folder writable, network only if declared, dies with skwir. Where
+   nothing isolates it, it does not run. Started on first ask; ends
+   after 30 s idle, when turned off, or with skwir.
+6. **Answers.** A plan is built from the plugin's steps on its files
+   (rename, trash, move, copy, make a folder), needs `write`, and is
+   always proposed for review when run from the window. From the
+   window, a command's answer is awaited on a worker
+   (`scheduler::on_window_thread`); a value or text appears in a
    notification.
 
 ## Consequences
 
-- A plugin can be written in any language that reads and writes lines
-  of JSON. The template (`crates/plugins-outside/template`) builds as
-  one from Rust (`guest::stdio::serve`); the first thumbnailer from
-  outside, `crates/plugins-outside/netpbm`, answers thumbnails as a
-  module.
-- Windows runs no program plugin yet: there is no isolation there
-  (ADR-039, `docs/PORTING.md`); macOS is compiled only.
-- A plugin's work is bounded: 30 seconds an answer, bytes read 4 MiB at
-  a time, 64 MiB a message.
-- Previews from outside draw text, code, hex and tables (the portable
-  `protocol::Inspection`), or any file skwir shows, made of the file,
-  whole or a page at a time (ADR-047): never a branch of the UI.
+- Any language that reads and writes JSON lines works. The template
+  (`crates/plugins-outside/template`) builds as a program from Rust
+  (`guest::stdio::serve`); `crates/plugins-outside/netpbm`, the first
+  outside thumbnailer, runs as a module.
+- Windows runs no program plugin (no isolation: ADR-039,
+  `docs/PORTING.md`); macOS is compiled only.
+- Work is bounded: 30 s per answer, reads of 4 MiB, 64 MiB per message
+  (`protocol::READ_LIMIT`, `MESSAGE_LIMIT`).
+- Outside previews draw text, code, hex and tables
+  (`protocol::Inspection`), or a file skwir shows, whole or a page at a
+  time (ADR-047). Never a UI branch.

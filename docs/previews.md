@@ -1,146 +1,374 @@
-# Optional previews
+# Previews
 
-Open the preview panel with **F11**, or press **Space** for peek. New formats use
-the shared toolbar, whose less frequent actions move into **More** in a narrow
-panel. **Alt+Page Up / Page Down** changes sections, chapters or comic pages.
+What skwir previews and how, kind by kind; then what each preview needs
+installed (for packagers) and how previews are checked (for
+contributors). The rules for working on preview code are in
+[`invariants/previews.md`](invariants/previews.md) and
+[`invariants/media.md`](invariants/media.md).
 
-A file inside an archive, or attached to a message, opens as what it is: a
-picture zooms, a PDF opens in the reader, JSON folds, Markdown reads. The name
-in the header becomes a trail (`bundle.zip › notes.md`); click a step, or Back,
-to return. The panel follows an archive inside an archive, and no deeper.
+## Using the preview
 
-The header shows the entry's icon, name, type, size and date. Click it, or
-press Ctrl+I, for **Details**, which opens under it and lists the rest of
-what is known: exact size, folder, owner and access, times, tags, and what the format
-says (a book's author, a font's family, an archive's unpacked size, a
-picture's dimensions). It fills the panel when there is nothing to preview.
-Click a value to copy it. The panel closes with the Preview button (F11).
+- `Space` peeks at a file. `F11` (or `Ctrl+Shift+Space`) opens the
+  preview panel, which follows the selection; `F11` or the Preview button
+  closes it.
+- **The header** shows the file's icon, name, type, size and date. Click
+  it, or press `Ctrl+I`, for **Details**: exact size, folder, owner and
+  access, times, tags, and what the format says (a book's author, a
+  font's family, an archive's unpacked size, a picture's dimensions).
+  Details fills the panel when there is nothing to preview. Click a value
+  to copy it.
+- **The bar** holds the tools of the kind shown; in a narrow panel the
+  less used ones move into More. Every tool is also a palette command
+  (`Preview: …`, `Player: …`).
+- **Files inside an archive or a message** open as what they are: a
+  picture zooms, a PDF opens in the reader, JSON folds, Markdown reads.
+  The file opens below or beside the archive's list (More › Layout), and
+  the header becomes a trail (`bundle.zip › notes.md`): click a step, or
+  press `Escape` or ×, to return. The panel follows an archive inside an
+  archive, no deeper.
+- **Links.** A link in a document opens with a click; an address found
+  in plain text opens with `Ctrl+click`. A link to a file or folder shows
+  it in skwir; a web address goes to your browser.
+- **Select and copy.** Drag to select text; copy with `Ctrl+C` or the
+  bar. With no text selected, Copy takes the selected row or the current
+  section.
+- **Find.** `Ctrl+F` searches the preview that has the keyboard; the
+  search button is always there. Searching again continues after the
+  last match: hex search streams on from the byte after it, a book
+  searches the rest of the chapter and then the next chapter with a
+  match, wrapping around; other previews search the loaded section after
+  the selected item.
+- Each kind is a plugin, turned on or off in Settings › Plugins.
 
-Each format is enabled by an independent plugin in **Settings → Plugins**:
+### Keys
 
-| Plugin | Formats and controls |
+| Keys | Where | Action |
+| --- | --- | --- |
+| Arrows | Peek | Previous or next file |
+| `Space`, `Escape` | Peek | Close |
+| `Ctrl+I`, `Alt+Enter` | Anywhere | Details |
+| `Ctrl+F`; `F3`, `Shift+F3` | Preview | Find; next or previous match |
+| `Ctrl+C`, `Ctrl+A` | Preview | Copy; select all |
+| `Page Up`, `Page Down` | Reader | Previous or next page |
+| `[`, `]` | Reader, text previews | Previous or next part of a long document |
+| `Alt+Page Up`, `Alt+Page Down` | Any preview | Previous or next section, chapter or comic page |
+| `Ctrl++`, `Ctrl+-`, `Ctrl+0` | Reader, picture, map | Zoom in, out, reset |
+| Arrows | Map | Pan |
+| Up, Down; Left, Right | Archive or message | Walk its files; fold or unfold |
+| `Ctrl+Shift+O` | Text and structured previews | Label the links in view for the keyboard |
+
+The player, in the panel or pinned at its foot:
+
+| Keys | Action |
 | --- | --- |
-| `preview-media` | Audio and video in one player: playback, seeking, volume, speed (pitch kept), audio and subtitle tracks, fullscreen for video; tags, embedded cover and a spectrum ring in the cover's colour for audio. Previous and Next step through the folder's files of the same kind or a playlist. **Keep playing while you browse** (on by default) pins what plays so it goes on in a player at the foot of the preview, steered from the status bar and from the desktop's media keys (MPRIS), without a gap between tracks. **Play on selection** starts a file once selected; **When a track ends** stops, plays the next or shuffles. ReplayGain and the video engine are settings. |
-| `preview-documents` | PDF in the document reader (PDFium, Poppler or MuPDF). Office documents as pages, converted by LibreOffice in a sandbox. Word (`.docx`, `.docm`, `.dotx`, `.dotm`), OpenDocument text (`.odt`, `.ott`) and RTF follow the **Text documents** setting: Reading (the default: skwir reads Word and OpenDocument files itself, at once and to fit the panel: headings, lists with their numbers, tables, footnotes that open under their reference, links and pictures; RTF goes to Pandoc), Pages (LibreOffice), or Pandoc for all of them. A choice whose program is missing gives way to another. A long document is read in parts, `[` and `]` between them. The grid shows the picture of its first page an Office or OpenDocument file keeps, before any preview. |
-| `preview-hex` | Read-only hexadecimal/ASCII ranges for binary files; available explicitly for any file. Jump to a decimal or `0x` offset; search text or `hex: 00 ff 7a` byte sequences. |
-| `preview-markdown` | Markdown and HTML reading mode with source toggle, headings, emphasis, lists, tables, code highlighting, links and local images. HTML keeps what its stylesheets say about emphasis, alignment, indents and hidden text, and is inert: no scripts, fonts or remote content. Fenced `mermaid` blocks are drawn as diagrams when `skwir-mermaid-worker` is installed, and stay code without it. Jupyter notebooks (`.ipynb`, format 4) read the same way: Markdown cells, code in the kernel's language, and what each cell printed, returned, raised or plotted. |
-| `preview-archives` | File-list-style archive tree with themed icons, folders first, aligned sizes, expand/collapse controls and selected-member image/text previews; other members show paged hexadecimal bytes. |
-| `preview-epub` | Reflowing EPUB chapters, contents, embedded images, links and footnotes (which open under their reference), text size, selection/copy, source and book search. The book's stylesheets give it its italics, centred titles, indents and hidden text; its fonts and colours give way to the theme. Chapters follow each other: scroll on past the end of one to read the next. A fixed-layout book (a comic, a picture book) opens in the document reader like a PDF, continuously or a page at a time, each page drawn as its book lays it out, lettering in the book's own fonts, and sharper as it is zoomed. The Book engine setting can instead give every book to MuPDF (optional worker), which lays it out into pages in the document reader; there the size keys lay it out again at a larger or smaller text size and keep the place. How wide lines may grow is the Reading width preference, or the Full width button beside the text size. The toolbar reads like the document reader's: previous chapter, the chapter number (click to type one), next; smaller, the text size as a picker, larger; then Full width. A book that lists the page numbers of its printed edition can be counted by them instead: the picker after the count switches between chapters and printed pages, and the Printed page numbers preference remembers the choice. A PDF that names its pages (front matter in roman numerals, a body starting at 1 further in) is counted the same way in the reader. |
-| `preview-playlists` | M3U/M3U8, PLS, XSPF and CUE files as a list of tracks with titles, artists and lengths; missing and remote entries are marked. A track on this machine opens in the player, whose Previous and Next then walk the playlist. Nothing is fetched. |
-| `preview-tables` | CSV/TSV tables, quoted multiline cells, horizontal scrolling and section navigation. JSON Lines (`.jsonl`, `.ndjson`): a row per line, the keys as columns. Excel workbooks (`.xlsx`, `.xlsm`, `.xlsb`): each sheet's cells, sheet after sheet; the **Spreadsheets** setting (Table or Pages) gives them to LibreOffice's pages instead. SQLite databases: each table's rows, table after table, opened read-only so nothing is written beside them. |
-| `preview-structured` | Syntax-highlighted JSON/YAML/TOML code with line numbers, folding and source toggle. JSON with comments (JSONC, `tsconfig.json`) and JSON5 are shown as written. |
-| `preview-fonts` | TTF/OTF/TTC and WOFF/WOFF2 specimens and character sheets. Find sets the specimen text; sections advance through supported characters. |
-| `preview-models` | 3D models, drawings and prints shown by the picture their application stored in them, in the panel and the grid: Blender files (and their `.blend1` backups, compressed or not), 3MF packages (the package thumbnail, or Bambu Studio's and Orca's first plate), FreeCAD documents, SketchUp models and LayOut documents, Rhino models, DWG drawings, and G-code, as text or Prusa's binary `.bgcode`. DXF drawings are drawn from what they hold, as a CAD program shows model space in AutoCAD's colours: lines, arcs, circles, polylines, ellipses, splines, solids, hatches, text and inserted blocks (dimensions among them), with their size in the drawing's unit, entities and blocks in Details (a DXF of more than 32 MiB shows the picture it stored, if any). Meshes that store no picture (STL, OBJ, PLY, OFF, glTF and GLB, a 3MF its slicer did not picture) are drawn by `skwir-model-worker`, seen from the front, right and above, and measured: size, volume and whether they are watertight, triangles and objects (an STL is read in millimetres, as slicers read it). Details lists what the file says: the Blender version and scenes, the SketchUp or Rhino version and a model's scenes or a LayOut document's pages, a print's time, filament, material, layer height and printer, the slicer, a drawing's DWG or DXF version. G-code that stores no picture is drawn from its moves: a print as a slicer previews it (extrusions from the front, right and above, in PrusaSlicer's colours for the features its slicer marks, or by height), a milling, engraving or laser program (`.nc`, `.ngc`, `.tap`, `.cnc` too) from above, its cuts coloured by depth and its rapid moves faint; Details adds the size of the work. A program that computes its moves (LinuxCNC's parameters, subroutines) reads as text. G-code keeps its text one toggle away. |
-| `preview-circuits` | KiCad boards (`.kicad_pcb`) drawn as pcbnew shows them: both sides' copper with filled zones, pads, vias and holes, silkscreens and the outline; footprints (`.kicad_mod`) alone; schematics (`.kicad_sch`) as eeschema draws them: symbols with their pins and fields, wires, buses, junctions, labels, notes and sheets; a symbol library's (`.kicad_sym`) first symbol. Details lists the KiCad version, title block, board size, copper layers, thickness, footprints, pads, nets, tracks and vias, or a schematic's paper, symbols and sheets. The text is one toggle away. Text is set in a system font (KiCad's own is not carried), so it is close to KiCad's but not identical. Gerber layers (`.gbr`, `.gtl`, `.gbl`, `.gts`, `.gto`, `.gm1`, `.g2`… from any design program) are drawn one at a time in the colour KiCad gives their layer, with their macros, regions, arcs, clear polarity, step and repeat and aperture blocks; Details names the layer (from the file's X2 attributes, else its name), the program that made it and its size. Excellon drill files (`.drl`, `.xln`, `.exc`) show their holes, slots and routes, with the holes, tools and sizes in Details. A `.gbr` that is a GIMP brush is left to the image previews. Files of more than 32 MiB are not drawn. |
-| `preview-email` | EML headers, inert HTML/text, embedded content-ID images and attachment previews. |
-| `preview-comics` | CBZ/CBR/CB7/CBT comics in the document reader, continuously or a page at a time, pages in numeric filename order, each decoded at the size it is shown. |
+| `Space` | Play or pause |
+| `Left`, `Right` | Seek 5 seconds (`Ctrl+Left`, `Ctrl+Right` in peek) |
+| `Shift+Left`, `Shift+Right` | Previous or next track |
+| `Up`, `Down` | Volume |
+| `M` | Mute |
+| `F` | Fullscreen |
+| `C` | Show or hide the controls (in the panel) |
+| `Escape` | Leave fullscreen, else close the preview (in the panel) |
 
-Pictures are decoded in the process (PNG, JPEG, GIF, WebP, BMP, TIFF, ICO,
-QOI, TGA, PNM, OpenEXR, DDS) and SVG drawings are drawn, sharper as they are
-zoomed. A picture of another kind (HEIC, AVIF, JPEG XL, a camera's raw file)
-is shown as the desktop's thumbnailer for it draws it, 1024 pixels at most,
-when one is installed (`thumbnails` plugin), else as ImageMagick draws it
-(the **Use ImageMagick** setting, on by default): AVIF, HEIC, JPEG XL, JPEG
-2000, raw files, Photoshop and GIMP images, DjVu, whatever its build reads.
-Both run isolated from your files and the network where bubblewrap works
-(ADR-031). So is a 3D model (STL, glTF,
-STEP, IGES, a Blender file…) when f3d, Blender or another thumbnailer
-claims its type. Code is highlighted with bat's
-grammars.
+## By kind of file
 
-Text can be drag-selected and copied with the toolbar or **Ctrl+C** while the
-reader has focus. With no text range, Copy uses the selected row or current
-section. **Ctrl+F** searches the focused viewer; the search button is always
-available. Repeating a search continues after the previous match: hex search
-streams from the byte after the last hit; EPUB search first looks further in
-the shown chapter, then asks the book for the next chapter with a match and
-wraps around. Other viewers search the loaded section after the selected item.
-The command palette exposes
-Preview: hexadecimal, default presentation, source / rendered, find content,
-headings and contents, copy content and page navigation.
+### Text and code
 
-Hex uses compact rows with byte-position headers, groups of eight bytes and
-separate offset/ASCII columns. Zero bytes and non-printing placeholders are
-muted; printable ASCII is accented. Font ligatures are disabled so adjacent
-characters remain distinct.
+- Code is highlighted with bat's grammars, in skwir's theme or one of
+  bat's, themes you added to bat included (Reading › Code), light or
+  dark whatever skwir is.
+- Any file can be shown as bytes (see [Bytes](#bytes-preview-hex)).
 
-## Dependencies
+### Structured data (`preview-structured`)
 
-`just run` builds the native helpers alongside skwir. The Nix shell includes the
-GStreamer and libarchive development/runtime dependencies. Packagers can omit
-helpers; their plugins explain what is missing when selected. Pure Rust formats
-need no external runtime or network service.
+- JSON, YAML and TOML with syntax colors, line numbers, folding and a
+  source toggle. Click a gutter arrow to fold an object, array or
+  section; the bar expands or collapses all.
+- JSON is formatted with two-space indentation; Source shows its
+  original formatting. TOML and YAML keep their syntax, indentation,
+  comments and order.
+- JSON with comments or trailing commas (JSONC, `tsconfig.json`) and
+  JSON5 are never reformatted: shown as written, folded where their
+  brackets say.
+- Find reveals matching lines; copying keeps blank lines. Read-only.
 
-- Audio: `skwir-media-worker` plus GStreamer playback/codec plugins; the spectrum
-  element comes from the good plugins. FFmpeg/ffprobe provide optional cover art.
-- Archives and comics: `skwir-archive-worker` plus libarchive. Neither 7-Zip nor
-  libarchive loads into the UI process.
-- Existing PDF, Office and video backend settings are unchanged.
-- Office documents as pages: LibreOffice and bubblewrap. Word and
-  OpenDocument text read as text need nothing; RTF, or every text document
-  when Pandoc is chosen, needs Pandoc and bubblewrap.
-- SQLite databases: the system's `libsqlite3`, which skwir links.
-- Mermaid diagrams: `skwir-mermaid-worker` (pure Rust, built by default, kept
-  out of skwir because its layout engine is about 16 MB).
-- 3D meshes without a stored picture: `skwir-model-worker` (pure Rust, built
-  by default). Without it, an installed thumbnailer (f3d) draws them, if any.
-- HEIC, AVIF, JPEG XL and raw photos: a thumbnailer for them (libheif's
-  `heif-thumbnailer`, for example), else ImageMagick (`magick`, or
-  ImageMagick 6's `convert`) and bubblewrap; with neither they show no
-  picture. Thumbnailers run in bubblewrap when it is installed and can
-  isolate; ImageMagick runs only there.
+### Markdown, HTML and notebooks (`preview-markdown`)
 
-ASF containers (`application/vnd.ms-asf`, `application/x-ms-asf`, or `.asf`)
-use `preview-media`. GStreamer discovers their streams: video files use the video
-player, while audio-only files show the audio presentation and spectrum. ASF needs
-the [GStreamer ASF demuxer](https://gstreamer.freedesktop.org/documentation/asf/asfdemux.html)
-from `gst-plugins-ugly`; the dev shell includes it alongside `gst-libav` for
-Windows Media codecs. Reload the dev shell after changing its plugin packages.
+- Markdown and HTML in reading mode, with a source toggle: headings,
+  emphasis, lists, tables, highlighted code, links and local images.
+- HTML keeps what its stylesheets say about emphasis, alignment, indents
+  and hidden text. It is inert: no scripts, fonts or remote content.
+- Fenced `mermaid` blocks are drawn as diagrams when
+  `skwir-mermaid-worker` is installed, and stay code without it.
+- Jupyter notebooks (`.ipynb`, format 4): Markdown cells, code in the
+  kernel's language, and what each cell printed, returned, raised or
+  plotted.
 
-EPUB is a native **reading mode**, not a browser: a book's stylesheets are
-applied only where they say how text reads (emphasis, alignment, indents, relative
-sizes, hidden text); its fonts, colours, page layout, scripts and DRM are not.
-Footnotes are gathered at the end of their chapter; clicking a note reference
-opens the note under it, from this chapter or another, and **Go to note**
-leads there. Superscripts, subscripts and small capitals are drawn as such.
-Pictures are decoded as they scroll into view. A fixed-layout page that
-states its size is drawn as its book lays it out (text over pictures, in the
-book's fonts); floats, tables and columns on such pages come out
-approximately, and a drawn page has no selectable text: search in such a
-book finds the pages, without marking the words. Markdown and email do not fetch remote images. Encrypted archives need
-an external application. Selected container
-members and mail attachments currently preview as images, text or bytes; they do
-not launch nested PDF/video sessions. Large inputs have explicit bounds and
-errors rather than unbounded parsing; see [ADR-009](adr/009-structured-previews.md).
+### Tables (`preview-tables`)
 
-Structured previews format JSON with two-space indentation; TOML and YAML keep
-their original syntax, indentation, comments and ordering. Click a gutter arrow
-to fold an object, array or section; the toolbar also offers expand/collapse all.
-Find reveals matching lines, and text selection/copy preserves blank lines.
-Source shows the original JSON formatting. JSON with comments or trailing
-commas, JSONC and JSON5 are never reformatted: they show as written, folded
-where their brackets say. These are read-only presentations.
-Invalid or oversized documents fall back to paginated source with a diagnostic;
-code previews are bounded to 2 MiB, 10000 lines and 4096 bytes per line.
+- CSV and TSV, quoted multi-line cells included, with horizontal
+  scrolling and section navigation.
+- JSON Lines (`.jsonl`, `.ndjson`): a row per line, the keys as columns.
+- Excel workbooks (`.xlsx`, `.xlsm`, `.xlsb`): each sheet's cells, one
+  sheet after another. The **Spreadsheets** setting (Table or Pages)
+  can give them to LibreOffice's pages instead.
+- SQLite databases: each table's rows, opened read-only so nothing is
+  written beside them.
 
-## Reproducible checks
+### Documents (`preview-documents`)
 
-`just previews-check` generates temporary audio and archives and exercises real
-workers, using a clocked fake audio sink. It verifies tags, spectrum, seek/pause,
-archive member reads, path handling, caller-provided output limits and symlink
-rejection. The archive worker takes every bound as an argument (`--members`,
-`--names`, `--bytes`) from `skwir_platform::inspection::limits`. This
-does not establish audible output quality on a real device.
-It also generates ASF video and audio-only fixtures and checks stream detection,
-playback, seeking and pause without an audio-only filename hint.
+- **PDF** in the document reader: continuous or a page at a time, zoom,
+  search, contents, links, text selection and copy. **Document engine**:
+  Automatic prefers PDFium and falls back to Poppler; MuPDF is used only
+  when chosen. A PDF that names its pages (roman numerals for the front
+  matter, a body starting at 1 further in) can be counted by those
+  names, as a book by its printed pages (see [Books](#books-preview-epub)).
+- **Office documents** as pages, converted by LibreOffice in a sandbox.
+- **Word** (`.docx`, `.docm`, `.dotx`, `.dotm`), **OpenDocument text**
+  (`.odt`, `.ott`) and **RTF** follow the **Text documents** setting:
+  - Reading (default): skwir reads Word and OpenDocument files itself, at
+    once and fitted to the panel: headings, numbered lists, tables,
+    footnotes that open under their reference, links and pictures. RTF
+    goes to Pandoc.
+  - Pages: LibreOffice lays them out as it prints them (a few seconds
+    each).
+  - Pandoc: Pandoc reads them all.
 
-For manual UI checks, generate synthetic files outside the repository:
+  A choice whose program is missing gives way to another.
+- A long document is read in parts; `[` and `]` move between them.
+- The grid shows the picture of the first page that an Office or
+  OpenDocument file stores, before any preview.
+
+### Books (`preview-epub`)
+
+- EPUB in reading mode, not a browser: chapters reflow, with contents,
+  embedded images, links, text size, selection and copy, source, and
+  search through the book. Chapters follow each other: scroll past the
+  end of one to read the next.
+- A book's stylesheets apply only to how text reads (emphasis,
+  alignment, indents, relative sizes, hidden text). Its fonts, colors,
+  page layout, scripts and DRM do not; the theme wins. Superscripts,
+  subscripts and small capitals are drawn as such. Pictures are decoded
+  as they scroll into view.
+- Footnotes are gathered at the end of their chapter. Clicking a note
+  reference opens the note under it, from this chapter or another; **Go
+  to note** leads there.
+- The bar: previous chapter, the chapter number (click to type one),
+  next; smaller, the text size, larger; **Full width**. How wide lines
+  may grow is the **Reading width** preference.
+- A book that lists its printed edition's page numbers can be counted by
+  them: the picker after the count switches between chapters and printed
+  pages, and the **Printed page numbers** preference remembers it.
+- A fixed-layout book (a comic, a picture book) opens in the document
+  reader like a PDF: each page drawn as the book lays it out, lettering
+  in the book's fonts, sharper as it is zoomed. Floats, tables and
+  columns on such pages are approximate, and a drawn page has no
+  selectable text: search finds the pages without marking the words.
+- **Book engine**: MuPDF (optional helper) can lay every book out into
+  pages in the document reader instead; the size keys then lay it out
+  again at a larger or smaller text size, keeping the place.
+
+### Comics (`preview-comics`)
+
+- CBZ, CBR, CB7 and CBT in the document reader, continuously or a page
+  at a time. Pages are in numeric file-name order, each decoded at the
+  size shown.
+
+### E-mail (`preview-email`)
+
+- EML messages: headers, the body as inert HTML or text, embedded
+  pictures, and attachments, each previewed as the file it is. Remote
+  content is never fetched.
+
+### Pictures
+
+- Decoded in skwir: PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, QOI, TGA, PNM,
+  OpenEXR, DDS. SVG drawings are drawn, sharper as they are zoomed.
+- Other kinds (HEIC, AVIF, JPEG XL, a camera's raw file) are shown as
+  the desktop's thumbnailer for them draws them, at most 1024 pixels,
+  when one is installed (`thumbnails` plugin). Otherwise ImageMagick
+  draws them (**Use ImageMagick**, on by default): AVIF, HEIC, JPEG XL,
+  JPEG 2000, raw files, Photoshop and GIMP images, DjVu, whatever its
+  build reads.
+- Thumbnailers and ImageMagick run isolated from your files and the
+  network where bubblewrap works
+  ([ADR-031](adr/031-pictures-by-imagemagick-thumbnailers-isolated.md)).
+
+### Audio and video (`preview-media`)
+
+- One player for both: play, seek, volume, speed (pitch kept), audio and
+  subtitle tracks, fullscreen for video. Audio shows its tags, its
+  embedded cover and a spectrum ring in the cover's color.
+- Previous and Next step through the folder's files of the same kind, or
+  a playlist.
+- **Keep playing while you browse** (on by default) pins what plays to a
+  player at the foot of the preview panel, with no gap between tracks.
+  The last pane's footer steers it, and so do the desktop's media keys
+  (`mpris`, Media controls).
+- **Play on selection** starts a file once it is selected. **When a
+  track ends**: stop, play the next, or shuffle. **Even out loudness**
+  uses ReplayGain. **Video engine**: Automatic plays with GStreamer and
+  falls back to a still frame from FFmpeg.
+- ASF files (`.asf`, Windows Media): GStreamer finds their streams; a
+  video plays in the video player, audio alone shows the audio
+  presentation and spectrum.
+
+### Playlists (`preview-playlists`)
+
+- M3U and M3U8, PLS, XSPF and CUE as a list of tracks with titles,
+  artists and lengths; missing and remote entries are marked.
+- A track on this machine opens in the player, whose Previous and Next
+  then walk the playlist. Nothing is fetched.
+
+### Archives (`preview-archives`)
+
+- ZIP, tar, 7z and other archives as a tree: folders first, icons,
+  aligned sizes, expand and collapse. A file selected in it opens as what
+  it is (see [Using the preview](#using-the-preview)).
+- **Extract Here**, in an archive's menu or a drop's, extracts it into a
+  folder beside it.
+- Encrypted archives need another application.
+
+### Fonts (`preview-fonts`)
+
+- TTF, OTF, TTC, WOFF and WOFF2 as specimens and character sheets,
+  without installing them. Find sets the specimen text; sections step
+  through the supported characters.
+
+### 3D models, drawings and prints (`preview-models`)
+
+- **Stored pictures**, in the panel and the grid: Blender files (and
+  their `.blend1` backups, compressed or not), 3MF packages (the package
+  thumbnail, or Bambu Studio's and Orca's first plate), FreeCAD
+  documents, SketchUp models and LayOut documents, Rhino models, DWG
+  drawings, and G-code (text or Prusa's binary `.bgcode`).
+- **DXF** drawings are drawn from what they hold, as a CAD program shows
+  model space, in AutoCAD's colors: lines, arcs, circles, polylines,
+  ellipses, splines, solids, hatches, text and inserted blocks
+  (dimensions among them). Details gives the size in the drawing's unit,
+  entities and blocks. A DXF over 32 MiB shows its stored picture, if
+  any.
+- **Meshes** that store no picture (STL, OBJ, PLY, OFF, glTF and GLB, a
+  3MF its slicer did not picture) are drawn by `skwir-model-worker` from
+  the front, right and above, and measured: size, volume, whether they
+  are watertight, triangles and objects. An STL is read in millimetres,
+  as slicers read it.
+- **G-code** that stores no picture is drawn from its moves:
+  - a print as a slicer previews it: extrusions from the front, right
+    and above, in PrusaSlicer's colors for the features its slicer
+    marks, or by height;
+  - a milling, engraving or laser program (also `.nc`, `.ngc`, `.tap`,
+    `.cnc`) from above, cuts colored by depth, rapid moves faint;
+    Details adds the size of the work;
+  - a program that computes its moves (LinuxCNC's parameters,
+    subroutines) reads as text. The text is always one toggle away.
+- **Details** lists what the file says: the Blender version and scenes,
+  the SketchUp or Rhino version and a model's scenes or a LayOut
+  document's pages, a print's time, filament, material, layer height,
+  printer and slicer, a drawing's DWG or DXF version.
+- Other models (STEP, IGES…) are shown when an installed thumbnailer
+  (f3d, Blender) claims their type, isolated like picture thumbnailers.
+
+### Circuit boards (`preview-circuits`)
+
+- **KiCad**: boards (`.kicad_pcb`) as pcbnew shows them (both sides'
+  copper with filled zones, pads, vias and holes, silkscreens, outline);
+  footprints (`.kicad_mod`); schematics (`.kicad_sch`) as eeschema draws
+  them (symbols with pins and fields, wires, buses, junctions, labels,
+  notes, sheets); a symbol library's (`.kicad_sym`) first symbol.
+  Details lists the KiCad version, title block, board size, copper
+  layers, thickness, footprints, pads, nets, tracks and vias, or a
+  schematic's paper, symbols and sheets. Text is set in a system font
+  (KiCad's is not carried): close to KiCad's, not identical.
+- **Gerber** layers (`.gbr`, `.gtl`, `.gbl`, `.gts`, `.gto`, `.gm1`,
+  `.g2`…, from any design program), one at a time in the color KiCad
+  gives their layer: macros, regions, arcs, clear polarity, step and
+  repeat, aperture blocks. Details names the layer (from the file's X2
+  attributes, else its name), the program that made it and its size. A
+  `.gbr` that is a GIMP brush goes to the picture previews.
+- **Excellon** drill files (`.drl`, `.xln`, `.exc`): holes, slots and
+  routes, with holes, tools and sizes in Details.
+- The text is one toggle away. Files over 32 MiB are not drawn.
+
+### Maps and tracks (`geo`, `map-tiles`)
+
+- GPS tracks and routes (GPX, KML, KMZ, GeoJSON, TCX, FIT, IGC, NMEA),
+  flight plans (Garmin, Flight Simulator, X-Plane, Little Navmap) and
+  drone missions (QGroundControl, MAVLink, Litchi, DJI) on a map, with
+  their distance, time and climb. Nothing a file links to is fetched.
+- Maps kept in files (PMTiles, MBTiles).
+- The background is the outline of the land, drawn offline, until you
+  choose OpenStreetMap or a tile server you add (Settings › Map
+  backgrounds). `map-tiles` is the only plugin that uses the network.
+
+### Bytes (`preview-hex`)
+
+- **View as hex**, for any file: read-only, compact rows with
+  byte-position headers, groups of eight bytes, separate offset and
+  ASCII columns. Zero bytes and non-printing placeholders are muted,
+  printable ASCII accented; font ligatures are off so adjacent
+  characters stay distinct.
+- Jump to a decimal or `0x` offset; search text or bytes
+  (`hex: 00 ff 7a`).
+
+## Limits
+
+Large inputs have explicit bounds and errors rather than unbounded
+parsing ([ADR-009](adr/009-structured-previews.md)):
+
+- Text parsed whole (Markdown, tables, structured code): 2 MiB. Code:
+  10,000 lines and 4096 bytes per line. A document that is invalid or
+  too large falls back to paginated source with a diagnostic.
+- DXF drawings and circuit files: 32 MiB.
+- Containers: an archive inside an archive, no deeper.
+
+## Dependencies (for packagers)
+
+`just run` builds every helper alongside skwir, and the Nix dev shell has
+their libraries. A packager can leave out any helper: its plugin says
+what is missing when a file needs it. Formats read in Rust need no
+external program or network service.
+
+| Preview | Helper | Needs at run time |
+| --- | --- | --- |
+| PDF | `skwir-pdf-worker` | PDFium (the packages carry it) |
+| PDF through Poppler | `skwir-poppler-worker` | Poppler |
+| PDF and books through MuPDF | `skwir-mupdf-worker` | MuPDF (linked) |
+| Audio and video | `skwir-media-worker` | GStreamer playback and codec plugins; the spectrum element from the good plugins; ASF from `gst-plugins-ugly`'s [ASF demuxer](https://gstreamer.freedesktop.org/documentation/asf/asfdemux.html), with `gst-libav` for Windows Media codecs; optional FFmpeg (`ffprobe`) for cover art |
+| Archives, comics | `skwir-archive-worker` | libarchive (neither it nor 7-Zip loads into skwir's process) |
+| Office documents as pages | | LibreOffice, bubblewrap |
+| RTF (or every text document with Pandoc chosen) | | Pandoc, bubblewrap; Word and OpenDocument read as text need nothing |
+| SQLite databases | | `libsqlite3`, which skwir links |
+| Mermaid diagrams | `skwir-mermaid-worker` | Nothing (Rust, built by default; separate because its layout engine is about 16 MB) |
+| 3D meshes without a stored picture | `skwir-model-worker` | Nothing (Rust, built by default); without it, an installed thumbnailer (f3d) draws them, if any |
+| HEIC, AVIF, JPEG XL, raw photos | | A thumbnailer for them (libheif's `heif-thumbnailer`, for example), else ImageMagick (`magick`, or ImageMagick 6's `convert`) and bubblewrap; with neither they show no picture |
+
+Thumbnailers run in bubblewrap when it is installed and can isolate;
+ImageMagick runs only there.
+
+## Checks (for contributors)
+
+- `just previews-check` generates temporary audio, ASF video and
+  audio-only files, and archives, and runs the real helpers with a
+  clocked fake audio sink. It checks tags, spectrum, seek and pause, ASF
+  stream detection and playback without a file-name hint, archive member
+  reads, path handling, caller-provided output limits and symlink
+  rejection. It does not establish audible output quality on a real
+  device.
+- The archive helper takes every bound as an argument (`--members`,
+  `--names`, `--bytes`) from `skwir_platform::inspection::limits`.
+- `just media-check` plays a synthetic two-track video with subtitles
+  through GStreamer.
+- Parser and plugin lifecycle regressions run in the normal suite
+  (`just test`).
+
+For checks by hand, generate synthetic files outside the repository:
 
 ```sh
 python3 tools/previews/check.py --root /tmp/skwir-preview-demo --generate-only
 just run /tmp/skwir-preview-demo
 ```
 
-The generator can copy an installed system font for the font specimen; generated
-media and screenshots are not repository fixtures. Parser and plugin lifecycle
-regressions also run in the normal workspace suite.
+The generator can copy an installed system font for the font specimen.
+Generated media and screenshots are not repository fixtures; delete the
+folder afterwards.

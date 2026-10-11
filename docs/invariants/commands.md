@@ -1,0 +1,130 @@
+# Command invariants: commands, agents, plugins from outside
+
+Read this before adding a command, or changing the `control` plugin, the
+permission layer, `skwir-plugin-api` or `skwir-extend`. It is binding,
+like `AGENTS.md`. ADR-043 (agents and scripts), ADR-044 (permissions),
+ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
+
+## Commands are the one surface
+
+- Every user action is a command (`skwir_core::command`), shared by the
+  keymap, the palette, the CLI, the MCP server and agents.
+- The shell's own commands (`ui.*`) are declared in the registry like
+  the rest (`commands.rs`, owner `ui`: a title, what it does, the schema
+  of its arguments) and carried out by the shell. A plugin may bind keys
+  to them.
+- Every command is checked before it runs (`CommandRegistry::check`): an
+  unknown name or an argument the command does not take is refused, never
+  guessed. A user's shortcut is checked against the declarations when
+  saved.
+- A new `ui.*` command is declared in `commands.rs`; the test of the
+  declarations covers its keys and palette entries. The palette offers
+  the shell's commands as `UI_COMMANDS` lists them, each with the
+  arguments that make it one thing to do.
+- A `ui.*` command dispatched from elsewhere (an agent, a script) waits
+  for the window (`App::request_front`).
+- Mutating commands return a `Plan` ([operations.md](operations.md)). No
+  command applies a plan it makes or is given (`apply_plan` hands it
+  back): the caller decides.
+- **Effects (ADR-044).** A command says what it does when registered
+  (`command::Effect`: `register(..).reads()`, `.shows()`, `.plans()`,
+  `.user_only()`); this decides what an agent may run. A command that says
+  nothing acts, and an agent's call of it asks the user first. A window
+  command (`ui.*`) is the user's alone unless `commands.rs` lists it among
+  those that show or act: one that answers a dialog or presses for the
+  user must never be an agent's.
+
+## Agents and scripts drive the window (ADR-043)
+
+- The `control` plugin, off by default, listens on a channel only the
+  user reaches (`channel::address`). `skwir mcp` carries an agent's MCP
+  there, `skwir cmd` one command (`crates/skwir/src/cli.rs`).
+- Every command is a tool, its dots written `__`: a new command is a new
+  tool with nothing more.
+- An agent's plan is proposed, and its tool answers with the verdict
+  (`App::propose_awaiting`). `skwir cmd` prints a plan, or applies it with
+  `--apply` as the user's own action.
+- What an agent needs to see is a command answering a value (`entries`,
+  `tab.list`), never a protocol of its own. `entries` with a `location`
+  lists a folder without showing it, so reading never moves the user's
+  view; asked off the window's thread, it waits a moment for a listing
+  still arriving.
+- A command that acts on entries takes them in `entries` (`op::EntryArg`:
+  an absolute path, or identity and path as the window names what it
+  shows) and reads them through `App::targets`, which falls back to the
+  pane's selection when none is named. Scripts and agents name files,
+  never select them: the selection is the user's and changes between two
+  calls.
+- A command that makes something somewhere takes the folder too (`mkdir`'s
+  `in`).
+- A path given from outside the window is absolute
+  (`os_path::absolute`), never read against the window's working folder.
+
+## The permission layer (ADR-044)
+
+An agent's call goes through `permissions::for_agent`, enforced in the
+control plugin's `run`:
+
+- Nothing it names may be private.
+- A command that acts runs once the user allows it in the review queue
+  (`App::ask`, a `Review::Question`). A user-only command is refused and
+  not listed.
+- Its plans say "An agent proposes" (`Plan::by`).
+- Every private path is removed from what it is answered
+  (`Checker::redact`).
+- Redaction removes what an answer names, not what it counted. So the
+  call runs as an agent's (`permissions::as_agent`), where the selection a
+  command is handed (`App::targets`, `selected_refs`) has no private file,
+  and a command that answers what it counted or gathered of a pane's
+  entries (how many, their tags, dates, places) leaves out
+  `App::withheld(pane)`, asked before taking the workspace's lock.
+- A script (`skwir cmd`) is the user's own.
+
+## What leaves this machine
+
+- Every plugin declares what it may do (`Plugin::capabilities`: read what
+  files hold, write, network, run programs), truthfully for a built-in
+  one; the Plugins page shows it. A new plugin declares its own.
+- Private folders (`permissions::Privacy`, the Privacy page: `~/.ssh` and
+  its like, and any folder holding a `.private` file) never reach an agent
+  or a plugin from outside. Check with `App::privacy()` wherever such code
+  is handed a file; it reads markers, so call it off the window's thread.
+- Only `map-tiles` uses the network (`AGENTS.md`, "Engineering rules").
+
+## Plugins from outside (ADR-045, ADR-046, ADR-047)
+
+- `skwir-plugin-api` is the contract: the manifest, the protocol, the WIT
+  world, the guest's `Plugin` trait. It depends on nothing of skwir's and
+  builds for WebAssembly.
+- `skwir-extend` is the host. It finds plugin folders (`folders()`,
+  `SKWIR_PLUGIN_PATH`) and makes each an `External` plugin, off until
+  turned on. It runs one as a program (isolated, `sandbox::plugin`) or as
+  a module, which the helper `skwir-module-worker` runs and serves as such
+  a program (Wasmtime, no WASI, only skwir's two imports). Wasmtime never
+  enters skwir's own process.
+- The module helper works in the plugin's cache folder and keeps the
+  compiled module there (`--keep`), the only folder it writes.
+- A plugin reads only the files of the call it answers, by handle
+  (`call::Call`), and only with `read`. A plan needs `write` and is
+  reviewed when run from the window.
+- What a plugin from outside can provide is the protocol's: fields,
+  thumbnails, previews, commands. A new kind is a new method and a new
+  protocol version, on both transports at once, documented in
+  `docs/plugins/protocol.md`.
+- The protocol is experimental (ADR-047): a version may change what an
+  older one said until it is declared stable, `OLDEST` following it, and
+  the release notes say so. Once stable, skwir keeps speaking older
+  versions.
+- A preview from outside is one of:
+  - an inspection (text, code, hex, a table);
+  - a file skwir shows, made of the file (`convert`,
+    `PreviewProvider::converted`, swapped in once in the panel's worker);
+  - pages with their text, links and outline, drawn as read (`page`, a
+    `DocumentSession` in `pages.rs` that skwir's reader reads).
+
+  Never skwir's own preview model on the wire. Links in what a plugin made
+  are closed unless the plugin may use the network.
+- `just plugins` builds the workspace's modules
+  (`crates/plugins-outside/*`) into `target/plugins`.
+- A command that may wait (a plugin from outside answering): see
+  `AGENTS.md`, "Background work and streamed state".

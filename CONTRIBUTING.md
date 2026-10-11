@@ -1,57 +1,61 @@
 # Contributing to skwir
 
-Thank you for helping. skwir is young, so a report of what went wrong is
-as welcome as code. With a Mac or a Windows machine, [the steps towards
-those releases](docs/HELP-WANTED.md) need you most.
+skwir is young: a report of what went wrong is as welcome as code. If you
+have a Mac or a Windows machine, [the steps towards those
+releases](docs/HELP-WANTED.md) need you most.
 
 ## Reporting a problem
 
-Open an issue with your system and its version (More › About skwir ›
-Copy details copies them), what you did, what you expected and what
-happened, and the log if you can (run
-`RUST_LOG=skwir=debug skwir` from a terminal). **Rename anything personal
-before you share it**: paths, file names and screenshots say a lot about
-you, and a folder called `taxes 2026` can be `folder a` in a report.
+Open an issue with:
 
-A security problem (something that reads a private folder, a plugin that
-gets what it did not declare, a way around a plan's review) goes to
-[SECURITY.md](SECURITY.md)'s address instead, not to an issue.
+- your system and its version (More › About skwir › Copy details);
+- what you did, what you expected, and what happened;
+- the log if you can (`RUST_LOG=skwir=debug skwir` from a terminal).
+
+**Rename anything personal before you share it.** Paths, file names and
+screenshots say a lot about you: a folder called `taxes 2026` can be
+`folder a` in a report.
+
+A security problem (a private folder reached, a plugin getting what it
+did not declare, a way around a plan's review) goes to
+[SECURITY.md](SECURITY.md)'s address, not to an issue.
 
 ## Building and checking
 
-The dev environment is the Nix flake (`nix develop`, or `direnv allow`);
-without Nix, Rust 1.96 or later and the libraries `flake.nix` lists. The
-checks run the Rust `rust-toolchain.toml` pins, which rustup installs by
-itself; moving the pin is a change of its own, with what the new clippy
-asks.
+The dev environment is the Nix flake (`nix develop`, or `direnv allow`).
+Without Nix: Rust 1.96 or later and the libraries `flake.nix` lists. The
+checks run the Rust that `rust-toolchain.toml` pins, which rustup
+installs by itself; moving the pin is a change of its own, with the
+fixes the new clippy asks for.
 
 ```
 just build          # skwir without its native helpers
-just run [folder]   # the release build
+just run [folder]   # the release build, with every helper
 just test           # the tests, through cargo-nextest
 just lint           # rustfmt and clippy, warnings as errors
 ```
 
-Before a change is done, CI's checks pass: `just lint-all`, `just deny`,
-`just test-all`, `just poppler-check`, `just mupdf-check` and `just
-bench-check` (`AGENTS.md`, "Build, test, lint").
+A change is done when CI's checks pass: `just lint-all`, `just deny`,
+`just test-all`, `just smoke`, `just bench-check`, `just poppler-check`
+and `just mupdf-check` (`AGENTS.md`, "Build, test, lint").
 
 ## The rules the code follows
 
 [`AGENTS.md`](AGENTS.md) holds them, for people and agents alike: the
 principles (always responsive, light, stateless, a small core, ready for
-agents), the engineering rules, how the UI is laid out, and the rules of
-each area. Read it once before a first change; it is long because it
-says what the code would otherwise teach by breaking. A decision that
-closes a door gets an ADR in [`docs/adr/`](docs/adr/), and
-[`docs/PLAN.md`](docs/PLAN.md) says honestly what is done and what is
-left.
+agents), the engineering rules, and how to build and test. The rules of
+each larger area (previews, media, the reader…) are in
+[`docs/invariants/`](docs/invariants/). Read `AGENTS.md` once before a
+first change, and the area's file before working there.
+
+A decision that closes a door gets an ADR in [`docs/adr/`](docs/adr/).
+[`docs/PLAN.md`](docs/PLAN.md) records what is done and what is left.
 
 Two rules matter from the first commit:
 
-- **Nothing personal enters the repository**: tests, documents,
+- **Nothing personal enters the repository.** Tests, documents,
   screenshots, logs and commit messages use synthetic names that keep
-  what matters (an apostrophe, a space, a character of several bytes).
+  what matters (an apostrophe, a space, a multi-byte character).
 - **Tests use real filesystems under `~/.cache/skwir-tests`**, never your
   own files, and run through nextest, which keeps them out of your Trash,
   settings and cache (`tools/test/isolate-xdg.sh`).
@@ -59,4 +63,4 @@ Two rules matter from the first commit:
 ## Licence
 
 skwir is under the Apache License 2.0. What you contribute is under it
-too (the licence's section 5): no separate agreement to sign.
+too (section 5 of the licence); there is no separate agreement to sign.

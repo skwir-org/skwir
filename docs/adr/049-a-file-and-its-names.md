@@ -1,14 +1,13 @@
 # ADR-049: A file and its names
 
 Status: accepted, 2026-10-10. Revises ADR-000's principle 6 ("entries
-have stable identity: device + inode") and ADR-036's first point: the
-device and the inode are the identity of a file, not of a row. Every
-point is built (Consequences).
+have stable identity: device + inode") and ADR-036's first point:
+device and inode identify a file, not a row. All points built
+2026-10-10.
 
 ## Context
 
-An entry's identity (`EntryId { dev, ino }`) is what a stat reports of
-the file, and skwir keys by it both what belongs to the file and what
+`EntryId { dev, ino }` keyed both what belongs to the file and what
 belongs to the name it was found under:
 
 | The file (the inode) | The name (an entry in a folder) |
@@ -18,159 +17,133 @@ belongs to the name it was found under:
 | thumbnails, fields (a photo's position), what a preview reads | what rename, move, trash and delete act on |
 | the space it takes | privacy (a folder is private); shelf, Recent and trash records |
 
-A file can have several names: hard links (pnpm's `node_modules`, a Nix
-store optimised, snapshot backups), and in a listing of several folders
-the same file reached twice (through a bind mount, or two folders
-holding its names). Two names of one file in one listing were one row:
-a folder holding `a.txt` and its hard link `b.txt` listed one of them,
-and a `content:` search of a home folder lost 725 to 2,036 of its matches
-so (`skwir-bench trigram`, measured 2026-10-10). Worse than a row
-missing, two bugs could act on the wrong name or leave one behind:
+A file can have several names: hard links (pnpm's `node_modules`, an
+optimised Nix store, snapshot backups), or one file reached twice in a
+multi-folder listing (a bind mount, two folders holding its names). Two
+names in one listing were one row: a folder with `a.txt` and its hard
+link `b.txt` listed one, and a `content:` search of a home folder lost
+725 to 2,036 matches (`skwir-bench trigram`, 2026-10-10). Two bugs
+could act on the wrong name:
 
 - `EntryRef::resolve` followed a reference whose name was gone, or held
   another file, to any name of the same inode in its folder: a plan to
   trash or delete `b.txt` could act on `a.txt`, for good.
-- Empty Trash planned one deletion per inode: of two names of one file
-  trashed apart, one stayed in the trash with its record.
+- Empty Trash planned one deletion per inode: of two names trashed
+  separately, one stayed in the trash.
 
-What other tools do decided the rest. `du` counts a file of several
-links once (POSIX: once under an operand); ncdu counts each file once in
-every folder holding it, so a folder's subfolders can add up to more
-than it, marks files of several links `H`, and warns that a folder's
-size is not what deleting it frees. Windows Explorer counts every name,
-which Microsoft documents as overstating the WinSxS folder. `btrfs
-filesystem du` shows a Total, what is Exclusive (what deleting frees)
-and what is shared. GNU `cp -a` and `tar` keep the hard links among
-what they copy; `rsync -a` does not unless asked (`-H`, which costs
-memory per file of several links); GUI file managers make independent
-copies. Nautilus checks the destination's free space before copying,
-and offers Copy Anyway since network shares reported 0 free.
+Prior art:
+
+| Tool | Behaviour |
+|---|---|
+| `du` | a multi-link file once (POSIX: once per operand) |
+| ncdu | once per folder holding it (subfolders can sum to more than their parent); marks them `H`; warns size is not what deleting frees |
+| Windows Explorer | every name (Microsoft documents it overstating WinSxS) |
+| `btrfs filesystem du` | Total, Exclusive (what deleting frees), shared |
+| GNU `cp -a`, `tar` | keep hard links among what they copy |
+| `rsync -a` | only with `-H` (memory per multi-link file) |
+| GUI file managers | independent copies |
+| Nautilus | checks free space first; Copy Anyway since network shares reported 0 free |
 
 ## Decision
 
-1. **Two identities.** A file is `FileId { dev, ino }`, what a stat says
-   (`EntryId` before). An entry, a row, is `EntryId { file, at }`, `at`
-   a hash of the folder holding its name (that folder's own `FileId`)
-   and the name (`EntryId::in_folder`): the directory entry itself, the
-   same in a folder's listing, a search's, the trash's and Recent's
-   (`stat_entry` names every entry it stats so), kept while a folder
-   above is renamed, and two for the same name in two folders (pnpm's).
-   A location that knows its entries by path alone and may not read
-   their folders (what was dropped on the shelf, a tag's files) hashes
-   the path (`EntryId::at_path`); a place keeps its sentinel (ADR-032).
-   The stat functions return a `FileId`, so a comparison of a stat with
-   a row does not compile until it says which it means. What belongs to the
-   file is keyed by the file (thumbnails, with the type they were made
-   for; fields; the notes kept in attributes; Usage's links; positions),
-   what belongs to the name by the row (rows, selection, cursor, cut,
-   the notes snapshot of the stores beside a file, what is withheld from
-   an agent).
+1. **Two identities.**
+   - A file is `FileId { dev, ino }` (formerly `EntryId`). Stat
+     functions return it, so comparing a stat with a row does not
+     compile until it says which it means.
+   - An entry (a row) is `EntryId { file, at }`, `at` hashing the
+     holding folder's `FileId` and the name (`EntryId::in_folder`;
+     `stat_entry` sets it). It is the same in a folder listing, a
+     search, the trash and Recent, survives renaming a folder above, and
+     differs for the same name in two folders.
+   - Locations that know entries by path alone and may not read their
+     folders (shelf, a tag's files) hash the path (`EntryId::at_path`).
+     Places keep their sentinel (ADR-032).
+   - By file: thumbnails (with the type made for: `thumbs::key` hashes
+     in the MIME type, so `x.jpg` and its link `x.bin` are two
+     pictures), preview conversions, fields, notes in attributes,
+     Usage's links, positions. By row: rows, selection, cursor, cut
+     (cutting one name dims it alone), the notes snapshot of stores
+     beside a file, what is withheld from an agent. Usage names rows as
+     the listing does, so its selection is the pane's.
 2. **A rename re-keys a row.** The folder provider pairs the name that
-   went with the one that came by the file's identity, as it does now,
-   and says so (row X is now row Y); the selection, the cursor, the
-   folders opened in place, the cut dimming and the preview follow it.
+   went with the one that came by file identity and sends
+   `ListingEvent::Renamed` (row X is now row Y; a search's post-plan
+   check sends it too). Selection, cursor, folders opened in place, cut
+   dimming and preview follow.
 3. **A reference follows a file only when it knew the file had one
-   name** (`EntryRef::only_name`: a folder, or a file whose link count
-   was one), and only while one name in its folder holds it. Otherwise
-   it resolves at its path, and a name gone is "not there any more", one
-   holding another file "now another file". Not known is no: of a file
-   with several names, a name gone and a name renamed look alike, and a
-   wrong delete cannot be taken back. **Built.**
-4. **Items count names; space counts files.** The selection's count, a
-   folder's, a search's, the shelf's, the trash's are names. Space is
-   each file once within what is totalled (a folder's weight in the
-   footer, the selection's size, the trash's, Usage as it already does);
-   a file with names outside still counts, as it takes that space. What
-   deleting frees is a third figure, the files whose every name goes,
-   shown only where deletion is in question (Usage, Delete for good,
-   Empty Trash) and only when it differs. A file of several names says
-   so where it is shown (Details' Hard links row, a mark in Usage).
-5. **Copies keep the links among what they carry.** A copy, and a move
-   to another filesystem, link each later name of a file to its first
-   copy, from one table the plan's steps share, holding only files of
-   more than one link and forgetting each once all its names are
-   copied. A file copied alone comes out independent. Where the
-   destination refuses links (FAT, exFAT, some network filesystems),
-   the data is copied, and counted.
-6. **A copy checks the destination's free space first,** against what
-   it will write (point 5's count), and offers to go ahead anyway; a
-   destination filled meanwhile still fails as it does.
-7. **The trash keeps an item per record:** two records whose files are
-   one are two items; one trash reached under two paths is not two.
-   **Built.**
+   name** (`EntryRef::only_name`: a folder, or link count one), and only
+   while one name in its folder holds it. Otherwise it resolves at its
+   path: "not there any more", or "now another file". Unknown counts as
+   no: for a multi-name file, gone and renamed look alike, and a wrong
+   delete cannot be undone.
+4. **Items count names; space counts files.**
+   - Counts (selection, folder, search, shelf, trash) are names.
+   - Space counts each file once within the total (`entry::weight`:
+     footer weight, selection size, trash, Usage); a file with names
+     outside still counts. The footer's worker asks the system each
+     file's name count.
+   - What deleting frees (files losing every name) is a third figure,
+     shown only where deleting is in question and only when different:
+     Usage keeps per folder what its files with outside names take
+     (`Node::shared`); Delete for good and Empty Trash say in their
+     question what stays on disk (`entry::kept_by_other_names`, from
+     listed link counts; silent while one is unknown).
+   - A multi-name file says so (Details' Hard links row, a mark in
+     Usage).
+5. **Copies keep the links among what they carry.** A copy, or a
+   cross-filesystem move, links each later name of a file to its first
+   copy (`StepContext::link_copied`), via a table shared by the plan's
+   steps, holding only multi-link files and dropping each once all its
+   names are copied; bytes count once. A file copied alone comes out
+   independent. Where links are refused (FAT, exFAT, another volume,
+   some network filesystems) the data is copied and counted.
+6. **A copy checks free space first.** A plan run as one action
+   (`Executor::execute_whole`) sums, after conflict checks, what its
+   copies and cross-filesystem moves write (`Operation::writes`, point
+   5's count) per volume against `fs::volume::free`. If short it asks
+   (`op::room`: Cancel or Copy anyway, `app::Asker::Room`), else
+   refuses with needed and free sizes. Filling up meanwhile still fails
+   as before.
+7. **The trash keeps one item per record:** two records of one file are
+   two items; one trash under two paths is not two.
 
-Hard links are the only sharing a stat shows. Space shared below files
-(reflink copies, which skwir's own copies are on btrfs; snapshots;
-deduplication) is counted in full, and skwir says that is what its
-sizes mean rather than estimate extents, a filesystem tool's work.
+Hard links are the only sharing a stat shows. Sharing below files
+(reflinks, which skwir's copies are on btrfs; snapshots; dedup) is
+counted in full, and skwir says so rather than estimate extents.
 
 ## Consequences
 
-- A row's key grows from 16 to 24 bytes and stays `Copy`; each name is
-  hashed once, on the provider's thread. `just bench-check` says what
-  that costs a listing of a hundred thousand.
-- Nothing stored holds an `EntryId` but the throwaway cache, whose
-  layout is bumped. The agents' wire format changes (`entries`' ids,
-  `select`'s, plans' references) before the first release.
-- Notes in attributes are the file's: tagging `a.jpg` tags `b.jpg`.
-  Notes beside a file are the name's, so two names can show different
-  notes. The tags index learns the other names at its next check
-  (setting an attribute moves the change time of every name).
+- A row key grows from 16 to 24 bytes, still `Copy`; each name is
+  hashed once on the provider's thread (`just bench-check` measures it
+  on 100,000 entries).
+- Only the throwaway cache stored `EntryId`s (layout bumped). The agent
+  wire format (`entries` and `select` ids, plan references) changed
+  before the first release.
+- Notes in attributes are the file's (tagging `a.jpg` tags `b.jpg`);
+  notes beside it are the name's, so two names can differ. The tags
+  index learns other names at its next check (an attribute write moves
+  every name's change time).
 - Undoing an operation on a file renamed since, whose names were not
-  known (a row not stat-ed yet, an agent's reference by identity),
-  says it is gone where it used to follow: the price of never acting on
-  another name. A reference made by a stat (`EntryRef::from_path`), the
-  selection's rows once stat-ed and the operations' inverses know.
-- On HFS+ (Time Machine before APFS) a folder can have several names;
-  point 3 takes a folder for one name, which holds everywhere else.
-- Built 2026-10-10: points 3 and 7, with tests of both (ops:
+  known (a row not stat-ed yet, an agent's reference by identity), says
+  it is gone instead of following: the price of never acting on another
+  name. References from a stat (`EntryRef::from_path`), stat-ed rows
+  and operation inverses know.
+- On HFS+ (pre-APFS Time Machine) a folder can have several names;
+  point 3 treats folders as single-named, true everywhere else.
+- Built 2026-10-10, all points. Tests: ops'
   `entry_ref_never_follows_a_file_to_another_of_its_names`,
-  `trashing_or_deleting_a_name_gone_spares_the_files_other_name`; trash:
-  `emptying_the_trash_deletes_every_name_of_a_file_trashed_twice`). Then
-  points 1 and 2: a folder's listing, a search, the trash, the shelf,
-  Recent and a tag's files list each name; a rename is
-  `ListingEvent::Renamed`, which the folder's watcher and a search's
-  check after a plan send and the pane follows; what waits for a paste
-  is each entry by its file and name, so cutting one name dims it alone;
-  the notes snapshot is a name's; thumbnails, previews' conversions,
-  fields and Usage's hard links are a file's; Usage names its rows as the
-  folder's listing does, so its selection is the pane's. Tested by
-  `two_names_of_one_file_are_two_entries` (listing),
-  `a_file_found_under_several_names_is_a_result_under_each` (query) and
-  the pending paste's test. Then point 4: a folder's weight in the
-  footer (added up from its listing, or read by a worker, which asks the
-  system how many names each file has), the selection's size and Usage's
-  selected files count each file once (`entry::weight`); Usage keeps,
-  for each folder, what its files with names outside it take on disk
-  (`Node::shared`), and says what deleting a folder frees where that is
-  less, and of a file that it is one of several names. Left, as rare
-  and costly to tell: two folders selected in Usage that share a file
-  each count it (a row keeps no table of its links).
-  Then point 5: a copy, and a move to another filesystem, link a later
-  name of a file to the copy the plan made of it (`StepContext::
-  link_copied`, its table forgetting a file once all its names are
-  copied), and count its bytes once; a link refused (another volume, one
-  that keeps none) copies the data. Tested by
-  `a_copy_keeps_the_links_among_what_it_copies`. On Windows `std` says
-  nothing of a file's names: there each name is copied, as before.
-  Then point 6: a plan the user asked for as one action
-  (`Executor::execute_whole`) adds up, after its conflicts are checked,
-  what its copies and its moves to another filesystem will write
-  (`Operation::writes`) by the volume they write to, against what each
-  says is free (`fs::volume::free`), and when one has too little asks
-  whether to go on (`op::room`; the review's question, Cancel or Copy
-  anyway, `app::Asker::Room`), refusing it with what it needs and what
-  is free otherwise. Tested by `a_copy_short_of_room_asks_whether_to_go_on`
-  and `room`'s own. Its cost: a copy's sources are walked once more
-  before it starts, to size them. Not asked of a trash onto another
-  volume (a volume without a trash of its own, rare).
-- Then what a deletion keeps: Delete for good of the selection, and
-  Empty Trash while its listing shows its items, note in their question
-  what stays on the disk, its files having names elsewhere
-  (`entry::kept_by_other_names`, from the link counts the listing has:
-  nothing is said while one is not known); and a thumbnail is of a file
-  as a type (`thumbs::key`, its MIME type hashed in), so `x.jpg` and its
-  link `x.bin` are two pictures. Tested by
-  `deleting_one_name_of_a_file_says_it_stays_on_the_disk`,
-  `emptying_the_trash_deletes_every_name_of_a_file_trashed_twice` and
-  `a_picture_is_of_a_file_as_a_type`.
+  `trashing_or_deleting_a_name_gone_spares_the_files_other_name`,
+  `a_copy_keeps_the_links_among_what_it_copies`,
+  `a_copy_short_of_room_asks_whether_to_go_on`,
+  `deleting_one_name_of_a_file_says_it_stays_on_the_disk`; trash's
+  `emptying_the_trash_deletes_every_name_of_a_file_trashed_twice`;
+  listing's `two_names_of_one_file_are_two_entries`; query's
+  `a_file_found_under_several_names_is_a_result_under_each`;
+  `a_picture_is_of_a_file_as_a_type`; `room`'s own; the pending paste's.
+- **Gaps:**
+  - Two folders selected in Usage that share a file each count it (rows
+    keep no link table): rare and costly to tell.
+  - On Windows `std` reports no names: each name is copied, as before.
+  - The free-space check walks a copy's sources once more to size them.
+  - Trashing onto another volume (one without its own trash, rare)
+    does not check free space.

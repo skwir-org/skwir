@@ -1,26 +1,28 @@
 # ADR-000: Principles and performance budgets
 
-Status: accepted, 2026-09-18
+Status: accepted, 2026-09-18. Revised by ADR-002 and ADR-033 (the
+first-frame and idle-memory rows) and ADR-049 (principle 6: a file's
+identity is not an entry's).
 
 ## Context
 
-skwir is an experimental file manager. The plan in `docs/PLAN.md` lists the
-principles; this record makes them binding and attaches numbers so that
-"fast" and "light" are checked by CI rather than argued about.
+skwir is an experimental file manager. `docs/PLAN.md` lists its principles;
+this record makes them binding and attaches numbers, so that "fast" and
+"light" are checked by CI rather than argued about.
 
 ## Decision
 
 ### Principles
 
-1. **Always responsive.** No blocking work on the UI thread. Listings stream,
-   every provider call is async, batched, and cancellable. Viewport-visible work
-   has priority over everything else.
+1. **Always responsive.** No blocking work on the UI thread. Listings stream;
+   every provider call is async, batched and cancellable. Work visible in the
+   viewport has priority over everything else.
 2. **Light.** Idle memory and startup time are budgeted (below) and measured.
 3. **Stateless and idempotent.** No daemon, no database. One content-addressed
    cache directory that can be deleted at any time. Re-applying an applied plan
    is a no-op.
 4. **Harness the environment.** Reuse OS thumbnails, icon themes, the MIME
-   database, bookmarks, existing indexes, and installed tools before building
+   database, bookmarks, existing indexes and installed tools before building
    our own.
 5. **Small core.** Only what two plugins must agree on lives in `skwir-core`.
    Everything else is a plugin with a runtime toggle.
@@ -30,11 +32,11 @@ principles; this record makes them binding and attaches numbers so that
 
 ### Budgets
 
-Reference machine: Intel i7 (Alder Lake) with Iris Xe iGPU and a GTX 1060 eGPU,
-NVMe, btrfs with zstd, NixOS on Hyprland/Wayland. Warm page cache.
+Reference machine: Intel i7 (Alder Lake) with Iris Xe iGPU and a GTX 1060
+eGPU, NVMe, btrfs with zstd, NixOS on Hyprland/Wayland. Warm page cache.
 
-Filesystem primitives (enforced by `just bench-check`, values in
-`crates/bench/budgets.toml` are 3x the reference measurement):
+Filesystem primitives, enforced by `just bench-check`; the values in
+`crates/bench/budgets.toml` are 3x the reference measurement:
 
 | Profile   | Metric                          | Reference | Budget  |
 |-----------|---------------------------------|-----------|---------|
@@ -44,7 +46,8 @@ Filesystem primitives (enforced by `just bench-check`, values in
 | deep1m    | recursive walk, parallel        | 63 ms     | 200 ms  |
 | images10k | full listing                    | 3.1 ms    | 10 ms   |
 
-UI (enforced by the toolkit spikes in Phase 0, then by the `ui` crate from Phase 2):
+UI, enforced by the toolkit spikes in Phase 0, then by the `ui` crate from
+Phase 2:
 
 | Metric                                                  | Budget            |
 |---------------------------------------------------------|-------------------|
@@ -56,13 +59,15 @@ UI (enforced by the toolkit spikes in Phase 0, then by the `ui` crate from Phase
 
 ### Rules
 
-- Budgets are tightened when the reference improves and never loosened without an ADR.
-- The bench compares the minimum over runs, since the budget is about what the
+- Budgets are tightened when the reference improves and never loosened
+  without an ADR.
+- The bench compares the minimum over runs: the budget is about what the
   machine can do, not scheduler noise.
-- Synthetic trees are generated on demand under `bench-data/` and never committed.
+- Synthetic trees are generated on demand under `bench-data/` and never
+  committed.
 
 ## Consequences
 
 - Every phase ends with `just bench-check` green.
-- Feature work that regresses a budget is not merged until the regression is fixed
-  or the budget is revised through an ADR.
+- Feature work that regresses a budget is not merged until the regression is
+  fixed or the budget is revised through an ADR.

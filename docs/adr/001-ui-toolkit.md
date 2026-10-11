@@ -1,29 +1,21 @@
 # ADR-001: UI toolkit
 
-Status: accepted, 2026-09-18
+Status: accepted, 2026-09-18. Built on gpui 0.2.2, now vendored with patches
+(`vendor/gpui`). Amended 2026-10-11 (accessibility waits for gpui).
 
 ## Context
 
-Phase 0 required choosing the GPU-accelerated Rust toolkit for the `ui` crate.
-The candidates shortlisted in the plan were GPUI (Zed) and Floem (Lapce), with
-iced, egui, and Xilem ruled out earlier for weaker list virtualization, look,
-or maturity respectively.
+Phase 0 had to pick the GPU-accelerated Rust toolkit for the `ui` crate.
+Shortlist: GPUI (Zed) and Floem (Lapce). Ruled out earlier: iced (list
+virtualization), egui (look), Xilem (maturity).
 
-Both candidates were implemented as the same demo (`spikes/`): a 100,000-row
-virtualized list, 48 px rows, 40 px thumbnails decoded lazily from real PNGs
-with viewport priority and staleness cancellation, a scripted 7 s scroll, and
-identical metrics from `spike-common`. Each was run alone, twice, on the Intel
-Iris Xe and on the NVIDIA GTX 1060, keeping the warm run.
-
-Versions: gpui 0.2.2, floem 0.2.0, both from crates.io.
-
-## Measurements
-
-Reference machine as in ADR-000. Both displays are 2560x1440 at 59.95 Hz and
-both toolkits present with vsync, so wall-clock frame intervals sit at 16.7 ms
-by construction. The discriminating numbers are main-thread CPU time per
-frame (layout + paint + submit, independent of vsync), the tail of the frame
-interval distribution (dropped frames), first frame, and RSS.
+Both were built as the same spike (`spikes/`): a 100,000-row virtualized
+list, 48 px rows, 40 px thumbnails decoded lazily from real PNGs with
+viewport priority and staleness cancellation, a scripted 7 s scroll, shared
+metrics (`spike-common`). gpui 0.2.2 and floem 0.2.0, each run alone, twice,
+on the Iris Xe and the GTX 1060 of ADR-000's machine; the warm run is kept.
+Displays are 2560x1440 at 59.95 Hz with vsync, so intervals sit at 16.7 ms:
+main-thread CPU per frame and the interval tail are what discriminate.
 
 | Metric                        | GPUI nvidia | GPUI intel | Floem nvidia | Floem intel |
 |-------------------------------|------------:|-----------:|-------------:|------------:|
@@ -39,75 +31,63 @@ interval distribution (dropped frames), first frame, and RSS.
 
 Raw reports: `spikes/results/*.json`.
 
-Reading the table:
+- Floem's median frame CPU is lower, but its p95 nears the 8.3 ms (120 Hz)
+  budget, its worst frames are 2–4x GPUI's, and its p99 interval is a dropped
+  frame. GPUI's p99 is within vsync jitter.
+- First frame: both within 100 ms, GPUI on NVIDIA at the edge.
+- RSS includes ~37 MB of thumbnails held on purpose. GPUI stays well under
+  100 MB; Floem on NVIDIA does not (its wgpu path and driver).
 
-- Both toolkits fit the per-frame budget at the median. Floem's median is
-  lower, but its p95 is close to the 8.3 ms budget for 120 Hz and its worst
-  frames are 2 to 4 times longer than GPUI's. GPUI's p99 interval is within
-  jitter of vsync; Floem's p99 is a dropped frame.
-- First frame is within the 100 ms budget for both, GPUI on NVIDIA being at
-  the edge.
-- RSS includes roughly 37 MB of decoded thumbnails held by `spike-common`
-  on purpose. GPUI's own footprint is well under the 100 MB budget; Floem on
-  NVIDIA is not, largely from its wgpu path and driver.
+Findings:
 
-## Qualitative findings
-
-GPUI:
-
-- `uniform_list` with a pixel-precise scroll offset did exactly what a file
-  list needs. `ImageSource::Render` bypasses the asset cache and goes straight
-  to the sprite atlas, which is the thumbnail fast path.
-- The default system font stack does not resolve on this machine and the
-  failed lookup repeats every frame, costing 35 to 50 ms per frame until an
-  explicit font family is set. skwir must always set a verified font family.
-- No Cargo features were needed for Wayland; Vulkan through blade honored the
-  ICD restriction. The code was compact (150 lines). Every API had to be read
-  from the crate source since documentation is thin.
-
-Floem:
-
-- No per-frame hook exists; the spike drives itself from a custom view's
-  `paint`. `img()` decodes and SHA-256 hashes the whole image on every update,
-  so thumbnails needed a custom view calling the renderer directly.
-- The vger renderer routes images through the glyph atlas and clears the
-  whole atlas, glyphs included, whenever usage passes 70 percent. A thumbnail
-  grid would thrash it. This is the most significant finding against Floem
-  for this application.
-- Readable source, Leptos-like signals, pleasant to write (190 lines).
+- **GPUI.** `uniform_list` with a pixel-precise scroll offset fits a file
+  list; `ImageSource::Render` goes straight to the sprite atlas. The default
+  font stack does not resolve here, and the failed lookup repeats every frame
+  (35–50 ms) until a font family is set. Wayland and Vulkan (blade, honoring
+  the ICD restriction) needed no setup. 150 lines; thin docs, every API read
+  from source.
+- **Floem.** No per-frame hook. `img()` decodes and SHA-256-hashes the whole
+  image on every update. The vger renderer keeps images in the glyph atlas and
+  clears all of it, glyphs included, past 70 % use: a thumbnail grid would
+  thrash it, the strongest finding against Floem. Readable, Leptos-like
+  signals, 190 lines.
 
 ## Decision
 
-**GPUI.** It has the tighter frame-time tail, the lower memory footprint, an
-image atlas designed for many sprites, and it is the only candidate proven on
-Linux, macOS, and Windows in a shipping application of this shape.
+**GPUI**: tighter frame-time tail, lower memory, an atlas built for many
+sprites, and the only candidate proven on Linux, macOS and Windows in a
+shipping application of this shape.
 
-Mitigations adopted with it:
+Mitigations:
 
-- Pin an exact `gpui` version and upgrade deliberately; expect API churn.
+- Pin an exact `gpui` version; upgrade deliberately.
 - Set an explicit font family at the root and verify it resolves at startup.
-- Keep `skwir-ui` thin over `skwir-core` so the toolkit remains replaceable.
+- Keep `skwir-ui` thin over `skwir-core` so the toolkit stays replaceable.
 
-## What the spike could not verify
+Not verified by the spike:
 
-- The 120 Hz budget: no display above 60 Hz is available. Main-thread CPU
-  p95 is the proxy and GPUI passes it with a 2x margin.
-- Rendering on the Intel iGPU: in this Hyprland session the compositor's DRM
-  device is the NVIDIA card, and Vulkan surfaces created on the Intel ICD are
-  never displayed (`vkcube` shows the same). Intel numbers measure work
-  submitted to an undisplayed swapchain, which is still representative of
-  CPU cost.
-- External drag-and-drop and IME on Wayland need a human at the keyboard and
-  remain open items for Phase 3.
+- 120 Hz: no such display. Main-thread CPU p95 is the proxy; GPUI passes with
+  a 2x margin.
+- Drawing on the Intel iGPU: the compositor runs on the NVIDIA card and Intel
+  Vulkan surfaces are never displayed (`vkcube` too). Intel numbers measure
+  CPU cost into an undisplayed swapchain.
+- External drag-and-drop and IME on Wayland: they need a human; left for
+  Phase 3.
 
 ## Consequences
 
 - Phase 2 builds `skwir-ui` on gpui 0.2.2.
-- **Known gap: accessibility.** gpui 0.2.2 has no AccessKit integration
-  (verified: no `accesskit` dependency in the crate). The plan's "AccessKit
-  from day one" requirement cannot be met on this toolkit version. Tracked
-  as an open item to revisit at each gpui upgrade; if it is still absent
-  by Phase 5, evaluate contributing it upstream or a dedicated
-  AccessKit adapter in `skwir-ui`.
-- The spike workspace stays in the repo as a reproducible benchmark; both
-  spikes remain runnable through `just spike <toolkit> <gpu>`.
+- **Known gap: accessibility.** gpui 0.2.2 has no AccessKit (no `accesskit`
+  dependency), so the plan's "AccessKit from day one" cannot be met.
+  Accessibility follows gpui's support: each gpui update checks for it
+  (`vendor/gpui/README.skwir.md`, "Updating gpui"), and skwir wires it in
+  once gpui provides it.
+- The spikes stay runnable as a benchmark: `just spike <toolkit> <gpu>`.
+
+## Amendments
+
+### 2026-10-11: accessibility waits for gpui
+
+The revisit no longer has a date of skwir's own ("if still absent by
+Phase 5, evaluate contributing it upstream or an adapter in `skwir-ui`"):
+it depends on gpui supporting accessibility, checked at each gpui update.

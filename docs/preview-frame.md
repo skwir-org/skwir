@@ -1,217 +1,160 @@
 # One preview frame
 
-Status: **the six agreed phases are implemented** (2026-09-21). Their rules
-are in `docs/invariants/previews.md`, "The preview frame", which is the binding
-text; this document keeps the reasoning, what was left out, and the proposal
-at the end, which is still only a proposal.
+Status: **the six agreed phases are implemented** (2026-09-21). The
+binding rules are in `docs/invariants/previews.md`, "The preview frame".
+This record keeps why the frame exists, the decisions behind it, what
+was left out or is still not done, and a proposal that is **not
+agreed**.
 
-Left out, deliberately or for want of means:
+## Why
 
-- EXIF for pictures: no metadata crate is in the dependency tree; Details shows
-  a picture's dimensions.
-- A folder's total size from the Usage cache: the cache belongs to a plugin the
-  UI cannot depend on. Details shows what the listing counted.
-- A hit counter in the structured previews' find field: providers search as
-  they go and do not know the total. The field, Enter and F3 are the reader's.
-- A text-size slider for fonts and a selection mirrored between a byte view's
-  two columns. The sheet is drawn larger instead, and the selected row is
-  decoded.
-- `InspectionKind::Tree`, which nothing produced, is removed.
+The PDF reader, the media player and the image viewer were good. The
+structured previews (hex, archives, code, tables, Markdown, EPUB, mail,
+fonts) and the fallbacks (plain text, folder, no preview) were built
+separately, and looking at all fourteen kinds side by side showed it:
 
-The PDF reader, the media player and the image viewer are good. The structured
-previews (hex, archives, code, tables, Markdown, EPUB, mail, fonts) and the
-fallbacks (plain text, folder, no preview) were built separately and show it.
-This design makes one frame that every kind fills, instead of four that
-resemble each other.
+- **Grey paper.** Inspections drew on `theme.surface`, greyer than the
+  file list, and primary data (hex offsets, `00` bytes, archive sizes)
+  was muted.
+- **Four toolbars**, each placing More and Open externally its own way,
+  with menus that repeated the buttons.
+- **One action, several faces.** Hex had two icons, Fit and Fit width
+  seven labels, the outline three names and two forms, find three
+  implementations.
+- **Two tiers of text.** JSON, YAML and TOML had a gutter, folds,
+  selection, find and copy; other source files were a bare list, and
+  `.html` showed its source although an inert reading mode existed.
 
-## What is wrong today
+So: one frame that every kind fills, instead of four that resemble each
+other.
 
-Found by looking at all fourteen kinds in a window and reading the code.
+## Decisions
 
-- **Grey paper.** Every `Inspection` kind draws on `theme.surface` (#f0f0f0),
-  greyer than the file list beside it (`bg`, #fafafa). On top of that, primary
-  data is muted: hex offsets and `00` bytes (`inspector.rs`, hex cells), archive
-  sizes (`archive_preview.rs`), everything but the name in the no-preview card
-  (`preview.rs::generic`). `PreviewContent::Text` hard-codes two base16 colours
-  instead of tokens.
-- **Four toolbars.** `inspector::toolbar_row`, `reader::reader_row`,
-  `media::row`, `preview_toolbar::row`. The reader packs left with no spacer.
-  More is always present in two and narrow-only in two. Open externally is a
-  bar button in two and menu-only in two.
-- **Redundancy.** The inspector's menu repeats every entry of `tools()`.
-  Reader: outline, find, copy, open. Image: all of zoom. Media: mute,
-  fullscreen.
-- **One action, several faces.** Hex is icon `list` in `preview_toolbar` and
-  `grid` in the inspector. "Fit whole image" / "Fit whole page" / "Fit image" /
-  "Fit page"; "Fit image width" / "Fit page width" / "Fit width". Outline is
-  "Document contents", "Contents" and "Headings and contents", a chip row in
-  the inspector and a drawer in the reader. Find has three implementations
-  (inspector prompt, reader popover, hex provider).
-- **Two tiers of text.** JSON, YAML and TOML get a gutter, folds, selection,
-  find and copy. Every other source file goes through `PreviewContent::Text`:
-  a bare list with none of them. An `.html` file shows its source although an
-  inert reading mode exists (`rich_preview::html`, used by EPUB and mail).
-- **Smaller.** The folder card says its item count twice in an empty panel and
-  shows neither size nor date. A selected archive member keeps the archive's
-  header and never names the member. CSV clips columns and leaves a gap under
-  its header. Images have no zoom key; Text, Dir, Generic and Error have no key
-  context. `InspectionKind::Tree` has no producer.
+Surfaces, the header card, one text path and the notice strip are as
+the invariants state. Decisions that are not visible there, or that
+changed during the build:
 
-## The frame
+- **Toolbar.** One builder with fixed slots; a kind declares the slots
+  it fills. One icon and one label per action ("Fit", "Fit width",
+  "Contents", "View as hex"). The draft order was navigate · view ·
+  spacer · find · copy · outline · More. As built, Contents comes first
+  (its drawer opens on that side), Copy has no button (Ctrl+C and the
+  context menu), hex is in More, and the format's name is the source
+  switch.
+- **Menu rule.** More holds only what has no button in the chosen width
+  variant. The draft kept More always present so it never moved; as
+  built, it appears only when it holds something.
+- **Copy** takes the selection, else the focused block.
+- **Details placement (revised).** Clicking the header card, or Ctrl+I,
+  opens Details under the card. A bottom bar came first and was dropped:
+  it repeated the header. With no preview (folders, several entries
+  selected) Details is always open.
+- **Details groups.** General · Location (path, link target) ·
+  Permissions (owner, group, mode in words) · Times (modified, created,
+  accessed) · Tags · then what the format knows. The draft had preview
+  plugins publish format facts as metadata fields (`MetadataProvider`);
+  as built, a provider fills `Inspection::details` from its own parse.
+- **Archive members are real previews.** A member is written out
+  (`PreviewProvider::extract`: `skwir-archive-worker` for an archive, at
+  most 16 MiB; the parsed message for an attachment) and previewed like
+  any file. Containers never inspect a member themselves: there is no
+  second, poorer member view. Nesting is at most two deep; encrypted
+  members and links are refused; only an explicit Extract writes a
+  member anywhere else (ADR-048 made that a step of its own).
+- **Decided:** media and document sessions may run on a member, though
+  they keep its temporary file open for their lifetime.
 
-1. **Surfaces.** What you read (text, code, tables, hex, trees, prose) is on
-   `bg` in `text`. `surface` is chrome: header, toolbar, and the letterbox
-   around images, video and document pages, which stay on it. Muted is for
-   secondary facts (line numbers, captions), never for data. New tokens
-   `code_bg` and `zebra`; nothing derives a colour locally.
-2. **Header.** Name, then type, size and date. A nested target is a trail,
-   `bundle.zip › sub › data.json`, and each step goes back to it.
-3. **One toolbar builder, fixed slots, in this order:**
-   navigate (back/parent, previous/next, page) · view (zoom or text size, fit,
-   mode toggles: continuous, source/rendered, hex) · spacer · find · copy ·
-   outline · More. A kind declares which slots it fills; it never builds a row.
-   One icon and one label per action: "Fit", "Fit width", "Contents",
-   "View as hex".
-4. **The menu rule** is the application toolbar's: More holds only what has no
-   button in the chosen width variant. Open externally, Reveal and Copy path
-   live there for every kind, left-aligned. More is always present, so it never
-   moves.
-5. **Shared behaviour.** One find bar (the reader's popover: hit counter, F3
-   and Shift+F3). One outline drawer. One copy rule: the selection, else the
-   focused block. One `Preview` key context: Ctrl+F, Ctrl+C, Ctrl++ / Ctrl+-,
-   Ctrl+0, Ctrl+wheel, `[` and `]` for previous and next.
-6. **One text path.** `PreviewContent::Text` goes away: all text is the
-   inspector's Code kind, so every source file gets the gutter, selection, find
-   and copy. HTML opens in reading mode with a Source toggle, like Markdown.
-7. **States.** Loading, empty, error and "too large, showing the first N" share
-   one notice strip under the toolbar, replacing grey sentences in the content.
+## Left out
 
-## Details: what we know about the entry
+- A folder's total size from the Usage cache: the cache belongs to a
+  plugin the UI cannot depend on. Details shows what the listing
+  counted.
+- A hit counter in the structured previews' find field: their providers
+  search as they go and do not know the total. The field says "Enter for
+  the next match".
+- A text-size slider for fonts: the sheet is drawn larger instead.
+- A selection mirrored between the byte view's two columns: the
+  selected row is decoded in a strip instead.
+- `InspectionKind::Tree`, which nothing produced: removed.
+- EXIF was first left out for want of a metadata crate; it was added the
+  same day (`skwir_platform::exif`, kamadak-exif) and shows in Details.
 
-A section of the frame, not a preview kind.
+## The planned polish, as of 2026-10-11
 
-- **Placement (decided, revised):** the header is a card (icon, name, type ·
-  size · date) and clicking it, or Ctrl+I, opens Details right under the
-  card, up to half the panel; the bottom bar it first had repeated the
-  header. When there is no preview (including folders and several entries
-  selected) Details is always open, above the toolbar as under a preview,
-  and as tall as its groups, so the toolbar and an error follow it. Its state belongs to `session.rs`.
-- **Groups:** General · Location (path, link target) · Permissions (owner,
-  group, mode in words) · Times (modified, created, accessed) · Tags · then
-  what the format knows.
-- Core already carries `mode`, `uid`, `gid`, `nlink`, `created`, `accessed`,
-  `link_target` (`fs/stat.rs`, provenance Filesystem) and `tags`; none is
-  shown. The MIME shown today is guessed from the name.
-- Format facts need preview plugins to publish metadata fields, with
-  provenance, in batches on workers (`MetadataProvider`; only `tags` registers
-  one today): image dimensions and EXIF, audio tags (now only in the live
-  `MediaState`), document properties from the document session, EPUB title and
-  author, archive totals, font family and version.
-- Folders: item count, breakdown by kind, and the total size only when the
-  Usage cache already has it. Details never starts a scan.
-- Values can be selected; a click copies one.
+All six phases of the original order are done. The polish list, checked
+in `crates/ui/src/` and the table plugin:
 
-## Archive members as real previews
-
-Providers take a path and nothing else (`PreviewProvider`, `PreviewRequest`
-holds an `EntryRef`). A member is written out by `PreviewProvider::extract`
-(`skwir-archive-worker` for an archive, at most 16 MiB; the parsed message
-for an email attachment) and the worker pipeline previews that file like any
-other. Containers never inspect a member themselves: there is no second,
-poorer member view.
-
-- Keep the extracted file for as long as the preview's generation lives, and
-  dispatch the registry again on a nested `PreviewRequest`: the temporary path,
-  the member's display name, the MIME from that name, and the parent it came
-  from. JSON gets its tree, Markdown its reading mode, a PDF its reader, a
-  picture its zoom. The header trail is the way back.
-- **Decided:** media and document sessions are allowed on a member, although
-  they keep the temporary file open for their lifetime.
-- Bounds: the existing size limits; nesting at most two deep; encrypted members
-  and links still refused; cleanup off the UI thread; member names stay labels,
-  never extraction paths; nothing opens a member externally from the temporary
-  path, only an explicit Extract.
+| Item | State |
+|---|---|
+| Tables: header above the scrolling rows, grid lines, numbers right-aligned, horizontal scroll, sort by a header click | done (`inspector.rs`) |
+| Tables: a rows × columns caption | not a caption: rows and columns are Details facts (`preview-tables`) |
+| Hex: offsets in normal text, a strip decoding the selected row | done |
+| Hex: the selection mirrored between bytes and text | not done (left out) |
+| Fonts: specimen on paper, drawn for the panel's width | done |
+| Fonts: a text-size slider | not done (left out) |
+| Peek (Space) uses the same frame | done (`preview::render_peek` draws `header` and `under_card`) |
+| Remove `InspectionKind::Tree` | done |
 
 ## Proposed, not agreed: capabilities instead of kinds
 
-This part was written from a misreading of a request about the panel's width.
-It is kept as an idea, is not part of the agreed plan or of the order below,
-and needs a decision of its own before anyone builds it.
+**Not agreed.** This came from a misreading of a request about the
+panel's width. It is kept as an idea, outside the agreed plan. It
+changes the provider contract of ADR-003 and ADR-009, so it needs an ADR
+of its own before any phase that touches core.
 
-Adding a format today means fitting one of eleven `InspectionKind`s or editing
-core and the UI: `inspector.rs` switches on the kind forty times (which tools
-exist, which style, which row estimate), the toolbar's actions are a fixed list
-inside `ui.inspect`, and the only alternatives to a provider's presentation are
-the hard-coded Hex and Source buttons. The first provider that accepts a file
-owns it. Images, plain text, folders and "no preview" are not providers at all:
-they live in `preview::compute` and nothing can replace them. Plugins stay free
-of GPUI (ADR-001, ADR-007); the way to open the panel up is to let them say more
-as data, and to make the UI ask what a preview can do rather than what it is.
+The problem: adding a format means fitting one of the eleven
+`InspectionKind`s or editing core and the UI. `inspector.rs` branches on
+the kind throughout (65 `InspectionKind::` matches on 2026-10-11), the
+toolbar's actions are a fixed set inside `ui.inspect`, and the only
+alternatives to a provider's presentation are the built-in hex view and
+source switch. The first provider that accepts a file owns it. Images,
+plain text, folders and "no preview" are not providers: they live in
+`preview::compute`, and nothing can replace them. Plugins stay free of
+GPUI (ADR-001, ADR-007), so the way to open the panel is to let them say
+more as data, and have the UI ask what a preview can do, not what it is.
 
-1. **Layouts and features instead of kinds.** An inspection names the layout
-   that draws it, from the small set the UI owns (prose, code, rows, table,
-   bytes, image), and the features it supports: find, folds, outline, text
-   size, sections, source. The toolbar builder and the key context read the
-   features. A new format picks a layout and needs no UI change; a new layout
-   is one registration in `skwir-ui`, resolved like `views::named_renderer`,
-   not a match arm in five files.
+1. **Layouts and features instead of kinds.** An inspection names its
+   layout from a small set the UI owns (prose, code, rows, table, bytes,
+   image) and the features it supports (find, folds, outline, text size,
+   sections, source), which the toolbar and the key context read. A new
+   format needs no UI change; a new layout is one registration in
+   `skwir-ui`, resolved like `views::named_renderer`, not a match arm in
+   five files.
 2. **Actions are contributed.** A provider lists actions for the file it
-   shows: id, title, icon, toolbar slot and a command invocation that receives
-   the preview's context (entry, target, selection). The frame's builder places
-   them; what has no room goes to More. Archives offer "Extract here", fonts
-   "Install", images "Rotate" or "Set as wallpaper", JSON "Copy path to value".
-   They are commands, so the palette, the CLI and agents get them too.
-3. **Presentations, chosen by the user.** Every provider that accepts a file
-   offers its presentations (SVG: picture, source, bytes; HTML: reading,
-   source; JSON: tree, code; CSV: table, source). One "View as" control in the
-   view slot replaces the Hex, Source and Default buttons. The highest priority
-   is the default, and the last choice is remembered per type.
+   shows (id, title, icon, slot, a command invocation given the
+   preview's entry, target and selection); the builder places them, the
+   rest go to More. Examples: Extract here, Install a font, Rotate, Set
+   as wallpaper, Copy path to value (JSON). As commands, the palette,
+   the CLI and agents get them too.
+3. **Presentations chosen by the user.** Each accepting provider offers
+   its presentations (SVG: picture, source, bytes; HTML: reading,
+   source; JSON: tree, code; CSV: table, source). One "View as" control
+   replaces the hex, source and default buttons. The highest priority is
+   the default; the last choice is remembered per type.
 4. **Providers declare what they handle** as data (types, extensions,
-   priority, presentations) beside `accepts`, so Settings can show which plugin
-   previews what and let the user settle a conflict, and the type is sniffed
-   from content when the name says nothing.
-5. **A source, not a path.** The request says where the bytes are: a file, or
-   a member extracted from a parent, with its display name. This is the nested
-   preview of the previous section, stated once for every provider.
-6. **The fallbacks become providers.** Image, text, folder and generic move
-   out of `preview::compute` into a built-in plugin with the lowest priority.
-   Everything then takes one path, and a plugin can replace the folder card (a
-   repository summary, a contact sheet for an album).
-7. **Anyone can add to Details,** not only the plugin that draws the preview:
-   fields with a group, a label, a value and their provenance, produced in
-   batches on workers. Some are on demand ("Compute SHA-256"): a field may be
-   an action until it has a value.
-8. **Several entries, and virtual ones.** The request carries the selection,
-   so a provider can summarize many files, and entries of a query or a shelf
-   resolve through `OpenLocation::path_of`.
-9. **Readable without a window.** `preview.describe` returns the inspection as
-   JSON through the same providers and bounds, for the CLI, the MCP server and
-   tests. A conformance test in `crates/skwir/tests/` runs every provider over
-   fixtures and checks the contract: bounds, fold nesting, actions that resolve
-   to registered commands, no trace after disable.
+   priority, presentations) beside `accepts`, so Settings can show which
+   plugin previews what and let the user settle a conflict. (Typing by
+   content when the name says nothing is built: `mime::by_content`.)
+5. **A source, not a path.** The request says where the bytes are: a
+   file, or a member extracted from a parent with its display name. This
+   is the nested preview, stated once for every provider.
+6. **The fallbacks become providers.** Image, text, folder and generic
+   move out of `preview::compute` into a built-in plugin of the lowest
+   priority, so everything takes one path and a plugin can replace the
+   folder card (a repository summary, an album's contact sheet).
+7. **Anyone can add to Details:** fields with a group, label, value and
+   provenance, produced in batches on workers. Some are on demand
+   ("Compute SHA-256"): a field may be an action until it has a value.
+8. **Several entries, and virtual ones.** The request carries the
+   selection, so a provider can summarize many files; entries of a query
+   or the shelf resolve through `OpenLocation::path_of`.
+9. **Readable without a window.** `preview.describe` returns the
+   inspection as JSON through the same providers and bounds, for the
+   CLI, the MCP server and tests. A conformance test in
+   `crates/skwir/tests/` runs every provider over fixtures and checks
+   bounds, fold nesting, that actions resolve to registered commands,
+   and no trace after disable.
 
-Custom GPUI content from a plugin stays out, as ADR-007 decided for views, until
-a third party needs it; items 1 and 2 are the seam it would use. This changes
-the provider contract of ADR-003 and ADR-009, so it needs an ADR of its own
-before the first phase that touches core.
-
-## More
-
-- **Tables:** sticky header, grid lines, numbers right-aligned, horizontal
-  scroll, a rows × columns caption, sort by a click on a header.
-- **Hex:** offsets in normal text, the selection mirrored between bytes and
-  ASCII, a strip decoding the bytes under the cursor (u8/u16/u32, float,
-  UTF-8).
-- **Fonts:** specimen on paper at a readable size, with a text-size slider.
-- **Peek** (Space) uses the same frame and gets all of this.
-- Remove `InspectionKind::Tree`, or put JSON on it.
-
-## Order
-
-1. The frame contract in `docs/invariants/previews.md`; surfaces and tokens.
-2. The toolbar builder and the menu rule; one find, one outline, one key
-   context.
-3. One text path; HTML reading mode.
-4. Details: core fields first, then plugin-contributed fields.
-5. Nested previews for archive members and mail attachments.
-6. Tables, hex, fonts, the folder card.
+Custom GPUI content from a plugin stays out, as ADR-007 decided for
+views, until a third party needs it; items 1 and 2 are the seam it would
+use.

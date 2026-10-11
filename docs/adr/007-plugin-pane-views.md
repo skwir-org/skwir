@@ -1,179 +1,182 @@
 # ADR-007: Plugin-controlled pane views and cached disk usage
 
-Status: accepted, 2026-09-19
+Status: accepted, 2026-09-19. Amended 2026-09-27 (view roles), 2026-09-29
+(alternate views), 2026-09-30 (hard links), 2026-10-09 (nested map, map
+modes).
 
 ## Context
 
-Usage was a global overlay backed by one scan. Entering a folder closed it,
-opening it again rescanned the subtree, and split panes could not browse Usage
-independently. The existing view registry was populated only at pane creation;
-its toolbar and palette were hard-coded to List, Grid and Columns.
+Usage was a global overlay backed by one scan: entering a folder closed it,
+reopening rescanned the subtree, and split panes could not browse it
+independently. The view registry was read only at pane creation, and the
+toolbar and palette hard-coded List, Grid and Columns.
 
 ## Decision
 
-Plugins contribute owner-tagged `ViewSpec` descriptors with a renderer name,
-title, icon, order and atomic data revision. `ViewSpec::named` has no toolkit
-dependency. Bundled renderers implement `PaneView` in `skwir-ui` and are resolved
-by `views::named_renderer`. Opaque UI factories remain supported for base views.
-The toolbar and palette discover available renderers through the registry;
-unknown renderers are omitted. Narrow toolbars expose other views in More.
+### Views from plugins
 
-Panes reconcile registrations by factory identity, so removal drops the view
-and falls back to List, and even a disable/re-enable between frames replaces
-its state. View selection survives directory navigation. Producers publish
-results, advance the revision, and wake the app; the UI queries data only when
-the location or revision changes. GPUI stays outside core and plugin crates.
-A public toolkit-facing plugin SDK remains deferred until there is an actual
-external view consumer.
+- Plugins contribute owner-tagged `ViewSpec` descriptors (renderer name,
+  title, icon, order, atomic data revision). `ViewSpec::named` has no toolkit
+  dependency; bundled renderers implement `PaneView` in `skwir-ui` and resolve
+  through `views::named_renderer`. Opaque UI factories remain for base views.
+- The toolbar and palette list the registry's renderers and omit unknown
+  ones; a narrow toolbar offers the others in a menu.
+- Panes reconcile registrations by factory identity: a removed view falls
+  back to List, and a disable/re-enable between frames still replaces its
+  state. The chosen view survives navigation.
+- Producers publish, advance the revision, then wake the app; the UI queries
+  data only when the location or revision changes.
+- GPUI stays out of core and plugins. A public toolkit-facing plugin SDK
+  waits for a real external view.
 
-Usage owns a lazy worker and a disposable in-memory cache. Directory breakdowns
-are stored independently, keeping the largest 64 immediate children and an
-aggregate for the rest, at any scan depth. The cache evicts least-recently-used
-breakdowns at 4096 directories or 16 MiB of estimated node/path payload. This
-is not a total process-memory limit. The scan bounds temporary child lists and
-checks cancellation while reading directories. Missing/evicted details are
-computed on demand; unchanged siblings are reused during ancestor updates.
+### Usage: cache and scan
 
-On a cache miss, Usage first lists the current directory's files and unknown
-folders, then streams its child directories through the recursive scanner.
-A second directory listing avoids retaining an unbounded queue of paths and
-uses entry types to avoid stat-ing ordinary files twice. It is skipped for
-folders containing only files. Only the visible breakdown and the running
-branch's counters are needed for progress, including within a large subtree.
-Snapshots have `incomplete` totals and striped blocks; the UI labels them as
-counted so far, rather than implying that unknown folders are empty. Completed
-subtrees enter the cache; partial or unreadable breakdowns do not. Filesystem
-events queued during a scan reconcile changes between the two listing passes.
-For a cold watch root, an initial shallow snapshot precedes root watch
-registration. This snapshot is never cached; the scanner rereads the current
-directory after registration to cover changes made during setup. Descendant
-watches are installed as the cancellable scanner visits each directory, before
-reading it, rather than asking the watcher backend to walk the whole subtree.
-This retains the additional shallow pass on first open, without an uninterruptible
-recursive registration phase. Subsequent progress snapshots are
-throttled to the existing 200 ms interval. Progressive rendering is only used
-until a location's first scan finishes. Later refreshes retain the finished
-chart and replace it atomically when fresh totals are ready; automatic refreshes
-publish no intermediate busy state. Explicit refresh may show delayed progress
-over the retained chart. Snapshot completion is separate from total completeness,
-since read errors can leave a finished result incomplete. Hover identity and
-block colors survive size-based reordering.
+- A lazy worker with a disposable in-memory cache; no files, no database.
+- Each directory's breakdown is cached on its own, at any depth: its 64
+  largest children plus an aggregate of the rest. LRU eviction at 4096
+  directories or 16 MiB of estimated payload (not a process memory limit).
+  Missing or evicted details are computed on demand; unchanged siblings are
+  reused when ancestors update.
+- On a miss, Usage lists the current directory's files and unknown folders
+  first, then streams its children through the recursive scanner. The second
+  listing avoids an unbounded path queue and uses entry types to stat files
+  once; it is skipped when a folder holds only files. Temporary child lists
+  are bounded, and cancellation is checked while reading.
+- Snapshots have `incomplete` totals and striped blocks, labelled "counted so
+  far", never implying unknown folders are empty. Progress needs only the
+  visible breakdown and the running branch's counters.
+- **Only completed subtrees enter the cache.** Partial or unreadable
+  breakdowns never do; a finished result can still be incomplete (read
+  errors), tracked apart.
+- Snapshots are throttled to 200 ms and used only until a location's first
+  scan finishes. Later refreshes keep the finished chart and swap it
+  atomically; automatic ones publish no busy state, an explicit one may show
+  delayed progress over the kept chart. Hover identity and block colors
+  survive reordering.
 
-Recursive coverage uses individual non-recursive watches, without following
-symlinks. The scanner also registers newly discovered subdirectories before
-reading them; directory replacement removes obsolete watch registrations.
-Coalesced events invalidate affected subtrees and ancestor totals; only panes
-whose paths intersect those events refresh, retaining their previous display.
-Cache eviction alone is not a reason to refresh an unrelated pane. At most four
-independent roots are watched; evicting coverage invalidates its cached data.
-Recursive watch resource use also depends on the number of directories and OS
-limits. Watch failures mark affected results stale and use a two-second
-background revalidation fallback with a separate deadline for each active view;
-unrelated events cannot postpone it or make healthy panes poll. Lost events
-invalidate cached data and watch coverage; active roots attempt registration
-again before scanning. Explicitly navigated directory aliases also use this
-fallback, since an inode watch cannot
-detect replacement of a symlink in an ancestor path. Interior symlinks remain
-leaves. Local event accumulation is bounded; overflowing it invalidates the
-whole cache.
+### Usage: watching
 
-Requests carry a pane, generation and cancellation token linked to that pane's
-location lifetime. Navigation, Back and pane close cancel old work immediately,
-without waiting for the UI to notice a different path. Completed child caches
-remain usable; partial results never become completed cache entries. Cancellation
-is checked before and after each watch registration and throughout traversal;
-an already-issued operating-system I/O call must still return before that worker
-can stop. Cancelled or replaced requests cannot publish results. The command
-status distinguishes queued/running work (`scanning`) from visible progress
-(`updating`): scan checkpoints publish
-progress only after 200 ms, so cache hits and brief refreshes do not flash an
-updating indicator. Closing a view releases its subscription;
-disabling the plugin cancels the worker and drops all cached state and watches
-on that worker, without joining it on the UI thread. No files or database are
-created for the cache. Ctrl+R or the refresh button explicitly bypasses the cache.
+- Coverage is non-recursive watches, not following symlinks. **The scanner
+  installs each directory's watch as it visits it, before reading it; never
+  ask the watcher backend to walk a subtree** (that cannot be cancelled).
+  Directory replacement drops obsolete registrations.
+- A cold root gets a shallow snapshot before its watch is registered; it is
+  never cached, and the directory is read again after registration. Events
+  queued during a scan reconcile the two listing passes.
+- Coalesced events invalidate affected subtrees and ancestor totals; only
+  panes whose paths intersect them refresh, keeping their display meanwhile.
+  Cache eviction alone never refreshes an unrelated pane.
+- At most four roots are watched; losing coverage invalidates its data. Watch
+  cost also depends on directory count and OS limits.
+- A watch failure marks results stale and falls back to revalidation every
+  two seconds, with a deadline per active view that unrelated events cannot
+  postpone; healthy panes never poll. Lost events invalidate data and
+  coverage; active roots register again before scanning.
+- Explicitly navigated directory aliases use that fallback too: an inode
+  watch cannot see a symlink replaced in an ancestor. Interior symlinks are
+  leaves. Event accumulation is bounded; overflow invalidates the whole cache.
+
+### Usage: cancellation
+
+- Requests carry a pane, a generation and a token tied to the pane's location
+  lifetime: navigation, Back and pane close cancel at once, without waiting
+  for the UI.
+- Cancellation is checked around each watch registration and throughout
+  traversal (an OS call already issued must return first). Cancelled or
+  replaced requests cannot publish. Completed child caches stay usable.
+- Status tells queued or running work (`scanning`) from visible progress
+  (`updating`), published only after 200 ms, so cache hits and short
+  refreshes do not flash.
+- Closing a view releases its subscription. Disabling the plugin cancels the
+  worker and drops its cache and watches there, without joining it on the UI
+  thread.
+- Ctrl+R or the refresh button bypasses the cache.
 
 ## Consequences
 
-Usage is a normal pane view with shared selection, file opening, previews,
-context actions and navigation history. Its chart shows the current folder's
-immediate children; smaller items can be reached through List, the address bar,
-or normal selection commands. Totals include hidden files; the hidden-files
-preference controls which individual blocks are shown. Allocated bytes retain
-stat's semantics, including shared extents counted for each file; they are not
-exclusive physical disk ownership. Unreadable entries produce an explicit
-incomplete-total warning.
+- Usage is a normal pane view: shared selection, opening, previews, context
+  actions, history. The chart shows the folder's immediate children; smaller
+  items are reached through List, the address bar or selection.
+- Totals include hidden files; the hidden-files preference decides which
+  blocks show.
+- Allocated bytes keep stat's semantics: shared extents count for each file,
+  so they are not exclusive physical ownership. Unreadable entries raise an
+  incomplete-total warning.
+- A Map or Gallery view needs only a descriptor and a renderer, no change to
+  the view selector or palette.
 
-Adding a bundled Map or Gallery view requires a plugin descriptor and a UI
-renderer, without changing the shell's view selector or command palette.
+## Amendments
 
-Amended 2026-09-27: a descriptor states its `ViewRole`. A `Listing` view
-(list, grid, columns, a future gallery) shows the folder's entries in a
-shape of its own and has a toolbar button. A `Lens` (Usage, a future map)
-answers a question with data it gathers itself; it is chosen from the View
-menu, the palette or its key, and has a toolbar button only while shown.
-The toolbar stays the same width as lenses are added.
+### 2026-09-27: view roles
 
-Amended 2026-09-29: an `Alternate` view (the tree, ADR-025) shows the
-folder's entries in a shape chosen now and then; it is offered like a
-lens, so the toolbar keeps the shapes switched between all the time.
+A descriptor states its `ViewRole`. A `Listing` view (list, grid, columns, a
+future gallery) shows the folder's entries and has a toolbar button. A `Lens`
+(Usage, a future map) answers a question with data it gathers; it is chosen
+from the View menu, the palette or its key, with a button only while shown.
+The toolbar keeps its width as lenses are added.
 
-Amended 2026-09-30: a file with several hard links is counted once in
-each folder that holds it, as `du` counts it: a folder weighs what it
-holds, and one holding two links to a file holds it once. Two sibling
-folders sharing a file each hold it, so a folder's blocks may add up to
-more than the folder. Each folder keeps the linked files whose other
-links may lie outside it (dropped once every link is found), so a total
-depends only on its own subtree and a cached folder composes into any
-parent. Progress snapshots subtract what the branch shares with the tree
-without merging, and stay lower bounds. Reflinked or deduplicated
-extents are still counted for each file: stat cannot see them.
+### 2026-09-29: alternate views (ADR-025)
 
-Amended 2026-10-09: the chart draws folders inside folders. A status
-carries, inside the shown folder's own entries, what their folders hold,
-down to three more levels, read from the breakdowns already cached
-(`worker::nest`): no folder is read for it. Only a folder weighing
-1/256 of the shown one is opened, only entries weighing 1/1024 of it are
-sent on their own (the rest join their folder's other items), and at
-most 1024 entries in all, the heaviest folders first: the map could not
-draw smaller ones, and a status is copied and parsed whole each time it
-changes. A folder whose breakdown is not cached (being counted,
-unreadable, evicted, or scanned without monitoring, which caches
-nothing) is sent closed, and drawn as a block. The view chooses how
-many levels it draws (its zoom, one to four, three by default, the
-window's and remembered with its shape as the tiles' size is), and the
-treemap element whether a folder's block has room to be drawn open,
-from its bounds in prepaint. Only the shown folder's own entries are the
-pane's: a block inside one selects it and opens its menu, so the ring
-around the selected entry says what the menu acts on, and a double click
-(or the middle button, in a tab) shows the block itself (`ui.reveal`).
-Each level draws its whole folder: hidden entries, while hidden files
-are not shown, and the other items each take one block, so no block is
-drawn larger than its share. The arrows move to the block beside on the
-map (`treemap::neighbour`, from the rectangles the last prepaint laid
-out); the footer weighs folders as the map does (`PaneView::weighs`).
+An `Alternate` view (the tree) shows the entries in a shape chosen now and
+then. It is offered like a lens, so the toolbar keeps only the shapes
+switched between all the time.
 
-Amended again 2026-10-09: the map has modes (`usage::Mode`, the
-window's, remembered with its shape, `ui.usage_mode`): blocks sized by
-the room they take (the default) or by the files they hold, or sized
-by room and colored by their newest change or by the kind of files
-that fill them, each with a legend. The scan counts all of it as it
-sizes them, and every breakdown kept keeps it: a file's kind, by its
-extension as the desktop's database types it, asked once per extension
-(the database takes about 13 µs a name, the walk 2 µs a file; a name
-without one is of no kind), and a folder's bytes by kind; each entry's
-newest change (a folder's is its newest file's, its own only when it
-holds none: a folder filled today with old files is old); the other
-items' files and newest change. Measured against the scan before them,
-alternating builds: about 110 ns of CPU a file, some 5% of a scan, the
-wall time lost in the machine's noise. A folder of many small files is
-kept and opened for its files as for its bytes (`trim` keeps the 16
-holding the most among those past the 64 heaviest; `nest` opens a
-folder holding 1/256 of the files), so the map sized by files draws
-it. Room that can be had back as a whole is marked in every mode, a
-dashed line inside the block: a cache (a folder holding a signed
-`CACHEDIR.TAG`, the user's cache folder) or a trash (the home trash, a
-volume's known by its name, `trash::named_as_trash`: asking the volumes
-for their trashes reads each one's device). Each folder says how much
-of it such folders hold, and the header sums it for the folder shown.
-While something is selected, the line under the map says what Delete
-does to its room: the Trash keeps it on the disk until it is emptied.
+### 2026-09-30: hard links
+
+- A file counts once in each folder holding any of its links, as `du`
+  counts; two sibling folders sharing it each hold it, so a folder's blocks
+  may sum to more than the folder.
+- Each folder keeps its linked files whose other links may lie outside it
+  (dropped once all are found), so a total depends only on its subtree and a
+  cached folder composes into any parent.
+- Progress snapshots subtract what the branch shares with the tree before
+  merging, and stay lower bounds.
+- Reflinked or deduplicated extents still count per file: stat cannot see
+  them.
+
+### 2026-10-09: folders inside folders
+
+- A status carries, inside the shown folder's entries, what their folders
+  hold, up to three more levels, built only from cached breakdowns
+  (`worker::nest`): no folder is read for it.
+- A folder opens only at 1/256 of the shown folder's weight; entries under
+  1/1024 join their folder's other items; at most 1024 entries, heaviest
+  folders first. The map cannot draw smaller, and a status is copied and
+  parsed whole on every change.
+- A folder without a cached breakdown (being counted, unreadable, evicted, or
+  scanned without monitoring, which caches nothing) is drawn closed.
+- The view's zoom picks the levels drawn (one to four, default three; the
+  window's, remembered with its shape). The treemap element decides in
+  prepaint whether a block has room to draw open.
+- Only the shown folder's entries are the pane's: a click inside one selects
+  it and opens its menu, so the selection ring shows what the menu acts on.
+  A double click (middle button: in a tab) shows the block itself
+  (`ui.reveal`).
+- Each level draws its whole folder (hidden entries while hidden files are
+  off, and the other items, one block each), so no block exceeds its share.
+- Arrows move to the neighbouring block (`treemap::neighbour`, from the last
+  prepaint). The footer weighs folders as the map does (`PaneView::weighs`).
+
+### 2026-10-09: map modes
+
+- `usage::Mode` (`ui.usage_mode`; the window's, remembered with its shape):
+  size by room (default) or by file count, or size by room and color by
+  newest change or by kind; each mode has a legend.
+- The scan gathers it all while sizing, and every kept breakdown keeps it:
+  each file's kind by extension, as the desktop's MIME database types it,
+  asked once per extension (13 µs a name against 2 µs a file for the walk; no
+  extension, no kind); a folder's bytes by kind; each entry's newest change
+  (a folder's is its newest file's, its own only when it holds none); the
+  other items' file count and newest change.
+- Cost, alternating builds: about 110 ns of CPU per file, some 5 % of a scan;
+  the wall-time change is lost in noise.
+- Folders of many small files are kept and opened by file count too: `trim`
+  keeps the 16 holding the most files beyond the 64 heaviest; `nest` opens a
+  folder holding 1/256 of the files.
+- Reclaimable room is a dashed line inside the block in every mode: a cache
+  (a folder with a signed `CACHEDIR.TAG`, the user's cache folder) or a trash
+  (the home trash, or a volume's recognized by name, `trash::named_as_trash`,
+  because asking volumes for their trashes reads each one's device). Each
+  folder says how much it holds of these; the header sums it.
+- With a selection, the line under the map says what Delete does to its
+  room: the Trash keeps it on disk until emptied.

@@ -1,51 +1,41 @@
 # ADR-016: One plugin for audio and video
 
-Status: accepted, 2026-09-25. Amends ADR-008 (video playback) and ADR-009
-(the structured preview plugins, of which `preview-audio` was one).
+Status: accepted, 2026-09-25. Built. Amends ADR-008 (video playback) and
+ADR-009 (the structured preview plugins, `preview-audio` among them).
 
 ## Context
 
-Audio and video were two plugins, `preview-audio` and `preview-media`,
-added in one batch without a decision of their own. Both registered the
-same provider (`MediaPreviews`) over the same GStreamer worker; audio added
-its cover, spectrum and ReplayGain, video its engine choice and FFmpeg
-stills. What plays either of them is one player in the shell: the panel's
-controls, the pin, its dock, the status bar's strip, `NowPlaying`.
+Audio and video were two plugins, `preview-audio` and `preview-media`, with
+no decision behind the split. Both registered the same provider
+(`MediaPreviews`) over the same GStreamer worker, and one player in the
+shell plays both (panel controls, pin, dock, footer strip, `NowPlaying`).
 
-That player gained preferences of its own (keep playing while you browse,
-play on selection, what follows a track that ends). They are neither
-kind's: put in `preview-audio`, films would behave according to a plugin
-about music, and switching it off would withdraw settings the video player
-still followed. Declared by the shell, they landed on the Settings dialog's
-Appearance page, the page of every `ui.*` key, which they are not. The
-split itself bought one thing, switching video off while keeping audio,
-which the Video engine's Still frames choice already gives.
+The player gained preferences of its own (keep playing while browsing, play
+on selection, what follows a track). In `preview-audio`, films would obey a
+music plugin, and disabling it would withdraw settings video still used.
+Declared by the shell, they landed on the Appearance page, where they do not
+belong. The split bought only disabling video apart from audio, which the
+Video engine's Still frames choice already gives.
 
 ## Decision
 
-- One plugin, `preview-media`, titled "Preview: audio and video",
-  registers both providers (`preview-media.audio`, `preview-media.video`)
-  and declares every preference of playback, in sections: Playback
-  (`keep_playing`, `autoplay`, `continue`), Audio (`replay_gain`), Video
-  (`backend`). `preview-audio` is removed.
-- The shell's player reads the Playback keys (`skwir_ui::settings`
-  constants, held to the plugin's names and choices by
-  `crates/skwir/tests/settings.rs`). With the plugin off there is no
-  player, so nothing follows a withdrawn preference.
-- A changed engine re-registers the video provider alone
-  (`PreviewRegistry::unregister(owner, id)`, new in core): audio playing,
-  pinned or not, goes on. ReplayGain stays a tuning read when a track opens.
-- The desktop's media controls stay a plugin of their own (`mpris`): they
-  mirror `App::player` for whatever plays, and are switched off for reasons
-  of their own.
+- One plugin, `preview-media` ("Preview: audio and video"), registers both
+  providers (`preview-media.audio`, `preview-media.video`) and declares
+  every playback preference: Playback (`keep_playing`, `autoplay`,
+  `continue`), Audio (`replay_gain`), Video (`backend`). `preview-audio` is
+  removed.
+- The shell's player reads the Playback keys through `skwir_ui::settings`
+  constants, checked against the plugin's names and choices by
+  `crates/skwir/tests/settings.rs`. With the plugin off there is no player.
+- Changing the engine re-registers the video provider alone
+  (`PreviewRegistry::unregister(owner, id)`): audio playing, pinned or not,
+  goes on. ReplayGain is read when a track opens.
+- The desktop's media controls stay a separate plugin (`mpris`), mirroring
+  `App::player` for whatever plays.
 
 ## Consequences
 
-- The Plugins page lists one toggle for playback, and its settings are on
-  one page named after it.
-- Keys renamed: `preview-audio.replay_gain` and the shell's `ui.media_*`
-  become `preview-media.*`. The plugin moves a value stored under an old
-  name before declaring the new one (`Settings::rename`, added with
-  ADR-010's addendum of 2026-09-25).
-- Video cannot be switched off apart from audio except through Still
-  frames, which keeps a picture of each film.
+- One Plugins toggle for playback, its settings on one page.
+- `preview-audio.replay_gain` and the shell's `ui.media_*` became
+  `preview-media.*`; stored values move through `Settings::rename`.
+- Video can be disabled apart from audio only through Still frames.

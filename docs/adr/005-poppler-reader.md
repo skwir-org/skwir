@@ -1,48 +1,52 @@
 # ADR-005: Poppler reader with the shared document protocol
 
-Status: accepted, 2026-09-18. Supersedes ADR-004's image-only Poppler integration.
+Status: accepted, 2026-09-18. Supersedes ADR-004's image-only Poppler
+integration.
+
+## Context
+
+ADR-004 gave PDFium a reader (selection, search, links, outlines) but left
+Poppler as image-only pages from its command-line tools. PDFium's library is
+optional and the default dev shell provides only Poppler, so without PDFium
+there was no reader.
 
 ## Decision
 
-Add `skwir-poppler-worker`, using `poppler-rs` 0.25 and the installed
-`poppler-glib` library with Cairo. Keep one document open for the session.
-The executable is optional at runtime, built by workspace and run recipes.
-Building it requires Poppler, GLib and Cairo development packages, supplied
-by the default Nix shell. Building `skwir` alone does not require them.
-Neither worker is a dependency of the main binary. The default shell provides
-Poppler only; PDFium's optional runtime comes from the `pdf` shell, entered
-through a git-ignored `.envrc.local` containing `use flake .#pdf`.
-
-Both workers implement the existing bounded document protocol: page pixels,
-character geometry, search, URI/page links and outlines. Reuse one platform
-session manager and one reader UI, including lifecycle cancellation, source
-invalidation, page/zoom controls, text selection/copy and navigation. Poppler's
-missing safe bindings are confined to a documented native adapter. Normalize
-text geometry from top-left coordinates and search/link geometry from
-bottom-left coordinates; native APIs already account for crop and rotation.
-
-`auto` prefers PDFium, then the Poppler worker when PDFium is unavailable.
-If neither reader is available, retain the existing Poppler CLI image fallback
-and disk cache. Explicit engine choices require the selected reader; document
-errors never trigger another engine. Converted Office PDFs use the same route.
-The Poppler reader rerenders revisited pages, retaining the parsed document,
-as PDFium does; the shared UI retains the displayed page while work completes.
+- **Worker.** `skwir-poppler-worker` uses `poppler-rs` 0.25 and the
+  installed `poppler-glib` with Cairo, keeping one document open per session.
+  It is optional at runtime and built by the workspace and run recipes;
+  building it needs Poppler, GLib and Cairo development packages (in the
+  default Nix shell), building `skwir` alone does not. Neither worker is a
+  dependency of the main binary. PDFium's runtime comes from the `pdf` shell,
+  via a git-ignored `.envrc.local` containing `use flake .#pdf`.
+- **One protocol, one UI.** Both workers implement the bounded document
+  protocol (page pixels, character geometry, search, URI and page links,
+  outlines) behind one session manager and one reader UI. Poppler's missing
+  safe bindings are confined to a documented native adapter. Text geometry is
+  normalized from top-left coordinates, search and link geometry from
+  bottom-left; the native APIs already handle crop and rotation.
+- **Engine order.** `auto` prefers PDFium, then the Poppler worker, then the
+  Poppler CLI image fallback with its disk cache. An explicit engine choice
+  requires that reader, and a document error never switches engines.
+  Converted Office PDFs take the same route.
+- Revisited pages are rendered again from the parsed document kept open, as
+  with PDFium; the UI keeps the displayed page until the new one is ready.
 
 ## Consequences
 
-The two backends expose the same current reader features and limitations:
-per-page selection, text-layer search, page links/HTTP(S) links, outlines,
-fit/zoom and page navigation. Neither adds OCR, password prompts, annotation
-editing, forms or cross-page selection. Continuous scrolling was subsequently
-added to the shared UI without changing this protocol. Native workers
-isolate crashes and cancellation, but are not filesystem sandboxes.
-
-Poppler retains its [GPL license](https://gitlab.freedesktop.org/poppler/poppler/-/blob/master/COPYING).
-Process separation does not relicense the library or the linked helper;
-distributors must honor the helper's linked dependencies. Our Rust adapter
-source and its MIT Rust bindings do not change Poppler's licensing terms.
-
-Use the same synthetic native checks for both workers, including all four
-rotations with cropping. Benchmark equivalent requests (including metadata
-and search), report child PSS and CPU, and distinguish renderer measurements
-from full application latency and footprint in `docs/pdf-comparison.md`.
+- Both backends have the same features and limits: per-page selection,
+  text-layer search, page and HTTP(S) links, outlines, fit/zoom, page
+  navigation; no OCR, password prompts, annotation editing, forms or
+  cross-page selection. Continuous scrolling came later in the shared UI with
+  no protocol change.
+- Native workers isolate crashes and cancellation; they are not filesystem
+  sandboxes.
+- Poppler stays
+  [GPL](https://gitlab.freedesktop.org/poppler/poppler/-/blob/master/COPYING).
+  A separate process relicenses neither the library nor the linked helper;
+  distributors honor the helper's linked dependencies. Our adapter and the
+  MIT bindings do not change Poppler's terms.
+- Both workers run the same synthetic native checks, all four rotations with
+  cropping included. Benchmarks use equivalent requests (metadata and search
+  included), report child PSS and CPU, and keep renderer numbers apart from
+  application latency and footprint, in `docs/pdf-comparison.md`.

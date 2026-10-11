@@ -1,218 +1,179 @@
 # ADR-034: The sidebar's places are the user's to arrange, and the trash is one
 
-Status: accepted, 2026-10-04. Amends ADR-032 (verbs) for the trash.
-Amended 2026-10-04: a trashed folder stays in the trash, and a folder's
-trail starts at the sidebar's place (below). Amended 2026-10-05: out of
-the trash wherever a file goes, and the Deleted column (below).
+Status: accepted, 2026-10-04. Built. Amends ADR-032 (verbs) for the
+trash. Amended 2026-10-04 and 2026-10-05 (see Amendments).
 
 ## Context
 
-The sidebar's groups could be folded, moved and hidden (`Sections`),
-but not what was in them. Places held Home and every folder of
-`user-dirs.dirs` (Templates and Public too) from the places plugin,
-Recent from jump and Shelf from the shelf, in the order the plugins
-were registered, none of which could be moved, renamed or left out.
-Bookmarks, saved searches and pinned tags could be moved and taken out,
-because their owners keep them in files of their own. Devices showed
-every volume: an EFI partition mounted at `/boot` among them, while a
-small FAT stick that was not mounted was left out by a guess on its
-size. Nothing in the sidebar could be reached from the keyboard, and the
-trash, which every file manager shows, was nowhere.
+Sidebar groups could be folded, moved and hidden (`Sections`), but not
+their places. Home, every `user-dirs.dirs` folder, Recent and Shelf sat
+in plugin registration order and could not be moved, renamed or left
+out. Devices showed an EFI partition at `/boot` but hid a small
+unmounted FAT stick by a size guess. Nothing was reachable by keyboard,
+and there was no trash.
 
-Three questions closed doors: who keeps the arrangement of a place no one
-keeps (Home, a volume), what names a volume across mounts, and how much
-of the trash skwir reads itself.
+Three questions closed doors: who keeps the arrangement of a place no
+one keeps (Home, a volume), what names a volume across mounts, and how
+much of the trash skwir reads itself.
 
 ## Decision
 
 ### Who arranges a place
 
-A place is one of three (`sidebar::Role`), from what its owner says of it:
+A place has a role (`sidebar::Role`) from what its owner says:
 
-- **Kept** by the user (it carries `forget` or `reorder`: a bookmark, a
-  saved search, a pinned tag). Its owner orders it, renames it
-  (`Place::rename`, which F2 runs) and takes it out, in the file it keeps
-  it in, as before. The sidebar does not hide it: a bookmark is taken
-  out, not hidden.
-- **Suggested** by its owner (a tag used often): the user can hide it.
-- **Offered** by its owner (Home, a folder of the desktop's, Recent, the
-  Shelf, the Trash, a volume): the user moves it among the group's other
-  offered places, renames it in the sidebar and hides it.
+| Role | Examples | Arranged by |
+|---|---|---|
+| **Kept** (carries `forget` or `reorder`) | bookmark, saved search, pinned tag | Its owner: order, rename (`Place::rename`, F2), take out, in its own file. Never hidden. |
+| **Suggested** | a frequent tag | The user can hide it. |
+| **Offered** | Home, desktop folders, Recent, Shelf, Trash, volumes | The user moves it among the group's offered places, renames and hides it. |
 
-The arrangement of offered and suggested places is the shell's, kept
-with the window's shape (`Sections::places`, by group: an order, what
-is shown or hidden, the names given), not their owners'. One group
-mixes owners (Places holds the places plugin's folders, jump's Recent,
-the shelf's Shelf and the trash's Trash), and an offered place has no
-file of its own to keep an order in. Nothing the desktop shares is
-written: the GTK bookmarks keep only what other file managers read too.
-`ui.sidebar_place` is the one command, so the menus, the keys, the
-palette and agents arrange the same way. A place moves only among those
-the same command moves (`sidebar::mover`): a bookmark among bookmarks,
-Home among the offered places, each set keeping the slots it holds.
+- The arrangement of offered and suggested places is the shell's, kept
+  with the window's shape (`Sections::places`: per group order,
+  visibility, names), because a group mixes owners and an offered place
+  has no file to keep an order in. Nothing the desktop shares is
+  written: GTK bookmarks keep only what other file managers read.
+- `ui.sidebar_place` is the one command, for menus, keys, palette and
+  agents.
+- A place moves only among those the same command moves
+  (`sidebar::mover`): a bookmark among bookmarks, Home among offered
+  places.
 
 ### What names a place
 
-A place is named in the arrangement by `Place::key`, its location unless
-its owner says otherwise. A volume is named by its filesystem (its
-UUID, and the subvolume or folder mounted when that is not all of it,
-since `/` and `/home` can be one filesystem's), read from sysfs and
-udev's database (`places::identity`); a container's cleartext volume by
-the container. So a volume is the same place locked, unlocked, mounted
-or not, whatever device name the kernel gives it this time.
+`Place::key`: its location unless the owner says otherwise. A volume is
+named by its filesystem: UUID, plus the subvolume or folder mounted when
+not the whole (`/` and `/home` can share one), from sysfs and udev's
+database (`places::identity`); a cleartext volume by its container. So a
+volume is the same place locked, unlocked, mounted or not, whatever its
+device name.
 
 ### udisks's word
 
-Whether a volume is shown when the user has not said is udisks's word:
-`UDISKS_IGNORE`, which its rules set for EFI, BIOS boot, recovery and
-reserved partitions, read from udev's database (files in `/run`, so the
-quick scan reads it without waiting for a drive, and skwir needs no
-D-Bus). Such a volume is offered hidden (`Place::hidden`), listed
-unchecked in its group's menu; the size guess applies only where udev
-has no record. The user's choice wins either way.
+Whether a volume shows by default is udisks's `UDISKS_IGNORE` (EFI,
+BIOS boot, recovery, reserved), read from udev's database in `/run` (no
+waiting for a drive, no D-Bus). Such a volume is offered hidden
+(`Place::hidden`), unchecked in its group's menu. The size guess
+applies only without a udev record. The user's choice wins.
 
 ### The keyboard
 
-F6 gives the keyboard to the sidebar and back (`ui.focus_sidebar`); in
-its context the arrows walk its headers and places, Enter opens, Menu
-opens the menu, Alt+arrows move, F2 renames, Delete takes out or hides.
-A click on a place never takes the keyboard from the files.
+F6 (`ui.focus_sidebar`) moves the keyboard to the sidebar and back.
+Arrows walk headers and places, Enter opens, Menu opens the menu,
+Alt+arrows move, F2 renames, Delete takes out or hides. A click never
+takes the keyboard from the files.
 
 ### The trash is a place
 
-The trash plugin provides `trash:`: what every trash of the user's
-holds, each file under the name it had, from the folder it had. It reads
-the trashes itself (`skwir_platform::trash`: the home trash and those of
-the volumes the sidebar shows, network and FUSE ones aside), rather than
-the trash crate's listing, which asks every mount point, network ones
-included, and which tests could not keep to a trash of their own. The
-core keeps the operations: a file is restored by the core's `Restore`,
-which now names the exact item (`item`, its `.trashinfo`) and refuses
-to put it over a file that took its place; it is deleted for good by the
-core's `Delete`, which takes the `.trashinfo` along, wherever the file
-is deleted from; and `Trash` refuses a file in a trash already.
-
-Where a location's files are the trash's, it says so with
-`Verbs::restore` (the `restores` token): Restore is in their menu, Move
-to Trash and Show in Folder are not, and Delete deletes them for good.
-Deleting for good is the one step Undo cannot take back
-(`Operation::undoable`), and a plan with such a step, from any gesture,
-is asked about before it is applied (`Shell::apply_user_plan`): Shift+
-Delete, Delete in the trash, Empty Trash.
+- The trash plugin provides `trash:`: every trash of the user's, each
+  file under its old name and folder.
+- It reads trashes itself (`skwir_platform::trash`: home and the
+  sidebar's volumes, not network or FUSE). Rejected: the trash crate's
+  listing, which asks every mount point, network ones included, and
+  cannot be confined to a test trash.
+- The core keeps the operations. `Restore` names the exact item (its
+  `.trashinfo`) and refuses to overwrite a file in its place; `Delete`
+  takes the `.trashinfo` along, wherever it deletes from; `Trash`
+  refuses a file already in a trash.
+- A location whose files are the trash's says `Verbs::restore` (the
+  `restores` token): Restore in their menu, no Move to Trash or Show in
+  Folder, and Delete deletes for good.
+- Deleting for good is the one step Undo cannot reverse
+  (`Operation::undoable`); a plan with one asks first, whatever the
+  gesture (`Shell::apply_user_plan`: Shift+Delete, Delete in the trash,
+  Empty Trash).
 
 ## Consequences
 
-- An arrangement is skwir's: Nautilus does not see Home moved below
-  Downloads, nor skwir a sidebar arranged in Nautilus.
-- A group whose places are all hidden keeps its header, whose menu shows
+- The arrangement is skwir's alone: Nautilus does not see it, nor skwir
+  Nautilus's.
+- A group with every place hidden keeps its header, whose menu shows
   them again.
-- The trash listed no Deleted column and did not sort by it: Details
-  said when a file was deleted. It does since the second amendment.
-- Restoring over a file that took the place is refused, not renamed; a
-  folder merges into one there again (amendment below).
-- A volume's trash is watched once read: one mounted later is read when
+- Restoring over a file in the place is refused, not renamed; a folder
+  merges (2026-10-04 amendment).
+- A volume's trash is watched once read; one mounted later is read when
   the Trash is opened or refreshed.
+- The Deleted column came with the 2026-10-05 amendment; before, only
+  Details said when a file was deleted.
 
-## Amendment: in the trash, and from the sidebar's places (2026-10-04)
+## Amendments
 
-### A trashed folder stays in the trash
+### 2026-10-04: a trashed folder stays in the trash
 
-Opening a trashed folder went to its path, so the address read
-`Home › .local › share › Trash › files › old project`, and the pane was
-a folder like any other: New Folder, paste, drop and Move to Trash were
-offered in the trash, and the core, which knew only the items of a
-trash's `files` as trashed, put a file of a trashed folder in the trash
-again, as an item that came from the trash.
+Opening a trashed folder went to its real path, an ordinary folder:
+New Folder, paste, drop and Move to Trash were offered, and a file of it
+was trashed again.
 
-A location may now say where a folder it lists leads, as it says where
-a place does (`OpenLocation::location_of`, asked of folders too): a
-trashed folder leads to `trash:` and its path, which the trash plugin
-lists with the core's own folder listing and reads as
-`Trash › old project › sub`. Opening it, opening it in a tab or in
-place, and dropping on it all go there; it keeps its path for what acts
-on files. Its files are the trash's: Delete deletes for good, a drop or
-a paste trashes, as on the Trash itself (moving files into a trashed
-folder would make restoring it bring them where they never were), and
-there is no New Folder or Rename. The core knows a file anywhere under a
-trash's `files` as trashed (`op::in_trash`), and Trash refuses it.
+- **A location may say where a folder it lists leads**
+  (`OpenLocation::location_of`, now asked of folders too). A trashed
+  folder leads to `trash:` plus its path, listed by the core's folder
+  listing and read as `Trash › old project › sub`. Opening, opening in
+  a tab or in place, and dropping go there; the path stays for file
+  actions.
+- **Its files are the trash's:** Delete deletes for good; a drop or
+  paste trashes (files moved into a trashed folder would be restored
+  where they never were); no New Folder or Rename. The core knows any
+  file under a trash's `files` as trashed (`op::in_trash`), and Trash
+  refuses it.
+- **A file of a trashed folder is restored alone** (`RestorePart`), to
+  the folder's old place plus its path inside. Missing folders on the
+  way are recreated like their trashed counterparts (mode, `user.*`
+  attributes, times); companions follow. The folder stays trashed with
+  its still-correct `.trashinfo`.
+- **A folder restored later merges** into the recreated folders
+  (`Restore`): contents move in where free; a file in the way stops it.
+  Undo puts back only what each moved (`ReturnPart`, `Unmerge`);
+  recreated folders go while empty.
+- The freedesktop.org trash keeps one `.trashinfo` per item, which is
+  why file managers restore only items; nothing forbids taking a file
+  out of one.
 
-A file of a trashed folder is restored alone (`RestorePart`): where it
-was is where the folder was, then its path in the folder; the folders
-missing on the way are made again, as their counterparts in the trash
-are (mode, `user.*` attributes, times), and it moves back with its
-companions. The folder stays in the trash with the rest and its
-`.trashinfo`, which still speaks of it rightly. Restored later, the
-folder merges into the folders made again (`Restore`): what it holds
-moves in where its place is free, and a file where one of its files
-would go stops it, as a file in the folder's own place always did.
-Undone, each puts back only what it moved (`ReturnPart`, `Unmerge`), and
-the folders a restore made go while empty. The freedesktop.org trash
-keeps one `.trashinfo` per item, which is why file managers usually
-restore only items; nothing in it forbids taking a file out of one.
+### 2026-10-04: a folder's trail starts at the sidebar's place
 
-### A folder's trail starts at the sidebar's place
+A folder's trail starts at the deepest folder the sidebar shows that
+holds it, under the sidebar's name (`sidebar::roots`), as Dolphin does:
+Documents renamed Papers reads `Papers › 2026`, a drive
+`stick › Photos`. Home stands for what is above it even when hidden.
 
-A place renamed in the sidebar kept its folder's name everywhere else.
-A folder's trail now starts at the deepest folder the sidebar shows
-that holds it, under the sidebar's name (`sidebar::roots`): the rule
-"the home folder stands for everything above it" made general, as
-Dolphin's breadcrumb does with its places. Documents named Papers reads
-`Papers › 2026`, a drive `stick › Photos`; the home folder stands for
-what is above it even when the sidebar hides it. Of two places on one
-folder (Music, and a bookmark of it), the first in the sidebar's order
-names it. A place hidden, in a group put away, or not mounted starts no
-trail. The location stays a path: Up goes to the real parent, Ctrl+L
-edits the real path, and only where a place is named (the trail, a
-tab, the history) does the sidebar's name replace the folder's; a
-listing, a toast and Details say the folder's own. The core does not see
-the user's names (they are the window's, ADR-034), so the CLI and
-agents name a folder as its owner does, and the search's pill ("In
-Documents") is the query plugin's words.
+- Of two places on one folder, the first in sidebar order names it.
+- A hidden place, one in a hidden group, or one not mounted starts no
+  trail.
+- The location stays a path: Up goes to the real parent, Ctrl+L edits
+  the real path. Only the trail, tabs and history use the sidebar's
+  name; listings, toasts and Details use the folder's.
+- The core did not see these names then; it does since 2026-10-05.
 
-## Amendment: out of the trash (2026-10-05)
+### 2026-10-05: out of the trash wherever a file goes
 
-### A file of the trash moved is taken out of it
+**Moving a trashed file takes it out there.** Before, only Restore could
+(a drop said "restore it first", Cut was not offered); Finder and
+Dolphin take a file out where it is dropped.
 
-A file of the trash could leave it only by Restore, to where it was:
-dragged to a folder, the drop was refused ("restore it first"), and Cut
-was not offered. Finder and Dolphin take a file out of the trash where
-it is dropped. A move of a file of the trash (a drop, a paste after Cut,
-Shift+F5 and Shift+F6, the `move` command, an agent's plan) now takes it
-out there, as a restore does to where it was: the operation `Move` is,
-for such a file, a `RestorePart` to its place in the destination, so
-every path that builds a move gets it, and none branches on the trash.
-An item of the trash goes under the name it had (the trash names a file
-whose name it holds already otherwise, `draft.txt.2`; its `.trashinfo`
-says the name), takes its `.trashinfo` along, and the companions
-trashed with it (each an item of its own: `._x`, `x.xmp`,
-`.ts/x.json`) go beside it where their places are free, found as
-`Restore` finds them, by where they came from and when. Across volumes
-it is copied, then removed, as any move. Undone, all of it is in the
-trash again as the trash had it, under the same names and with the same
-`.trashinfo` text (`ReturnPart`, `Untrashed`), so its date still finds
-its companions when it is restored later. Within the trash, an item
-still does not move: the trash would hold a file it says nothing of.
+- Any move of a trashed file (drop, paste after Cut, Shift+F5/F6,
+  `move`, an agent's plan) is a `RestorePart` to its place in the
+  destination, so no path branches on the trash.
+- An item goes under its original name (`draft.txt.2` back to
+  `draft.txt`, from its `.trashinfo`), takes its `.trashinfo`, and the
+  companions trashed with it (`._x`, `x.xmp`, `.ts/x.json`, each an
+  item) go beside it where free, found as `Restore` finds them: by
+  origin and date. Across volumes: copy, then remove.
+- Undo puts all of it back as the trash had it, same names and
+  `.trashinfo` text (`ReturnPart`, `Untrashed`), so a later restore
+  still finds the companions.
+- Within the trash an item does not move: the trash would hold a file
+  it says nothing of.
+- A merging folder restore takes its trashed companions too
+  (`Unmerge::companions` undoes it). Recreated folders may be
+  read-only: undo opens them to remove them, and one something was put
+  in since keeps its mode.
 
-A folder restored into one there again (the merge) takes the
-companions trashed with it too, where their places are free; undone,
-they are back in the trash as they were (`Unmerge::companions`). The
-folders a file restored alone made are made as their counterparts in
-the trash are, read-only maybe: undone, they are opened to go, and one
-something was put in since keeps its mode.
+**The Deleted column.** Where files are the trash's (`Verbs::restore`),
+the list has a Deleted column (`keys::TRASHED`) and sorts by it
+(`SortKey::Deleted`, newest first). Not inside a trashed folder: its
+contents were trashed with it. The trash still opens in the pane's
+sort.
 
-### The Deleted column
-
-Where a location's files are the trash's (`Verbs::restore`), the list
-has a Deleted column from `keys::TRASHED`, and the listing sorts by it
-(`SortKey::Deleted`), newest first when chosen. Not in a trashed
-folder: what it holds was put in the trash with it. The trash still
-opens in the pane's sort.
-
-### Names
-
-The sidebar's names now reach the core (`Registry::set_place_titles`,
-from the consistency review of the same day), so the last sentence of
-the first amendment no longer holds: the query plugin names the folder a
-search looks in as the sidebar does (`place_name`), its pill
-("In Papers") and its title ("report in Papers") included, read again
-when the sidebar's names change.
+**Names.** The sidebar's names now reach the core
+(`Registry::set_place_titles`): the query plugin names a search's folder
+as the sidebar does (`place_name`), in its pill ("In Papers") and title
+("report in Papers").

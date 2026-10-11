@@ -1,90 +1,72 @@
 # ADR-021: Remote file systems come from installed tools
 
-Status: accepted, 2026-09-27, as a direction. Nothing is built yet; each
-step below is planned and decided further when it starts.
+Status: accepted, 2026-09-27, as a direction. Not built (checked
+2026-10-11); each step is decided further when it starts.
 
 ## Context
 
-Skwir will open files that are not on a local disk: SFTP servers, SMB
-and WebDAV shares, S3 buckets, cloud drives. Each protocol is a client,
-an authentication scheme and a set of failures of its own; Dolphin and
-Nautilus reach them through KIO and GVfs, frameworks larger than skwir.
-Implementing them in skwir would put a network layer in the core and
-make skwir hold credentials.
+skwir will open remote files: SFTP, SMB and WebDAV shares, S3 buckets,
+cloud drives. Each protocol is a client, an authentication scheme and its
+own failures; Dolphin and Nautilus use KIO and GVfs, frameworks larger than
+skwir. Implementing them would put a network layer in the core and make
+skwir hold credentials.
 
-Other software already speaks these protocols and keeps the
-credentials. GVfs (`gio mount`) and sshfs present a remote as a local
-folder through FUSE; rclone does the same for more than seventy back
-ends (`rclone mount`) and also answers a JSON API over a socket
-(`rclone rcd`: listing, copying and moving on the server, asynchronous
-jobs that report progress and can be stopped). Principle 4 says to use
-them.
+Installed tools already speak them and keep the credentials: GVfs
+(`gio mount`) and sshfs mount a remote through FUSE; rclone does so for
+over seventy back ends (`rclone mount`) and serves a JSON API on a socket
+(`rclone rcd`: server-side copy and move, jobs with progress and
+cancellation). Principle 4 says use them.
 
-Skwir already meets part of this. The places plugin reads mountinfo and
-counts `fuse*` file systems as user data, though only under `/mnt`,
-`/media` and `/run/media`: GVfs mounts, under `/run/user/<uid>/gvfs`, and
-NFS and CIFS are not listed. The GTK bookmarks file keeps `sftp://`
-lines, which skwir preserves but cannot open. Plugins register their own
-operation kinds (`op::OpRegistry` is owner-tagged), and locations have
-schemes with providers of their own (`query:`, `shelf:`).
+Today the places plugin lists `fuse*` mounts only under `/mnt`, `/media`
+and `/run/media`: GVfs mounts (`/run/user/<uid>/gvfs`), NFS and CIFS are
+not listed. `sftp://` lines in GTK bookmarks are kept but cannot be opened.
+Plugins can register operation kinds (`op::OpRegistry`) and location
+schemes (`query:`, `shelf:`).
 
 ## Decision
 
-- **Skwir implements no file-system protocol, and the core has no
-  network layer.** Remote files are reached through installed tools. A
-  plugin that needs HTTP for something else keeps its client
-  (`map-tiles`, ADR-020); a client two plugins share goes to
-  `skwir-platform` as a utility, not into the core as a contract.
-- **Skwir holds no credentials.** The keyring, GVfs and rclone's
-  configuration keep them; a prompt they need is theirs. A passphrase
-  skwir must pass on follows the rule for locked volumes (never stored,
-  logged or put on a command line; its argument struct has no `Debug`).
-- **First, mounts.** A remote mounted by any tool is a folder:
-  - The places plugin lists GVfs mounts and network file systems
-    (`nfs`, `cifs`, `9p`, `fuse.sshfs`, `fuse.rclone`,
-    `fuse.gvfsd-fuse`…) beside local volumes, and opens an `sftp://`,
-    `smb://` or `dav://` bookmark by mounting it with `gio mount` and
-    navigating to its mount point, as `places.mount` does with udisks.
-    rclone remotes (`rclone listremotes`) can be mounted the same way.
-    Unmounting is the place's eject.
-  - A location on such a file system is **remote**: `skwir-platform`
-    reads it from mountinfo's type and the core carries it on the
-    location, so every plugin can act on it. On a
-    remote location, content is read only when asked: thumbnails and
-    previews wait for the user, Usage asks before walking a tree. The
-    listing is read again on F5 and when skwir regains focus, because
-    the kernel does not report changes made on the server. Deleting says
-    it is permanent where there is no Trash. Tags say they are
-    unavailable where extended attributes are.
-  - Remote locations get a small worker budget of their own. A server
-    that stops answering can block a `stat` on its mount in the kernel,
-    uninterruptibly; the UI thread never waits on one (principle 1), and
-    a hung remote must not take every worker with it.
-- **Then, where mounts fall short, rclone as a worker.** A `remote`
-  plugin runs `rclone rcd` for the session on a private socket, like the
-  media and document workers, and registers a location provider for
-  rclone remotes. It gives what a mount cannot: copies and moves done on
-  the server, real progress and cancellation (`job/status`, `job/stop`),
-  bounded requests instead of kernel waits, and no FUSE, which macOS and
-  Windows make awkward (Phase 5). Its operations are plugin-registered
-  kinds with inverses where the back end allows them.
-- **What the rclone step needs from the core** is a way for copy, paste,
-  drop and the shelf to pick an operation by the schemes of their source
-  and target, as `Keeper` picks by scheme, instead of building a
-  path-based `Copy` directly. It is decided in its own ADR when that
-  step starts.
+- **No file-system protocol in skwir, no network layer in the core.** A
+  plugin needing HTTP keeps its own client (`map-tiles`, ADR-020); one two
+  plugins share goes to `skwir-platform` as a utility, not a core
+  contract.
+- **skwir holds no credentials.** The keyring, GVfs and rclone keep them,
+  and prompt for them. A passphrase skwir must pass on follows the
+  locked-volume rule: never stored, logged or on a command line; no `Debug`
+  on its argument struct.
+- **Step 1: mounts.** A mounted remote is a folder.
+  - The places plugin lists GVfs mounts and network file systems (`nfs`,
+    `cifs`, `9p`, `fuse.sshfs`, `fuse.rclone`, `fuse.gvfsd-fuse`…). An
+    `sftp://`, `smb://` or `dav://` bookmark opens by `gio mount`, as
+    `places.mount` uses udisks; rclone remotes (`rclone listremotes`)
+    mount the same way. Eject unmounts.
+  - A location there is **remote** (read by `skwir-platform` from
+    mountinfo's type, carried by the core on the location). Content is read
+    only when asked (thumbnails and previews wait; Usage asks before
+    walking); the listing is reread on F5 and on focus, since the kernel
+    does not report server-side changes; Delete says it is permanent
+    without a Trash; tags say they are unavailable without extended
+    attributes.
+  - Remote locations get a small worker budget of their own: a dead server
+    can block a `stat` uninterruptibly. The UI thread never waits on one,
+    and a hung remote must not take every worker.
+- **Step 2, where mounts fall short: rclone as a worker.** A `remote`
+  plugin runs `rclone rcd` on a private socket for the session and provides
+  locations for rclone remotes: server-side copies and moves, real progress
+  and cancellation (`job/status`, `job/stop`), bounded requests instead of
+  kernel waits, no FUSE (awkward on macOS and Windows). Its operations are
+  plugin kinds, with inverses where the back end allows.
+- **Step 2 needs from the core** that copy, paste, drop and the shelf pick
+  an operation by source and target schemes (as `Keeper` does) instead of
+  building a path-based `Copy`. Decided in its own ADR.
 
 ## Consequences
 
-Remote access depends on what is installed: without GVfs or rclone, the
-feature is absent and says why (`Plugin::requirements` probes).
-Behaviour follows the tools: rclone's and some FUSE file systems'
-inode numbers are made up and may change between mounts, so entry
-references on a remote fall back to their path hint and stable identity
-(principle 6) is weaker there. What a server supports (Trash, extended
-attributes, modification times, permissions) varies, and skwir reports
-the difference rather than hiding it.
-
-The core stays free of protocols, clients and secrets. Nothing prevents
-a later plugin from speaking a protocol itself if a tool proves
-unusable; that would be a new decision, not a change to the core.
+- Remote access depends on what is installed; without GVfs or rclone the
+  feature is absent and says why (`Plugin::requirements`).
+- rclone's and some FUSE file systems' inodes are made up and may change
+  between mounts: references fall back to their path hint, so stable
+  identity (principle 6) is weaker there.
+- Server capabilities (Trash, xattrs, mtimes, permissions) vary; skwir
+  reports the difference rather than hiding it.
+- A later plugin speaking a protocol itself, if a tool proves unusable,
+  would be a new decision, not a core change.

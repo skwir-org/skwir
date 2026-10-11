@@ -1,102 +1,104 @@
 # ADR-003: Preview providers and external document renderers
 
-Status: accepted, 2026-09-18
+Status: accepted, 2026-09-18. PDF engine superseded by ADR-004 and ADR-005
+(readers); the Poppler command-line path below remains their fallback.
+Amended by ADR-030 (text documents read as text) and ADR-031 (thumbnailers
+isolated).
 
 ## Context
 
-The shell decoded images and text itself and launched video thumbnail tools,
-with no cancellation of a running process. PDF previews were deferred; Phase 3
-proposed PDFium. Office documents need a converter as well as a page renderer.
-The same panel and peek overlay must display all these results, without bringing
-GPUI into plugins or loading office/PDF engines at application startup.
+The shell decoded images and text itself and launched video thumbnail tools
+it could not cancel. PDF previews were deferred (Phase 3 proposed PDFium);
+Office documents need a converter as well as a page renderer. One panel and
+the peek overlay must show all of it, without GPUI in plugins or office/PDF
+engines loaded at startup.
 
 ## Decision
 
-- Add a small core preview contract: requests carry an `EntryRef`, MIME type,
-  page or video position, and pixel limit; results contain RGBA pixels and
-  document/video navigation metadata. Media and document plugins share this
-  contract. Providers execute on scheduler workers, not during UI rendering.
-- Register `preview-media` and `preview-documents` independently. Disabling a
-  provider cancels its active requests; registration changes invalidate the
-  UI's current preview. Image/text rendering remains in the existing UI code.
-- Use installed FFmpeg/ffprobe for video stills, and Poppler's `pdfinfo` and
-  `pdftoppm` for PDF pages. This replaces the planned PDFium dependency for
-  Linux. No renderer library is loaded into skwir at idle.
-- Convert supported Office/OpenDocument files to PDF with installed
-  LibreOffice. Reuse the PDF backend for pages, slides, and spreadsheet print
-  layouts. Conversion does not provide an interactive spreadsheet grid.
-  (ADR-030 amends this: a text document can also be read as text, by skwir
-  or by Pandoc, in the same sandbox.)
-- On Linux, Office conversion requires bubblewrap. Mount only the input,
-  system runtime directories, and private scratch space; disable networking,
-  macros, and link updates, and use an isolated LibreOffice profile. A sandbox
-  failure is reported; conversion is never retried outside it. Other platforms
-  need an isolation adapter before Office conversion is enabled there.
-- Run tools with separate argv values, null stdin, bounded captured diagnostics,
-  deadlines, and cancellation. On Unix, kill the child process group and reap
-  the direct child. Bubblewrap also destroys its PID namespace on termination.
-  Desktop thumbnailers use the same runner and private temporary directories
-  (ADR-031 amends this: where bubblewrap can isolate, they run in the
-  converters' sandbox, and ImageMagick, isolated, draws what none does).
-- Serialize expensive work within each backend instance. Render only the
-  requested page/frame, at most 2048 pixels on either side. Tool deadlines are
-  15 seconds for rendering/metadata and 45 seconds for Office conversion;
-  captured stdout/stderr are limited to 1 MiB each while running. Read output
-  artifacts only below 64 MiB. These are safeguards, not latency targets or
-  OS-level memory limits on child processes.
-- Store compressed pages/frames and converted PDFs in the plugin's disposable
-  cache namespace. Keys include file identity, path, size, modification/change
-  times, executable metadata, requested page/time/size, and a format version.
-  Trim each namespace to 128 MiB after storing a completed preview. Changed
-  source files are rejected before publishing newly rendered output.
-- Keep GPUI images and controls in skwir-ui. Invalidate requests on pane,
-  entry, path, metadata, theme, and provider changes; reject stale generations,
-  cancel on close/drop, and wake the UI only when results arrive. Reuse an
-  existing desktop thumbnail while generating a larger preview.
+- **Contract.** A small core preview contract: a request carries an
+  `EntryRef`, MIME type, page or video position and pixel limit; a result
+  holds RGBA pixels plus document/video navigation metadata. Providers run on
+  scheduler workers, never during rendering.
+- **Plugins.** `preview-media` and `preview-documents` register
+  independently. Disabling one cancels its requests; a registration change
+  invalidates the current preview. Image and text rendering stay in the UI.
+- **Tools, not libraries.** Installed FFmpeg/ffprobe for video stills,
+  Poppler's `pdfinfo` and `pdftoppm` for PDF pages (instead of PDFium on
+  Linux). No renderer library is loaded into skwir at idle.
+- **Office.** Installed LibreOffice converts Office/OpenDocument files to
+  PDF, shown by the PDF backend (pages, slides, spreadsheet print layouts; no
+  interactive grid). ADR-030: a text document can also be read as text, by
+  skwir or Pandoc, in the same sandbox.
+- **Sandbox.** On Linux, Office conversion requires bubblewrap: only the
+  input, system runtime directories and private scratch are mounted; no
+  network, macros or link updates; an isolated LibreOffice profile. A sandbox
+  failure is reported, never retried outside it. Other platforms need an
+  isolation adapter before conversion is enabled.
+- **Running tools.** Separate argv values, null stdin, bounded diagnostics,
+  deadlines, cancellation. On Unix, kill the child's process group and reap
+  the direct child (bubblewrap also destroys its PID namespace). Desktop
+  thumbnailers use the same runner with private temporary directories
+  (ADR-031: in the converters' sandbox where bubblewrap can isolate, and
+  ImageMagick, isolated, draws what no thumbnailer does).
+- **Bounds.** Work is serialized per backend instance; only the requested
+  page or frame is rendered, at most 2048 px per side. Deadlines: 15 s for
+  rendering and metadata, 45 s for Office conversion. Captured stdout and
+  stderr: 1 MiB each. Output artifacts are read only under 64 MiB. These are
+  safeguards, not latency targets or OS memory limits.
+- **Cache.** Compressed pages/frames and converted PDFs live in the plugin's
+  disposable cache namespace, keyed by file identity, path, size,
+  modification/change times, executable metadata, requested page/time/size
+  and a format version; each namespace is trimmed to 128 MiB after a store.
+  A source that changed is rejected before new output is published.
+- **UI.** GPUI images and controls stay in `skwir-ui`. Pane, entry, path,
+  metadata, theme and provider changes invalidate requests; stale generations
+  are rejected; close and drop cancel; the UI wakes only when results arrive.
+  An existing desktop thumbnail shows while a larger preview is made.
 
 ## Consequences
 
-Optional installed tools determine availability; missing tools produce an
-explanation in the preview panel. There is no persistent converter process,
-network service, or application database. New plugins add only descriptors and
-small state at startup; conversion resource costs are transient and measured
-separately from skwir's idle PSS.
+- Installed tools decide availability; the panel explains a missing one.
+- No persistent converter, network service or database. Plugins add only
+  descriptors and small state at startup; conversion costs are transient and
+  measured apart from idle PSS.
+- Page navigation, zoom and five-second video seeking are shell commands.
+- Left for later: video playback (built, ADR-008), selectable PDF text
+  (ADR-004), password entry, spreadsheet cell navigation. Office fidelity
+  depends on the installed converter and fonts.
+- Default tests cover cancellation, cache bounds and plugin removal. Ignored
+  smoke tests in `crates/platform/src/preview.rs` run the real tools on
+  synthetic PDF, video and generated DOC/DOCX/ODT, XLS/XLSX/ODS, PPT/PPTX/ODP
+  files; opt-in, since the dev shell does not require these tools.
 
-Page navigation, zoom, and five-second video seeking are shell commands in the
-palette and preview controls. Video playback, selectable PDF text, password
-entry, and spreadsheet cell navigation remain future work. Office fidelity
-still depends on the installed converter and available fonts.
+## Amendments
 
-Default tests exercise cancellation, cache bounds, and plugin removal. Explicit
-ignored smoke tests in `crates/platform/src/preview.rs` exercise real tools with
-synthetic PDFs, video, and generated DOC/DOCX/ODT, XLS/XLSX/ODS, PPT/PPTX/ODP
-files. They are optional because the regular dev shell does not require these
-external rendering programs.
+### 2026-09-18: PDF latency
 
-## PDF latency follow-up
+Poppler's PNG compression dominated cold-page latency on a scanned document.
 
-Poppler's PNG compression dominated cold-page latency on a synthetic scanned
-document. Request uncompressed PPM pixels from `pdftoppm`, then encode the disk
-cache with our fast, lossless PNG encoder. Decode only once and skip resampling
-when the renderer's output already fits. Retain just the active document's
-page count, keyed by source and tool metadata, across page turns.
-Fast compression can produce larger cache files; the namespace remains bounded
-to 128 MiB, and raw PPM intermediates live only in the request's scratch directory.
+- `pdftoppm` writes uncompressed PPM; skwir encodes the cache with its fast
+  lossless PNG encoder. Files may be larger; the namespace stays at 128 MiB,
+  and PPM intermediates stay in the request's scratch directory.
+- Decode once; skip resampling when the output already fits. Keep only the
+  active document's page count (keyed by source and tool metadata) across
+  page turns.
+- A desktop thumbnail is used only before the file has preview content. Page
+  turns and seeks keep the current image until the next is ready; a file's
+  cover never replaces a page already shown.
 
-Use a desktop thumbnail only before the selected file has preview content.
-Page turns and video seeking retain the current image until the requested one
-is ready; a file-level cover must never replace an already displayed page.
+Release build, 2048 px, synthetic noisy scan, median of three (identical
+decoded pixels asserted; backend timings, not UI latency or a guarantee for
+every PDF):
 
-Three release-mode samples at 2048 pixels on a synthetic noisy scan gave median
-times of 1777 ms for Poppler PNG output plus decoding, 99 ms for the new backend
-including metadata and cache storage, and 24 ms for a disk-cache hit. The test
-asserts identical decoded pixels; these are backend timings, not end-to-end UI
-latencies or guarantees for every PDF. Reproduce with:
+| Path                                        | Time    |
+|---------------------------------------------|---------|
+| Poppler PNG output + decoding (before)      | 1777 ms |
+| New backend, with metadata and cache store  | 99 ms   |
+| Disk-cache hit                              | 24 ms   |
 
 ```
 cargo test --release -p skwir-platform real_scanned_pdf_fast_path_preserves_pixels -- --ignored --nocapture
 ```
 
-Document preview debug logs include page, cache hit, render time, and total
-backend time, without file paths. Enable `RUST_LOG=skwir_platform::preview=debug`
-to investigate remaining document-specific delays.
+`RUST_LOG=skwir_platform::preview=debug` logs page, cache hit, render time
+and total backend time, without file paths.

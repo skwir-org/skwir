@@ -4,44 +4,46 @@
 
 The first release, for Linux.
 
-- **Browsing**: folders listed as they stream, however large; list, grid,
-  columns, tree and board views; two panes and tabs; a sidebar of places
-  you arrange, drives mounted and unlocked from it; Recent; the Trash as
-  a place, restoring files where they were or where you drop them.
-- **Searching**: a search is a place (`Ctrl+F`), its terms as pills;
+- **Browsing**: folders listed as they stream, however large; list,
+  grid, columns, tree and board views; two panes and tabs; a sidebar of
+  places you arrange, with drives mounted and unlocked from it; Jump and
+  Recent; the shelf; the Trash as a place, restoring files where they
+  were or where you drop them.
+- **Searching**: a search is a place (`Ctrl+F`) with its terms as pills:
   names, kinds, sizes, dates in your calendar, tags, ratings, contents,
-  positions; kept in the sidebar; narrowed by what its files have.
+  positions. Searches can be kept in the sidebar and narrowed by what
+  their files have.
 - **Notes on the files**: tags, ratings and comments kept where the
   desktop, darktable, Lightroom, a Mac and TagSpaces keep them, merged
-  when they disagree; categories of tags; tags as places; copies that
-  keep them.
-- **Changes as plans**: every operation undoable; bulk renames, an edit
-  of a folder as text, and what agents and plugins propose reviewed
+  when they disagree; tag categories; tags as places; copies keep them.
+- **Changes as plans**: every operation undoable; bulk renames, editing
+  a folder as text, and what agents and plugins propose are reviewed
   before they run.
-- **Copies you can trust**: a long copy or move pauses and cancels, and
-  Quit asks while one runs, then takes back what it left half done; a
-  copy onto a USB drive goes at the drive's pace, its progress the
-  drive's; a copy short of room asks before it starts; hard links stay
-  links, and each name of a file is listed as its own.
-- **Drag and drop** asks whether to move, copy or link (or hold Shift,
-  Ctrl, Ctrl+Shift), and offers to extract an archive where it is
-  dropped.
-- **Previews**: text and code, Markdown, tables, structured files, PDFs
-  in skwir's reader, office documents, books, comics, e-mails,
-  notebooks, pictures, audio and video, fonts, 3D models, circuit boards,
-  maps and tracks, archives, and any file's bytes; code in bat's themes
-  or your own; a player pinned to keep playing while you move on.
-- **Views of data**: disk usage, folders inside folders, sized by room
-  or files, colored by age or kind, saying what deleting frees; a
+- **Reliable copies**: long copies and moves pause and cancel; Quit asks
+  while one runs, then undoes what it left half done. Copies onto a USB
+  drive run at the drive's pace and report its progress; a copy short of
+  room asks before it starts; hard links stay links, and each name of a
+  file is listed on its own.
+- **Drag and drop** asks whether to move, copy or link (or hold `Shift`,
+  `Ctrl`, `Ctrl+Shift`), and offers to extract a dropped archive.
+- **Previews**: text and code, Markdown, tables, structured data, PDFs in
+  skwir's reader, office documents, books, comics, e-mail, notebooks,
+  pictures, audio and video, fonts, 3D models, circuit boards, maps and
+  tracks, archives, and any file's bytes; code in bat's themes, or those
+  you added to bat; a player that keeps playing while you browse.
+- **Views of data**: disk usage (nested folders, sized by room or file
+  count, colored by age or kind, saying what deleting frees); a
   timeline; a map.
 - **A terminal** that follows the folder shown.
+- **Keys**: every binding can be changed; Vim keys (yazi's, off by
+  default) as a scheme.
 - **Agents and scripts** (off by default): `skwir cmd` and `skwir mcp`,
-  with the permission layer between them and your files; private
-  folders never leave the machine.
+  with a permission layer between them and your files; private folders
+  never leave the machine.
 - **Plugins from outside skwir**, as WebAssembly modules or isolated
-  programs. Their protocol is experimental: it may change before it is
+  programs. Their protocol is experimental and may change before it is
   declared stable.
 
-Known limits: macOS and Windows builds compile but have not run
-([how to help](docs/HELP-WANTED.md)); there is no screen reader support
-yet (the toolkit has none); Undo lasts while skwir runs.
+Known limits: the macOS and Windows builds compile but have never run
+([how to help](docs/HELP-WANTED.md)); no screen reader support yet (the
+toolkit has none); Undo lasts only while skwir runs.

@@ -2,72 +2,61 @@
 
 Status: accepted, 2026-10-09. Revises the archive rule of
 `docs/invariants/previews.md` ("member names are never extraction
-paths"), which held while skwir only previewed archives.
+paths"), which held while skwir only previewed archives. Built.
 
 ## Context
 
-A drop asks what it does (`core.drop_asks`): Move, Copy and Link Here.
-Plugins may add rows to that menu (the registry's `drop` items), and the
-one every file manager offers there is Extract Here. skwir read archives
-only to preview them: `skwir-archive-worker` lists members within bounds
-and writes one member at a time under a name of skwir's (`member_file`),
-never under its own, so no member's name ever reached the filesystem.
+A drop asks what to do (`core.drop_asks`), and plugins may add rows
+(`drop` menu items); every file manager offers Extract Here. Until now
+`skwir-archive-worker` only previewed: it listed members within bounds
+and wrote one at a time under a skwir-chosen name (`member_file`), so
+no member name reached the filesystem.
 
-Extracting is the opposite: an archive's names become paths on disk. An
-archive is a file nobody vouched for, and the attacks on extraction are
-old and many: `../` or an absolute name written outside the folder, a
-link the archive makes and a later member written through it, a hard
-link to a file outside, a device node, set-id bits, a name the
-destination refuses, a bomb that fills the disk.
+Extracting turns untrusted names into paths. Known attacks: `../` or
+absolute names, a link the archive makes and a later member written
+through it, hard links to outside files, device nodes, set-id bits,
+names the destination refuses, bombs that fill the disk.
 
 ## Decision
 
-1. **libarchive extracts, with its own guards.** The helper gains
-   `--extract`: libarchive's disk writer with
-   `ARCHIVE_EXTRACT_SECURE_NODOTDOT`, `SECURE_NOABSOLUTEPATHS` and
-   `SECURE_SYMLINKS` (never written through a link it made), and
-   `TIME`; never `OWNER` or `PERM` (no owner, no set-id or sticky bits,
-   the umask obeyed). Pipes, devices and sockets are left out; folders,
-   files, links and hard links are made. A member the guards refuse, or
-   one encrypted, stops it all: an archive that tries to leave its
-   folder is not half extracted. bsdtar's guards, not ours: fewer to
-   get wrong.
-2. **In its sandbox, writing only where it extracts.** It runs through
-   `sandbox::untrusted` like every program on a file nobody vouched
-   for (bubblewrap on Linux, Seatbelt on macOS, `Otherwise::Run`
-   elsewhere), its writable folder the one it extracts into: a guard
-   libarchive missed still writes nowhere else.
-3. **A step of a plan, made whole.** The archive plugin's `extract`
-   step (`archive.extract`, Extract Here in an archive's menu and a
-   drop's) extracts into a staging folder in the destination
-   (`StepContext::stage`, a copy's: a later run sweeps what a crash
-   left) and puts the result in place only once whole, never over what
-   is there. It is named after the archive (`photos.zip`, `photos.tar.gz`
-   give `photos`); an archive whose one member has that name (a folder
-   `project-1.0` in `project-1.0.tar.gz`, the file of `notes.txt.gz`) is
-   that member, not a folder around it. Undo puts it in the trash, as a
-   copy's undo does; run again, a folder that holds what the listing
-   names is the step already done.
-4. **Cancel and Pause reach the helper.** It takes a byte of standard
-   input before each unit of work (an entry, or a MiB of one) and
-   reports what it read; the step hands out units a few ahead
-   (`archive::extract_all`), none while the plan is paused, so a pause
-   stops it within those and works on every system, sandboxed or not.
-   The bar counts the archive's bytes read against its size. Cancel
-   kills it; the staging folder goes with what it made.
-5. **No bound on what it writes.** Extracting is the user's act, of an
-   archive they chose: its size is theirs to judge, as a copy's is. The
-   bar and Cancel are the answer to a bomb, not a limit.
+1. **libarchive extracts with its own guards** (helper `--extract`):
+   `ARCHIVE_EXTRACT_SECURE_NODOTDOT`, `SECURE_NOABSOLUTEPATHS`,
+   `SECURE_SYMLINKS`, `TIME`; never `OWNER` or `PERM` (no owner, no
+   set-id or sticky bits, umask obeyed). Folders, files, links and hard
+   links are made; pipes, devices and sockets skipped. A refused or
+   encrypted member stops everything: an archive that tries to escape is
+   never half extracted. bsdtar's guards, not ours: fewer to get wrong.
+2. **Sandboxed, writing only where it extracts:** `sandbox::untrusted`
+   (bubblewrap, Seatbelt, else `Otherwise::Run`), the extraction folder
+   its only writable one, so a missed guard writes nowhere else.
+3. **A plan step, placed whole.** `archive.extract` (Extract Here in an
+   archive's menu and a drop's) extracts into a staging folder in the
+   destination (`StepContext::stage`, swept after a crash like a
+   copy's) and places the result only when whole, never over what is
+   there.
+   - Named after the archive (`photos.tar.gz` → `photos`). An archive
+     whose single member has that name (`project-1.0` in
+     `project-1.0.tar.gz`, the file in `notes.txt.gz`) gives that
+     member, not a folder around it.
+   - Undo trashes it, as for a copy. Re-run, a folder holding what the
+     listing names counts as done.
+4. **Cancel and Pause reach the helper.** It reads a stdin byte before
+   each unit (an entry, or a MiB of one) and reports progress; the step
+   hands out units a few ahead (`archive::extract_all`), none while
+   paused, so pause works on every system, sandboxed or not. The bar
+   counts archive bytes read. Cancel kills it; the staging folder goes.
+5. **No bound on output.** Extracting an archive the user chose is
+   their call, like a copy's size. The bar and Cancel answer a bomb.
 
 ## Consequences
 
-- Only the helper links libarchive still; the rule in
-  `docs/invariants/previews.md` now says names reach the filesystem in
-  extraction alone, by libarchive's guards, in the sandbox.
-- The archive plugin writes files: its capabilities say so (Write).
-- Nothing else of the destination is read to decide: a name that is
-  taken is a conflict, never a merge or a rename.
-- A Mac's `__MACOSX` folder is extracted as it is stored; joining its
-  `._` files to their files (ADR-028) is left for later.
-- Windows extracts without a sandbox (as the helper previews there) and
-  makes a link only where the system lets the user make links.
+- Only the helper links libarchive. `docs/invariants/previews.md` now
+  says names reach the filesystem only in extraction, through
+  libarchive's guards, in the sandbox.
+- The archive plugin declares Write.
+- Nothing else in the destination is read: a taken name is a conflict,
+  never a merge or rename.
+- A Mac's `__MACOSX` is extracted as stored; joining its `._` files to
+  their files (ADR-028) is left for later.
+- Windows extracts unsandboxed (as it previews) and makes links only
+  where the user may.

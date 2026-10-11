@@ -1,8 +1,10 @@
 //! Details: everything known about what the panel shows.
 //!
 //! A section of the preview frame, not a kind of preview. With nothing to
-//! preview (a folder, an unknown file, several entries) it fills the panel;
-//! under a preview it is one line at the bottom that opens on demand.
+//! preview (a folder, an unknown file, several entries) it is always open;
+//! under a preview it opens on demand in the same place, under the header's
+//! card and above the toolbar (`preview::under_card`, the one place that
+//! draws it).
 //!
 //! Facts come from three places, none of them read while painting: the entry's
 //! metadata, with its provenance, collected when the entry or its listing

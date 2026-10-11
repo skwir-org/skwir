@@ -6,10 +6,9 @@
 //! shell's own keys and every plugin's. Moves follow the cursor
 //! (`ui.cursor` with `step: follow`), so what Space picks stays picked while
 //! the cursor moves, and `v` holds a range (`select_sweep`). What yazi binds
-//! and skwir has not (line modes, links, tasks, the trash as a place) is
-//! left out; so are Left and Right, which keep each view's meaning (a grid
-//! moves sideways), and Tab, which moves the keyboard to the toolbar or the
-//! other pane.
+//! and skwir has not (line modes, links, tasks) is left out; so are Left
+//! and Right, which keep each view's meaning (a grid moves sideways), and
+//! Tab, which moves the keyboard to the toolbar or the other pane.
 
 use std::path::Path;
 

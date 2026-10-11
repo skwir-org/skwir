@@ -1,47 +1,49 @@
 # ADR-003: Embedded full-text search engine
 
-Status: accepted, 2026-09-19
+Status: accepted, 2026-09-19. Amended by ADR-050 (skwird). Not built: the
+`fulltext` plugin is planned for Phase 7.
 
 ## Context
 
-The query language has a `content:` term that scans files with the grep
-crates. That is correct and needs no state, but it is linear in the size
-of the subtree (about 27 microseconds per file on the reference machine
-for empty files, dominated by file opens, far more for large ones). A
+The query language's `content:` term scans files with the grep crates:
+correct and stateless, but linear in the subtree (about 27 µs per empty file
+on the reference machine, dominated by opens; far more for large files). A
 persistent keyword index would make repeated content searches instant.
 
-Meilisearch was considered. It is a separate server process with an HTTP
-API and its own on-disk store, its engine crate is not a supported
-embedding target, and its strengths (typo tolerance, ranking rules,
-facets over structured documents) are not what file content search needs.
-It conflicts with the principles of no daemon, no database, and the
-memory budget.
+Rejected: **Meilisearch**. A separate server with an HTTP API and its own
+store; its engine crate is not a supported embedding target; its strengths
+(typo tolerance, ranking rules, facets over structured documents) are not
+what file content search needs. It conflicts with no daemon, no database,
+and the memory budget.
 
 ## Decision
 
-- **Tantivy** is the embedded full-text engine. It is a Rust library, its
-  index is a directory of plain files, and it supports the phrase, boolean,
-  and prefix queries a file manager needs.
-- The index is an **accelerator, never a requirement**: one index per
-  subtree, built only on request, refreshed incrementally by mtime and
-  content hash, stored in the deletable cache, pausable. When no index
-  covers a query root, the scan runs as today.
-- Text extraction is shared with the Phase 7 `extract` provider, so the
-  same content feeds keyword search, previews, and later embeddings.
+- **Tantivy** is the embedded engine: a Rust library, an index that is a
+  directory of plain files, and the phrase, boolean and prefix queries a file
+  manager needs.
+- The index is **an accelerator, never a requirement**: one per subtree, built
+  only on request, refreshed incrementally by mtime and content hash, kept in
+  the deletable cache, pausable. Without an index covering the query root,
+  the scan runs.
+- Text extraction is shared with the Phase 7 `extract` provider, feeding
+  keyword search, previews and later embeddings.
 - **System indexes are providers.** Tracker, Baloo, Recoll, Spotlight,
-  Windows Search, and a Meilisearch instance the user already runs may
-  serve the `content:` term when present. None is ever installed or
-  started by skwir.
+  Windows Search, or a Meilisearch the user already runs may answer
+  `content:`. None is ever installed or started by skwir.
 
 ## Consequences
 
-- A `fulltext` plugin in Phase 7 (see `docs/PLAN.md`), owning the index
-  lifecycle and its settings (roots, size caps, pause).
-- The `query` plugin gains a provider hook for the `content:` term so
-  indexes and external services can answer it; the scan remains the
+- A Phase 7 `fulltext` plugin (`docs/PLAN.md`) owns the index lifecycle and
+  its settings (roots, size caps, pause).
+- The `query` plugin gains a provider hook for `content:`; the scan stays the
   fallback and the correctness reference in tests.
-- Index size and build time become measured quantities in `skwir-bench`
-  when the plugin lands.
-- Amended (2026-10-10, ADR-050): skwir may start one system index,
-  skwird, for the session, where skwird is installed: a helper that ends
-  with skwir, not a daemon. It still installs and enables none.
+- Index size and build time become `skwir-bench` measurements when the plugin
+  lands.
+
+## Amendments
+
+### 2026-10-10: skwird (ADR-050)
+
+skwir may start one system index, skwird, for the session where it is
+installed: a helper that ends with skwir, not a daemon. skwir still installs
+and enables none.
