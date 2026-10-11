@@ -28,7 +28,7 @@ const CACHE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone)]
 pub(crate) struct Decoded {
-    pub image: Arc<RenderImage>,
+    pub picture: crate::backdrop::Picture,
     bytes: usize,
 }
 
@@ -69,7 +69,7 @@ impl Pictures {
         self.distance.clear();
         std::mem::take(&mut self.loaded)
             .values()
-            .map(|decoded| decoded.image.clone())
+            .map(|decoded| decoded.picture.image.clone())
             .collect()
     }
     /// Past the budget, the decoded pictures farthest from the view go.
@@ -184,7 +184,7 @@ impl Shell {
             pictures.cancel();
         }
         for decoded in pictures.evict() {
-            cx.drop_image(decoded.image, Some(window));
+            cx.drop_image(decoded.picture.image, Some(window));
         }
         self.request_picture();
     }
@@ -224,9 +224,9 @@ impl Shell {
                         let image =
                             image.ok_or_else(|| anyhow::anyhow!("the picture is not there"))?;
                         let bytes = image.bytes();
-                        let image = crate::thumbs::to_render_image(&image)
+                        let picture = crate::backdrop::Picture::of(&image)
                             .ok_or_else(|| anyhow::anyhow!("invalid picture"))?;
-                        Ok(Decoded { image, bytes })
+                        Ok(Decoded { picture, bytes })
                     })
                     .map_err(|error| format!("{error:#}"));
                 Reply { key, result }
@@ -243,7 +243,7 @@ impl Shell {
                 Ok(decoded) => {
                     if let Some(old) = Rc::make_mut(&mut pictures.loaded).insert(reply.key, decoded)
                     {
-                        cx.drop_image(old.image, Some(window));
+                        cx.drop_image(old.picture.image, Some(window));
                     }
                 }
                 Err(error) => {
@@ -252,7 +252,7 @@ impl Shell {
                 }
             }
             for decoded in pictures.evict() {
-                cx.drop_image(decoded.image, Some(window));
+                cx.drop_image(decoded.picture.image, Some(window));
             }
             self.request_picture();
             cx.notify();

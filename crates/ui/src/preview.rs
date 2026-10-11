@@ -51,6 +51,10 @@ pub enum PreviewContent {
         facts: Vec<skwir_core::inspection::Detail>,
         /// How many pixels it can have, which bounds a zoom's sharpening.
         pixels: Pixels,
+        /// What it draws, when some of it lets its background through
+        /// (`backdrop::ink`), read where it was decoded: `None` for a page
+        /// or a film, drawn opaque.
+        ink: Option<f32>,
     },
     Dir {
         items: usize,
@@ -703,6 +707,7 @@ fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
         img
     };
     let rgba = img.to_rgba8();
+    let ink = crate::backdrop::ink(&rgba);
     let image = crate::thumbs::owned_render_image(rgba.width(), rgba.height(), rgba.into_raw())
         .ok_or_else(|| anyhow::anyhow!("invalid image"))?;
     Ok(PreviewContent::Image {
@@ -713,6 +718,7 @@ fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
         document: None,
         facts: skwir_platform::exif::details(path),
         pixels: Pixels::Own,
+        ink,
     })
 }
 
@@ -726,6 +732,7 @@ fn decode_drawing(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Resul
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
+    let ink = crate::backdrop::ink(&decoded.rgba);
     let image = crate::thumbs::owned_render_image(decoded.width, decoded.height, decoded.rgba)
         .ok_or_else(|| anyhow::anyhow!("invalid image"))?;
     Ok(PreviewContent::Image {
@@ -736,6 +743,7 @@ fn decode_drawing(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Resul
         document: None,
         facts: Vec::new(),
         pixels: Pixels::Any,
+        ink,
     })
 }
 
@@ -1561,6 +1569,9 @@ impl Shell {
                     document: None,
                     facts: Vec::new(),
                     pixels: Pixels::Own,
+                    // A film's frame, or a track's cover as the player
+                    // keeps it.
+                    ink: None,
                 }),
                 window,
                 cx,
@@ -1805,6 +1816,7 @@ impl Shell {
                             document: None,
                             facts: Vec::new(),
                             pixels: Pixels::Own,
+                            ink: crate::backdrop::ink(&image.rgba),
                         };
                         if !cancel.is_cancelled() {
                             let _ = tx.send(PreviewResult {
@@ -1851,6 +1863,7 @@ impl Shell {
                                 // shows beside what the player says.
                                 facts: skwir_platform::mp4::details(&path),
                                 pixels: Pixels::Own,
+                                ink: crate::backdrop::ink(&preview.image.rgba),
                             };
                             send(content, true, None, None);
                         }
@@ -1890,6 +1903,7 @@ impl Shell {
                                     document: Some(page.content),
                                     facts: Vec::new(),
                                     pixels: Pixels::Own,
+                                    ink: None,
                                 })
                             })
                             .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
@@ -1916,6 +1930,7 @@ impl Shell {
                                 document: None,
                                 facts: skwir_platform::exif::details(&path),
                                 pixels: Pixels::Drawn,
+                                ink: crate::backdrop::ink(&preview.image.rgba),
                             },
                             info => PreviewContent::Image {
                                 image,
@@ -1925,6 +1940,7 @@ impl Shell {
                                 document: None,
                                 facts: Vec::new(),
                                 pixels: Pixels::Own,
+                                ink: crate::backdrop::ink(&preview.image.rgba),
                             },
                         },
                         None => PreviewContent::Error("Invalid preview image".into()),
@@ -2021,8 +2037,8 @@ impl Shell {
                 cx.drop_image(image, Some(window));
             }
             Some(PreviewContent::Inspection(display)) => {
-                for image in display.images.iter().flatten() {
-                    cx.drop_image(Arc::clone(image), Some(window));
+                for picture in display.images.iter().flatten() {
+                    cx.drop_image(Arc::clone(&picture.image), Some(window));
                 }
             }
             _ => {}
@@ -2859,8 +2875,8 @@ fn discard_parked(parked: crate::members::Parked, window: &mut Window, cx: &mut 
     let crate::members::Parked {
         display, mut state, ..
     } = parked;
-    for image in display.images.iter().flatten() {
-        cx.drop_image(Arc::clone(image), Some(window));
+    for picture in display.images.iter().flatten() {
+        cx.drop_image(Arc::clone(&picture.image), Some(window));
     }
     state.notes.close(window);
     for image in state.pictures.clear() {
@@ -3042,6 +3058,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
             image,
             width,
             height,
+            ink,
             ..
         }) = placeholder(shell) =>
         {
@@ -3064,6 +3081,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                         &p.picture_scroll,
                         "preview-placeholder",
                         None,
+                        crate::backdrop::behind(*ink, theme.surface, theme),
                     )
                 })
                 .into_any_element()
@@ -3086,6 +3104,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
             height,
             document,
             pixels,
+            ink,
             ..
         }) => {
             let picture = if let Some(document) = document.as_ref().filter(|_| interactive) {
@@ -3114,6 +3133,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                             Pixels::Drawn => 0,
                         },
                     }),
+                    crate::backdrop::behind(*ink, theme.surface, theme),
                 )
             };
             // A film answers a click like a player does.
@@ -3436,6 +3456,11 @@ const TOOLBAR_HEIGHT: f32 = crate::tabs::STRIP_HEIGHT;
 /// zoom), and only fill the box. After layout, `sharpen` compares the device
 /// pixels the picture covers with the ones it has and asks for more when
 /// they fall short (`Shell::sharpen_picture`).
+///
+/// `backdrop` is what it is drawn on when it lets its background through
+/// (`backdrop::behind`, of the panel's `surface`, its letterbox): under
+/// the pixels, not the box, which Fit can make wider or taller than they
+/// are.
 pub(crate) fn picture(
     image: &Arc<gpui::RenderImage>,
     own: (u32, u32),
@@ -3443,6 +3468,7 @@ pub(crate) fn picture(
     scroll: &gpui::ScrollHandle,
     id: &'static str,
     sharpen: Option<Sharpen>,
+    backdrop: Option<gpui::Hsla>,
 ) -> AnyElement {
     let (width, height) = (own.0.max(1) as f32, own.1.max(1) as f32);
     let scrolling = |content: AnyElement| {
@@ -3478,6 +3504,20 @@ pub(crate) fn picture(
         .absolute()
         .size_full()
         .object_fit(ObjectFit::Contain);
+    let backdrop = backdrop.map(|color| {
+        let size = image.size(0);
+        gpui::canvas(
+            |_, _, _| {},
+            move |bounds, (), window, _| {
+                window.paint_quad(gpui::fill(
+                    ObjectFit::Contain.get_bounds(bounds, size),
+                    color,
+                ));
+            },
+        )
+        .absolute()
+        .size_full()
+    });
     let raster = {
         let size = image.size(0);
         u32::try_from(size.width.0.max(size.height.0)).unwrap_or(0)
@@ -3500,6 +3540,7 @@ pub(crate) fn picture(
                         .flex_none()
                         .w(px(width * zoom))
                         .h(px(height * zoom))
+                        .children(backdrop)
                         .child(pixels)
                         .children(watch),
                 )
@@ -3516,6 +3557,7 @@ pub(crate) fn picture(
                     d.style().aspect_ratio = Some(width / height);
                     d
                 })
+                .children(backdrop)
                 .child(pixels)
                 .children(watch)
                 .into_any_element(),
@@ -3538,6 +3580,7 @@ pub(crate) fn picture(
                         .size_full()
                         .max_w(px(width))
                         .max_h(px(height))
+                        .children(backdrop)
                         .child(pixels)
                         .children(watch),
                 )

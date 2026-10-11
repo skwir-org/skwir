@@ -110,6 +110,13 @@ A name that says nothing is not a binary file.
   `EMBEDDED_IMAGES`.
 - Floating-point pictures hold linear light and are encoded as sRGB in
   `picture::decode`, which every shown picture passes.
+- A picture the panel shows and a document's pictures sit on
+  `picture_backdrop` as thumbnails do (`backdrop`, views.md). Their ink is
+  read where they are decoded, on the worker (`PreviewContent::Image`'s
+  `ink`, `backdrop::Picture::of`), and weighed against what they lie on:
+  the panel's `surface` for a picture, its letterbox; `bg` for a
+  document's page. A page or a film is opaque (`ink: None`). The backdrop
+  lies under the pixels, never the box Fit gives them.
 
 ## Models, drawings and diagrams
 

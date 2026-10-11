@@ -167,14 +167,19 @@ impl MarkdownStyle {
 /// `failed` to decode, and the size it is shown at either way.
 pub struct Shown<'a> {
     pub image: Option<&'a Arc<RenderImage>>,
+    /// What it is drawn on, when it lets the page through and its ink would
+    /// not read there (`backdrop::behind`).
+    pub backdrop: Option<gpui::Hsla>,
     pub size: (u32, u32),
     pub failed: bool,
 }
 impl<'a> Shown<'a> {
-    pub fn ready(image: &'a Arc<RenderImage>) -> Self {
-        let size = image.size(0);
+    /// One decoded with the page, on the page's `bg`.
+    pub fn ready(picture: &'a crate::backdrop::Picture, theme: &crate::theme::Theme) -> Self {
+        let size = picture.image.size(0);
         Self {
-            image: Some(image),
+            image: Some(&picture.image),
+            backdrop: crate::backdrop::behind(picture.ink, theme.bg, theme),
             size: (
                 u32::try_from(size.width.0).unwrap_or(1),
                 u32::try_from(size.height.0).unwrap_or(1),
@@ -290,7 +295,11 @@ fn picture_box(block: &Block, picture: &Shown<'_>, style: &MarkdownStyle) -> imp
             d
         });
     let frame = match picture.image {
-        Some(image) => frame.child(gpui::img(image.clone()).size_full()),
+        Some(image) => frame.child(
+            gpui::img(image.clone())
+                .size_full()
+                .when_some(picture.backdrop, gpui::Styled::bg),
+        ),
         // One that cannot be decoded says what it stands for, as a
         // browser does.
         None if picture.failed => frame

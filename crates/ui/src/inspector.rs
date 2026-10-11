@@ -5,16 +5,14 @@ use crate::{
     theme::Theme,
     toolbar::Button,
 };
-use gpui::{
-    AnyElement, Context, ListAlignment, ListState, RenderImage, Window, div, prelude::*, px,
-};
+use gpui::{AnyElement, Context, ListAlignment, ListState, Window, div, prelude::*, px};
 use skwir_core::inspection::{InspectRequest, Inspection, InspectionKind, Picture};
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::Arc};
 pub struct Display {
     pub data: Arc<Inspection>,
-    /// The inspection's own picture, then one per block. Shared with every
-    /// frame's list closure, never copied per frame.
-    pub images: Arc<[Option<Arc<RenderImage>>]>,
+    /// The inspection's own picture, then one per block, with their ink.
+    /// Shared with every frame's list closure, never copied per frame.
+    pub images: Arc<[Option<crate::backdrop::Picture>]>,
     pub(crate) row_icons: Arc<Vec<Option<crate::icons::Pic>>>,
     /// Case-folded search text per block, then per row, prepared on the
     /// worker so Find never lowercases a document on the UI thread.
@@ -111,8 +109,9 @@ impl Display {
                 format!("{} · {unpacked}", data.notice)
             };
         }
-        // A picture decoded with the page is uploaded here, on the worker; one
-        // for later stays in its block, for its size and its key.
+        // A picture decoded with the page is uploaded here, its ink read, on
+        // the worker; one for later stays in its block, for its size and its
+        // key.
         let images = std::iter::once(data.image.take())
             .chain(data.blocks.iter_mut().map(|b| match b.picture.take() {
                 Some(Picture::Ready(image)) => Some(image),
@@ -121,7 +120,7 @@ impl Display {
                     None
                 }
             }))
-            .map(|i| i.and_then(|i| crate::thumbs::to_render_image(&i)))
+            .map(|i| i.and_then(|i| crate::backdrop::Picture::of(&i)))
             .collect();
         let folded = data
             .blocks
@@ -2247,9 +2246,9 @@ pub fn content(
             // The notice is the frame's strip (`notice`); the first item is
             // only the picture an inspection may carry.
             return match images[0].as_ref() {
-                Some(image) => div()
+                Some(picture) => div()
                     .p_2()
-                    .child(gpui::img(image.clone()).max_w_full())
+                    .child(picture.img(theme).max_w_full())
                     .into_any_element(),
                 None => div().into_any_element(),
             };
@@ -2275,10 +2274,14 @@ pub fn content(
         if let Some(block) = data.blocks.get(i) {
             seen.borrow_mut().push(i);
             let picture = match (images[i + 1].as_ref(), &block.picture) {
-                (Some(image), _) => Some(crate::markdown::Shown::ready(image)),
+                (Some(picture), _) => Some(crate::markdown::Shown::ready(picture, theme)),
                 (None, Some(Picture::Later { key, width, height })) => {
+                    let decoded = loaded.get(key).map(|decoded| &decoded.picture);
                     Some(crate::markdown::Shown {
-                        image: loaded.get(key).map(|decoded| &decoded.image),
+                        image: decoded.map(|picture| &picture.image),
+                        backdrop: decoded.and_then(|picture| {
+                            crate::backdrop::behind(picture.ink, theme.bg, theme)
+                        }),
                         size: (*width, *height),
                         failed: failed.contains(key),
                     })

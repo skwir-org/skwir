@@ -8,8 +8,9 @@
 //!   letterbox around a picture or a page). `code_bg` sets a code block or a
 //!   table header apart on `bg`, unless the code theme chosen brings its
 //!   own background (`code`, `code_preview::Palette`), `zebra` tints
-//!   alternate rows. `picture_backdrop` is behind a thumbnail whose ink,
-//!   on nothing, would not read on `bg` (`thumbs::Thumb::on_backdrop`). Code kept in the other look
+//!   alternate rows. `picture_backdrop` is behind a picture whose ink,
+//!   on nothing, would not read on what it is laid on
+//!   (`backdrop::behind`). Code kept in the other look
 //!   (`reading.code_appearance`) is drawn with that look's tokens
 //!   (`in_look`). `text_muted` is for secondary facts (line numbers,
 //!   captions), never for the data.
@@ -88,8 +89,8 @@ pub struct Theme {
     pub rating: Hsla,
     /// Where a picture will be once it is loaded.
     pub placeholder: Hsla,
-    /// Behind a thumbnail whose ink, on nothing, would not read on `bg`:
-    /// light, so a drawing's dark lines read on the dark look.
+    /// Behind a picture whose ink, on nothing, would not read on what it is
+    /// laid on: light, so a drawing's dark lines read on the dark look.
     pub picture_backdrop: Hsla,
     /// Bars of a chart; the one under the pointer is `accent`.
     pub chart: Hsla,

@@ -381,6 +381,8 @@ impl Shell {
                                     document: None,
                                     facts: Vec::new(),
                                     pixels: crate::preview::Pixels::Own,
+                                    // A film's.
+                                    ink: None,
                                 }),
                                 window,
                                 cx,
@@ -428,6 +430,7 @@ impl Shell {
                     document: None,
                     facts: Vec::new(),
                     pixels: crate::preview::Pixels::Own,
+                    ink: None,
                 }),
                 window,
                 cx,
