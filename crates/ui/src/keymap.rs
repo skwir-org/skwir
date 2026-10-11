@@ -59,6 +59,8 @@ pub const MEMBER: &str = "PreviewMember";
 pub const MENU: &str = "ContextMenu";
 /// A structured preview's content (`inspector.rs`).
 pub const INSPECTOR: &str = "Inspector";
+/// A text read where it is shown (`text_view.rs`): the keys scroll it.
+pub const TEXT: &str = "PreviewText";
 /// What the preview plays.
 pub const MEDIA: &str = "MediaPlayer";
 /// The sidebar while it has the keyboard (F6): the arrows walk its groups
@@ -601,6 +603,45 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     ("right", "ui.map_pan", r#"{"dx":1,"dy":0}"#, Some("map")),
     ("up", "ui.map_pan", r#"{"dx":0,"dy":-1}"#, Some("map")),
     ("down", "ui.map_pan", r#"{"dx":0,"dy":1}"#, Some("map")),
+    // A text read where it is shown goes row by row, a screen at a time,
+    // or to either end; Alt+Z wraps its lines or not.
+    (
+        "up",
+        "ui.inspect",
+        r#"{"action":"scroll","to":"up"}"#,
+        Some("text"),
+    ),
+    (
+        "down",
+        "ui.inspect",
+        r#"{"action":"scroll","to":"down"}"#,
+        Some("text"),
+    ),
+    (
+        "pageup",
+        "ui.inspect",
+        r#"{"action":"scroll","to":"page_up"}"#,
+        Some("text"),
+    ),
+    (
+        "pagedown",
+        "ui.inspect",
+        r#"{"action":"scroll","to":"page_down"}"#,
+        Some("text"),
+    ),
+    (
+        "ctrl-home",
+        "ui.inspect",
+        r#"{"action":"scroll","to":"start"}"#,
+        Some("text"),
+    ),
+    (
+        "ctrl-end",
+        "ui.inspect",
+        r#"{"action":"scroll","to":"end"}"#,
+        Some("text"),
+    ),
+    ("alt-z", "ui.wrap_lines", "{}", Some("text")),
     ("[", "ui.preview_page", r#"{"delta":-1}"#, Some("inspector")),
     ("]", "ui.preview_page", r#"{"delta":1}"#, Some("inspector")),
     ("[", "ui.preview_page", r#"{"delta":-1}"#, Some("reader")),
@@ -770,6 +811,7 @@ const PLACES: &[(&str, &str, &str)] = &[
     ("preview", PREVIEW, "Documents and structured previews"),
     ("preview_find", PREVIEW_FIND, "Preview search"),
     ("inspector", INSPECTOR, "Structured previews"),
+    ("text", TEXT, "Text in the preview"),
     ("members", MEMBERS, "Files of an archive or a message"),
     (
         "member",

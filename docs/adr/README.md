@@ -64,3 +64,4 @@ them by topic.
 | [048](048-archives-are-extracted-by-libarchive-in-its-sandbox.md) | Archives extracted by libarchive, sandboxed, as a step | built |
 | [049](049-a-file-and-its-names.md) | A file and its names are two identities | built |
 | [050](050-names-are-indexed-by-skwird.md) | Names are indexed by skwird | not built |
+| [051](051-text-is-read-where-it-is-shown.md) | Text is read where it is shown | built |

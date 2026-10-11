@@ -1,0 +1,757 @@
+//! A text file shown whole, read where it is shown (ADR-051).
+//!
+//! The provider names the file (`Inspection::text`) and its first rows. A
+//! worker counts its rows into an index (`text_rows::count`) while the
+//! view draws; the rows it lays out (`elements::rows`) are read a chunk of
+//! `STRIDE` at a time around them, nearest first, one chunk on its way at a
+//! time, as a document's pictures are (`inspector_pictures`). A chunk is
+//! read plain first, which takes a few milliseconds whatever its grammar
+//! or its lines, then colored: from where the one before it stopped, or
+//! fresh after a jump, and again once the one before it has been.
+//! Chunks far from the view go past `KEPT`. Find, copy and a line a link
+//! asks for (`file:12`) read the file on a worker too.
+
+use std::collections::HashMap;
+use std::ops::Range;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use gpui::Context;
+use parking_lot::RwLock;
+use skwir_core::cancel::CancelToken;
+use skwir_core::inspection::{Block, TextFile};
+use skwir_core::scheduler::Priority;
+use skwir_platform::text_rows::{self, Form, Index, Point, STRIDE};
+
+use crate::code_preview::{Highlighter, Palette, Resume};
+use crate::elements::rows::Scroll;
+use crate::latest::Latest;
+use crate::shell::Shell;
+
+/// Chunks kept around the view: a few screens either way.
+const KEPT: usize = 24;
+/// The most Copy reads from the file: what one X11 request carries, with
+/// room. gpui hands the clipboard to another program on X11 in a single
+/// request (it sends no INCR), at most 16 MiB less its header with
+/// BIG-REQUESTS; a larger one is never answered.
+pub const COPY_BYTES: usize = 8 * 1024 * 1024;
+/// How often counting shows how far it got.
+const TELL: Duration = Duration::from_millis(100);
+
+/// Rows `chunk × STRIDE` on, read and their links found, colored or not
+/// yet.
+#[derive(Clone)]
+pub(crate) struct Chunk {
+    pub rows: Vec<Block>,
+    /// Each row's line (from 0), and whether the row begins it.
+    pub lines: Vec<(u64, bool)>,
+    colored: bool,
+    /// Colored from where the chunk before stopped (or the file's start),
+    /// not from a fresh start after a jump.
+    exact: bool,
+}
+
+/// The first rows, read plain with the inspection on its worker
+/// (`inspector::Display::new`), and what colors them.
+pub(crate) struct Start {
+    pub form: Form,
+    pub chunk: Chunk,
+    pub palette: Arc<Palette>,
+}
+
+/// How a chunk is read: plain, or colored from where the chunk before
+/// stopped (or fresh) in a palette.
+enum Reading<'a> {
+    Plain,
+    Colored(Option<Resume>, &'a Palette),
+}
+
+/// Read chunk `chunk`, which starts at `point`, plain or colored. One row
+/// more is read to say whether the last ends its line. Where the colors
+/// stopped, when they were applied.
+fn read_chunk(
+    file: &TextFile,
+    form: Form,
+    (chunk, point): (u64, Point),
+    reading: Reading<'_>,
+    cancel: &CancelToken,
+) -> anyhow::Result<(Chunk, Option<Resume>)> {
+    let at = chunk * STRIDE;
+    let mut rows = text_rows::read(&file.path, form, (at, point), at..at + STRIDE + 1, cancel)?;
+    let after = (rows.len() as u64 > STRIDE)
+        .then(|| rows.pop())
+        .flatten()
+        .map(|row| row.first);
+    let ends: Vec<bool> = (0..rows.len())
+        .map(|n| {
+            rows.get(n + 1)
+                .map_or(after.unwrap_or(true), |next| next.first)
+        })
+        .collect();
+    let (mut colors, exact) = match reading {
+        Reading::Plain => (None, false),
+        Reading::Colored(from, palette) => {
+            let exact = chunk == 0 || from.is_some();
+            let colors = Highlighter::resume(file.language.as_deref(), palette, from);
+            (Some(colors), exact)
+        }
+    };
+    let mut blocks = Vec::with_capacity(rows.len());
+    let mut lines = Vec::with_capacity(rows.len());
+    for (n, row) in rows.into_iter().enumerate() {
+        if n % 64 == 0 {
+            skwir_platform::inspection::check(cancel)?;
+        }
+        let mut block = Block {
+            runs: colors
+                .as_mut()
+                .map(|colors| colors.row(&row.text, ends[n]))
+                .unwrap_or_default(),
+            text: row.text,
+            code: true,
+            language: file.language.clone(),
+            ..Block::default()
+        };
+        skwir_platform::links::link_block(&mut block, true);
+        blocks.push(block);
+        lines.push((row.line, row.first));
+    }
+    Ok((
+        Chunk {
+            rows: blocks,
+            lines,
+            colored: colors.is_some(),
+            exact,
+        },
+        colors.map(Highlighter::stop),
+    ))
+}
+
+/// The first rows of `file`, plain, for the inspection's worker: shown at
+/// once, colored by the view.
+pub(crate) fn start(file: &TextFile, palette: Palette) -> anyhow::Result<Start> {
+    let cancel = CancelToken::new();
+    let form = Form::read(&file.path, &cancel)?;
+    let (chunk, _) = read_chunk(
+        file,
+        form,
+        (0, text_rows::origin(form)),
+        Reading::Plain,
+        &cancel,
+    )?;
+    Ok(Start {
+        form,
+        chunk,
+        palette: Arc::new(palette),
+    })
+}
+
+struct Reply {
+    chunk: u64,
+    read: anyhow::Result<(Chunk, Option<Resume>)>,
+}
+
+/// What a search or a line asked for found: the row to show, or what to
+/// say instead.
+pub(crate) enum Found {
+    Row(u64),
+    Nothing(String),
+}
+
+pub(crate) struct Copied {
+    text: String,
+    cut: bool,
+}
+
+pub struct TextView {
+    pub(crate) file: TextFile,
+    index: Arc<RwLock<Index>>,
+    counting: CancelToken,
+    palette: Arc<Palette>,
+    chunks: HashMap<u64, Rc<Chunk>>,
+    /// Where a chunk's colors start: where the one before stopped.
+    starts: HashMap<u64, Resume>,
+    /// The chunks to have, nearest the view first.
+    wanted: Vec<u64>,
+    laid: Range<u64>,
+    asked: Latest<Reply>,
+    pub(crate) scroll: Scroll,
+    found: Latest<Found>,
+    copied: Latest<anyhow::Result<Copied>>,
+    /// A line (from 1) a link asked for, until it is counted.
+    line: Option<u64>,
+    /// The rows and lines of the first chunk, before any is counted.
+    first: (u64, u64),
+    /// The rows known at the last wake.
+    seen: u64,
+}
+
+impl Drop for TextView {
+    fn drop(&mut self) {
+        self.counting.cancel();
+    }
+}
+
+impl TextView {
+    /// The view of `file`, from its first rows, its rows counted from now.
+    /// `scroll` is the place to keep, when it is the same file read again.
+    fn new(
+        app: &Arc<skwir_core::App>,
+        file: TextFile,
+        start: Start,
+        scroll: Option<Scroll>,
+    ) -> Self {
+        let Start {
+            form,
+            chunk,
+            palette,
+        } = start;
+        let first = (
+            chunk.rows.len() as u64,
+            chunk.lines.iter().filter(|(_, first)| *first).count() as u64,
+        );
+        let index = Arc::new(RwLock::new(Index::new(form)));
+        let counting = app.lifetime().child();
+        {
+            let (index, path, cancel) = (Arc::clone(&index), file.path.clone(), counting.clone());
+            let wake = app.waker_handle();
+            app.scheduler.spawn(
+                Priority::Normal,
+                "text-rows-count",
+                counting.clone(),
+                move || {
+                    let mut told = Instant::now();
+                    let counted = text_rows::count(&path, &index, &cancel, || {
+                        if told.elapsed() >= TELL {
+                            told = Instant::now();
+                            wake();
+                        }
+                    });
+                    if let Err(error) = counted
+                        && !cancel.is_cancelled()
+                    {
+                        tracing::debug!(%error, "counting a text's rows");
+                    }
+                    wake();
+                },
+            );
+        }
+        TextView {
+            file,
+            index,
+            counting,
+            palette,
+            chunks: HashMap::from([(0, Rc::new(chunk))]),
+            starts: HashMap::new(),
+            wanted: Vec::new(),
+            laid: 0..0,
+            asked: Latest::default(),
+            scroll: scroll.unwrap_or_default(),
+            found: Latest::default(),
+            copied: Latest::default(),
+            line: None,
+            first,
+            seen: 0,
+        }
+    }
+
+    /// The rows known: counted, or the first chunk's before any is.
+    pub(crate) fn rows(&self) -> u64 {
+        self.index.read().rows().max(self.first.0)
+    }
+
+    /// The lines known, and whether all are counted.
+    pub(crate) fn lines(&self) -> (u64, bool) {
+        let index = self.index.read();
+        let done = index.done() || self.file.whole;
+        (index.lines().max(self.first.1), done)
+    }
+
+    /// The chunks read, for a frame's rows.
+    pub(crate) fn chunks(&self) -> HashMap<u64, Rc<Chunk>> {
+        self.chunks.clone()
+    }
+
+    /// Row `row`, if it is read.
+    pub(crate) fn block(&self, row: usize) -> Option<&Block> {
+        let row = row as u64;
+        self.chunks
+            .get(&(row / STRIDE))?
+            .rows
+            .get((row % STRIDE) as usize)
+    }
+
+    /// The text of rows `from..=to` (row, byte), when all are read: rows of
+    /// a line joined, lines by a newline.
+    fn text_read(&self, from: (usize, usize), to: (usize, usize)) -> Option<String> {
+        let mut out = String::new();
+        for row in from.0..=to.0 {
+            let chunk = self.chunks.get(&(row as u64 / STRIDE))?;
+            let n = row % STRIDE as usize;
+            let (block, (_, first)) = (chunk.rows.get(n)?, chunk.lines.get(n)?);
+            if *first && row > from.0 {
+                out.push('\n');
+            }
+            let within = |mut at: usize| {
+                at = at.min(block.text.len());
+                while !block.text.is_char_boundary(at) {
+                    at -= 1;
+                }
+                at
+            };
+            let end = if row == to.0 {
+                within(to.1)
+            } else {
+                block.text.len()
+            };
+            let start = if row == from.0 {
+                within(from.1).min(end)
+            } else {
+                0
+            };
+            out.push_str(&block.text[start..end]);
+        }
+        Some(out)
+    }
+
+    /// The rows just laid out: what to read is around them. Whether that
+    /// changed.
+    fn laid(&mut self, laid: Range<u64>) -> bool {
+        if laid == self.laid {
+            return false;
+        }
+        self.laid = laid.clone();
+        let rows = self.rows();
+        let last = rows.saturating_sub(1) / STRIDE;
+        let (first, end) = (laid.start / STRIDE, laid.end.saturating_sub(1) / STRIDE);
+        let middle = u64::midpoint(first, end);
+        let mut wanted: Vec<u64> = (first..=end.min(last)).collect();
+        wanted.sort_by_key(|chunk| chunk.abs_diff(middle));
+        wanted.extend((end < last).then_some(end + 1));
+        wanted.extend(first.checked_sub(1));
+        self.wanted = wanted;
+        // Far from the view, past the budget: the farthest go.
+        if self.chunks.len() > KEPT {
+            let mut far: Vec<u64> = self
+                .chunks
+                .keys()
+                .copied()
+                .filter(|chunk| !self.wanted.contains(chunk))
+                .collect();
+            far.sort_by_key(|chunk| std::cmp::Reverse(chunk.abs_diff(middle)));
+            for chunk in far.into_iter().take(self.chunks.len() - KEPT) {
+                self.chunks.remove(&chunk);
+                self.starts.remove(&(chunk + 1));
+            }
+        }
+        true
+    }
+
+    /// Ask for what the chunks wanted lack, nearest first, one at a time:
+    /// one not read is read plain, then one not colored is colored, or
+    /// colored again when it started fresh and the one before has since
+    /// been colored.
+    fn request(&mut self, app: &Arc<skwir_core::App>) {
+        if self.asked.is_pending() {
+            return;
+        }
+        let next = {
+            let index = self.index.read();
+            let form = index.form;
+            // Read once the count has reached it: its place is known.
+            let place = |chunk: u64| {
+                if chunk == 0 {
+                    Some(text_rows::origin(form))
+                } else {
+                    index.point(chunk)
+                }
+            };
+            let missing = self
+                .wanted
+                .iter()
+                .copied()
+                .filter(|chunk| !self.chunks.contains_key(chunk))
+                .find_map(|chunk| Some((chunk, place(chunk)?, false)));
+            missing
+                .or_else(|| {
+                    self.wanted.iter().copied().find_map(|chunk| {
+                        let read = self.chunks.get(&chunk)?;
+                        let stale =
+                            !read.colored || (!read.exact && self.starts.contains_key(&chunk));
+                        stale.then(|| Some((chunk, place(chunk)?, true))).flatten()
+                    })
+                })
+                .map(|(chunk, point, colored)| (chunk, point, colored, form))
+        };
+        let Some((chunk, point, colored, form)) = next else {
+            return;
+        };
+        let from = self.starts.get(&chunk).cloned();
+        let (file, palette) = (self.file.clone(), Arc::clone(&self.palette));
+        self.asked.ask(
+            app,
+            &self.counting,
+            Priority::Visible,
+            "text-rows-read",
+            move |cancel| {
+                let reading = if colored {
+                    Reading::Colored(from, &palette)
+                } else {
+                    Reading::Plain
+                };
+                Reply {
+                    chunk,
+                    read: read_chunk(&file, form, (chunk, point), reading, cancel),
+                }
+            },
+        );
+    }
+
+    /// Take a chunk that arrived. Whether one did.
+    fn take(&mut self) -> bool {
+        let Some(Reply { chunk, read }) = self.asked.take() else {
+            return false;
+        };
+        match read {
+            Ok((read, stop)) => {
+                if let Some(stop) = stop.filter(|_| read.exact) {
+                    self.starts.insert(chunk + 1, stop);
+                }
+                // Plain rows never replace colored ones.
+                let colored = self.chunks.get(&chunk).is_some_and(|had| had.colored);
+                if read.colored || !colored {
+                    self.chunks.insert(chunk, Rc::new(read));
+                }
+            }
+            Err(error) => tracing::debug!(%error, chunk, "reading a text's rows"),
+        }
+        true
+    }
+
+    /// Look for `query` (lowercase) from `from`, forward or `back`.
+    fn find(&mut self, app: &Arc<skwir_core::App>, query: String, from: u64, back: bool) {
+        let (path, index) = (self.file.path.clone(), Arc::clone(&self.index));
+        self.found.ask(
+            app,
+            &self.counting,
+            Priority::Visible,
+            "text-rows-find",
+            move |cancel| match text_rows::find(&path, &index, &query, from, back, cancel) {
+                Ok(Some(row)) => Found::Row(row),
+                Ok(None) if index.read().done() => Found::Nothing("No match in the file".into()),
+                Ok(None) => Found::Nothing("No match in what is counted so far".into()),
+                Err(error) => Found::Nothing(format!("{error:#}")),
+            },
+        );
+    }
+
+    /// Ask for the line a link wants, once it is counted.
+    fn find_line(&mut self, app: &Arc<skwir_core::App>) {
+        let Some(line) = self.line else {
+            return;
+        };
+        let (lines, done) = self.lines();
+        if lines < line && !done {
+            return;
+        }
+        self.line = None;
+        let (path, index) = (self.file.path.clone(), Arc::clone(&self.index));
+        self.found.ask(
+            app,
+            &self.counting,
+            Priority::Visible,
+            "text-rows-line",
+            move |cancel| match text_rows::row_of_line(&path, &index, line - 1, cancel) {
+                Ok(Some(row)) => Found::Row(row),
+                Ok(None) => Found::Nothing(format!("The file has no line {line}")),
+                Err(error) => Found::Nothing(format!("{error:#}")),
+            },
+        );
+    }
+
+    /// Show line `line` (from 1) once it is counted, as a link to it asks.
+    pub(crate) fn show_line(&mut self, line: u64) {
+        self.line = Some(line.max(1));
+    }
+
+    fn copy(&mut self, app: &Arc<skwir_core::App>, from: (u64, usize), to: (u64, usize)) {
+        let (path, index) = (self.file.path.clone(), Arc::clone(&self.index));
+        self.copied.ask(
+            app,
+            &self.counting,
+            Priority::Visible,
+            "text-rows-copy",
+            move |cancel| {
+                text_rows::text(&path, &index, from, to, COPY_BYTES, cancel)
+                    .map(|(text, cut)| Copied { text, cut })
+            },
+        );
+    }
+}
+
+/// How the rows are drawn this frame: the code view's look.
+pub(crate) struct Look {
+    pub theme: crate::theme::Theme,
+    pub style: crate::markdown::MarkdownStyle,
+    pub mono: gpui::SharedString,
+    pub font_size: f32,
+    pub selected: Option<usize>,
+    pub selection: Option<crate::inspector_text::Selection>,
+    pub pane: skwir_core::workspace::PaneId,
+    pub entity: gpui::WeakEntity<Shell>,
+    /// Whether lines wrap to the width (`reading.wrap_lines`).
+    pub wrap: bool,
+}
+
+/// The rows of `view`, those read drawn as the code view draws a line
+/// (`code_preview::CodeRow`), the others empty until they are.
+pub(crate) fn element(view: &TextView, look: Look) -> gpui::AnyElement {
+    use gpui::IntoElement;
+    let chunks = view.chunks();
+    let digits = crate::code_preview::digits(view.lines().0);
+    let empty = Block {
+        code: true,
+        ..Block::default()
+    };
+    let Look {
+        theme,
+        style,
+        mono,
+        font_size,
+        selected,
+        selection,
+        pane,
+        entity,
+        wrap,
+    } = look;
+    let laid = entity.clone();
+    crate::elements::rows::rows(
+        "text-rows",
+        Rc::clone(&view.scroll),
+        view.rows(),
+        wrap,
+        move |row, shift, _, _| {
+            let n = (row % STRIDE) as usize;
+            let read = chunks
+                .get(&(row / STRIDE))
+                .and_then(|chunk| Some((chunk.rows.get(n)?, chunk.lines.get(n)?)));
+            let (block, number) = match read {
+                Some((block, &(line, first))) => (block, first.then_some(line + 1)),
+                None => (&empty, None),
+            };
+            crate::code_preview::CodeRow {
+                block,
+                index: row as usize,
+                number,
+                digits,
+                fold: None,
+                shift,
+                selected: selected == Some(row as usize),
+                selection,
+                font_size,
+                mono: &mono,
+                theme: &theme,
+                style: &style,
+                pane,
+                entity: entity.clone(),
+            }
+            .render()
+        },
+    )
+    .on_laid(move |range, _, cx| {
+        if let Some(shell) = laid.upgrade() {
+            shell.update(cx, |shell, cx| shell.text_laid(range, cx));
+        }
+    })
+    .into_any_element()
+}
+
+impl Shell {
+    /// An inspection arrived: the view of the file it names, when it names
+    /// one. The same file read again (it changed) keeps its place.
+    pub(crate) fn start_text(
+        &mut self,
+        content: &mut Option<crate::preview::PreviewContent>,
+        refresh: bool,
+    ) {
+        let kept = self
+            .preview
+            .inspection
+            .text
+            .take()
+            .filter(|_| refresh)
+            .map(|view| Rc::clone(&view.scroll));
+        let Some(crate::preview::PreviewContent::Inspection(display)) = content else {
+            return;
+        };
+        let (Some(file), Some(start)) = (display.data.text.clone(), display.text.take()) else {
+            return;
+        };
+        let mut view = TextView::new(&self.app, file, *start, kept);
+        view.request(&self.app);
+        self.preview.inspection.text = Some(view);
+    }
+
+    /// Ask for what the view lacks: a chunk around it, a line a link wants.
+    pub(crate) fn ask_text(&mut self) {
+        let app = Arc::clone(&self.app);
+        if let Some(view) = self.preview.inspection.text.as_mut() {
+            view.request(&app);
+            view.find_line(&app);
+        }
+    }
+
+    /// The rows just laid out (`elements::rows`), after layout: read what
+    /// is missing around them. Never while painting.
+    pub(crate) fn text_laid(&mut self, laid: Range<u64>, cx: &mut Context<Self>) {
+        let app = Arc::clone(&self.app);
+        let Some(view) = self.preview.inspection.text.as_mut() else {
+            return;
+        };
+        if view.laid(laid) {
+            view.request(&app);
+            cx.notify();
+        }
+    }
+
+    /// Take what the workers read, as the core wakes the UI: a chunk, how
+    /// far counting got, a match, a copy.
+    pub(crate) fn sync_text(&mut self, cx: &mut Context<Self>) {
+        let app = Arc::clone(&self.app);
+        let state = &mut self.preview.inspection;
+        let Some(view) = state.text.as_mut() else {
+            return;
+        };
+        // Counting moved on: what was not counted yet may be read now.
+        let mut changed = view.take();
+        view.request(&app);
+        view.find_line(&app);
+        if let Some(found) = view.found.take() {
+            changed = true;
+            match found {
+                Found::Row(row) => {
+                    view.scroll.borrow_mut().reveal(row);
+                    state.selected = Some(row as usize);
+                    state.selection = None;
+                }
+                Found::Nothing(said) => self.set_status(said, false, cx),
+            }
+        }
+        let state = &mut self.preview.inspection;
+        if let Some(view) = state.text.as_mut()
+            && let Some(copied) = view.copied.take()
+        {
+            match copied {
+                Ok(Copied { text, cut }) => {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    if cut {
+                        self.set_status(
+                            format!(
+                                "Copied the first {}",
+                                skwir_platform::limits::describe(COPY_BYTES)
+                            ),
+                            false,
+                            cx,
+                        );
+                    }
+                }
+                Err(error) => self.set_status(format!("{error:#}"), true, cx),
+            }
+        }
+        // The count grew: the scrollbar and the caption say so.
+        if let Some(view) = self.preview.inspection.text.as_mut() {
+            let rows = view.rows();
+            changed |= std::mem::replace(&mut view.seen, rows) != rows;
+        }
+        if changed {
+            cx.notify();
+        }
+    }
+
+    /// `ui.inspect` actions on a text read where it is shown: `true` when
+    /// it was one, done.
+    pub(crate) fn text_action(
+        &mut self,
+        action: &str,
+        args: &serde_json::Value,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let app = Arc::clone(&self.app);
+        let state = &mut self.preview.inspection;
+        let selected = state.selected;
+        let selection = state.selection;
+        let Some(view) = state.text.as_mut() else {
+            return false;
+        };
+        match action {
+            "find" => {
+                let query = args["value"].as_str().unwrap_or("").to_lowercase();
+                let back = args["back"].as_bool() == Some(true);
+                let top = view.scroll.borrow().top;
+                // After the row selected, or before it; else from the top.
+                let from = match (selected, back) {
+                    (Some(row), false) => row as u64 + 1,
+                    (Some(row), true) => row as u64,
+                    (None, _) => top,
+                };
+                view.find(&app, query, from, back);
+            }
+            "select_all" => {
+                let last = view.rows().saturating_sub(1) as usize;
+                state.selection = Some(crate::inspector_text::Selection {
+                    start: (0, 0),
+                    end: (last, usize::MAX),
+                });
+                cx.notify();
+            }
+            "copy" => {
+                let (from, to) = match (selection, selected) {
+                    (Some(selection), _) if selection.start != selection.end => {
+                        let (from, to) = if selection.start <= selection.end {
+                            (selection.start, selection.end)
+                        } else {
+                            (selection.end, selection.start)
+                        };
+                        (from, to)
+                    }
+                    (_, Some(row)) => ((row, 0), (row, usize::MAX)),
+                    _ => ((0, 0), (view.rows().saturating_sub(1) as usize, usize::MAX)),
+                };
+                match view.text_read(from, to) {
+                    Some(text) if text.len() <= COPY_BYTES => {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    }
+                    _ => view.copy(&app, (from.0 as u64, from.1), (to.0 as u64, to.1)),
+                }
+            }
+            "scroll" => {
+                let mut scroll = view.scroll.borrow_mut();
+                match args["to"].as_str().unwrap_or("") {
+                    "up" => {
+                        let row = scroll.row();
+                        scroll.scroll_by(-row);
+                    }
+                    "down" => {
+                        let row = scroll.row();
+                        scroll.scroll_by(row);
+                    }
+                    "page_up" => {
+                        let page = scroll.page();
+                        scroll.scroll_by(-page);
+                    }
+                    "page_down" => {
+                        let page = scroll.page();
+                        scroll.scroll_by(page);
+                    }
+                    "start" => scroll.to_edge(false),
+                    "end" => scroll.to_edge(true),
+                    _ => {}
+                }
+                cx.notify();
+            }
+            _ => return false,
+        }
+        true
+    }
+}

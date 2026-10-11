@@ -240,6 +240,9 @@ archives, and the bytes of any file.
 - A file shown other than as written (Markdown, a table, a map, JSON
   formatted) has **Source** in the bar: lit, it shows the file's own
   text; pressed again, the rendered view.
+- A text file of any size opens whole, numbered from its first line;
+  Find and Copy see all of it. More › Wrap lines (`Alt+Z`) lets long
+  lines go on sideways.
 - A link in a document opens with a click; an address found in plain
   text with `Ctrl+click`.
 - Music and video can keep playing while you browse, in a player at the

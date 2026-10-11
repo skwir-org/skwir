@@ -34,10 +34,7 @@ pub mod limits {
     pub const HELPER_OUTPUT: u64 =
         (MEMBER_NAMES * 6 + CONTAINER_MEMBERS * MEMBER_JSON_OVERHEAD) as u64;
     pub const HELPER_TIMEOUT: Duration = Duration::from_secs(15);
-    /// One source page and one hexadecimal page.
-    pub const SOURCE_PAGE: usize = 32 * 1024;
-    /// One page of a text file that has no presentation of its own.
-    pub const TEXT_PAGE: usize = 256 * 1024;
+    /// One hexadecimal page.
     pub const HEX_PAGE: u64 = 4096;
     pub const HEX_NEEDLE: usize = 4096;
     /// Semantic blocks per rich document; rows per contents listing.
@@ -352,48 +349,55 @@ pub fn read_text(path: &Path, cancel: &CancelToken) -> anyhow::Result<(String, E
 pub fn text(path: &Path, cancel: &CancelToken) -> anyhow::Result<String> {
     read_text(path, cancel).map(|(text, _)| text)
 }
-/// A file's own text behind a rendered presentation, one page at a time.
-/// It says what any text file says (`plain`): the toolbar's Source, lit,
-/// says it is the source.
-pub fn source(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<Inspection> {
-    let mut data = paged(path, offset, limits::SOURCE_PAGE, cancel)?;
+/// A file's own text behind a rendered presentation: what any text file
+/// is (`plain`), with the switch back to the presentation.
+pub fn source(path: &Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
+    let mut data = plain(path, cancel)?;
     data.source_available = true;
     Ok(data)
 }
 
-/// Any text file that has no presentation of its own. It is the same view as
-/// `source`, so every text file is read, searched and copied the same way.
-pub fn plain(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<Inspection> {
-    paged(path, offset, limits::TEXT_PAGE, cancel)
-}
-
-/// A page of at most `page` bytes of a text file, titled by its lines, and
-/// how to move through the file when it is more than one page.
-fn paged(
-    path: &Path,
-    offset: u64,
-    page: usize,
-    cancel: &CancelToken,
-) -> anyhow::Result<Inspection> {
-    let mut data = lines(path, offset, page, cancel)?;
-    let count = data.blocks.len();
-    data.title = match (data.position, count) {
-        (0, 1) => "1 line".into(),
-        (0, _) => format!("{count} lines"),
-        (position, _) => format!("{count} lines from byte {position}"),
-    };
-    if data.next.is_some() || data.position > 0 {
-        let paged = format!(
-            "Shown {} at a time · [ and ] move through the file",
-            limits::describe(page)
-        );
-        data.notice = if data.notice.is_empty() {
-            paged
-        } else {
-            format!("{} · {paged}", data.notice)
-        };
-    }
-    Ok(data)
+/// Any text file that has no presentation of its own, read where it is
+/// shown (ADR-051): its first rows, and the file (`Inspection::text`) for
+/// the view to read on from. It is the same view as `source`, so every
+/// text file is read, searched and copied the same way.
+pub fn plain(path: &Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
+    use crate::text_rows::{Form, STRIDE, origin, read};
+    let form = Form::read(path, cancel)?;
+    // One more than shown says whether there is more.
+    let mut rows = read(path, form, (0, origin(form)), 0..STRIDE + 1, cancel)?;
+    let whole = rows.len() as u64 <= STRIDE;
+    rows.truncate(STRIDE as usize);
+    let language = path
+        .extension()
+        .or_else(|| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned());
+    let lines = rows.iter().filter(|row| row.first).count();
+    Ok(Inspection {
+        kind: InspectionKind::Code,
+        // Counted by the view, as it reads, unless this is all of it.
+        title: match (whole, lines) {
+            (false, _) => String::new(),
+            (true, 1) => "1 line".into(),
+            (true, _) => format!("{lines} lines"),
+        },
+        blocks: rows
+            .into_iter()
+            .map(|row| Block {
+                text: row.text,
+                code: true,
+                language: language.clone(),
+                ..Block::default()
+            })
+            .collect(),
+        notice: form.encoding.notice().unwrap_or_default(),
+        text: Some(skwir_core::inspection::TextFile {
+            path: path.to_path_buf(),
+            language,
+            whole,
+        }),
+        ..Inspection::default()
+    })
 }
 
 /// The code view of `text`: a block per line in `language` (a file
@@ -431,57 +435,6 @@ pub fn code_lines(text: &str, language: Option<String>) -> Inspection {
     }
 }
 
-/// One page of a text file as the code view wants it (`code_lines`), the
-/// language taken from the name. A page starts and ends on a line where it
-/// can: going back a page lands on an arbitrary byte, so a page whose start
-/// is not at a line start begins after the first newline and says where
-/// (`position`); a page ends after its last newline.
-fn lines(
-    path: &Path,
-    offset: u64,
-    page: usize,
-    cancel: &CancelToken,
-) -> anyhow::Result<Inspection> {
-    // One byte before the page tells whether it starts a line.
-    let before = u64::from(offset > 0);
-    let bytes = read(path, offset - before, page + 1 + before as usize, cancel)?;
-    let mut start = before as usize;
-    if bytes
-        .first()
-        .is_some_and(|byte| before == 1 && *byte != b'\n')
-        && let Some(newline) = bytes[1..bytes.len().min(page)]
-            .iter()
-            .position(|byte| *byte == b'\n')
-    {
-        start = newline + 2;
-    } else {
-        // No line to start on: at least do not start inside a character.
-        while bytes.get(start).is_some_and(|byte| byte & 0xC0 == 0x80) && start < 4 {
-            start += 1;
-        }
-    }
-    let position = offset - before + start as u64;
-    let bytes = &bytes[start.min(bytes.len())..];
-    let limit = page - (position - offset) as usize;
-    let more = bytes.len() > limit;
-    let mut end = bytes.len().min(limit);
-    if more && let Some(newline) = bytes[..end].iter().rposition(|byte| *byte == b'\n') {
-        end = newline + 1;
-    }
-    let (text, encoding) = page_text(&bytes[..end], position == 0);
-    let language = path
-        .extension()
-        .or_else(|| path.file_name())
-        .map(|name| name.to_string_lossy().into_owned());
-    Ok(Inspection {
-        position,
-        previous: (position > 0).then(|| position.saturating_sub(page as u64)),
-        next: more.then_some(position + end as u64),
-        notice: encoding.notice().unwrap_or_default(),
-        ..code_lines(&text, language)
-    })
-}
-
 /// What a picture embedded in a file may ask the decoder for: its sides
 /// and its pixels' bytes (`limits::IMAGE_SIDE`, `IMAGE_ALLOC`), checked
 /// before anything is allocated. Every decoder of such a picture is given
@@ -494,21 +447,6 @@ pub fn image_limits() -> image::Limits {
     image_limits
 }
 
-/// A page's text. UTF-8 cut through its last character is still UTF-8;
-/// otherwise `decode` decides, except that UTF-16 is recognised only by the
-/// mark at the start of the file: a page elsewhere cannot tell.
-fn page_text(bytes: &[u8], first: bool) -> (Cow<'_, str>, Encoding) {
-    let marked = first && encoding_rs::Encoding::for_bom(bytes).is_some();
-    if !marked && text_prefix(bytes).is_some() {
-        return (String::from_utf8_lossy(bytes), Encoding::Utf8);
-    }
-    match decode(bytes) {
-        (_, Encoding::Utf16Le | Encoding::Utf16Be) if !first => {
-            (String::from_utf8_lossy(bytes), Encoding::Utf8)
-        }
-        decoded => decoded,
-    }
-}
 pub fn image(bytes: &[u8]) -> anyhow::Result<Image> {
     picture(bytes, limits::IMAGE_DISPLAY_SIDE).map(|decoded| Image {
         width: decoded.width,
@@ -1132,81 +1070,42 @@ mod tests {
     }
 
     #[test]
-    fn text_is_a_line_per_block_and_pages_end_on_a_line() {
+    fn text_is_its_first_rows_and_the_file_to_read_on() {
         let dir = tempfile::tempdir().unwrap();
         let cancel = CancelToken::new();
         let path = dir.path().join("it's a café.rs");
         std::fs::write(&path, "fn main() {\r\n    let x = 1;\n}\n").unwrap();
-        let data = plain(&path, 0, &cancel).unwrap();
+        let data = plain(&path, &cancel).unwrap();
         assert_eq!(data.kind, InspectionKind::Code);
         assert_eq!(data.title, "3 lines");
         assert_eq!(data.blocks[0].text, "fn main() {");
         assert_eq!(data.blocks[1].language.as_deref(), Some("rs"));
         assert!(data.notice.is_empty() && !data.source_available);
-        let shown = source(&path, 0, &cancel).unwrap();
+        let file = data.text.unwrap();
+        assert!(file.whole && file.path == path);
+        let shown = source(&path, &cancel).unwrap();
         assert!(shown.source_available);
         assert_eq!(
             shown.title, "3 lines",
             "said as any text is, never by offset"
         );
 
-        // A file of several pages: every page ends on a line, none is lost.
+        // A longer file: its first rows, counted by the view as it reads.
         let long = dir.path().join("Makefile");
         let line = "target: dependency # comment\n";
-        std::fs::write(&long, line.repeat(limits::TEXT_PAGE / line.len() + 50)).unwrap();
-        let first = plain(&long, 0, &cancel).unwrap();
+        std::fs::write(&long, line.repeat(1000)).unwrap();
+        let first = plain(&long, &cancel).unwrap();
         assert_eq!(first.blocks[0].language.as_deref(), Some("Makefile"));
-        let next = first.next.unwrap();
-        assert_eq!(next as usize % line.len(), 0, "cut between two lines");
-        let second = plain(&long, next, &cancel).unwrap();
-        assert_eq!(second.blocks.len(), 50);
-        assert!(
-            second
-                .blocks
-                .iter()
-                .all(|block| block.text == line.trim_end())
-        );
-        assert!(!first.notice.is_empty());
+        assert_eq!(first.blocks.len() as u64, crate::text_rows::STRIDE);
+        assert!(first.title.is_empty() && !first.text.unwrap().whole);
+        assert!(first.notice.is_empty(), "nothing said of pages");
 
-        // One endless line is not code: it stays a block of plain text.
+        // One endless line is rows of the code view, a line's number once.
         let minified = dir.path().join("app.min.js");
         std::fs::write(&minified, "x".repeat(limits::LINE_BYTES + 1)).unwrap();
-        let data = plain(&minified, 0, &cancel).unwrap();
-        assert_eq!((data.kind, data.blocks.len()), (InspectionKind::Text, 1));
-    }
-
-    #[test]
-    fn going_back_a_page_lands_on_a_line_and_meets_the_page_after() {
-        let dir = tempfile::tempdir().unwrap();
-        let cancel = CancelToken::new();
-        let path = dir.path().join("notes caf\u{e9}.txt");
-        // Lines of varying length, with characters of several bytes, so a
-        // page boundary falls in the middle of a line and of a character.
-        let text = (0..60_000).fold(String::new(), |mut text, i| {
-            use std::fmt::Write as _;
-            let _ = writeln!(text, "{i} {}", "\u{e9}t\u{e9}".repeat(i % 7 + 3));
-            text
-        });
-        std::fs::write(&path, &text).unwrap();
-        let first = plain(&path, 0, &cancel).unwrap();
-        let second = plain(&path, first.next.unwrap(), &cancel).unwrap();
-        let third = plain(&path, second.next.unwrap(), &cancel).unwrap();
-        let back = plain(&path, third.previous.unwrap(), &cancel).unwrap();
-        let at = back.position as usize;
-        assert!(at > 0 && text.as_bytes()[at - 1] == b'\n', "starts a line");
-        assert_eq!(back.next, Some(third.position), "ends where it was left");
-        let lines: std::collections::HashSet<&str> = text.lines().collect();
-        assert_eq!(back.kind, InspectionKind::Code);
-        assert!(
-            back.blocks.iter().all(|b| lines.contains(b.text.as_str())),
-            "every line whole"
-        );
-        assert!(back.notice.contains("at a time") && !back.notice.contains("Read as"));
-        // A requested line start is kept as it is.
-        assert_eq!(
-            plain(&path, second.position, &cancel).unwrap().position,
-            second.position
-        );
+        let data = plain(&minified, &cancel).unwrap();
+        assert_eq!((data.kind, data.blocks.len()), (InspectionKind::Code, 2));
+        assert_eq!(data.title, "1 line");
     }
 
     #[test]
@@ -1245,7 +1144,7 @@ mod tests {
             read_text(&path, &cancel).unwrap(),
             ("name;price\ncaf\u{e9};3\n".into(), Encoding::Windows1252)
         );
-        let data = plain(&path, 0, &cancel).unwrap();
+        let data = plain(&path, &cancel).unwrap();
         assert_eq!(data.blocks[1].text, "caf\u{e9};3");
         assert_eq!(data.notice, "Read as Windows-1252");
     }

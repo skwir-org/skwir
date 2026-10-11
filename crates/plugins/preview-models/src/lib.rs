@@ -267,7 +267,7 @@ impl PreviewProvider for Provider {
             },
             // Text without a picture is read as the text it is.
             None if format.is_text() => {
-                let mut data = inspection::plain(&path, view.offset, cancel)?;
+                let mut data = inspection::plain(&path, cancel)?;
                 data.details = details;
                 data
             }

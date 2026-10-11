@@ -66,6 +66,8 @@ pub const READER_CONTINUOUS_KEY: &str = "reading.continuous";
 pub const READING_WIDTH_KEY: &str = "reading.width";
 /// Whether a book's position counts its printed pages (`ui.printed_pages`).
 pub const PRINTED_PAGES_KEY: &str = "reading.printed_pages";
+/// Whether a text's long lines wrap to the panel (`ui.wrap_lines`).
+pub const WRAP_LINES_KEY: &str = "reading.wrap_lines";
 /// Whether code is drawn light or dark: Automatic is as skwir is
 /// (`code_preview::CodeTheme::chosen`).
 pub const CODE_APPEARANCE_KEY: &str = "reading.code_appearance";
@@ -310,6 +312,15 @@ pub fn declare(app: &App) {
             false,
         )
         .section("Pages"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            WRAP_LINES_KEY,
+            "Wrap lines",
+            "Wrap a text file's long lines to the panel, a line's number on its first row. Off, they go on sideways and the panel scrolls with them.",
+            true,
+        )
+        .section("Code"),
     );
     app.settings.declare(
         SettingSpec::choice(

@@ -11,6 +11,9 @@ homepage.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# The index of a text read where it is shown (`text_view`), shared with
+# the workers that count and read it.
+parking_lot.workspace = true
 skwir-core.workspace = true
 gpui.workspace = true
 flume.workspace = true

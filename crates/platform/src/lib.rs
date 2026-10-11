@@ -68,6 +68,7 @@ pub use inspection::limits;
 
 pub mod rich_preview;
 pub mod secrets;
+pub mod text_rows;
 
 pub mod apps;
 pub mod archive;

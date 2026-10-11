@@ -365,6 +365,8 @@ impl Shell {
         let data = Arc::clone(&display.data);
         self.links.goto = None;
         self.preview.inspection.show_line(&data, line);
+        // A text read where it is shown finds the line on a worker.
+        self.ask_text();
     }
 }
 

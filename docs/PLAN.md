@@ -368,6 +368,26 @@ dates, measurements and what is left.
     are the preview's picture and a document's pictures. Backdrops
     behind every picture with transparency left light corners around
     rounded icons, and boxes on the light look.
+  - Text read where it is shown (ADR-051, 2026-10-11): a text file and
+    every format's source scroll whole, numbered from their first line,
+    instead of 256 KiB and 32 KiB pages ("1746 lines from byte 32725",
+    numbers starting again, Find in the page). A worker counts the rows
+    into an index of every 256th; the view reads chunks of 256 rows
+    around what it shows, plain first, then colored. Checked on Xvfb,
+    debug build: a 200 MB log (2,036,070 lines, the count matching
+    `wc -l`) to its end; Find across a 49 MB log both ways and around,
+    and "No match in the file" under a second; Copy of a selection,
+    exact, and of all of it, stopped at 8 MiB and said; a 2 MB minified
+    line, shown at once (colored a chunk at a time, it waited seconds
+    when the first chunk was colored before showing); lines unwrapped
+    and scrolled sideways, the gutter kept; a terminal's `code.rs:1200`
+    showing its line; a log written to while shown followed at its end;
+    UTF-16 read in its own units (pages past the first read it as
+    UTF-8). Deviations: Copy is bounded at 8 MiB, not 16, because gpui
+    hands the clipboard to another X11 program in one request, which
+    carries 16 MiB less its header (a 16 MiB copy was never answered,
+    and the clipboard stopped answering); a vendored patch sending INCR
+    is left to do. The byte view still pages 4 KiB at a time.
   - Mermaid by merman in `skwir-mermaid-worker`: linked into Skwir it
     added 14.7 MB of code (text 51.9 → 66.6 MB), so it is a helper
     (16.3 MB), a default member. Without it a diagram stays code.

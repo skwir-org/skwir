@@ -462,6 +462,7 @@ const SHOWS: &[&str] = &[
     "ui.preview_zoom",
     "ui.inspect",
     "ui.printed_pages",
+    "ui.wrap_lines",
     "ui.full_width",
     "ui.note",
     "ui.reader_continuous",
@@ -1036,6 +1037,12 @@ pub fn declare_all(app: &App) {
         "ui.printed_pages",
         "Printed page numbers",
         "Count a book's pages as printed, where it lists them",
+    );
+    declare::<On>(
+        app,
+        "ui.wrap_lines",
+        "Wrap lines",
+        "Wrap a text's long lines to the panel, or let them go on sideways",
     );
     none(
         "ui.full_width",

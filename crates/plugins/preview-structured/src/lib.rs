@@ -58,7 +58,7 @@ impl PreviewProvider for Provider {
             // The source view takes its language from the name, like any
             // text file, and may hold no line at all (an empty file).
             Err(error) if !cancel.is_cancelled() => {
-                let mut source = inspection::source(&path, view.offset, cancel)?;
+                let mut source = inspection::source(&path, cancel)?;
                 source.notice = format!("Showing source: {error}");
                 // Nothing else to switch to.
                 source.source_available = false;

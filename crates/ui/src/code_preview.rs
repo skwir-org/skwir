@@ -11,7 +11,7 @@
 use crate::{inspector_text::Selection, shell::Shell, theme::Theme};
 use gpui::{AnyElement, Hsla, WeakEntity, div, prelude::*, px};
 use skwir_core::{
-    inspection::{Inspection, Run},
+    inspection::{Block, Inspection, Run},
     workspace::PaneId,
 };
 use std::collections::BTreeSet;
@@ -306,27 +306,59 @@ pub(crate) struct Highlighter<'a> {
     styled: bool,
 }
 
+/// Where a highlighter is in a text, to go on from there later: what a
+/// chunk of a text read where it is shown ends in, for the next (ADR-051).
+#[derive(Clone)]
+pub(crate) struct Resume(
+    syntect::highlighting::HighlightState,
+    syntect::parsing::ParseState,
+);
+
 impl<'a> Highlighter<'a> {
     pub fn new(language: Option<&str>, palette: &'a Palette) -> Self {
+        Self::resume(language, palette, None)
+    }
+
+    /// One that goes on from `from`, where another stopped; from the
+    /// start of the text without.
+    pub fn resume(language: Option<&str>, palette: &'a Palette, from: Option<Resume>) -> Self {
         let syntaxes = syntaxes();
-        let syntax = language
-            .and_then(|language| syntaxes.find_syntax_by_token(language))
-            .unwrap_or_else(|| syntaxes.find_syntax_plain_text());
+        let lines = if let Some(Resume(highlight, parse)) = from {
+            syntect::easy::HighlightLines::from_state(palette.colors(), highlight, parse)
+        } else {
+            let syntax = language
+                .and_then(|language| syntaxes.find_syntax_by_token(language))
+                .unwrap_or_else(|| syntaxes.find_syntax_plain_text());
+            syntect::easy::HighlightLines::new(syntax, palette.colors())
+        };
         Self {
             syntaxes,
-            lines: syntect::easy::HighlightLines::new(syntax, palette.colors()),
+            lines,
             styled: palette.styled,
         }
+    }
+
+    /// Where it is, to resume from.
+    pub fn stop(self) -> Resume {
+        let (highlight, parse) = self.lines.state();
+        Resume(highlight, parse)
     }
 
     /// The coloured runs of the next line, `text` without its line ending,
     /// in the line's own coordinates. The grammar needs the ending, but
     /// selection and copy use the text as it is: the extra byte never shows.
     pub fn line(&mut self, text: &str) -> Vec<Run> {
+        self.row(text, true)
+    }
+
+    /// The runs of the next row of a text: a line, or a part of one that
+    /// the next row goes on with (`ends_line` false), given no ending.
+    pub fn row(&mut self, text: &str, ends_line: bool) -> Vec<Run> {
         let mut runs = Vec::new();
+        let ending = if ends_line { "\n" } else { "" };
         if let Ok(ranges) = self
             .lines
-            .highlight_line(&format!("{text}\n"), self.syntaxes)
+            .highlight_line(&format!("{text}{ending}"), self.syntaxes)
         {
             let mut offset = 0;
             for (style, part) in ranges {
@@ -401,11 +433,22 @@ pub fn visible(data: &Inspection, collapsed: &BTreeSet<usize>) -> Vec<usize> {
         .collect()
 }
 
+/// A row of the code view: a line of code, or a row of a text read where
+/// it is shown (ADR-051), its number in the gutter.
 pub struct CodeRow<'a> {
-    pub data: &'a Inspection,
-    pub line: usize,
-    pub collapsed: &'a BTreeSet<usize>,
-    pub selected: Option<usize>,
+    pub block: &'a Block,
+    /// Its index among the rows: what selection, links and ids count.
+    pub index: usize,
+    /// The line number in the gutter (from 1), on a line's first row.
+    pub number: Option<u64>,
+    /// How many digits the gutter holds: the most any row of it needs.
+    pub digits: usize,
+    /// The fold it opens, and whether it is closed.
+    pub fold: Option<(&'a std::ops::Range<usize>, bool)>,
+    /// How far its text is scrolled sideways, when lines do not wrap: the
+    /// gutter stays.
+    pub shift: f32,
+    pub selected: bool,
     pub selection: Option<Selection>,
     pub font_size: f32,
     pub mono: &'a gpui::SharedString,
@@ -415,12 +458,22 @@ pub struct CodeRow<'a> {
     pub pane: PaneId,
     pub entity: WeakEntity<Shell>,
 }
+
+/// The digits a gutter holds for `rows` lines: five at least, so it does
+/// not widen as a short text's count grows.
+pub fn digits(rows: u64) -> usize {
+    rows.max(1).ilog10() as usize + 1
+}
+
 impl CodeRow<'_> {
     pub fn render(self) -> AnyElement {
         let Self {
-            data,
-            line,
-            collapsed,
+            block,
+            index,
+            number,
+            digits,
+            fold,
+            shift,
             selected,
             selection,
             font_size,
@@ -430,26 +483,29 @@ impl CodeRow<'_> {
             pane,
             entity,
         } = self;
-        let fold = data
-            .folds
-            .binary_search_by_key(&line, |fold| fold.start)
-            .ok()
-            .map(|i| &data.folds[i]);
-        let folded = collapsed.contains(&line);
+        let folded = fold.is_some_and(|(_, folded)| folded);
+        // A digit of the monospaced font is about 0.6 of its size.
+        let numbers = (digits.max(5) as f32 * (font_size - 2.) * 0.62).ceil();
         let mut gutter = div()
-            .id(("code-fold", line))
+            .id(("code-fold", index))
             .flex_none()
             .flex()
             .items_center()
-            .w(px(68.))
+            .w(px(numbers + 30.))
+            .pl_1()
             .pr_2()
             .gap_1()
             .text_color(theme.text_muted)
-            .child(div().w(px(42.)).text_right().child((line + 1).to_string()))
-            .child(div().w(px(14.)).child(if fold.is_some() {
-                if folded { "▸" } else { "▾" }
-            } else {
-                ""
+            .child(
+                div()
+                    .w(px(numbers))
+                    .text_right()
+                    .children(number.map(|number| number.to_string())),
+            )
+            .child(div().w(px(14.)).child(match fold {
+                Some((_, true)) => "▸",
+                Some((_, false)) => "▾",
+                None => "",
             }));
         if fold.is_some() {
             let weak = entity.clone();
@@ -461,7 +517,7 @@ impl CodeRow<'_> {
                         s.with_pane(pane, |s| {
                             s.run(
                                 "ui.inspect",
-                                serde_json::json!({"action":"collapse", "index":line}),
+                                serde_json::json!({"action":"collapse", "index":index}),
                                 window,
                                 cx,
                             );
@@ -470,30 +526,26 @@ impl CodeRow<'_> {
                 });
         }
         div()
-            .id(("code-line", line))
+            .id(("code-line", index))
             .w_full()
             .flex()
             .items_start()
             .font_family(mono.clone())
             .text_size(px(font_size - 2.))
             .line_height(px(font_size + 4.))
-            .when(selected == Some(line), |d| d.bg(theme.highlight))
+            .when(selected, |d| d.bg(theme.highlight))
             .child(gutter)
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .pr_2()
-                    .child(crate::inspector_text::render(
-                        &data.blocks[line],
-                        line,
-                        selection,
-                        style,
-                        pane,
-                        entity,
-                    )),
+                    .when(shift > 0., gpui::Styled::overflow_hidden)
+                    .child(div().ml(px(-shift)).child(crate::inspector_text::render(
+                        block, index, selection, style, pane, entity,
+                    ))),
             )
-            .when(folded && fold.is_some(), |d| {
+            .when_some(fold.filter(|_| folded), |d, (range, _)| {
                 d.child(
                     div()
                         .flex_none()
@@ -501,10 +553,7 @@ impl CodeRow<'_> {
                         .rounded_sm()
                         .bg(theme.code_bg)
                         .text_color(theme.text_muted)
-                        .child(format!(
-                            "… {} lines",
-                            fold.map_or(0, |r| r.end - r.start - 1)
-                        )),
+                        .child(format!("… {} lines", range.end - range.start - 1)),
                 )
             })
             .into_any_element()

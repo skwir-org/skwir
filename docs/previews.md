@@ -34,10 +34,11 @@ contributors). The rules for working on preview code are in
   section.
 - **Find.** `Ctrl+F` searches the preview that has the keyboard; the
   search button is always there. Searching again continues after the
-  last match: hex search streams on from the byte after it, a book
-  searches the rest of the chapter and then the next chapter with a
-  match, wrapping around; other previews search the loaded section after
-  the selected item.
+  last match: a text file is searched whole, either way and around its
+  end; hex search streams on from the byte after it; a book searches the
+  rest of the chapter and then the next chapter with a match, wrapping
+  around; other previews search the loaded section after the selected
+  item.
 - Each kind is a plugin, turned on or off in Settings › Plugins.
 
 ### Keys
@@ -50,7 +51,9 @@ contributors). The rules for working on preview code are in
 | `Ctrl+F`; `F3`, `Shift+F3` | Preview | Find; next or previous match |
 | `Ctrl+C`, `Ctrl+A` | Preview | Copy; select all |
 | `Page Up`, `Page Down` | Reader | Previous or next page |
-| `[`, `]` | Reader, text previews | Previous or next part of a long document |
+| `[`, `]` | Reader, book | Previous or next page or chapter |
+| Up, Down; `Page Up`, `Page Down`; `Ctrl+Home`, `Ctrl+End` | Text | A line; a screen; the start or the end |
+| `Alt+Z` | Text | Wrap long lines, or let them go on sideways |
 | `Alt+Page Up`, `Alt+Page Down` | Any preview | Previous or next section, chapter or comic page |
 | `Ctrl++`, `Ctrl+-`, `Ctrl+0` | Reader, picture, map | Zoom in, out, reset |
 | Arrows | Map | Pan |
@@ -74,9 +77,21 @@ The player, in the panel or pinned at its foot:
 
 ### Text and code
 
+- A text file of any size is shown whole: it opens at once, its lines
+  numbered from the first, counted as you read (the bar says how many),
+  and only what is on screen is read from the file. A huge log scrolls to
+  its end, and Find and Copy see all of it (Copy up to 8 MiB). The
+  source of a rendered file (Markdown, a table, a map) is read the same
+  way.
+- Long lines wrap to the panel, the line's number on its first row; More
+  › Wrap lines (`Alt+Z`, Reading › Code) lets them go on sideways.
 - Code is highlighted with bat's grammars, in Skwir's theme or one of
   bat's, themes you added to bat included (Reading › Code), light or
-  dark whatever Skwir is.
+  dark whatever Skwir is. Colors follow what is read: after a jump into
+  the middle of a long file, a string or comment open across the jump
+  can be colored wrongly until it ends.
+- The text is decoded once, from its first bytes: UTF-8, UTF-16 by its
+  mark, else Windows-1252 (and the bar says so).
 - Any file can be shown as bytes (see [Bytes](#bytes-preview-hex)).
 
 ### Structured data (`preview-structured`)

@@ -148,6 +148,9 @@ pub struct Preferences {
     pub full_path: bool,
     /// `ui.printed_pages`: a book's position counts its printed pages.
     pub printed_pages: bool,
+    /// `ui.wrap_lines`: a text's long lines wrap to the panel, else go on
+    /// sideways (`text_view`).
+    pub wrap_lines: bool,
     /// `core.close_split`: which pane closing the split takes away.
     pub close_split: crate::layout::CloseSplit,
     /// How audio and video play.
@@ -163,6 +166,7 @@ impl Default for Preferences {
             single_tab: false,
             full_path: false,
             printed_pages: false,
+            wrap_lines: true,
             close_split: crate::layout::CloseSplit::Other,
             player: crate::player::PlayerPrefs::default(),
         }
@@ -1310,6 +1314,22 @@ impl Shell {
         }
     }
 
+    /// `ui.wrap_lines`: a text's long lines wrap to the panel, or go on
+    /// sideways. A preference, through `settings.apply` like the dialog's
+    /// switch.
+    fn set_wrap_lines(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.prefs.wrap_lines = on;
+        cx.notify();
+        if let Err(error) = self.app.dispatch(&Invocation::with_args(
+            "settings.apply",
+            &serde_json::json!({
+                "changes": { crate::settings::WRAP_LINES_KEY: on.to_string() }
+            }),
+        )) {
+            self.set_status(format!("{error:#}"), true, cx);
+        }
+    }
+
     /// `ui.full_width`: the reading column takes the whole panel, or goes
     /// back to the width it had. The Reading width preference, so it goes
     /// through `settings.apply` like the choice in the dialog.
@@ -1868,6 +1888,13 @@ impl Shell {
                     .unwrap_or(!self.prefs.printed_pages);
                 self.set_printed_pages(on, window, cx);
             }
+            "wrap_lines" => {
+                let on = args
+                    .get("on")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(!self.prefs.wrap_lines);
+                self.set_wrap_lines(on, cx);
+            }
             "zoom" => {
                 let dir = arg("dir").unwrap_or_else(|| "reset".into());
                 self.zoom_step(&dir, cx);
@@ -2162,6 +2189,11 @@ impl Shell {
                 .settings
                 .get::<bool>(crate::settings::PRINTED_PAGES_KEY)
                 .unwrap_or(false);
+            self.prefs.wrap_lines = self
+                .app
+                .settings
+                .get::<bool>(crate::settings::WRAP_LINES_KEY)
+                .unwrap_or(true);
             self.read_player_prefs();
             self.columns = crate::views::list::PerColumn(
                 crate::views::list::COLUMNS.each_ref().map(|column| {
@@ -2286,6 +2318,7 @@ impl Shell {
             this.sync_reader(cx);
             this.sync_document_scroll(window, cx);
             this.sync_pictures(window, cx);
+            this.sync_text(cx);
             this.sync_notes(window, cx);
             this.sync_media(window, cx);
             this.sync_player(window, cx);

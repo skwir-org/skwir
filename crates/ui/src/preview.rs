@@ -823,7 +823,6 @@ fn compute(
     is_dir: bool,
     mime: Option<&str>,
     code: &crate::code_preview::CodeTheme,
-    offset: u64,
     picture_side: u32,
     cancel: &CancelToken,
 ) -> PreviewContent {
@@ -866,7 +865,7 @@ fn compute(
     if skwir_platform::inspection::is_text(&head) {
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
-        return match skwir_platform::inspection::plain(path, offset, cancel) {
+        return match skwir_platform::inspection::plain(path, cancel) {
             Ok(data) => PreviewContent::Inspection(crate::inspector::Display::new(data, code)),
             Err(error) => PreviewContent::Error(format!("{error:#}")),
         };
@@ -1756,12 +1755,7 @@ impl Shell {
                             .inspect(&request, &inspection, &cancel)
                             .and_then(|result| {
                                 if result.is_none() && inspection.source {
-                                    skwir_platform::inspection::source(
-                                        &path,
-                                        inspection.offset,
-                                        &cancel,
-                                    )
-                                    .map(Some)
+                                    skwir_platform::inspection::source(&path, &cancel).map(Some)
                                 } else {
                                     Ok(result)
                                 }
@@ -1950,7 +1944,6 @@ impl Shell {
                         is_dir,
                         request.mime.as_deref(),
                         &code,
-                        inspection.offset,
                         picture_side,
                         &cancel,
                     ),
@@ -2053,6 +2046,7 @@ impl Shell {
             cx.drop_image(image, Some(window));
         }
         let refresh = std::mem::take(&mut self.preview.refresh);
+        let mut content = content;
         if let Some(PreviewContent::Inspection(display)) = &content {
             self.preview.inspection.arrived(display, refresh);
             self.preview
@@ -2060,6 +2054,8 @@ impl Shell {
                 .focus
                 .get_or_insert_with(|| cx.focus_handle());
         }
+        // A text read where it is shown: its view, from its first rows.
+        self.start_text(&mut content, refresh);
         self.preview.content = content;
         // A link to a line of this file shows it now it is here.
         self.show_waiting_line();
@@ -3864,7 +3860,6 @@ mod tests {
                 false,
                 Some("image/svg+xml"),
                 &crate::code_preview::CodeTheme::own(false),
-                0,
                 side,
                 &cancel,
             );
@@ -3943,7 +3938,6 @@ mod tests {
             false,
             mime,
             &crate::code_preview::CodeTheme::own(false),
-            0,
             1024,
             &cancel,
         ) {

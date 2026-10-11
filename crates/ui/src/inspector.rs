@@ -37,6 +37,10 @@ pub struct Display {
     /// The look its code was colored for (`CodeTheme::dark`), whose
     /// tokens it is drawn with whatever skwir's look (`Theme::in_look`).
     pub code_dark: bool,
+    /// A text read where it is shown (`Inspection::text`): its first rows,
+    /// colored here on the worker, until the view takes them
+    /// (`Shell::start_text`).
+    pub(crate) text: Option<Box<crate::text_view::Start>>,
 }
 impl Display {
     pub fn new(mut data: Inspection, code: &crate::code_preview::CodeTheme) -> Self {
@@ -64,7 +68,21 @@ impl Display {
         // from bat's folder the first time.
         let palette = (data.kind == InspectionKind::Code || data.blocks.iter().any(|b| b.code))
             .then(|| crate::code_preview::Palette::of(code));
-        if let Some(palette) = palette
+        // A text read where it is shown colors its rows as it reads them:
+        // its first ones here, for the view (`text_view`).
+        let text = data
+            .text
+            .as_ref()
+            .filter(|_| data.kind == InspectionKind::Code)
+            .and_then(|file| {
+                crate::text_view::start(file, crate::code_preview::Palette::of(code))
+                    .inspect_err(|error| tracing::debug!(%error, "a text's first rows"))
+                    .ok()
+                    .map(Box::new)
+            });
+        if text.is_some() {
+            // The view's rows are colored as they are read.
+        } else if let Some(palette) = palette
             .as_ref()
             .filter(|_| data.kind == InspectionKind::Code)
         {
@@ -158,6 +176,7 @@ impl Display {
             origin: None,
             code_bg: palette.and_then(|palette| palette.background),
             code_dark: code.dark,
+            text,
         }
     }
     /// The next block or row (blocks first, then rows offset by the block
@@ -324,8 +343,8 @@ pub struct State {
     visible: Arc<Vec<usize>>,
     /// Shared with the frame's list closure: changed only by a click.
     collapsed: Arc<BTreeSet<usize>>,
-    selected: Option<usize>,
-    selection: Option<crate::inspector_text::Selection>,
+    pub(crate) selected: Option<usize>,
+    pub(crate) selection: Option<crate::inspector_text::Selection>,
     dragging: bool,
     font_size: f32,
     outline: bool,
@@ -351,6 +370,8 @@ pub struct State {
     /// The links in view labelled (Ctrl+Shift+O): typing a label follows
     /// its link.
     pub(crate) labels: Option<crate::links::Labels>,
+    /// A text read where it is shown (ADR-051), drawn instead of the list.
+    pub(crate) text: Option<crate::text_view::TextView>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -375,6 +396,7 @@ impl Default for State {
             pictures: crate::inspector_pictures::Pictures::default(),
             notes: crate::note_popover::Notes::default(),
             labels: None,
+            text: None,
         }
     }
 }
@@ -606,21 +628,35 @@ impl State {
     /// Label the links of the blocks in view, as last drawn: what the
     /// keyboard can reach of what the pointer can. Whether there are any.
     pub(crate) fn label_links(&mut self, data: &Inspection) -> bool {
-        let bottom = self.list.viewport_bounds().bottom();
         let mut found = Vec::new();
+        let links = |index: usize, block: &skwir_core::inspection::Block| {
+            crate::inspector_text::links_in(block, 0..block.text.len())
+                .into_iter()
+                .map(move |link| (index, link))
+        };
+        if let Some(text) = &self.text {
+            // The rows wholly on screen.
+            let shown = text.scroll.borrow().shown();
+            for row in shown {
+                if let Some(block) = text.block(row as usize) {
+                    found.extend(links(row as usize, block));
+                }
+            }
+        }
+        let bottom = self.list.viewport_bounds().bottom();
         let mut item = self.list.logical_scroll_top().item_ix;
-        while let Some(bounds) = self.list.bounds_for_item(item) {
+        while let Some(bounds) = self
+            .list
+            .bounds_for_item(item)
+            .filter(|_| self.text.is_none())
+        {
             if bounds.top() >= bottom {
                 break;
             }
             if let Some(index) = self.block_of_item(data, item)
                 && let Some(block) = data.blocks.get(index)
             {
-                found.extend(
-                    crate::inspector_text::links_in(block, 0..block.text.len())
-                        .into_iter()
-                        .map(|link| (index, link)),
-                );
+                found.extend(links(index, block));
             }
             item += 1;
         }
@@ -642,12 +678,26 @@ impl State {
         self.labels.is_some()
     }
     /// Show line `line` (from 1) of the code view, highlighted, as a link
-    /// to it asks (`src/main.rs:12`). Only a page that starts the file
-    /// numbers its lines from the file's start.
+    /// to it asks (`src/main.rs:12`): in a text read where it is shown, once
+    /// it is counted (`text_view`).
     pub(crate) fn show_line(&mut self, data: &Inspection, line: u32) {
+        if let Some(text) = self.text.as_mut() {
+            return text.show_line(u64::from(line));
+        }
         let index = (line as usize).saturating_sub(1);
-        if data.kind == InspectionKind::Code && data.position == 0 && index < data.blocks.len() {
+        if data.kind == InspectionKind::Code && index < data.blocks.len() {
             self.reveal(data, index);
+        }
+    }
+    /// Block `index`: a row of a text read where it is shown, once read.
+    pub(crate) fn block<'a>(
+        &'a self,
+        data: &'a Inspection,
+        index: usize,
+    ) -> Option<&'a skwir_core::inspection::Block> {
+        match &self.text {
+            Some(text) => text.block(index),
+            None => data.blocks.get(index),
         }
     }
     /// Highlight a row, scrolled into view if it is shown: the member shown
@@ -1058,6 +1108,12 @@ impl Shell {
             Some(PreviewContent::Inspection(display)) => Some(display.data.kind),
             _ => None,
         };
+        // A text read where it is shown finds, copies and scrolls the file.
+        if matches!(action, "find" | "copy" | "select_all" | "scroll")
+            && self.text_action(action, args, cx)
+        {
+            return;
+        }
         if let Some(PreviewContent::Inspection(display)) = &self.preview.content {
             match action {
                 // The links in view labelled, or no longer.
@@ -1124,7 +1180,7 @@ impl Shell {
                         return;
                     }
                     let index = args["index"].as_u64().unwrap_or(0) as usize;
-                    if let Some(block) = display.data.blocks.get(index) {
+                    if let Some(block) = self.preview.inspection.block(&display.data, index) {
                         let mut offset =
                             (args["offset"].as_u64().unwrap_or(0) as usize).min(block.text.len());
                         while !block.text.is_char_boundary(offset) {
@@ -1972,7 +2028,20 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             .active(request.source),
         ));
     }
-    let caption = data.title.as_str();
+    // A text read where it is shown says its lines as they are counted.
+    let counted = state.text.as_ref().map(|text| {
+        let (lines, done) = text.lines();
+        let lines = crate::format::count(usize::try_from(lines).unwrap_or(usize::MAX), "line");
+        if done { lines } else { format!("{lines}…") }
+    });
+    let caption = counted.as_deref().unwrap_or(data.title.as_str());
+    if state.text.is_some() {
+        bar.push(Item::menu_only(
+            Button::new("inspect-wrap", "width", "Wrap lines", "ui.wrap_lines")
+                .label("Wrap lines")
+                .active(shell.prefs.wrap_lines),
+        ));
+    }
     // Numbered sections say where they are in their field.
     if !caption.is_empty() && !numbered {
         let (caption, muted) = (caption.to_owned(), theme.text_muted);
@@ -2233,6 +2302,26 @@ pub fn content(
     let measure = list_style.measure;
     let entity = cx.entity().downgrade();
     let ui_font = shell.font.clone();
+    // A text read where it is shown: its rows, scrolled by row, instead of
+    // the list (`text_view`).
+    let text = state.text.as_ref().filter(|_| data.text.is_some());
+    let wrap = shell.prefs.wrap_lines;
+    let rows = text.map(|view| {
+        crate::text_view::element(
+            view,
+            crate::text_view::Look {
+                theme: list_theme.clone(),
+                style: list_style.clone(),
+                mono: mono.clone(),
+                font_size,
+                selected,
+                selection,
+                pane,
+                entity: entity.clone(),
+                wrap,
+            },
+        )
+    });
     let list = gpui::list(state.list.clone(), move |index, _, _| {
         let theme = &list_theme;
         if index == 0 {
@@ -2248,12 +2337,20 @@ pub fn content(
         }
         let i = index - 1;
         if data.kind == InspectionKind::Code {
-            let logical = visible[i];
+            let line = visible[i];
+            let fold = data
+                .folds
+                .binary_search_by_key(&line, |fold| fold.start)
+                .ok()
+                .map(|i| (&data.folds[i], collapsed.contains(&line)));
             return crate::code_preview::CodeRow {
-                data: &data,
-                line: logical,
-                collapsed: &collapsed,
-                selected,
+                block: &data.blocks[line],
+                index: line,
+                number: Some(line as u64 + 1),
+                digits: crate::code_preview::digits(data.blocks.len() as u64),
+                fold,
+                shift: 0.,
+                selected: selected == Some(line),
                 selection,
                 font_size,
                 mono: &mono,
@@ -2421,11 +2518,17 @@ pub fn content(
         .flex_col()
         // The files of an archive or a message are walked with the arrows.
         .key_context(
-            match (kept_rows(display.data.kind), state.labels.is_some()) {
-                (true, false) => "Inspector PreviewMembers",
-                (true, true) => "Inspector PreviewMembers labelling",
-                (false, false) => "Inspector",
-                (false, true) => "Inspector labelling",
+            match (
+                kept_rows(display.data.kind),
+                state.labels.is_some(),
+                text.is_some(),
+            ) {
+                (true, false, _) => "Inspector PreviewMembers",
+                (true, true, _) => "Inspector PreviewMembers labelling",
+                (false, false, false) => "Inspector",
+                (false, true, false) => "Inspector labelling",
+                (false, false, true) => "Inspector PreviewText",
+                (false, true, true) => "Inspector PreviewText labelling",
             },
         )
         // While its links are labelled, what is typed picks one.
@@ -2546,7 +2649,10 @@ pub fn content(
                     .w_full()
                     .h_full()
                     .when_some(measure, |d, measure| d.max_w(px(measure)))
-                    .child(list),
+                    .map(|d| match rows {
+                        Some(rows) => d.child(rows),
+                        None => d.child(list),
+                    }),
             )
             // After the list's layout, which drew the rows: what they show
             // is what to decode. Deferred, never done while painting.
@@ -2572,8 +2678,18 @@ pub fn content(
             })
             .child(crate::elements::scrollbar::vertical(
                 "inspect-scrollbar",
-                crate::elements::scrollbar::Scrolls::Items(state.list.clone()),
-            )),
+                match text {
+                    Some(view) => crate::elements::scrollbar::Scrolls::Rows(view.scroll.clone()),
+                    None => crate::elements::scrollbar::Scrolls::Items(state.list.clone()),
+                },
+            ))
+            // Lines that do not wrap go on sideways.
+            .when_some(text.filter(|_| !wrap), |d, view| {
+                d.child(crate::elements::scrollbar::horizontal(
+                    "inspect-scrollbar-sideways",
+                    crate::elements::scrollbar::Scrolls::Rows(view.scroll.clone()),
+                ))
+            }),
     );
     let mut decoded = None;
     if display.data.kind == InspectionKind::Hex

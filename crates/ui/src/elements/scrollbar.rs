@@ -47,6 +47,14 @@ pub enum Scrolls {
     Offset(ScrollHandle),
     /// `gpui::list`: scrolls by item, measures as it goes.
     Items(ListState),
+    /// `elements::rows`: scrolls by row, counted at the average row.
+    Rows(crate::elements::rows::Scroll),
+}
+
+impl From<ScrollHandle> for Scrolls {
+    fn from(handle: ScrollHandle) -> Self {
+        Scrolls::Offset(handle)
+    }
 }
 
 impl Scrolls {
@@ -62,6 +70,18 @@ impl Scrolls {
                 max: f32::from(list.max_offset_for_scrollbar().height),
                 viewport: f32::from(list.viewport_bounds().size.height),
             },
+            Scrolls::Rows(scroll) => {
+                let scroll = scroll.borrow();
+                let (offset, max, viewport) = match axis {
+                    Axis::Vertical => scroll.vertical(),
+                    Axis::Horizontal => scroll.horizontal(),
+                };
+                Metrics {
+                    offset,
+                    max,
+                    viewport,
+                }
+            }
         }
     }
 
@@ -71,6 +91,10 @@ impl Scrolls {
                 handle.set_offset(handle.offset().apply_along(axis, |_| px(-to)));
             }
             Scrolls::Items(list) => list.set_offset_from_scrollbar(gpui::point(px(0.), px(-to))),
+            Scrolls::Rows(scroll) => match axis {
+                Axis::Vertical => scroll.borrow_mut().scroll_vertically_to(to),
+                Axis::Horizontal => scroll.borrow_mut().scroll_horizontally_to(to),
+            },
         }
     }
 
@@ -107,12 +131,12 @@ pub fn vertical(id: impl Into<ElementId>, scrolls: Scrolls) -> Scrollbar {
     }
 }
 
-/// A horizontal scrollbar over the bottom edge of what `handle` scrolls
-/// sideways (`overflow_x_scroll`).
-pub fn horizontal(id: impl Into<ElementId>, handle: ScrollHandle) -> Scrollbar {
+/// A horizontal scrollbar over the bottom edge of what `scrolls` scrolls
+/// sideways (`overflow_x_scroll`, rows that do not wrap).
+pub fn horizontal(id: impl Into<ElementId>, scrolls: impl Into<Scrolls>) -> Scrollbar {
     Scrollbar {
         id: id.into(),
-        scrolls: Scrolls::Offset(handle),
+        scrolls: scrolls.into(),
         axis: Axis::Horizontal,
     }
 }

@@ -71,7 +71,7 @@ arguments).
 | Area | Bound |
 |------|-------|
 | Hex view | 4096-byte sections; search streams bounded chunks, checking cancellation |
-| Source mode | 32 KiB sections |
+| Text and source mode | Read where shown (ADR-051, which replaced 32 KiB sections): rows of 4 KiB, an index of every 256th, chunks of 256 rows; Copy 8 MiB |
 | Parsed text, table, structured input | 2 MiB |
 | Tables | 500 rows per section, 64 columns, 1024 characters per cell (longer marked shortened) |
 | Code | 10000 lines, 64 levels, 4096 bytes per line; JSON 10000 nodes |
@@ -86,7 +86,8 @@ arguments).
   bytes use its rows. A hex search reports the exact match byte, so Find
   again resumes after it; a book search resumes at the next chapter and
   reveals the first matching block.
-- Invalid or oversized structured input falls back to paginated source. Fold
+- Invalid or oversized structured input falls back to the source, read
+  where it is shown (ADR-051; paginated before). Fold
   ranges are logical source lines from parser spans or events, nested or
   disjoint. JSON is formatted; TOML and YAML keep comments, order and
   indentation. Highlighting keeps parser state across lines on a worker; the

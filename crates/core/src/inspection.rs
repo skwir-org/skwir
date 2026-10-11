@@ -63,6 +63,21 @@ pub struct Inspection {
     pub geo: Option<std::sync::Arc<crate::geo::GeoDoc>>,
     /// What it draws over the background: the tiles a tile archive holds.
     pub tiles: Option<crate::tiles::Layer>,
+    /// The file it is the text of, read where it is shown (ADR-051): its
+    /// blocks are only its first rows, and the view reads the rest.
+    pub text: Option<TextFile>,
+}
+
+/// A text file a view reads where it shows it, a few rows at a time
+/// (ADR-051), never held whole.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextFile {
+    pub path: std::path::PathBuf,
+    /// What it is colored as: an extension or a name, as the highlighter
+    /// takes it.
+    pub language: Option<String>,
+    /// Whether its first rows are all of it: nothing is left to count.
+    pub whole: bool,
 }
 /// A page of the printed book (`Inspection::printed_pages`): its number as
 /// printed ("xii", "47"), the section that holds it, and the link to where

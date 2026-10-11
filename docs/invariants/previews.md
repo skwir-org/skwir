@@ -677,12 +677,35 @@ is still to come are in `docs/preview-frame.md`.
 ## Text and code
 
 - **One text path.** Any text file without a presentation of its own is
-  the code view (`inspection::plain`): a block per line, the language
-  from the name, a gutter, selection, find and copy. A rendered format's
-  source is the same view (`inspection::source`), titled the same way
-  (its lines). Both are paged, a page ending on a line; text the view's bounds do not hold (one endless
-  line) stays one block of plain text. There is no second, poorer text
-  renderer in the UI.
+  the code view (`inspection::plain`): the language from the name, a
+  gutter, selection, find and copy. A rendered format's source is the
+  same view (`inspection::source`). There is no second, poorer text
+  renderer in the UI: the code view's rows (`code_preview::CodeRow`)
+  draw both it and structured code.
+- **Text is read where it is shown** (ADR-051). `plain` and `source`
+  carry the file (`Inspection::text`) and its first rows, never the
+  whole text, and no page:
+  - Rows (`platform::text_rows`): a row ends with its line or after
+    `LINE_BYTES` at a character boundary. Counting and reading cut rows
+    with one cutter, so they agree. The encoding is decided once, from
+    the file's first bytes; UTF-16 is cut in its own units.
+  - A worker counts the rows into an index of every `STRIDE`th
+    (`text_rows::count`), published a block at a time; the view shows
+    what is counted, and the bar the lines so far ("…" until done).
+  - The view (`text_view.rs`) asks for the chunks around the rows laid
+    out, nearest first, one at a time (`Latest`), never per row or per
+    frame; a bounded cache keeps those near the view. A chunk is read
+    plain first, then colored: from the state the one before it stopped
+    in, else fresh, and again once that state is known (`Chunk::exact`).
+    Nothing waits on colors to show text.
+  - The element (`elements/rows.rs`) scrolls by row and lays out only the
+    rows on screen, in prepaint; it keeps nothing per row. After
+    Ctrl+End it follows the end until moved up, a file written to
+    included. Lines wrap or not (`reading.wrap_lines`); unwrapped, a row
+    shifts its text and keeps its gutter (`CodeRow::shift`).
+  - Find, copy and a line a link names (`file:12`) read the file on a
+    worker (`text_rows::find`, `text`, `row_of_line`): never only what is
+    loaded. Copy stops at `text_view::COPY_BYTES` and says so.
 - HTML files open in the inert reading mode, like Markdown, their source
   one toggle away.
 - Code inspections hold one bounded logical line per block. Fold ranges

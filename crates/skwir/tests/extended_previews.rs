@@ -51,7 +51,7 @@ fn try_inspect(app: &App, path: &Path, view: &InspectRequest) -> Option<Inspecti
         .unwrap()
         .or_else(|| {
             view.source
-                .then(|| skwir_platform::inspection::source(path, view.offset, &cancel).unwrap())
+                .then(|| skwir_platform::inspection::source(path, &cancel).unwrap())
         })
 }
 fn inspect(app: &App, path: &Path, view: &InspectRequest) -> Inspection {
@@ -215,23 +215,23 @@ fn structured_source_toggle_and_invalid_input_remain_readable() {
     let invalid = inspect(&app, &path, &InspectRequest::default());
     assert_eq!(invalid.plain_text(), "{incomplete");
     assert!(invalid.notice.starts_with("Showing source:"));
-    // Bounded fallback remains pageable even for a single huge source line.
+    // Too long a line for the code view: the source, read where it is
+    // shown, the line cut into bounded rows (ADR-051).
     let large = format!("\"{}\"", "a".repeat(40000));
     std::fs::write(&path, &large).unwrap();
-    let first = inspect(&app, &path, &InspectRequest::default());
-    let next = first.next.unwrap();
-    let second = inspect(
-        &app,
-        &path,
-        &InspectRequest {
-            offset: next,
-            ..InspectRequest::default()
-        },
-    );
+    let source = inspect(&app, &path, &InspectRequest::default());
+    assert!(source.notice.starts_with("Showing source:"));
+    assert!(source.text.as_ref().is_some_and(|file| file.whole));
+    assert!(source.blocks.iter().all(|row| row.text.len() <= 4096));
     assert_eq!(
-        format!("{}{}", first.plain_text(), second.plain_text()),
+        source
+            .blocks
+            .iter()
+            .map(|row| row.text.as_str())
+            .collect::<String>(),
         large
     );
+    assert_eq!((source.next, source.title.as_str()), (None, "1 line"));
 }
 
 #[test]

@@ -44,6 +44,8 @@ skrifa = "0.44"
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 percent-encoding = "2"
 encoding_rs = "0.8"
+# Where a text file's lines end, counted at memory speed (`text_rows`).
+memchr.workspace = true
 crossbeam-channel.workspace = true
 rustix = { workspace = true, features = ["process", "event", "system"] }
 futures-lite = "2"

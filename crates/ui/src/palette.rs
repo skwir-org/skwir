@@ -187,6 +187,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         r#"{"action":"source"}"#,
         "Preview: source / rendered",
     ),
+    ("ui.wrap_lines", "{}", "Preview: wrap lines"),
     ("ui.preview_contents", "{}", "Preview: contents"),
     ("ui.preview_copy", "{}", "Preview: copy"),
     ("ui.preview_select_all", "{}", "Preview: select all"),
