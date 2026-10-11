@@ -78,8 +78,11 @@ A name that says nothing is not a binary file.
 
 ## Pictures
 
-- Skwir decodes in-process what `thumb_providers::decodes` lists; a new
-  in-process decoder adds its type there, which keeps the fallback away.
+- Skwir decodes in-process what `thumb_providers::decodes` lists, and
+  `ImageDecoder` thumbnails all of it; a new in-process decoder adds its
+  type there, which keeps the fallback away. A drawing
+  (`thumb_providers::is_drawing`: SVG, plain or compressed) is drawn to
+  the thumbnail's side, enlarged too, by the preview's inert path.
   Other `image/*` types and 3D models (`model/*`, and types the MIME
   database draws as pictures, `pictured`) go to the desktop thumbnailer
   (`thumbnails` plugin, a fallback). Its drawing is final

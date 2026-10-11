@@ -45,7 +45,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   the first push.
 - **Budgets:** idle own share 94.8 MiB of 100 and first frame median
   145.2 ms of 150 (session display, 2026-10-11); `just bench-check`
-  meets all 42 budgets (2026-10-10, load average 4.6).
+  meets all 44 budgets (2026-10-11, load average 3 to 5.5).
 - **Latest work (2026-10-07 to 10-10):** drops that ask, plans that
   pause, copies at a USB drive's pace, hard links as entries (ADR-049),
   archives extracted (ADR-048), then about eighty commits removing work
@@ -356,6 +356,12 @@ dates, measurements and what is left.
     LibreOffice, whose readers there allocate the whole grid; Jupyter
     notebooks as documents. Left out: Radiance HDR and farbfeld (the
     MIME database names neither).
+  - SVG thumbnails (2026-10-11), drawn as the preview draws a drawing.
+    The decoder had refused SVG while `decodes` kept ImageMagick away,
+    so only a desktop thumbnailer drew one. 6,000 of a desktop's SVGs
+    drew in 0.08 ms at 128 px (median; p99 1.2 ms, the slowest 34 ms,
+    Adwaita's blurred `user-trash-full`). A compressed drawing's text
+    was never drawn (text was looked for in the compressed bytes).
   - Mermaid by merman in `skwir-mermaid-worker`: linked into Skwir it
     added 14.7 MB of code (text 51.9 → 66.6 MB), so it is a helper
     (16.3 MB), a default member. Without it a diagram stays code.

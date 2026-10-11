@@ -47,6 +47,10 @@ pub struct Report {
     pub thumbs_cold_per_image: Stat,
     /// Thumbnail pipeline, per image, served from the freedesktop cache written by the cold run.
     pub thumbs_warm_per_image: Stat,
+    /// Thumbnail pipeline, per drawing (SVG), with an empty cache (drawn + write-back).
+    pub thumbs_cold_per_drawing: Stat,
+    /// Thumbnail pipeline, per drawing, served from the cache written by the cold run.
+    pub thumbs_warm_per_drawing: Stat,
     /// The tags plugin's provider over every entry of the directory (tags,
     /// rating, comment and origins from the user attributes), as hydration
     /// and a search run it.
@@ -296,10 +300,11 @@ fn stream(app: &skwir_core::App, path: &Path) -> (Duration, Duration, Duration) 
     (opened, first.unwrap_or(complete), complete)
 }
 
-/// Request thumbnails for `paths` through a fresh app with the providers
-/// the thumbnails plugin registers for images, the cache at `cache`; return
-/// the time until every one is `Ready`, divided by the count.
-fn thumbs_pass(paths: &[std::path::PathBuf], cache: &Path, scratch: &Path) -> Duration {
+/// Request thumbnails for `paths`, of type `mime`, through a fresh app with
+/// the providers the thumbnails plugin registers for images, the cache at
+/// `cache`; return the time until every one is `Ready`, divided by the
+/// count.
+fn thumbs_pass(paths: &[std::path::PathBuf], mime: &str, cache: &Path, scratch: &Path) -> Duration {
     use skwir_core::scheduler::Priority;
     use skwir_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
     use skwir_platform::thumb_providers::{FreedesktopCache, ImageDecoder};
@@ -315,7 +320,7 @@ fn thumbs_pass(paths: &[std::path::PathBuf], cache: &Path, scratch: &Path) -> Du
         .iter()
         .map(|p| ThumbRequest {
             entry: skwir_core::op::EntryRef::from_path(p).expect("stat"),
-            mime: Some("image/png".into()),
+            mime: Some(mime.into()),
             mtime: None,
             size: ThumbSize::Normal,
         })
@@ -342,9 +347,7 @@ fn thumbs_pass(paths: &[std::path::PathBuf], cache: &Path, scratch: &Path) -> Du
     t.elapsed() / u32::try_from(paths.len()).unwrap_or(1)
 }
 
-/// Cold and warm thumbnail timings over the first 200 images of `dir`, each
-/// run with a fresh thumbnail cache beside the trees, on the same disk
-/// (a cache on tmpfs would make write-back look free).
+/// Cold and warm thumbnail timings over the first 200 images of `dir`.
 fn thumbs(root: &Path, dir: &Path, runs: usize) -> (Stat, Stat) {
     let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .expect("images dir")
@@ -354,10 +357,43 @@ fn thumbs(root: &Path, dir: &Path, runs: usize) -> (Stat, Stat) {
         .collect();
     paths.sort();
     paths.truncate(200);
-    let paths: Vec<_> = paths
+    thumbs_timed(root, &canonical(paths), "image/png", runs)
+}
+
+/// Cold and warm thumbnail timings of 200 drawings
+/// (`generate::drawings`), written beside the trees for the measurement
+/// and removed after it.
+fn drawings(root: &Path, runs: usize) -> (Stat, Stat) {
+    let dir = tempfile::Builder::new()
+        .prefix(".drawings-")
+        .tempdir_in(root)
+        .expect("drawings dir");
+    crate::generate::drawings(dir.path(), 200).expect("drawings");
+    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir.path())
+        .expect("drawings dir")
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    paths.sort();
+    thumbs_timed(root, &canonical(paths), "image/svg+xml", runs)
+}
+
+fn canonical(paths: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
+    paths
         .into_iter()
         .map(|p| skwir_core::os_path::canonical(p).expect("canonical"))
-        .collect();
+        .collect()
+}
+
+/// Cold and warm thumbnail timings of `paths`, each run with a fresh
+/// thumbnail cache beside the trees, on the same disk (a cache on tmpfs
+/// would make write-back look free).
+fn thumbs_timed(
+    root: &Path,
+    paths: &[std::path::PathBuf],
+    mime: &str,
+    runs: usize,
+) -> (Stat, Stat) {
     let mut cold = Vec::new();
     let mut warm = Vec::new();
     for _ in 0..runs {
@@ -366,8 +402,8 @@ fn thumbs(root: &Path, dir: &Path, runs: usize) -> (Stat, Stat) {
             .tempdir_in(root)
             .expect("scratch dir");
         let cache = scratch.path().join("thumbnails");
-        cold.push(thumbs_pass(&paths, &cache, scratch.path()));
-        warm.push(thumbs_pass(&paths, &cache, scratch.path()));
+        cold.push(thumbs_pass(paths, mime, &cache, scratch.path()));
+        warm.push(thumbs_pass(paths, mime, &cache, scratch.path()));
     }
     (Stat::of(cold), Stat::of(warm))
 }
@@ -763,6 +799,11 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
     } else {
         (Stat::NONE, Stat::NONE)
     };
+    let (thumbs_cold_per_drawing, thumbs_warm_per_drawing) = if profile == Profile::Images10k {
+        drawings(root, runs)
+    } else {
+        (Stat::NONE, Stat::NONE)
+    };
     let tags = tags_app();
     let tags_fill = match profile {
         Profile::Deep1m => Stat::NONE,
@@ -784,6 +825,8 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         stream_complete: Stat::of(completes),
         thumbs_cold_per_image,
         thumbs_warm_per_image,
+        thumbs_cold_per_drawing,
+        thumbs_warm_per_drawing,
         tags_fill,
         // Measured after every profile (`tag_search`, `tags_check`).
         tag_search: Stat::NONE,
@@ -804,7 +847,7 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         eprintln!("bench: {}: no budgets, skipped", profile.name());
         return true;
     };
-    let measured: [(&str, &Stat); 21] = [
+    let measured: [(&str, &Stat); 23] = [
         ("first_batch_us", &report.first_batch),
         ("list_getdents_us", &report.list_getdents),
         ("list_std_us", &report.list_std),
@@ -816,6 +859,14 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         ("stream_complete_us", &report.stream_complete),
         ("thumbs_cold_per_image_us", &report.thumbs_cold_per_image),
         ("thumbs_warm_per_image_us", &report.thumbs_warm_per_image),
+        (
+            "thumbs_cold_per_drawing_us",
+            &report.thumbs_cold_per_drawing,
+        ),
+        (
+            "thumbs_warm_per_drawing_us",
+            &report.thumbs_warm_per_drawing,
+        ),
         ("tags_fill_us", &report.tags_fill),
         ("tag_search_us", &report.tag_search),
         ("tags_check_us", &report.tags_check),

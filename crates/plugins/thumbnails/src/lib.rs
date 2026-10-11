@@ -474,6 +474,42 @@ mod tests {
         assert!(app.thumbnails.provider_ids().is_empty());
     }
 
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[allow(unsafe_code)]
+    fn draws_a_drawing_and_writes_it_back_to_the_cache() {
+        let cache = tempfile::tempdir().unwrap();
+        // SAFETY: one test per process under nextest; the env is ours.
+        unsafe { std::env::set_var("XDG_CACHE_HOME", cache.path()) };
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins.add(Arc::new(ThumbnailsPlugin::default()), &app);
+        let drawing = tmp.path().join("a drawing’s name.svg");
+        std::fs::write(
+            &drawing,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">
+                <rect width="40" height="20" fill="#ff0000"/></svg>"##,
+        )
+        .unwrap();
+        let src = skwir_core::os_path::canonical(&drawing).unwrap();
+        // Typed by its name, as a row asks.
+        let req = ThumbRequest {
+            entry: EntryRef::from_path(&src).unwrap(),
+            mime: None,
+            mtime: None,
+            size: ThumbSize::Normal,
+        };
+        let img = wait_ready(&app.thumbnails, &req);
+        assert_eq!((img.width, img.height), (128, 64), "drawn to the side");
+        assert_eq!(&img.rgba[..4], &[255, 0, 0, 255]);
+        let cached = cache
+            .path()
+            .join("thumbnails/normal")
+            .join(format!("{}.png", skwir_platform::thumbnails::key(&src)));
+        assert!(cached.exists(), "drawn once, for every application");
+    }
+
     /// A provider slow enough that ordering is observable, logging completions.
     struct Slow(parking_lot::Mutex<Vec<u64>>);
 

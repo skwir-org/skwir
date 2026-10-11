@@ -169,6 +169,46 @@ fn images(dir: &Path, n: u64) -> Result<()> {
     })
 }
 
+/// `n` drawings for the thumbnail measurement, written into `dir`, not a
+/// profile's tree. Drawn as an icon theme's full-color icons are: a
+/// gradient, filled and stroked curves, and on every tenth a blurred
+/// shadow, what costs most. No text: its cost is the machine's fonts'.
+pub fn drawings(dir: &Path, n: u32) -> Result<()> {
+    use std::fmt::Write as _;
+    const SIZE: u32 = 96;
+    let color = |(r, g, b): (u8, u8, u8)| format!("#{r:02x}{g:02x}{b:02x}");
+    for i in 0..n {
+        let hue = (i * 37 % 360) as f32;
+        let (light, dark) = (color(hsv(hue, 0.7, 0.9)), color(hsv(hue, 0.7, 0.45)));
+        let mut svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{SIZE}" height="{SIZE}"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{light}"/><stop offset="1" stop-color="{dark}"/></linearGradient><filter id="s" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3"/></filter></defs>"#
+        );
+        if i % 10 == 0 {
+            svg.push_str(r##"<rect x="10" y="16" width="80" height="72" rx="8" fill="#000" opacity="0.3" filter="url(#s)"/>"##);
+        }
+        svg.push_str(r##"<rect x="8" y="12" width="80" height="72" rx="8" fill="url(#g)" stroke="#000" stroke-opacity="0.2"/><circle cx="48" cy="44" r="18" fill="#fff" fill-opacity="0.85"/>"##);
+        for k in 0..24 {
+            let at = |step: u32| 12 + (k * step + i) % 72;
+            write!(
+                svg,
+                r##"<path d="M{} {} C{} {} {} {} {} {}" fill="none" stroke="#fff" stroke-opacity="0.6" stroke-width="{}" stroke-linecap="round"/>"##,
+                at(7),
+                at(11),
+                at(13),
+                at(5),
+                at(17),
+                at(19),
+                at(23),
+                at(3),
+                1 + k % 3
+            )?;
+        }
+        svg.push_str("</svg>");
+        fs::write(dir.join(format!("drawing-{i:03}.svg")), svg)?;
+    }
+    Ok(())
+}
+
 fn hsv(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
     let c = v * s;
     let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());

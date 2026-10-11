@@ -183,7 +183,8 @@ The player, in the panel or pinned at its foot:
 ### Pictures
 
 - Decoded in Skwir: PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, QOI, TGA, PNM,
-  OpenEXR, DDS. SVG drawings are drawn, sharper as they are zoomed.
+  OpenEXR, DDS. SVG drawings (`.svg`, `.svgz`) are drawn, thumbnails
+  included, and sharper as the preview is zoomed.
 - Other kinds (HEIC, AVIF, JPEG XL, a camera's raw file) are shown as
   the desktop's thumbnailer for them draws them, at most 1024 pixels,
   when one is installed (`thumbnails` plugin). Otherwise ImageMagick

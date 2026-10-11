@@ -216,7 +216,8 @@ pub fn tools_stamp() -> &'static str {
 
 // ------------------------------------------------------------- image decoder
 
-/// Decodes raster images in-process with the `image` crate.
+/// Decodes in-process what `decodes` lists: rasters with the `image`
+/// crate, drawings with resvg.
 #[derive(Debug, Clone, Default)]
 pub struct ImageDecoder;
 
@@ -240,10 +241,21 @@ static RASTERS: crate::mime::Types = crate::mime::Types::new(&[
     "image/x-dds",
 ]);
 
+/// The drawings resvg draws: SVG, plain or compressed.
+static DRAWINGS: crate::mime::Types =
+    crate::mime::Types::new(&["image/svg+xml", "image/svg+xml-compressed"]);
+
 /// Whether skwir decodes pictures of type `mime` itself: a raster the
-/// `image` crate reads, or a drawing (`inspection::drawing`).
+/// `image` crate reads, or a drawing (`is_drawing`). What it lists,
+/// `ImageDecoder` thumbnails and the fallbacks leave alone.
 pub fn decodes(mime: &str) -> bool {
-    raster(mime) || matches!(mime, "image/svg+xml" | "image/svg+xml-compressed")
+    raster(mime) || is_drawing(mime)
+}
+
+/// Whether a file of type `mime` is a drawing, read by
+/// `inspection::read_drawing` and drawn by `inspection::drawing`.
+pub fn is_drawing(mime: &str) -> bool {
+    DRAWINGS.contains(mime)
 }
 
 fn raster(mime: &str) -> bool {
@@ -259,11 +271,14 @@ impl ThumbnailProvider for ImageDecoder {
     }
 
     fn accepts(&self, req: &ThumbRequest) -> bool {
-        mime_of(req).is_some_and(|m| raster(&m))
+        mime_of(req).is_some_and(|m| decodes(&m))
     }
 
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
         let path = &req.entry.path;
+        if mime_of(req).is_some_and(|m| is_drawing(&m)) {
+            return drawn_to(path, req.size.pixels(), cancel);
+        }
         let open =
             || crate::picture::open(path).with_context(|| format!("open {}", path.display()));
         let (w, h) = open()?.into_dimensions()?;
@@ -277,6 +292,22 @@ impl ThumbnailProvider for ImageDecoder {
         }
         Ok(Some(fit(img, req.size.pixels())))
     }
+}
+
+/// A drawing at `pixels` on its longer side, enlarged too, as a drawing
+/// has as many pixels as it is asked for: as inert as the preview's,
+/// nothing outside it read.
+fn drawn_to(path: &Path, pixels: u32, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
+    let bytes = crate::inspection::read_drawing(path, cancel)?;
+    let drawn = crate::inspection::drawing_within(&bytes, pixels)?;
+    if cancel.is_cancelled() {
+        return Ok(None);
+    }
+    Ok(Some(Image {
+        width: drawn.width,
+        height: drawn.height,
+        rgba: drawn.rgba.into(),
+    }))
 }
 
 // ------------------------------------------------------------- thumbnailers
@@ -803,7 +834,7 @@ mod tests {
     // Types from the free desktops' database (step E, ADR-035).
     #[cfg(target_os = "linux")]
     #[test]
-    fn image_decoder_accepts_by_mime_or_extension_only_for_rasters() {
+    fn image_decoder_accepts_by_mime_or_extension_what_skwir_decodes() {
         let r = |p: &str, mime: Option<&str>| ThumbRequest {
             entry: EntryRef::new(skwir_core::FileId { dev: 0, ino: 0 }, p),
             mime: mime.map(Into::into),
@@ -812,11 +843,56 @@ mod tests {
         };
         assert!(ImageDecoder.accepts(&r("/x/a.png", None)));
         assert!(ImageDecoder.accepts(&r("/x/a.bin", Some("image/jpeg"))));
-        assert!(
-            !ImageDecoder.accepts(&r("/x/a.svg", None)),
-            "svg is not decodable here"
-        );
+        assert!(ImageDecoder.accepts(&r("/x/a.svg", None)), "a drawing");
+        assert!(ImageDecoder.accepts(&r("/x/a.svgz", None)), "compressed");
         assert!(!ImageDecoder.accepts(&r("/x/a.txt", None)));
+        assert!(
+            !ImageDecoder.accepts(&r("/x/a.heic", None)),
+            "left to the thumbnailers"
+        );
+    }
+
+    #[test]
+    fn image_decoder_draws_a_drawing_to_the_thumbnail_side() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        // Small, and wider than tall: a drawing is enlarged to the side.
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="8">
+            <rect width="16" height="8" fill="#ff0000"/></svg>"##;
+        let plain = tmp.path().join("l'été en vrac.svg");
+        std::fs::write(&plain, svg).unwrap();
+        let compressed = tmp.path().join("l'été en vrac.svgz");
+        let mut gzip = flate2::write::GzEncoder::new(
+            std::fs::File::create(&compressed).unwrap(),
+            flate2::Compression::default(),
+        );
+        gzip.write_all(svg).unwrap();
+        gzip.finish().unwrap();
+        for (path, mime, size, side) in [
+            (&plain, "image/svg+xml", CoreSize::Normal, 128),
+            (&plain, "image/svg+xml", CoreSize::Large, 256),
+            (
+                &compressed,
+                "image/svg+xml-compressed",
+                CoreSize::Normal,
+                128,
+            ),
+        ] {
+            let req = ThumbRequest {
+                entry: EntryRef::from_path(path).unwrap(),
+                mime: Some(mime.into()),
+                mtime: None,
+                size,
+            };
+            assert!(ImageDecoder.accepts(&req));
+            let img = ImageDecoder
+                .thumbnail(&req, &CancelToken::new())
+                .unwrap()
+                .unwrap();
+            assert_eq!((img.width, img.height), (side, side / 2), "{path:?}");
+            assert!(img.is_whole());
+            assert_eq!(&img.rgba[..4], &[255, 0, 0, 255]);
+        }
     }
 
     // The freedesktop thumbnailers and cache (step G, ADR-035).

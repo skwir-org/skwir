@@ -69,6 +69,10 @@ mime_by_name_us = 80_000
 # Thumbnail pipeline over 200 images on 8 workers, wall-clock per image.
 thumbs_cold_per_image_us = 250
 thumbs_warm_per_image_us = 100
+# The same over 200 drawings (`generate::drawings`), drawn at 128 px:
+# 0.7 ms each alone, heavier than nine in ten of a desktop's SVGs.
+thumbs_cold_per_drawing_us = 1_000
+thumbs_warm_per_drawing_us = 100
 # The tags plugin's provider over 10,000 images, one in ten with tags, a
 # rating and a comment.
 tags_fill_us = 120_000

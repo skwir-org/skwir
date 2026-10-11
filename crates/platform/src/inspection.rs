@@ -713,7 +713,7 @@ fn svg_tree(bytes: &[u8]) -> anyhow::Result<resvg::usvg::Tree> {
     };
     xml_depth(text)?;
     let mut options = resvg::usvg::Options::default();
-    if bytes.windows(5).any(|window| window == b"<text") {
+    if text.windows(5).any(|window| window == b"<text") {
         options.fontdb = std::sync::Arc::clone(system_fonts());
     }
     options.image_href_resolver.resolve_string = Box::new(|_, _| None);
@@ -1068,15 +1068,26 @@ mod tests {
         );
     }
 
+    fn gzip(bytes: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(bytes).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn a_compressed_drawings_text_is_set_as_the_plain_drawings() {
+        // Equal with the system's fonts or without: text was looked for in
+        // the compressed bytes, so a compressed drawing's was never drawn.
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="60">
+            <text x="10" y="40" font-family="sans-serif" font-size="32">Hello</text></svg>"#;
+        let plain = drawing(svg.as_bytes(), None).unwrap();
+        let compressed = drawing(&gzip(svg.as_bytes()), None).unwrap();
+        assert!(plain.rgba == compressed.rgba, "the same text, drawn alike");
+    }
+
     #[test]
     fn a_compressed_drawing_is_inflated_within_bounds() {
-        use std::io::Write;
-        let gzip = |bytes: &[u8]| {
-            let mut encoder =
-                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-            encoder.write_all(bytes).unwrap();
-            encoder.finish().unwrap()
-        };
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("drawing.svgz");
         std::fs::write(&path, gzip(DRAWING.as_bytes())).unwrap();

@@ -666,7 +666,7 @@ fn opens_as_pages(shell: &Shell) -> bool {
 /// drawing's, from its document.
 fn image_size(path: &Path, mime: &str, cancel: &CancelToken) -> Option<(u32, u32)> {
     use skwir_platform::inspection;
-    if matches!(mime, "image/svg+xml" | "image/svg+xml-compressed") {
+    if skwir_platform::thumb_providers::is_drawing(mime) {
         return inspection::drawing_size(&inspection::read_drawing(path, cancel).ok()?).ok();
     }
     skwir_platform::picture::size(skwir_platform::picture::open(path).ok()?).ok()
@@ -836,7 +836,7 @@ fn compute(
         };
     }
     let top = mime.and_then(|m| m.split('/').next()).unwrap_or("");
-    if matches!(mime, Some("image/svg+xml" | "image/svg+xml-compressed")) {
+    if mime.is_some_and(skwir_platform::thumb_providers::is_drawing) {
         return decode_drawing(path, picture_side, cancel)
             .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
     }
