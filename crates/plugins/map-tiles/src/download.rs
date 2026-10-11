@@ -184,7 +184,7 @@ impl Downloads {
             user_agent: format!(
                 "skwir/{} (+{})",
                 env!("CARGO_PKG_VERSION"),
-                env!("CARGO_PKG_REPOSITORY")
+                env!("CARGO_PKG_HOMEPAGE")
             ),
         }
     }

@@ -22,8 +22,8 @@
   </description>
   <launchable type="desktop-id">org.skwir.skwir.desktop</launchable>
   <url type="homepage">https://skwir.org</url>
-  <url type="bugtracker">https://github.com/skwir-org/skwir/issues</url>
-  <url type="vcs-browser">https://github.com/skwir-org/skwir</url>
+  <url type="bugtracker">https://skwir.org/issues</url>
+  <url type="vcs-browser">https://skwir.org/source</url>
   <provides>
     <binary>skwir</binary>
   </provides>

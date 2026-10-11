@@ -37,9 +37,9 @@ nextest first runs `tools/test/isolate-xdg.sh`, so tests never touch your
 Trash, settings or cache; on Windows Git's `sh` runs it, as in CI. A failing
 test is a finding: report which and what it printed.
 
-**Report** with the [macOS or Windows issue
-form](https://github.com/skwir-org/skwir/issues/new?template=other-system.yml),
-naming the step (for example "macOS 3, Files"). Include:
+**Report** in [the issue tracker](https://skwir.org/issues): open a new
+issue with its "macOS or Windows" form, naming the step (for example
+"macOS 3, Files"). Include:
 
 - the system's version and the machine (processor, GPU);
 - what you did, what you expected, what happened;

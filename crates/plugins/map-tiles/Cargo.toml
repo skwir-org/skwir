@@ -5,8 +5,9 @@ publish.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-# Named in the User-Agent, as the tile policy asks.
-repository.workspace = true
+# Named in the User-Agent, as the tile policy asks: the project's own
+# domain, a contact that stays whoever hosts the code.
+homepage.workspace = true
 
 [dependencies]
 skwir-core.workspace = true

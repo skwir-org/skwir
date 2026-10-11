@@ -1,7 +1,13 @@
 //! About skwir (`ui.about`, in More and the palette): its icon, name,
-//! version and licence, the way to its website and to the licences its
-//! package installed, and what a report of a problem asks of the system
-//! it runs on (`.github/ISSUE_TEMPLATE/problem.yml`), copied in one click.
+//! version and licence, the way to its website, its source code and the
+//! licences its package installed, and what a report of a problem asks of
+//! the system it runs on (`.github/ISSUE_TEMPLATE/problem.yml`), copied in
+//! one click.
+//!
+//! Both lead to the project's own domain, which does not change: Source
+//! code to its `/source`, which the site redirects to wherever the code is
+//! hosted (skwir-site's `static/_redirects`). A move of the code changes
+//! the site, never a release already installed.
 //!
 //! The system's own name and where the licences are installed are read on
 //! a worker (`skwir_platform::about`) and the dialog opens with them, so
@@ -27,7 +33,8 @@ use crate::theme::Theme;
 /// stop About draws after them.
 const SUMMARY: &str = "An augmented file manager, for humans and agents";
 const LICENCE: &str = env!("CARGO_PKG_LICENSE");
-const WEBSITE: &str = env!("CARGO_PKG_REPOSITORY");
+const WEBSITE: &str = env!("CARGO_PKG_HOMEPAGE");
+const SOURCE: &str = concat!(env!("CARGO_PKG_HOMEPAGE"), "/source");
 
 /// The version as `skwir --version` says it, and whether it is a build
 /// for development, slower than a release.
@@ -42,9 +49,11 @@ fn version() -> String {
 
 pub struct About {
     focus: FocusHandle,
-    /// Copy details, Website, Licences: what Tab walks, of those shown.
+    /// Copy details, Website, Source code, Licences: what Tab walks, of
+    /// those shown.
     copy: FocusHandle,
     website: FocusHandle,
+    source: FocusHandle,
     licences_button: FocusHandle,
     previous: FocusReturn,
     /// What a report says of where skwir runs: a label and its value.
@@ -58,6 +67,9 @@ impl About {
         let mut buttons = vec![&self.copy];
         if !WEBSITE.is_empty() {
             buttons.push(&self.website);
+        }
+        if !SOURCE.is_empty() {
+            buttons.push(&self.source);
         }
         if self.licences.is_some() {
             buttons.push(&self.licences_button);
@@ -132,6 +144,7 @@ impl Shell {
                     focus,
                     copy: cx.focus_handle(),
                     website: cx.focus_handle(),
+                    source: cx.focus_handle(),
                     licences_button: cx.focus_handle(),
                     previous,
                     facts,
@@ -210,7 +223,9 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 )),
         );
     }
-    let mut buttons = div().flex().justify_end().gap_2().child(
+    // Four buttons fill the row; one that does not fit goes to the next
+    // line rather than out of the panel.
+    let mut buttons = div().flex().flex_wrap().justify_end().gap_2().child(
         controls::button(
             "about-copy",
             "Copy details",
@@ -236,6 +251,21 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .on_click(cx.listener(|this, _, _, cx| this.open_address(WEBSITE, cx))),
         );
     }
+    if !SOURCE.is_empty() {
+        let font = shell.font.clone();
+        buttons = buttons.child(
+            controls::button(
+                "about-source",
+                "Source code",
+                Some("code"),
+                ButtonStyle::Plain,
+                &about.source,
+                &theme,
+            )
+            .tooltip(move |_, cx| crate::toolbar::tooltip(SOURCE.into(), font.clone(), cx))
+            .on_click(cx.listener(|this, _, _, cx| this.open_address(SOURCE, cx))),
+        );
+    }
     if about.licences.is_some() {
         buttons = buttons.child(
             controls::button(
@@ -249,7 +279,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .on_click(cx.listener(|this, _, window, cx| this.show_licences(window, cx))),
         );
     }
-    let panel = modal::panel(460., &theme)
+    let panel = modal::panel(520., &theme)
         .p_5()
         .gap_4()
         .line_height(px(20.))
@@ -302,7 +332,18 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SUMMARY, details, graphics};
+    use super::{SOURCE, SUMMARY, WEBSITE, details, graphics};
+
+    #[test]
+    fn the_website_is_the_projects_own_domain() {
+        // The application id is the domain reversed (`org.skwir.skwir`):
+        // About leads there, never to where the code happens to be hosted
+        // (the site redirects /source there).
+        let mut parts = skwir_core::APP_ID.split('.');
+        let (tld, name) = (parts.next().unwrap(), parts.next().unwrap());
+        assert_eq!(WEBSITE, format!("https://{name}.{tld}"));
+        assert_eq!(SOURCE, format!("{WEBSITE}/source"));
+    }
 
     #[test]
     fn about_and_every_package_say_skwir_in_the_same_words() {

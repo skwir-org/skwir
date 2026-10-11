@@ -31,8 +31,8 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 
 ## Current status (2026-10-11)
 
-- **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`,
-  repository `github.com/skwir-org/skwir`), version 0.1.0. Phases 0 to
+- **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
+  version 0.1.0. Phases 0 to
   4, 5a and 6 pass their gates. Maps and Notes everywhere are built, as
   is much that no phase planned
   ([Built beyond the plan](#built-beyond-the-plan)).

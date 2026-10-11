@@ -6,7 +6,7 @@ releases](docs/HELP-WANTED.md) need you most.
 
 ## Reporting a problem
 
-Open an issue with:
+Open an issue in [the tracker](https://skwir.org/issues) with:
 
 - your system and its version (More › About Skwir › Copy details);
 - what you did, what you expected, and what happened;

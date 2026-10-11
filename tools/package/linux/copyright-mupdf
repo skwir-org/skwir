@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: skwir
-Source: https://github.com/skwir-org/skwir
+Source: https://skwir.org/source
 Comment: skwir-mupdf-worker, skwir's own code (Apache-2.0), links
  MuPDF (AGPL-3.0-or-later, Artifex Software), whose source the mupdf-sys
  crate bundles: the program is distributed under the AGPL, its source

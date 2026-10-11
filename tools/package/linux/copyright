@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: skwir
-Source: https://github.com/skwir-org/skwir
+Source: https://skwir.org/source
 Comment: skwir's own code is under the Apache License 2.0. It carries PDFium
  (usr/lib/skwir/libpdfium.so, ADR-041), a build of bblanchon's
  pdfium-binaries under PDFium's licence (BSD-3-Clause) with those of what

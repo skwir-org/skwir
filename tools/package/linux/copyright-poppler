@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: skwir
-Source: https://github.com/skwir-org/skwir
+Source: https://skwir.org/source
 Comment: skwir-poppler-worker, skwir's own code (Apache-2.0), links
  Poppler, whose core is under the GPL version 2 or 3 and the rest under
  version 2 or later: code under the Apache License can join it only

@@ -5,8 +5,9 @@ version.workspace = true
 publish.workspace = true
 edition.workspace = true
 license.workspace = true
-# The website About links to.
-repository.workspace = true
+# Where About's Website and Source code (its /source) lead: the project's
+# own domain, whoever hosts the code.
+homepage.workspace = true
 rust-version.workspace = true
 
 [dependencies]
