@@ -353,9 +353,10 @@ pub fn text(path: &Path, cancel: &CancelToken) -> anyhow::Result<String> {
     read_text(path, cancel).map(|(text, _)| text)
 }
 /// A file's own text behind a rendered presentation, one page at a time.
+/// It says what any text file says (`plain`): the toolbar's Source, lit,
+/// says it is the source.
 pub fn source(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<Inspection> {
-    let mut data = lines(path, offset, limits::SOURCE_PAGE, cancel)?;
-    data.title = format!("Source · byte {}", data.position);
+    let mut data = paged(path, offset, limits::SOURCE_PAGE, cancel)?;
     data.source_available = true;
     Ok(data)
 }
@@ -363,7 +364,18 @@ pub fn source(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<
 /// Any text file that has no presentation of its own. It is the same view as
 /// `source`, so every text file is read, searched and copied the same way.
 pub fn plain(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<Inspection> {
-    let mut data = lines(path, offset, limits::TEXT_PAGE, cancel)?;
+    paged(path, offset, limits::TEXT_PAGE, cancel)
+}
+
+/// A page of at most `page` bytes of a text file, titled by its lines, and
+/// how to move through the file when it is more than one page.
+fn paged(
+    path: &Path,
+    offset: u64,
+    page: usize,
+    cancel: &CancelToken,
+) -> anyhow::Result<Inspection> {
+    let mut data = lines(path, offset, page, cancel)?;
     let count = data.blocks.len();
     data.title = match (data.position, count) {
         (0, 1) => "1 line".into(),
@@ -373,7 +385,7 @@ pub fn plain(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<I
     if data.next.is_some() || data.position > 0 {
         let paged = format!(
             "Shown {} at a time · [ and ] move through the file",
-            limits::describe(limits::TEXT_PAGE)
+            limits::describe(page)
         );
         data.notice = if data.notice.is_empty() {
             paged
@@ -1131,7 +1143,12 @@ mod tests {
         assert_eq!(data.blocks[0].text, "fn main() {");
         assert_eq!(data.blocks[1].language.as_deref(), Some("rs"));
         assert!(data.notice.is_empty() && !data.source_available);
-        assert!(source(&path, 0, &cancel).unwrap().source_available);
+        let shown = source(&path, 0, &cancel).unwrap();
+        assert!(shown.source_available);
+        assert_eq!(
+            shown.title, "3 lines",
+            "said as any text is, never by offset"
+        );
 
         // A file of several pages: every page ends on a line, none is lost.
         let long = dir.path().join("Makefile");

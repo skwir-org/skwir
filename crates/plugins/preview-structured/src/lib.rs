@@ -60,6 +60,8 @@ impl PreviewProvider for Provider {
             Err(error) if !cancel.is_cancelled() => {
                 let mut source = inspection::source(&path, view.offset, cancel)?;
                 source.notice = format!("Showing source: {error}");
+                // Nothing else to switch to.
+                source.source_available = false;
                 Ok(Some(source))
             }
             Err(error) => Err(error),
@@ -94,7 +96,10 @@ fn code(
         }
         _ => None,
     };
-    let text = if let Some(value) = parsed.filter(|_| language == "json" && !original) {
+    // Only JSON is printed again (indented, its keys in order): elsewhere
+    // the file is shown as written, and its source would be the same.
+    let printed = language == "json" && parsed.is_some();
+    let text = if let Some(value) = parsed.filter(|_| printed && !original) {
         let mut pending = vec![(&value, 0)];
         let mut count = 0;
         while let Some((node, depth)) = pending.pop() {
@@ -153,14 +158,14 @@ fn code(
         .collect();
     Ok(Inspection {
         kind: InspectionKind::Code,
-        title: format!(
-            "{} · {}",
-            language.to_ascii_uppercase(),
-            if original { "Source" } else { "Code" }
-        ),
+        title: if printed && !original {
+            format!("{} · formatted", language.to_ascii_uppercase())
+        } else {
+            language.to_ascii_uppercase()
+        },
         blocks,
         folds,
-        source_available: true,
+        source_available: printed,
         ..Inspection::default()
     })
 }
@@ -184,9 +189,12 @@ mod tests {
         );
         assert_eq!(data.folds.len(), 3);
         assert_eq!(data.folds[0], 0..data.blocks.len() - 1);
+        assert_eq!(data.title, "JSON · formatted");
         let raw = code(source, "json", true, &CancelToken::new()).unwrap();
         assert_eq!(raw.plain_text(), source);
         assert!(raw.folds.is_empty());
+        assert_eq!(raw.title, "JSON");
+        assert!(data.source_available && raw.source_available);
     }
 
     #[test]
@@ -199,6 +207,7 @@ mod tests {
             assert_eq!(data.plain_text(), source, "{language} keeps its comments");
             assert_eq!(data.folds, [0..6, 2..4]);
             assert_eq!(data.blocks[0].language.as_deref(), Some("json"));
+            assert!(!data.source_available, "its source is what is shown");
         }
         let error = code(
             "{ \"a\": // no value\n }",
@@ -232,6 +241,11 @@ mod tests {
         let data = code(source, "toml", false, &CancelToken::new()).unwrap();
         assert_eq!(data.plain_text(), source);
         assert_eq!(data.folds, [1..11, 2..5, 6..9, 11..13, 13..16]);
+        assert_eq!(data.title, "TOML");
+        assert!(
+            !data.source_available,
+            "shown as written: no source to switch to"
+        );
     }
 
     #[test]

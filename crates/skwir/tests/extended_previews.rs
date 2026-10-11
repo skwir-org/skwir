@@ -148,6 +148,9 @@ fn markdown_styles_source_and_plugin_fallback() {
         },
     );
     assert!(source.plain_text().contains("**bold**"));
+    // Said as any text is: the lit Source says it is the source.
+    assert_eq!(source.title, "12 lines");
+    assert!(source.source_available, "and switches back");
     assert!(app.plugins.set_enabled("preview-markdown", false, &app));
     // Text is never the byte view's: with Markdown off, nothing claims the
     // file and the worker shows it as the plain code view.

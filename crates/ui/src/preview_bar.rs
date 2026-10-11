@@ -35,6 +35,7 @@ pub mod label {
     pub const FIT_WIDTH: &str = "Fit width";
     pub const CONTENTS: &str = "Contents";
     pub const FIND: &str = "Find";
+    pub const SOURCE: &str = "Source";
     pub const HEX: &str = "View as hex";
     pub const ZOOM: &str = "Zoom and fit";
     pub const MORE: &str = "More";

@@ -496,8 +496,9 @@ is still to come are in `docs/preview-frame.md`.
      book's numbered sections alike, `Inspection::sections`);
   4. view: zoom or text size (smaller, the value as a picker, larger);
      Fit width for a page or Full width for text; the presentation (the
-     reader's Continuous, or the format's name as the switch between
-     rendered and source);
+     reader's Continuous, or Source, lit while the file's own text is
+     shown), then what is shown says itself (`Inspection::title`: the
+     format's name, a page's lines);
   5. spacer, find, More;
   6. the × that leaves a member (`preview_bar::close_tool`), the same for
      every kind, also for a member that could not be written out, whose
@@ -512,6 +513,11 @@ is still to come are in `docs/preview-frame.md`.
   text's twin is the inspector's text size picker (`text_size_panel`, a
   popup of kind `text`).
 - Shared actions take their words from `preview_bar::label`.
+- A button's label names what it does or shows, never the state it
+  leaves: Source is Source in both states, lit while on. A provider
+  offers it (`Inspection::source_available`) only where the file's own
+  text differs from what is shown: YAML, TOML and JSON shown as written
+  have none.
 - **The menu rule** is every responsive toolbar's. More holds the
   buttons the chosen variant dropped (`PopoverAnchor::popup_for`), a
   kind's settings that never have a button (volume, speed, tracks), and
@@ -673,8 +679,8 @@ is still to come are in `docs/preview-frame.md`.
 - **One text path.** Any text file without a presentation of its own is
   the code view (`inspection::plain`): a block per line, the language
   from the name, a gutter, selection, find and copy. A rendered format's
-  source is the same view (`inspection::source`). Both are paged, a page
-  ending on a line; text the view's bounds do not hold (one endless
+  source is the same view (`inspection::source`), titled the same way
+  (its lines). Both are paged, a page ending on a line; text the view's bounds do not hold (one endless
   line) stays one block of plain text. There is no second, poorer text
   renderer in the UI.
 - HTML files open in the inert reading mode, like Markdown, their source

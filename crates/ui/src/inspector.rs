@@ -1946,13 +1946,10 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                 .active(shell.reading_measure.is_none()),
         ));
     }
-    // How the file is shown, after its size, as a document's Continuous is.
-    // The name of the presentation is the switch to the other one:
-    // "Markdown" shows the source, "Source" the document again.
-    let (name, rest) = data
-        .title
-        .split_once(" · ")
-        .map_or((data.title.as_str(), ""), |(name, rest)| (name, rest));
+    // How the file is shown, after its size, as a document's Continuous is:
+    // Source, lit while the file's own text is shown, never named after
+    // the state it is in. What is shown says itself beside it, rendered or
+    // not (a format's name, a page's lines).
     if request.provider.is_some() {
         bar.push(Item::button(
             Slot::View,
@@ -1968,18 +1965,14 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                 "inspect-source",
                 "code",
                 // One wording for both states: a tooltip outlives the click.
-                "Switch between rendered and source",
+                "The file's own text, as written",
                 "source",
             )
-            .label(if request.source { "Source" } else { name }.to_owned())
+            .label(label::SOURCE)
             .active(request.source),
         ));
     }
-    let caption = if data.source_available {
-        rest
-    } else {
-        data.title.as_str()
-    };
+    let caption = data.title.as_str();
     // Numbered sections say where they are in their field.
     if !caption.is_empty() && !numbered {
         let (caption, muted) = (caption.to_owned(), theme.text_muted);

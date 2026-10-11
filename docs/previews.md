@@ -81,12 +81,13 @@ The player, in the panel or pinned at its foot:
 
 ### Structured data (`preview-structured`)
 
-- JSON, YAML and TOML with syntax colors, line numbers, folding and a
-  source toggle. Click a gutter arrow to fold an object, array or
-  section; the bar expands or collapses all.
-- JSON is formatted with two-space indentation; Source shows its
-  original formatting. TOML and YAML keep their syntax, indentation,
-  comments and order.
+- JSON, YAML and TOML with syntax colors, line numbers and folding.
+  Click a gutter arrow to fold an object, array or section; the bar
+  expands or collapses all.
+- JSON is formatted with two-space indentation, its keys in order;
+  Source shows its original formatting. TOML and YAML are shown as
+  written (syntax, indentation, comments and order), so they have no
+  Source to switch to.
 - JSON with comments or trailing commas (JSONC, `tsconfig.json`) and
   JSON5 are never reformatted: shown as written, folded where their
   brackets say.

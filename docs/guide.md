@@ -237,6 +237,9 @@ PDFs and office documents, books, comics, e-mail, notebooks, pictures,
 audio and video, fonts, 3D models, circuit boards, maps and tracks,
 archives, and the bytes of any file.
 
+- A file shown other than as written (Markdown, a table, a map, JSON
+  formatted) has **Source** in the bar: lit, it shows the file's own
+  text; pressed again, the rendered view.
 - A link in a document opens with a click; an address found in plain
   text with `Ctrl+click`.
 - Music and video can keep playing while you browse, in a player at the
