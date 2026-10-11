@@ -66,6 +66,12 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 serde_json.workspace = true
 
+# skwir.exe's icon, drawn from the UI's own and embedded when built on
+# Windows (build.rs).
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
+resvg = { version = "0.45", default-features = false }
+
 [lints]
 workspace = true
 
@@ -82,7 +88,8 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 # The Linux packages (ADR-040, ADR-041): skwir in /usr/bin, its helpers
 # where a distribution keeps a program's own (`process::helper_folders`),
-# PDFium beside its helper, the desktop entry and the metainfo. Built on
+# PDFium beside its helper, the desktop entry, the metainfo and the icon
+# (the UI's own, crates/ui/assets/org.skwir.skwir.svg). Built on
 # the distribution each is for, whose libraries they depend on:
 # tools/package/deb.sh, rpm.sh, and the AUR's tools/package/aur/PKGBUILD,
 # which lists the same files. A helper whose libraries most systems do
@@ -117,6 +124,7 @@ assets = [
     ["../../target/pdfium/licenses/pdfium/*", "usr/share/doc/skwir/pdfium/", "644"],
     ["../../tools/package/linux/org.skwir.skwir.desktop", "usr/share/applications/", "644"],
     ["../../tools/package/linux/org.skwir.skwir.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["../../crates/ui/assets/org.skwir.skwir.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["../../tools/package/linux/copyright", "usr/share/doc/skwir/copyright", "644"],
     ["../../target/notices/skwir/THIRD-PARTY-NOTICES", "usr/share/doc/skwir/", "644"],
     ["../../README.md", "usr/share/doc/skwir/", "644"],
@@ -193,6 +201,7 @@ assets = [
     { source = "../../target/pdfium/licenses/pdfium/*", dest = "/usr/share/licenses/skwir/pdfium/", mode = "644" },
     { source = "../../tools/package/linux/org.skwir.skwir.desktop", dest = "/usr/share/applications/org.skwir.skwir.desktop", mode = "644" },
     { source = "../../tools/package/linux/org.skwir.skwir.metainfo.xml", dest = "/usr/share/metainfo/org.skwir.skwir.metainfo.xml", mode = "644" },
+    { source = "../../crates/ui/assets/org.skwir.skwir.svg", dest = "/usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg", mode = "644" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/skwir/LICENSE", mode = "644" },
     { source = "../../target/notices/skwir/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir/THIRD-PARTY-NOTICES", mode = "644" },
     { source = "../../README.md", dest = "/usr/share/doc/skwir/README.md", mode = "644", doc = true },

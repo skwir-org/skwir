@@ -41,6 +41,16 @@ cp LICENSE "$app/Contents/Resources/licenses/"
 # (with Homebrew's update-mime-database: brew install shared-mime-info).
 mkdir -p "$app/Contents/Resources/share"
 tools/package/mime-database.sh "$app/Contents/Resources/share/mime"
+# The icon (the UI's own, crates/ui/assets/org.skwir.skwir.svg) at every
+# side an .icns holds, drawn by librsvg (brew install librsvg).
+iconset="$out/skwir.iconset"
+rm -rf "$iconset"
+mkdir -p "$iconset"
+for side in 16 32 128 256 512; do
+    rsvg-convert -w "$side" -h "$side" -o "$iconset/icon_${side}x${side}.png" crates/ui/assets/org.skwir.skwir.svg
+    rsvg-convert -w "$((side * 2))" -h "$((side * 2))" -o "$iconset/icon_${side}x${side}@2x.png" crates/ui/assets/org.skwir.skwir.svg
+done
+iconutil -c icns -o "$app/Contents/Resources/skwir.icns" "$iconset"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -50,6 +60,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key><string>skwir</string>
     <key>CFBundleIdentifier</key><string>org.skwir.skwir</string>
     <key>CFBundleExecutable</key><string>skwir</string>
+    <key>CFBundleIconFile</key><string>skwir</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$version</string>
     <key>CFBundleVersion</key><string>$version</string>

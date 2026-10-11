@@ -81,5 +81,8 @@ it.
 - The Debian maintainer field says "The skwir authors" until someone
   answers for the package; the AUR's maintainer is whoever publishes
   it there, which is the user's to do.
-- skwir has no icon of its own yet: the desktop entry names the
-  theme's file manager icon.
+- skwir's icon (2026-10-11; until then the desktop entry named the
+  theme's file manager icon) is one SVG, the UI's own
+  (`crates/ui/assets/org.skwir.skwir.svg`), installed as
+  `/usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg`, which
+  the desktop entry names and `linux/check.sh` checks.

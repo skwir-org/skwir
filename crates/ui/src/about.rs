@@ -1,7 +1,7 @@
-//! About skwir (`ui.about`, in More and the palette): its name, version
-//! and licence, the way to its website and to the licences its package
-//! installed, and what a report of a problem asks of the system it runs
-//! on (`.github/ISSUE_TEMPLATE/problem.yml`), copied in one click.
+//! About skwir (`ui.about`, in More and the palette): its icon, name,
+//! version and licence, the way to its website and to the licences its
+//! package installed, and what a report of a problem asks of the system
+//! it runs on (`.github/ISSUE_TEMPLATE/problem.yml`), copied in one click.
 //!
 //! The system's own name and where the licences are installed are read on
 //! a worker (`skwir_platform::about`) and the dialog opens with them, so
@@ -264,14 +264,16 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .child(
             div()
                 .flex()
-                .flex_col()
-                .child(div().text_xl().child("skwir"))
+                .items_center()
+                .gap_3()
+                .child(crate::icons::app_icon(48.))
                 .child(
                     div()
-                        .text_color(theme.text_muted)
-                        .child(SharedString::from(format!(
-                            "Version {} · {LICENCE}",
-                            version()
+                        .flex()
+                        .flex_col()
+                        .child(div().text_xl().child("skwir"))
+                        .child(div().text_color(theme.text_muted).child(SharedString::from(
+                            format!("Version {} · {LICENCE}", version()),
                         ))),
                 ),
         )

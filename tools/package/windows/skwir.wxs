@@ -7,13 +7,17 @@
            UpgradeCode="6f1c2b7e-3d9a-4c5e-9b8f-2a7d4e1c0b35" Scope="perUser">
     <MajorUpgrade DowngradeErrorMessage="A newer skwir is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <!-- The icon skwir.exe carries (crates/skwir/build.rs), for its
+         shortcut and the list of installed programs. -->
+    <Icon Id="skwir.exe" SourceFile="$(Dist)\skwir.exe" />
+    <Property Id="ARPPRODUCTICON" Value="skwir.exe" />
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="Programs" Name="Programs">
         <Directory Id="INSTALLFOLDER" Name="skwir">
           <Component Id="Programs" Guid="*">
             <File Source="$(Dist)\skwir.exe" KeyPath="yes">
               <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="skwir"
-                        WorkingDirectory="INSTALLFOLDER" Advertise="yes" />
+                        WorkingDirectory="INSTALLFOLDER" Icon="skwir.exe" Advertise="yes" />
             </File>
             <File Source="$(Dist)\skwir-pdf-worker.exe" />
             <File Source="$(Dist)\skwir-model-worker.exe" />

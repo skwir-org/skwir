@@ -8,7 +8,8 @@
 # `minimal` (without what the packages only recommend), it may be there
 # with its libraries absent, which its probe says, as skwir's settings
 # do. skwir's licence and PDFium's notices are installed, and the
-# libraries skwir opens at run time are there.
+# libraries skwir opens at run time are there, and so are the desktop
+# entry and its icon.
 #
 #     tools/package/linux/check.sh [minimal]
 set -eu
@@ -65,6 +66,16 @@ else
     echo "missing: skwir's licence, PDFium's notices or the crates' notices"
     failed=1
 fi
+# The desktop entry and the icon it names, where the desktop finds them.
+for file in /usr/share/applications/org.skwir.skwir.desktop \
+    /usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg; do
+    if [ -s "$file" ]; then
+        echo "ok: $file"
+    else
+        echo "missing: $file"
+        failed=1
+    fi
+done
 for library in libvulkan.so.1 libfontconfig.so.1; do
     if ldconfig -p | grep -q "$library"; then
         echo "ok: $library"

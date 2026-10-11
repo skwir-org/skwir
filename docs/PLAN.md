@@ -224,7 +224,15 @@ Debian and Fedora skwir then drew its window on a virtual display
 through the distribution's own Mesa (software Vulkan). namcap finds
 nothing in the PKGBUILD. CI builds the three in their containers
 (`linux-packages`), never run (no remote). Not done: publishing (the
-AUR and a repository are the user's), Ubuntu's own build, an icon.
+AUR and a repository are the user's), Ubuntu's own build.
+skwir has its own icon (2026-10-11): the identity's ink tile, the
+squirrel reversed on it (`crates/ui/assets/org.skwir.skwir.svg`), which
+About shows and every Linux package (the Nix one too, with the desktop
+entry and metainfo it lacked) installs in hicolor's scalable apps for
+the desktop entry to name; the macOS bundle makes its `.icns` of it
+(librsvg and `iconutil`), and `skwir.exe` carries it as an `.ico` its
+build script draws when built on Windows (resource 1, which gpui gives
+the windows), the installer's shortcut too. Those two never ran.
 Settings now says a helper is installed only where it works: every
 helper answers `--probe` (`process::probe`), the PDFium reader opening
 the library the settings name, the player finding GStreamer's playback

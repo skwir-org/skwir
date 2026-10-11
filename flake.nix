@@ -153,10 +153,11 @@
       });
       # skwir and its helpers as `just dist` builds them, for Linux
       # (Phase 5, step K): the helpers beside skwir, where it finds them,
-      # and what wgpu and GStreamer load at run time on its path. Built
-      # from the git tree: only tracked files are its source. The tests
-      # need a session and fixtures of their own (`just test-all`), not run
-      # here.
+      # what wgpu and GStreamer load at run time on its path, and its
+      # desktop entry, metainfo and icon, as the other packages install
+      # them. Built from the git tree: only tracked files are its source.
+      # The tests need a session and fixtures of their own (`just
+      # test-all`), not run here.
       packages.default = let
         rustPlatform = pkgs.makeRustPlatform {
           cargo = rustToolchain;
@@ -176,6 +177,11 @@
           inherit buildInputs;
           nativeBuildInputs = [pkgs.pkg-config pkgs.cmake pkgs.clang pkgs.makeWrapper];
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          postInstall = lib.optionalString stdenv.hostPlatform.isLinux ''
+            install -Dm644 tools/package/linux/org.skwir.skwir.desktop -t $out/share/applications
+            install -Dm644 tools/package/linux/org.skwir.skwir.metainfo.xml -t $out/share/metainfo
+            install -Dm644 crates/ui/assets/org.skwir.skwir.svg -t $out/share/icons/hicolor/scalable/apps
+          '';
           postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
             wrapProgram $out/bin/skwir \
               --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath linuxRuntimeLibs} \

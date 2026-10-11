@@ -426,6 +426,24 @@ fn file_element(path: &Path, size: f32) -> AnyElement {
     img(source).size(px(size)).flex_none().into_any_element()
 }
 
+/// skwir's own icon, the one its packages install
+/// (`assets/org.skwir.skwir.svg`).
+const APP_ICON: &[u8] = include_bytes!("../assets/org.skwir.skwir.svg");
+
+/// skwir's icon at `size` px, rasterized for the side it is drawn at, as
+/// a theme's SVG is.
+pub fn app_icon(size: f32) -> AnyElement {
+    img(ImageSource::Custom(Arc::new(
+        move |window: &mut Window, cx: &mut gpui::App| {
+            let pixels = raster_side(size * window.scale_factor());
+            window.use_asset::<AppIcon>(&pixels, cx)
+        },
+    )))
+    .size(px(size))
+    .flex_none()
+    .into_any_element()
+}
+
 /// Whether an icon file is an SVG drawing (`.svgz` compressed).
 fn is_svg(path: &Path) -> bool {
     path.extension()
@@ -464,18 +482,35 @@ impl Asset for SizedSvg {
         (path, side): Self::Source,
         _cx: &mut gpui::App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
-        async move {
-            let drawn =
-                icons::rasterize(&path, side).map_err(|e| ImageCacheError::Other(Arc::new(e)))?;
-            crate::thumbs::owned_render_image(drawn.width, drawn.height, drawn.rgba).ok_or_else(
-                || {
-                    ImageCacheError::Other(Arc::new(anyhow::anyhow!(
-                        "an icon's pixels do not fill its size"
-                    )))
-                },
-            )
-        }
+        async move { render_image(icons::rasterize(&path, side)) }
     }
+}
+
+/// skwir's icon (`APP_ICON`) rasterized within a side of device pixels,
+/// kept per side as `SizedSvg` keeps a file's.
+enum AppIcon {}
+
+impl Asset for AppIcon {
+    type Source = u32;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    // As `SizedSvg::load`: the work stays in the future.
+    #[allow(clippy::manual_async_fn)]
+    fn load(side: u32, _cx: &mut gpui::App) -> impl Future<Output = Self::Output> + Send + 'static {
+        async move { render_image(skwir_platform::inspection::drawing_within(APP_ICON, side)) }
+    }
+}
+
+/// A rasterized SVG as GPUI draws it.
+fn render_image(
+    drawn: anyhow::Result<skwir_platform::inspection::Decoded>,
+) -> Result<Arc<RenderImage>, ImageCacheError> {
+    let drawn = drawn.map_err(|e| ImageCacheError::Other(Arc::new(e)))?;
+    crate::thumbs::owned_render_image(drawn.width, drawn.height, drawn.rgba).ok_or_else(|| {
+        ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+            "an icon's pixels do not fill its size"
+        )))
+    })
 }
 
 /// A system icon drawn within a side of device pixels
@@ -624,9 +659,18 @@ pub fn themed(pic: &Pic, size: f32, color: Hsla) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{IconCache, Pic, Want, is_svg, is_symbolic, preloaded, raster_side};
+    use super::{APP_ICON, IconCache, Pic, Want, is_svg, is_symbolic, preloaded, raster_side};
     use std::path::Path;
     use std::sync::Arc;
+
+    #[test]
+    fn skwirs_icon_is_drawn_at_the_side_asked() {
+        let drawn = skwir_platform::inspection::drawing_within(APP_ICON, 64).unwrap();
+        assert_eq!((drawn.width, drawn.height), (64, 64));
+        let pixel = |x: usize, y: usize| &drawn.rgba[(y * 64 + x) * 4..][..4];
+        assert_eq!(pixel(0, 0)[3], 0, "a rounded corner shows what is behind");
+        assert_eq!(pixel(32, 3), [0x20, 0x30, 0x42, 0xff], "the ink tile");
+    }
 
     #[test]
     fn another_theme_forgets_the_icons_and_what_was_on_its_way() {
