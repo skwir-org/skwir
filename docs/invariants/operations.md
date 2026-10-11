@@ -27,6 +27,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 ## Running
 
 - Plans run on a thread of their own, never a worker.
+- A failed recursive removal may already have removed writable entries.
+  Its error names and counts what actually remains; tests compare that
+  report with the surviving tree, never assume a directory traversal order.
 - A plan of several steps shows a bar with Pause and Cancel
   (`Executor::pause`, `Executor::cancel`). Pausing waits where Cancel
   would be answered (`StepContext::check_cancelled`), so long steps call

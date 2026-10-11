@@ -182,6 +182,14 @@ fn other_device(reference: &Path) -> Option<tempfile::TempDir> {
 
 #[test]
 fn a_move_across_filesystems_that_cannot_remove_its_source_keeps_both_whole() {
+    // Different filesystems enumerate these entries differently. Exercise
+    // both creation orders without requiring either removal order.
+    for notes_first in [false, true] {
+        move_with_unremovable_source(notes_first);
+    }
+}
+
+fn move_with_unremovable_source(notes_first: bool) {
     let tmp = home_tempdir();
     let root = tmp.path();
     let _writable = Writable(root.to_path_buf());
@@ -189,9 +197,17 @@ fn a_move_across_filesystems_that_cannot_remove_its_source_keeps_both_whole() {
         eprintln!("skipped: no second filesystem available");
         return;
     };
+    let _destination_writable = Writable(there.path().to_path_buf());
     let src = root.join("project");
-    std::fs::create_dir_all(src.join("kept")).unwrap();
-    std::fs::write(src.join("notes.txt"), b"notes").unwrap();
+    std::fs::create_dir(&src).unwrap();
+    let make_notes = || std::fs::write(src.join("notes.txt"), b"notes").unwrap();
+    if notes_first {
+        make_notes();
+    }
+    std::fs::create_dir(src.join("kept")).unwrap();
+    if !notes_first {
+        make_notes();
+    }
     std::fs::write(src.join("kept/data.txt"), b"data").unwrap();
     // Read, so copied; never emptied, so the source cannot all go.
     set_mode(&src.join("kept"), 0o555);
@@ -199,6 +215,7 @@ fn a_move_across_filesystems_that_cannot_remove_its_source_keeps_both_whole() {
         eprintln!("skipped: this user writes in a read-only folder");
         return;
     }
+    let original = snapshot(&src);
     let app = app(root);
     let plan = Plan::with_steps(
         "move",
@@ -209,12 +226,12 @@ fn a_move_across_filesystems_that_cannot_remove_its_source_keeps_both_whole() {
     );
     let r = app.executor.execute_blocking(&plan, app.lifetime());
     let moved = there.path().join("project");
-    // Whatever is said, every file is somewhere, whole.
-    let whole = |dir: &Path| {
-        std::fs::read(dir.join("notes.txt")).is_ok_and(|b| b == b"notes")
-            && std::fs::read(dir.join("kept/data.txt")).is_ok_and(|b| b == b"data")
-    };
-    assert!(whole(&moved), "the copy is whole: {:?}", r.error);
+    assert_eq!(
+        snapshot(&moved),
+        original,
+        "the copy is whole: {:?}",
+        r.error
+    );
     assert!(
         std::fs::read(src.join("kept/data.txt")).is_ok_and(|b| b == b"data"),
         "what could not be removed is still there"
@@ -224,13 +241,31 @@ fn a_move_across_filesystems_that_cannot_remove_its_source_keeps_both_whole() {
         error.contains("copied whole"),
         "says the copy is whole: {error}"
     );
+    // Removal may reach the writable notes before the protected file.
+    // Check the actual survivors, never a filesystem's traversal order.
+    let remaining = snapshot(&src);
     assert!(
-        error.contains("“project/kept/data.txt” and 1 more are left")
-            || error.contains("“project/notes.txt” and 1 more are left"),
-        "names what is left: {error}"
+        remaining.iter().all(|entry| original.contains(entry)),
+        "the source remainder is unchanged: {remaining:?}"
     );
-    set_mode(&src.join("kept"), 0o755);
-    let _ = std::fs::remove_dir_all(&moved);
+    let files: Vec<_> = remaining
+        .iter()
+        .filter(|(_, state)| state != "<dir>")
+        .collect();
+    let suffix = match files.len() {
+        1 => "is left".to_owned(),
+        count => format!("and {} more are left", count - 1),
+    };
+    eprintln!(
+        "writable entry created first: {notes_first}; {} source files remain",
+        files.len()
+    );
+    assert!(
+        files.iter().any(|(path, _)| {
+            error.contains(&format!("“project/{}” {suffix}", path.display()))
+        }),
+        "names and counts the actual files left: {error}"
+    );
 }
 
 #[test]

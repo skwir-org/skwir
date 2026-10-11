@@ -1254,7 +1254,13 @@ Phase 7.
    that could not remove all its source, and a delete stopped partway,
    said only "Permission denied", so files looked lost (now: the copy
    is whole, and what is left); failures read as log lines, now in the
-   user's words (`op::said`), the chain in the log. Found 2026-10-10
+   user's words (`op::said`), the chain in the log. Hosted CI exposed a
+   test assumption on 2026-10-11: source removal can delete the writable
+   file before failing on the protected one. The test now verifies the
+   complete destination and unchanged source survivors, and compares the
+   error's named file and count with the actual remainder, without
+   assuming traversal order. Both creation orders are exercised; locally
+   these reproduce one and two surviving files. Found 2026-10-10
    and fixed, each with a test (ADR-049): two names of one file were
    one row; a plan whose name had gone could act on another name of its
    file; Empty Trash left one of two names trashed apart. With it, space
