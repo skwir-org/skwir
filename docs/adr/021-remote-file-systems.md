@@ -5,11 +5,11 @@ Status: accepted, 2026-09-27, as a direction. Not built (checked
 
 ## Context
 
-skwir will open remote files: SFTP, SMB and WebDAV shares, S3 buckets,
+Skwir will open remote files: SFTP, SMB and WebDAV shares, S3 buckets,
 cloud drives. Each protocol is a client, an authentication scheme and its
 own failures; Dolphin and Nautilus use KIO and GVfs, frameworks larger than
-skwir. Implementing them would put a network layer in the core and make
-skwir hold credentials.
+Skwir. Implementing them would put a network layer in the core and make
+Skwir hold credentials.
 
 Installed tools already speak them and keep the credentials: GVfs
 (`gio mount`) and sshfs mount a remote through FUSE; rclone does so for
@@ -25,12 +25,12 @@ schemes (`query:`, `shelf:`).
 
 ## Decision
 
-- **No file-system protocol in skwir, no network layer in the core.** A
+- **No file-system protocol in Skwir, no network layer in the core.** A
   plugin needing HTTP keeps its own client (`map-tiles`, ADR-020); one two
   plugins share goes to `skwir-platform` as a utility, not a core
   contract.
-- **skwir holds no credentials.** The keyring, GVfs and rclone keep them,
-  and prompt for them. A passphrase skwir must pass on follows the
+- **Skwir holds no credentials.** The keyring, GVfs and rclone keep them,
+  and prompt for them. A passphrase Skwir must pass on follows the
   locked-volume rule: never stored, logged or on a command line; no `Debug`
   on its argument struct.
 - **Step 1: mounts.** A mounted remote is a folder.
@@ -66,7 +66,7 @@ schemes (`query:`, `shelf:`).
 - rclone's and some FUSE file systems' inodes are made up and may change
   between mounts: references fall back to their path hint, so stable
   identity (principle 6) is weaker there.
-- Server capabilities (Trash, xattrs, mtimes, permissions) vary; skwir
+- Server capabilities (Trash, xattrs, mtimes, permissions) vary; Skwir
   reports the difference rather than hiding it.
 - A later plugin speaking a protocol itself, if a tool proves unusable,
   would be a new decision, not a core change.

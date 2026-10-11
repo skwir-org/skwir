@@ -94,14 +94,14 @@ control plugin's `run`:
 ## Plugins from outside (ADR-045, ADR-046, ADR-047)
 
 - `skwir-plugin-api` is the contract: the manifest, the protocol, the WIT
-  world, the guest's `Plugin` trait. It depends on nothing of skwir's and
+  world, the guest's `Plugin` trait. It depends on nothing of Skwir's and
   builds for WebAssembly.
 - `skwir-extend` is the host. It finds plugin folders (`folders()`,
   `SKWIR_PLUGIN_PATH`) and makes each an `External` plugin, off until
   turned on. It runs one as a program (isolated, `sandbox::plugin`) or as
   a module, which the helper `skwir-module-worker` runs and serves as such
-  a program (Wasmtime, no WASI, only skwir's two imports). Wasmtime never
-  enters skwir's own process.
+  a program (Wasmtime, no WASI, only Skwir's two imports). Wasmtime never
+  enters Skwir's own process.
 - The module helper works in the plugin's cache folder and keeps the
   compiled module there (`--keep`), the only folder it writes.
 - A plugin reads only the files of the call it answers, by handle
@@ -113,16 +113,16 @@ control plugin's `run`:
   `docs/plugins/protocol.md`.
 - The protocol is experimental (ADR-047): a version may change what an
   older one said until it is declared stable, `OLDEST` following it, and
-  the release notes say so. Once stable, skwir keeps speaking older
+  the release notes say so. Once stable, Skwir keeps speaking older
   versions.
 - A preview from outside is one of:
   - an inspection (text, code, hex, a table);
-  - a file skwir shows, made of the file (`convert`,
+  - a file Skwir shows, made of the file (`convert`,
     `PreviewProvider::converted`, swapped in once in the panel's worker);
   - pages with their text, links and outline, drawn as read (`page`, a
-    `DocumentSession` in `pages.rs` that skwir's reader reads).
+    `DocumentSession` in `pages.rs` that Skwir's reader reads).
 
-  Never skwir's own preview model on the wire. Links in what a plugin made
+  Never Skwir's own preview model on the wire. Links in what a plugin made
   are closed unless the plugin may use the network.
 - `just plugins` builds the workspace's modules
   (`crates/plugins-outside/*`) into `target/plugins`.

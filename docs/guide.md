@@ -1,6 +1,6 @@
-# Using skwir
+# Using Skwir
 
-This guide is for skwir 0.1 on Linux. Every action is also a command in
+This guide is for Skwir 0.1 on Linux. Every action is also a command in
 the palette (`Ctrl+Shift+P`), which shows its keys. `F1` lists the keys
 that work where the keyboard is.
 
@@ -28,7 +28,7 @@ that work where the keyboard is.
 - **More** (the sidebar's button, or the pane's row when the sidebar is
   hidden) holds what has no button, and Layout: where the split and the
   preview go, or Automatic, which follows the window's shape. About
-  skwir, at its end, shows the version, system, display and graphics,
+  Skwir, at its end, shows the version, system, display and graphics,
   and copies them for a report.
 - **Footer.** Each pane's footer shows how many items it lists, what is
   selected and what it weighs. The last pane's footer also shows Undo,
@@ -96,7 +96,7 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
     the Trash frees nothing until it is emptied.
 - **Map** (`Ctrl+5`) places a folder's pictures and videos, and tracks
   and flight plans, where they were taken or go. Its default background
-  is drawn offline from data skwir carries; a background that downloads
+  is drawn offline from data Skwir carries; a background that downloads
   tiles (OpenStreetMap, a server you add) is used only once you choose it
   in Settings › Map backgrounds.
 - **Timeline** (`Ctrl+Shift+L`) shows when files changed, one bar per
@@ -145,7 +145,7 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   asking, since it cannot be undone (and says what stays on disk when a
   file has other names).
 - **Undo and Redo:** `Ctrl+Z`, `Ctrl+Shift+Z` (or `Ctrl+Y`), for every
-  change skwir made, in order. The history lasts while skwir runs.
+  change Skwir made, in order. The history lasts while Skwir runs.
 - **Plans.** A change to many files, and anything an agent or a plugin
   proposes, is shown as steps to review first. `Enter` applies it,
   `Escape` dismisses it.
@@ -231,7 +231,7 @@ and the comment.
 `Space` peeks at a file (the arrows walk the files, `Space` or `Escape`
 closes). `F11` (or `Ctrl+Shift+Space`) opens the preview panel, which
 follows the selection. Each kind of file has its tools in the panel's
-bar. skwir previews text and code, Markdown, tables, structured data,
+bar. Skwir previews text and code, Markdown, tables, structured data,
 PDFs and office documents, books, comics, e-mail, notebooks, pictures,
 audio and video, fonts, 3D models, circuit boards, maps and tracks,
 archives, and the bytes of any file.
@@ -240,7 +240,7 @@ archives, and the bytes of any file.
   text with `Ctrl+click`.
 - Music and video can keep playing while you browse, in a player at the
   foot of the panel, steered by the desktop's media keys.
-- Some kinds need a program skwir does not carry; Settings › Plugins says
+- Some kinds need a program Skwir does not carry; Settings › Plugins says
   which, and what to install.
 
 [Previews](previews.md) lists every kind of file with its tools, keys
@@ -270,7 +270,7 @@ a hint shows what can follow.
 
 | Page | What it sets |
 | --- | --- |
-| General | What skwir does with files: startup, drops, copies, split, tabs |
+| General | What Skwir does with files: startup, drops, copies, split, tabs |
 | Appearance | How it looks: theme, icons, dates, the path, tabs |
 | Keyboard | The keys |
 | Reading | The reader shared by documents, books, Markdown and code |
@@ -279,29 +279,29 @@ a hint shows what can follow.
 | Plugins | Every plugin, on or off, what it may do and what it needs; each plugin's own options |
 
 If the settings file cannot be read (edited by hand into something that
-is no longer TOML), skwir starts with its defaults, keeps the file aside
+is no longer TOML), Skwir starts with its defaults, keeps the file aside
 as `settings.toml.unreadable-…`, and says so.
 
-## What skwir keeps, and where
+## What Skwir keeps, and where
 
 | What | Where |
 | --- | --- |
 | Settings, and the window's shape | `~/.config/skwir/settings.toml` |
-| The cache | `~/.cache/skwir`: delete it whenever you like, skwir rebuilds what it needs |
+| The cache | `~/.cache/skwir`: delete it whenever you like, Skwir rebuilds what it needs |
 | Thumbnails it makes | The desktop's cache (`~/.cache/thumbnails`), shared unless Thumbnails › Share generated thumbnails is off |
 | Tags, ratings, comments | On the files (see above) |
 | Bookmarks, default applications | The desktop's own files |
 | A tile server's key | The desktop's keyring |
-| Plugins from outside skwir | `~/.local/share/skwir/plugins/` |
+| Plugins from outside Skwir | `~/.local/share/skwir/plugins/` |
 
 There is no database and no daemon.
 
-If skwir stops during a copy (a crash, a power cut), what it had copied
+If Skwir stops during a copy (a crash, a power cut), what it had copied
 waits in a hidden folder named `.skwir-copy-…` in the destination, never
-under the file's own name. skwir removes it at its next start or next
+under the file's own name. Skwir removes it at its next start or next
 copy there; on a network share, delete it yourself.
 
 ## Agents, scripts and plugins
 
 See the [README](../README.md#scripts-and-agents) for agents and scripts,
-and [writing a plugin](plugins/README.md) for plugins from outside skwir.
+and [writing a plugin](plugins/README.md) for plugins from outside Skwir.

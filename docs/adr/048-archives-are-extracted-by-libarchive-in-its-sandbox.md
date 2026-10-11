@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-10-09. Revises the archive rule of
 `docs/invariants/previews.md` ("member names are never extraction
-paths"), which held while skwir only previewed archives. Built.
+paths"), which held while Skwir only previewed archives. Built.
 
 ## Context
 

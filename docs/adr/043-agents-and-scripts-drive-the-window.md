@@ -7,14 +7,14 @@ PLAN.md records the deviation). Built (`control` plugin).
 ## Context
 
 Phase 6 adds a command line and an MCP server, thin consumers of the
-command registry, so an agent can drive skwir and end with a plan the
+command registry, so an agent can drive Skwir and end with a plan the
 user reviews. The pieces exist: commands with JSON schemas
 (`CommandRegistry::list`, `check`, `dispatch`), plans for file changes,
 review for plans not from the user's gesture (`App::propose`), window
 commands that wait for the window (`App::request_front`).
 
-An agent could run its own windowless skwir, or reach the user's
-window. Plans are reviewed and undone in the window; a windowless skwir
+An agent could run its own windowless Skwir, or reach the user's
+window. Plans are reviewed and undone in the window; a windowless Skwir
 shows no plan and keeps a second undo history and settings writer.
 
 ## Decision
@@ -24,7 +24,7 @@ shows no plan and keeps a second undo history and settings writer.
    user reaches: a Unix socket in a user-only folder
    (`$XDG_RUNTIME_DIR/skwir/control.sock` on Linux, under `$TMPDIR` on
    macOS), a named pipe on Windows. No daemon: the channel ends with
-   the window or the plugin. A second skwir finds it taken and does not
+   the window or the plugin. A second Skwir finds it taken and does not
    listen.
 2. **MCP through `rmcp`** (the official Rust SDK), on the plugin's own
    runtime and thread, started and ended with the plugin. Tokio is
@@ -40,7 +40,7 @@ shows no plan and keeps a second undo history and settings writer.
      while says it still waits.
    - A value, or text for the clipboard, is the answer.
 4. **`skwir mcp`**, started by the agent's configuration, pipes stdio to
-   the window's channel. With no window listening it says to open skwir
+   the window's channel. With no window listening it says to open Skwir
    and turn Control on, and starts nothing.
 5. **`skwir cmd <name> [arguments]`** runs one command over the channel
    and prints JSON. A plan is printed, or applied with `--apply`: the
@@ -48,7 +48,7 @@ shows no plan and keeps a second undo history and settings writer.
    request says which in `_meta` (`skwir/plan`: `print` or `apply`;
    absent, the plan is proposed); an agent's model fills arguments,
    never `_meta`. With no window listening, the command runs in a
-   windowless skwir: it answers, or prints or `--apply`s its plan.
+   windowless Skwir: it answers, or prints or `--apply`s its plan.
 6. **Off until the permission layer** (ADR-044): any program running as
    the user can reach the channel, and an agent reads what commands
    read, so folders such as `~/.ssh` need keeping from it first.

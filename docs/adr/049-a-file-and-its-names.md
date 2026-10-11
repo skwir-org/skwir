@@ -108,8 +108,8 @@ Prior art:
    two items; one trash under two paths is not two.
 
 Hard links are the only sharing a stat shows. Sharing below files
-(reflinks, which skwir's copies are on btrfs; snapshots; dedup) is
-counted in full, and skwir says so rather than estimate extents.
+(reflinks, which Skwir's copies are on btrfs; snapshots; dedup) is
+counted in full, and Skwir says so rather than estimate extents.
 
 ## Consequences
 

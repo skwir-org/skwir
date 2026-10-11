@@ -4,11 +4,11 @@ Status: accepted, 2026-10-06 (Phase 5, step E; ADR-035). Proposed
 2026-10-05 with three options; the user chose the system's registry
 where it can answer, shared-mime-info as the fallback. Built: tested on
 Linux and under Wine; the macOS reader is compiled, never run. ADR-042
-(skwir under Apache-2.0 alone) changes nothing here.
+(Skwir under Apache-2.0 alone) changes nothing here.
 
 ## Context
 
-skwir types files with shared-mime-info: by name (globs, weights,
+Skwir types files with shared-mime-info: by name (globs, weights,
 case), by content (magic), with aliases, a hierarchy (`subclass-of`,
 which `kind:` and "takes files by type" rely on) and generic icons
 (which group types into kinds). Linux has it, read through `xdg-mime`.
@@ -23,12 +23,12 @@ macOS and Windows do not ship it, and their registries answer less:
   `PerceivedType`, names it in Explorer's words, and has no hierarchy
   and almost no sniffing (`FindMimeFromData`: a few dozen web types).
 
-The database is GPL-2.0-or-later (skwir was then MIT or Apache-2.0): it
-can ship beside skwir as data, as Linux distributions ship it, never
+The database is GPL-2.0-or-later (Skwir was then MIT or Apache-2.0): it
+can ship beside Skwir as data, as Linux distributions ship it, never
 built in.
 
 Options: (1) ship the database and read only it; (2) map each system's
-types onto skwir's, no GPL data; (3) a small permissive table.
+types onto Skwir's, no GPL data; (3) a small permissive table.
 
 ## Decision
 
@@ -47,7 +47,7 @@ types onto skwir's, no GPL data; (3) a small permissive table.
 | Hierarchy (`lineage`) | The database's: macOS's graph is mostly types without MIME names; Windows has none. |
 
 2. **macOS and Windows packages carry the database** in `share/mime`:
-   only the compiled files skwir reads (180 KB, 43 KB compressed), not
+   only the compiled files Skwir reads (180 KB, 43 KB compressed), not
    the per-type XML (7 MB of translated names the system provides
    there); its licence and a note of where its source is (the source
    itself would outweigh the files). The source is vendored
@@ -55,7 +55,7 @@ types onto skwir's, no GPL data; (3) a small permissive table.
    licence) and compiled by its own `update-mime-database`
    (`tools/package/mime-database.sh`; the dev shell's, on a Mac
    Homebrew's), so what ships is what the repository holds. Linux
-   packages carry none. skwir looks beside the program, in a bundle's
+   packages carry none. Skwir looks beside the program, in a bundle's
    `Resources/share`, Homebrew's, then `$XDG_DATA_DIRS`: the first
    found.
 3. **The reader runs everywhere**: `xdg-mime` is vendored
@@ -68,7 +68,7 @@ types onto skwir's, no GPL data; (3) a small permissive table.
 
 - A file can have another type or kind on macOS or Windows than on
   Linux: what that system's applications say (ADR-000, principle 4). A
-  wrongly registered extension is wrong in skwir too, as in Explorer.
+  wrongly registered extension is wrong in Skwir too, as in Explorer.
 - Without the database (a source build with none installed), macOS and
   Windows still type and name files by name, but read no bytes, know no
   hierarchy beyond the system's, and `kind:` is the system's alone.

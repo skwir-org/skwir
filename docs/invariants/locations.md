@@ -127,7 +127,7 @@ and `notes.agree` are core `notes.*` commands.
   the test can tell.
 - A provider names its location (`LocationProvider::title`: `report in
   Papers`) for tabs and menus.
-- A search watches nothing, but sees skwir's changes: after each plan the
+- A search watches nothing, but sees Skwir's changes: after each plan the
   query plugin (`provider::Searches`, an executor observer) re-checks the
   touched files under each open search's root and updates rows without
   listing again.

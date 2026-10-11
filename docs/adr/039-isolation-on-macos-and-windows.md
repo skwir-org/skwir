@@ -7,10 +7,10 @@ Pandoc's `--sandbox`. Not built: Windows.
 
 ## Context
 
-skwir runs programs on untrusted files as soon as one is selected.
+Skwir runs programs on untrusted files as soon as one is selected.
 LibreOffice, Pandoc and ImageMagick must run isolated
 (`sandbox::Otherwise::Refuse`); decoders the desktop runs on the same
-files anyway (ffmpeg, Poppler's tools, skwir's helpers, thumbnailers)
+files anyway (ffmpeg, Poppler's tools, Skwir's helpers, thumbnailers)
 are isolated where possible (`Otherwise::Run`). Linux uses bubblewrap;
 elsewhere the converters were off and the decoders unisolated.
 
@@ -62,7 +62,7 @@ Cost does not decide: milliseconds beside a converter's start
   starts under the profile (compiled, never run; 5b). Its allowances
   (fonts, name, preferences, file locations) are to be narrowed if
   programs start without them.
-- On Windows, Office documents are shown by skwir's readers and Pandoc,
+- On Windows, Office documents are shown by Skwir's readers and Pandoc,
   not as pages, until AppContainer is built.
 - A plugin's isolation requirement names the system's program
   (`sandbox::PROGRAM`: `bwrap`, `sandbox-exec`; none on Windows).

@@ -1,6 +1,6 @@
 # Vendored gpui 0.2.2
 
-The `gpui` 0.2.2 crate exactly as published on crates.io, plus skwir's
+The `gpui` 0.2.2 crate exactly as published on crates.io, plus Skwir's
 patches, wired in through `[patch.crates-io]` in the root `Cargo.toml`.
 Remove both once the patches are upstream.
 
@@ -8,7 +8,7 @@ Each patch is a diff in `../patches/`, its paths rewritten to the Zed monorepo
 layout (`crates/gpui/...`) so it applies there with `git apply -p1`.
 
 Tests covering the patches run on an isolated copy, so GPUI's dev
-dependencies stay out of skwir's workspace:
+dependencies stay out of Skwir's workspace:
 
 - `just list-check`: list, line wrapper, line layout and keyboard click
   tests (0004 to 0007, 0017). No GPU needed.
@@ -51,7 +51,7 @@ icon on a `wl_shm` surface (premultiplied ARGB8888; hotspot via
 `wl_surface.offset`, or the attach offset on older compositors), starts the
 drag with the last mouse-press serial, and on `Cancelled` or `DndFinished`
 destroys the icon and synthesizes a mouse-up so the in-window drag ends. A drop
-back onto skwir arrives as an ordinary `ExternalPaths` drop.
+back onto Skwir arrives as an ordinary `ExternalPaths` drop.
 
 ### 0002: taffy f32 literals
 
@@ -73,7 +73,7 @@ never from `prepaint` or `paint`.** `BladeRenderer::draw` submits the
 frame, waits for the *previous* submission, then destroys retired
 textures. A texture retired before the scene is built belongs at most to
 the previous submission; one retired in `paint` may be referenced by the
-in-flight scene and freed while the GPU reads it. skwir drops images in
+in-flight scene and freed while the GPU reads it. Skwir drops images in
 `replace_preview_content`, the reader page cache and the thumbnail LRU.
 
 ### 0004: List item height hints
@@ -149,8 +149,8 @@ the same place on every fresh start, zoomed half a level, is gone.
 
 `image`'s default `avif` feature is the AVIF *encoder* (rav1e): 2.4 MB of
 machine code nothing calls (decoding is `avif-native`). gpui now names the
-formats it decodes (`ImageFormat`: PNG, JPEG, WebP, GIF, BMP, TIFF); skwir's
-crates name theirs, and features add up, so what skwir decodes is unchanged.
+formats it decodes (`ImageFormat`: PNG, JPEG, WebP, GIF, BMP, TIFF); Skwir's
+crates name theirs, and features add up, so what Skwir decodes is unchanged.
 Also gone: Radiance HDR, farbfeld (unreachable) and `rayon` (previews already
 run on workers). The diff is against the published manifest.
 
@@ -159,7 +159,7 @@ run on workers). The diff is against the published manifest.
 A keystroke starting a multi-stroke binding (`g g`) waited one second (a
 constant in `Window::dispatch_key_event`), then replayed alone.
 `App::set_key_sequence_timeout` sets it; `None` waits for the next key, as yazi
-and modal editors do. skwir waits (ADR-024) and shows what may follow
+and modal editors do. Skwir waits (ADR-024) and shows what may follow
 (`crates/ui/src/sequence.rs`), so reading the strip is not a race. A focus
 change still drops pending keys.
 
@@ -170,9 +170,9 @@ a builder that may return `None`: the element shows nothing, an enclosing
 element's tooltip shows instead, and the builder is asked again on the next
 move. A declining builder no longer requests a redraw. `TooltipBuilder` already
 returned an `Option`, so `tooltip` and `hoverable_tooltip` now wrap theirs in
-`Some`. skwir uses it for text cut to fit (`crates/ui/src/elements/clip.rs`),
+`Some`. Skwir uses it for text cut to fit (`crates/ui/src/elements/clip.rs`),
 known only after layout. `InteractiveText` could already decline, but it
-notifies its view whenever the pointer crosses a character, and skwir's shell
+notifies its view whenever the pointer crosses a character, and Skwir's shell
 is one view.
 
 Cost (release build, Xvfb, pointer sweeping): 55 such tooltips per draw,
@@ -224,7 +224,7 @@ thread it is created in place. With a warm page cache the fonts take about 7 ms
 on the reference machine, which is the saving; after a boot both come from
 disk.
 
-**0012 to 0014:** skwir's first frame went from a median of 134.6 ms to
+**0012 to 0014:** Skwir's first frame went from a median of 134.6 ms to
 114.5 ms on the reference machine (ten warm starts per build, alternated on
 a quiet machine); 0013 and 0014 are on that path.
 
@@ -240,12 +240,12 @@ manifest as 0009 left it.
 
 libxcb never recovers a connection in error and its socket stays readable, so
 when the X server went away calloop polled forever, logging `error while
-polling for X11 events` each time. A skwir left on a stopped Xvfb spun a core
+polling for X11 events` each time. A Skwir left on a stopped Xvfb spun a core
 and wrote 131 GB of log in four hours (27 MB/s on the reference machine). Now a
 poll failing on a connection in error (`XCBConnection::has_error`; one
 unparsable event still only warns) stops the event loop
 (`X11Client::connection_lost`), and the app ends as if it quit:
-`LinuxPlatform::run` runs the quit callbacks (skwir winds its plans down).
+`LinuxPlatform::run` runs the quit callbacks (Skwir winds its plans down).
 Windows are not destroyed on the dead server (each logged a failure with a
 backtrace). Checked on Xvfb: the app ended within a second, its log two lines
 longer. Wayland's client already ended on a lost connection.
@@ -257,7 +257,7 @@ wrap. After a space overflowed a line, the next word did not follow a space, so
 the next line broke mid-word; the shaped layout
 (`LineLayout::compute_wrap_boundaries`) broke before the word. With 0005, a
 clamped last line started inside a word and was drawn wider than its box, cut
-at both ends (three-line grid names); skwir's grid counts lines with the
+at both ends (three-line grid names); Skwir's grid counts lines with the
 wrapper too. The character is now remembered first. The clamped test is 0005's.
 
 ### 0018: Ellipsis is no place to break
@@ -271,7 +271,7 @@ after an ellipsis still follows its space.
 ### 0019: Font id without fallback
 
 `resolve_font` falls back to its own stack and panics when none of it is
-installed. skwir picked its font by resolving a nonexistent family and
+installed. Skwir picked its font by resolving a nonexistent family and
 comparing, which panicked before the window opened on a system with only
 Liberation or Inter. A public `TextSystem::font_id` asks whether a family
 loads without fallback.
@@ -308,7 +308,7 @@ update, drop 0005 (Zed main has its changes under the same names); 0004 and
 0017 have equivalents in Zed main; 0009 and 0015 move to Zed's workspace
 `Cargo.toml`. Run `just list-check` and `just atlas-check`.
 
-Check whether the new gpui supports accessibility (AccessKit): skwir wires it
+Check whether the new gpui supports accessibility (AccessKit): Skwir wires it
 in once it does (ADR-001).
 
 Once every patch is upstream, remove `vendor/gpui` and its `[patch.crates-io]`

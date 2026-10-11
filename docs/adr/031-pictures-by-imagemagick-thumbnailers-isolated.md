@@ -5,7 +5,7 @@ macOS and Windows).
 
 ## Context
 
-skwir decodes common pictures in process, in pure Rust. Others (HEIC,
+Skwir decodes common pictures in process, in pure Rust. Others (HEIC,
 AVIF, JPEG XL, camera raw, PSD, XCF) are drawn by the desktop's
 thumbnailer for their type; where none is installed the file has no
 picture, though the machine may read it.
@@ -15,23 +15,23 @@ Options (reference machine, synthetic 12-megapixel pictures):
 | Option | Measured | Verdict |
 |---|---|---|
 | AVIF in process (rav1d + own container reader) | 0.17 s one thread with assembly, 0.92 s without; 2.7 MB of code in the UI process | Rejected: one format, and a video decoder's assembly where only pure Rust decodes. HEIC has no such decoder. |
-| KDE's thumbnailers | Qt plugins in KIO's worker, no command | Rejected: needs a C++ helper linked to Qt and KDE Frameworks, for one desktop. Dolphin's results already reach skwir through the freedesktop cache. |
+| KDE's thumbnailers | Qt plugins in KIO's worker, no command | Rejected: needs a C++ helper linked to Qt and KDE Frameworks, for one desktop. Dolphin's results already reach Skwir through the freedesktop cache. |
 | ImageMagick | 259 formats here (AVIF, HEIC, JPEG XL, JPEG 2000, raw via LibRaw, PSD, XCF, DjVu); AVIF → 256 px in 0.72 s at ~213 MB (`heif-thumbnailer` 0.57 s, `vipsthumbnail` 0.73 s) | Chosen, isolated: its vulnerability history (ImageTragick) is long. |
 
-Separately, the desktop's thumbnailers ran with skwir's rights (every
+Separately, the desktop's thumbnailers ran with Skwir's rights (every
 file, the network, the session). GNOME has sandboxed them with
-bubblewrap since 3.26; skwir has had that sandbox since ADR-030.
+bubblewrap since 3.26; Skwir has had that sandbox since ADR-030.
 
 ## Decision
 
 ### ImageMagick, the last resort
 
-`Stage::LastResort` runs after the cache, skwir's decoders, the
+`Stage::LastResort` runs after the cache, Skwir's decoders, the
 desktop's thumbnailers (`Generate`) and plugins' renderers (`Fallback`).
 A picture's preview asks the desktop's thumbnailer first, then
 ImageMagick.
 
-- **Takes** an `image/*` file skwir does not decode, if ImageMagick
+- **Takes** an `image/*` file Skwir does not decode, if ImageMagick
   reads its format. The format comes from the MIME database's globs,
   the file's extension first, named explicitly
   (`CR2:/input/document.cr2[0]`) so the bytes never choose another

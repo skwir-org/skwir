@@ -1,7 +1,7 @@
 # ADR-050: Names are indexed by skwird
 
 Status: accepted, 2026-10-10. Not built. Amends ADR-026 (an index that
-proves its coverage answers) and the last point of ADR-003 (skwir may
+proves its coverage answers) and the last point of ADR-003 (Skwir may
 start skwird for the session).
 
 ## Context
@@ -26,28 +26,28 @@ start skwird for the session).
   | macOS | FSEvents, history replayed after restart | — |
   | Windows | one recursive watch, no history | administrator: the USN change journal |
 
-- **Rules to keep:** no daemon in skwir (ADR-000); system indexes may
-  serve a term, but skwir never installs or starts them (ADR-003); an
+- **Rules to keep:** no daemon in Skwir (ADR-000); system indexes may
+  serve a term, but Skwir never installs or starts them (ADR-003); an
   index hints, the walk answers (ADR-026).
 
 ## Decision
 
 1. **skwird, a separate project, indexes names** (design: its
-   repository's `docs/DESIGN.md`). skwir is one client: it speaks
+   repository's `docs/DESIGN.md`). Skwir is one client: it speaks
    skwird's protocol, never links its engine, asks nothing another
    client could not, and stays complete without it (it walks).
 2. **Three lifetimes, one protocol:** system service, user service, or
    on demand (started by its first client, ending a minute after its
-   last). skwir never installs or enables a service; packages may
-   recommend skwird. Where installed, skwir may start it on demand: a
-   helper ending with skwir, not a daemon (ADR-000). This amends
-   ADR-003's "none is ever started by skwir", for skwird alone.
+   last). Skwir never installs or enables a service; packages may
+   recommend skwird. Where installed, Skwir may start it on demand: a
+   helper ending with Skwir, not a daemon (ADR-000). This amends
+   ADR-003's "none is ever started by Skwir", for skwird alone.
 3. **Coverage, not hints.** Each answer states, per root and kind of
    fact (names, attributes): live since a time (nothing dropped,
    applied up to a barrier the search set), checked at a time, as of a
    time, or not covered and why. ADR-026 is amended to trust proven
    coverage.
-4. **skwir keeps what a search means.** The query plugin compiles the
+4. **Skwir keeps what a search means.** The query plugin compiles the
    terms skwird can answer (names, kinds, sizes, times as instants from
    the user's calendar, ADR-017) and checks each file skwird names like
    any other: stat, providers, every term. Types stay the MIME
@@ -57,10 +57,10 @@ start skwird for the session).
    file are two results (ADR-049).
 6. **Privacy.** skwird never indexes private folders (honours `.private`
    itself, ADR-044); a system service answers each user only what that
-   user could list; skwir still applies its own privacy rules before an
+   user could list; Skwir still applies its own privacy rules before an
    agent or outside plugin sees anything.
 7. **A provider in the query plugin**, through skwird's client crate
-   once published (no git dependency: skwir builds from its lockfile).
+   once published (no git dependency: Skwir builds from its lockfile).
    The core's hints gain coverage (ADR-026), so no plugin depends on
    another.
 

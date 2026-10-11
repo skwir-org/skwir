@@ -43,10 +43,10 @@ them by topic.
 | [027](027-notes-stores.md) | Notes read from every store, written where the user says | built |
 | [028](028-companion-files.md) | Files beside a file go where it goes | built, but for orphan matching |
 | [029](029-links-in-text.md) | Links found in text and in the terminal | built |
-| [030](030-text-documents-read-as-text.md) | Text documents read as text, by skwir or Pandoc | built |
+| [030](030-text-documents-read-as-text.md) | Text documents read as text, by Skwir or Pandoc | built |
 | [031](031-pictures-by-imagemagick-thumbnailers-isolated.md) | ImageMagick pictures; thumbnailers isolated | built |
 | [032](032-a-tag-is-a-place.md) | A tag is a place | built |
-| [033](033-idle-memory-own-share.md) | The idle budget counts skwir's own share | built (`just idle-pss`) |
+| [033](033-idle-memory-own-share.md) | The idle budget counts Skwir's own share | built (`just idle-pss`) |
 | [034](034-the-sidebar-is-the-users-and-the-trash-a-place.md) | The sidebar is the user's; the trash is a place | built |
 | [035](035-phase-5-built-on-linux.md) | Phase 5 built on Linux, run on its systems later | in force |
 | [036](036-identity-on-windows.md) | A file's identity on Windows | under Wine only; point 1 revised by 049 |
@@ -55,12 +55,12 @@ them by topic.
 | [039](039-isolation-on-macos-and-windows.md) | Isolating converters on macOS and Windows | macOS compiled only; Windows not built |
 | [040](040-linux-packages.md) | Linux packages: Debian, RPM, AUR | built |
 | [041](041-pdfium-carried-and-what-each-system-brings.md) | PDFium carried; what each system brings | built on Linux |
-| [042](042-apache-2.0.md) | skwir is under the Apache License 2.0 | in force |
+| [042](042-apache-2.0.md) | Skwir is under the Apache License 2.0 | in force |
 | [043](043-agents-and-scripts-drive-the-window.md) | Agents and scripts drive the running window | built |
 | [044](044-the-permission-layer.md) | The permission layer | built |
 | [045](045-plugins-from-outside-as-programs.md) | Plugins from outside, run as programs | built on Linux |
 | [046](046-plugins-as-webassembly-modules.md) | Plugins as WebAssembly modules | built |
-| [047](047-previews-from-outside-are-files-skwir-shows.md) | A preview from outside is a file skwir shows | built |
+| [047](047-previews-from-outside-are-files-skwir-shows.md) | A preview from outside is a file Skwir shows | built |
 | [048](048-archives-are-extracted-by-libarchive-in-its-sandbox.md) | Archives extracted by libarchive, sandboxed, as a step | built |
 | [049](049-a-file-and-its-names.md) | A file and its names are two identities | built |
 | [050](050-names-are-indexed-by-skwird.md) | Names are indexed by skwird | not built |

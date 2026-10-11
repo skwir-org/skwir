@@ -1,6 +1,6 @@
-# Working on skwir
+# Working on Skwir
 
-skwir is an experimental file manager in Rust with a GPU-accelerated UI
+Skwir is an experimental file manager in Rust with a GPU-accelerated UI
 (gpui): a small core, everything else a plugin, driven alike by people,
 scripts and AI agents. This file is the context every contributor, human
 or model, needs before touching the code. Read it once, fully. Before
@@ -36,7 +36,7 @@ working in an area, also read that area's rules (see
    wakes it (`App::set_waker`); never run a `request_animation_frame`
    loop.
 2. **Light.** Idle memory and startup are budgeted (ADR-000, revised by
-   ADR-002 and ADR-033: skwir's own share of PSS, not the GPU driver's
+   ADR-002 and ADR-033: Skwir's own share of PSS, not the GPU driver's
    code). `just bench-check` and `just idle-pss` stay green. Budgets are
    tightened when the reference improves, never loosened without an ADR.
 3. **Stateless and idempotent.** No daemon, no database, one deletable
@@ -65,7 +65,7 @@ working in an area, also read that area's rules (see
   measures budgets and regressions; it is not the target. Choose
   behaviour for its hardware (GPU vendor or driver, hardware decoder,
   core count, memory) only when the gain holds with certainty on the
-  machines skwir runs on (other GPUs, no GPU, fewer cores, less memory),
+  machines Skwir runs on (other GPUs, no GPU, fewer cores, less memory),
   by a mechanism that does not depend on that hardware. When one machine
   is all the evidence, record what was measured and keep the platform's
   default (see the decoder note in `docs/invariants/media.md`).
@@ -123,10 +123,10 @@ working in an area, also read that area's rules (see
   shell state restore the intended pane with `Shell::with_pane`.
 - **Network.** Only the `map-tiles` plugin makes requests (ADR-020), and
   only once the user chose a background that downloads; nothing a file
-  names is fetched. The core has no network layer, and skwir speaks no
+  names is fetched. The core has no network layer, and Skwir speaks no
   file-system protocol (ADR-021). A new use of the network needs an ADR
   of its own.
-- **Every system (ADR-035).** skwir is built for Linux, macOS and
+- **Every system (ADR-035).** Skwir is built for Linux, macOS and
   Windows; `just lint-all` compiles all three (`check-cross`).
   - Code only one system has sits behind `cfg` where it is used, with the
     others' answer beside it: their own code, or an error naming the
@@ -388,7 +388,7 @@ crates/*-worker    optional helper processes: pdf (PDFium, loaded at runtime),
                    (libarchive), mermaid and model (pure Rust), module (a
                    plugin's WebAssembly module, Wasmtime)
 crates/plugins/*   one crate per plugin
-crates/plugin-api  what a plugin from outside skwir is and speaks (ADR-045, ADR-046)
+crates/plugin-api  what a plugin from outside Skwir is and speaks (ADR-045, ADR-046)
 crates/extend      the host of plugins from outside: programs and WebAssembly modules
 crates/plugins-outside/*  plugins from outside built here: the template, the hex
                    view as a module, a Netpbm thumbnailer

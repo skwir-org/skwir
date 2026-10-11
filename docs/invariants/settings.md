@@ -37,7 +37,7 @@ The namespace is the page, and a preference goes where its subject is:
   mode, the colors code is drawn in: shared by documents, books, comics,
   Markdown and the code view); `notes.*` (Notes, the core's: each store's
   Read and Write, declared by `App::register_notes_store`).
-- `ui.*` is only how skwir looks (Appearance). `core.*` is what it does
+- `ui.*` is only how Skwir looks (Appearance). `core.*` is what it does
   with files (General).
 
 ## The dialog
@@ -72,17 +72,17 @@ The namespace is the page, and a preference goes where its subject is:
 - `Plugin::requirements` lists external tools with a probe. Probes touch
   the filesystem: the dialog runs them on a worker when it opens, never
   during registration or rendering.
-- **Helpers answer `--probe`.** One of skwir's own helpers is probed by
+- **Helpers answer `--probe`.** One of Skwir's own helpers is probed by
   starting it with `--probe` (`process::Worker::requirement`, `probe`),
   the first thing every helper answers: it checks what it opens itself
   (PDFium's library, GStreamer's playback plugins) and exits 0 when it can
   work. A helper whose linked libraries are missing never starts, so it
   is not reported installed where only its program is. A new helper
   answers `--probe` too, with a test.
-- **Helpers answer `--build`** with the build of skwir they are
+- **Helpers answer `--build`** with the build of Skwir they are
   (`SKWIR_BUILD`: the version, plus the commit in a release build, from
   `tools/build/identity.rs`, which the helper's build script includes).
-  skwir asks only after a call of the helper failed (`process::explain`)
+  Skwir asks only after a call of the helper failed (`process::explain`)
   and then says, after the failure, that a helper of another build may be
   why. It never refuses one for it, since most calls work all the same. A
   new kind of call of a helper explains its failures this way where they

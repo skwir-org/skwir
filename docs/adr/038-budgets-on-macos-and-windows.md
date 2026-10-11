@@ -5,7 +5,7 @@ are 5b's, on the machines.
 
 ## Context
 
-ADR-000 budgets idle memory and the first frame; ADR-033 counts skwir's
+ADR-000 budgets idle memory and the first frame; ADR-033 counts Skwir's
 own share of PSS, without the GPU driver's code. `tools/measure/
 idle-pss.py` reads `/proc/<pid>/smaps`, which macOS and Windows lack.
 Each has its own cost figure, which also leaves the driver's shared code

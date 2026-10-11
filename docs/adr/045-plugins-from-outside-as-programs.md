@@ -1,4 +1,4 @@
-# ADR-045: Plugins from outside skwir, and those that run as programs
+# ADR-045: Plugins from outside Skwir, and those that run as programs
 
 Status: accepted, 2026-10-07 (Phase 6, "Level 2, external processes").
 Built on Linux; macOS compiled only; Windows runs none.
@@ -17,7 +17,7 @@ plugin from outside is.
    (`skwir_plugin_api::Manifest`): id (namespace of its commands and
    fields), title, category, capabilities (ADR-044), what it provides
    per MIME type (Details fields, thumbnails, previews, commands), and a
-   `module` (ADR-046) or `program` inside the folder. skwir looks in
+   `module` (ADR-046) or `program` inside the folder. Skwir looks in
    `skwir/plugins` under the user's and system's data folders, then
    `SKWIR_PLUGIN_PATH`. An inconsistent manifest or a taken id is left
    out, with the reason logged.
@@ -28,9 +28,9 @@ plugin from outside is.
    effect, reachable from palette, scripts and agents.
 3. **Protocol** (`skwir_plugin_api::protocol`,
    `docs/plugins/protocol.md`): JSON-RPC 2.0, one message per line on
-   stdin/stdout. skwir sends `initialize`, `field`, `thumbnail`,
+   stdin/stdout. Skwir sends `initialize`, `field`, `thumbnail`,
    `inspect`, `command` (ADR-047 adds `convert`, `page`); the plugin
-   sends `read` and `log`. One call at a time; `$/cancel` when skwir
+   sends `read` and `log`. One call at a time; `$/cancel` when Skwir
    stops waiting.
 4. **Files by handle.** The plugin reads bytes through `read`, answered
    only for a file of the current call, only with `read`, never for a
@@ -38,9 +38,9 @@ plugin from outside is.
    reachable.
 5. **Isolated or not run.** On Linux, bubblewrap (`sandbox::plugin`):
    system programs, libraries and its own folder readable, a working
-   folder writable, network only if declared, dies with skwir. Where
+   folder writable, network only if declared, dies with Skwir. Where
    nothing isolates it, it does not run. Started on first ask; ends
-   after 30 s idle, when turned off, or with skwir.
+   after 30 s idle, when turned off, or with Skwir.
 6. **Answers.** A plan is built from the plugin's steps on its files
    (rename, trash, move, copy, make a folder), needs `write`, and is
    always proposed for review when run from the window. From the
@@ -59,5 +59,5 @@ plugin from outside is.
 - Work is bounded: 30 s per answer, reads of 4 MiB, 64 MiB per message
   (`protocol::READ_LIMIT`, `MESSAGE_LIMIT`).
 - Outside previews draw text, code, hex and tables
-  (`protocol::Inspection`), or a file skwir shows, whole or a page at a
+  (`protocol::Inspection`), or a file Skwir shows, whole or a page at a
   time (ADR-047). Never a UI branch.

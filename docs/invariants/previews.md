@@ -65,7 +65,7 @@ A name that says nothing is not a binary file.
 - Every program run on a file that is not ours goes through
   `sandbox::untrusted` (`skwir_platform::sandbox`, bubblewrap). Where
   nothing isolates, converters (LibreOffice, Pandoc) and ImageMagick
-  refuse (`Otherwise::Refuse`); the desktop's thumbnailers, skwir's
+  refuse (`Otherwise::Refuse`); the desktop's thumbnailers, Skwir's
   decoders (`ffprobe`, `ffmpeg`, Poppler's `pdfinfo` and `pdftoppm`) and
   helpers (the archive and model workers) run unisolated
   (`Otherwise::Run`).
@@ -78,7 +78,7 @@ A name that says nothing is not a binary file.
 
 ## Pictures
 
-- skwir decodes in-process what `thumb_providers::decodes` lists; a new
+- Skwir decodes in-process what `thumb_providers::decodes` lists; a new
   in-process decoder adds its type there, which keeps the fallback away.
   Other `image/*` types and 3D models (`model/*`, and types the MIME
   database draws as pictures, `pictured`) go to the desktop thumbnailer
@@ -137,7 +137,7 @@ A name that says nothing is not a binary file.
   picture is held, never the moves. Segments under a pixel are merged.
 - A Mermaid diagram's source goes to `skwir-mermaid-worker`
   (`skwir_platform::diagram`), never to a layout engine linked into
-  skwir. Its SVG is decoded with the page like an HTML drawing, within
+  Skwir. Its SVG is decoded with the page like an HTML drawing, within
   `EMBEDDED_IMAGES`. What cannot be drawn, the helper missing included,
   stays code.
 
@@ -414,10 +414,10 @@ is still to come are in `docs/preview-frame.md`.
   page brings its own, under the code view and code blocks
   (`Display::code_bg`). A look lists only themes of its own lightness, so
   the tokens over them still read.
-- Code kept in the look skwir is not in (`reading.code_appearance`) uses
+- Code kept in the look Skwir is not in (`reading.code_appearance`) uses
   that look's tokens (`Display::code_dark`, `Theme::in_look`): the whole
   code view with its gutter, selection and Default's background, and a
-  document's code blocks (`MarkdownStyle::code`). Never skwir's tokens
+  document's code blocks (`MarkdownStyle::code`). Never Skwir's tokens
   over colors meant for the other look.
 - Muted is for secondary facts (line numbers, captions, column headers),
   never for data: offsets, sizes and values are `theme.text`. The only
@@ -670,8 +670,8 @@ is still to come are in `docs/preview-frame.md`.
 - Copy keeps empty selected lines.
 - Code is colored with bat's grammars and themes (two-face), through the
   one `code_preview::Highlighter`, for the code view and every
-  document's code blocks, light or dark as skwir is unless
-  `reading.code_appearance` keeps it in one. Default is skwir's own
+  document's code blocks, light or dark as Skwir is unless
+  `reading.code_appearance` keeps it in one. Default is Skwir's own
   colors (base16 Ocean's, on that look's background, no font styles). A
   chosen theme (`reading.code_light`, `reading.code_dark`) is one of
   bat's or one the user added to bat, read from bat's folder

@@ -1,6 +1,6 @@
 # Previews
 
-What skwir previews and how, kind by kind; then what each preview needs
+What Skwir previews and how, kind by kind; then what each preview needs
 installed (for packagers) and how previews are checked (for
 contributors). The rules for working on preview code are in
 [`invariants/previews.md`](invariants/previews.md) and
@@ -28,7 +28,7 @@ contributors). The rules for working on preview code are in
   archive, no deeper.
 - **Links.** A link in a document opens with a click; an address found
   in plain text opens with `Ctrl+click`. A link to a file or folder shows
-  it in skwir; a web address goes to your browser.
+  it in Skwir; a web address goes to your browser.
 - **Select and copy.** Drag to select text; copy with `Ctrl+C` or the
   bar. With no text selected, Copy takes the selected row or the current
   section.
@@ -74,9 +74,9 @@ The player, in the panel or pinned at its foot:
 
 ### Text and code
 
-- Code is highlighted with bat's grammars, in skwir's theme or one of
+- Code is highlighted with bat's grammars, in Skwir's theme or one of
   bat's, themes you added to bat included (Reading › Code), light or
-  dark whatever skwir is.
+  dark whatever Skwir is.
 - Any file can be shown as bytes (see [Bytes](#bytes-preview-hex)).
 
 ### Structured data (`preview-structured`)
@@ -126,7 +126,7 @@ The player, in the panel or pinned at its foot:
 - **Office documents** as pages, converted by LibreOffice in a sandbox.
 - **Word** (`.docx`, `.docm`, `.dotx`, `.dotm`), **OpenDocument text**
   (`.odt`, `.ott`) and **RTF** follow the **Text documents** setting:
-  - Reading (default): skwir reads Word and OpenDocument files itself, at
+  - Reading (default): Skwir reads Word and OpenDocument files itself, at
     once and fitted to the panel: headings, numbered lists, tables,
     footnotes that open under their reference, links and pictures. RTF
     goes to Pandoc.
@@ -182,7 +182,7 @@ The player, in the panel or pinned at its foot:
 
 ### Pictures
 
-- Decoded in skwir: PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, QOI, TGA, PNM,
+- Decoded in Skwir: PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, QOI, TGA, PNM,
   OpenEXR, DDS. SVG drawings are drawn, sharper as they are zoomed.
 - Other kinds (HEIC, AVIF, JPEG XL, a camera's raw file) are shown as
   the desktop's thumbnailer for them draws them, at most 1024 pixels,
@@ -324,7 +324,7 @@ parsing ([ADR-009](adr/009-structured-previews.md)):
 
 ## Dependencies (for packagers)
 
-`just run` builds every helper alongside skwir, and the Nix dev shell has
+`just run` builds every helper alongside Skwir, and the Nix dev shell has
 their libraries. A packager can leave out any helper: its plugin says
 what is missing when a file needs it. Formats read in Rust need no
 external program or network service.
@@ -335,10 +335,10 @@ external program or network service.
 | PDF through Poppler | `skwir-poppler-worker` | Poppler |
 | PDF and books through MuPDF | `skwir-mupdf-worker` | MuPDF (linked) |
 | Audio and video | `skwir-media-worker` | GStreamer playback and codec plugins; the spectrum element from the good plugins; ASF from `gst-plugins-ugly`'s [ASF demuxer](https://gstreamer.freedesktop.org/documentation/asf/asfdemux.html), with `gst-libav` for Windows Media codecs; optional FFmpeg (`ffprobe`) for cover art |
-| Archives, comics | `skwir-archive-worker` | libarchive (neither it nor 7-Zip loads into skwir's process) |
+| Archives, comics | `skwir-archive-worker` | libarchive (neither it nor 7-Zip loads into Skwir's process) |
 | Office documents as pages | | LibreOffice, bubblewrap |
 | RTF (or every text document with Pandoc chosen) | | Pandoc, bubblewrap; Word and OpenDocument read as text need nothing |
-| SQLite databases | | `libsqlite3`, which skwir links |
+| SQLite databases | | `libsqlite3`, which Skwir links |
 | Mermaid diagrams | `skwir-mermaid-worker` | Nothing (Rust, built by default; separate because its layout engine is about 16 MB) |
 | 3D meshes without a stored picture | `skwir-model-worker` | Nothing (Rust, built by default); without it, an installed thumbnailer (f3d) draws them, if any |
 | HEIC, AVIF, JPEG XL, raw photos | | A thumbnailer for them (libheif's `heif-thumbnailer`, for example), else ImageMagick (`magick`, or ImageMagick 6's `convert`) and bubblewrap; with neither they show no picture |

@@ -9,7 +9,7 @@ Users of yazi, ranger or vim drive a file manager with letters (`j`/`k`
 move, `space` marks, `v` selects a range, `y`/`x`/`p` copy, cut, paste). A
 plugin could bind them, but the result was wrong:
 
-- **No marks.** yazi keeps marks apart from the hovered file. In skwir an
+- **No marks.** yazi keeps marks apart from the hovered file. In Skwir an
   arrow replaces the selection, and Ctrl+arrow moves a cursor that leaves
   nothing to act on once marks clear.
 - **No range held while the cursor moves** (visual mode).
@@ -59,7 +59,7 @@ and conflict detection. This is that decision.
 
 ## Consequences
 
-- yazi keys for what skwir lacked are left out: line modes, links, tasks,
+- yazi keys for what Skwir lacked are left out: line modes, links, tasks,
   the trash as a place (one since ADR-034), sorting by birth time,
   extension or at random. Left
   and Right keep each view's meaning; Tab still moves the keyboard to the

@@ -1,11 +1,11 @@
 # Security
 
-skwir handles your files, runs plugins from outside its code, and lets
+Skwir handles your files, runs plugins from outside its code, and lets
 agents act through it. Report these problems privately, not in a public
 issue:
 
 - a private folder (Settings › Privacy) reaching an agent or a plugin
-  from outside skwir;
+  from outside Skwir;
 - a plugin getting what its manifest did not declare (another file, the
   network, a program), or escaping its isolation;
 - an agent or a script changing files without the review its plan needs;

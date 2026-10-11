@@ -104,13 +104,13 @@ PDFium and Poppler only (date not recorded). Fresh isolated configurations,
 an 1189×1334 Wayland window, synthetic text PDF in the side panel, 50
 alternating page turns:
 
-| Engine | skwir PSS after 10 turns | After 50 turns | Worker after 50 turns | Combined after 50 turns |
+| Engine | Skwir PSS after 10 turns | After 50 turns | Worker after 50 turns | Combined after 50 turns |
 |---|---:|---:|---:|---:|
 | PDFium | 161.85 MiB | 161.89 MiB | 29.13 MiB | 191.02 MiB |
 | Poppler | 161.56 MiB | 161.46 MiB | 23.47 MiB | 184.93 MiB |
 
-- Memory stabilized for both; neither native library was mapped in skwir.
-- Closing the preview reaped the worker. skwir kept about 161.5 MiB: GPU and
+- Memory stabilized for both; neither native library was mapped in Skwir.
+- Closing the preview reaped the worker. Skwir kept about 161.5 MiB: GPU and
   allocator caches need not shrink back. Idle CPU over 5 s: 0.6–1.0% of one
   core.
 - Single-session observations, not budgets. The 100 MB UI idle target is

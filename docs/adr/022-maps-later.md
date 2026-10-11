@@ -12,7 +12,7 @@ features were left for later because each closes a door:
 
 1. Finding files by where they are (`near:`): a contract between plugins.
 2. Writing locations (geotag from a track, remove before sharing): the
-   first change to file content skwir would make on its own.
+   first change to file content Skwir would make on its own.
 3. Place names without the network ("Near Example Town").
 4. Backgrounds from a local file (PMTiles, MBTiles).
 
@@ -51,7 +51,7 @@ cheaply over thousands of files?
   it and other costly fields will follow (a duration, a page count).
 - A batched `geo.positions { paths }` command: rejected, a contract only
   two plugins know, which the next consumer would copy.
-- An index: rejected, skwir keeps no database (principle 3).
+- An index: rejected, Skwir keeps no database (principle 3).
 
 **Decided (2026-09-27):** the core contract, in ADR-023
 (`skwir_core::fields`; geo answers `position` for pictures and videos).
@@ -149,7 +149,7 @@ and attribution from the file's metadata. What must hold:
 
 - **Raster tiles only** (ADR-020): PNG, JPEG, WebP decoded like downloads.
   Most offline maps are vector tiles (MVT, Protomaps): a vector file is
-  identified and refused until an ADR decides whether skwir draws them (the
+  identified and refused until an ADR decides whether Skwir draws them (the
   option seen: a fixed simple style on the outline's workers).
 - **Bounded readers:** PMTiles directories with every length checked;
   MBTiles through the system's `libsqlite3`, not a bundled copy, unless the

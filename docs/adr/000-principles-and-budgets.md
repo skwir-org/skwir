@@ -6,7 +6,7 @@ identity is not an entry's).
 
 ## Context
 
-skwir is an experimental file manager. `docs/PLAN.md` lists its principles;
+Skwir is an experimental file manager. `docs/PLAN.md` lists its principles;
 this record makes them binding and attaches numbers, so that "fast" and
 "light" are checked by CI rather than argued about.
 

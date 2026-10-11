@@ -1,7 +1,7 @@
 # ADR-002: UI budgets revisited after Phase 2
 
 Status: accepted, 2026-09-18. Decision 1 amended by ADR-033 (2026-10-04):
-the idle budget counts skwir's own share, without the GPU driver's code.
+the idle budget counts Skwir's own share, without the GPU driver's code.
 
 ## Context
 
@@ -33,7 +33,7 @@ render take about 40 ms.
 ## Decision
 
 1. **Memory is PSS, not RSS.** Pages shared with the compositor and other GPU
-   clients are not skwir's cost. Budget: 100 MB PSS, idle, default plugins.
+   clients are not Skwir's cost. Budget: 100 MB PSS, idle, default plugins.
 2. **Vulkan drivers load only for present vendors.** Before any GPU work,
    `skwir` sets `VK_LOADER_DRIVERS_DISABLE` for ICDs whose hardware is absent
    (PCI vendor in sysfs). It never overrides a value the user set, and never

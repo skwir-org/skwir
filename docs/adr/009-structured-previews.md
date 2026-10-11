@@ -10,7 +10,7 @@ Archive extraction, a plan step, is ADR-048. Area rules:
 Beyond images, text, PDFs and video, users preview audio, raw bytes,
 Markdown, archives, EPUB, tables, structured data, fonts, email and comics,
 each a parser of untrusted input. Each preview must stay optional, keep GPUI
-out of plugins, bound skwir's work, and not embed a browser before its costs
+out of plugins, bound Skwir's work, and not embed a browser before its costs
 are measured.
 
 ## Decision
@@ -104,7 +104,7 @@ arguments).
 
 ## Consequences
 
-- The bounds limit skwir's own work, not native libraries' resources.
+- The bounds limit Skwir's own work, not native libraries' resources.
 - Packagers may omit the helpers. Disabling a plugin withdraws its UI; its
   Rust parsers stay compiled in.
 - Archive members and attachments preview as images, text or bytes, with no

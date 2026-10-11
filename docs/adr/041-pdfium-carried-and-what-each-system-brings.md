@@ -6,7 +6,7 @@ ADR-040; builds on ADR-004 (PDFium), ADR-005 (Poppler), ADR-014
 
 ## Context
 
-skwir reads PDFs through a helper for PDFium, Poppler or MuPDF (`auto`:
+Skwir reads PDFs through a helper for PDFium, Poppler or MuPDF (`auto`:
 PDFium, then Poppler; MuPDF only when chosen), all with the same reader
 features.
 
@@ -24,7 +24,7 @@ features.
 
 ## Decision
 
-1. **skwir's packages carry PDFium**, pinned in
+1. **Skwir's packages carry PDFium**, pinned in
    `tools/package/pdfium.lock` (tag, SHA-256 per archive), fetched and
    checked by `tools/package/pdfium.sh` (the PKGBUILD checks the same),
    with its notices. The helper looks for it after the library the
@@ -41,7 +41,7 @@ features.
    | Debian, Fedora | `skwir` (app, PDFium, archive and 3D helpers); `skwir-media` (recommended: GStreamer); `skwir-poppler`, `skwir-mermaid`, `skwir-mupdf` (suggested) |
    | Arch | `skwir` with the Poppler reader and player, their libraries optional; `skwir-mermaid`, `skwir-mupdf` |
 
-   A helper missing its libraries says so (`--probe`); skwir shows its
+   A helper missing its libraries says so (`--probe`); Skwir shows its
    engine as not installed.
 4. **macOS and Windows: system frameworks first.** Packages carry PDFium
    (bundle `Frameworks`; beside the program on Windows) and the type

@@ -47,7 +47,7 @@ registered in `App::notes` by its plugin); all share one model,
   remove those), never a list written over each file.
 - Commands take `entries`, so Details and the tag editor act on what they
   showed, not on the selection at the time.
-- Stores that disagree are merged against what skwir last wrote (a
+- Stores that disagree are merged against what Skwir last wrote (a
   snapshot in the cache): another application's later edit wins; an
   emptied store is not an edit. Details shows where notes are and which
   stores differ; `notes.agree` aligns them.
@@ -65,7 +65,7 @@ registered in `App::notes` by its plugin); all share one model,
   removals. Nothing writes categories onto files. A chip shows the leaf
   (`metadata::tag_leaf`), Details the path. `tags.move` moves tags into a
   category.
-- **Exclusive categories** are skwir's `key:value`: a category holding
+- **Exclusive categories** are Skwir's `key:value`: a category holding
   one tag at a time (`tags.exclusive`, `metadata::TAG_EXCLUSIVE_SETTING`)
   replaces its value on every edit (`metadata::with_exclusive`), takes
   one tag in the tag editor, shows as its own Details row (`Status:
@@ -89,7 +89,7 @@ registered in `App::notes` by its plugin); all share one model,
   folders not seen before (by device, inode and path) and filesystems
   whose change times do not tell (`filesystem::change_times_tell`:
   network, FUSE). A folder checked once per run is checked again only on
-  F5; between, the index follows what panes list and skwir applies.
+  F5; between, the index follows what panes list and Skwir applies.
   `tags.counted` reports the state.
 
 ## Companions (ADR-028)

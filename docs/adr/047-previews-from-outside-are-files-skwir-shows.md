@@ -1,4 +1,4 @@
-# ADR-047: A preview from outside is a file skwir shows
+# ADR-047: A preview from outside is a file Skwir shows
 
 Status: accepted, 2026-10-07 (Phase 6, after its three steps). Point 7
 (pages) added and point 6 revised the same day, before the first
@@ -6,16 +6,16 @@ release: the protocol is experimental, with one version. Built.
 
 ## Context
 
-Outside plugins previewed as text, code, hex or tables (ADR-045). skwir
+Outside plugins previewed as text, code, hex or tables (ADR-045). Skwir
 shows far more: reading-mode Markdown and HTML, books, comics, mail,
 fonts, archives, maps, fitted pictures, the PDF reader, the player, 3D
 models. Could an outside plugin reach these?
 
-Rejected: **skwir's preview model on the wire.**
+Rejected: **Skwir's preview model on the wire.**
 
 - It is internal and changes (`Inspection` gained alignment, notes,
   printed pages): each change would be a protocol version, and
-  `skwir-plugin-api` would depend on skwir's core.
+  `skwir-plugin-api` would depend on Skwir's core.
 - Some of it acts: a link runs a command or opens an address, so the
   user's click would be the plugin's act.
 - Some is read later (a book's pictures, archive members), needing a
@@ -26,15 +26,15 @@ Rejected: **skwir's preview model on the wire.**
 ## Decision
 
 1. **A preview may be another file** (`convert`). A plugin with
-   `converts` answers a file in a format skwir shows (PDF, PNG,
-   Markdown, CSV, GPX, a 3D model…), by name and bytes; skwir previews
+   `converts` answers a file in a format Skwir shows (PDF, PNG,
+   Markdown, CSV, GPX, a 3D model…), by name and bytes; Skwir previews
    it with whichever provider shows that type
    (`PreviewProvider::converted`, asked first, once, in the panel's
    worker). Every kind is reachable, reader and player included, and
    the contract is public formats.
-2. **skwir types it** by name and bytes, as an archive member, never by
+2. **Skwir types it** by name and bytes, as an archive member, never by
    the plugin's word.
-3. **skwir caches it** in the plugin's cache folder, keyed by file
+3. **Skwir caches it** in the plugin's cache folder, keyed by file
    version and plugin version (`made_key`), within 256 MiB (oldest
    evicted). Turning a page, reshowing or restarting asks the plugin
    nothing.
@@ -44,7 +44,7 @@ Rejected: **skwir's preview model on the wire.**
    Otherwise a module could put what it read into an address and have
    the user's click send it. The panel says why (`closed_links`).
 6. **Versions.** The protocol is experimental. `convert` and `page`
-   (written as versions 2 and 3, never published) ship in skwir 0.1 as
+   (written as versions 2 and 3, never published) ship in Skwir 0.1 as
    version 1 (`OLDEST`, `VERSION`). Until declared stable, a new
    version may change an older one's meaning, `OLDEST` follows, and the
    release notes say so. A new method is still a new version, on both
@@ -53,7 +53,7 @@ Rejected: **skwir's preview model on the wire.**
    asked within the side asked, gives the page count, page sizes and
    outline, and on request the page's text as runs with boxes (and
    character starts if known) and its links (to a page or an address).
-   - skwir reads it in its own reader (`crates/extend/src/pages.rs`, a
+   - Skwir reads it in its own reader (`crates/extend/src/pages.rs`, a
      `DocumentSession` opened by the adapter's `open_document`):
      scrolled or turned, zoomed, text selected, copied and searched
      (side 0 asks text only, so search draws nothing), links followed,
@@ -78,7 +78,7 @@ Rejected: **skwir's preview model on the wire.**
   nothing of this file", never another provider's preview. So Netpbm
   reads every kind (`P1`-`P6`, text or binary, 16-bit) and scales
   pictures over 3600 px a side down to fit a message.
-- Converted files go through skwir's readers, which face any user file
+- Converted files go through Skwir's readers, which face any user file
   anyway: no reader meets bytes it could not meet before.
 - A conversion is whole, up to one message (about 48 MB); long
   documents use pages.

@@ -27,7 +27,7 @@ The first release, for Linux.
 - **Drag and drop** asks whether to move, copy or link (or hold `Shift`,
   `Ctrl`, `Ctrl+Shift`), and offers to extract a dropped archive.
 - **Previews**: text and code, Markdown, tables, structured data, PDFs in
-  skwir's reader, office documents, books, comics, e-mail, notebooks,
+  Skwir's reader, office documents, books, comics, e-mail, notebooks,
   pictures, audio and video, fonts, 3D models, circuit boards, maps and
   tracks, archives, and any file's bytes; code in bat's themes, or those
   you added to bat; a player that keeps playing while you browse.
@@ -40,10 +40,10 @@ The first release, for Linux.
 - **Agents and scripts** (off by default): `skwir cmd` and `skwir mcp`,
   with a permission layer between them and your files; private folders
   never leave the machine.
-- **Plugins from outside skwir**, as WebAssembly modules or isolated
+- **Plugins from outside Skwir**, as WebAssembly modules or isolated
   programs. Their protocol is experimental and may change before it is
   declared stable.
 
 Known limits: the macOS and Windows builds compile but have never run
 ([how to help](docs/HELP-WANTED.md)); no screen reader support yet (the
-toolkit has none); Undo lasts only while skwir runs.
+toolkit has none); Undo lasts only while Skwir runs.

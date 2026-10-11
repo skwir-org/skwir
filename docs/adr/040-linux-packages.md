@@ -7,12 +7,12 @@ helpers are separate packages, optional libraries on Arch) and ADR-042
 
 ## Context
 
-skwir's Linux packages were Nix's (the flake and an AppImage, ADR-035).
+Skwir's Linux packages were Nix's (the flake and an AppImage, ADR-035).
 A Nix build carries Nix's libc and cannot load another distribution's
 GPU driver, so the AppImage likely fails there. People install what
 their distribution installs.
 
-Rejected: **Flatpak**. Its sandbox hides the system programs skwir runs
+Rejected: **Flatpak**. Its sandbox hides the system programs Skwir runs
 and the folders it manages unless all are granted, and bubblewrap
 (ADR-039) cannot run inside it.
 
@@ -28,7 +28,7 @@ and the folders it manages unless all are granted, and bubblewrap
 
    `.deb` and `.rpm` use rustup's Rust: a distribution's may be too old.
 2. **One layout:** `skwir` in `/usr/bin`; helpers in `/usr/lib/skwir`
-   (Debian, Arch) or `/usr/libexec/skwir` (Fedora), where skwir looks
+   (Debian, Arch) or `/usr/libexec/skwir` (Fedora), where Skwir looks
    after its own folder (`process::helper_folders`), so no wrapper; a
    desktop entry `org.skwir.skwir.desktop` (the window's application
    id) and AppStream metainfo. The shipped programs are one list,
@@ -36,13 +36,13 @@ and the folders it manages unless all are granted, and bubblewrap
 3. **Dependencies:** what programs link (found by each tool: `$auto`,
    auto-req; by hand for the AUR), plus the Vulkan loader and
    fontconfig, opened at run time. Recommended: a Vulkan driver,
-   bubblewrap, basic GStreamer plugins. Suggested: programs skwir uses
+   bubblewrap, basic GStreamer plugins. Suggested: programs Skwir uses
    when present (LibreOffice, Pandoc, ImageMagick, ffmpeg, exiftool,
    plocate, other GStreamer plugins), so no package pulls an office
    suite.
 4. **Every helper ships**, MuPDF's included (EPUB pages are MuPDF's).
    Packages state the Poppler reader is GPL and the MuPDF reader AGPL
-   (ADR-014), sources in skwir's repository. A packager may drop both
+   (ADR-014), sources in Skwir's repository. A packager may drop both
    (ADR-014).
 5. **Each package installs the licence text** (`LICENSE` since ADR-042;
    first `LICENSE-MIT` and `LICENSE-APACHE`).
@@ -62,13 +62,13 @@ and the folders it manages unless all are granted, and bubblewrap
 - The AUR package disables makepkg's LTO (`options=('!lto')`): it would
   compile crates' C (MuPDF) to GCC bytecode, which Rust's linker (lld)
   cannot read.
-- No font is a dependency. A system lacking one with a symbol skwir
+- No font is a dependency. A system lacking one with a symbol Skwir
   draws as text (the sort arrow) shows a box; every desktop has one
   (DejaVu, Noto).
-- The Debian maintainer field says "The skwir authors" until someone
+- The Debian maintainer field says "The Skwir authors" until someone
   answers for the package. The AUR maintainer is whoever publishes it
   there; publishing is the user's to do.
-- skwir's icon (2026-10-11; before, the desktop entry named the theme's
+- Skwir's icon (2026-10-11; before, the desktop entry named the theme's
   file manager icon) is one SVG, the UI's own
   (`crates/ui/assets/org.skwir.skwir.svg`), installed as
   `/usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg`, which

@@ -24,11 +24,11 @@ engines loaded at startup.
   invalidates the current preview. Image and text rendering stay in the UI.
 - **Tools, not libraries.** Installed FFmpeg/ffprobe for video stills,
   Poppler's `pdfinfo` and `pdftoppm` for PDF pages (instead of PDFium on
-  Linux). No renderer library is loaded into skwir at idle.
+  Linux). No renderer library is loaded into Skwir at idle.
 - **Office.** Installed LibreOffice converts Office/OpenDocument files to
   PDF, shown by the PDF backend (pages, slides, spreadsheet print layouts; no
   interactive grid). ADR-030: a text document can also be read as text, by
-  skwir or Pandoc, in the same sandbox.
+  Skwir or Pandoc, in the same sandbox.
 - **Sandbox.** On Linux, Office conversion requires bubblewrap: only the
   input, system runtime directories and private scratch are mounted; no
   network, macros or link updates; an isolated LibreOffice profile. A sandbox
@@ -76,7 +76,7 @@ engines loaded at startup.
 
 Poppler's PNG compression dominated cold-page latency on a scanned document.
 
-- `pdftoppm` writes uncompressed PPM; skwir encodes the cache with its fast
+- `pdftoppm` writes uncompressed PPM; Skwir encodes the cache with its fast
   lossless PNG encoder. Files may be larger; the namespace stays at 128 MiB,
   and PPM intermediates stay in the request's scratch directory.
 - Decode once; skip resampling when the output already fits. Keep only the

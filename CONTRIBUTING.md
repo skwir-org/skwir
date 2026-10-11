@@ -1,6 +1,6 @@
-# Contributing to skwir
+# Contributing to Skwir
 
-skwir is young: a report of what went wrong is as welcome as code. If you
+Skwir is young: a report of what went wrong is as welcome as code. If you
 have a Mac or a Windows machine, [the steps towards those
 releases](docs/HELP-WANTED.md) need you most.
 
@@ -8,7 +8,7 @@ releases](docs/HELP-WANTED.md) need you most.
 
 Open an issue with:
 
-- your system and its version (More › About skwir › Copy details);
+- your system and its version (More › About Skwir › Copy details);
 - what you did, what you expected, and what happened;
 - the log if you can (`RUST_LOG=skwir=debug skwir` from a terminal).
 
@@ -29,7 +29,7 @@ installs by itself; moving the pin is a change of its own, with the
 fixes the new clippy asks for.
 
 ```
-just build          # skwir without its native helpers
+just build          # Skwir without its native helpers
 just run [folder]   # the release build, with every helper
 just test           # the tests, through cargo-nextest
 just lint           # rustfmt and clippy, warnings as errors
@@ -62,5 +62,5 @@ Two rules matter from the first commit:
 
 ## Licence
 
-skwir is under the Apache License 2.0. What you contribute is under it
+Skwir is under the Apache License 2.0. What you contribute is under it
 too (section 5 of the licence); there is no separate agreement to sign.

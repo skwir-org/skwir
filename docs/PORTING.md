@@ -223,7 +223,7 @@ Left:
 
 Done:
 
-- skwir's own folders per system (`core/src/folders.rs`): `~/Library/…` on
+- Skwir's own folders per system (`core/src/folders.rs`): `~/Library/…` on
   macOS, `%APPDATA%`/`%LOCALAPPDATA%` on Windows, XDG on Linux.
 - Keyring: Windows' Credential Manager (under Wine's); macOS's Keychain
   (compiled only).
@@ -265,7 +265,7 @@ Left:
 - `platform/thumbnails.rs`: the freedesktop cache **(c)**; private
   elsewhere. `thumb_providers.rs` `.thumbnailer` files **(c)**.
 - `platform/sandbox.rs` (ADR-039): bubblewrap on Linux. macOS:
-  `sandbox-exec` with skwir's profile, compiled, never run; whether
+  `sandbox-exec` with Skwir's profile, compiled, never run; whether
   LibreOffice, Pandoc, ImageMagick and the decoders start under it, and what
   the profile must let through, is for a Mac **(5b)**. Windows: nothing; an
   AppContainer is to be built and tried on the machine **(5b)**.
@@ -275,7 +275,7 @@ Left:
     `--sandbox` (2.15 or later) on every system, and alone where the system
     isolates nothing.
 - System thumbnails (ADR-041, `platform/system_thumbs.rs`), at the Generate
-  stage after skwir's decoder: Quick Look on macOS (compiled, never run
+  stage after Skwir's decoder: Quick Look on macOS (compiled, never run
   **(5b)**); the shell's `IShellItemImageFactory` on Windows (under Wine,
   whose shell draws none **(5b)**).
 - PDFs (ADR-041): the packages carry PDFium; its helper finds it beside
@@ -353,11 +353,11 @@ Left:
   Wine (`tests/pipe.rs`), which keeps no accounts apart. Left for Phase 5b's
   gate: the pipe has Windows' default security, which lets every account
   open it to read, and a pipe another account created first under that name
-  is taken for skwir's (the window does not listen, and `skwir mcp` would
+  is taken for Skwir's (the window does not listen, and `skwir mcp` would
   talk to it). The pipe needs a DACL of the user alone, and the client a
   check of the server's account (`GetNamedPipeServerProcessId`). On macOS
   the socket is in the user's own `$TMPDIR`, compiled only.
-- **Plugins from outside skwir** (ADR-045, ADR-046): a module runs the same
+- **Plugins from outside Skwir** (ADR-045, ADR-046): a module runs the same
   everywhere (Wasmtime; compiled for Windows and macOS, run on Linux only).
   A program is isolated by bubblewrap on Linux and `sandbox-exec` on macOS
   (`sandbox::plugin`, compiled only), and does not run on Windows, which has

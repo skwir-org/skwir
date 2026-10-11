@@ -87,9 +87,9 @@ one container an OS reads there, and a container of attributes, so it
 holds ours too (`user.xdg.tags` as `xdg.tags`, an attribute again on a
 Mac or after `rsync -X` back to Linux). Nothing is translated or lost.
 
-### Reading: what changed since skwir last wrote
+### Reading: what changed since Skwir last wrote
 
-The cache (namespace `notes`, by file identity) keeps what skwir last
+The cache (namespace `notes`, by file identity) keeps what Skwir last
 wrote to each store. A store that differs was edited elsewhere: its
 edit wins, additions and removals alike. With nothing remembered, tags
 are the union; a rating or comment is the most recent store's where
@@ -122,9 +122,9 @@ part of a notes edit. yt-dlp names downloads `title [id].ext` and
 
 Nothing else would read it. What one could add (refinding a file by
 fingerprint, per-field merge times, per-field survival flags) lives in
-skwir instead: the snapshot, a check for a sidecar's missing file
+Skwir instead: the snapshot, a check for a sidecar's missing file
 (ADR-028), the stores' declarations. A sidecar of our own, if ever
-needed, will be an XMP profile with a skwir namespace for the rest.
+needed, will be an XMP profile with a Skwir namespace for the rest.
 
 ## Consequences
 

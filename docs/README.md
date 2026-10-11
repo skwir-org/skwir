@@ -1,13 +1,13 @@
-# skwir documentation
+# Skwir documentation
 
-## Using skwir
+## Using Skwir
 
 - [User guide](guide.md): the window, moving around, views, files,
   searching, tags, previews, settings.
 - [Previews](previews.md): what each kind of file shows, and the optional
   programs it needs.
 - [README](../README.md): installing, scripts and agents, plugins from
-  outside skwir.
+  outside Skwir.
 
 ## Writing a plugin
 

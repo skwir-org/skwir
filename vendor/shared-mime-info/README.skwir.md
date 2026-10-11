@@ -7,10 +7,10 @@ tag `2.5.1`; release tarball sha256
 unchanged, with its licence (`COPYING`, GPL-2.0-or-later). `VERSION` names
 the release.
 
-It is data, not code skwir builds. `tools/package/mime-database.sh`
+It is data, not code Skwir builds. `tools/package/mime-database.sh`
 compiles it with shared-mime-info's `update-mime-database` into the files
-the macOS and Windows packages carry beside skwir, as the fallback of each
-system's own types (ADR-037). On Linux skwir reads the database the desktop
+the macOS and Windows packages carry beside Skwir, as the fallback of each
+system's own types (ADR-037). On Linux Skwir reads the database the desktop
 installed, never this one.
 
 Left out: the translations (`po/`; each system names types in its own

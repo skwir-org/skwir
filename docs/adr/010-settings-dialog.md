@@ -76,7 +76,7 @@ preference now goes where its subject is:
   its own page. `reading.*` (`continuous`, `width`, `printed_pages`) is the
   Reading page, shared by the documents, EPUB, comics and Markdown plugins;
   switching one off must not take the others' preferences with it.
-- `ui.*` is Appearance (how skwir looks); `core.*` is General.
+- `ui.*` is Appearance (how Skwir looks); `core.*` is General.
 
 A moved key keeps the user's value: the owner calls
 `Settings::rename(old, new)` before declaring it, which moves a stored value

@@ -1,6 +1,6 @@
-# skwir — Implementation Plan
+# Skwir — Implementation Plan
 
-skwir is an experimental file manager in Rust: a GPU-accelerated UI
+Skwir is an experimental file manager in Rust: a GPU-accelerated UI
 (gpui), a tiny core, everything else a plugin, built to be driven by
 humans, scripts and AI agents alike. This file holds the phases with
 their goals and **Done when** gates, the status of each, the deviations
@@ -31,7 +31,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 
 ## Current status (2026-10-11)
 
-- **Where:** named skwir (skwir.org, application id `org.skwir.skwir`,
+- **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`,
   repository `github.com/skwir-org/skwir`), version 0.1.0. Phases 0 to
   4, 5a and 6 pass their gates. Maps and Notes everywhere are built, as
   is much that no phase planned
@@ -107,7 +107,7 @@ never run: there is no remote yet.
 **Deviations:**
 - The UI budgets were revised after Phase 2 (ADR-002): idle memory is
   PSS, not RSS; the first frame may take 150 ms until gpui loads fonts
-  lazily, our own share under 50 ms. ADR-033 (2026-10-04) counts skwir's
+  lazily, our own share under 50 ms. ADR-033 (2026-10-04) counts Skwir's
   own share of PSS, without the GPU driver's code.
 - First frame and idle memory are measured by `just idle-pss`, not by
   `bench` (ADR-002, until an automated startup harness in Phase 8).
@@ -356,7 +356,7 @@ dates, measurements and what is left.
     LibreOffice, whose readers there allocate the whole grid; Jupyter
     notebooks as documents. Left out: Radiance HDR and farbfeld (the
     MIME database names neither).
-  - Mermaid by merman in `skwir-mermaid-worker`: linked into skwir it
+  - Mermaid by merman in `skwir-mermaid-worker`: linked into Skwir it
     added 14.7 MB of code (text 51.9 → 66.6 MB), so it is a helper
     (16.3 MB), a default member. Without it a diagram stays code.
   - 3D models: `preview-models` (~120 KB of code) shows the picture
@@ -382,7 +382,7 @@ dates, measurements and what is left.
     1024 px as at 128; the three that compute moves with parameters
     stay text.
 - **Text documents** (2026-10-03, ADR-030): Word, OpenDocument text and
-  RTF read by skwir (`preview-documents`, the default), LibreOffice
+  RTF read by Skwir (`preview-documents`, the default), LibreOffice
   pages or Pandoc, each giving way to the next when missing. Measured
   once (a small synthetic Word file): LibreOffice 1.2 to 2.7 s and up to
   370 MB, Pandoc 0.03 s and 120 MB. Not covered: `.fodt`, presentations
@@ -431,7 +431,7 @@ dates, measurements and what is left.
 - **Keys** (2026-09-28, ADR-024): the `vim` plugin (yazi's keymap, off
   by default), a selection that knows it was picked, key layers,
   sequences (vendored patch 0010). Deviations from yazi: no line modes,
-  links, tasks or trash place; Left, Right and Tab keep skwir's meaning;
+  links, tasks or trash place; Left, Right and Tab keep Skwir's meaning;
   `f` and `s` both search; `u` undoes (vim's).
 - **Context menu by file** (2026-09-28): `when` says `kind:image` or
   `has:.gpx`; `registry::MenuSource` names the default application.
@@ -470,7 +470,7 @@ dates, measurements and what is left.
   dark theme. `ui.icon_theme` (Appearance) picks any installed theme,
   applied at once; free desktops only.
 - **Code themes** (2026-10-09 and 10): code in a theme of bat's or the
-  user's, kept light or dark whatever skwir is.
+  user's, kept light or dark whatever Skwir is.
 
 ### Search
 
@@ -486,7 +486,7 @@ dates, measurements and what is left.
   `query.refine`), Find Similar; vendored patch 0007 (a key's click
   fires only on the element it went down on). The chips became pills in
   the address field on 2026-09-29.
-- **Saved searches** (2026-09-25): kept in skwir's settings
+- **Saved searches** (2026-09-25): kept in Skwir's settings
   (`query.saved`), under Searches. Rejected: the GTK bookmarks file
   (every GTK file chooser would show them as broken rows) and one list
   mixing both (an order file of our own over two stores). The core
@@ -523,7 +523,7 @@ dates, measurements and what is left.
   quiet machine: `flat100k` streams in 49.7 ms (budget 100), `images10k`
   in 10.7 ms (12); `tag:` over a million files 2.1 s. Gaps: no `._` file
   a Mac wrote was read (the layout is built from Apple's source); the
-  sidebar suggests only tags skwir's index has seen, not Baloo's;
+  sidebar suggests only tags Skwir's index has seen, not Baloo's;
   renaming leaves hidden files alone, as the search does.
 - **Pills** (2026-10-01): sidebar tags wrap as pills; 20 listed by
   default (was 10).
@@ -547,7 +547,7 @@ dates, measurements and what is left.
   fake `lsblk` and `udisksctl`; not on a real drive.
 - **Bookmarks** (2026-09-25): rename, remove and reorder, each with Undo
   and Redo; Ctrl+D and the pane's button; the GTK file watched, so
-  other file managers' edits appear; lines skwir does not touch are
+  other file managers' edits appear; lines Skwir does not touch are
   kept.
 - **Open With** (2026-09-25): the `open-with` plugin and `ui.choose`;
   "Always use for…" rewrites the user's `mimeapps.list` through
@@ -640,7 +640,7 @@ taken.
   map shows; a coarser tile stands in for a finer one. Verified against
   a local tile server: each tile asked once, from the cache after a
   restart, revalidated with `If-None-Match` (304), the User-Agent naming
-  skwir. Not verified: OpenStreetMap's own server.
+  Skwir. Not verified: OpenStreetMap's own server.
 - **B′. Tile servers.** *Built 2026-09-27* (ADR-020 and ADR-010
   addenda): servers as a records setting, addresses in the common forms
   (`{s}`, `{-y}`, `{q}`, `{r}`, `{key}`), headers, an API key in the
@@ -718,7 +718,7 @@ and budgets for the GPX parse and the EXIF position scan per 1,000 files
 drone mission preview with their facts; a folder of geotagged pictures
 shows on the Map view with shared selection; both plugins disable with
 no trace (`plugins_toggle.rs`), cancelling tile requests in flight; no
-request leaves skwir until a network source is chosen; idle CPU returns
+request leaves Skwir until a network source is chosen; idle CPU returns
 to 0 % after panning on `images10k`.
 
 **Status:** every step built 2026-09-27; the gate is not declared. Met:
@@ -734,7 +734,7 @@ panning on `images10k`, which has no geotagged pictures.
 ADR-027, ADR-028.
 
 **Goal:** a file's tags, rating and comment on any system (Linux, macOS,
-Windows, USB drives) with nothing lost going back and forth; skwir reads
+Windows, USB drives) with nothing lost going back and forth; Skwir reads
 every store it knows by default and writes the ones the user chooses.
 
 **Steps** (each built 2026-09-30):
@@ -750,7 +750,7 @@ every store it knows by default and writes the ones the user chooses.
   when another application changed a store since. One batch per folder,
   one `listxattr` per file. Old `set_tags`, `set_rating`, `set_comment`
   plans still load. The index learns from `Executor::observe`.
-- **B. Merge against what skwir wrote.** A snapshot per file in the
+- **B. Merge against what Skwir wrote.** A snapshot per file in the
   cache; another application's edit in one store wins; the union
   without a snapshot. Details lists where the notes are and offers to
   make the stores agree.
@@ -801,10 +801,10 @@ Tests use synthetic files built from each format's specification (not
 our own encoders) and, where an application runs headless, its output.
 The operations' property tests cover trees with companions.
 
-**Done when:** a file tagged in skwir keeps its notes copied to an exFAT
+**Done when:** a file tagged in Skwir keeps its notes copied to an exFAT
 stick, read by a Mac's Finder there (checked on a Mac or with a `._` file
 a Mac wrote), and copied back to a Linux disk; an edit made in another
-application's store wins over skwir's older one; undo restores every
+application's store wins over Skwir's older one; undo restores every
 store byte for byte; `tags_fill_us` holds its budget.
 
 **Status:** the gate passes in part. The round trip was checked on a
@@ -841,7 +841,7 @@ compiling their C), tested where Linux or Wine can. 5b, on the machines,
 is the original gate. `docs/PORTING.md` lists what is still Linux's;
 each step removes its items. The dev shell has both targets, Zig and
 cargo-zigbuild; `nix develop .#windows` adds Wine. At the start, every
-C dependency and gpui's backend built for Windows and only skwir's code
+C dependency and gpui's backend built for Windows and only Skwir's code
 failed; for macOS, gpui's backend needs Apple's SDK.
 
 "Compiled only" below means nothing of it ran; "under Wine" means it
@@ -912,11 +912,11 @@ ran there, in a prefix of its own.
   folders (compiled only). Not done: eject and mount off Linux, Finder's
   favorites, Quick Access, hearing a drive plugged in on Windows.
   Windows writes removable drives through by default (quick removal);
-  skwir's write-through there and on a Mac flushes once per plan
+  Skwir's write-through there and on a Mac flushes once per plan
   (`docs/PORTING.md`, section 3).
 - **G. Thumbnails and isolation.** *In part, 2026-10-06* (ADR-039,
   ADR-041). macOS isolates converters, decoders and the document readers
-  with `sandbox-exec` under skwir's profile (compiled, never run);
+  with `sandbox-exec` under Skwir's profile (compiled, never run);
   callers ask `sandbox::command` for the paths a program is given. Pandoc
   runs in its own `--sandbox` (2.15 or later) everywhere, and alone
   where nothing isolates (Windows, Linux without bubblewrap); tested on
@@ -970,7 +970,7 @@ ran there, in a prefix of its own.
   Also written: the Nix package (`just package-nix`) and its AppImage;
   the `.app` and `.dmg` (`tools/package/macos.sh`) and the `.msi`
   (`tools/package/windows/`), unsigned, without the native workers'
-  libraries, never run. Those leave Mermaid and MuPDF out; there skwir
+  libraries, never run. Those leave Mermaid and MuPDF out; there Skwir
   finds LibreOffice where it installs itself and searches Homebrew's
   and MacPorts' folders (compiled only); the Windows PDF helper loaded
   the pinned `pdfium.dll` under Wine. CI's `native` job for macOS and
@@ -1023,7 +1023,7 @@ for 5a:
 **Deviations:**
 - Split into 5a and 5b (ADR-035); Phase 6 and Release 0.1 came before
   5b's gate (the user's choice).
-- Packaging: no Flatpak (its sandbox hides the programs skwir runs, and
+- Packaging: no Flatpak (its sandbox hides the programs Skwir runs, and
   bubblewrap cannot run inside it) and no AppImage for other
   distributions (Nix's C library cannot load the system's graphics
   driver); Debian's, RPMs and the AUR instead (ADR-040).
@@ -1060,7 +1060,7 @@ rename-and-move task over MCP that ends in a reviewable plan.
 - **CLI and MCP** (ADR-043): the `control` plugin (off by default)
   listens on a Unix socket in a folder of the user's alone (a named pipe
   on Windows); `skwir mcp` carries an agent's MCP there (`rmcp`);
-  `skwir cmd` runs one command and prints JSON, in a windowless skwir
+  `skwir cmd` runs one command and prints JSON, in a windowless Skwir
   when none listens. An agent's plan is proposed and its tool answers
   with the verdict (`App::propose_awaiting`); `apply_plan` hands its
   plan back, so nothing skips review; commands take `entries` by
@@ -1083,9 +1083,9 @@ rename-and-move task over MCP that ends in a reviewable plan.
   `crates/extend/tests/programs.rs`; the first thumbnailer from outside
   is `crates/plugins-outside/netpbm`.
 - **Level 1** (ADR-046): Wasmtime (49.0.2 since 2026-10-08, minimum
-  Rust 1.96; release step 8 says why), no WASI, skwir's two imports,
+  Rust 1.96; release step 8 says why), no WASI, Skwir's two imports,
   bounded work and memory, in `skwir-module-worker`, so Wasmtime never
-  enters skwir's process. Measured 2026-10-07 with Wasmtime 38: linked
+  enters Skwir's process. Measured 2026-10-07 with Wasmtime 38: linked
   in, it cost 1.6 MiB of idle memory (94.8 against 93.2 MiB own share);
   a module is compiled once and kept in the plugin's cache folder, so
   the hex module answers in 4.0 ms against 188 ms compiling (release,
@@ -1099,7 +1099,7 @@ rename-and-move task over MCP that ends in a reviewable plan.
 - **Gate, second half:** first a scripted MCP client on Xvfb with the
   release binary (a rename, then a move, applied with Enter in the
   review; a trash discarded with Escape). Then Claude Code, given
-  `skwir mcp`, against its own skwir on Xvfb with synthetic files, from
+  `skwir mcp`, against its own Skwir on Xvfb with synthetic files, from
   the tools' descriptions alone. It found what scripted agents had not,
   fixed: a listing's `total` still counted redacted private files, so a
   content search told whether a private file held a word (ADR-044's
@@ -1108,10 +1108,10 @@ rename-and-move task over MCP that ends in a reviewable plan.
   takes `location`); `mkdir` only in the folder shown (`in`); reviews
   did not say an agent proposed (`Plan::by`); `undo` did not say what
   it took back; search syntax and some descriptions were written for
-  skwir's developers.
+  Skwir's developers.
 - **Previews from outside** (ADR-047): a plugin may answer with a file
-  skwir shows (`convert`), or a document a page at a time (`page`), read
-  by skwir's reader with text, links and outline; links open only if
+  Skwir shows (`convert`), or a document a page at a time (`page`), read
+  by Skwir's reader with text, links and outline; links open only if
   the plugin may use the network. Checked on Xvfb: a PPM shown as
   Netpbm's PNG; a `.log` made Markdown by a Python program plugin; a
   log shown in pages, its text selected and searched.
@@ -1168,7 +1168,7 @@ Phase 7.
    read cut at an ASCII character found or after a byte check; step 3
    covers the rest. A command that panics no longer takes its caller
    down: the registry catches it, logs it, and the call fails.
-3. **Fuzzing** what reads files skwir did not write. Done 2026-10-07 as
+3. **Fuzzing** what reads files Skwir did not write. Done 2026-10-07 as
    property tests over any input (proptest; coverage-guided fuzzing
    needs a nightly compiler): each reader gets its own sample mutated
    (bytes changed, multi-byte characters where ASCII is expected, cut
@@ -1178,7 +1178,7 @@ Phase 7.
    jump's lists, links, volumes, entries, users, XHTML, encodings,
    packages, EXIF, MP4, trash records, an edited buffer, tile archives)
    and `crates/skwir/tests/any_file.rs` (33 samples of 32 types shown
-   every way skwir shows a file in its own process). One run of 20,000
+   every way Skwir shows a file in its own process). One run of 20,000
    cases each (64 to 128 for those writing a file a case; 4,000 for the
    preview test); the tests keep 256 (128). Nothing panicked. The font
    preview's test (2026-10-08) hit a panic in `read-fonts`, skrifa's
@@ -1189,7 +1189,7 @@ Phase 7.
    rasterizer, swash 0.2.10, takes none later; the specimen catches the
    panic per glyph and leaves that glyph out (a test builds it).
    **Not covered:** what runs in a helper (PDF, media, archives, 3D
-   models, Mermaid), where a crash ends the helper, not skwir.
+   models, Mermaid), where a crash ends the helper, not Skwir.
 4. **Files under failure.** Done 2026-10-07
    (`crates/core/tests/failures.rs`): a copy into a folder refusing
    writes changes nothing; a plan stopped by a failure keeps what it did
@@ -1207,13 +1207,13 @@ Phase 7.
    leaves its hidden `.skwir-copy-…` folder in the destination, never a
    part copy under the file's name; since 2026-10-08 a later run sweeps
    it (`op::staging`, where this machine alone writes). The journal is
-   memory, so Undo does not outlive skwir (by design: no database).
+   memory, so Undo does not outlive Skwir (by design: no database).
 5. **What users keep from 0.1 on.** Done 2026-10-07: settings are read
    with defaults for what is missing and nothing refused for what is
    unknown (the session included); renamed keys follow
    (`Settings::rename`). Fixed: a settings file that is not TOML or not
-   text stopped skwir from starting; it is now set aside
-   (`settings.toml.unreadable-…`), never overwritten, and skwir starts
+   text stopped Skwir from starting; it is now set aside
+   (`settings.toml.unreadable-…`), never overwritten, and Skwir starts
    with defaults and says so (if it cannot set it aside, it saves
    nothing). The cache lives in a folder its layout names (`<cache>/1`,
    `cache::LAYOUT`); a release that would misread an older layout raises
@@ -1274,9 +1274,9 @@ Phase 7.
    `proc-macro-error2`, which a future Rust refuses, came with gpui's
    `stacksafe` 0.1; vendored patch 0015 (2026-10-08) moves gpui to 1.0,
    which uses `syn` alone. Left: no file split (no change needed one).
-8. **Licences.** skwir is Apache-2.0 alone (2026-10-06, ADR-042, the
+8. **Licences.** Skwir is Apache-2.0 alone (2026-10-06, ADR-042, the
    user's choice; was MIT or Apache-2.0): `LICENSE`, every crate and
-   package. Every dependency built into skwir allows it. The Poppler
+   package. Every dependency built into Skwir allows it. The Poppler
    reader is GPL-3.0 (Poppler's core is GPL 2 or 3), the MuPDF reader
    AGPL (ADR-014); Arch's `skwir`, holding the Poppler reader, says so.
    The dependencies (2026-10-07) are permissive, MPL-2.0 for ten crates.
@@ -1297,22 +1297,22 @@ Phase 7.
    the font preview moved to `skrifa` and `zeno` (2026-10-08, `fontdue`
    gone) and fixed book pages take metrics from `skrifa`; it now comes
    only with gpui's and resvg's text stacks, so its advisory ignore is
-   gone. The toolbar's icons were made for skwir
+   gone. The toolbar's icons were made for Skwir
    (`crates/ui/assets/toolbar/README.md`). Left: notices for the macOS
    and Windows packages.
 9. **Documents.** Done 2026-10-07: the README as a front page (what it
    said of previews, tags and Usage, much no longer true, is now in
    `docs/guide.md`); `CONTRIBUTING.md`, `SECURITY.md`,
    `docs/HELP-WANTED.md` (macOS and Windows step by step, **try** where
-   running skwir and reporting is enough), `.github/ISSUE_TEMPLATE/`
+   running Skwir and reporting is enough), `.github/ISSUE_TEMPLATE/`
    (warning of personal data in paths and screenshots), `CHANGELOG.md`;
    `skwir --version` and `--help`.
 10. **The release.** Named 2026-10-10 (the user had reconsidered the
-    name since 2026-10-07): **skwir**, at skwir.org, its repository
+    name since 2026-10-07): **Skwir**, at skwir.org, its repository
     `https://github.com/skwir-org/skwir`, its application id
     `org.skwir.skwir` (the metainfo, the desktop entry, the window's
     app_id and WM_CLASS, macOS's bundle identifier; one constant,
-    `skwir_core::APP_ID`). bibli became skwir everywhere; nothing reads
+    `skwir_core::APP_ID`). bibli became Skwir everywhere; nothing reads
     the old names, since no release used them. Version 0.1.0
     everywhere. CI for GitHub (`.github/workflows`): the checks as four
     parallel jobs sized for hosted runners; the packages built,
@@ -1355,7 +1355,7 @@ ADR-050. Planned; nothing is built.
 
 **Goal:** name searches that answer from an index where it proves it is
 current, and walk only where it does not. skwird is a project of its
-own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are skwir's steps,
+own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps,
 after Release 0.1 and after skwird's phase 1.
 
 - **A. Coverage in the hints** (ADR-026, amended). `HintProvider` says,

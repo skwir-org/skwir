@@ -29,7 +29,7 @@ and the memory budget.
   keyword search, previews and later embeddings.
 - **System indexes are providers.** Tracker, Baloo, Recoll, Spotlight,
   Windows Search, or a Meilisearch the user already runs may answer
-  `content:`. None is ever installed or started by skwir.
+  `content:`. None is ever installed or started by Skwir.
 
 ## Consequences
 
@@ -44,6 +44,6 @@ and the memory budget.
 
 ### 2026-10-10: skwird (ADR-050)
 
-skwir may start one system index, skwird, for the session where it is
-installed: a helper that ends with skwir, not a daemon. skwir still installs
+Skwir may start one system index, skwird, for the session where it is
+installed: a helper that ends with Skwir, not a daemon. Skwir still installs
 and enables none.

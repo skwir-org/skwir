@@ -1,4 +1,4 @@
-# ADR-030: Text documents read as text, by skwir or by Pandoc
+# ADR-030: Text documents read as text, by Skwir or by Pandoc
 
 Status: accepted, 2026-10-03. Built. Extended by ADR-039 (isolation on
 macOS and Windows).
@@ -17,7 +17,7 @@ file: an order of magnitude, not a budget):
 
 Arrowing through reports waits for an office suite at every file;
 without LibreOffice, or outside Linux, there was no preview. A preview
-is mostly for reading, and skwir already reads Markdown, HTML, EPUB and
+is mostly for reading, and Skwir already reads Markdown, HTML, EPUB and
 mail as semantic blocks (ADR-009, ADR-012). Word and OpenDocument text
 are zips of XML that map onto those blocks. Also, a document's
 thumbnail existed only once previewed (`OfficePages` never converts),
@@ -34,9 +34,9 @@ LibreOffice's pages on request).
 
 | Choice | What | If its program is missing |
 |---|---|---|
-| **Reading** (default) | skwir reads Word and ODF; RTF goes to Pandoc | Pandoc, then Pages |
-| **Pages** | LibreOffice, as before | skwir's reader, then Pandoc |
-| **Pandoc** | every format Pandoc reads | skwir's reader, then Pages |
+| **Reading** (default) | Skwir reads Word and ODF; RTF goes to Pandoc | Pandoc, then Pages |
+| **Pages** | LibreOffice, as before | Skwir's reader, then Pandoc |
+| **Pandoc** | every format Pandoc reads | Skwir's reader, then Pages |
 
 - Installed programs are detected, never assumed. Pandoc's formats are
   its own answer (`pandoc --list-input-formats`, once per version).
@@ -47,7 +47,7 @@ LibreOffice's pages on request).
   decides in `accepts`, on the worker, from the setting, the first
   bytes and the programs found.
 
-### skwir's reader builds blocks, not HTML
+### Skwir's reader builds blocks, not HTML
 
 `docx.rs` and `odt.rs` walk the XML into `inspection::Block`s, so a list
 keeps its own markers (`1.2.`, `a)`) and a heading its number.

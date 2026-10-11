@@ -1,20 +1,20 @@
-# Helping skwir reach macOS and Windows
+# Helping Skwir reach macOS and Windows
 
-skwir 0.1 is released for Linux only. Its code for macOS and Windows
+Skwir 0.1 is released for Linux only. Its code for macOS and Windows
 compiles (`just check-cross`) and the Windows build's tests pass under
 Wine, but none of it has run on a real Mac or Windows machine: nobody
-working on skwir has one. If you do, you can help.
+working on Skwir has one. If you do, you can help.
 
 Below are the steps each release needs, best done in order. Details are in
 [`docs/PORTING.md`](PORTING.md) ("PORTING"); ADR-035 explains the split.
 
-- **try**: no programming. Run skwir and report what happened.
+- **try**: no programming. Run Skwir and report what happened.
 - **code**: needs someone who writes Rust on that system.
 
 ## Before you start
 
 **Build.** Install Rust with [rustup](https://rustup.rs); in the repository
-it uses the version `rust-toolchain.toml` pins (skwir builds with 1.96 or
+it uses the version `rust-toolchain.toml` pins (Skwir builds with 1.96 or
 later). On a Mac, install Xcode's command line tools
 (`xcode-select --install`); on Windows, the MSVC build tools. Then:
 
@@ -69,7 +69,7 @@ called `taxes 2026` can be `folder a`.
    for itself (PORTING "10–15"). Report shortcuts that do the wrong thing.
    A drag's copy modifier should be Option (not done).
 6. **Isolation** (code). Converters (LibreOffice, Pandoc, ImageMagick) and
-   plugins from outside run under `sandbox-exec` with skwir's profile
+   plugins from outside run under `sandbox-exec` with Skwir's profile
    (`platform/src/sandbox.rs`, ADR-039). Find what the profile must let
    through for each to start; without it they are refused.
 7. **What is not written** (code): ejecting a volume (DiskArbitration);

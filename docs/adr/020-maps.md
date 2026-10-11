@@ -1,4 +1,4 @@
-# ADR-020: Maps, their backgrounds, and skwir's first network requests
+# ADR-020: Maps, their backgrounds, and Skwir's first network requests
 
 Status: accepted, 2026-09-27. Built: previews on a map, their backgrounds
 and the Map view (steps A, B and C of `docs/PLAN.md`, "Maps"). Amended
@@ -12,7 +12,7 @@ preview as its line with distance, time and climb; photos with a position
 opens and previews like any other.
 
 Lines and markers are easy; the map under them is not. Every usable street
-map is served over the network, which skwir had never used, and tile
+map is served over the network, which Skwir had never used, and tile
 requests reveal where the user looks (for photos, where they have been).
 This ADR decides how the network arrives.
 
@@ -35,7 +35,7 @@ downloads. Access can be blocked without notice.
     domain), simplified, drawn on a worker in theme colours. No network;
     loaded only when a map is drawn.
   - *OpenStreetMap*, off until chosen (`map-tiles.source`), following the
-    policy point by point (User-Agent with skwir's version, 7 days without
+    policy point by point (User-Agent with Skwir's version, 7 days without
     caching headers, `If-None-Match`/`If-Modified-Since`).
   - *Custom*: a URL template with its own attribution, for a keyed
     provider or one's own server (a list since the first amendment).
@@ -74,14 +74,14 @@ downloads. Access can be blocked without notice.
 
 ## Consequences
 
-- skwir makes network requests only after the user chose a network source;
+- Skwir makes network requests only after the user chose a network source;
   until then the outline shows countries and regions, not streets.
 - The outline adds 514 KB to the binary (Natural Earth 5.1.2: 1:110m below
   zoom 3, 1:50m above; ~110 000 points, packed by
   `tools/maps/natural_earth.py`). Decoded on first use in 7 ms and kept
   (~1 MB) while the plugin is on; a tile draws in 0.25–7 ms on a worker
   (release build, reference machine).
-- OSM can refuse skwir at any time; custom servers and the outline remain.
+- OSM can refuse Skwir at any time; custom servers and the outline remain.
   Offline street maps would come from local PMTiles or MBTiles files, as
   another source.
 - Location data is personal: tests, fixtures and bench data use invented
@@ -101,9 +101,9 @@ downloads. Access can be blocked without notice.
   screens), `{key}`. Unknown ones, or `{s}` without subdomains, are refused
   on save.
 - **Headers** go with every request to that server; `User-Agent` replaces
-  skwir's. Headers the HTTP layer writes (`Host`, `Content-Length`,
+  Skwir's. Headers the HTTP layer writes (`Host`, `Content-Length`,
   `Connection`, conditional headers…) are refused. The built-in OSM source
-  takes none: its policy wants skwir's User-Agent.
+  takes none: its policy wants Skwir's User-Agent.
 - **The API key lives in the keyring**, never in settings. `{key}` is
   substituted at request time on the download threads (keyring read once
   per server until settings change). Tiles are cached by server id and tile

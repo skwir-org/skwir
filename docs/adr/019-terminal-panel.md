@@ -7,7 +7,7 @@ Windows (on Windows the pane and the shell do not follow each other:
 ## Context
 
 Dolphin's F4 terminal follows the folder shown, and a `cd` typed there
-takes the view along; people miss it elsewhere. skwir only had "Open
+takes the view along; people miss it elsewhere. Skwir only had "Open
 Terminal Here" (Shift+F4), handing the folder to `$TERMINAL`, which then
 knows nothing of the pane.
 

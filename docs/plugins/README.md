@@ -1,8 +1,8 @@
-# Writing a plugin for skwir
+# Writing a plugin for Skwir
 
-A plugin from outside skwir is a folder holding a `plugin.toml` and what
+A plugin from outside Skwir is a folder holding a `plugin.toml` and what
 runs it: a **WebAssembly module** (ADR-046) or a **program** (ADR-045).
-skwir finds it in a plugin folder, lists it on Settings › Plugins with what
+Skwir finds it in a plugin folder, lists it on Settings › Plugins with what
 it may do, and runs it once the user turns it on. It can provide:
 
 - **fields** shown in Details (a text's word count, a format's version);
@@ -10,15 +10,15 @@ it may do, and runs it once the user turns it on. It can provide:
 - **previews**, one of:
   - an inspection: text, code, hexadecimal rows or a table, a page at a
     time;
-  - a converted file skwir already shows (a PDF, a picture, Markdown,
-    audio, video…), displayed by skwir's own preview of it;
+  - a converted file Skwir already shows (a PDF, a picture, Markdown,
+    audio, video…), displayed by Skwir's own preview of it;
   - pages: each a picture drawn on demand, with its text and links where
-    they lie, read in skwir's reader (select, copy, search, follow links,
+    they lie, read in Skwir's reader (select, copy, search, follow links,
     outline);
 - **commands**, in the palette and for scripts and agents, answering a
   value, a text for the clipboard, or a plan of changes to files.
 
-skwir draws everything: a plugin provides data, never a view.
+Skwir draws everything: a plugin provides data, never a view.
 
 The protocol is experimental (ADR-047): until declared stable, a new
 version may change what an older one said. The spec is
@@ -30,7 +30,7 @@ version may change what an older one said. The spec is
 field and a command) that builds both as a module and as a program.
 
 1. Copy it to `crates/plugins-outside/<name>`. `skwir-plugin-api` is not
-   on crates.io, so build inside the skwir workspace, which includes every
+   on crates.io, so build inside the Skwir workspace, which includes every
    folder there.
 2. Rename the package in `Cargo.toml` and the `id` in `plugin.toml`.
 3. Write `src/lib.rs`:
@@ -57,7 +57,7 @@ field and a command) that builds both as a module and as a program.
    the Nix dev shell has it; with rustup,
    `rustup target add wasm32-unknown-unknown`). Each plugin lands in
    `target/plugins/<id>`, laid out as an installed one.
-5. Run skwir with it, then turn it on in Settings › Plugins:
+5. Run Skwir with it, then turn it on in Settings › Plugins:
 
    ```
    SKWIR_PLUGIN_PATH=$PWD/target/plugins just run
@@ -124,14 +124,14 @@ effect = "reads"             # reads, shows, plans or acts (default): what an ag
 arguments = { type = "object", properties = { minimum = { type = "integer" } } }
 ```
 
-skwir refuses a manifest (and logs why) unless:
+Skwir refuses a manifest (and logs why) unless:
 
 - `id` is 2 to 64 characters: lowercase letters, digits and dashes,
   starting with a letter;
 - every field `key` and command `name` is `<id>.<something>`;
 - `[run]` names exactly one of `module` and `program` (paths relative to
   the plugin's folder);
-- `api` is a version skwir speaks (1 today);
+- `api` is a version Skwir speaks (1 today);
 - a module does not ask for `network`;
 - a command with `effect = "plans"` comes with the `write` capability;
 - `arguments`, when given, is a JSON schema of type `object`;
@@ -139,7 +139,7 @@ skwir refuses a manifest (and logs why) unless:
 - a `shows_bytes` preview neither `converts` nor shows `pages`;
 - it has no unknown keys.
 
-A command also takes `entries` (absolute paths) and `pane`. skwir resolves
+A command also takes `entries` (absolute paths) and `pane`. Skwir resolves
 the files and hands them to the plugin as `File`s: the ones named, else the
 pane's selection.
 
@@ -150,7 +150,7 @@ Only what it declares (ADR-044):
 | Capability | Allows |
 | --- | --- |
 | `read` | Reading the bytes of the files a call names, through `Host::read`. |
-| `write` | Answering a command with a plan: steps on the call's files by handle (`rename`, `trash`, `move` or `copy` into an absolute folder) or `mkdir` of an absolute folder. skwir shows the plan for review before anything changes; a plan from a plugin run from the window is always reviewed. |
+| `write` | Answering a command with a plan: steps on the call's files by handle (`rename`, `trash`, `move` or `copy` into an absolute folder) or `mkdir` of an absolute folder. Skwir shows the plan for review before anything changes; a plan from a plugin run from the window is always reviewed. |
 | `network` | A program may use the network. A module cannot. |
 | `programs` | A program may start other programs, isolated as it is. |
 
@@ -167,10 +167,10 @@ commands are refused.
 
 A **module** (`[run] module`) is the safest and simplest to ship. Build it
 for `wasm32-unknown-unknown` with `skwir_plugin_api::export!`. It reaches
-only skwir's two imports, `read` and `log`: no files, no clock, no network,
+only Skwir's two imports, `read` and `log`: no files, no clock, no network,
 on every system.
 
-- It runs in `skwir-module-worker`, a helper installed with skwir and
+- It runs in `skwir-module-worker`, a helper installed with Skwir and
   isolated where the system can.
 - Each call is bounded: 20 billion units of Wasmtime fuel (about one
   instruction each, a few seconds of work) and 256 MiB of memory. A module
@@ -184,7 +184,7 @@ and writes JSON lines on standard input and output (see `protocol.md`). A
 Rust program serves its `Plugin` with `skwir_plugin_api::guest::stdio::serve`
 (the template's `main.rs`).
 
-- skwir starts it isolated when first asked: bubblewrap on Linux,
+- Skwir starts it isolated when first asked: bubblewrap on Linux,
   `sandbox-exec` on macOS (compiled, never run). Where nothing can isolate
   it, as on Windows today, it does not run.
 - Inside: the system's programs and libraries (read-only), the plugin's own
@@ -200,7 +200,7 @@ started as a program):
 | --- | --- |
 | Ready after start (`initialize`) | 10 s |
 | Answer to a call | 30 s |
-| Idle before it is ended | 30 s (also ended when turned off, and with skwir) |
+| Idle before it is ended | 30 s (also ended when turned off, and with Skwir) |
 | Restart after a failed start | not before 10 s |
 | Breaks in a row before the plugin is turned off | 3 (no answer in time, stopped, or protocol broken; the user is told) |
 
@@ -210,7 +210,7 @@ started as a program):
   methods directly: the template's `tests` module does this with `Text`.
   Run them with `cargo nextest run -p <package>`.
 - **The JSON.** `guest::answer(&plugin, &host, method, params)` returns
-  exactly what skwir would receive (`plugin-api`'s own tests use it).
+  exactly what Skwir would receive (`plugin-api`'s own tests use it).
 - **A program by hand.** Build it (`cargo build -p skwir-outside-template`)
   and send it one JSON-RPC message per line:
 
@@ -222,8 +222,8 @@ started as a program):
   It answers `{"jsonrpc":"2.0","id":1,"result":{"api":1}}`.
 - **End to end.** `crates/extend/tests/` (`modules.rs`, `programs.rs`)
   installs workspace plugins in a plugin folder, as a user would, and drives
-  them through skwir.
-- **Logs.** A plugin's `log` lines go to skwir's log (the terminal skwir was
+  them through Skwir.
+- **Logs.** A plugin's `log` lines go to Skwir's log (the terminal Skwir was
   started from; level set by `RUST_LOG`, default `info`) as `plugin: …`, cut
   to 500 characters: `error` and `warn` at warn, `info` at info, `debug` at
   debug. A program's standard error is logged line by line at debug, with
@@ -240,7 +240,7 @@ Put the plugin's folder in one of these, searched in order:
 3. the absolute folders in `SKWIR_PLUGIN_PATH` (separated as in `PATH`;
    relative ones are ignored).
 
-Every subfolder holding a `plugin.toml` is a plugin. Then restart skwir
+Every subfolder holding a `plugin.toml` is a plugin. Then restart Skwir
 (plugins are found at startup) and turn the plugin on in Settings ›
 Plugins, where its line says what it may do and where it is. A plugin whose
 id is taken (by a built-in plugin, or one found earlier) or whose manifest

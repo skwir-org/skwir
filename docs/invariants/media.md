@@ -80,7 +80,7 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 
 ## Decoder choice
 
-- The decoder is GStreamer's choice, by its feature ranks. skwir never picks
+- The decoder is GStreamer's choice, by its feature ranks. Skwir never picks
   one per machine: the ranks stay as installed.
 - Measured 2026-09-24 on the reference machine:
 

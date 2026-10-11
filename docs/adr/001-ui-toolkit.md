@@ -80,7 +80,7 @@ Not verified by the spike:
 - **Known gap: accessibility.** gpui 0.2.2 has no AccessKit (no `accesskit`
   dependency), so the plan's "AccessKit from day one" cannot be met.
   Accessibility follows gpui's support: each gpui update checks for it
-  (`vendor/gpui/README.skwir.md`, "Updating gpui"), and skwir wires it in
+  (`vendor/gpui/README.skwir.md`, "Updating gpui"), and Skwir wires it in
   once gpui provides it.
 - The spikes stay runnable as a benchmark: `just spike <toolkit> <gpu>`.
 
@@ -88,6 +88,6 @@ Not verified by the spike:
 
 ### 2026-10-11: accessibility waits for gpui
 
-The revisit no longer has a date of skwir's own ("if still absent by
+The revisit no longer has a date of Skwir's own ("if still absent by
 Phase 5, evaluate contributing it upstream or an adapter in `skwir-ui`"):
 it depends on gpui supporting accessibility, checked at each gpui update.

@@ -1,12 +1,12 @@
 # Vendored xdg-mime 0.4.0
 
 The `xdg-mime` 0.4.0 crate as published on crates.io (Apache-2.0,
-`LICENSE.txt`), plus skwir's patches, wired in through `[patch.crates-io]`
+`LICENSE.txt`), plus Skwir's patches, wired in through `[patch.crates-io]`
 in the root `Cargo.toml`. Remove both once the patches are upstream
 (ebassi/xdg-mime-rs).
 
 Left out: `test_files/`, the crate's test data, which holds a copy of
-shared-mime-info's database (GPL-2.0-or-later). skwir does not run this
+shared-mime-info's database (GPL-2.0-or-later). Skwir does not run this
 crate's tests.
 
 ## Patches
@@ -16,7 +16,7 @@ they apply there with `git apply -p1`.
 
 - `0001-every-system.patch`: compiles off Unix instead of to nothing. The
   crate reads the database's files by name and needs nothing of Unix; on
-  Windows skwir reads the database it ships beside the program, as the
+  Windows Skwir reads the database it ships beside the program, as the
   fallback of the system's own types (ADR-037).
 - `0002-one-lowercasing-per-lookup.patch`: no allocation per glob.
   `Glob::compare` lowercased the name again for every case-insensitive
@@ -33,5 +33,5 @@ they apply there with `git apply -p1`.
   - aliases are a map; the first directory to name one still decides;
   - a subclass cycle ends instead of overflowing the stack;
   - `new_for_directories` reads the database from the directories its
-    caller found, since skwir reads the XDG variables in one place
+    caller found, since Skwir reads the XDG variables in one place
     (`skwir_core::xdg`).

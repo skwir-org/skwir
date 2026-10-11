@@ -32,7 +32,7 @@ observations, not controlled before/after comparisons.
   selectable and the fallback. Deferred: passwords, OCR, editing,
   selection across pages. Found: preview textures stayed in GPUI's
   atlas (now evicted on replace and close); PDFium page buffers now
-  reach GPUI without a copy. After 50 page turns: skwir with PDFium
+  reach GPUI without a copy. After 50 page turns: Skwir with PDFium
   about 201 MiB, with Poppler 177, both stable; fresh idle 115–117 MiB.
 - **Settings dialog:** schema-driven, from the toolbar, the palette or
   Ctrl+comma; `settings.apply` validates whole batches and saves the
@@ -45,7 +45,7 @@ observations, not controlled before/after comparisons.
   Auto prefers PDFium, then Poppler, then the command-line image path.
   Parity checked on rotations with cropping, text, search and link
   geometry, named destinations, empty pages, missing outlines, limits
-  and corrupt PDFs. After 50 page turns, skwir and its worker: about
+  and corrupt PDFs. After 50 page turns, Skwir and its worker: about
   185 MiB with Poppler, 191 with PDFium; closing a preview reaps its
   worker. Timings in `docs/pdf-comparison.md`.
 - **Toolbars:** bundled symbolic SVGs; one reader toolbar for both

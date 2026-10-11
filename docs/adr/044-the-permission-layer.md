@@ -5,7 +5,7 @@ same day. Amends ADR-043: agent calls go through it. Built.
 
 ## Context
 
-Phase 6 opens skwir to code it does not ship: agents (ADR-043), plugin
+Phase 6 opens Skwir to code it does not ship: agents (ADR-043), plugin
 programs (ADR-045) and modules (ADR-046). The plan asks for a permission
 layer before any model provider: capabilities per plugin (read
 contents, write, network, spawn processes) and per-folder policies
@@ -38,7 +38,7 @@ Each kind of code can be held to a different degree:
      (`Checker::redact`).
    - An outside plugin is never handed one (provider answers nothing,
      command refused).
-   - Built-in plugins are skwir: they show these folders to the user.
+   - Built-in plugins are Skwir: they show these folders to the user.
 3. **Each command declares its effect** at registration
    (`command::Effect`, `register(..).reads()`…): `reads`; `shows`
    (changes only what the window shows); `plans` (changes files only by

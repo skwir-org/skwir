@@ -10,14 +10,14 @@ PDFium in the packages.
 
 Image-only page previews cannot select text, search, follow links or show
 outlines, and every new page paid for a command start and a document parse.
-A reader needs a document session, without losing skwir's small startup or
+A reader needs a document session, without losing Skwir's small startup or
 responsive UI. A permissive engine is preferred over MuPDF's AGPL/commercial
 choice.
 
 ## Decision
 
 - **Engine.** The installed PDFium shared library through `pdfium-render`, in
-  a separate `skwir-pdf-worker`; no PDF engine is linked into skwir. The worker
+  a separate `skwir-pdf-worker`; no PDF engine is linked into Skwir. The worker
   is built by the normal recipes; the library is optional (`nix develop .#pdf`
   supplies the pinned runtime). The binding is pinned to 0.8.35 with the
   `pdfium_6721` ABI surface, exercised against PDFium 7749; any library or

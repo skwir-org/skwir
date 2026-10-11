@@ -4,7 +4,7 @@ Status: accepted, 2026-10-05. Splits Phase 5's gate (`docs/PLAN.md`).
 
 ## Context
 
-Phase 5 ports skwir to macOS and Windows. Neither machine is available
+Phase 5 ports Skwir to macOS and Windows. Neither machine is available
 now; one will be later, for testing. The gate (a week of daily use on
 each system, budgets passing there) cannot be met before. Everything
 short of running the result can be done from Linux.

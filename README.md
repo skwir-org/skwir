@@ -20,11 +20,11 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dark.png">
     <img src="docs/images/screenshot-light.png" width="100%"
-         alt="skwir showing a folder as a grid of pictures and documents, the tags of each as colored dots, and a Markdown file read in the preview panel beside it">
+         alt="Skwir showing a folder as a grid of pictures and documents, the tags of each as colored dots, and a Markdown file read in the preview panel beside it">
   </picture>
 </p>
 
-skwir is written in Rust on gpui, Zed's GPU-accelerated toolkit. Version 0.1 is
+Skwir is written in Rust on gpui, Zed's GPU-accelerated toolkit. Version 0.1 is
 for Linux (Wayland or X11, with Vulkan). The macOS and Windows code compiles but
 has never run on either system: see [how to help](docs/HELP-WANTED.md).
 
@@ -36,7 +36,7 @@ has never run on either system: see [how to help](docs/HELP-WANTED.md).
 - **Changes are plans.** A bulk rename, an edit of the listing as text, or
   anything an agent proposes is shown as steps to review before it runs. Every
   operation has an inverse, so Undo and Redo cover everything.
-- **Nothing runs behind your back.** No daemon, no index of its own. skwir
+- **Nothing runs behind your back.** No daemon, no index of its own. Skwir
   reuses what the desktop has (thumbnails, icons, the type database, bookmarks,
   recent files, installed tools) and keeps one cache you can delete at any time.
 - **Notes live on the files.** Tags, ratings and comments are kept where other
@@ -106,11 +106,11 @@ because any program running as you can use it.
   a plan waits until you allow it.
 
 **Private folders** (Settings › Privacy) never leave the machine: agents never
-see their names or contents, and plugins from outside skwir are never handed
+see their names or contents, and plugins from outside Skwir are never handed
 them. `~/.ssh`, `~/.gnupg` and similar folders are private from the start, as is
 any folder holding a file named `.private`.
 
-## Plugins from outside skwir
+## Plugins from outside Skwir
 
 A plugin can be a folder with a `plugin.toml` and either a WebAssembly module or
 a program speaking JSON lines. It can provide fields, thumbnails, previews and
@@ -125,7 +125,7 @@ this repository ([index](docs/README.md)):
 
 - [User guide](docs/guide.md): views, searching, tags, previews, files,
   settings, where things are kept.
-- [Previews](docs/previews.md): every kind of file skwir previews, and what each
+- [Previews](docs/previews.md): every kind of file Skwir previews, and what each
   needs installed.
 - [Writing a plugin](docs/plugins/README.md) and
   [its protocol](docs/plugins/protocol.md).
@@ -137,10 +137,10 @@ this repository ([index](docs/README.md)):
 
 ## License
 
-skwir is under the Apache License 2.0 ([`LICENSE`](LICENSE)), and so are
+Skwir is under the Apache License 2.0 ([`LICENSE`](LICENSE)), and so are
 contributions to it (section 5 of the licence). The Poppler and MuPDF readers
 are separate programs that link libraries under the GPL and the AGPL;
 distributed, they are under the GPL version 3 and the AGPL version 3
-respectively. skwir itself links neither
+respectively. Skwir itself links neither
 ([ADR-042](docs/adr/042-apache-2.0.md)). Each package carries the notices of the
 crates its programs are built from (`THIRD-PARTY-NOTICES`).

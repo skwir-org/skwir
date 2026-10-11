@@ -14,7 +14,7 @@ reaches only what its imports give, on every system, without a sandbox.
 ## Decision
 
 1. **The plugin world** (`crates/plugin-api/wit/plugin.wit`,
-   `skwir:plugin@0.1.0`): skwir provides `read` (a file of the call, by
+   `skwir:plugin@0.1.0`): Skwir provides `read` (a file of the call, by
    handle) and `log`; the plugin exports `call(method, params)` with the
    protocol's methods and JSON (ADR-045). The same plugin builds as a
    module or a program.
@@ -26,7 +26,7 @@ reaches only what its imports give, on every system, without a sandbox.
 3. **The helper `skwir-module-worker` runs it**, started like a program
    plugin (ADR-045), sandboxed where the system can (Wasmtime confines
    the module regardless); module imports become protocol asks.
-   - **Wasmtime and Cranelift stay out of skwir's process:** linked in,
+   - **Wasmtime and Cranelift stay out of Skwir's process:** linked in,
      they cost 1.6 MiB idle for code used only when a module is asked
      (`just idle-pss` back to back, Wasmtime 38: own share 94.8 vs
      93.2 MiB, binary 41.0 vs 39.4 MiB).
@@ -41,7 +41,7 @@ reaches only what its imports give, on every system, without a sandbox.
      256 MiB of memory; one call at a time; a trapped module is
      re-instantiated for its next call.
 4. **Gate plugin: the hex preview** (`crates/plugins-outside/
-   preview-hex`, id `hex-view`), its bytes read through skwir.
+   preview-hex`, id `hex-view`), its bytes read through Skwir.
    `crates/extend/tests/modules.rs` asks it and the built-in the same
    pages, searches and failed searches on synthetic files (a match
    across 64 KiB search chunks, an empty file, a name with an apostrophe
@@ -53,7 +53,7 @@ reaches only what its imports give, on every system, without a sandbox.
    and answers `--probe`.
 
 Rejected: Wasmtime's own cache (its own folder, settings and cleaning
-thread; skwir has one cache).
+thread; Skwir has one cache).
 
 ## Consequences
 

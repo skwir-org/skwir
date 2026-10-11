@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-09-24. Built. Amends ADR-004, which preferred PDFium
 partly to keep MuPDF's AGPL out of the reader. Amended 2026-10-06 by
-ADR-042: skwir's code, the worker's included, is Apache-2.0 alone; the
+ADR-042: Skwir's code, the worker's included, is Apache-2.0 alone; the
 worker executable is still distributed under the AGPL.
 
 ## Context
@@ -30,7 +30,7 @@ layout" EPUB engine. It is AGPL-3.0 or commercial.
   Poppler worker). The worker executable is distributed under the AGPL-3.0
   with MuPDF's source; packagers who refuse that omit it, and the plugin
   reports it missing. The AGPL's network clause concerns software offered
-  over a network; skwir is a desktop application.
+  over a network; Skwir is a desktop application.
 
 ## Consequences
 

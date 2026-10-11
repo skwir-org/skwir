@@ -1,4 +1,4 @@
-# ADR-011: mimalloc, tuned, is the allocator of the skwir binaries
+# ADR-011: mimalloc, tuned, is the allocator of the Skwir binaries
 
 Status: accepted, 2026-09-24. Amended 2026-10-06 (idle workers give back
 what they freed).

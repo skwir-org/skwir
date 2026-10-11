@@ -92,7 +92,7 @@ Count again is F5. Sidebar tags open tag folders; All Tags opens
 
 - **A tag leaves as a folder**: dropped or pasted in a real folder, it
   is copied as a folder of its files, a subfolder per tag within (a
-  plan to review), for a stick or someone without skwir.
+  plan to review), for a stick or someone without Skwir.
 - **A tag's grid tile** shows a few of its latest pictures, framed in
   its color.
 - **The board**: an alternate view opening every place or folder of the

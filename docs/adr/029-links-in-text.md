@@ -9,7 +9,7 @@ followed (`docs/invariants/previews.md`). Elsewhere addresses and paths
 were dead text: the code view, a README's bare `https://…`
 (pulldown-cmark has no GFM autolinks), plain-text mail, and the
 terminal (ADR-019), where `ls`, compilers, `grep` and `git` print the
-files skwir could show. Programs' own terminal links (OSC 8: `ls
+files Skwir could show. Programs' own terminal links (OSC 8: `ls
 --hyperlink`, `rg`, gcc, systemd) were kept by the engine and dropped
 by the screen.
 
@@ -20,7 +20,7 @@ and what following a path does when the terminal follows the pane.
 
 ### What is found
 
-- **Addresses by scheme**, only those skwir follows: `http`, `https`,
+- **Addresses by scheme**, only those Skwir follows: `http`, `https`,
   `mailto`, `file` (`skwir_platform::links::urls`). A dotted name is
   never a domain: `main.rs` and `README.md` are files.
 - **Terminal paths**, with line and column (`src/main.rs:12:5`); only
@@ -40,9 +40,9 @@ and what following a path does when the terminal follows the pane.
 ### What following does
 
 - An address goes to the desktop's browser or mail client through one
-  gate (`ui.open_url`, `open::open_address`, on a worker). skwir
+  gate (`ui.open_url`, `open::open_address`, on a worker). Skwir
   fetches nothing (ADR-020).
-- A file or folder is shown in skwir (`ui.reveal`): a folder entered, a
+- A file or folder is shown in Skwir (`ui.reveal`): a folder entered, a
   file selected, a line number shown in the preview.
 - A link is never opened with an application: printing a hostile file
   to the terminal cannot make a click run anything.

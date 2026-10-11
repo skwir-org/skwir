@@ -8,14 +8,14 @@ by fingerprint.
 
 Some notes live in files beside their file (ADR-027): `._x`,
 `x.ext.xmp` or `x.xmp`, `.ts/x.json` (and its thumbnail
-`.ts/x.ext.jpg`). Only the name ties them. skwir knew them in three
+`.ts/x.ext.jpg`). Only the name ties them. Skwir knew them in three
 ad-hoc places (a second folder read in the tags plugin,
 `attrs::AsideNames`; a `._` re-read rule in `path_provider.rs`), and
 operations ignored them: renaming `x` orphaned `._x` and the Mac lost
 its tags. Copying to a volume without attributes lost the notes, or
 failed when keeping them (ADR-006). A Mac writes attributes to `._x`
 there, and `dot_clean` turns them back into attributes; USB drives need
-skwir to do the same.
+Skwir to do the same.
 
 ## Decision
 
@@ -72,7 +72,7 @@ only when none can and the preference is on.
 
 ### Files another program renamed
 
-skwir cannot follow an outside rename; the companion becomes an orphan.
+Skwir cannot follow an outside rename; the companion becomes an orphan.
 Where a store records a fingerprint (XMP's `xmpMM:DocumentID`, size and
 digest), a matching orphan is offered back to its file as a plan. `._`
 files record none. (Not built.)

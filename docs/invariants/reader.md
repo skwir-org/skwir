@@ -35,7 +35,7 @@ binding, like `AGENTS.md`. Measurements: `docs/pdf-comparison.md`.
   `document::AUTO`), and `pdftoppm` only when none is installed, as on
   macOS, Windows and a minimal Linux (ADR-041).
 - PDFium's library is the one the settings name (`document::PdfiumChoice`,
-  shared by reader, thumbnails and probe), else the one skwir's package
+  shared by reader, thumbnails and probe), else the one Skwir's package
   carries beside the helper (or in a Mac bundle's `Frameworks`), else the
   system's. Every helper answers `--probe` (`process::probe`).
 - `auto` falls back only when a worker or library is absent: the worker is
@@ -144,4 +144,4 @@ binding, like `AGENTS.md`. Measurements: `docs/pdf-comparison.md`.
 ## Measuring
 
 - Separate renderer time from full UI latency, and include child PSS, not
-  only skwir's.
+  only Skwir's.

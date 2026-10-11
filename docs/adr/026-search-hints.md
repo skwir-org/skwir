@@ -39,7 +39,7 @@ requirement", in the deletable cache, and the system's indexes.
 - **The system's index first.** The tags plugin asks Baloo
   (`baloosearch -d root tag:"…"`) while `baloofilerc` says
   `Indexing-Enabled`; Baloo indexes the desktop's tags, which are ours.
-  skwir never starts or configures it.
+  Skwir never starts or configures it.
 - **Our index is learned, not built.** The tags plugin caches the
   tagged files it has seen (namespace `tags`, key `index`): every file
   its provider reads updates it. Loaded when a worker first needs it,
@@ -74,7 +74,7 @@ check: files whose change time moved, folders not seen before, and
 folders on filesystems whose change times do not tell (network, FUSE)
 are read. This is the one place the index is trusted as complete, for
 counting only; `tag:` still walks. Coverage ends when the index is full
-or skwir moves the folder. `tags_check_us`: 1.3 s for a no-change check
+or Skwir moves the folder. `tags_check_us`: 1.3 s for a no-change check
 of the million-file tree (search: 3.0 s).
 
 ### 2026-10-01: the index is bounded by room

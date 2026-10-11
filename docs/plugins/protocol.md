@@ -1,6 +1,6 @@
 # The plugin protocol, version 1
 
-What skwir and a plugin from outside say to each other (ADR-045, ADR-046,
+What Skwir and a plugin from outside say to each other (ADR-045, ADR-046,
 ADR-047). The types are in `skwir_plugin_api::protocol`
 (`crates/plugin-api/src/protocol.rs`); a Rust plugin uses them, a plugin in
 another language writes the same JSON. How to write a plugin:
@@ -9,27 +9,27 @@ another language writes the same JSON. How to write a plugin:
 ## Versions
 
 The protocol is experimental (ADR-047, point 6). Until it is declared
-stable, a new version may change what an older one said, and skwir then
+stable, a new version may change what an older one said, and Skwir then
 stops speaking the older one; the release notes say so. Once stable, a
 plugin written for an older version runs unchanged and is never asked what
 its version did not have.
 
-A manifest states the version its plugin speaks (`api`, default 1). skwir
+A manifest states the version its plugin speaks (`api`, default 1). Skwir
 speaks versions `OLDEST` to `VERSION`, both 1 today.
 
 ## Transports
 
 - **Program**: JSON-RPC 2.0, one message per line on its standard input
-  (skwir's messages) and standard output (the plugin's). A line is at most
-  64 MiB, newline included (`MESSAGE_LIMIT`). Standard error goes to skwir's
-  log. skwir closes standard input when it no longer needs the program.
+  (Skwir's messages) and standard output (the plugin's). A line is at most
+  64 MiB, newline included (`MESSAGE_LIMIT`). Standard error goes to Skwir's
+  log. Skwir closes standard input when it no longer needs the program.
 - **Module**: the WIT world `skwir:plugin@0.1.0`
-  (`crates/plugin-api/wit/plugin.wit`). skwir calls the export
+  (`crates/plugin-api/wit/plugin.wit`). Skwir calls the export
   `call(method, params)` with the method's name and its parameters as JSON
   text, and reads the answer as JSON text, or an error message. The plugin
   calls the imports `read(file, offset, length)` and `log(level, message)`.
 
-One call at a time per plugin: skwir sends the next once one is answered.
+One call at a time per plugin: Skwir sends the next once one is answered.
 While answering, the plugin may send `read` requests and `log`
 notifications.
 
@@ -50,7 +50,7 @@ A call about files names each as a `File`:
 | `mime` | string, optional | When known. |
 | `size` | u64, optional | Bytes, when known. |
 
-## skwir asks
+## Skwir asks
 
 ### `initialize` (program only, first)
 
@@ -58,9 +58,9 @@ A call about files names each as a `File`:
 { "api": 1, "capabilities": ["read"] }
 ```
 
-`api` is the newest version skwir speaks; `capabilities` what the plugin
+`api` is the newest version Skwir speaks; `capabilities` what the plugin
 was granted. Answer `{ "api": 1 }` with the version the plugin speaks; a
-version skwir does not speak is refused.
+version Skwir does not speak is refused.
 
 ### `field`
 
@@ -130,7 +130,7 @@ For a preview declared with `converts = true`:
 { "file": { "handle": 1, "name": "sunset.ppm", … } }
 ```
 
-Answer `null` (nothing to show for this file), or a file in a format skwir
+Answer `null` (nothing to show for this file), or a file in a format Skwir
 shows, which it previews as it would that file (a PDF in the reader, a
 picture zoomed and fitted, audio or video in the player, Markdown, a table,
 a track on the map):
@@ -139,9 +139,9 @@ a track on the map):
 { "name": "sunset.png", "data": "<base64>" }
 ```
 
-- skwir types it by its name (the extension) and bytes, as any file.
+- Skwir types it by its name (the extension) and bytes, as any file.
 - It must fit one message: about 48 MB once in base64.
-- skwir caches it in the plugin's cache folder under the file's version and
+- Skwir caches it in the plugin's cache folder under the file's version and
   the plugin's, and asks again only when either changes.
 - The file's own views stay its own: View as hex shows the original's bytes,
   not the converted file's.
@@ -152,8 +152,8 @@ a track on the map):
 
 For a preview declared with `pages = true`: the file shown a page at a time,
 each page a picture the plugin draws when shown, with its text where it
-lies (a document format skwir does not read, a file of several pictures).
-skwir reads it in its own reader, as a PDF: pages scrolled or turned,
+lies (a document format Skwir does not read, a file of several pictures).
+Skwir reads it in its own reader, as a PDF: pages scrolled or turned,
 zoomed, text selected, copied and searched, links followed, outline listed.
 
 ```json
@@ -190,17 +190,17 @@ Every field but `pages` may be left out.
 | `links` | A box (as for runs) and where it leads: `page` (from 1) of this file, or `uri`. |
 | `outline` | The file's headings: `title`, `depth` (0 at the top, default 0), `page` it starts on (optional). |
 
-- skwir joins two runs on one line with a space and lines with a line
+- Skwir joins two runs on one line with a space and lines with a line
   break, and searches the text case-insensitively.
 - An address link is followed only when the plugin has `network`;
   otherwise the panel says why.
-- The outline is the file's, the same for any page: skwir reads it once,
+- The outline is the file's, the same for any page: Skwir reads it once,
   with the page count.
-- skwir caches what it is answered in the plugin's cache folder, under the
+- Skwir caches what it is answered in the plugin's cache folder, under the
   file's version and the plugin's: the page count and outline, each page's
   picture by side, and its text and links separately. Nothing is asked
   twice.
-- With `converts` too, skwir asks `convert` first and reads in pages a file
+- With `converts` too, Skwir asks `convert` first and reads in pages a file
   `convert` answers `null` for. The Netpbm plugin converts a single picture
   to PNG and shows a file of several one picture a page.
 
@@ -230,7 +230,7 @@ named, else a pane's selection (default `[]`). Answer one of:
 | --- | --- |
 | `done` | Nothing to report. |
 | `value` | A value for the caller (a script, an agent). |
-| `text` | Text for the clipboard; `said` is what skwir says once it is there. |
+| `text` | Text for the clipboard; `said` is what Skwir says once it is there. |
 | `plan` | A plan the caller applies or proposes. Needs the `write` capability. `note` is optional. |
 
 A step's `file` is a handle of the call's files: `rename` gives it `name`
@@ -243,7 +243,7 @@ in its folder, `trash` trashes it, `move` and `copy` put it into the folder
 { "id": 7 }
 ```
 
-skwir stopped waiting for call 7; its `read` requests are refused from then
+Skwir stopped waiting for call 7; its `read` requests are refused from then
 on.
 
 ## The plugin asks
@@ -270,7 +270,7 @@ plugin without the `read` capability.
 ## Errors
 
 A JSON-RPC error's `message` (for a module, the error `call` returns) is
-what skwir reports: a preview shows it where the page would be; a command's
-caller receives it. skwir does not read the `code`; its own errors and the
-Rust guest's use `-32000`. A request to skwir for a method other than
+what Skwir reports: a preview shows it where the page would be; a command's
+caller receives it. Skwir does not read the `code`; its own errors and the
+Rust guest's use `-32000`. A request to Skwir for a method other than
 `read` is answered with an error.

@@ -14,7 +14,7 @@ and there was no trash.
 
 Three questions closed doors: who keeps the arrangement of a place no
 one keeps (Home, a volume), what names a volume across mounts, and how
-much of the trash skwir reads itself.
+much of the trash Skwir reads itself.
 
 ## Decision
 
@@ -85,7 +85,7 @@ takes the keyboard from the files.
 
 ## Consequences
 
-- The arrangement is skwir's alone: Nautilus does not see it, nor skwir
+- The arrangement is Skwir's alone: Nautilus does not see it, nor Skwir
   Nautilus's.
 - A group with every place hidden keeps its header, whose menu shows
   them again.
