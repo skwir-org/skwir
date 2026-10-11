@@ -727,8 +727,7 @@ impl Walk {
             self.finish();
             self.begin(context);
         }
-        alt.clone_into(&mut self.current.text);
-        self.current.picture = picture;
+        self.current.set_picture(picture, alt);
         self.row = None;
         self.finish();
         self.row = row;
@@ -1241,7 +1240,9 @@ mod tests {
             .unwrap()
             .blocks;
             assert_eq!(asked, ["../Images/cover.jpg"]);
-            assert_eq!(texts(&blocks), ["Cover", "Text", "", "after."]);
+            // The cover's title stands in for it, and it is shown.
+            assert_eq!(texts(&blocks), ["", "Text", "", "after."]);
+            assert_eq!(blocks[0].alt, "Cover");
             let Some(Picture::Ready(drawing)) = &blocks[2].picture else {
                 panic!("the drawing is decoded with the page");
             };

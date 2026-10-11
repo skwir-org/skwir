@@ -315,7 +315,16 @@ A text document is read as its structure, or laid out as pages.
   a rule and a heading.
 - A list marker belongs to its item's first block: the block that takes
   it spends it, so a loose item's later paragraphs repeat no bullet.
-- An image ends its block; both halves keep their quote and list.
+- An image ends its block; both halves keep their quote and list. The
+  picture is the block's middle (`markdown::block`): in its item's column,
+  with the item's marker at its foot when the item begins with it.
+- A picture's description (an image's `alt`, a drawing's title) stands in
+  for it, as a browser draws it (`Block::set_picture`): never beside a
+  picture shown, in its box when it cannot be decoded, and as the block's
+  text when there is no picture to show. A Markdown image's description is
+  the plain content of its brackets, as CommonMark reads it: code and
+  inline HTML as written, an image inside by its own description, a line
+  break as a space.
 
 ### Reading typography
 

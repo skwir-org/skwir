@@ -161,10 +161,28 @@ pub struct Block {
     pub size: Option<f32>,
     pub runs: Vec<Run>,
     pub picture: Option<Picture>,
+    /// The words `picture` stands for, drawn in its box only if it cannot be
+    /// decoded (`set_picture`).
+    pub alt: String,
     /// The note this block is part of (a footnote, an endnote), numbered in
     /// its page: the blocks of one note share it, and a reference to any of
     /// its names opens them together.
     pub note: Option<u32>,
+}
+impl Block {
+    /// Show `picture`, described by `alt` (an image's `alt`, a drawing's
+    /// title). A description stands in for its picture, as a browser draws
+    /// it: never beside a picture shown, in the picture's box if it cannot be
+    /// decoded, and as the block's text when there is no picture to show.
+    pub fn set_picture(&mut self, picture: Option<Picture>, alt: &str) {
+        let alt = alt.trim().to_owned();
+        if picture.is_some() {
+            self.alt = alt;
+        } else {
+            self.text = alt;
+        }
+        self.picture = picture;
+    }
 }
 /// A picture a block shows.
 #[derive(Clone, Debug)]
@@ -300,6 +318,11 @@ pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
                     block.picture.take()
                 } else {
                     None
+                },
+                alt: if start == 0 {
+                    std::mem::take(&mut block.alt)
+                } else {
+                    String::new()
                 },
                 anchors: if start == 0 {
                     std::mem::take(&mut block.anchors)

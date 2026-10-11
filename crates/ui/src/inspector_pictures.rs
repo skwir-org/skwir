@@ -41,7 +41,9 @@ struct Reply {
 pub struct Pictures {
     /// Shared with each frame's rows, which only read it.
     pub(crate) loaded: Rc<HashMap<String, Decoded>>,
-    failed: HashSet<String>,
+    /// What could not be decoded, never asked again; the rows draw its
+    /// description in its box.
+    pub(crate) failed: Rc<HashSet<String>>,
     /// The blocks the rows drew last, to do nothing when they drew the same.
     seen: Vec<usize>,
     /// What the view shows and its neighbours, nearest first.
@@ -61,7 +63,7 @@ impl Pictures {
     /// The caller drops what is returned from the atlas.
     pub(crate) fn clear(&mut self) -> Vec<Arc<RenderImage>> {
         self.cancel();
-        self.failed.clear();
+        self.failed = Rc::default();
         self.seen.clear();
         self.wanted.clear();
         self.distance.clear();
@@ -246,7 +248,7 @@ impl Shell {
                 }
                 Err(error) => {
                     tracing::debug!(%error, "preview picture");
-                    pictures.failed.insert(reply.key);
+                    Rc::make_mut(&mut pictures.failed).insert(reply.key);
                 }
             }
             for decoded in pictures.evict() {

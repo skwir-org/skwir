@@ -210,7 +210,8 @@ pub fn parse(
     let mut marker: Option<String> = None;
     let mut alt = String::new();
     let mut pending: Option<Picture> = None;
-    let mut in_image = false;
+    // Images open inside the one being read: its description may hold one.
+    let mut images = 0u32;
     let mut in_table = false;
     let mut in_metadata = false;
     let mut table_header = false;
@@ -285,6 +286,25 @@ pub fn parse(
                 _ => {}
             }
             continue;
+        }
+        // An image's description is its `alt`, read as CommonMark and
+        // pulldown-cmark's own HTML writer read it: its plain content, code
+        // and inline HTML as written, an image inside it by its own
+        // description, a line break as a space; emphasis and links leave
+        // their words.
+        if images > 0 {
+            match &event {
+                Event::Start(Tag::Image { .. }) => images += 1,
+                Event::End(TagEnd::Image) => images -= 1,
+                Event::Text(text) | Event::Code(text) | Event::InlineHtml(text) => {
+                    alt.push_str(text);
+                }
+                Event::SoftBreak | Event::HardBreak => alt.push(' '),
+                _ => {}
+            }
+            if images > 0 {
+                continue;
+            }
         }
         if inline_event(&mut inline, &event) {
             continue;
@@ -396,7 +416,7 @@ pub fn parse(
             }
             Event::Start(Tag::Image { dest_url, .. }) => {
                 flush(&mut blocks, &mut current, &mut marker);
-                in_image = true;
+                images = 1;
                 alt.clear();
                 pending = load(dest_url.as_ref());
             }
@@ -404,39 +424,23 @@ pub fn parse(
             // cut in two; both halves stay in the quote or list item they
             // were written in.
             Event::End(TagEnd::Image) => {
-                in_image = false;
                 let picture = pending.take();
                 let text = std::mem::take(&mut alt);
                 begin(&mut current, quote_depth, &lists, marker.as_deref());
-                if picture.is_some() || !text.is_empty() {
-                    current.text = text;
-                    current.picture = picture;
+                if picture.is_some() || !text.trim().is_empty() {
+                    current.set_picture(picture, &text);
                     flush(&mut blocks, &mut current, &mut marker);
                     begin(&mut current, quote_depth, &lists, marker.as_deref());
                 }
             }
-            Event::Text(text) => {
-                if in_image {
-                    alt.push_str(text.as_ref());
-                } else {
-                    push(&mut current, text.as_ref(), &inline);
-                }
-            }
+            Event::Text(text) => push(&mut current, text.as_ref(), &inline),
             Event::Code(text) => {
                 inline.code += 1;
                 push(&mut current, text.as_ref(), &inline);
                 inline.code -= 1;
             }
-            Event::SoftBreak => {
-                if !in_image {
-                    push(&mut current, " ", &inline);
-                }
-            }
-            Event::HardBreak => {
-                if !in_image {
-                    push(&mut current, "\n", &inline);
-                }
-            }
+            Event::SoftBreak => push(&mut current, " ", &inline),
+            Event::HardBreak => push(&mut current, "\n", &inline),
             Event::Rule => {
                 flush(&mut blocks, &mut current, &mut marker);
                 blocks.push(Block {
@@ -611,6 +615,58 @@ mod tests {
             blocks.iter().filter(|b| b.marker.is_some()).count(),
             1,
             "one bullet for the item"
+        );
+    }
+
+    /// A description stands in for its picture: kept aside while there is
+    /// one to show, the text where there is none, in Markdown and in HTML.
+    #[test]
+    fn a_picture_shown_is_not_described_beside_itself() {
+        let source = "![A grid of *pictures*](shown.png)\n\n\
+            <img src=\"logo.png\" alt=\"The logo\">\n\n\
+            ![Not there](missing.png)\n";
+        let blocks = super::parse(source, &CancelToken::new(), |href| {
+            (href != "missing.png").then(|| Picture::Later {
+                key: href.to_owned(),
+                width: 4,
+                height: 3,
+            })
+        })
+        .unwrap()
+        .blocks;
+        let read: Vec<_> = blocks
+            .iter()
+            .map(|b| (b.text.as_str(), b.alt.as_str(), b.picture.is_some()))
+            .collect();
+        assert_eq!(
+            read,
+            [
+                ("", "A grid of pictures", true),
+                ("", "The logo", true),
+                ("Not there", "", false),
+            ]
+        );
+    }
+
+    /// What the Markdown specification and `pulldown_cmark::html` put in
+    /// `alt`, with the image inside the description named, never loaded.
+    #[test]
+    fn a_description_is_the_plain_content_of_its_brackets() {
+        let mut asked = Vec::new();
+        let blocks = super::parse(
+            "![Run `ls -a` *here*\nthen ![the inner](inner.png) [a link](u) <kbd>K</kbd>](x.png)\n",
+            &CancelToken::new(),
+            |href| {
+                asked.push(href.to_owned());
+                None
+            },
+        )
+        .unwrap()
+        .blocks;
+        assert_eq!(asked, ["x.png"]);
+        assert_eq!(
+            blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>(),
+            ["Run ls -a here then the inner a link <kbd>K</kbd>"]
         );
     }
 

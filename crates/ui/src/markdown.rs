@@ -9,8 +9,8 @@
 //!
 //! A block is drawn in one pass: the container carries the spacing, the quote
 //! border and the list indent whatever the block holds, and only its middle
-//! differs between text, a code box and a table row. Nothing may return early
-//! and skip the frame, or code inside a quote loses its border.
+//! differs between text, a picture, a code box and a table row. Nothing may
+//! return early and skip the frame, or code inside a quote loses its border.
 use crate::{inspector_text, theme::Theme};
 use gpui::{
     AnyElement, FontWeight, Hsla, RenderImage, SharedString, WeakEntity, div, prelude::*, px,
@@ -163,11 +163,12 @@ impl MarkdownStyle {
     }
 }
 
-/// A block's picture as a row draws it: decoded, or still on its way, and
-/// the size it is shown at either way.
+/// A block's picture as a row draws it: decoded, still on its way, or
+/// `failed` to decode, and the size it is shown at either way.
 pub struct Shown<'a> {
     pub image: Option<&'a Arc<RenderImage>>,
     pub size: (u32, u32),
+    pub failed: bool,
 }
 impl<'a> Shown<'a> {
     pub fn ready(image: &'a Arc<RenderImage>) -> Self {
@@ -178,6 +179,7 @@ impl<'a> Shown<'a> {
                 u32::try_from(size.width.0).unwrap_or(1),
                 u32::try_from(size.height.0).unwrap_or(1),
             ),
+            failed: false,
         }
     }
 }
@@ -209,6 +211,9 @@ pub fn block(
     if block.quote {
         row = row.border_l_2().border_color(style.quote_border).pl_4();
     }
+    // A picture alone on its line sits on the line's baseline, as a browser
+    // sets it: an item's marker beside it lines up with its foot.
+    let pictured = picture.is_some() && block.text.is_empty();
     let content = match &block.kind {
         // Only the middle differs: a rule inside a quote or a list item
         // keeps the border and the indent like any other block.
@@ -222,7 +227,21 @@ pub fn block(
             table_row(block, index, cells, *header, selection, style, pane, entity)
         }
         _ if block.code => code_box(block, index, selection, style, mono, pane, entity),
-        BlockKind::Text => text_body(block, index, selection, style, pane, entity),
+        BlockKind::Text => match picture {
+            None => text_body(block, index, selection, style, pane, entity),
+            // A picture is the block's middle, in its item's column; its
+            // description is not text of the block (`Block::set_picture`).
+            Some(picture) => div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .when(!block.text.is_empty(), |d| {
+                    d.child(text_body(block, index, selection, style, pane, entity))
+                })
+                .child(picture_box(block, &picture, style))
+                .into_any_element(),
+        },
     };
     // The document's own margins (a letter, a verse, a definition) indent
     // the whole block, marker included.
@@ -231,13 +250,14 @@ pub fn block(
         .flex()
         .flex_row()
         .items_start()
+        .when(pictured, Styled::items_end)
         .w_full()
         .min_w_0()
         .pl(px(indent));
     if block.list_depth > 0 {
         // The marker column is reserved for every block of the item, not only
-        // the one that shows the bullet, so an item's later paragraphs and its
-        // code line up under its first line.
+        // the one that shows the bullet, so an item's later paragraphs, its
+        // code and its pictures line up under its first line.
         line = line
             .pl(px(
                 indent + style.list_indent * (block.list_depth - 1) as f32
@@ -251,39 +271,47 @@ pub fn block(
                     .child(block.marker.clone().unwrap_or_default()),
             );
     }
-    row.child(line.child(content))
-        .when_some(picture, |d, picture| {
-            // A picture the page centred (a cover, a logo) stays in the middle;
-            // its caption, the block's text, follows it there. Its box is the
-            // size it is shown at before it is decoded too, so nothing moves
-            // when it arrives: the width, no wider than the column, and the
-            // height its proportions give.
-            let (width, height) = picture.size;
-            let frame = div()
-                .flex_none()
-                .w(px(width.max(1) as f32))
-                .max_w_full()
-                .map(|mut d| {
-                    d.style().aspect_ratio = Some(width.max(1) as f32 / height.max(1) as f32);
-                    d
-                });
-            let frame = match picture.image {
-                Some(image) => frame.child(gpui::img(image.clone()).size_full()),
-                None => frame.bg(style.placeholder),
-            };
-            d.child(
-                div()
-                    .w_full()
-                    .flex()
-                    .map(|d| match block.align {
-                        Align::Start => d,
-                        Align::Center => d.justify_center(),
-                        Align::End => d.justify_end(),
-                    })
-                    .child(frame),
-            )
+    row.child(line.child(content)).into_any_element()
+}
+
+/// A block's picture, where its text would be. One the page centred (a
+/// cover, a logo) stays in the middle of its column. Its box is the size it
+/// is shown at before it is decoded too, so nothing moves when it arrives,
+/// or fails to: the width, no wider than the column, and the height its
+/// proportions give.
+fn picture_box(block: &Block, picture: &Shown<'_>, style: &MarkdownStyle) -> impl IntoElement {
+    let (width, height) = picture.size;
+    let frame = div()
+        .flex_none()
+        .w(px(width.max(1) as f32))
+        .max_w_full()
+        .map(|mut d| {
+            d.style().aspect_ratio = Some(width.max(1) as f32 / height.max(1) as f32);
+            d
+        });
+    let frame = match picture.image {
+        Some(image) => frame.child(gpui::img(image.clone()).size_full()),
+        // One that cannot be decoded says what it stands for, as a
+        // browser does.
+        None if picture.failed => frame
+            .bg(style.placeholder)
+            .overflow_hidden()
+            .p_2()
+            .text_color(style.text_muted)
+            .text_size(px(style.body_size))
+            .line_height(px(style.body_size * style.line_height))
+            .child(block.alt.clone()),
+        None => frame.bg(style.placeholder),
+    };
+    div()
+        .w_full()
+        .flex()
+        .map(|d| match block.align {
+            Align::Start => d,
+            Align::Center => d.justify_center(),
+            Align::End => d.justify_end(),
         })
-        .into_any_element()
+        .child(frame)
 }
 
 fn text_body(

@@ -2169,6 +2169,7 @@ pub fn content(
     // The blocks the rows draw, reported after layout so the pictures they
     // show can be asked for (`inspector_pictures`).
     let loaded = Rc::clone(&state.pictures.loaded);
+    let failed = Rc::clone(&state.pictures.failed);
     let drawn = Rc::new(RefCell::new(Vec::new()));
     let seen = Rc::clone(&drawn);
     // A container's view kept above a member decodes nothing more: what it
@@ -2279,6 +2280,7 @@ pub fn content(
                     Some(crate::markdown::Shown {
                         image: loaded.get(key).map(|decoded| &decoded.image),
                         size: (*width, *height),
+                        failed: failed.contains(key),
                     })
                 }
                 _ => None,

@@ -202,24 +202,19 @@ impl Builder {
     }
 
     /// A picture ends the block it sits in; the paragraph goes on after it
-    /// in the same list or quote. In a table it stands after the row. One
-    /// that cannot be shown says its description, when it has one; one that
-    /// is shown does not, since a word processor writes descriptions nobody
+    /// in the same list or quote. In a table it stands after the row. Its
+    /// description is said only where it cannot be shown
+    /// (`Block::set_picture`): a word processor writes descriptions nobody
     /// typed ("Description automatically generated").
     pub(crate) fn picture(&mut self, alt: &str, picture: Option<Picture>) {
         if picture.is_none() && alt.trim().is_empty() {
             return;
         }
         let mut block = Block {
-            text: if picture.is_some() {
-                String::new()
-            } else {
-                alt.trim().to_owned()
-            },
-            picture,
             note: self.note,
             ..Block::default()
         };
+        block.set_picture(picture, alt);
         if self.row.is_some() {
             self.after_row.push(block);
             return;
