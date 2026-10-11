@@ -362,6 +362,11 @@ dates, measurements and what is left.
     drew in 0.08 ms at 128 px (median; p99 1.2 ms, the slowest 34 ms,
     Adwaita's blurred `user-trash-full`). A compressed drawing's text
     was never drawn (text was looked for in the compressed bytes).
+    A thumbnail whose ink would not read on the window's background
+    (under WCAG's 3:1), but does on a light backdrop, is drawn on one:
+    dark lines on nothing, on the dark look (`Thumb::on_backdrop`).
+    Backdrops behind every picture with transparency left light
+    corners around rounded icons, and boxes on the light look.
   - Mermaid by merman in `skwir-mermaid-worker`: linked into Skwir it
     added 14.7 MB of code (text 51.9 → 66.6 MB), so it is a helper
     (16.3 MB), a default member. Without it a diagram stays code.

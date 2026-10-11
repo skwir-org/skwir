@@ -16,6 +16,13 @@ around the views is in [shell.md](shell.md).
   entries: they take only the picture (`icons::entry_picture`) and the
   cut dimming.
 - Every view marks a link, and a tag's place, with `icons::Mark`.
+- A thumbnail is drawn by `thumbs::Thumb::img`, sized and fitted by the
+  view. One that lets its background through, whose ink (its luminance,
+  weighted by opacity, read once when converted) would not read on `bg`
+  (under WCAG's 3:1 for graphics) but reads on `picture_backdrop`, is
+  drawn on that: a drawing's dark lines on the dark look. A colored icon
+  reads as it is, and an opaque picture has no backdrop to fringe its
+  edges. The map frames its photos in its paper.
 
 ## Selection
 

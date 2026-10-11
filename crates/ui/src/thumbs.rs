@@ -1,11 +1,11 @@
 //! UI side of thumbnails: builds requests for visible entries, converts the
-//! core's RGBA images into GPUI `RenderImage`s once, and keeps a byte-capped
-//! LRU that releases atlas textures on eviction.
+//! core's RGBA images into GPUI `RenderImage`s once (`Thumb`), and keeps a
+//! byte-capped LRU that releases atlas textures on eviction.
 
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use gpui::RenderImage;
+use gpui::{RenderImage, prelude::*};
 use skwir_core::EntryId;
 use skwir_core::entry::keys;
 use skwir_core::lru::ByteLru;
@@ -14,13 +14,99 @@ use skwir_core::thumbs::{Image, ThumbRequest, ThumbSize, ThumbState};
 use smallvec::SmallVec;
 
 use crate::shell::Shell;
+use crate::theme::Theme;
 
 /// What a view draws for an entry.
 #[derive(Clone)]
 pub enum ThumbView {
-    Ready(Arc<RenderImage>),
+    Ready(Thumb),
     Pending,
     Unavailable,
+}
+
+/// A thumbnail as the window draws it.
+#[derive(Clone)]
+pub struct Thumb {
+    pub image: Arc<RenderImage>,
+    /// The luminance of what it draws (`ink`), when some of it lets its
+    /// background through: a drawing, an icon, a model drawn on nothing.
+    ink: Option<f32>,
+}
+
+/// The least contrast a picture's ink needs with what is behind it to
+/// read: WCAG's for graphics (1.4.11).
+const LEGIBLE: f32 = 3.;
+
+impl Thumb {
+    /// The core's picture converted for the window.
+    fn of(img: &Image) -> Option<Thumb> {
+        Some(Thumb {
+            ink: ink(&img.rgba),
+            image: to_render_image(img)?,
+        })
+    }
+
+    /// Whether it is drawn on `picture_backdrop`: it lets its background
+    /// through, and its ink would not read on the window's but reads on
+    /// the backdrop. On the dark look, dark lines on nothing; a colored
+    /// icon, which reads, keeps no light corners around its own, and a
+    /// light one on the light look no white box that would hardly help.
+    pub fn on_backdrop(&self, theme: &Theme) -> bool {
+        self.ink.is_some_and(|ink| {
+            contrast(ink, luminance(theme.bg)) < LEGIBLE
+                && contrast(ink, luminance(theme.picture_backdrop)) >= LEGIBLE
+        })
+    }
+
+    /// Its element, on its backdrop when it needs one (`on_backdrop`). The
+    /// backdrop is the element's box, so a view sizes and fits it as it
+    /// would the picture.
+    pub fn img(&self, theme: &Theme) -> gpui::Img {
+        gpui::img(Arc::clone(&self.image)).when(self.on_backdrop(theme), |img| {
+            img.bg(theme.picture_backdrop)
+        })
+    }
+}
+
+/// The relative luminance of what `rgba` draws, each pixel weighted by how
+/// opaque it is, when some of it is not; `None` for a picture opaque
+/// throughout (a backdrop would only fringe its edges) or with nothing
+/// drawn. Read once, when the thumbnail is converted.
+fn ink(rgba: &[u8]) -> Option<f32> {
+    static LINEAR: std::sync::LazyLock<[f32; 256]> =
+        std::sync::LazyLock::new(|| std::array::from_fn(|v| linear(v as f32 / 255.)));
+    let pixels = rgba.as_chunks::<4>().0;
+    if pixels.iter().all(|p| p[3] == 255) {
+        return None;
+    }
+    let (mut sum, mut weight) = (0f32, 0f32);
+    for &[r, g, b, a] in pixels {
+        let a = f32::from(a) / 255.;
+        let [r, g, b] = [r, g, b].map(|c| LINEAR[usize::from(c)]);
+        sum += a * (0.2126 * r + 0.7152 * g + 0.0722 * b);
+        weight += a;
+    }
+    (weight > 0.).then(|| sum / weight)
+}
+
+/// An sRGB channel (0 to 1) in linear light.
+fn linear(c: f32) -> f32 {
+    if c <= 0.040_45 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// A color's relative luminance.
+fn luminance(color: gpui::Hsla) -> f32 {
+    let rgb = color.to_rgb();
+    0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b)
+}
+
+/// The contrast of two relative luminances, from 1 to 21.
+fn contrast(a: f32, b: f32) -> f32 {
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
 /// An entry's picture at one size, as of one modification time: a file
@@ -38,8 +124,8 @@ type Key = skwir_core::thumbs::Key;
 /// frame begins (`begin_frame`), in render, never while a map or a view
 /// lays out.
 pub struct ThumbCache {
-    lru: ByteLru<Key, Arc<RenderImage>>,
-    retired: Vec<Arc<RenderImage>>,
+    lru: ByteLru<Key, Thumb>,
+    retired: Vec<Thumb>,
     /// The recency clock when this frame and the one before began.
     frame: u64,
     before: u64,
@@ -57,13 +143,13 @@ impl Default for ThumbCache {
 }
 
 impl ThumbCache {
-    fn get(&mut self, k: &Key) -> Option<Arc<RenderImage>> {
+    fn get(&mut self, k: &Key) -> Option<Thumb> {
         self.lru.get(k).cloned()
     }
 
     /// Insert a converted image; what it evicts, and the one it replaced,
     /// go back to the atlas when the next frame begins.
-    fn insert(&mut self, k: Key, img: Arc<RenderImage>, bytes: usize) {
+    fn insert(&mut self, k: Key, img: Thumb, bytes: usize) {
         let evicted = self.lru.insert_keeping(k, img, bytes, self.before.max(1));
         self.retired.extend(evicted);
     }
@@ -76,7 +162,7 @@ impl ThumbCache {
         }
         self.before = self.frame;
         self.frame = self.lru.now() + 1;
-        std::mem::take(&mut self.retired)
+        self.retired.drain(..).map(|thumb| thumb.image).collect()
     }
 
     pub fn bytes(&self) -> usize {
@@ -219,11 +305,11 @@ impl Shell {
     fn thumb_asked(&mut self, key: Key, req: ThumbRequest) -> ThumbView {
         match self.app.thumbnails.take(req, Priority::Visible) {
             ThumbState::Ready(img) => {
-                let Some(ri) = to_render_image(&img) else {
+                let Some(thumb) = Thumb::of(&img) else {
                     return ThumbView::Unavailable;
                 };
-                self.thumbs.insert(key, Arc::clone(&ri), img.bytes());
-                ThumbView::Ready(ri)
+                self.thumbs.insert(key, thumb.clone(), img.bytes());
+                ThumbView::Ready(thumb)
             }
             ThumbState::Pending if self.app.thumbnails.only_in_cache(key) => ThumbView::Unavailable,
             ThumbState::Pending => ThumbView::Pending,
@@ -237,13 +323,63 @@ mod tests {
     use super::*;
     use skwir_core::FileId;
 
-    fn img(px: u32) -> Arc<RenderImage> {
-        to_render_image(&Image {
+    fn img(px: u32) -> Thumb {
+        Thumb::of(&Image {
             width: px,
             height: px,
             rgba: Arc::from(vec![0u8; (px * px * 4) as usize]),
         })
         .unwrap()
+    }
+
+    /// Four pixels of one color, with these opacities.
+    fn picture(rgb: [u8; 3], alphas: [u8; 4]) -> Thumb {
+        let rgba: Vec<u8> = alphas
+            .iter()
+            .flat_map(|&a| [rgb[0], rgb[1], rgb[2], a])
+            .collect();
+        Thumb::of(&Image {
+            width: 2,
+            height: 2,
+            rgba: rgba.into(),
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn only_ink_that_would_not_read_is_drawn_on_the_backdrop() {
+        let (dark, light) = (Theme::dark(), Theme::light());
+        let lines = picture([0, 0, 0], [255, 255, 0, 0]);
+        assert!(lines.on_backdrop(&dark), "black lines on nothing");
+        assert!(!lines.on_backdrop(&light), "they read on the light look");
+        let edge = picture([0, 0, 0], [255, 255, 255, 254]);
+        assert!(edge.on_backdrop(&dark), "one pixel drawn on nothing");
+        let photo = picture([0, 0, 0], [255; 4]);
+        assert_eq!(photo.ink, None, "an opaque picture has no backdrop");
+        assert!(!photo.on_backdrop(&dark));
+        let icon = picture([0xe2, 0x55, 0x2a], [255, 255, 255, 0]);
+        assert!(!icon.on_backdrop(&dark), "an orange icon reads as it is");
+        let white = picture([255, 255, 255], [255, 0, 0, 0]);
+        assert!(
+            !white.on_backdrop(&light),
+            "a light backdrop would not help white lines"
+        );
+        let green = picture([0x2e, 0xc2, 0x7e], [255, 255, 255, 0]);
+        assert!(
+            !green.on_backdrop(&light),
+            "white would not make a light green read"
+        );
+        assert_eq!(picture([0, 0, 0], [0; 4]).ink, None, "nothing drawn");
+        // Weighted by opacity: a faint black shadow under a white mark.
+        let mut rgba = vec![255, 255, 255, 255, 255, 255, 255, 255];
+        rgba.extend([0, 0, 0, 20, 0, 0, 0, 20]);
+        let shadowed = Thumb::of(&Image {
+            width: 2,
+            height: 2,
+            rgba: rgba.into(),
+        })
+        .unwrap();
+        assert!(!shadowed.on_backdrop(&dark), "its white reads");
     }
 
     #[test]

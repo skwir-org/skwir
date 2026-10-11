@@ -8,7 +8,8 @@
 //!   letterbox around a picture or a page). `code_bg` sets a code block or a
 //!   table header apart on `bg`, unless the code theme chosen brings its
 //!   own background (`code`, `code_preview::Palette`), `zebra` tints
-//!   alternate rows. Code kept in the other look
+//!   alternate rows. `picture_backdrop` is behind a thumbnail whose ink,
+//!   on nothing, would not read on `bg` (`thumbs::Thumb::on_backdrop`). Code kept in the other look
 //!   (`reading.code_appearance`) is drawn with that look's tokens
 //!   (`in_look`). `text_muted` is for secondary facts (line numbers,
 //!   captions), never for the data.
@@ -87,6 +88,9 @@ pub struct Theme {
     pub rating: Hsla,
     /// Where a picture will be once it is loaded.
     pub placeholder: Hsla,
+    /// Behind a thumbnail whose ink, on nothing, would not read on `bg`:
+    /// light, so a drawing's dark lines read on the dark look.
+    pub picture_backdrop: Hsla,
     /// Bars of a chart; the one under the pointer is `accent`.
     pub chart: Hsla,
     /// Laid over the Usage map's block under the pointer.
@@ -160,6 +164,7 @@ impl Theme {
             .map(|value| rgb(value).into()),
             rating: rgb(0xe0a100).into(),
             placeholder: Hsla::from(rgb(0xd8d8d8)).opacity(0.6),
+            picture_backdrop: gpui::white(),
             chart: Hsla::from(rgb(0x2f6feb)).opacity(0.6),
             block_hover: gpui::white().opacity(0.2),
             block_selected: rgb(0x1f1f1f).into(),
@@ -211,6 +216,7 @@ impl Theme {
             .map(|value| rgb(value).into()),
             rating: rgb(0xf2c14b).into(),
             placeholder: Hsla::from(rgb(0x3a3a3a)).opacity(0.6),
+            picture_backdrop: rgb(0xd8d8d8).into(),
             chart: Hsla::from(rgb(0x6ea8fe)).opacity(0.6),
             block_hover: gpui::white().opacity(0.16),
             block_selected: gpui::white(),

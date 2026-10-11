@@ -23,7 +23,7 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
 
-use gpui::{AnyElement, Context, Window, div, img, prelude::*, px, size};
+use gpui::{AnyElement, Context, Window, div, prelude::*, px, size};
 use skwir_core::EntryId;
 use skwir_core::thumbs::ThumbSize;
 
@@ -206,18 +206,24 @@ fn cell(
     let icon_px = GridView::icon(zoom).0;
     let picture: AnyElement = match thumb {
         // Cover scales the picture past its box and leaves the clipping to us.
-        ThumbView::Ready(ri) if fill => div()
+        ThumbView::Ready(thumb) if fill => div()
             .size(px(zoom as f32))
             .overflow_hidden()
-            .child(img(ri).size_full().object_fit(gpui::ObjectFit::Cover))
+            .child(
+                thumb
+                    .img(theme)
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Cover),
+            )
             .into_any_element(),
-        ThumbView::Ready(ri) => {
-            let own = ri.size(0);
+        ThumbView::Ready(thumb) => {
+            let own = thumb.image.size(0);
             let (width, height) = fitted(
                 (own.width.0.max(1) as f32, own.height.0.max(1) as f32),
                 zoom as f32,
             );
-            img(ri)
+            thumb
+                .img(theme)
                 .w(px(width))
                 .h(px(height))
                 .object_fit(gpui::ObjectFit::Contain)
@@ -365,8 +371,13 @@ fn mosaic(
                 .rounded_sm()
                 .bg(theme.placeholder);
             match shell.thumb_of(entry, mtime, quality) {
-                ThumbView::Ready(ri) => frame
-                    .child(img(ri).size_full().object_fit(gpui::ObjectFit::Cover))
+                ThumbView::Ready(thumb) => frame
+                    .child(
+                        thumb
+                            .img(theme)
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Cover),
+                    )
                     .into_any_element(),
                 _ => frame.into_any_element(),
             }

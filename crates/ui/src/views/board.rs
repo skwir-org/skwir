@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use gpui::{
     AnyElement, Context, ExternalPaths, ScrollHandle, ScrollStrategy, UniformListScrollHandle,
-    Window, div, img, prelude::*, px, uniform_list,
+    Window, div, prelude::*, px, uniform_list,
 };
 use skwir_core::command::Invocation;
 use skwir_core::thumbs::ThumbSize;
@@ -326,13 +326,18 @@ fn card_element(
         shell.thumb(look.id, ThumbSize::Normal)
     };
     let picture: AnyElement = match thumb {
-        ThumbView::Ready(ri) => crate::icons::marked(
+        ThumbView::Ready(thumb) => crate::icons::marked(
             div()
                 .size(px(PICTURE))
                 .flex_none()
                 .overflow_hidden()
                 .rounded_sm()
-                .child(img(ri).size_full().object_fit(gpui::ObjectFit::Cover))
+                .child(
+                    thumb
+                        .img(theme)
+                        .size_full()
+                        .object_fit(gpui::ObjectFit::Cover),
+                )
                 .into_any_element(),
             PICTURE,
             look.mark(),
