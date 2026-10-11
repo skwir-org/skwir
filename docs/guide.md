@@ -84,7 +84,8 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
 - **Tree** opens folders in place. **Board** shows the folders of the one
   shown as columns of cards you can drag between.
 - **Usage** (`Ctrl+4`) draws what takes the room in a folder, counted as
-  you look; the zoom draws more or fewer levels.
+  you look; its − and + (or the zoom: `Ctrl` and the wheel, `Ctrl+=`,
+  `Ctrl+-`) draw more or fewer levels.
   - Click a block to select it, double-click one inside a folder to go
     there, arrows to move between blocks; `F5` or `Ctrl+R` counts again.
   - Its buttons size blocks by room or by number of files, and color them

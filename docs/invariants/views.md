@@ -163,6 +163,10 @@ around the views is in [shell.md](shell.md).
 
 ## Usage (ADR-007)
 
+- Its toolbar holds the zoom's steps (`ui.zoom`, in the View menu's
+  words: `usage::STEPS`) around the count of levels, which goes first
+  when the pane is narrow (`elements::adaptive::AdaptiveRow`). The
+  summary asks for no room: it takes what the tools leave.
 - The cancellable scanner installs non-recursive watches as it visits
   each directory, before reading it. Never hand a recursive walk to a
   watcher API: it cannot see our cancellation.

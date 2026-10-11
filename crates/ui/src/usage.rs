@@ -41,6 +41,14 @@ pub const LEVELS: [u32; 4] = [1, 2, 3, 4];
 pub const MAX_LEVELS: u32 = LEVELS[LEVELS.len() - 1];
 pub const DEFAULT_LEVELS: u32 = 3;
 
+/// What the zoom's steps say here (`ui.zoom` in, out and reset), each
+/// with its tooltip: in the View menu and on the toolbar.
+pub const STEPS: [(&str, &str); 3] = [
+    ("More levels", "More levels (or Ctrl and the wheel)"),
+    ("Fewer levels", "Fewer levels (or Ctrl and the wheel)"),
+    ("Default levels", "Default levels"),
+];
+
 /// What the map draws of each block (`Shell::usage_mode`): the window's,
 /// remembered with its shape.
 #[derive(
@@ -822,83 +830,18 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
     let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
     let font = shell.font.clone();
-    let state = &shell.ui().usage;
-    let status = state.status.as_ref();
-    let mut header = toolbar::row(&theme)
-        .text_color(theme.text)
-        .id(("usage-tools", pane.0 as usize));
-    header = header.child(crate::elements::clip::clipped(
-        div()
-            .id("usage-summary")
-            .flex_1()
-            .min_w_0()
-            .text_xs()
-            .truncate(),
-        status.map_or_else(
-            || {
-                if state.root.is_some() {
-                    "Scanning…".into()
-                } else {
-                    "Usage is available for filesystem folders".into()
-                }
-            },
-            |s| {
-                if s.tree.is_none() && s.scanning {
-                    return "Calculating sizes…".into();
-                }
-                let reclaimable = s.tree.as_ref().map_or(0, |n| n.reclaimable.min(n.alloc));
-                let freed = s
-                    .tree
-                    .as_ref()
-                    .filter(|n| n.shared > 0)
-                    .map_or(String::new(), |n| format!(" · {}", freed(n)));
-                format!(
-                    "{}{} · {} · {}{}{}{}",
-                    if s.tree.as_ref().is_some_and(|n| n.incomplete) {
-                        "Counted so far: "
-                    } else {
-                        ""
-                    },
-                    sizes(s.size, s.alloc),
-                    format::count(usize::try_from(s.files).unwrap_or(usize::MAX), "file"),
-                    format::count(usize::try_from(s.dirs).unwrap_or(usize::MAX), "folder"),
-                    if reclaimable > 0 {
-                        format!(" · {} in caches and the Trash", format::size(reclaimable))
-                    } else {
-                        String::new()
-                    },
-                    freed,
-                    if s.updating { " · updating…" } else { "" }
-                )
-            },
-        ),
-        font.clone(),
-    ));
+    let summary = summary(&shell.ui().usage);
     let mode = shell.usage_mode;
-    for each in Mode::ALL {
-        header = header.child(
-            Button::new(
-                format!("usage-mode-{}-{}", each.name(), pane.0),
-                "",
-                each.title(),
-                "ui.usage_mode",
-            )
-            .args(serde_json::json!({ "mode": each.name() }))
-            .label(each.label())
-            .active(each == mode)
-            .render(shell, cx),
-        );
-    }
-    header = header.child(
-        Button::new(
-            format!("usage-refresh-{}", pane.0),
-            "refresh",
-            "Recalculate sizes",
-            "ui.usage_refresh",
-        )
-        .enabled(state.root.is_some())
-        .render(shell, cx),
-    );
+    // The richest toolbar that fits: the count of levels between the
+    // zoom's steps where there is room (`elements::adaptive`).
+    let header = crate::elements::adaptive::AdaptiveRow {
+        variants: [true, false]
+            .into_iter()
+            .map(|count| tools(shell, &theme, &summary, count, cx))
+            .collect(),
+        height: toolbar::HEIGHT,
+        chosen: None,
+    };
     // Read before the lock below: a second read waits behind a writer.
     let show_hidden = shell.sort_spec().show_hidden;
     let zoned = jiff::Zoned::now();
@@ -1051,6 +994,158 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
             font,
         ))
         .into_any_element()
+}
+
+/// What the toolbar says of the folder: its size and counts, or why there
+/// are none yet.
+fn summary(state: &UsageState) -> String {
+    let status = state.status.as_ref();
+    status.map_or_else(
+        || {
+            if state.root.is_some() {
+                "Scanning…".into()
+            } else {
+                "Usage is available for filesystem folders".into()
+            }
+        },
+        |s| {
+            if s.tree.is_none() && s.scanning {
+                return "Calculating sizes…".into();
+            }
+            let reclaimable = s.tree.as_ref().map_or(0, |n| n.reclaimable.min(n.alloc));
+            let freed = s
+                .tree
+                .as_ref()
+                .filter(|n| n.shared > 0)
+                .map_or(String::new(), |n| format!(" · {}", freed(n)));
+            format!(
+                "{}{} · {} · {}{}{}{}",
+                if s.tree.as_ref().is_some_and(|n| n.incomplete) {
+                    "Counted so far: "
+                } else {
+                    ""
+                },
+                sizes(s.size, s.alloc),
+                format::count(usize::try_from(s.files).unwrap_or(usize::MAX), "file"),
+                format::count(usize::try_from(s.dirs).unwrap_or(usize::MAX), "folder"),
+                if reclaimable > 0 {
+                    format!(" · {} in caches and the Trash", format::size(reclaimable))
+                } else {
+                    String::new()
+                },
+                freed,
+                if s.updating { " · updating…" } else { "" }
+            )
+        },
+    )
+}
+
+/// The toolbar: what the folder holds, then the modes, the zoom's steps
+/// (with the count of levels, when `count`) and Recalculate. The summary
+/// is drawn over a box of its own, which asks for no room: it takes what
+/// the tools leave, so the tools alone choose the version that fits.
+fn tools(
+    shell: &Shell,
+    theme: &Theme,
+    summary: &str,
+    count: bool,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let pane = shell.pane;
+    let mut header = toolbar::row(theme)
+        .text_color(theme.text)
+        .id(("usage-tools", pane.0 as usize))
+        .child(
+            div().flex_1().min_w_0().h_full().relative().child(
+                div().absolute().inset_0().flex().items_center().child(
+                    crate::elements::clip::clipped(
+                        div()
+                            .id("usage-summary")
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .truncate(),
+                        summary.to_owned(),
+                        shell.font.clone(),
+                    ),
+                ),
+            ),
+        );
+    let mode = shell.usage_mode;
+    for each in Mode::ALL {
+        header = header.child(
+            Button::new(
+                format!("usage-mode-{}-{}", each.name(), pane.0),
+                "",
+                each.title(),
+                "ui.usage_mode",
+            )
+            .args(serde_json::json!({ "mode": each.name() }))
+            .label(each.label())
+            .active(each == mode)
+            .render(shell, cx),
+        );
+    }
+    header
+        .child(toolbar::separator(theme))
+        .child(levels(shell, theme, count, cx))
+        .child(toolbar::separator(theme))
+        .child(
+            Button::new(
+                format!("usage-refresh-{}", pane.0),
+                "refresh",
+                "Recalculate sizes",
+                "ui.usage_refresh",
+            )
+            .enabled(shell.ui().usage.root.is_some())
+            .render(shell, cx),
+        )
+        .into_any_element()
+}
+
+/// The zoom's steps, for whoever never tries Ctrl and the wheel: the View
+/// menu's (`STEPS`), each greyed at its end, around how many levels the map
+/// draws when `count`. The count keeps the room of the widest, so neither
+/// step moves under the pointer as it changes.
+fn levels(shell: &Shell, theme: &Theme, count: bool, cx: &mut Context<Shell>) -> gpui::Div {
+    let levels = shell.levels;
+    let said = |n: u32| format::count(n as usize, "level");
+    let mut step = |dir: &str, icon: &'static str, (_, title): (&str, &'static str), enabled| {
+        Button::new(
+            format!("usage-levels-{dir}-{}", shell.pane.0),
+            icon,
+            title,
+            "ui.zoom",
+        )
+        .args(serde_json::json!({ "dir": dir }))
+        .enabled(enabled)
+        .render(shell, cx)
+    };
+    let fewer = step("out", "minus", STEPS[1], levels > LEVELS[0]);
+    let more = step("in", "plus", STEPS[0], levels < MAX_LEVELS);
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .child(fewer)
+        .when(count, |d| {
+            d.child(
+                div()
+                    .relative()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(div().invisible().child(said(MAX_LEVELS)))
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .justify_center()
+                            .child(said(levels)),
+                    ),
+            )
+        })
+        .child(more)
 }
 
 /// What Delete does to the room the selection takes, while there is one:

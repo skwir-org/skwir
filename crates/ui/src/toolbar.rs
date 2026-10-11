@@ -545,12 +545,15 @@ pub fn separator(theme: &Theme) -> Div {
         .flex_none()
         .bg(theme.border)
 }
+/// How tall a toolbar's row is.
+pub const HEIGHT: f32 = 42.;
+
 pub fn row(theme: &Theme) -> Div {
     div()
         .tab_group()
         .relative()
         .w_full()
-        .h(px(42.))
+        .h(px(HEIGHT))
         .flex()
         .items_center()
         .gap(px(2.))

@@ -311,11 +311,7 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     let mut size = Vec::new();
     let zooms = shell.view_zooms();
     let words = if zooms == crate::view::Zooms::Levels {
-        [
-            ("More levels", "More levels (or Ctrl and the wheel)"),
-            ("Fewer levels", "Fewer levels (or Ctrl and the wheel)"),
-            ("Default levels", "Default levels"),
-        ]
+        crate::usage::STEPS
     } else {
         [
             ("Larger", "Larger (or Ctrl and the wheel)"),
