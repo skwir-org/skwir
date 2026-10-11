@@ -28,24 +28,80 @@ Skwir is written in Rust on gpui, Zed's GPU-accelerated toolkit. Version 0.1 is
 for Linux (Wayland or X11, with Vulkan). The macOS and Windows code compiles but
 has never run on either system: see [how to help](docs/HELP-WANTED.md).
 
-## What it is like
+## Features
 
-- **A search is a place.** Type `*.pdf modified<7d size>10M` and the results are
-  a location: go back to it, open it in a tab, keep it in the sidebar. Tags are
-  places too: `tags:/Places/France`.
-- **Changes are plans.** A bulk rename, an edit of the listing as text, or
-  anything an agent proposes is shown as steps to review before it runs. Every
-  operation has an inverse, so Undo and Redo cover everything.
-- **Nothing runs behind your back.** No daemon, no index of its own. Skwir
-  reuses what the desktop has (thumbnails, icons, the type database, bookmarks,
-  recent files, installed tools) and keeps one cache you can delete at any time.
-- **Notes live on the files.** Tags, ratings and comments are kept where other
-  applications keep them (extended attributes, XMP sidecars, a Mac's files,
-  TagSpaces), and copies keep them.
-- **Many views of one listing**: list, grid, columns, tree, board, two panes,
-  tabs, disk usage, a timeline and a map.
-- **Everything is a command** with a JSON schema. The keyboard, the palette, the
-  command line and agents (over MCP) all use the same ones.
+**Browsing**
+
+- Views: list (columns chosen from its header), grid with thumbnails,
+  columns, tree, and a board of a folder's folders as card columns. Usage
+  draws what takes the room in a folder; Timeline charts when files changed;
+  Map places pictures, tracks and flight plans where they were taken or go.
+- Two panes (side by side or stacked) and tabs. Folders stream in as they
+  are read, however many entries they hold.
+- A sidebar of places you arrange: your folders, bookmarks, saved searches,
+  tags, Recent, the Trash, and drives, which mount and unlock (LUKS) from it.
+- Jump to folders you used before (zoxide's list and the desktop's recent
+  files); type a path or filter the folder from the address bar; a terminal
+  panel that follows the folder shown.
+
+**Searching**
+
+- A query language: names, extensions, kinds and MIME types, sizes, dates
+  (in your time zone and week), tags, ratings, comments, file contents (text
+  or a regex) and positions, combined with `OR`, `NOT` and parentheses.
+- A search is a location: Back returns to it, it opens in a tab, and it can
+  be kept in the sidebar. Baloo and plocate are used to go faster where they
+  run; the files themselves are always checked.
+
+**Changing files**
+
+- Copy, move, link, rename, trash and delete, from keys, menus or drag and
+  drop (which asks whether to move, copy or link). Bulk rename with a preview
+  of every name; a folder's names edited as text in `$EDITOR`.
+- Every change is a plan of steps with inverses: Undo and Redo cover them all,
+  and changes to many files, or proposed by a plugin or an agent, are reviewed
+  before they run.
+- Long operations can be paused and cancelled. Copies onto USB drives go at
+  the drive's pace; a copy short of room asks first; quitting mid-copy asks,
+  then removes the partial files; hard links stay hard links.
+- The Trash is a place: restore a file where it was, or wherever it is
+  dropped. Archives are browsed and extracted.
+
+**Tags, ratings and comments**
+
+- Kept on the files, where other applications read them: extended attributes
+  (Dolphin's keys), XMP sidecars (darktable, Lightroom), a Mac's Finder tags
+  and `._` files, TagSpaces' sidecars, tags in file names. Stores that
+  disagree are merged; copies keep everything.
+- Tags can have categories (`Places/France/Paris`) and are browsed as folders
+  (`tags:/`); a category can hold one tag at a time, like a field.
+
+**Previews**
+
+- Text and code highlighted with bat's grammars; Markdown and HTML in a
+  reading mode; CSV, JSON Lines, Excel and SQLite tables; JSON, YAML and TOML
+  folded.
+- PDFs in a reader (PDFium, Poppler or MuPDF) with search, contents and text
+  selection; Word and OpenDocument files, EPUB books, comics, e-mail and
+  Jupyter notebooks.
+- Pictures (HEIC, AVIF, RAW and more through the desktop's thumbnailers or
+  ImageMagick), and an audio and video player that can keep playing while you
+  browse, steered by the desktop's media keys.
+- Fonts, 3D models, CAD drawings and G-code, KiCad boards and Gerber files,
+  GPS tracks on a map, files inside archives, and any file's bytes.
+  [Previews](docs/previews.md) lists them all.
+
+**Design**
+
+- No daemon and no database: thumbnails, icons, the MIME database, bookmarks
+  and recent files are the desktop's, and Skwir's one cache can be deleted at
+  any time. Converters run sandboxed (bubblewrap).
+- Every action is a command with a JSON schema, shared by the keys, the
+  palette, the command line and AI agents ([Scripts and
+  agents](#scripts-and-agents)).
+- Everything beyond a small core is a plugin that can be turned off; plugins
+  from outside Skwir run as WebAssembly modules or isolated programs
+  ([below](#plugins-from-outside-skwir)).
 
 ## Installing
 
