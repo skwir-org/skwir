@@ -92,6 +92,7 @@
       devTools = with pkgs;
         [
           just
+          gh # uploading verified local bundles to GitHub draft releases
           python3 # synthetic native-reader checks and comparisons
           cargo-nextest
           cargo-watch

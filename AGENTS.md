@@ -422,8 +422,8 @@ docs/              PLAN.md, STATUS-LOG.md, adr/, invariants/, plugins/, the guid
 ## Build, test, lint
 
 The dev environment is the Nix flake (`flake.nix`, loaded by direnv).
-Without an active shell, run `nix develop --command just <recipe>`, as CI
-does. Its Rust is the one `rust-toolchain.toml` pins (rustup follows it
+Without an active shell, run `nix develop --command just <recipe>`. Its
+Rust is the one `rust-toolchain.toml` pins (rustup follows it
 too, in CI's macOS and Windows jobs): a new release's lints arrive only
 with the commit that moves the pin and fixes them.
 
@@ -443,11 +443,17 @@ just screenshots           the README's screenshots, made again (docs/images)
 just deny / notices        dependency licences and advisories; third-party notices
 just plugins               build the plugins from outside as modules (target/plugins)
 just package-nix/deb/rpm/aur, package-try <distro>   Linux packages (ADR-040)
+just ci-check              cheap routine GitHub CI (core/API, formatting, release tools)
+just release-check         full required checks, locally or on demand (ADR-053)
+just release-build/upload <tag>   verified Linux bundle / GitHub draft (docs/RELEASING.md)
 just run [dir] / dist / flame [dir]   run the release build; build for packaging; profile
 ```
 
-- **Done means CI is green:** `lint-all`, `deny`, `test-all`, `smoke`,
-  `poppler-check`, `mupdf-check` and `bench-check`. The native workers
+- **Done means the full checks are green:** `just release-check` runs
+  `lint-all`, `deny`, `test-all`, `smoke`, `poppler-check`, `mupdf-check`,
+  `bench-check` and `release-tools-check`. Routine GitHub CI runs only
+  `ci-check`; the full suite and Linux packaging are also manual workflows
+  (ADR-053). A green routine CI alone is not the full gate. The native workers
   are outside `default-members`, so the default build needs no Poppler,
   MuPDF, GStreamer or libarchive; run the `-all` recipes before
   committing worker changes. `spikes/` is a separate workspace, not

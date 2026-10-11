@@ -1,0 +1,8 @@
+#!/bin/sh
+# Only the media worker sees these paths; never export them from AppRun.
+set -eu
+folder="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+export GST_PLUGIN_SYSTEM_PATH_1_0="$folder/gstreamer-1.0"
+export GST_PLUGIN_PATH_1_0=''
+export GST_PLUGIN_SCANNER_1_0="$folder/gst-plugin-scanner"
+exec "$folder/skwir-media-worker.bin" "$@"

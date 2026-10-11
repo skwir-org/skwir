@@ -239,6 +239,36 @@ pub fn command(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untr
     isolated(program, input, &[], work, &[])
 }
 
+/// A relocatable package's private runtime is readable by its helpers
+/// (ADR-052). Derive it from Skwir itself, never from a plugin's ancestry:
+/// an outside plugin must not grant itself access to an enclosing folder
+/// by placing a marker there. Only programs in this runtime need it.
+#[cfg(target_os = "linux")]
+fn package_runtime<'a>(executable: &'a Path, program: &Path) -> Option<&'a Path> {
+    let bin = executable.parent()?;
+    let prefix = bin.parent()?;
+    (bin.file_name()? == "bin"
+        && prefix.file_name()? == "usr"
+        && program.strip_prefix(prefix).is_ok_and(|relative| {
+            !relative
+                .components()
+                .any(|part| part == std::path::Component::ParentDir)
+        })
+        && prefix.join("share/skwir/appimage-runtime").is_file())
+    .then_some(prefix)
+}
+
+#[cfg(target_os = "linux")]
+fn bind_package_runtime(command: &mut Command, program: &Path) {
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(runtime) = package_runtime(&executable, program)
+    {
+        // Called after the private /tmp, which may hide the AppImage's
+        // mount. Bind only usr, read-only, not the user's mount folder.
+        command.arg("--ro-bind").arg(runtime).arg(runtime);
+    }
+}
+
 /// Bubblewrap: the system's folders read-only, the input at `/input`, the
 /// working folder at `/work`, nothing else; no network, no session. A
 /// program outside the system's folders is bound at its own path, and so
@@ -263,6 +293,7 @@ fn isolated(
     command.args([
         "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/input",
     ]);
+    bind_package_runtime(&mut command, program);
     // After the private /tmp, which would hide a program kept there.
     let outside =
         |path: &Path| path.is_absolute() && !SYSTEM.iter().any(|system| path.starts_with(system));
@@ -526,6 +557,7 @@ fn plugin_isolated(
         }
     }
     command.args(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]);
+    bind_package_runtime(&mut command, program);
     // After the private /tmp, which would hide a plugin kept there.
     command.arg("--ro-bind").arg(folder).arg(folder);
     // A program of the system's is there already: bound again, a link
@@ -619,6 +651,108 @@ fn plugin_isolated(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_our_bundled_helpers_receive_the_private_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().join("App Dir's/usr");
+        std::fs::create_dir_all(prefix.join("share/skwir")).unwrap();
+        let executable = prefix.join("bin/skwir");
+        let helper = prefix.join("lib/skwir/skwir-pdf-worker");
+        assert!(package_runtime(&executable, &helper).is_none());
+        std::fs::write(prefix.join("share/skwir/appimage-runtime"), "runtime").unwrap();
+        assert_eq!(
+            package_runtime(&executable, &helper),
+            Some(prefix.as_path())
+        );
+        // A host application or an outside plugin gets no extra access.
+        assert!(package_runtime(&executable, Path::new("/usr/bin/tool")).is_none());
+        assert!(package_runtime(&executable, &dir.path().join("plugin/run")).is_none());
+        assert!(package_runtime(&executable, &prefix.join("../plugin/run")).is_none());
+        assert!(package_runtime(&dir.path().join("plugin/run"), &helper).is_none());
+    }
+
+    /// Run this test from a synthetic package so `current_exe` has the
+    /// packaged shape. Exercise the real sandbox, including an `AppImage`
+    /// mounted under /tmp, which its private /tmp would otherwise hide.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_packaged_helper_reads_its_runtime_but_not_the_users_files() {
+        const CHILD: &str = "SKWIR_TEST_PACKAGED_SANDBOX";
+        if !available() {
+            eprintln!("bubblewrap cannot isolate here");
+            return;
+        }
+        if let Some(root) = std::env::var_os(CHILD) {
+            let root = Path::new(&root);
+            let prefix = root.join("App Dir's/usr");
+            let helper = prefix.join("lib/skwir/helper");
+            let work = tempfile::tempdir().unwrap();
+            let input = root.join("input.txt");
+            let mut run = command(&helper, &input, work.path()).unwrap();
+            run.command
+                .arg(&run.input)
+                .arg(prefix.join("lib/shared.txt"))
+                .arg(root.join("secret.txt"));
+            crate::process::run(
+                &mut run.command,
+                &skwir_core::CancelToken::new(),
+                std::time::Duration::from_secs(10),
+            )
+            .unwrap();
+            assert_eq!(
+                std::fs::read_to_string(work.path().join("out")).unwrap(),
+                "input\nruntime\nhidden\n"
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.join("secret.txt")).unwrap(),
+                "secret"
+            );
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let prefix = root.path().join("App Dir's/usr");
+        for dir in ["bin", "lib/skwir", "share/skwir"] {
+            std::fs::create_dir_all(prefix.join(dir)).unwrap();
+        }
+        std::fs::write(prefix.join("share/skwir/appimage-runtime"), "runtime").unwrap();
+        std::fs::write(prefix.join("lib/shared.txt"), "runtime\n").unwrap();
+        std::fs::write(root.path().join("input.txt"), "input\n").unwrap();
+        std::fs::write(root.path().join("secret.txt"), "secret").unwrap();
+        let helper = prefix.join("lib/skwir/helper");
+        std::fs::write(
+            &helper,
+            "#!/bin/sh\nset -eu\ncat \"$1\" \"$2\" > /work/out\n\
+             if cat \"$3\" >> /work/out 2>/dev/null; then exit 1; fi\n\
+             echo hidden >> /work/out\n\
+             if echo changed > \"$2\" 2>/dev/null; then exit 1; fi\n",
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let executable = prefix.join("bin/skwir");
+        let current = std::env::current_exe().unwrap();
+        // A hard link avoids copying a large test binary; copy when the
+        // temporary folder is on another volume.
+        if std::fs::hard_link(&current, &executable).is_err() {
+            std::fs::copy(&current, &executable).unwrap();
+        }
+        assert!(
+            Command::new(executable)
+                .args([
+                    "--exact",
+                    "sandbox::tests::a_packaged_helper_reads_its_runtime_but_not_the_users_files",
+                    "--nocapture",
+                ])
+                .env(CHILD, root.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
 
     #[test]
     fn the_inside_name_keeps_only_a_plain_extension() {

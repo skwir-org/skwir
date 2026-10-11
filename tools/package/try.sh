@@ -13,6 +13,7 @@
 # depends on and nothing it only recommends, and
 # tools/package/linux/check.sh checks it there. The package lands in
 # target/package/linux.
+# Set SKWIR_PACKAGE_OUT to collect checked packages in a different directory.
 #
 #     tools/package/try.sh debian|fedora|arch
 set -eu
@@ -28,8 +29,10 @@ arch) image=archlinux/current/amd64/default ;;
 esac
 tree="$(cd "$(dirname "$0")/../.." && pwd)"
 roots="$HOME/.cache/skwir-tests/roots"
-out="$tree/target/package/linux"
+out="${SKWIR_PACKAGE_OUT:-$tree/target/package/linux}"
 mkdir -p "$roots" "$out"
+exec 9>"$roots/$distribution.lock"
+flock -n 9 || { echo "A $distribution package build is already running" >&2; exit 1; }
 
 # The image, once: its root filesystem, checked against its sum.
 tarball="$roots/$distribution.rootfs.tar.xz"
@@ -77,18 +80,18 @@ enter() {
     uid="$2"
     shift 2
     if [ "$uid" = 0 ]; then
-        home=/root
+        package_home=/root
         set -- --cap-add ALL "$@"
     else
-        home=/home/builder
+        package_home=/home/builder
     fi
-    mkdir -p "$root$home/.cargo/registry"
+    mkdir -p "$root$package_home/.cargo/registry"
     bwrap --unshare-user --uid "$uid" --gid "$uid" --unshare-pid --share-net --die-with-parent \
         --bind "$root" / --proc /proc --dev /dev --tmpfs /tmp \
         --ro-bind "$tree/tools" /tools \
-        --bind "$HOME/.cargo/registry" "$home/.cargo/registry" \
-        --clearenv --setenv HOME "$home" --setenv LANG C.UTF-8 \
-        --setenv PATH "$home/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+        --bind "$HOME/.cargo/registry" "$package_home/.cargo/registry" \
+        --clearenv --setenv HOME "$package_home" --setenv LANG C.UTF-8 \
+        --setenv PATH "$package_home/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
         --setenv CARGO_BUILD_JOBS "${CARGO_BUILD_JOBS:-8}" \
         "$@"
 }
@@ -116,12 +119,15 @@ mkdir -p "$builder/src"
 # and skwir-mupdf on Arch), by names of the tools' own making.
 case "$distribution" in
 debian)
+    # Keep Cargo's compiled dependencies, but never reuse old packages.
+    rm -rf "$builder/build/target/debian"
     enter "$builder" 0 env CARGO_TARGET_DIR=/build/target sh -c 'cd /src && tools/package/deb.sh'
     made="$builder/build/target/debian"
     main='skwir_*.deb'
     extra='skwir-*_*.deb'
     ;;
 fedora)
+    rm -rf "$builder/build/target/generate-rpm"
     enter "$builder" 0 env CARGO_TARGET_DIR=/build/target sh -c 'cd /src && tools/package/rpm.sh'
     made="$builder/build/target/generate-rpm"
     main='skwir-[0-9]*.rpm'
@@ -144,8 +150,6 @@ mkdir -p "$fresh/package/main" "$fresh/package/extra"
 # shellcheck disable=SC2086 # the names are patterns
 for package in "$made"/$main; do
     cp "$package" "$fresh/package/main/"
-    cp "$package" "$out/"
-    echo "built: $out/$(basename "$package")"
 done
 # shellcheck disable=SC2086 # the names are patterns
 for package in "$made"/$extra; do
@@ -153,8 +157,6 @@ for package in "$made"/$extra; do
     *-debug-*) continue ;;
     esac
     cp "$package" "$fresh/package/extra/"
-    cp "$package" "$out/"
-    echo "built: $out/$(basename "$package")"
 done
 case "$distribution" in
 debian)
@@ -182,5 +184,10 @@ arch)
 esac
 echo "== $distribution: with the others and what they recommend"
 enter "$fresh" 0 /tools/package/linux/check.sh
+# Only packages that passed both installations leave the test root.
+for package in "$fresh"/package/main/* "$fresh"/package/extra/*; do
+    cp "$package" "$out/"
+    echo "built and checked: $out/$(basename "$package")"
+done
 chmod -R u+rwX "$fresh"
 rm -rf "${fresh:?}"

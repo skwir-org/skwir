@@ -1,0 +1,3 @@
+Skwir AppImage runtime, version 1.
+This usr tree contains the executable, its helpers and their libraries.
+Sandboxes may bind this tree read-only, never the enclosing mount or home.

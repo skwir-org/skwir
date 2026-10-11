@@ -1,0 +1,62 @@
+{
+  "ubuntu-base.tar.gz": {
+    "url": "https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-amd64.tar.gz",
+    "sha256": "242cd8898b33ea806ef5f13b1076ed7c76f9f989d18384452f7166692438ff1a"
+  },
+  "linuxdeploy.AppImage": {
+    "url": "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage",
+    "sha256": "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
+  },
+  "appimagetool.AppImage": {
+    "url": "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage",
+    "sha256": "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+  },
+  "runtime-x86_64": {
+    "url": "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64",
+    "sha256": "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
+  },
+  "runtime.LICENSE": {
+    "url": "https://raw.githubusercontent.com/AppImage/type2-runtime/20251108/LICENSE",
+    "sha256": "aa154fc9070614bbe7921f89db11efd1dba7a1f3a41685958110e2230f9c0ca1"
+  },
+  "runtime-musl.COPYRIGHT": {
+    "url": "https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?h=v1.2.5",
+    "sha256": "f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af"
+  },
+  "runtime-fuse.LGPL": {
+    "url": "https://raw.githubusercontent.com/libfuse/libfuse/fuse-3.15.0/LGPL2.txt",
+    "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+  },
+  "runtime-squashfuse.LICENSE": {
+    "url": "https://raw.githubusercontent.com/vasi/squashfuse/0.5.2/LICENSE",
+    "sha256": "9e909cc8a8ba27b1a649c964cf9eda37de911f3138c2b64e6d2f01703904ac13"
+  },
+  "runtime-zstd.LICENSE": {
+    "url": "https://raw.githubusercontent.com/facebook/zstd/v1.5.6/LICENSE",
+    "sha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8"
+  },
+  "runtime-zlib.LICENSE": {
+    "url": "https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE",
+    "sha256": "845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243"
+  },
+  "runtime-mimalloc.LICENSE": {
+    "url": "https://raw.githubusercontent.com/microsoft/mimalloc/v2.1.7/LICENSE",
+    "sha256": "19c99805e7a44a34b297a75d1edea9985e300066dfc024d5c99d4236d4573b5d"
+  },
+  "gstreamer-1.28.8.tar.xz": {
+    "url": "https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-1.28.8.tar.xz",
+    "sha256": "baa8e86985ad6417cc0ad6e7b79ff2884c6779c8b1c7a6240e7121822c86e524"
+  },
+  "gst-plugins-base-1.28.8.tar.xz": {
+    "url": "https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-1.28.8.tar.xz",
+    "sha256": "ade70e3381fcbb024f1f20aa9ede9b5654aeed39d5bd70b1a98f53015e501117"
+  },
+  "orc-0.4.44.tar.xz": {
+    "url": "https://gstreamer.freedesktop.org/src/orc/orc-0.4.44.tar.xz",
+    "sha256": "4aeb97aea2b58224029dc2b23d7d064cfa990cb4fb8c4da440bcbe9c95bc5d2d"
+  },
+  "meson-1.9.1-py3-none-any.whl": {
+    "url": "https://files.pythonhosted.org/packages/9c/07/b48592d325cb86682829f05216e4efb2dc881762b8f1bafb48b57442307a/meson-1.9.1-py3-none-any.whl",
+    "sha256": "f824ab770c041a202f532f69e114c971918ed2daff7ea56583d80642564598d0"
+  }
+}

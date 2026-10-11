@@ -3,6 +3,36 @@
 default:
     @just --list
 
+# Cheap routine CI: workspace formatting, core/API contracts and release tooling.
+ci-check: release-tools-check
+    cargo fmt --all --check
+    cargo clippy --locked -p skwir-core -p skwir-plugin-api --all-targets -- -D warnings
+    cargo nextest run --locked -p skwir-core -p skwir-plugin-api --no-tests=pass
+
+# All required checks before packaging a release (ADR-053).
+release-check:
+    python3 tools/release/release.py check
+
+# Exercise release validation, isolated staging and draft uploads with fake tools.
+release-tools-check:
+    python3 -B -m unittest discover -s tools/release -p 'test_*.py'
+
+# Check that tag, crates, package metadata and dated release notes agree.
+release-metadata tag:
+    python3 tools/release/release.py metadata {{quote(tag)}}
+
+# Check a clean tagged source, build/install-test Linux packages, stage one bundle.
+release-build tag:
+    python3 tools/release/release.py build {{quote(tag)}}
+
+# Recheck an existing local bundle's identity, asset set and checksums.
+release-verify tag:
+    python3 tools/release/release.py verify {{quote(tag)}}
+
+# Create/update a GitHub draft from a verified bundle; never publish it.
+release-upload tag:
+    python3 tools/release/release.py upload {{quote(tag)}}
+
 # Build the default members (no native workers; see the root Cargo.toml).
 build:
     cargo build
@@ -29,7 +59,7 @@ plugins:
 test:
     cargo nextest run --no-tests=pass
 
-# Run every test, native workers included (what CI runs).
+# Run every test, native workers included (full release gate and manual CI).
 test-all:
     cargo nextest run --workspace --no-tests=pass
 
@@ -142,9 +172,10 @@ package-aur:
 package-try distribution:
     tools/package/try.sh {{distribution}}
 
-# An AppImage of that package (nix-appimage), into result-appimage.
+# A portable x86-64 AppImage built in Ubuntu 22.04, checked in a separate
+# runtime-only root; runs on NixOS too. Into target/package/appimage.
 package-appimage:
-    nix bundle --bundler github:ralismark/nix-appimage -o result-appimage "git+file://{{justfile_directory()}}#default"
+    tools/package/appimage.sh
 
 # Format the workspace.
 fmt:
@@ -158,7 +189,7 @@ bench-gen *profiles:
 bench-list *profiles:
     cargo run --release -p skwir-bench -- list {{profiles}}
 
-# Fail on any performance budget regression (what CI runs).
+# Fail on any performance budget regression (full release gate and manual CI).
 bench-check:
     cargo run --release -p skwir-bench -- check
 

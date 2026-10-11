@@ -36,13 +36,15 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   4, 5a and 6 pass their gates. Maps and Notes everywhere are built, as
   is much that no phase planned
   ([Built beyond the plan](#built-beyond-the-plan)).
-- **Next:** the last step of [Release 0.1](#release-01-linux): rewrite
-  and scan the history, push for the first time, get CI green, tag.
+- **Next:** finish [Release 0.1](#release-01-linux): confirm the history
+  scan, date the release metadata, commit/tag, build locally and review
+  the uploaded GitHub draft (ADR-053).
   Then skwird's steps (ADR-050) and Phase 7, which the user put after
   the release (2026-10-07).
 - **Blocked:** Phase 5b needs a Mac and a Windows machine
-  (`docs/HELP-WANTED.md`). CI has never run: there is no remote until
-  the first push.
+  (`docs/HELP-WANTED.md`). The user reports hosted CI is too slow;
+  routine CI is now reduced to essentials, with full checks and package
+  builds retained as manual fallbacks. Remote runs were not inspected.
 - **Budgets:** idle own share 94.8 MiB of 100 and first frame median
   145.2 ms of 150 (session display, 2026-10-11); `just bench-check`
   meets all 44 budgets (2026-10-11, load average 3 to 5.5).
@@ -101,8 +103,8 @@ both GPUs.
 **Status:** gate passed 2026-09-18. GPUI chosen (ADR-001: its p99 frame
 interval stays within vsync jitter on both GPUs; Floem's is a dropped
 frame). `just bench-check` enforces `crates/bench/budgets.toml` (42
-budgets on 2026-10-10). CI is written (`.github/workflows`) but has
-never run: there is no remote yet.
+budgets on 2026-10-10). Routine CI is now minimal; the budget check is
+part of the local release gate and manual full workflow (ADR-053).
 
 **Deviations:**
 - The UI budgets were revised after Phase 2 (ADR-002): idle memory is
@@ -999,15 +1001,36 @@ ran there, in a prefix of its own.
   the window drew through the distribution's Mesa. Every helper answers
   `--probe` (`process::probe`), so Settings says a helper is installed
   only where it works and a package may leave its libraries optional.
-  Also written: the Nix package (`just package-nix`) and its AppImage;
+  The Nix-based AppImage recipe was retained but never verified. ADR-052
+  replaces it with an x86-64 AppImage built from this Nix host in a
+  rootless Ubuntu 22.04 build root (`just package-appimage`), with all
+  programs from the shared list, pinned PDFium, a pinned GStreamer
+  core/base built against the same glibc baseline, codecs and
+  licence notices. Relative library paths keep host programs' environment
+  intact; bundled helpers retain their private runtime inside the sandbox.
+  A separate runtime-only root checks the actual image, every helper,
+  synthetic PDFs and playback, the window's commands, sandboxed archive
+  extraction and undo, and the host terminal's environment. *Built and
+  tried 2026-10-11:* a 156 MB image, all 573 ELFs checked against glibc
+  2.35, passed in runtime-only Ubuntu 22.04, Ubuntu 24.04 and Fedora 44
+  roots. On this NixOS host, `appimage-run` passed the window's command checks on both
+  Xvfb/lavapipe and Wayland/NVIDIA. The packaged player's synthetic
+  video checks cover seeking, audio and subtitle tracks, rate, end and
+  restart. Local workspace lint, cross checks, 1,474 nextest tests,
+  dependency checks, reader checks and performance budgets pass; tests
+  and budgets were rerun after the heavy build load. CI's same-artifact
+  checks on Ubuntu 24.04 and Fedora 44 passed locally, not run remotely;
+  other hardware and actual audio output have not been tried.
+  Also written: the Nix package (`just package-nix`);
   the `.app` and `.dmg` (`tools/package/macos.sh`) and the `.msi`
   (`tools/package/windows/`), unsigned, without the native workers'
   libraries, never run. Those leave Mermaid and MuPDF out; there Skwir
   finds LibreOffice where it installs itself and searches Homebrew's
   and MacPorts' folders (compiled only); the Windows PDF helper loaded
-  the pinned `pdfium.dll` under Wine. CI's `native` job for macOS and
-  Windows (not blocking until 5b) and the `linux-packages` containers:
-  written, never run (no remote). Left for the machines: audio and
+  the pinned `pdfium.dll` under Wine. The manual full workflow's `native`
+  job for macOS and Windows (not blocking until 5b) and the Linux package
+  containers remain fallbacks; their hosted results have not been verified
+  here. Left for the machines: audio and
   video through AVFoundation and Media Foundation, libarchive linked
   statically, everything run.
 - **L. Budgets per system.** *Decided 2026-10-05* (ADR-038): the own
@@ -1056,9 +1079,10 @@ for 5a:
 - Split into 5a and 5b (ADR-035); Phase 6 and Release 0.1 came before
   5b's gate (the user's choice).
 - Packaging: no Flatpak (its sandbox hides the programs Skwir runs, and
-  bubblewrap cannot run inside it) and no AppImage for other
-  distributions (Nix's C library cannot load the system's graphics
-  driver); Debian's, RPMs and the AUR instead (ADR-040).
+  bubblewrap cannot run inside it). ADR-040 chose Debian's, RPMs and the
+  AUR over an AppImage carrying Nix's C library, which cannot load other
+  systems' graphics drivers. ADR-052 adds a conventional AppImage built
+  against Ubuntu's compatibility baseline instead.
 - No step yet covers the NTFS USN journal.
 
 ---
@@ -1346,14 +1370,18 @@ Phase 7.
     app_id and WM_CLASS, macOS's bundle identifier; one constant,
     `skwir_core::APP_ID`). bibli became Skwir everywhere; nothing reads
     the old names, since no release used them. Version 0.1.0
-    everywhere. CI for GitHub (`.github/workflows`): the checks as four
-    parallel jobs sized for hosted runners; the packages built,
-    installed, checked and run in Debian's, Fedora's and Arch's
-    containers for every change; a `v<version>` tag drafts a release
-    holding them, its notes the changelog's section, once the crates,
-    the metainfo, the PKGBUILD and a dated changelog agree on the
-    version. The packages, built by `try.sh` in fresh Debian 13, Fedora
-    44 and Arch roots (2026-10-10), install alone and with the others,
+    everywhere. **Release workflow revised 2026-10-11 (ADR-053):**
+    routine GitHub CI is one cached job (formatting, core/API lint and
+    tests, release-tool tests). Full checks, native jobs and package
+    builds are manual fallbacks. Tags only validate release metadata.
+    `just release-build <tag>` requires clean tagged source and dated,
+    matching versions, runs the full local gate, builds/install-tests
+    the AppImage and Debian/Fedora/Arch packages, and stages a checked
+    bundle. `just release-upload <tag>` verifies local assets and the
+    remote tag before creating/updating a GitHub draft, never publishing.
+    See [Releasing](RELEASING.md). The packages, built by `try.sh` in
+    fresh Debian 13, Fedora 44 and Arch roots (2026-10-10), install alone
+    and with the others,
     every helper answers `--probe`, and the licences and notices are
     where each distribution keeps them. Found: cargo-about builds its
     program only with `--features cli` since 0.9; Ubuntu's runners
@@ -1368,16 +1396,29 @@ Phase 7.
     build script draws when built on Windows (resource 1, which gpui
     gives the windows), and so does the installer's shortcut. Those two
     never ran.
-    **Left:** the history rewritten and scanned, the first push, CI
-    green, then the tag. Not done: publishing to the AUR and a
-    repository (the user's), Ubuntu's own build.
+    **Validation:** the new minimal CI recipe passes locally (285 nextest
+    tests). The actual `just release-check` also passes: full lint and
+    Windows/macOS cross checks, dependency checks, 1,474 workspace tests
+    (19 skipped), the window smoke test, both native readers, all 44
+    performance budgets, and 13 release-tool integration tests. Those
+    cover staging, failed checks, source/version disagreement, altered
+    assets, remote SHA256 disagreement and draft-only uploads. Uploads
+    use a fake GitHub CLI in temporary repositories; no real draft was
+    created. Package builds recorded above predate this orchestration
+    change; its output isolation is tested with synthetic packages.
+    GitHub CLI authentication and repository write access are verified;
+    no real release upload has been attempted.
+    **Left:** confirm the history scan, date and commit the release,
+    create/push its tag, run the local release build and review/publish
+    its draft. Not done: AUR publication and Ubuntu's own package build.
 
 **Done when:** every step above is done or says why not, the packages
-built by CI install and run on Debian, Fedora and Arch, and the history
-scan finds nothing personal.
+built by the local gate (or manual CI) install and run on Debian, Fedora
+and Arch, and the history scan finds nothing personal.
 
 **Status:** in progress: steps 1 to 9 done or say what is left; step
-10 waits for the history rewrite and the first push.
+10 waits for the final release metadata, tagged local build and publication;
+the history scan's completion has not been reverified here.
 
 ---
 

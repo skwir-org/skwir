@@ -1,14 +1,70 @@
 name: packages
-# The Linux packages (ADR-040), each built in its distribution's own
-# container, installed there and checked; called by ci.yml for every
-# change, and by release.yml for a release's files.
+# Manual fallback and reusable job for full.yml (ADR-053).
 on:
+  workflow_dispatch:
   workflow_call:
 
 permissions:
   contents: read
 
 jobs:
+  appimage:
+    name: AppImage (Ubuntu 22.04 baseline)
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v7
+      - name: Room and user namespaces
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: Build and check in separate Ubuntu roots
+        run: nix develop --command just package-appimage
+      - uses: actions/upload-artifact@v7
+        with:
+          name: skwir-appimage
+          path: target/package/appimage/*
+          if-no-files-found: error
+
+  appimage-portability:
+    needs: appimage
+    name: AppImage on ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:24.04", "fedora:44"]
+    container:
+      image: ${{ matrix.image }}
+      # The real app runs nested bubblewrap sandboxes in these disposable
+      # test containers; Docker's default profiles refuse their namespaces.
+      options: --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: skwir-appimage
+          path: appimage
+      - name: Desktop runtime only
+        run: |
+          if command -v apt-get; then
+            apt-get update -q
+            # shellcheck disable=SC2046 # one package name per line
+            apt-get install -y --no-install-recommends $(sed 's/^libasound2$/libasound2t64/' tools/package/appimage/test-deps)
+          else
+            dnf install -y python3 binutils bubblewrap xorg-x11-server-Xvfb \
+              mesa-vulkan-drivers vulkan-loader libwayland-client libxkbcommon \
+              libX11 libxcb libXcursor libXi libXrandr fontconfig dejavu-sans-fonts \
+              alsa-lib mesa-libgbm libglvnd-egl shared-mime-info
+          fi
+      - name: Check the same artifact
+        run: |
+          cd appimage && sha256sum -c ./*.sha256 && chmod +x ./*.AppImage && cd ..
+          python3 tools/package/appimage/check.py appimage/*.AppImage
+
   linux:
     strategy:
       fail-fast: false

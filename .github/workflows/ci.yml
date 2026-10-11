@@ -7,105 +7,41 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  # A hosted runner has a fraction of a workstation's disk: no incremental
-  # sessions, and line tables alone in debug builds (a test binary with full
-  # debug info is near a gigabyte).
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_TARGET_DIR: target/ci
 
 jobs:
-  # What `just lint-all`, `just test-all`, `just smoke` and the rest check
-  # locally, inside the flake's dev shell, in four jobs that run at once:
-  # each has a runner's disk and cores to itself.
   check:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: lint
-            # The Windows and macOS builds too (check-cross), and the
-            # dependencies' licences and advisories.
-            run: just lint-all && just deny
-          - name: test
-            run: just test-all
-          - name: window
-            # The release window on an X display of its own with software
-            # Vulkan (Xvfb and Mesa from the flake's nixpkgs), driven by a
-            # script and checked on disk; then the performance budgets,
-            # which carry a 3x margin for hosted runners, slower and noisier
-            # than the reference machine.
-            run: just smoke && just bench-check
-          - name: readers
-            # The native Poppler and MuPDF readers (their first build
-            # compiles MuPDF) on synthetic PDFs.
-            run: just poppler-check && just mupdf-check
-    name: ${{ matrix.name }}
+    name: essentials
     runs-on: ubuntu-latest
-    timeout-minutes: 240
-    steps:
-      - name: Room to build
-        # Toolchains the runner image carries and skwir never uses (the
-        # flake brings its own).
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /usr/local/.ghcup /opt/hostedtoolcache /usr/local/share/boost \
-            /usr/share/swift /usr/local/share/powershell /usr/local/julia*
-          df -h /
-      - name: User namespaces
-        # Ubuntu's AppArmor refuses them to unprivileged programs, and
-        # bubblewrap, which isolates skwir's helpers and plugins, needs
-        # them (as it has them on the distributions skwir runs on).
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - uses: actions/checkout@v7
-        with:
-          # Nix reads the flake from git, which a shallow clone confuses.
-          fetch-depth: 0
-      - uses: DeterminateSystems/nix-installer-action@v23
-      - uses: DeterminateSystems/magic-nix-cache-action@main
-      - name: ${{ matrix.name }}
-        run: nix develop --command sh -c '${{ matrix.run }}'
-
-  # The Linux packages (ADR-040), each built in its distribution's own
-  # container, installed there and checked (`tools/package/try.sh` does the
-  # same from any Linux, in a fresh root of each).
-  linux-packages:
-    uses: ./.github/workflows/packages.yml
-
-  # The other systems, natively (ADR-035). Their failures are 5b's
-  # findings: they do not block merging until 5b says they pass, so
-  # `continue-on-error` until then. The default members only: the native
-  # workers' libraries per system are step K's, not set up here. Windows
-  # builds with the runner's MSVC; which Windows toolchain ships is 5b's
-  # decision.
-  native:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    continue-on-error: true
-    timeout-minutes: 180
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - name: Rust, as rust-toolchain.toml pins it
-        # The flake's, so these jobs lint with the same clippy as Linux's.
-        shell: bash
+      - name: Pinned Rust
         run: |
           channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
           rustup toolchain install "$channel" --profile minimal --component clippy,rustfmt
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/ci
+          key: essentials-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            essentials-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest
-      - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
-      - name: Test
-        # nextest's XDG isolation (`tools/test/isolate-xdg.sh`) is a shell
-        # script: Git's sh runs it on Windows.
-        run: cargo nextest run --no-tests=pass
+          tool: cargo-nextest,just
+      - name: Formatting, core and plugin API lint/tests, release tools
+        # No GUI, native workers, Nix closure or package builds on each push.
+        # The complete gate is `just release-check` / manual full.yml.
+        run: just ci-check

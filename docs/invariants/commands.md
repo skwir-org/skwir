@@ -93,6 +93,12 @@ control plugin's `run`:
 
 ## Plugins from outside (ADR-045, ADR-046, ADR-047)
 
+- A bundled helper's sandbox can read the package's private runtime,
+  read-only (ADR-052). Find that runtime from Skwir's own executable and
+  its package marker, never from a plugin's enclosing folders. Bind only
+  the package's `usr` tree, after creating the private `/tmp`; an
+  AppImage mounted there must remain visible. This grants no additional
+  folders to programs outside that runtime.
 - `skwir-plugin-api` is the contract: the manifest, the protocol, the WIT
   world, the guest's `Plugin` trait. It depends on nothing of Skwir's and
   builds for WebAssembly.

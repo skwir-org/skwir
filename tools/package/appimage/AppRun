@@ -1,0 +1,6 @@
+#!/bin/sh
+# RPATHs find the bundle's libraries. Keep the host's PATH and loader
+# environment for the editor, terminal and converters Skwir launches.
+set -eu
+appdir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+exec "$appdir/usr/bin/skwir" "$@"

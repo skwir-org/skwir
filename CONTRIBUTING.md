@@ -35,9 +35,11 @@ just test           # the tests, through cargo-nextest
 just lint           # rustfmt and clippy, warnings as errors
 ```
 
-A change is done when CI's checks pass: `just lint-all`, `just deny`,
-`just test-all`, `just smoke`, `just bench-check`, `just poppler-check`
-and `just mupdf-check` (`AGENTS.md`, "Build, test, lint").
+A change is done when `just release-check` passes: the full lint, dependency,
+test, window, reader, performance and release-tool checks (`AGENTS.md`,
+"Build, test, lint"). Routine GitHub CI runs the smaller `just ci-check`;
+the full suite and package builds are available as manual workflows.
+[Releasing](docs/RELEASING.md) describes local builds and draft uploads.
 
 ## The rules the code follows
 

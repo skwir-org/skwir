@@ -119,6 +119,21 @@ PDF, archive and 3D-model helpers. The rest is optional:
 On Arch, `skwir` includes the player and the Poppler reader, with their
 libraries as optional dependencies.
 
+**AppImage**, built on x86-64 Linux (NixOS included):
+
+```sh
+nix develop --command just package-appimage
+```
+
+The verified `skwir-<version>-x86_64.AppImage` and its checksum land in
+`target/package/appimage`.
+The build uses an Ubuntu 22.04 root of its own and keeps its cache in
+`target/appimage`; the first build downloads its toolchain and libraries.
+On NixOS, run the resulting image through `appimage-run`. On other desktops,
+make it executable and run it directly.
+The image includes the optional readers and player; system tools such as
+LibreOffice and bubblewrap remain the host's ([ADR-052](docs/adr/052-portable-appimage.md)).
+
 **From source**, with Rust 1.96 or later and the libraries `flake.nix` lists
 (the Nix flake has everything):
 
@@ -126,6 +141,11 @@ libraries as optional dependencies.
 direnv allow                # or: nix develop
 just run ~/Documents        # or: cargo run --release -p skwir -- ~/Documents
 ```
+
+Maintainers can build checked Linux releases on a Nix host with
+`just release-build v<version>` and upload a GitHub draft with
+`just release-upload v<version>`. See [Releasing](docs/RELEASING.md) for
+the required clean tag, release metadata, checks and package outputs.
 
 ## First steps
 

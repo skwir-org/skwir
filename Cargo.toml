@@ -23,7 +23,7 @@ members = [
 # The native workers link Poppler, MuPDF, GStreamer and libarchive. They are optional
 # at runtime and stay out of the default build so the application, plugins and
 # tests compile without those libraries; `just workers` / `just test-all`
-# include them, and CI runs the full set inside the Nix shell.
+# include them; release-check and the manual full workflow run the full set.
 default-members = [
     "crates/core",
     "crates/platform",
