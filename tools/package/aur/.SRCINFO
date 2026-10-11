@@ -1,5 +1,5 @@
 pkgbase = skwir
-	pkgdesc = An experimental file manager, GPU-drawn, for people, scripts and agents
+	pkgdesc = An augmented file manager, for humans and agents
 	pkgver = 0.1.0
 	pkgrel = 1
 	url = https://skwir.org

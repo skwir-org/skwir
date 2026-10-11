@@ -10,8 +10,8 @@
   <summary>Browse, find and organize your files</summary>
   <description>
     <p>
-      skwir is an experimental file manager, drawn by the GPU, built to be
-      driven by people, scripts and agents alike.
+      skwir is an augmented file manager, built to be driven by humans and
+      agents alike.
     </p>
     <ul>
       <li>Lists, grids and columns that stay responsive on very large folders</li>

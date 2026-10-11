@@ -188,7 +188,8 @@
               --set-default GST_PLUGIN_SYSTEM_PATH_1_0 ${lib.makeSearchPath "lib/gstreamer-1.0" mediaPlugins}
           '';
           meta = {
-            description = "An experimental file manager, GPU-drawn, for humans, scripts and agents";
+            # The words every package says skwir in.
+            inherit ((builtins.fromTOML (builtins.readFile ./crates/skwir/Cargo.toml)).package) description;
             # skwir's own; the Poppler and MuPDF readers, which link
             # libraries under the GPL and the AGPL (ADR-042).
             license = with lib.licenses; [asl20 gpl3Only agpl3Plus];

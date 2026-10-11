@@ -22,8 +22,10 @@ use crate::modal::{self, FocusReturn};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-/// What its package says of it (`crates/skwir/Cargo.toml`).
-const SUMMARY: &str = "An experimental file manager, GPU-drawn, for people, scripts and agents.";
+/// What every package says of skwir, in the words of
+/// `crates/skwir/Cargo.toml` (a test holds them to it), without the full
+/// stop About draws after them.
+const SUMMARY: &str = "An augmented file manager, for humans and agents";
 const LICENCE: &str = env!("CARGO_PKG_LICENSE");
 const WEBSITE: &str = env!("CARGO_PKG_REPOSITORY");
 
@@ -277,7 +279,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                         ))),
                 ),
         )
-        .child(SUMMARY)
+        .child(SharedString::from(format!("{SUMMARY}.")))
         .child(facts)
         .child(buttons);
     Some(
@@ -300,7 +302,32 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
 
 #[cfg(test)]
 mod tests {
-    use super::{details, graphics};
+    use super::{SUMMARY, details, graphics};
+
+    #[test]
+    fn about_and_every_package_say_skwir_in_the_same_words() {
+        // The .deb, the .rpm and Nix read the binary's manifest; the AUR's
+        // files cannot.
+        let manifest = include_str!("../../skwir/Cargo.toml");
+        let package = manifest
+            .lines()
+            .find_map(|line| line.strip_prefix("description = \"")?.strip_suffix('"'));
+        assert_eq!(package, Some(SUMMARY), "crates/skwir/Cargo.toml");
+        let pkgbuild = include_str!("../../../tools/package/aur/PKGBUILD");
+        assert!(
+            pkgbuild
+                .lines()
+                .any(|line| line == format!("pkgdesc='{SUMMARY}'")),
+            "tools/package/aur/PKGBUILD"
+        );
+        let srcinfo = include_str!("../../../tools/package/aur/.SRCINFO");
+        assert!(
+            srcinfo
+                .lines()
+                .any(|line| line == format!("\tpkgdesc = {SUMMARY}")),
+            "tools/package/aur/.SRCINFO"
+        );
+    }
 
     #[test]
     fn the_graphics_say_the_device_then_its_driver() {

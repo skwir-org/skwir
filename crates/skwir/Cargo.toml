@@ -1,8 +1,10 @@
 [package]
 name = "skwir"
-# What the packages say of it (ADR-040): the binary wires core, the
-# plugins and the UI shell.
-description = "An experimental file manager, GPU-drawn, for people, scripts and agents"
+# What every package says of it (ADR-040), and About: the one place
+# these words are written, which Nix reads and a test holds the AUR's
+# and About's to (`about.rs`). The binary wires core, the plugins and
+# the UI shell.
+description = "An augmented file manager, for humans and agents"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -106,11 +108,10 @@ profile = "dist"
 section = "utils"
 priority = "optional"
 extended-description = """\
-An experimental file manager, drawn by the GPU, built to be driven by \
-people, scripts and agents alike: lists, grids and columns that stay \
-responsive on very large folders, previews of documents, pictures, \
-music, films, archives and maps, tags kept on the files themselves, \
-and every change undoable."""
+An augmented file manager, built to be driven by humans and agents \
+alike: lists, grids and columns that stay responsive on very large \
+folders, previews of documents, pictures, music, films, archives and \
+maps, tags kept on the files themselves, and every change undoable."""
 depends = "$auto, libvulkan1, libfontconfig1"
 recommends = "skwir-media, mesa-vulkan-drivers, bubblewrap, udisks2"
 suggests = "skwir-poppler, skwir-mermaid, skwir-mupdf, poppler-utils, libreoffice-writer, libreoffice-calc, libreoffice-impress, pandoc, imagemagick, ffmpeg, libimage-exiftool-perl, plocate"
