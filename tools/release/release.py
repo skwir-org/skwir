@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CHECKS = ["lint-all", "deny", "test-all", "smoke", "poppler-check",
           "mupdf-check", "bench-check", "release-tools-check"]
 PACKAGES = [("appimage", ["package-appimage"]),
-            *[(d, ["package-try", d]) for d in ("debian", "fedora", "arch")]]
+            *[(d, ["package-try", d]) for d in ("debian", "ubuntu", "fedora", "arch")]]
 
 
 def require(condition, message):
@@ -84,6 +84,8 @@ def patterns(version):
                            rf"skwir-{re.escape(version)}-x86_64\.AppImage\.sha256"]}
     for distro, key, template in (
         ("debian", "deb", r"{}_{version}-[0-9]+_amd64\.deb"),
+        # Ubuntu's revision names the release it was made on (deb.sh).
+        ("ubuntu", "deb", r"{}_{version}-[0-9]+ubuntu[0-9]+\.[0-9]+_amd64\.deb"),
         ("fedora", "generate-rpm", r"{}-{version}-[0-9]+\.x86_64\.rpm"),
     ):
         config = package["metadata"][key]

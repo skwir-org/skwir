@@ -1,12 +1,13 @@
 #!/bin/sh
 # What building a Linux package needs (ADR-040), installed as root on the
 # distribution it is for (a CI container, or tools/package/try.sh's
-# root): the libraries' development packages (build-deps.<distribution>),
-# and for Debian and Fedora rustup's Rust (a distribution's may be older
-# than skwir needs) and the packaging tool; Arch builds with its own Rust
-# (the PKGBUILD's makedepends) as a user of its own, `builder`.
+# root): the libraries' development packages (build-deps.<distribution>;
+# Ubuntu's are Debian's), and for Debian, Ubuntu and Fedora rustup's Rust
+# (a distribution's may be older than skwir needs) and the packaging tool;
+# Arch builds with its own Rust (the PKGBUILD's makedepends) as a user of
+# its own, `builder`.
 #
-#     tools/package/linux/prepare.sh debian|fedora|arch
+#     tools/package/linux/prepare.sh debian|ubuntu|fedora|arch
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 PATH="$HOME/.cargo/bin:$PATH"
@@ -17,7 +18,7 @@ rust() {
 }
 # shellcheck disable=SC2046 # one argument per package named
 case "${1:-}" in
-debian)
+debian | ubuntu)
     apt-get update -q
     DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends $(cat "$here/build-deps.debian")
     rust
@@ -35,7 +36,7 @@ arch)
     id builder >/dev/null 2>&1 || useradd -m builder
     ;;
 *)
-    echo "usage: $0 debian|fedora|arch" >&2
+    echo "usage: $0 debian|ubuntu|fedora|arch" >&2
     exit 2
     ;;
 esac

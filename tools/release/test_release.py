@@ -35,6 +35,9 @@ if args == ['package-appimage']:
 elif args == ['package-try', 'debian']:
     for name in ['skwir', 'skwir-media']:
         (out / f'{name}_1.2.3-1_amd64.deb').write_bytes(b'synthetic deb')
+elif args == ['package-try', 'ubuntu']:
+    for name in ['skwir', 'skwir-media']:
+        (out / f'{name}_1.2.3-1ubuntu24.04_amd64.deb').write_bytes(b'synthetic ubuntu deb')
 elif args == ['package-try', 'fedora']:
     for name in ['skwir', 'skwir-media']:
         (out / f'{name}-1.2.3-1.x86_64.rpm').write_bytes(b'synthetic rpm')
@@ -325,12 +328,12 @@ sys.exit(subprocess.call([service, os.environ['AUR_TEST_REMOTE']]))
         stale.write_bytes(b"old release")
         self.cli("build")
         self.cli("verify")
-        self.assertEqual(len(list(self.bundle.iterdir())), 11)
+        self.assertEqual(len(list(self.bundle.iterdir())), 13)
         self.assertNotIn("Old notes", (self.bundle / "notes.md").read_text())
         self.assertTrue(stale.exists())
         self.assertEqual(self.calls("just"), [["release-check"], ["package-appimage"],
-                                             ["package-try", "debian"], ["package-try", "fedora"],
-                                             ["package-try", "arch"]])
+                                             ["package-try", "debian"], ["package-try", "ubuntu"],
+                                             ["package-try", "fedora"], ["package-try", "arch"]])
         self.cli("build", ok=False)
         self.cli("verify")
 

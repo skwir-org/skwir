@@ -167,7 +167,8 @@ package-rpm:
 package-aur:
     cd tools/package/aur && makepkg --printsrcinfo > .SRCINFO
 
-# Prepare a verified release's PKGBUILD and .SRCINFO in a separate AUR checkout.
+# Prepare a verified release's PKGBUILD and .SRCINFO in a separate AUR checkout
+# (cloned over SSH: requires the AUR SSH key already).
 aur-prepare tag:
     python3 tools/release/aur.py prepare {{quote(tag)}}
 
@@ -176,7 +177,8 @@ aur-publish tag:
     python3 tools/release/aur.py publish {{quote(tag)}}
 
 # A Linux package built in a distribution's own root and installed in a
-# fresh one, from any Linux with bubblewrap (ADR-040): debian, fedora, arch.
+# fresh one, from any Linux with bubblewrap (ADR-040): debian, ubuntu, fedora,
+# arch.
 package-try distribution:
     tools/package/try.sh {{distribution}}
 

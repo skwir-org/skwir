@@ -8,7 +8,7 @@
 # writes .SRCINFO beside this file. `just aur-prepare <tag>` fills the
 # source checksum in a separate checkout; `just aur-publish <tag>` pushes
 # its reviewed PKGBUILD and .SRCINFO to the AUR (docs/RELEASING.md).
-# Maintainer: whoever publishes it on the AUR
+# Maintainer: venator <venator at tutamail dot com>
 
 pkgbase=skwir
 pkgname=(skwir skwir-mermaid skwir-mupdf)

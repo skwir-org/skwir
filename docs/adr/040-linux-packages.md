@@ -59,10 +59,13 @@ and the folders it manages unless all are granted, and bubblewrap
 
 ## Consequences
 
-- A release is three builds (CI, or `try.sh`), each needing the glibc
-  it linked or newer: the `.deb` from Debian 13 needs 2.39 (Ubuntu
-  24.04 has it and the same library packages; not tried there); the
-  `.rpm` from Fedora 44 needs 2.43 (Fedora 44+).
+- A release is four builds (CI, or `try.sh`), each needing the glibc
+  it linked or newer: the `.deb` from Debian 13 needs 2.39; Ubuntu's own,
+  built on 24.04 since 2026-10-12, depends on Ubuntu's library packages
+  and is named apart (`-1ubuntu24.04`); the `.rpm` from Fedora 44 needs
+  2.43 (Fedora 44+). In the roots `try.sh` enters as a namespace's only
+  user, dpkg runs under fakeroot: Ubuntu's package scripts give folders
+  to groups the namespace does not have.
 - The AUR package disables makepkg's LTO (`options=('!lto')`): it would
   compile crates' C (MuPDF) to GCC bytecode, which Rust's linker (lld)
   cannot read.

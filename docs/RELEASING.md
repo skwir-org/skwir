@@ -9,8 +9,9 @@ workers, check performance or build packages.
 ## Prepare the source
 
 1. Set the workspace version in `Cargo.toml`, `pkgver` in
-   `tools/package/aur/PKGBUILD`, and the AppStream release version and date
-   in `tools/package/linux/org.skwir.skwir.metainfo.xml`.
+   `tools/package/aur/PKGBUILD`, the AppStream release version and date
+   in `tools/package/linux/org.skwir.skwir.metainfo.xml`, and the file
+   names in `README.md`'s install commands.
 2. Date that version's `CHANGELOG.md` heading, for example
    `## 0.1.0 (2026-10-11)`. AppStream must have the same date. The section
    supplies the GitHub release notes. Only stable `v<major>.<minor>.<patch>`
@@ -45,23 +46,24 @@ It then runs the existing packagers with separate fresh output directories:
 | --- | --- |
 | `just package-appimage` | Ubuntu 22.04 build root; separate runtime root, ELF/glibc checks, helpers, PDFs, audio and window commands |
 | `just package-try debian` | Debian 13 build; fresh installation of main package alone, then optional packages |
+| `just package-try ubuntu` | Ubuntu 24.04 build, its revision naming the release (`-1ubuntu24.04`); the same installations |
 | `just package-try fedora` | Fedora 44 build; fresh installation of main package alone, then optional packages |
 | `just package-try arch` | Arch build; fresh installation of main package alone, then optional packages |
 
 The final bundle is `target/releases/v0.1.0/`. It contains the lowercase
 `skwir-0.1.0-x86_64.AppImage` and its companion checksum, all current-version
-Debian/RPM/Arch split packages, `notes.md`, `manifest.json` and `SHA256SUMS`.
-The package manifests supply the expected split package names. Missing,
+Debian, Ubuntu, RPM and Arch split packages, `notes.md`, `manifest.json`
+and `SHA256SUMS`. The package manifests supply the expected split package names. Missing,
 duplicate, unexpected or old-version assets fail the build. The manifest
 records the source commit, platform, checks and each asset's size and SHA256.
 It is a local build record, not signed CI provenance.
 
 A bundle appears only when all checks and packaging succeed. An existing
 bundle is never overwritten: move it aside explicitly before rebuilding.
-Builds reuse the AppImage and Debian/Fedora Cargo caches and prepared roots;
-Arch currently retains downloads but rebuilds its source tree. First builds
-still take substantial time and disk space. Distribution roots are cached
-under `~/.cache/skwir-tests/roots`; AppImage inputs and build cache live in
+Builds reuse the AppImage and Debian/Ubuntu/Fedora Cargo caches and
+prepared roots; Arch currently retains downloads but rebuilds its source
+tree. First builds still take substantial time and disk space.
+Distribution roots are cached under `~/.cache/skwir-tests/roots`; AppImage inputs and build cache live in
 `target/appimage`. Package scripts also accept `SKWIR_PACKAGE_OUT` to direct
 their verified outputs elsewhere.
 

@@ -20,9 +20,10 @@ conventional Linux packages possible there without a container daemon.
    remain available manually. A tag push validates metadata only.
 2. `just release-build <tag>` requires clean source at the tagged commit,
    matching stable versions and dated changelog/AppStream metadata. It
-   runs the full gate, builds and checks AppImage, Debian, Fedora and Arch
-   packages in their existing roots, and stages one bundle atomically in
-   `target/releases/<tag>`. Split package names come from package metadata;
+   runs the full gate, builds and checks AppImage, Debian, Ubuntu (added
+   2026-10-12), Fedora and Arch packages in their existing roots, and
+   stages one bundle atomically in `target/releases/<tag>`. Split
+   package names come from package metadata;
    unrelated, missing or duplicate assets fail. Existing bundles are not
    replaced. The bundle includes notes, commit/check records and checksums.
 3. `just release-upload <tag>` verifies the bundle and the remote tag's

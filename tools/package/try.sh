@@ -15,15 +15,17 @@
 # target/package/linux.
 # Set SKWIR_PACKAGE_OUT to collect checked packages in a different directory.
 #
-#     tools/package/try.sh debian|fedora|arch
+#     tools/package/try.sh debian|ubuntu|fedora|arch
 set -eu
 distribution="${1:-}"
 case "$distribution" in
 debian) image=debian/trixie/amd64/default ;;
+# The oldest Ubuntu LTS with the libraries' 64-bit time names (t64).
+ubuntu) image=ubuntu/noble/amd64/default ;;
 fedora) image=fedora/44/amd64/default ;;
 arch) image=archlinux/current/amd64/default ;;
 *)
-    echo "usage: $0 debian|fedora|arch" >&2
+    echo "usage: $0 debian|ubuntu|fedora|arch" >&2
     exit 2
     ;;
 esac
@@ -63,7 +65,7 @@ unpack() {
     rm -f "$1/etc/resolv.conf"
     cp -L /etc/resolv.conf "$1/etc/resolv.conf"
     case "$distribution" in
-    debian)
+    debian | ubuntu)
         echo 'APT::Sandbox::User "root";' > "$1/etc/apt/apt.conf.d/99skwir-sandbox"
         ;;
     arch)
@@ -96,6 +98,14 @@ enter() {
         "$@"
 }
 
+# dpkg's package scripts give files to users and groups this namespace
+# does not have: on Debian and Ubuntu, dpkg runs under fakeroot.
+rootless() {
+    case "$distribution" in
+    debian | ubuntu) enter "$1" 0 /tools/package/linux/rootless-apt.sh >/dev/null ;;
+    esac
+}
+
 # The build root, prepared once and kept: what the build needs.
 builder="$roots/$distribution-build"
 if [ ! -f "$builder/.skwir-prepared" ]; then
@@ -103,6 +113,7 @@ if [ ! -f "$builder/.skwir-prepared" ]; then
     if [ "$distribution" = arch ]; then
         enter "$builder" 0 sh -c 'pacman-key --init && pacman-key --populate archlinux' >/dev/null
     fi
+    rootless "$builder"
     enter "$builder" 0 /tools/package/linux/prepare.sh "$distribution"
     touch "$builder/.skwir-prepared"
 fi
@@ -118,7 +129,7 @@ mkdir -p "$builder/src"
 # holds (skwir-media, skwir-poppler… on Debian and Fedora; skwir-mermaid
 # and skwir-mupdf on Arch), by names of the tools' own making.
 case "$distribution" in
-debian)
+debian | ubuntu)
     # Keep Cargo's compiled dependencies, but never reuse old packages.
     rm -rf "$builder/build/target/debian"
     enter "$builder" 0 env CARGO_TARGET_DIR=/build/target sh -c 'cd /src && tools/package/deb.sh'
@@ -146,6 +157,7 @@ esac
 # the libraries skwir's helpers may go without), and checks them all.
 fresh="$roots/$distribution-try"
 unpack "$fresh"
+rootless "$fresh"
 mkdir -p "$fresh/package/main" "$fresh/package/extra"
 # shellcheck disable=SC2086 # the names are patterns
 for package in "$made"/$main; do
@@ -159,7 +171,7 @@ for package in "$made"/$extra; do
     cp "$package" "$fresh/package/extra/"
 done
 case "$distribution" in
-debian)
+debian | ubuntu)
     enter "$fresh" 0 sh -c 'apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends /package/main/*.deb' >/dev/null
     ;;
 fedora)
@@ -172,7 +184,7 @@ esac
 echo "== $distribution: skwir alone"
 enter "$fresh" 0 /tools/package/linux/check.sh minimal
 case "$distribution" in
-debian)
+debian | ubuntu)
     enter "$fresh" 0 sh -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -q /package/extra/*.deb' >/dev/null
     ;;
 fedora)
