@@ -1620,20 +1620,8 @@ pub struct RenameArgs {
     pub pane: Option<PaneId>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct DestArgs {
-    /// Destination directory, an absolute path.
-    pub dest: PathArg,
-    /// The entries to act on, by absolute path; the pane's selection when
-    /// omitted.
-    #[serde(default)]
-    pub entries: Vec<op::EntryArg>,
-    #[serde(default)]
-    pub pane: Option<PaneId>,
-}
-
-/// Where a copy or a move goes, what it takes, and what becomes of a name
-/// taken there.
+/// Where a copy, a move or a link goes, what it takes, and what becomes of
+/// a name taken there.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TransferArgs {
     /// Destination directory, an absolute path.
@@ -1645,10 +1633,11 @@ pub struct TransferArgs {
     #[serde(default)]
     pub pane: Option<PaneId>,
     /// What becomes of a name already taken in the destination (ADR-054):
-    /// `files` `keep_both` (named "name (copy).ext"), `replace` (what was
-    /// there to the Trash), `replace_if_newer` or `skip`; `folders`
-    /// `merge`, `keep_both` or `skip`. Omitted, the window asks when the plan is
-    /// applied; with no window, nothing is applied.
+    /// `files` `keep_both` (named "name (copy).ext", a link "name
+    /// (link).ext"), `replace` (what was there to the Trash),
+    /// `replace_if_newer` or `skip`; `folders` `merge`, `keep_both` or
+    /// `skip` (a link takes the files' choice). Omitted, the window asks
+    /// when the plan is applied; with no window, nothing is applied.
     #[serde(default)]
     pub on_conflict: Option<op::clash::Policy>,
 }
@@ -1726,8 +1715,8 @@ mod builtin {
         )))
     }
 
-    /// A copy's or a move's plan, settling the names it finds taken as
-    /// `policy` says (ADR-054).
+    /// A copy's, a move's or a link's plan, settling the names it finds
+    /// taken as `policy` says (ADR-054).
     fn transfer_plan(outcome: Outcome, policy: Option<op::clash::Policy>) -> Outcome {
         match outcome {
             Outcome::Plan(plan) => Outcome::Plan(plan.on_conflict(policy)),
@@ -2343,25 +2332,23 @@ mod builtin {
         )
         .plans();
 
-        c.register::<DestArgs, _>(
+        c.register::<TransferArgs, _>(
             "core",
             "link",
             "Link",
-            "Make a link in a directory to each of the selection, or the entries given, under its name (plan)",
+            "Make a link in a directory to each of the selection, or the entries given, under its name (plan); on_conflict says what becomes of a name taken there",
             |a, app| {
                 let dest = destination(&a.dest)?;
-                targets_plan(
-                    app,
-                    a.pane,
-                    a.entries,
-                    &format!("link in {}", dest.display()),
-                    |e| {
-                        Box::new(op::Link {
-                            entry: e,
-                            dest_dir: dest.clone(),
-                        })
-                    },
-                )
+                Ok(transfer_plan(
+                    targets_plan(
+                        app,
+                        a.pane,
+                        a.entries,
+                        &format!("link in {}", dest.display()),
+                        |e| Box::new(op::Link::new(e, dest.clone())),
+                    )?,
+                    a.on_conflict,
+                ))
             },
         )
         .plans();

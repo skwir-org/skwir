@@ -57,8 +57,8 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   calls.
 - A command that makes something somewhere takes the folder too (`mkdir`'s
   `in`).
-- A command whose plan copies or moves takes what becomes of a name
-  taken there (`on_conflict`, ADR-054), carried by the plan: a script
+- A command whose plan copies, moves or links takes what becomes of a
+  name taken there (`on_conflict`, ADR-054), carried by the plan: a script
   never answers a dialog, and without it a plan applied with no window
   up applies nothing and says what is taken.
 - A path given from outside the window is absolute

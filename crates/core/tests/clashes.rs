@@ -1,4 +1,4 @@
-//! A name already taken where a copy or a move goes (ADR-054): what is
+//! A name already taken where a copy, a move or a link goes (ADR-054): what is
 //! never asked, what the window is asked, what an agent says beforehand,
 //! and Undo taking all of it back.
 
@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use common::*;
 use skwir_core::app::{App, ClashQuestion};
-use skwir_core::op::clash::{Answer, Choice, FileChoice, FolderChoice, Policy};
+use skwir_core::op::clash::{Act, Answer, Choice, FileChoice, FolderChoice, Policy};
 use skwir_core::op::{Change, ExecEvent, Items, StepStatus};
 
 /// A scratch tree for one test; what it left in the trash is purged when
@@ -253,7 +253,7 @@ fn cancelled_the_plan_applies_nothing() {
     let entries = [root.join("b.txt"), root.join("a.txt")];
     app.apply_whole(transfer(&app, "move", &entries, &root.join("dest")));
     let question = asked(&app);
-    assert!(question.clashes[0].moving);
+    assert_eq!(question.clashes[0].act, Act::Move);
     app.answer_clashes(question.id, None);
     assert!(matches!(
         finished(&app),
@@ -585,4 +585,153 @@ fn a_plan_settled_says_what_was_asked() {
     );
     finished(&app);
     assert_eq!(read(&root.join("dest/c.txt")), "kept");
+}
+
+/// A link onto a name taken is asked about as a copy is, with a file's
+/// choices even for a folder: a link is what it is, never merged. Kept
+/// both, it is named `name (link).ext`.
+#[cfg(unix)]
+#[test]
+fn a_link_onto_a_name_taken_is_asked_about() {
+    // What was replaced goes to the trash.
+    if under_wine("trashing through the shell") {
+        return;
+    }
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    let (src, dest) = (root.join("src"), root.join("dest"));
+    write(&src.join("a.txt"), "a, mine");
+    write(&src.join("b.txt"), "b, mine");
+    write(&src.join("d/x.txt"), "x, mine");
+    write(&dest.join("a.txt"), "a, theirs");
+    write(&dest.join("b.txt"), "b, theirs");
+    write(&dest.join("d/x.txt"), "x, theirs");
+    let before = snapshot(&root);
+    let app = app(tmp.path());
+    app.set_window_shown();
+    let entries = ["a.txt", "b.txt", "d"].map(|n| src.join(n));
+    app.apply_whole(transfer(&app, "link", &entries, &dest));
+
+    let question = asked(&app);
+    let listed: Vec<(PathBuf, bool, bool)> = question
+        .clashes
+        .iter()
+        .map(|c| (c.there.path.clone(), c.act == Act::Link, c.folders()))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            (dest.join("a.txt"), true, false),
+            (dest.join("b.txt"), true, false),
+            (dest.join("d"), true, false),
+        ]
+    );
+    let key = |i: usize| question.clashes[i].key();
+    let answer = Answer {
+        policy: Policy::default(),
+        each: HashMap::from([(key(1), Choice::Replace), (key(2), Choice::Skip)]),
+    };
+    assert!(app.answer_clashes(question.id, Some(answer)));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished { error: None, .. }
+    ));
+    assert_eq!(read(&dest.join("a.txt")), "a, theirs", "kept");
+    assert_eq!(
+        std::fs::read_link(dest.join("a (link).txt")).unwrap(),
+        src.join("a.txt"),
+        "both"
+    );
+    assert_eq!(
+        std::fs::read_link(dest.join("b.txt")).unwrap(),
+        src.join("b.txt"),
+        "replaced"
+    );
+    assert!(
+        dest.join("d").symlink_metadata().unwrap().is_dir(),
+        "skipped"
+    );
+    assert_eq!(read(&dest.join("d/x.txt")), "x, theirs");
+
+    undo(&app);
+    assert_eq!(snapshot(&root), before, "all of it taken back");
+}
+
+/// A link into its own folder is kept beside what it leads to, never
+/// asked; a link already made is not made again, nor asked about.
+#[cfg(unix)]
+#[test]
+fn a_link_beside_itself_or_made_already_is_never_asked_about() {
+    let tmp = Scratch::new();
+    let root = tmp.path().join("it's here");
+    write(&root.join("notes.txt"), "mine");
+    write(&root.join("dest/other.txt"), "theirs");
+    let app = app(tmp.path());
+    app.set_window_shown();
+    app.apply_whole(transfer(&app, "link", &[root.join("notes.txt")], &root));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished { error: None, .. }
+    ));
+    assert_eq!(
+        std::fs::read_link(root.join("notes (link).txt")).unwrap(),
+        root.join("notes.txt")
+    );
+
+    let entries = [root.join("dest/other.txt")];
+    for applied in [1, 0] {
+        app.apply_whole(transfer(&app, "link", &entries, &root));
+        assert!(
+            matches!(finished(&app), ExecEvent::Finished { applied: a, error: None, .. } if a == applied)
+        );
+    }
+    assert!(app.take_clash_questions().is_empty(), "nothing asked");
+    assert_eq!(
+        std::fs::read_link(root.join("other.txt")).unwrap(),
+        root.join("dest/other.txt")
+    );
+}
+
+/// An agent says beforehand what becomes of a name a link would take.
+#[cfg(unix)]
+#[test]
+fn a_link_s_policy_is_said_beforehand() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    write(&root.join("a.txt"), "mine");
+    write(&root.join("dest/a.txt"), "theirs");
+    let app = app(root);
+    let plan = plan(
+        &app,
+        "link",
+        serde_json::json!({
+            "entries": [root.join("a.txt")],
+            "dest": root.join("dest"),
+            "on_conflict": { "files": "keep_both" },
+        }),
+    );
+    let diff = plan.diff(&std::sync::Arc::default());
+    assert_eq!(diff.steps.len(), 1);
+    assert!(
+        matches!(&diff.steps[0], (Change::Link { to, .. }, StepStatus::Pending { .. })
+            if *to == root.join("dest/a (link).txt")),
+        "{:?}",
+        diff.steps
+    );
+    // With no window and no policy, nothing is applied.
+    app.apply_whole(transfer(
+        &app,
+        "link",
+        &[root.join("a.txt")],
+        &root.join("dest"),
+    ));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished {
+            applied: 0,
+            error: Some(_),
+            ..
+        }
+    ));
+    assert_eq!(read(&root.join("dest/a.txt")), "theirs");
 }

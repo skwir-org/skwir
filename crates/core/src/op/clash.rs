@@ -1,10 +1,10 @@
-//! A name already taken where a copy or a move goes (ADR-054): found by
-//! the dry run before anything is done, answered once, and the answers
-//! made the plan ([`settle`]): a copy or a move under a new name, a Trash
-//! step before what replaces, the steps of a merge, an `Rmdir` for each
-//! folder a move-merge emptied. What is never asked is settled the same
-//! way: a copy into its own folder, two items of one name, an item
-//! already there whole.
+//! A name already taken where a copy, a move or a link goes (ADR-054):
+//! found by the dry run before anything is done, answered once, and the
+//! answers made the plan ([`settle`]): a copy, a move or a link under a new
+//! name, a Trash step before what replaces, the steps of a merge, an
+//! `Rmdir` for each folder a move-merge emptied. What is never asked is
+//! settled the same way: a copy or a link into its own folder, two items
+//! of one name, an item already there whole, a link already made.
 
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
@@ -13,7 +13,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Change, Copy, EntryRef, Move, Operation, Rmdir, StepContext, Trash, builtin};
+use super::{Change, Copy, EntryRef, Link, Move, Operation, Rmdir, StepContext, Trash, builtin};
 
 /// What becomes of an item whose name a file takes, or of a file whose
 /// name a folder takes.
@@ -22,7 +22,8 @@ use super::{Change, Copy, EntryRef, Move, Operation, Rmdir, StepContext, Trash, 
 )]
 #[serde(rename_all = "snake_case")]
 pub enum FileChoice {
-    /// Both: what comes is named `name (copy).ext` ([`copy_name`]).
+    /// Both: what comes is named `name (copy).ext`, a link `name
+    /// (link).ext` ([`copy_name`]).
     #[default]
     KeepBoth,
     /// What was there goes to the Trash, its companions with it.
@@ -150,6 +151,14 @@ impl Side {
     }
 }
 
+/// What a plan does with an item whose name is taken.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Act {
+    Copy,
+    Move,
+    Link,
+}
+
 /// A name taken where an item goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Clash {
@@ -157,8 +166,9 @@ pub struct Clash {
     pub step: usize,
     /// The clash of the folder it is in, merged: its index in the list.
     pub inside: Option<usize>,
-    /// Moved, not copied.
-    pub moving: bool,
+    /// Copied, moved or linked.
+    pub act: Act,
+    /// What comes: for a link, what it leads to.
     pub source: Side,
     pub there: Side,
 }
@@ -170,9 +180,10 @@ impl Clash {
     }
 
     /// A folder onto a folder: merged, both kept, or skipped. Any other
-    /// takes a file's choices.
+    /// takes a file's choices, and so does a link to a folder: a link is
+    /// what it is, never merged.
     pub fn folders(&self) -> bool {
-        self.source.folder && self.there.folder
+        self.act != Act::Link && self.source.folder && self.there.folder
     }
 
     /// What it says where no one is asked: the dry run's words.
@@ -229,12 +240,14 @@ pub fn settle(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext) 
         count += 1;
         if first.is_none() {
             let from = match &asked {
-                Change::Copy { from, .. } | Change::Move { from, .. } => Some(from.clone()),
+                Change::Copy { from, .. }
+                | Change::Move { from, .. }
+                | Change::Link { from, .. } => Some(from.clone()),
                 _ => None,
             };
             let own = done.iter().map(|s| s.describe()).find(|c| {
                 matches!(c, Change::Copy { from: f, .. } | Change::Move { from: f, .. }
-                    if Some(f) == from.as_ref())
+                    | Change::Link { from: f, .. } if Some(f) == from.as_ref())
             });
             first = Some(own.unwrap_or(asked));
         }
@@ -247,19 +260,20 @@ pub fn settle(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext) 
     }
 }
 
-/// Whether a step of `steps` copies or moves: a plan with none has no
-/// name to settle.
+/// Whether a step of `steps` copies, moves or links: a plan with none has
+/// no name to settle.
 pub fn transfers(steps: &[Box<dyn Operation>]) -> bool {
     steps
         .iter()
         .any(|step| Transfer::of(step.as_ref()).is_some())
 }
 
-/// A copy or a move, as the walk takes it.
+/// A copy, a move or a link, as the walk takes it.
 #[derive(Clone)]
 enum Transfer {
     Copy(Copy),
     Move(Move),
+    Link(Link),
 }
 
 impl Transfer {
@@ -269,12 +283,22 @@ impl Transfer {
             .cloned()
             .map(Transfer::Copy)
             .or_else(|| any.downcast_ref::<Move>().cloned().map(Transfer::Move))
+            .or_else(|| any.downcast_ref::<Link>().cloned().map(Transfer::Link))
     }
 
     fn entry(&self) -> &EntryRef {
         match self {
             Transfer::Copy(c) => &c.entry,
             Transfer::Move(m) => &m.entry,
+            Transfer::Link(l) => &l.entry,
+        }
+    }
+
+    fn act(&self) -> Act {
+        match self {
+            Transfer::Copy(_) => Act::Copy,
+            Transfer::Move(_) => Act::Move,
+            Transfer::Link(_) => Act::Link,
         }
     }
 
@@ -286,6 +310,7 @@ impl Transfer {
         match self {
             Transfer::Copy(c) => c.target(src),
             Transfer::Move(m) => m.target(src),
+            Transfer::Link(l) => l.target(src),
         }
     }
 
@@ -299,6 +324,10 @@ impl Transfer {
             Transfer::Move(m) => Transfer::Move(Move {
                 new_name: Some(name),
                 ..m
+            }),
+            Transfer::Link(l) => Transfer::Link(Link {
+                new_name: Some(name),
+                ..l
             }),
         }
     }
@@ -314,6 +343,7 @@ impl Transfer {
                 preserve_attributes: c.preserve_attributes,
             }),
             Transfer::Move(_) => Transfer::Move(Move::new(entry, dest_dir)),
+            Transfer::Link(_) => Transfer::Link(Link::new(entry, dest_dir)),
         }
     }
 
@@ -321,6 +351,7 @@ impl Transfer {
         match self {
             Transfer::Copy(c) => Box::new(c),
             Transfer::Move(m) => Box::new(m),
+            Transfer::Link(l) => Box::new(l),
         }
     }
 }
@@ -362,17 +393,24 @@ impl Walk<'_> {
         {
             return self.keep(transfer, child);
         }
-        // Onto itself (a copy into its own folder), or onto what an
-        // earlier step puts there (two items of one name): both kept.
+        let linking = transfer.act() == Act::Link;
+        // Onto itself (a copy or a link into its own folder), or onto what
+        // an earlier step puts there (two items of one name): both kept.
         if target == src || self.ctx.made(&target) {
             return self.keep_both(transfer, &src, &target);
         }
-        if !self.ctx.exists(&target) || src.is_dir() && target.starts_with(&src) {
+        if !self.ctx.exists(&target) || !linking && src.is_dir() && target.starts_with(&src) {
             return self.keep(transfer, child);
         }
-        // There whole already: a copy has nothing to do, and a move leaves
-        // what was moved in the trash.
-        if builtin::same_tree(&src, &target, self.ctx).unwrap_or(false) {
+        // There already: the link made, or the item whole (the same kinds,
+        // sizes and times all the way down). A copy or a link has nothing
+        // to do, and a move leaves what was moved in the trash.
+        let there = if linking {
+            std::fs::read_link(&target).is_ok_and(|says| says == src)
+        } else {
+            builtin::same_tree(&src, &target, self.ctx).unwrap_or(false)
+        };
+        if there {
             if transfer.moving() {
                 self.changed = true;
                 return self.push(Box::new(Trash {
@@ -384,7 +422,7 @@ impl Walk<'_> {
         let clash = Clash {
             step,
             inside,
-            moving: transfer.moving(),
+            act: transfer.act(),
             source: Side::of(&src),
             there: Side::of(&target),
         };
@@ -407,7 +445,12 @@ impl Walk<'_> {
     fn keep_both(&mut self, transfer: Transfer, src: &Path, target: &Path) {
         let dir = target.parent().unwrap_or(Path::new("/"));
         let folder = std::fs::symlink_metadata(src).is_ok_and(|m| m.is_dir());
-        let name = copy_name(target.file_name().unwrap_or_default(), folder, |n| {
+        let word = if transfer.act() == Act::Link {
+            "link"
+        } else {
+            "copy"
+        };
+        let name = kept_name(target.file_name().unwrap_or_default(), word, folder, |n| {
             self.ctx.exists(&dir.join(n))
         });
         self.keep(transfer.named(name), true);
@@ -470,6 +513,17 @@ const NAME_MAX: usize = 255;
 /// words are not translated: a file's name does not change with the
 /// window's language.
 pub fn copy_name(name: &OsStr, folder: bool, taken: impl Fn(&OsStr) -> bool) -> OsString {
+    kept_name(name, "copy", folder, taken)
+}
+
+/// [`copy_name`] with another word: `name (link).ext` for a link kept
+/// beside `name`.
+pub fn kept_name(
+    name: &OsStr,
+    word: &str,
+    folder: bool,
+    taken: impl Fn(&OsStr) -> bool,
+) -> OsString {
     let bytes = name.as_encoded_bytes();
     let split = if folder {
         bytes.len()
@@ -477,13 +531,13 @@ pub fn copy_name(name: &OsStr, folder: bool, taken: impl Fn(&OsStr) -> bool) -> 
         extension_at(bytes)
     };
     let (stem, extension) = bytes.split_at(split);
-    let (base, mut n) = counted(stem);
+    let (base, mut n) = counted(stem, word);
     loop {
         n += 1;
         let suffix = if n == 1 {
-            " (copy)".to_owned()
+            format!(" ({word})")
         } else {
-            format!(" (copy {n})")
+            format!(" ({word} {n})")
         };
         let room = NAME_MAX.saturating_sub(suffix.len() + extension.len());
         let mut candidate = cut(base, room).to_vec();
@@ -523,16 +577,16 @@ fn extension_at(name: &[u8]) -> usize {
     dot
 }
 
-/// `stem` without a copy's ending, and the copy it says it is: 0 for
-/// none, 1 for ` (copy)`, n for ` (copy n)`.
-fn counted(stem: &[u8]) -> (&[u8], u32) {
-    if let Some(base) = stem.strip_suffix(b" (copy)") {
+/// `stem` without a copy's ending (with `word` "copy"), and the copy it
+/// says it is: 0 for none, 1 for ` (copy)`, n for ` (copy n)`.
+fn counted<'a>(stem: &'a [u8], word: &str) -> (&'a [u8], u32) {
+    if let Some(base) = stem.strip_suffix(format!(" ({word})").as_bytes()) {
         return (base, 1);
     }
     let numbered = stem.strip_suffix(b")").and_then(|rest| {
         let at = rest.iter().rposition(|&b| b == b' ')?;
         let n: u32 = std::str::from_utf8(&rest[at + 1..]).ok()?.parse().ok()?;
-        let base = rest[..at].strip_suffix(b" (copy")?;
+        let base = rest[..at].strip_suffix(format!(" ({word}").as_bytes())?;
         (n >= 2 && !rest[at + 1..].starts_with(b"0")).then_some((base, n))
     });
     numbered.unwrap_or((stem, 0))
@@ -600,6 +654,28 @@ mod tests {
             "été à Brest (copy).jpg"
         );
         assert_eq!(named("README", false, &[]), "README (copy)");
+    }
+
+    #[test]
+    fn a_link_kept_beside_is_named_so() {
+        let link = |name: &str, folder: bool, taken: &[&str]| {
+            kept_name(OsStr::new(name), "link", folder, |n| {
+                taken.iter().any(|t| OsStr::new(t) == n)
+            })
+            .to_string_lossy()
+            .into_owned()
+        };
+        assert_eq!(link("notes.txt", false, &[]), "notes (link).txt");
+        assert_eq!(
+            link("notes.txt", false, &["notes (link).txt"]),
+            "notes (link 2).txt"
+        );
+        assert_eq!(link("notes (link).txt", false, &[]), "notes (link 2).txt");
+        assert_eq!(
+            link("notes (copy).txt", false, &[]),
+            "notes (copy) (link).txt"
+        );
+        assert_eq!(link("Photos 2024.d", true, &[]), "Photos 2024.d (link)");
     }
 
     #[test]

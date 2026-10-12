@@ -1,6 +1,6 @@
 # ADR-054: A name already taken
 
-Status: accepted, 2026-10-12.
+Status: accepted, 2026-10-12. Links ask too (decision 9), the same day.
 
 ## Context
 
@@ -63,6 +63,15 @@ Status: accepted, 2026-10-12.
    who applies it; run where no one can be asked (no window), it applies
    nothing and says what is taken.
 
+9. **A link asks too.** Link Here, and `link` (which takes
+   `on_conflict`), onto a name taken asks as a copy does, with a file's
+   choices even for a link to a folder: a link is never merged. Keep both
+   names it `name (link).ext`, then `(link 2)`… (`clash::kept_name`);
+   Replace puts what was there in the Trash; Replace if newer compares
+   what the link leads to. Never asked: a link into its own folder is
+   kept beside what it leads to, and a link already there saying the same
+   path is done already.
+
 ## Consequences
 
 - Paste, drops, the split's transfers and the commands share the dialog:
@@ -78,5 +87,5 @@ Status: accepted, 2026-10-12.
   (`Restore::item`), as macOS names where the item went. Windows' trash
   does not say: there the latest item from the path comes back
   (PORTING.md).
-- `link` into a folder where the name is taken still refuses: a link is
-  not a copy of anything to keep beside.
+- A link kept beside a name taken is named apart from a copy, so that
+  what it is shows in its name.

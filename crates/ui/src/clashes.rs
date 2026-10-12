@@ -1,14 +1,15 @@
-//! What becomes of the names a plan found taken where it copies or moves
-//! (ADR-054): one dialog lists them all, each choice made for one item or
-//! for all of a kind, answered before anything is done. It waits in the
-//! review queue (`review.rs`) and is answered as a review is: Enter goes
-//! on, Escape cancels; the arrows walk its rows and change their choice.
+//! What becomes of the names a plan found taken where it copies, moves
+//! or links (ADR-054): one dialog lists them all, each choice made for one
+//! item or for all of a kind, answered before anything is done. It waits
+//! in the review queue (`review.rs`) and is answered as a review is: Enter
+//! goes on, Escape cancels; the arrows walk its rows and change their
+//! choice.
 
 use std::collections::HashMap;
 
 use gpui::{AnyElement, Context, Div, ScrollHandle, SharedString, div, prelude::*, px};
 use skwir_core::app::ClashQuestion;
-use skwir_core::op::clash::{Answer, Choice, Clash, FileChoice, FolderChoice, Policy, Side};
+use skwir_core::op::clash::{Act, Answer, Choice, Clash, FileChoice, FolderChoice, Policy, Side};
 
 use crate::controls::{self, ButtonStyle};
 use crate::keymap;
@@ -195,9 +196,15 @@ impl Clashes {
         }
     }
 
-    /// Whether the plan moves, rather than copies.
-    pub fn moving(&self) -> bool {
-        self.question.clashes.first().is_some_and(|c| c.moving)
+    /// What the plan does, as its button says it and as what is not done
+    /// until it is answered: ("Copy", "copied"), ("Move", "moved") or
+    /// ("Link", "linked").
+    pub fn words(&self) -> (&'static str, &'static str) {
+        match self.question.clashes.first().map(|c| c.act) {
+            Some(Act::Move) => ("Move", "moved"),
+            Some(Act::Link) => ("Link", "linked"),
+            Some(Act::Copy) | None => ("Copy", "copied"),
+        }
     }
 }
 
@@ -306,11 +313,7 @@ pub fn render(
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let now = jiff::Zoned::now();
-    let (verb, done) = if clashes.moving() {
-        ("Move", "moved")
-    } else {
-        ("Copy", "copied")
-    };
+    let (verb, done) = clashes.words();
     let first = clashes.question.clashes.first();
     let dest = first
         .and_then(|c| c.there.path.parent())
@@ -546,7 +549,7 @@ mod tests {
         Clash {
             step: 0,
             inside,
-            moving: false,
+            act: Act::Copy,
             source: side("/example/src/x", folder, if newer { 2 } else { 1 }),
             there: side(there, folder, if newer { 1 } else { 2 }),
         }

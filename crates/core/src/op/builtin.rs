@@ -2718,20 +2718,36 @@ impl super::Effect for RemoveEmptyFile {
 
 // ------------------------------------------------------------------ link
 
-/// Make a link in `dest_dir` to the entry, under its name: what a drop's
-/// Link Here makes. The link says the entry's whole path, so it leads
-/// there wherever the link itself is moved.
+/// Make a link in `dest_dir` to the entry, under its name or `new_name`:
+/// what a drop's Link Here makes. The link says the entry's whole path, so
+/// it leads there wherever the link itself is moved.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Link {
     pub entry: EntryRef,
     #[serde(with = "crate::os_path")]
     #[schemars(with = "PathArg")]
     pub dest_dir: PathBuf,
+    /// Name of the link; the entry's name when `None` (a name kept beside
+    /// one taken, ADR-054).
+    #[serde(default, with = "optional_name")]
+    #[schemars(with = "Option<PathArg>")]
+    pub new_name: Option<OsString>,
 }
 
 impl Link {
-    fn target(&self, src: &Path) -> PathBuf {
-        self.dest_dir.join(file_name(src))
+    pub fn new(entry: EntryRef, dest_dir: PathBuf) -> Self {
+        Self {
+            entry,
+            dest_dir,
+            new_name: None,
+        }
+    }
+
+    pub(super) fn target(&self, src: &Path) -> PathBuf {
+        match &self.new_name {
+            Some(n) => self.dest_dir.join(n),
+            None => self.dest_dir.join(file_name(src)),
+        }
     }
 }
 
@@ -2747,6 +2763,9 @@ impl super::Effect for Link {
         }
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
+        if let Some(invalid) = self.new_name.as_deref().and_then(invalid_name) {
+            return invalid;
+        }
         if !ctx.is_folder(&self.dest_dir) {
             return conflict(format!(
                 "“{}” is not a folder",
@@ -2758,14 +2777,25 @@ impl super::Effect for Link {
             Err(e) => return conflict(e.to_string()),
         };
         let link = self.target(&src);
+        if ctx.made(&link) {
+            return conflict(format!(
+                "“{}” is already there, by an earlier step",
+                display_name(&link)
+            ));
+        }
+        if !ctx.exists(&link) {
+            return pending(true);
+        }
         match std::fs::read_link(&link) {
             // What this step makes: applied already.
             Ok(says) if says == src => StepStatus::AlreadyDone,
-            _ if exists(&link) => conflict(format!("“{}” is already there", display_name(&link))),
-            _ => pending(true),
+            _ => conflict(format!("“{}” is already there", display_name(&link))),
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        if let Some(name) = &self.new_name {
+            valid_file_name(name)?;
+        }
         let src = self.entry.resolve()?;
         let link = self.target(&src);
         sys::symlink_to(&src, &link, src.is_dir()).with_context(|| {
@@ -2821,9 +2851,11 @@ impl super::Effect for Unlink {
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         sys::remove_link(&self.path)
             .with_context(|| format!("“{}” could not be removed", display_name(&self.path)))?;
+        let name = file_name(&self.path);
         Ok(Some(Box::new(Link {
             entry: self.entry.clone(),
             dest_dir: self.path.parent().unwrap_or(Path::new("/")).to_path_buf(),
+            new_name: (name != file_name(&self.entry.path)).then_some(name),
         })))
     }
 }

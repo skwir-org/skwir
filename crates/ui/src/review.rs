@@ -2,7 +2,7 @@
 //! listing each step's change and status, Apply or Cancel. A question an
 //! agent asks before a command that acts without a plan (ADR-044) waits
 //! in the same queue and is answered the same way: Allow or Refuse; so do
-//! the names a copy or a move found taken (ADR-054, `clashes.rs`).
+//! the names a copy, a move or a link found taken (ADR-054, `clashes.rs`).
 
 use gpui::{AnyElement, Context, FocusHandle, Window, div, prelude::*, px};
 use skwir_core::Plan;
@@ -81,7 +81,7 @@ pub enum Review {
     Plan { plan: Plan, diff: Option<Checked> },
     /// A question: an agent asks to run a command that acts.
     Question(Question),
-    /// What becomes of the names a copy or a move found taken.
+    /// What becomes of the names a copy, a move or a link found taken.
     Clashes(Box<crate::clashes::Clashes>),
 }
 
@@ -229,12 +229,8 @@ impl Shell {
             }
             Some(Review::Clashes(clashes)) => {
                 self.app.answer_clashes(clashes.question.id, None);
-                let said = if clashes.moving() {
-                    "Cancelled: nothing was moved"
-                } else {
-                    "Cancelled: nothing was copied"
-                };
-                self.set_status(said, false, cx);
+                let (_, done) = clashes.words();
+                self.set_status(format!("Cancelled: nothing was {done}"), false, cx);
             }
             None => return,
         }

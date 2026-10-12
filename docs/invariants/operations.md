@@ -64,21 +64,23 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 
 ## Names taken (ADR-054)
 
-- A copy or a move onto a name taken is settled before anything runs
-  (`op::clash::settle`, from `Executor::execute_whole`): as the plan says
-  beforehand (`Plan::on_conflict`, the commands' `on_conflict`), else as
-  the window answers, every name asked at once (`Executor::set_clash_asker`,
-  `ui/src/clashes.rs`), else nothing applies and the plan says what is
-  taken.
+- A copy, a move or a link onto a name taken is settled before anything
+  runs (`op::clash::settle`, from `Executor::execute_whole`): as the plan
+  says beforehand (`Plan::on_conflict`, the commands' `on_conflict`), else
+  as the window answers, every name asked at once
+  (`Executor::set_clash_asker`, `ui/src/clashes.rs`), else nothing applies
+  and the plan says what is taken.
 - The answer is the plan: a step under a new name (`Copy::new_name`,
-  `Move::new_name`), a `Trash` before what replaces, a merge's steps, an
-  `Rmdir` for each folder a move-merge emptied. No step overwrites: a name
+  `Move::new_name`, `Link::new_name`), a `Trash` before what replaces, a
+  merge's steps, an `Rmdir` for each folder a move-merge emptied. No step overwrites: a name
   taken in between still fails its step (`rename_noreplace`, staging).
-- Never asked: a copy into its own folder and two items of one name keep
-  both (`clash::copy_name`, GNOME's `name (copy).ext`); an item there whole
-  (`same_tree`) is skipped by a copy and put in the trash by a move; a
-  folder into itself is refused. A link is never merged; a move out of
-  the trash keeps a restore's rules.
+- Never asked: a copy or a link into its own folder and two items of one
+  name keep both (`clash::copy_name`, GNOME's `name (copy).ext`; a link's
+  `name (link).ext`, `clash::kept_name`); an item there whole
+  (`same_tree`) is skipped by a copy and put in the trash by a move, a
+  link already saying the same path is done; a folder into itself is
+  refused. A link, even to a folder, is never merged: it takes a file's
+  choices. A move out of the trash keeps a restore's rules.
 - A dry run foresees what each earlier step takes and makes
   (`StepContext::foresee`): a check asks the context whether a name is
   free (`exists`, `made`, `empty_after`), never the disk alone.

@@ -249,7 +249,7 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // Ctrl+Space, `ui.cursor_toggle`, selects or deselects what it is on).
     ("up", "ui.cursor", r#"{"to":"up"}"#, Some("pane")),
     ("down", "ui.cursor", r#"{"to":"down"}"#, Some("pane")),
-    // The names a copy or a move found taken: the choice of the row.
+    // The names a copy, a move or a link found taken: the row's choice.
     (
         "left",
         "ui.review_choose",

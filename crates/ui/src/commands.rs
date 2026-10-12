@@ -743,7 +743,7 @@ pub fn declare_all(app: &App) {
         app,
         "ui.review_choose",
         "Next choice",
-        "In the names a copy or a move found taken: the next choice of the row the keyboard is on, or the previous with a negative delta",
+        "In the names a copy, a move or a link found taken: the next choice of the row the keyboard is on, or the previous with a negative delta",
     );
     // The address and searching.
     none(
