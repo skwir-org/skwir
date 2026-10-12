@@ -71,7 +71,7 @@ arguments).
 | Area | Bound |
 |------|-------|
 | Hex view | 4096-byte sections; search streams bounded chunks, checking cancellation |
-| Text and source mode | Read where shown (ADR-051, which replaced 32 KiB sections): rows of 4 KiB, an index of every 256th, chunks of 256 rows; Copy 8 MiB |
+| Text and source mode | Read where shown (ADR-051, which replaced 32 KiB sections): rows of 4 KiB, an index of every 256th, chunks of 256 rows; Copy 16 MiB |
 | Parsed text, table, structured input | 2 MiB |
 | Tables | 500 rows per section, 64 columns, 1024 characters per cell (longer marked shortened) |
 | Code | 10000 lines, 64 levels, 4096 bytes per line; JSON 10000 nodes |

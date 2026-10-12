@@ -385,11 +385,13 @@ dates, measurements and what is left.
     and scrolled sideways, the gutter kept; a terminal's `code.rs:1200`
     showing its line; a log written to while shown followed at its end;
     UTF-16 read in its own units (pages past the first read it as
-    UTF-8). Deviations: Copy is bounded at 8 MiB, not 16, because gpui
-    hands the clipboard to another X11 program in one request, which
-    carries 16 MiB less its header (a 16 MiB copy was never answered,
-    and the clipboard stopped answering); a vendored patch sending INCR
-    is left to do. The byte view still pages 4 KiB at a time.
+    UTF-8). gpui handed the clipboard to another X11 program in one
+    request, which carries 16 MiB less its header: a 16 MiB copy was
+    never answered and the clipboard stopped answering until restarted.
+    Vendored patch 0021 (2026-10-12) sends it in pieces (INCR), and Copy
+    went back from 8 MiB to 16: xclip read 16 MiB whole, and a reader
+    killed mid-transfer left the next served. The byte view still pages
+    4 KiB at a time.
   - Mermaid by merman in `skwir-mermaid-worker`: linked into Skwir it
     added 14.7 MB of code (text 51.9 → 66.6 MB), so it is a helper
     (16.3 MB), a default member. Without it a diagram stays code.

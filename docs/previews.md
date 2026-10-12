@@ -80,7 +80,7 @@ The player, in the panel or pinned at its foot:
 - A text file of any size is shown whole: it opens at once, its lines
   numbered from the first, counted as you read (the bar says how many),
   and only what is on screen is read from the file. A huge log scrolls to
-  its end, and Find and Copy see all of it (Copy up to 8 MiB). The
+  its end, and Find and Copy see all of it (Copy up to 16 MiB). The
   source of a rendered file (Markdown, a table, a map) is read the same
   way.
 - Long lines wrap to the panel, the line's number on its first row; More

@@ -31,11 +31,8 @@ use crate::shell::Shell;
 
 /// Chunks kept around the view: a few screens either way.
 const KEPT: usize = 24;
-/// The most Copy reads from the file: what one X11 request carries, with
-/// room. gpui hands the clipboard to another program on X11 in a single
-/// request (it sends no INCR), at most 16 MiB less its header with
-/// BIG-REQUESTS; a larger one is never answered.
-pub const COPY_BYTES: usize = 8 * 1024 * 1024;
+/// The most Copy reads from the file.
+pub const COPY_BYTES: usize = 16 * 1024 * 1024;
 /// How often counting shows how far it got.
 const TELL: Duration = Duration::from_millis(100);
 

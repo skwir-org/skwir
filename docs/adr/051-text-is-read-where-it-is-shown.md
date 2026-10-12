@@ -65,9 +65,9 @@ ADR-009's bounds (`TEXT_PAGE`, `SOURCE_PAGE`).
    More › Wrap lines, `Alt+Z`); the scrollbar counts rows.
 7. **Find and copy see the file.** Find reads the file on a worker from
    the row after the one selected, either way, around the end, and lands
-   on the row. Copy reads the rows selected, up to `COPY_BYTES` (8 MiB: gpui
-   hands the clipboard to another X11 program in one request, which
-   carries at most 16 MiB), and says when it stopped there.
+   on the row. Copy reads the rows selected, up to `COPY_BYTES` (16 MiB),
+   and says when it stopped there. On X11 a clipboard larger than one
+   request goes in pieces (INCR, vendored gpui patch 0021).
 8. **A file that changes is counted again**, the view kept at its row.
 
 ## Consequences

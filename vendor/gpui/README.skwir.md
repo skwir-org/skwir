@@ -41,6 +41,7 @@ dependencies stay out of Skwir's workspace:
 | `0018-ellipsis-is-no-place-to-break` | `…` is a word character | — |
 | `0019-font-id-without-fallback` | `TextSystem::font_id` public | — |
 | `0020-render-image-into-frames` | `RenderImage::into_frames` returns pixel buffers | — |
+| `0021-x11-clipboard-sends-in-pieces` | X11 clipboard sends large data with INCR; one failed request no longer ends it | — |
 
 ### 0001: Wayland outgoing drag
 
@@ -283,6 +284,30 @@ buffers. Video frames are same-size images made thirty times a second: the
 window hands each buffer back to the player once nothing draws it (texture
 dropped first), and the next frame is read into it instead of a fresh 8 MB
 buffer at 1080p, mapped and zeroed by the kernel.
+
+### 0021: X11 clipboard sends in pieces
+
+gpui answered a request for the clipboard with one `ChangeProperty`, whatever
+its size. One request carries at most the server's maximum (16 MiB less the
+header with BIG-REQUESTS, 256 KiB without), and x11rb refuses a larger one
+before sending it. That error left `serve_requests` through `?`, which ended
+the thread that serves the clipboard: the requestor never got its
+`SelectionNotify` (xclip hung), and nothing more was ever answered, TARGETS
+included, until the app restarted.
+
+Data larger than one request (`Inner::max_property_bytes`, from
+`maximum_request_bytes`) is now sent with INCR (ICCCM 2.7.2): the property
+says `INCR` and the size, the requestor's window is watched for
+`PropertyNotify`, and each time the requestor deletes the property the next
+piece goes, then an empty one ends it (`start_transfer`,
+`continue_transfer`). A transfer no requestor takes a piece of for 30 s is
+dropped. A request that cannot be answered is logged and the next ones are
+still served. Reading already handled INCR.
+
+Checked on Xvfb (BIG-REQUESTS): Skwir copied 16 MiB of a log, xclip read the
+16,777,216 bytes, identical to the file's; TARGETS was answered after; an xclip
+killed during a transfer left the next one served whole. Before, the same copy
+hung xclip and the clipboard stopped answering.
 
 ## Adding or regenerating a patch
 
