@@ -487,6 +487,7 @@ fn move_into(
     steps.push(Box::new(Move {
         entry: EntryRef::new(id, current[i].clone()),
         dest_dir: dest.clone(),
+        new_name: None,
     }));
     current[i] = dest.join(&arrives);
     if arrives != target.name {

@@ -168,10 +168,7 @@ fn paste(clipboard: &Mutex<Clipboard>, pane: Option<PaneId>, app: &App) -> anyho
         .into_iter()
         .map(|entry| -> Box<dyn Operation> {
             if cut {
-                Box::new(Move {
-                    entry,
-                    dest_dir: dest.clone(),
-                })
+                Box::new(Move::new(entry, dest.clone()))
             } else {
                 Box::new(Copy::from_settings(entry, dest.clone(), &app.settings))
             }

@@ -50,6 +50,9 @@ pub struct Running {
     first: Option<Change>,
     /// The change whose step failed, to say what could not be done.
     failed: Option<Change>,
+    /// What the user asked for, where the steps are not its items (a
+    /// merge, a replace): what the result says once the plan is through.
+    items: Option<skwir_core::op::Items>,
     /// Waiting where it would answer Cancel, until resumed.
     paused: bool,
     cancelling: bool,
@@ -303,6 +306,7 @@ impl Shell {
                     title,
                     total,
                     run,
+                    items,
                 } => {
                     self.toasts.running.push(Running {
                         plan,
@@ -311,6 +315,7 @@ impl Shell {
                         total,
                         first: None,
                         failed: None,
+                        items,
                         paused: false,
                         cancelling: false,
                     });
@@ -349,8 +354,16 @@ impl Shell {
                         continue;
                     };
                     let running = self.toasts.running.remove(index);
-                    let (title, run, first) = (running.title, running.run, running.first);
-                    let done = describe(&title, run, first.as_ref(), applied);
+                    let (title, run) = (running.title, running.run);
+                    // Through, it did what was asked, item by item; cut
+                    // short, as far as its steps went.
+                    let (first, count) = match running.items {
+                        Some(items) if error.is_none() && !cancelled => {
+                            (Some(items.first), items.count)
+                        }
+                        _ => (running.first, applied),
+                    };
+                    let done = describe(&title, run, first.as_ref(), count);
                     let (text, tone) = match (error, cancelled) {
                         (Some(error), _) if applied > 0 => {
                             (format!("{done}, then stopped: {error}"), Tone::Error)

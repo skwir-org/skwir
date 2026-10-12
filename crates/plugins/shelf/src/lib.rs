@@ -324,6 +324,7 @@ fn plan_into(items: &[ShelfItem], dest: &Path, copy: bool, app: &App) -> anyhow:
                 Box::new(Move {
                     entry: i.entry_ref(),
                     dest_dir: dest.to_path_buf(),
+                    new_name: None,
                 })
             }
         })

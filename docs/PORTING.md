@@ -174,6 +174,12 @@ Left:
   no origin, so the trash crate's listing and restoring stay **(n)**
   (`trash_list`, `trash_restore`) and `trash::trashes` lists none **(u)**:
   `trash:` is empty on a Mac, and only undo restores.
+- Windows: the `trash` crate does not say which `$I` record it wrote, so
+  undoing a trash restores the latest item from the path, not its own
+  (Linux names its record, ADR-054). A replace undone (a name taken,
+  "Replace") then brings back the copy it just put in the trash; the
+  original stays there. Finding the record after trashing (the newest from
+  the path) would fix it.
 
 ## 5. Attributes and notes stores
 

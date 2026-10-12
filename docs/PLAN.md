@@ -644,6 +644,20 @@ eighty commits over what woke or worked while nothing changed: idle
 threads, startup, work per frame and per batch of metadata, memory
 given back.
 
+### 2026-10-11 to 10-12
+
+Names already taken (ADR-054): a copy or a move onto names in its
+destination asks once about all of them, before anything is done (keep
+both as `name (copy).ext`, replace into the Trash, replace if newer,
+skip; a folder onto a folder merged), for all of a kind or row by row;
+a copy into its own folder and two items of one name keep both unasked;
+agents and scripts say beforehand (`on_conflict`). The answers are the
+plan's steps, checked and undone as any. On the way, undoing a trash
+restores its own item on Linux (it names its record), so a replace
+undone brings back what it replaced. Left: on Windows undoing a trash
+restores the latest item from its path (PORTING.md); `link` still
+refuses a name taken.
+
 ---
 
 ## Maps

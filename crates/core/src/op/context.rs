@@ -135,10 +135,10 @@ pub struct StepContext {
     trash: RefCell<Option<super::builtin::TrashListing>>,
     /// The files beside a file that go where it goes (ADR-028).
     companions: Arc<crate::companions::Companions>,
-    /// The folders a dry run's earlier steps make (`super::dry_run`): a
-    /// later step finds them, as it does when the plan is applied step by
-    /// step.
-    foreseen: RefCell<HashSet<PathBuf>>,
+    /// What a dry run's earlier steps do to the names the steps after
+    /// them meet (`super::dry_run`): a later step finds them as it does
+    /// when the plan is applied step by step.
+    foreseen: RefCell<Foreseen>,
     /// Where the folders copies are under way in are noted, and those this
     /// plan stages in, each swept once and noted while the plan runs.
     under_way: Option<super::staging::UnderWay>,
@@ -182,6 +182,59 @@ pub struct StepContext {
     /// The files of several names whose bytes this plan counted already:
     /// copied once, they are counted once.
     sized: RefCell<HashSet<crate::FileId>>,
+}
+
+/// What a dry run's earlier steps make and take away, by path. A path
+/// made after it went is made; one that went after it was made is gone.
+#[derive(Default)]
+struct Foreseen {
+    /// Made: a folder made, a copy, where a move or a rename goes.
+    made: HashSet<PathBuf>,
+    /// Of those, the folders.
+    folders: HashSet<PathBuf>,
+    /// How many of `made` each folder holds.
+    made_in: HashMap<PathBuf, usize>,
+    /// Taken away, with what is in it: moved, renamed, put in the trash,
+    /// removed, and the places of its companions.
+    gone: HashSet<PathBuf>,
+}
+
+impl Foreseen {
+    fn make(&mut self, path: &Path, folder: bool) {
+        self.gone.remove(path);
+        if self.made.insert(path.to_path_buf())
+            && let Some(dir) = path.parent()
+        {
+            *self.made_in.entry(dir.to_path_buf()).or_default() += 1;
+        }
+        if folder {
+            self.folders.insert(path.to_path_buf());
+        }
+    }
+
+    /// `path` goes, and where its companions would be (no disk read: a
+    /// place that holds none is gone all the same).
+    fn take(&mut self, path: &Path, companions: &crate::companions::Companions) {
+        if self.made.remove(path)
+            && let Some(held) = path.parent().and_then(|dir| self.made_in.get_mut(dir))
+        {
+            *held -= 1;
+        }
+        self.folders.remove(path);
+        self.gone.insert(path.to_path_buf());
+        if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
+            for place in companions.of(name) {
+                self.gone.insert(dir.join(place));
+            }
+        }
+    }
+
+    /// Whether `path`, or a folder it is in, went and was not made again.
+    fn went(&self, path: &Path) -> bool {
+        path.ancestors()
+            .take_while(|p| !self.made.contains(*p))
+            .any(|p| self.gone.contains(p))
+    }
 }
 
 /// A copy a plan made of a file with several names: where it is now, the
@@ -605,23 +658,76 @@ impl StepContext {
         }
     }
 
-    /// A dry run's step checked as pending will make what `change` says:
-    /// the steps after it count a folder it makes as there.
+    /// A dry run's step checked as pending will do what `change` says:
+    /// the steps after it find what it makes there, and what it moves,
+    /// renames, puts in the trash or removes gone.
     pub(super) fn foresee(&self, change: &super::Change) {
-        if let super::Change::Create {
-            path,
-            directory: true,
-            ..
-        } = change
-        {
-            self.foreseen.borrow_mut().insert(path.clone());
+        use super::Change;
+        match change {
+            Change::Create {
+                path, directory, ..
+            } => self.foreseen.borrow_mut().make(path, *directory),
+            Change::Copy { from, to } => {
+                let folder = self.is_folder(from);
+                self.foreseen.borrow_mut().make(to, folder);
+            }
+            Change::Move { from, to } | Change::Rename { from, to } => {
+                let folder = self.is_folder(from);
+                let mut foreseen = self.foreseen.borrow_mut();
+                foreseen.take(from, &self.companions);
+                foreseen.make(to, folder);
+            }
+            Change::Link { to, .. } => self.foreseen.borrow_mut().make(to, false),
+            Change::Restore { path } => {
+                let folder = path.is_dir();
+                self.foreseen.borrow_mut().make(path, folder);
+            }
+            Change::Trash { path } | Change::Delete { path } | Change::Remove { path } => {
+                self.foreseen.borrow_mut().take(path, &self.companions);
+            }
+            Change::Swap { .. } | Change::Metadata { .. } => {}
         }
     }
 
     /// Whether `path` is a folder, or one an earlier step of this dry run
-    /// makes.
+    /// makes, and no earlier step takes it away.
     pub fn is_folder(&self, path: &Path) -> bool {
-        path.is_dir() || self.foreseen.borrow().contains(path)
+        let foreseen = self.foreseen.borrow();
+        foreseen.folders.contains(path) || !foreseen.went(path) && path.is_dir()
+    }
+
+    /// Whether something is at `path` (a link counts, whatever it leads
+    /// to), as this dry run's earlier steps leave it.
+    pub fn exists(&self, path: &Path) -> bool {
+        let foreseen = self.foreseen.borrow();
+        foreseen.made.contains(path)
+            || !foreseen.went(path) && std::fs::symlink_metadata(path).is_ok()
+    }
+
+    /// Whether an earlier step of this dry run puts something at `path`.
+    pub fn made(&self, path: &Path) -> bool {
+        self.foreseen.borrow().made.contains(path)
+    }
+
+    /// Whether the folder `dir` holds nothing once this dry run's earlier
+    /// steps have taken what they take from it.
+    ///
+    /// # Errors
+    /// When the folder cannot be read (`NotFound` when it is not there).
+    pub fn empty_after(&self, dir: &Path) -> std::io::Result<bool> {
+        let foreseen = self.foreseen.borrow();
+        if foreseen.went(dir) {
+            return Err(std::io::ErrorKind::NotFound.into());
+        }
+        if foreseen.made_in.get(dir).is_some_and(|&held| held > 0) {
+            return Ok(false);
+        }
+        for entry in std::fs::read_dir(dir)? {
+            if !foreseen.gone.contains(&entry?.path()) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 

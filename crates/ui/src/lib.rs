@@ -20,6 +20,7 @@ mod archive_preview;
 mod backdrop;
 pub mod bytes_view;
 pub mod choose;
+pub mod clashes;
 mod code_preview;
 pub mod commands;
 pub mod controls;

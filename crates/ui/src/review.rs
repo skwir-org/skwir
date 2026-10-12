@@ -1,11 +1,12 @@
 //! Review of proposed plans (from editors, agents, background work): a modal
 //! listing each step's change and status, Apply or Cancel. A question an
 //! agent asks before a command that acts without a plan (ADR-044) waits
-//! in the same queue and is answered the same way: Allow or Refuse.
+//! in the same queue and is answered the same way: Allow or Refuse; so do
+//! the names a copy or a move found taken (ADR-054, `clashes.rs`).
 
 use gpui::{AnyElement, Context, FocusHandle, Window, div, prelude::*, px};
 use skwir_core::Plan;
-use skwir_core::app::{Asker, Question};
+use skwir_core::app::{Asker, ClashQuestion, Question};
 use skwir_core::op::{PlanDiff, StepStatus};
 
 use crate::controls::{self, ButtonStyle};
@@ -51,16 +52,24 @@ pub fn lines(diff: &PlanDiff) -> impl Iterator<Item = (String, &'static str, Lin
 pub struct Checked {
     lines: Vec<(String, &'static str, LineKind)>,
     applicable: bool,
+    /// Its steps as it will be done: a folder merged is many.
+    steps: usize,
+    /// The names it finds taken that the user is asked about as it is
+    /// applied (ADR-054): its lines show them settled as the defaults
+    /// would.
+    asked: usize,
 }
 
 impl Checked {
-    fn of(diff: &PlanDiff) -> Self {
+    fn of((diff, asked): &(PlanDiff, usize)) -> Self {
         Checked {
             lines: lines(diff).take(SHOWN).collect(),
             applicable: !diff
                 .steps
                 .iter()
                 .any(|(_, status)| matches!(status, StepStatus::Conflict { .. })),
+            steps: diff.steps.len(),
+            asked: *asked,
         }
     }
 }
@@ -72,26 +81,28 @@ pub enum Review {
     Plan { plan: Plan, diff: Option<Checked> },
     /// A question: an agent asks to run a command that acts.
     Question(Question),
+    /// What becomes of the names a copy or a move found taken.
+    Clashes(Box<crate::clashes::Clashes>),
 }
 
 impl Review {
     fn applicable(&self) -> Option<bool> {
         match self {
             Review::Plan { diff, .. } => diff.as_ref().map(|checked| checked.applicable),
-            Review::Question(_) => Some(true),
+            Review::Question(_) | Review::Clashes(_) => Some(true),
         }
     }
 
     pub fn is_question(&self) -> bool {
-        matches!(self, Review::Question(_))
+        matches!(self, Review::Question(_) | Review::Clashes(_))
     }
 }
 
 /// The keyboard while a proposal is shown: its own focus, and what had it.
 pub struct ReviewFocus {
     pub focus: FocusHandle,
-    cancel: FocusHandle,
-    apply: FocusHandle,
+    pub(crate) cancel: FocusHandle,
+    pub(crate) apply: FocusHandle,
     back: FocusReturn,
 }
 
@@ -105,7 +116,7 @@ impl Shell {
             self.reviews.push_back(Review::Plan { plan, diff: None });
             self.off_thread(
                 "review-diff",
-                move || Checked::of(&dry.diff(&companions)),
+                move || Checked::of(&dry.review(&companions)),
                 move |this, done, _, cx| {
                     let waiting = this.reviews.iter_mut().find_map(|r| match r {
                         Review::Plan { plan, diff } if plan.id == id => Some(diff),
@@ -127,6 +138,16 @@ impl Shell {
     pub fn add_questions(&mut self, questions: Vec<Question>, cx: &mut Context<Self>) {
         self.reviews
             .extend(questions.into_iter().map(Review::Question));
+        cx.notify();
+    }
+
+    /// Queue the names plans found taken, after what waits already.
+    pub fn add_clash_questions(&mut self, questions: Vec<ClashQuestion>, cx: &mut Context<Self>) {
+        self.reviews.extend(
+            questions
+                .into_iter()
+                .map(|q| Review::Clashes(Box::new(crate::clashes::Clashes::new(q)))),
+        );
         cx.notify();
     }
 
@@ -171,7 +192,14 @@ impl Shell {
                     };
                     self.set_status(said, false, cx);
                 }
-                Some(Review::Question(_)) | None => {}
+                Some(Review::Clashes(clashes))
+                    if !self
+                        .app
+                        .answer_clashes(clashes.question.id, Some(clashes.answer())) =>
+                {
+                    self.set_status("It stopped waiting: nothing was done", false, cx);
+                }
+                Some(Review::Question(_) | Review::Clashes(_)) | None => {}
             },
             Some(Some(false)) => {
                 self.set_status(
@@ -199,6 +227,15 @@ impl Shell {
                 };
                 self.set_status(said, false, cx);
             }
+            Some(Review::Clashes(clashes)) => {
+                self.app.answer_clashes(clashes.question.id, None);
+                let said = if clashes.moving() {
+                    "Cancelled: nothing was moved"
+                } else {
+                    "Cancelled: nothing was copied"
+                };
+                self.set_status(said, false, cx);
+            }
             None => return,
         }
         cx.notify();
@@ -208,6 +245,10 @@ impl Shell {
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let review = shell.reviews.front()?;
     let handles = shell.review_focus.as_ref()?;
+    if let Review::Clashes(clashes) = review {
+        let pending = shell.reviews.len() - 1;
+        return Some(crate::clashes::render(clashes, handles, pending, cx));
+    }
     let focus = handles.focus.clone();
     let (cancel_focus, apply_focus) = (handles.cancel.clone(), handles.apply.clone());
     let theme = cx.global::<Theme>().clone();
@@ -230,14 +271,29 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     // the words of its keys and buttons.
     let (title, size, note, list, hint, refuse, allow) = match review {
         Review::Plan { plan, diff } => {
-            let steps = plan.steps.len();
+            let steps = diff.as_ref().map_or(plan.steps.len(), |d| d.steps);
+            // The names taken, asked about as it is applied: its lines say
+            // what the defaults would do.
+            let asked = diff.as_ref().map_or(0, |d| d.asked);
+            let asked = (asked > 0).then(|| {
+                format!(
+                    "{} already taken: you choose what becomes of {} as it is applied \
+                     (shown here as both kept, folders merged).",
+                    crate::format::count(asked, "name"),
+                    if asked == 1 { "it" } else { "them" },
+                )
+            });
+            let note = match (plan.note.clone(), asked) {
+                (Some(note), Some(asked)) => Some(format!("{note} {asked}")),
+                (note, asked) => note.or(asked),
+            };
             (
                 match &plan.by {
                     Some(who) => format!("{who} proposes: {}", plan.title),
                     None => format!("Proposed: {}", plan.title),
                 },
                 format!("{}{more}", crate::format::count(steps, "step")),
-                plan.note.clone(),
+                note,
                 plan_lines(shell, list, diff.as_ref(), steps, &theme),
                 match applicable {
                     Some(true) => "Enter applies (undoable), Escape discards",
@@ -248,6 +304,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 "Apply",
             )
         }
+        Review::Clashes(_) => return None,
         Review::Question(question) => {
             let (note, hint, refuse, allow) = match question.asker {
                 Asker::Agent => (

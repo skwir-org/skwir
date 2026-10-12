@@ -174,6 +174,7 @@ fn make_plan(root: &Path, t: &Tree, steps: &[Step]) -> Plan {
                 Box::new(Move {
                     entry: e,
                     dest_dir: root.join(format!("d{dir}")),
+                    new_name: None,
                 }) as Box<dyn Operation>
             }),
             Step::Copy { file, dir } if t.dirs > 0 => file_ref(root, *file).map(|e| {
@@ -290,6 +291,7 @@ fn a_companion_s_place_taken_is_a_conflict_before_anything_applies() {
     plan.push(Move {
         entry: EntryRef::from_path(root.join("it's a.txt")).unwrap(),
         dest_dir: root.join("d"),
+        new_name: None,
     });
     let diff = plan.diff(&app.companions);
     assert!(
@@ -1345,6 +1347,7 @@ fn a_cross_device_move_redoes_and_is_idempotent() {
         vec![Box::new(Move {
             entry: a,
             dest_dir: remote.path().to_path_buf(),
+            new_name: None,
         })],
     );
     apply(&app, &plan);
@@ -1383,6 +1386,7 @@ fn observers_hear_what_holds_after_each_run_until_withdrawn() {
         vec![Box::new(Move {
             entry: EntryRef::from_path(root.join("a")).unwrap(),
             dest_dir: root.join("d"),
+            new_name: None,
         })],
     );
     assert!(
@@ -1538,6 +1542,7 @@ fn a_file_goes_with_its_companion_and_a_copy_takes_its_attributes_in() {
     plan.steps.push(Box::new(Move {
         entry: EntryRef::from_path(root.join("b.txt")).unwrap(),
         dest_dir: root.join("into"),
+        new_name: None,
     }));
     assert!(
         app.executor
@@ -1628,6 +1633,7 @@ fn companions_trashed_with_a_file_leave_the_trash_with_it() {
     let out = Move {
         entry: EntryRef::from_path(&item).unwrap(),
         dest_dir: root.join("desk"),
+        new_name: None,
     };
     apply(&app, &Plan::with_steps("move", vec![Box::new(out)]));
     assert_eq!(

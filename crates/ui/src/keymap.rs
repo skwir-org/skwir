@@ -224,31 +224,44 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "up",
         "ui.list_move",
         r#"{"delta":-1}"#,
-        Some("palette|jump|choose|tag_editor|address"),
+        Some("palette|jump|choose|tag_editor|address|review"),
     ),
     (
         "down",
         "ui.list_move",
         r#"{"delta":1}"#,
-        Some("palette|jump|choose|tag_editor|address"),
+        Some("palette|jump|choose|tag_editor|address|review"),
     ),
     (
         "pageup",
         "ui.list_move",
         r#"{"to":"page_up"}"#,
-        Some("palette|jump|choose|tag_editor|address"),
+        Some("palette|jump|choose|tag_editor|address|review"),
     ),
     (
         "pagedown",
         "ui.list_move",
         r#"{"to":"page_down"}"#,
-        Some("palette|jump|choose|tag_editor|address"),
+        Some("palette|jump|choose|tag_editor|address|review"),
     ),
     // The cursor in the file list (`ui.cursor`): the arrows select what
     // they reach, Shift extends, Ctrl moves the cursor alone (and
     // Ctrl+Space, `ui.cursor_toggle`, selects or deselects what it is on).
     ("up", "ui.cursor", r#"{"to":"up"}"#, Some("pane")),
     ("down", "ui.cursor", r#"{"to":"down"}"#, Some("pane")),
+    // The names a copy or a move found taken: the choice of the row.
+    (
+        "left",
+        "ui.review_choose",
+        r#"{"delta":-1}"#,
+        Some("review"),
+    ),
+    (
+        "right",
+        "ui.review_choose",
+        r#"{"delta":1}"#,
+        Some("review"),
+    ),
     ("left", "ui.cursor", r#"{"to":"left"}"#, Some("pane")),
     ("right", "ui.cursor", r#"{"to":"right"}"#, Some("pane")),
     ("home", "ui.cursor", r#"{"to":"home"}"#, Some("pane")),

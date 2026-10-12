@@ -112,12 +112,12 @@ fn along(ctx: &StepContext, src: &Path, dest: &Path) -> Vec<Along> {
         .collect()
 }
 
-/// The first companion whose place is taken: the step conflicts as it does
-/// when the file's own place is.
-fn along_conflict(along: &[Along]) -> Option<StepStatus> {
+/// The first companion whose place is taken, as the plan's earlier steps
+/// leave it: the step conflicts as it does when the file's own place is.
+fn along_conflict(ctx: &StepContext, along: &[Along]) -> Option<StepStatus> {
     along
         .iter()
-        .find(|a| exists(&a.to))
+        .find(|a| ctx.exists(&a.to))
         .map(|a| conflict(format!("“{}” is already there", display_name(&a.to))))
 }
 
@@ -233,7 +233,7 @@ impl super::Effect for Rename {
             Ok(src) if src == target => StepStatus::AlreadyDone,
             Ok(src) => match self.classify(&src, &target) {
                 RenameTarget::Free | RenameTarget::Respelled => {
-                    along_conflict(&along(ctx, &src, &target)).unwrap_or(pending(true))
+                    along_conflict(ctx, &along(ctx, &src, &target)).unwrap_or(pending(true))
                 }
                 RenameTarget::Spelled => StepStatus::AlreadyDone,
                 RenameTarget::Taken => {
@@ -289,21 +289,52 @@ impl super::Effect for Rename {
 
 // ------------------------------------------------------------------ move
 
-/// Move into another directory, keeping the name.
+/// Move into another directory, keeping the name or under a new one (a
+/// name taken there kept, ADR-054).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Move {
     pub entry: EntryRef,
     #[serde(with = "crate::os_path")]
     #[schemars(with = "PathArg")]
     pub dest_dir: PathBuf,
+    /// Name at the destination; the source's when `None`.
+    #[serde(
+        default,
+        with = "optional_name",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Option<PathArg>")]
+    pub new_name: Option<OsString>,
 }
 
 impl Move {
-    /// Where `src` goes: into the destination under its name, or for an
-    /// item of the trash the name it had (`trashed_name`).
-    fn target(&self, src: &Path) -> PathBuf {
-        self.dest_dir
-            .join(trashed_name(src).unwrap_or_else(|| file_name(src)))
+    /// Move `entry` into `dest_dir` under its name.
+    pub fn new(entry: EntryRef, dest_dir: PathBuf) -> Self {
+        Move {
+            entry,
+            dest_dir,
+            new_name: None,
+        }
+    }
+
+    /// Where `src` goes: into the destination under its new name, else
+    /// its own, or for an item of the trash the name it had
+    /// (`trashed_name`).
+    pub(super) fn target(&self, src: &Path) -> PathBuf {
+        self.dest_dir.join(
+            self.new_name
+                .clone()
+                .unwrap_or_else(|| trashed_name(src).unwrap_or_else(|| file_name(src))),
+        )
+    }
+
+    /// Whether `src` is where it would go.
+    pub(super) fn in_place(&self, src: &Path) -> bool {
+        src.parent() == Some(self.dest_dir.as_path())
+            && self
+                .new_name
+                .as_ref()
+                .is_none_or(|n| src.file_name() == Some(n))
     }
 }
 
@@ -328,6 +359,9 @@ impl super::Effect for Move {
         Some((self.dest_dir.clone(), tree_size(&src, ctx).ok()?))
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
+        if let Some(invalid) = self.new_name.as_deref().and_then(invalid_name) {
+            return invalid;
+        }
         if !ctx.is_folder(&self.dest_dir) {
             return conflict(format!(
                 "“{}” is not a folder",
@@ -345,8 +379,8 @@ impl super::Effect for Move {
             }
         }
         match self.entry.resolve() {
-            Ok(src) if src.parent() == Some(self.dest_dir.as_path()) => StepStatus::AlreadyDone,
-            Ok(src) if exists(&self.target(&src)) => conflict(format!(
+            Ok(src) if self.in_place(&src) => StepStatus::AlreadyDone,
+            Ok(src) if ctx.exists(&self.target(&src)) => conflict(format!(
                 "“{}” is already there",
                 display_name(&self.target(&src))
             )),
@@ -354,7 +388,7 @@ impl super::Effect for Move {
                 conflict("a folder cannot be moved into itself")
             }
             Ok(src) => {
-                along_conflict(&along(ctx, &src, &self.target(&src))).unwrap_or(pending(true))
+                along_conflict(ctx, &along(ctx, &src, &self.target(&src))).unwrap_or(pending(true))
             }
             Err(_) if id_of(&self.target(&self.entry.path)) == Some(self.entry.id) => {
                 StepStatus::AlreadyDone
@@ -372,6 +406,9 @@ impl super::Effect for Move {
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        if let Some(name) = &self.new_name {
+            valid_file_name(name)?;
+        }
         let src = self.entry.resolve()?;
         if in_trash(&src).is_some() && in_trash(&self.dest_dir).is_none() {
             return super::Effect::apply(&self.restoring(&src), ctx);
@@ -383,8 +420,10 @@ impl super::Effect for Move {
         // Moved to another filesystem, it is a new file, of one name.
         let (id, only) = named(&target).unwrap_or((self.entry.id, self.entry.only_name));
         Ok(Some(Box::new(Move {
-            entry: EntryRef::new(id, target).with_only_name(only),
+            entry: EntryRef::new(id, target.clone()).with_only_name(only),
             dest_dir: origin,
+            // Back under the name it had.
+            new_name: (target.file_name() != src.file_name()).then(|| file_name(&src)),
         })))
     }
 }
@@ -581,7 +620,7 @@ impl Copy {
                 .unwrap_or(true),
         }
     }
-    fn target(&self, src: &Path) -> PathBuf {
+    pub(super) fn target(&self, src: &Path) -> PathBuf {
         match &self.new_name {
             Some(n) => self.dest_dir.join(n),
             None => self.dest_dir.join(src.file_name().unwrap_or_default()),
@@ -622,7 +661,13 @@ impl super::Effect for Copy {
         if target == src {
             return conflict("it would be copied onto itself");
         }
-        if exists(&target) {
+        if ctx.made(&target) {
+            return conflict(format!(
+                "“{}” is already there, by an earlier step",
+                display_name(&target)
+            ));
+        }
+        if ctx.exists(&target) {
             // Only a finished copy of this very source is "already done": an
             // unrelated folder that happens to share the name is a conflict.
             return match same_tree(&src, &target, ctx) {
@@ -634,7 +679,7 @@ impl super::Effect for Copy {
         if src.is_dir() && target.starts_with(&src) {
             return conflict("a folder cannot be copied into itself");
         }
-        along_conflict(&along(ctx, &src, &target)).unwrap_or(pending(true))
+        along_conflict(ctx, &along(ctx, &src, &target)).unwrap_or(pending(true))
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         if let Some(name) = &self.new_name {
@@ -666,7 +711,7 @@ impl super::Effect for Copy {
 /// Whether `copy` holds what copying `src` would produce: the same kinds,
 /// names, sizes and file times all the way down (a copy keeps file mtimes),
 /// and the same link targets. Stops at the first difference.
-fn same_tree(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::Result<bool> {
+pub(super) fn same_tree(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::Result<bool> {
     ctx.check_cancelled()?;
     let (a, b) = (
         std::fs::symlink_metadata(src)?,
@@ -1360,10 +1405,14 @@ impl super::Effect for Trash {
             .collect();
         let at = trash_item(ctx, &src)
             .with_context(|| format!("“{}” could not be moved to the trash", display_name(&src)))?;
-        // Each an item of the trash of its own, restored with the file.
+        // Each an item of the trash of its own, restored with the file:
+        // found by when it was trashed where the trash keeps records, by
+        // where it went on macOS.
         let mut landed = Vec::new();
         for companion in companions {
-            if let Ok(Some(at)) = trash_item(ctx, &companion) {
+            if let Ok(Some(at)) = trash_item(ctx, &companion)
+                && cfg!(target_os = "macos")
+            {
                 landed.push(Landed {
                     at: PathArg(at),
                     from: PathArg(companion),
@@ -1378,21 +1427,22 @@ impl super::Effect for Trash {
     }
 }
 
-/// Put `path` in the trash, and say where it went where only the system
-/// can tell (`sys::trash_item`). On Linux the plan puts it there itself,
-/// its trash found once (`put_trash`), and one going to a trash on
-/// another filesystem is moved there as any move across volumes is.
+/// Put `path` in the trash, and say where it went where it can be told:
+/// its record on Linux, where the plan puts it there itself, its trash
+/// found once (`put_trash`), and one going to a trash on another
+/// filesystem is moved there as any move across volumes is; where the
+/// system put it on macOS (`sys::trash_item`).
 fn trash_item(ctx: &StepContext, path: &Path) -> anyhow::Result<Option<PathBuf>> {
     #[cfg(target_os = "linux")]
     {
         match ctx.trashes().put(path)? {
-            super::put_trash::Put::Done => Ok(None),
+            super::put_trash::Put::Done { info } => Ok(Some(info)),
             super::put_trash::Put::Across { item, info } => {
                 if let Err(error) = move_entry(ctx, path, &item, &[]) {
                     let _ = std::fs::remove_file(&info);
                     return Err(error);
                 }
-                Ok(None)
+                Ok(Some(info))
             }
         }
     }
@@ -1706,9 +1756,11 @@ pub struct Restore {
     #[schemars(with = "PathArg")]
     pub path: PathBuf,
     /// The item's record (`.trashinfo`, `$I`), when one item is meant:
-    /// undoing a trash leaves it out, and restores what was trashed last
-    /// from `path`. On macOS, whose trash keeps no record, the item
-    /// itself, where `trashItemAtURL` put it.
+    /// undoing a trash names it where it is known (Linux: a plan that
+    /// trashes a path twice, a replace undone, restores each its own),
+    /// and without it restores what was trashed last from `path`. On
+    /// macOS, whose trash keeps no record, the item itself, where
+    /// `trashItemAtURL` put it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item: Option<PathArg>,
     /// On macOS, the companions trashed with it and where they went.
@@ -2189,7 +2241,7 @@ impl super::Effect for RestorePart {
         // An item's companions are items of their own, which go only where
         // their places are free.
         if !inside.inner.as_os_str().is_empty()
-            && let Some(taken) = along_conflict(&along(ctx, &src, &self.path))
+            && let Some(taken) = along_conflict(ctx, &along(ctx, &src, &self.path))
         {
             return taken;
         }
@@ -2386,7 +2438,7 @@ impl super::Effect for ReturnPart {
         if self.info_text.is_some() {
             return pending(true);
         }
-        along_conflict(&along(ctx, &self.path, &self.to)).unwrap_or(pending(true))
+        along_conflict(ctx, &along(ctx, &self.path, &self.to)).unwrap_or(pending(true))
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let opened = self.open_made();
@@ -2556,15 +2608,12 @@ impl super::Effect for Rmdir {
             path: self.path.clone(),
         }
     }
-    fn check(&self, _ctx: &StepContext) -> StepStatus {
-        match std::fs::read_dir(&self.path) {
-            Ok(mut rd) => {
-                if rd.next().is_none() {
-                    pending(true)
-                } else {
-                    conflict(format!("“{}” is not empty", display_name(&self.path)))
-                }
-            }
+    fn check(&self, ctx: &StepContext) -> StepStatus {
+        // Emptied by the plan's earlier steps (a folder a merge moved
+        // everything out of, ADR-054) is empty.
+        match ctx.empty_after(&self.path) {
+            Ok(true) => pending(true),
+            Ok(false) => conflict(format!("“{}” is not empty", display_name(&self.path))),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => StepStatus::AlreadyDone,
             Err(e) => conflict(e.to_string()),
         }
@@ -2865,6 +2914,7 @@ mod tests {
         let moved = Move {
             entry: entry.clone(),
             dest_dir: tmp.path().to_path_buf(),
+            new_name: None,
         };
         assert_eq!(moved.check(&ctx), StepStatus::Pending { reversible: true });
         let delete = Delete { entry };
@@ -3005,6 +3055,7 @@ mod tests {
         let out = Move {
             entry: EntryRef::from_path(trash.join("files/it's a.txt")).unwrap(),
             dest_dir: desk.clone(),
+            new_name: None,
         };
         assert_eq!(out.check(&ctx), StepStatus::Pending { reversible: true });
         let back = out.apply(&ctx).unwrap().unwrap();
@@ -3023,6 +3074,7 @@ mod tests {
         let inner = Move {
             entry: EntryRef::from_path(trash.join("files/old project/b.txt")).unwrap(),
             dest_dir: desk.clone(),
+            new_name: None,
         };
         let back = inner.apply(&ctx).unwrap().unwrap();
         assert!(desk.join("b.txt").exists());
@@ -3043,6 +3095,7 @@ mod tests {
         let named = Move {
             entry: EntryRef::from_path(trash.join("files/it's a.txt.2")).unwrap(),
             dest_dir: other.clone(),
+            new_name: None,
         };
         assert_eq!(
             named.describe(),
@@ -3066,6 +3119,7 @@ mod tests {
         let within = Move {
             entry: EntryRef::from_path(trash.join("files/c.txt")).unwrap(),
             dest_dir: trash.join("files/old project"),
+            new_name: None,
         };
         assert!(matches!(within.check(&ctx), StepStatus::Conflict { .. }));
     }

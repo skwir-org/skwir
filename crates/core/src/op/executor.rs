@@ -46,6 +46,9 @@ pub enum ExecEvent {
         total: usize,
         /// Whether this run applies a plan or takes one back (or again).
         run: RunKind,
+        /// What the user asked for, where the steps are not its items
+        /// (`Plan::items`).
+        items: Option<super::Items>,
     },
     Step(Progress),
     /// The plan waits where it would answer Cancel, until resumed
@@ -267,6 +270,9 @@ pub struct Executor {
     /// (`set_room_asker`): its answer comes on the channel. None asks:
     /// such a plan is refused.
     room_asker: Mutex<Option<RoomAsker>>,
+    /// Asks the user what becomes of the names a plan finds taken
+    /// (`set_clash_asker`). None asks: such a plan is refused.
+    clash_asker: Mutex<Option<ClashAsker>>,
 }
 
 /// What a volume has free, by a folder on it.
@@ -276,6 +282,29 @@ pub type Free = Arc<dyn Fn(&Path) -> Option<u64> + Send + Sync>;
 /// on anyway; answers on the channel, true to go on.
 pub type RoomAsker =
     Arc<dyn Fn(&str, &super::room::Short) -> crossbeam_channel::Receiver<bool> + Send + Sync>;
+
+/// Asks what becomes of the names the plan titled so finds taken
+/// (ADR-054), all at once: the answer comes on the channel, `None` to
+/// cancel. `None` when no one can be asked: the plan applies nothing.
+pub type ClashAsker = Arc<
+    dyn Fn(
+            &str,
+            &[super::clash::Clash],
+        ) -> Option<crossbeam_channel::Receiver<Option<super::clash::Answer>>>
+        + Send
+        + Sync,
+>;
+
+/// What becomes of a plan with names taken where it copies or moves
+/// (`Executor::settle`).
+enum Settling {
+    /// It goes on, these steps in place of its own where they differ.
+    Steps(Option<super::clash::Settled>),
+    /// A name taken, and no one to ask: what it says.
+    Refused(String),
+    /// The user cancelled.
+    Cancelled,
+}
 
 /// A plan being applied: what stops it, what holds it, what it moved.
 struct Active {
@@ -327,6 +356,7 @@ impl Executor {
             watched: Mutex::new(std::collections::HashMap::new()),
             free: Mutex::new(Arc::new(crate::fs::volume::free)),
             room_asker: Mutex::new(None),
+            clash_asker: Mutex::new(None),
         })
     }
 
@@ -334,6 +364,55 @@ impl Executor {
     /// writes goes on anyway (ADR-049): the window's question.
     pub fn set_room_asker(&self, asker: Option<RoomAsker>) {
         *self.room_asker.lock() = asker;
+    }
+
+    /// Ask the user, through `asker`, what becomes of the names a plan
+    /// asked for as one action finds taken (ADR-054): the window's dialog.
+    pub fn set_clash_asker(&self, asker: Option<ClashAsker>) {
+        *self.clash_asker.lock() = asker;
+    }
+
+    /// What `plan`, asked for as one action, does with the names it finds
+    /// taken (ADR-054): as it says beforehand, else as the user answers;
+    /// what is never asked, as ADR-054 says. Waits for the answer, Cancel
+    /// answering none.
+    fn settle(
+        &self,
+        plan: &Plan,
+        companions: &Arc<crate::companions::Companions>,
+        cancel: &CancelToken,
+    ) -> Settling {
+        use super::clash::{Answer, settle};
+        let ctx =
+            || StepContext::with_cancel(cancel.clone()).with_companions(Arc::clone(companions));
+        let said = plan.on_conflict.map(Answer::all);
+        let first = settle(
+            &plan.steps,
+            said.as_ref().unwrap_or(&Answer::default()),
+            &ctx(),
+        );
+        let settled = if first.clashes.is_empty() || said.is_some() {
+            first
+        } else {
+            let asker = self.clash_asker.lock().clone();
+            let Some(answer) = asker.and_then(|asker| asker(&plan.title, &first.clashes)) else {
+                return Settling::Refused(first.clashes[0].said());
+            };
+            let answer = loop {
+                match answer.recv_timeout(Duration::from_millis(100)) {
+                    Ok(Some(answer)) => break answer,
+                    Ok(None) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                        return Settling::Cancelled;
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) if cancel.is_cancelled() => {
+                        return Settling::Cancelled;
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                }
+            };
+            settle(&plan.steps, &answer, &ctx())
+        };
+        Settling::Steps(settled.changed.then_some(settled))
     }
 
     /// What a volume has free, as `free` says: for a test.
@@ -733,17 +812,39 @@ impl Executor {
                 Work::Execute { plan, whole } => {
                     let whole = whole && !job.cancel.is_cancelled();
                     let companions = Arc::clone(&self.companions.lock());
-                    // A conflict anywhere, or too little room where it
-                    // writes and the user not going on, applies nothing.
-                    let refused = whole
-                        .then(|| {
-                            first_conflict(&plan, &companions)
-                                .or_else(|| self.short_of_room(&plan, &job.cancel))
-                        })
-                        .flatten();
-                    Some(match refused {
-                        Some(reason) => self.refuse(&plan, reason),
-                        None => self.run_execute(&plan, &job.cancel),
+                    // Names taken are settled first: what the dry run
+                    // checks is what will be done.
+                    let settled = if whole && super::clash::transfers(&plan.steps) {
+                        self.settle(&plan, &companions, &job.cancel)
+                    } else {
+                        Settling::Steps(None)
+                    };
+                    Some(match settled {
+                        Settling::Refused(reason) => self.refuse(&plan, reason),
+                        Settling::Cancelled => self.cancelled(&plan),
+                        Settling::Steps(settled) => {
+                            let plan = match settled {
+                                Some(settled) => Plan {
+                                    steps: settled.steps,
+                                    items: settled.items.map(Box::new),
+                                    ..plan
+                                },
+                                None => plan,
+                            };
+                            // A conflict anywhere, or too little room where
+                            // it writes and the user not going on, applies
+                            // nothing.
+                            let refused = whole
+                                .then(|| {
+                                    first_conflict(&plan, &companions)
+                                        .or_else(|| self.short_of_room(&plan, &job.cancel))
+                                })
+                                .flatten();
+                            match refused {
+                                Some(reason) => self.refuse(&plan, reason),
+                                None => self.run_execute(&plan, &job.cancel),
+                            }
+                        }
                     })
                 }
                 Work::Replay(direction) => self.replay(direction, &job.cancel),
@@ -761,6 +862,7 @@ impl Executor {
             title: plan.title.clone(),
             total: plan.steps.len(),
             run: RunKind::Apply,
+            items: None,
         });
         self.emit(ExecEvent::Finished {
             plan: plan.id,
@@ -775,6 +877,28 @@ impl Executor {
             skipped: 0,
             error: Some(error),
             cancelled: false,
+            undoable: false,
+            complete: false,
+        }
+    }
+
+    /// A plan the user cancelled before it began (the names it found
+    /// taken, unanswered): whoever waits for it hears so; nothing started,
+    /// so nothing is shown.
+    fn cancelled(&self, plan: &Plan) -> ExecResult {
+        self.emit(ExecEvent::Finished {
+            plan: plan.id,
+            applied: 0,
+            skipped: 0,
+            error: None,
+            cancelled: true,
+            undoable: false,
+        });
+        ExecResult {
+            applied: 0,
+            skipped: 0,
+            error: None,
+            cancelled: true,
             undoable: false,
             complete: false,
         }
@@ -825,6 +949,7 @@ impl Executor {
                 title,
                 total: 0,
                 run: direction.into(),
+                items: None,
             });
             self.emit(ExecEvent::Finished {
                 plan: id,
@@ -905,6 +1030,7 @@ impl Executor {
             title: plan.title.clone(),
             total,
             run,
+            items: plan.items.as_deref().cloned(),
         });
         let mut inverses: Vec<Box<dyn Operation>> = Vec::new();
         let mut held = Vec::new();

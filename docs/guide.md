@@ -128,6 +128,14 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   the drive. A copy that needs more room than its destination has asks
   before it starts. Hard links stay links; each name of a file is its
   own row, and the footer counts the file once.
+- **Names already taken.** A copy or a move onto names already in the
+  destination first asks, once, about all of them: keep both (the new one
+  is named `name (copy).ext`), replace (what was there goes to the
+  Trash), replace if newer, or skip; a folder onto a folder is merged by
+  default. Choose for all files and all folders, or row by row (`↑` `↓`
+  a row, `←` `→` its choice); `Enter` goes on, `Escape` cancels and
+  nothing is done. A copy into its own folder makes `name (copy).ext`
+  without asking, and Undo takes all of it back.
 - **Rename** with `F2`. With several files selected, `F2` (or `Ctrl+F2`)
   renames them together from a template, a regex and case rules, with a
   preview of every new name (`Tab` moves between fields, `Ctrl+K`

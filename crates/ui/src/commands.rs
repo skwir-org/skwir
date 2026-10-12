@@ -739,6 +739,12 @@ pub fn declare_all(app: &App) {
         "Discard the plan",
         "Discard the plan being reviewed",
     );
+    declare::<Delta>(
+        app,
+        "ui.review_choose",
+        "Next choice",
+        "In the names a copy or a move found taken: the next choice of the row the keyboard is on, or the previous with a negative delta",
+    );
     // The address and searching.
     none(
         "ui.focus_address",
@@ -801,7 +807,7 @@ pub fn declare_all(app: &App) {
         app,
         "ui.list_move",
         "Next in the list",
-        "Move in the list being typed into (the palette, a choice, Jump, the tag editor, the address's suggestions): rows round its ends, or a page, or to an end",
+        "Move in the list being typed into (the palette, a choice, Jump, the tag editor, the address's suggestions) or answered (the names a copy found taken): rows round its ends, or a page, or to an end",
     );
     none(
         "ui.shortcuts",

@@ -55,6 +55,16 @@ pub enum Asker {
     Room,
 }
 
+/// The names a plan found taken where it copies or moves (ADR-054), asked
+/// all at once (`App::take_clash_questions`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClashQuestion {
+    pub id: u64,
+    /// The plan's title: "copy to /example/folder".
+    pub title: String,
+    pub clashes: Vec<op::clash::Clash>,
+}
+
 /// A message from background work for the UI.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Notification {
@@ -153,6 +163,10 @@ pub struct App {
     /// who waits for each answer.
     questions: parking_lot::Mutex<Vec<Question>>,
     answers: parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<bool>>>,
+    /// The names plans found taken (ADR-054), until the window takes them,
+    /// and who waits for each answer.
+    clashes: parking_lot::Mutex<Vec<ClashQuestion>>,
+    settled: parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<Option<op::clash::Answer>>>>,
     /// Messages from background work for the UI to show.
     notifications: parking_lot::Mutex<Vec<Notification>>,
     /// Commands the window carries out (`ui.*`), dispatched from elsewhere
@@ -209,6 +223,8 @@ impl App {
             proposals: parking_lot::Mutex::new(Vec::new()),
             questions: parking_lot::Mutex::new(Vec::new()),
             answers: parking_lot::Mutex::new(HashMap::new()),
+            clashes: parking_lot::Mutex::new(Vec::new()),
+            settled: parking_lot::Mutex::new(HashMap::new()),
             front: parking_lot::Mutex::new(Vec::new()),
             shown: (parking_lot::Mutex::new(false), parking_lot::Condvar::new()),
             scheduler,
@@ -258,6 +274,16 @@ impl App {
                     }
                     // Gone: no one answers, so nothing is copied.
                     None => crossbeam_channel::bounded(0).1,
+                },
+            )));
+            // A plan that finds names taken asks the window what becomes
+            // of them; with no window up, no one is asked.
+            let asking = Arc::downgrade(&app);
+            app.executor.set_clash_asker(Some(Arc::new(
+                move |title: &str, clashes: &[op::clash::Clash]| {
+                    let app = asking.upgrade()?;
+                    app.window_shown()
+                        .then(|| app.ask_clashes(title, clashes.to_vec()))
                 },
             )));
             // What a run that ended mid-copy left is swept as this one
@@ -842,6 +868,12 @@ impl App {
         self.shown.1.notify_all();
     }
 
+    /// Whether the window is up (`set_window_shown`): someone can be
+    /// asked.
+    pub fn window_shown(&self) -> bool {
+        *self.shown.0.lock()
+    }
+
     /// Wait at most `timeout` for the window to be shown
     /// (`set_window_shown`); whether it is.
     pub fn wait_window_shown(&self, timeout: std::time::Duration) -> bool {
@@ -906,6 +938,39 @@ impl App {
         });
         self.wake();
         (id, answer)
+    }
+
+    /// Ask the window what becomes of the names the plan titled so found
+    /// taken: the receiver hears the answer, `None` for Cancel; it ends
+    /// unanswered if the window closes.
+    pub fn ask_clashes(
+        &self,
+        title: impl Into<String>,
+        clashes: Vec<op::clash::Clash>,
+    ) -> crossbeam_channel::Receiver<Option<op::clash::Answer>> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (reply, answer) = crossbeam_channel::bounded(1);
+        self.settled.lock().insert(id, reply);
+        self.clashes.lock().push(ClashQuestion {
+            id,
+            title: title.into(),
+            clashes,
+        });
+        self.wake();
+        answer
+    }
+
+    /// The names found taken since the last call, oldest first.
+    pub fn take_clash_questions(&self) -> Vec<ClashQuestion> {
+        std::mem::take(&mut *self.clashes.lock())
+    }
+
+    /// The user answered the clashes `id`, `None` for Cancel: whether the
+    /// plan still waited.
+    pub fn answer_clashes(&self, id: u64, answer: Option<op::clash::Answer>) -> bool {
+        let reply = self.settled.lock().remove(&id);
+        reply.is_some_and(|reply| reply.send(answer).is_ok())
     }
 
     /// Questions asked since the last call, oldest first.
@@ -1532,6 +1597,27 @@ pub struct DestArgs {
     pub pane: Option<PaneId>,
 }
 
+/// Where a copy or a move goes, what it takes, and what becomes of a name
+/// taken there.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TransferArgs {
+    /// Destination directory, an absolute path.
+    pub dest: PathArg,
+    /// The entries to act on, by absolute path; the pane's selection when
+    /// omitted.
+    #[serde(default)]
+    pub entries: Vec<op::EntryArg>,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+    /// What becomes of a name already taken in the destination (ADR-054):
+    /// `files` `keep_both` (named "name (copy).ext"), `replace` (what was
+    /// there to the Trash), `replace_if_newer` or `skip`; `folders`
+    /// `merge`, `keep_both` or `skip`. Omitted, the window asks when the plan is
+    /// applied; with no window, nothing is applied.
+    #[serde(default)]
+    pub on_conflict: Option<op::clash::Policy>,
+}
+
 /// What a command acts on: entries it is given, else a pane's selection
 /// (`App::targets`).
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -1603,6 +1689,15 @@ mod builtin {
             title,
             refs.into_iter().map(f).collect(),
         )))
+    }
+
+    /// A copy's or a move's plan, settling the names it finds taken as
+    /// `policy` says (ADR-054).
+    fn transfer_plan(outcome: Outcome, policy: Option<op::clash::Policy>) -> Outcome {
+        match outcome {
+            Outcome::Plan(plan) => Outcome::Plan(plan.on_conflict(policy)),
+            other => other,
+        }
     }
 
     /// The folder a move or a copy goes to: a path, whole (it may come
@@ -2171,43 +2266,44 @@ mod builtin {
         )
         .plans();
 
-        c.register::<DestArgs, _>(
+        c.register::<TransferArgs, _>(
             "core",
             "move",
             "Move",
-            "Move the selection, or the entries given, to a directory (plan)",
+            "Move the selection, or the entries given, to a directory (plan); on_conflict says what becomes of a name taken there",
             |a, app| {
                 let dest = destination(&a.dest)?;
-                targets_plan(
-                    app,
-                    a.pane,
-                    a.entries,
-                    &format!("move to {}", dest.display()),
-                    |e| {
-                        Box::new(op::Move {
-                            entry: e,
-                            dest_dir: dest.clone(),
-                        })
-                    },
-                )
+                Ok(transfer_plan(
+                    targets_plan(
+                        app,
+                        a.pane,
+                        a.entries,
+                        &format!("move to {}", dest.display()),
+                        |e| Box::new(op::Move::new(e, dest.clone())),
+                    )?,
+                    a.on_conflict,
+                ))
             },
         )
         .plans();
 
-        c.register::<DestArgs, _>(
+        c.register::<TransferArgs, _>(
             "core",
             "copy",
             "Copy",
-            "Copy the selection, or the entries given, to a directory (plan)",
+            "Copy the selection, or the entries given, to a directory (plan); on_conflict says what becomes of a name taken there",
             |a, app| {
                 let dest = destination(&a.dest)?;
-                targets_plan(
-                    app,
-                    a.pane,
-                    a.entries,
-                    &format!("copy to {}", dest.display()),
-                    |e| Box::new(op::Copy::from_settings(e, dest.clone(), &app.settings)),
-                )
+                Ok(transfer_plan(
+                    targets_plan(
+                        app,
+                        a.pane,
+                        a.entries,
+                        &format!("copy to {}", dest.display()),
+                        |e| Box::new(op::Copy::from_settings(e, dest.clone(), &app.settings)),
+                    )?,
+                    a.on_conflict,
+                ))
             },
         )
         .plans();

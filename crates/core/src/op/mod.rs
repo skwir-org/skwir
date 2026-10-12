@@ -7,6 +7,7 @@
 //! each step checks whether it is already done before acting.
 
 mod builtin;
+pub mod clash;
 mod context;
 mod entry_ref;
 mod executor;
@@ -512,6 +513,12 @@ pub trait Operation: Send + Sync + fmt::Debug {
         let _ = ctx;
         None
     }
+    /// The step as its own type, for code that knows the kind (`clash`
+    /// reads a copy's and a move's). `None` for one that is not its own
+    /// data.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
 }
 
 impl Clone for Box<dyn Operation> {
@@ -572,6 +579,9 @@ impl<T: Kind> Operation for T {
     }
     fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
         Effect::writes(self, ctx)
+    }
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
     }
 }
 
@@ -650,6 +660,22 @@ pub struct Plan {
     /// Who proposes it when the user did not make it: "An agent", a
     /// plugin from outside by its title. The review says so.
     pub by: Option<String>,
+    /// What becomes of a name taken where it copies or moves, said
+    /// beforehand (ADR-054); `None` asks whoever applies it, and applies
+    /// nothing where no one can be asked.
+    pub on_conflict: Option<clash::Policy>,
+    /// What the user asked for, where its steps are not its items one by
+    /// one (names taken settled, ADR-054: a merge, a replace): what the
+    /// toast says it did.
+    pub items: Option<Box<Items>>,
+}
+
+/// A plan's items as the user asked for them: the first one's change and
+/// how many there are.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Items {
+    pub first: Change,
+    pub count: usize,
 }
 
 /// Serialized plan.
@@ -659,6 +685,10 @@ pub struct PlanData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     pub steps: Vec<OpData>,
+    /// What becomes of a name taken where a step copies or moves: asked
+    /// when applied in the window when omitted, else nothing applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_conflict: Option<clash::Policy>,
 }
 
 /// The dry-run view of a plan: what each step will do and whether it can.
@@ -678,7 +708,16 @@ impl Plan {
             note: None,
             steps: Vec::new(),
             by: None,
+            on_conflict: None,
+            items: None,
         }
+    }
+
+    /// The same plan, settling the names it finds taken as `policy` says.
+    #[must_use]
+    pub fn on_conflict(mut self, policy: Option<clash::Policy>) -> Self {
+        self.on_conflict = policy;
+        self
     }
 
     /// The same plan, proposed by `who` ("An agent").
@@ -721,13 +760,55 @@ impl Plan {
     }
 
     /// Dry run every step, with the companion rules it will be applied
-    /// with (`App::companions`).
+    /// with (`App::companions`): as it will be done, the names it finds
+    /// taken settled as it says (ADR-054); saying nothing, those are its
+    /// conflicts.
     pub fn diff(&self, companions: &Arc<crate::companions::Companions>) -> PlanDiff {
+        let settled = self.on_conflict.map(|policy| {
+            clash::settle(
+                &self.steps,
+                &clash::Answer::all(policy),
+                &StepContext::detached().with_companions(Arc::clone(companions)),
+            )
+        });
         PlanDiff {
             title: self.title.clone(),
             note: self.note.clone(),
-            steps: dry_run(&self.steps, companions).collect(),
+            steps: dry_run(
+                settled
+                    .as_ref()
+                    .map_or(&self.steps, |settled| &settled.steps),
+                companions,
+            )
+            .collect(),
         }
+    }
+
+    /// What a review shows of the plan before the user applies it: its dry
+    /// run as it will be done, the names it finds taken settled as it says,
+    /// else as the defaults would (both kept, folders merged); and how
+    /// many of those the user is asked about as it is applied.
+    pub fn review(&self, companions: &Arc<crate::companions::Companions>) -> (PlanDiff, usize) {
+        let settled = clash::settle(
+            &self.steps,
+            &clash::Answer::all(self.on_conflict.unwrap_or_default()),
+            &StepContext::detached().with_companions(Arc::clone(companions)),
+        );
+        let asked = if self.on_conflict.is_some() {
+            0
+        } else {
+            settled
+                .clashes
+                .iter()
+                .filter(|c| c.inside.is_none())
+                .count()
+        };
+        let diff = PlanDiff {
+            title: self.title.clone(),
+            note: self.note.clone(),
+            steps: dry_run(&settled.steps, companions).collect(),
+        };
+        (diff, asked)
     }
 
     /// Whether every step is pending or already done (no conflicts).
@@ -740,6 +821,7 @@ impl Plan {
         PlanData {
             title: self.title.clone(),
             note: self.note.clone(),
+            on_conflict: self.on_conflict,
             steps: self
                 .steps
                 .iter()
@@ -759,6 +841,7 @@ impl Plan {
             .collect::<anyhow::Result<Vec<_>>>()?;
         let mut plan = Plan::with_steps(data.title.clone(), steps);
         plan.note.clone_from(&data.note);
+        plan.on_conflict = data.on_conflict;
         Ok(plan)
     }
 }

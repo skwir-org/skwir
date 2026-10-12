@@ -30,14 +30,12 @@ pub(super) struct Trashes(RefCell<Option<Known>>);
 
 /// A file put in the trash, or to be.
 pub(super) enum Put {
-    Done,
+    /// In the trash, its record at `info`.
+    Done { info: PathBuf },
     /// Its place in the trash, on another filesystem, for the step to
     /// move it to (nothing is there yet), and its record, written: removed
     /// if the move fails.
-    Across {
-        item: PathBuf,
-        info: PathBuf,
-    },
+    Across { item: PathBuf, info: PathBuf },
 }
 
 struct Known {
@@ -230,7 +228,7 @@ fn put_in(path: &Path, trash: &Path) -> io::Result<Put> {
         drop(file);
         let item = trash.join("files").join(&named);
         match renamed(path, &item) {
-            Ok(()) => return Ok(Put::Done),
+            Ok(()) => return Ok(Put::Done { info }),
             Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
                 return Ok(Put::Across { item, info });
             }
@@ -329,7 +327,7 @@ mod tests {
             let path = tmp.path().join(folder).join("it's a.txt");
             std::fs::create_dir(path.parent().unwrap()).unwrap();
             std::fs::write(&path, body).unwrap();
-            assert!(matches!(put_in(&path, &trash).unwrap(), Put::Done));
+            assert!(matches!(put_in(&path, &trash).unwrap(), Put::Done { .. }));
             assert!(!path.exists());
         }
         let read = |name: &str| std::fs::read_to_string(trash.join(name)).unwrap();

@@ -165,7 +165,7 @@ fn dropped_plan(
             Some(match how {
                 DropOp::Copy => Box::new(op::Copy::from_settings(entry, dest_dir, settings))
                     as Box<dyn op::Operation>,
-                DropOp::Move => Box::new(op::Move { entry, dest_dir }),
+                DropOp::Move => Box::new(op::Move::new(entry, dest_dir)),
                 DropOp::Link => Box::new(op::Link { entry, dest_dir }),
             })
         })

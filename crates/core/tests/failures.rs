@@ -222,6 +222,7 @@ fn move_with_unremovable_source(notes_first: bool) {
         vec![Box::new(Move {
             entry: EntryRef::from_path(&src).unwrap(),
             dest_dir: there.path().to_path_buf(),
+            new_name: None,
         })],
     );
     let r = app.executor.execute_blocking(&plan, app.lifetime());

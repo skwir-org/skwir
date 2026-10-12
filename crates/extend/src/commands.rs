@@ -231,6 +231,7 @@ fn plan_steps(
                 Step::Move { file: handle, to } => Box::new(op::Move {
                     entry: file(*handle)?,
                     dest_dir: folder(to)?,
+                    new_name: None,
                 }),
                 Step::Copy { file: handle, to } => Box::new(op::Copy::from_settings(
                     file(*handle)?,

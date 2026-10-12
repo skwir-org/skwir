@@ -1655,7 +1655,8 @@ impl Shell {
             // a choice, Jump, the tag editor, the address's suggestions.
             "list_move" => {
                 let mv = crate::modal::ListMove::of(args);
-                if self.palette.is_some() {
+                if self.clashes_move(mv, cx) {
+                } else if self.palette.is_some() {
                     self.palette_move(mv, cx);
                 } else if self.choose.is_some() {
                     self.choose_move(mv, cx);
@@ -1812,6 +1813,14 @@ impl Shell {
             "rename_bulk_prev" => self.bulk_focus_next(-1, window, cx),
             "rename_bulk_case" => self.bulk_cycle_case(window, cx),
             "review_apply" => self.review_apply(cx),
+            "review_choose" => {
+                let delta = args
+                    .get("delta")
+                    .and_then(serde_json::Value::as_i64)
+                    .and_then(|d| isize::try_from(d).ok())
+                    .unwrap_or(1);
+                self.clashes_choose(delta, cx);
+            }
             "review_cancel" => self.review_cancel(cx),
             "usage_refresh" => self.refresh_usage(cx),
             "usage_mode" => {
@@ -2221,6 +2230,10 @@ impl Shell {
         let questions = self.app.take_questions();
         if !questions.is_empty() {
             self.add_questions(questions, cx);
+        }
+        let clashes = self.app.take_clash_questions();
+        if !clashes.is_empty() {
+            self.add_clash_questions(clashes, cx);
         }
         self.sync_review_focus(window, cx);
         self.sync_map_tiles(window, cx);
