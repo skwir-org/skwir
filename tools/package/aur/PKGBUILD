@@ -5,8 +5,9 @@
 # left optional (skwir says the engine is not installed without them);
 # Mermaid and MuPDF are packages of their own. The files are those of the
 # Debian and RPM packages (crates/skwir/Cargo.toml). `just package-aur`
-# writes .SRCINFO beside this file; publishing it is pushing both to the
-# AUR's git repository of the package.
+# writes .SRCINFO beside this file. `just aur-prepare <tag>` fills the
+# source checksum in a separate checkout; `just aur-publish <tag>` pushes
+# its reviewed PKGBUILD and .SRCINFO to the AUR (docs/RELEASING.md).
 # Maintainer: whoever publishes it on the AUR
 
 pkgbase=skwir
@@ -33,7 +34,7 @@ _pdfium=8086
 source=("$pkgbase-$pkgver.tar.gz::$_repo/archive/v$pkgver.tar.gz")
 source_x86_64=("pdfium-linux-x64-$_pdfium.tgz::https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F$_pdfium/pdfium-linux-x64.tgz")
 source_aarch64=("pdfium-linux-arm64-$_pdfium.tgz::https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F$_pdfium/pdfium-linux-arm64.tgz")
-# skwir's: filled when a release is tagged (updpkgsums); PDFium's: as
+# skwir's: filled by aur-prepare after the release tag is pushed; PDFium's: as
 # tools/package/pdfium.lock pins them.
 sha256sums=('SKIP')
 sha256sums_x86_64=('588577cf52dabc1a444988bac841920df54cc2f141801424de97ab04f4fbb935')

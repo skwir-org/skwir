@@ -1,5 +1,6 @@
 """Run the public release CLI against real Git repositories and fake just/gh."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import tempfile
 import unittest
 
 SCRIPT = Path(__file__).with_name("release.py")
+AUR_SCRIPT = SCRIPT.with_name("aur.py")
 TRY_SCRIPT = SCRIPT.parent.parent / "package/try.sh"
 
 # Fakes execute in subprocesses, so tests cover arguments, environment and files.
@@ -113,7 +115,10 @@ name = "skwir-media"
 [package.metadata.generate-rpm.variants.media]
 name = "skwir-media"
 ''',
-            "tools/package/aur/PKGBUILD": "pkgname=(skwir skwir-mermaid)\npkgver=1.2.3\npkgrel=1\n",
+            "tools/package/aur/PKGBUILD": "pkgbase=skwir\npkgname=(skwir skwir-mermaid)\npkgver=1.2.3\npkgrel=1\n"
+                "pkgdesc='Synthetic package'\narch=('x86_64' 'aarch64')\nlicense=('Apache-2.0')\n"
+                "source=('skwir-1.2.3.tar.gz::https://github.com/example/skwir/archive/v1.2.3.tar.gz')\n"
+                "sha256sums=('SKIP')\npackage_skwir() { :; }\npackage_skwir-mermaid() { :; }\n",
             "tools/package/linux/org.skwir.skwir.metainfo.xml": '<component><releases><release version="1.2.3" date="2026-10-11"/></releases></component>',
         }
         for name, content in files.items():
@@ -123,6 +128,7 @@ name = "skwir-media"
         script = self.root / "tools/release/release.py"
         script.parent.mkdir(parents=True)
         shutil.copyfile(SCRIPT, script)
+        shutil.copyfile(AUR_SCRIPT, script.with_name("aur.py"))
         self.script = script
         self.bin = Path(self.temp.name) / "bin"
         self.bin.mkdir()
@@ -158,6 +164,160 @@ name = "skwir-media"
 
     def assert_no_remote_changes(self):
         self.assertFalse([c for c in self.calls("gh") if c[0] == "release"])
+
+    def aur_setup(self):
+        self.cli("build")
+        self.aur = self.root / "target/aur-publish/skwir"
+        self.aur_remote = Path(self.temp.name) / "aur.git"
+        subprocess.run(["git", "init", "--bare", "--initial-branch=master", str(self.aur_remote)],
+                       env=self.env, check=True, capture_output=True)
+        programs = {
+            "makepkg": r'''#!/usr/bin/env python3
+import os, pathlib, re, shlex, sys
+assert sys.argv[1:] == ['--printsrcinfo']
+if os.getenv('FAIL_MAKEPKG'):
+    sys.exit(1)
+text = pathlib.Path('PKGBUILD').read_text()
+print('pkgbase = skwir')
+for key in ('pkgver', 'source', 'sha256sums'):
+    value = re.search(r'^' + key + r'=(.+)$', text, re.M)[1]
+    print(f'\t{key} = {shlex.split(value.strip("()"))[0]}')
+for name in ('skwir', 'skwir-mermaid'):
+    print(f'pkgname = {name}')
+''',
+            "curl": r'''#!/usr/bin/env python3
+import os, pathlib, sys
+if os.getenv('FAIL_DOWNLOAD'):
+    sys.exit(1)
+assert sys.argv[-1] == 'https://github.com/example/skwir/archive/v1.2.3.tar.gz'
+pathlib.Path(sys.argv[sys.argv.index('--output') + 1]).write_bytes(b'synthetic source archive')
+''',
+            "aur-ssh": r'''#!/usr/bin/env python3
+import os, shlex, subprocess, sys
+service, path = shlex.split(sys.argv[-1])
+assert path == '/skwir.git'
+assert service in ('git-upload-pack', 'git-receive-pack')
+if service == 'git-receive-pack' and os.getenv('FAIL_PUSH'):
+    sys.exit(1)
+sys.exit(subprocess.call([service, os.environ['AUR_TEST_REMOTE']]))
+''',
+        }
+        for name, content in programs.items():
+            path = self.bin / name
+            path.write_text(content)
+            path.chmod(0o755)
+        self.env.update(GIT_SSH_COMMAND=str(self.bin / "aur-ssh"), GIT_SSH_VARIANT="ssh",
+                        AUR_TEST_REMOTE=str(self.aur_remote))
+
+    def aur_cli(self, command, ok=True, tag="v1.2.3", **env):
+        result = subprocess.run([sys.executable, str(self.script.with_name("aur.py")), command, tag],
+                                cwd=self.root, env={**self.env, **env}, capture_output=True, text=True)
+        self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
+        return result.stdout + result.stderr
+
+    def aur_git(self, *args):
+        return subprocess.run(["git", "-C", str(self.aur), *args], env=self.env,
+                              check=True, capture_output=True, text=True).stdout.strip()
+
+    def aur_prepare(self):
+        self.aur_cli("prepare")
+        self.aur_git("config", "user.name", "Release Test")
+        self.aur_git("config", "user.email", "test@example.invalid")
+
+    def aur_remote_head(self):
+        result = subprocess.run(["git", "--git-dir", str(self.aur_remote), "rev-parse", "--verify", "HEAD"],
+                                env=self.env, capture_output=True, text=True)
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    def test_aur_prepare_and_publish_split_package_with_retry(self):
+        self.aur_setup()
+        self.aur_prepare()
+        self.assertIsNone(self.aur_remote_head())
+        pkgbuild = (self.aur / "PKGBUILD").read_text()
+        info = (self.aur / ".SRCINFO").read_text()
+        checksum = hashlib.sha256(b"synthetic source archive").hexdigest()
+        self.assertIn(f"sha256sums=('{checksum}')", pkgbuild)
+        self.assertIn(f"sha256sums = {checksum}", info)
+        self.assertIn("pkgname = skwir-mermaid", info)
+        self.assertIn("SKIP", (self.root / "tools/package/aur/PKGBUILD").read_text())
+        self.aur_cli("publish", ok=False, FAIL_PUSH="1")
+        self.assertIsNone(self.aur_remote_head())
+        commit = self.aur_git("rev-parse", "HEAD")
+        self.aur_cli("publish")
+        self.assertEqual(self.aur_remote_head(), commit)
+        self.assertEqual(self.aur_git("ls-tree", "--name-only", "HEAD").splitlines(),
+                         [".SRCINFO", "PKGBUILD"])
+        self.aur_cli("publish")
+        self.assertEqual(self.aur_remote_head(), commit)
+        self.aur_cli("prepare")
+        self.aur_cli("publish")
+        self.assertEqual(self.aur_remote_head(), commit)
+
+    @unittest.skipUnless(shutil.which("makepkg"), "makepkg is available in the Linux Nix shell")
+    def test_aur_with_real_makepkg(self):
+        real_makepkg = shutil.which("makepkg")
+        self.aur_setup()
+        (self.bin / "makepkg").unlink()
+        (self.bin / "makepkg").symlink_to(real_makepkg)
+        self.aur_prepare()
+        info = (self.aur / ".SRCINFO").read_text()
+        self.assertNotIn("SKIP", info)
+        self.assertIn("pkgname = skwir-mermaid", info)
+        self.aur_cli("publish")
+        self.assertEqual(self.aur_remote_head(), self.aur_git("rev-parse", "HEAD"))
+
+    def test_aur_rejects_missing_bundle_remote_tag_and_failed_tools(self):
+        self.aur_setup()
+        for env in ({"WRONG_REMOTE": "1"}, {"FAIL_DOWNLOAD": "1"}, {"FAIL_MAKEPKG": "1"}):
+            with self.subTest(env=env):
+                self.aur_cli("prepare", ok=False, **env)
+                self.assertIsNone(self.aur_remote_head())
+                self.assertFalse((self.aur / "PKGBUILD").exists())
+        (self.bundle / "notes.md").write_text("changed")
+        self.assertIn("asset changed", self.aur_cli("prepare", ok=False))
+        self.assertIsNone(self.aur_remote_head())
+
+    def test_aur_refuses_changed_files_wrong_release_and_unrelated_changes(self):
+        self.aur_setup()
+        self.aur_prepare()
+        info = self.aur / ".SRCINFO"
+        original = info.read_text()
+        info.write_text("changed")
+        self.assertIn("files changed", self.aur_cli("publish", ok=False))
+        info.write_text(original)
+        unrelated = self.aur / "unrelated file"
+        unrelated.touch()
+        self.assertIn("unrelated changes", self.aur_cli("publish", ok=False))
+        unrelated.unlink()
+        state = self.root / "target/aur-publish/prepared.json"
+        prepared = json.loads(state.read_text())
+        prepared["tag"] = "v9.9.9"
+        state.write_text(json.dumps(prepared))
+        self.assertIn("another release", self.aur_cli("publish", ok=False))
+        self.assertIsNone(self.aur_remote_head())
+
+    def test_aur_refuses_dirty_preparation_and_redirected_origin(self):
+        self.aur_setup()
+        self.aur_prepare()
+        self.assertIn("checkout has changes", self.aur_cli("prepare", ok=False))
+        self.aur_git("remote", "set-url", "--push", "origin", "ssh://example.invalid/wrong.git")
+        self.assertIn("origin disagrees", self.aur_cli("publish", ok=False))
+        self.assertIsNone(self.aur_remote_head())
+
+    def test_aur_remote_change_rejects_push_without_force(self):
+        self.aur_setup()
+        self.aur_prepare()
+        other = Path(self.temp.name) / "other maintainer"
+        subprocess.run(["git", "clone", str(self.aur_remote), str(other)],
+                       env=self.env, check=True, capture_output=True)
+        for key, value in (("user.name", "Other Test"), ("user.email", "other@example.invalid")):
+            subprocess.run(["git", "-C", str(other), "config", key, value], env=self.env, check=True)
+        (other / "PKGBUILD").write_text("another maintainer's package")
+        for args in (("add", "."), ("commit", "-qm", "Other package update"), ("push", "origin", "master")):
+            subprocess.run(["git", "-C", str(other), *args], env=self.env, check=True, capture_output=True)
+        remote = self.aur_remote_head()
+        self.aur_cli("publish", ok=False)
+        self.assertEqual(self.aur_remote_head(), remote)
 
     def test_build_and_verify_isolated_bundle(self):
         stale = self.root / "target/package/linux/skwir-0.9.0-old.rpm"

@@ -1395,7 +1395,20 @@ Phase 7.
     the AppImage and Debian/Fedora/Arch packages, and stages a checked
     bundle. `just release-upload <tag>` verifies local assets and the
     remote tag before creating/updating a GitHub draft, never publishing.
-    See [Releasing](RELEASING.md). The packages, built by `try.sh` in
+    **AUR publication tooling (2026-10-12):** the Linux Nix shell
+    provides pacman/makepkg, Git, OpenSSH and curl. `aur-prepare <tag>`
+    verifies the release bundle and remote source tag, fills the archive
+    checksum and stages PKGBUILD/.SRCINFO in a separate AUR checkout;
+    `aur-publish <tag>` commits and pushes those reviewed files, with
+    retries and no force push. Validation: all 19 release-tool tests
+    pass, including real Nix makepkg against a local AUR stand-in; the
+    actual three-package SRCINFO and macOS shell evaluation also pass.
+    Dependency checks pass. The benchmark passes 43 of 44 budgets;
+    `images10k.stream_complete_us` measures 12,903 us against 12,000 us.
+    The full release gate was attempted but stopped at a Clippy
+    `items_after_statements` error in the concurrent, uncommitted
+    `crates/core/tests/clashes.rs` changes. No package has been published
+    by this change. See [Releasing](RELEASING.md). The packages, built by `try.sh` in
     fresh Debian 13, Fedora 44 and Arch roots (2026-10-10), install alone
     and with the others,
     every helper answers `--probe`, and the licences and notices are

@@ -163,9 +163,17 @@ package-rpm:
     tools/package/rpm.sh
 
 # The AUR package (ADR-040): its .SRCINFO beside the PKGBUILD, which the
-# AUR wants with it (makepkg, from pacman: on Arch).
+# AUR wants with it (makepkg, from pacman in the Linux Nix shell).
 package-aur:
     cd tools/package/aur && makepkg --printsrcinfo > .SRCINFO
+
+# Prepare a verified release's PKGBUILD and .SRCINFO in a separate AUR checkout.
+aur-prepare tag:
+    python3 tools/release/aur.py prepare {{quote(tag)}}
+
+# Commit and push the reviewed files from aur-prepare (requires an AUR SSH key).
+aur-publish tag:
+    python3 tools/release/aur.py publish {{quote(tag)}}
 
 # A Linux package built in a distribution's own root and installed in a
 # fresh one, from any Linux with bubblewrap (ADR-040): debian, fedora, arch.

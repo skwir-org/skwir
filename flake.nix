@@ -118,6 +118,10 @@
           '')
         ]
         ++ lib.optionals stdenv.hostPlatform.isLinux [
+          pacman # makepkg generates the AUR's .SRCINFO; builds stay in Arch
+          git
+          openssh # publishing the AUR checkout over SSH
+          curl # downloading the release source for its AUR checksum
           bubblewrap # isolated Office document previews
           samply
           heaptrack
@@ -132,6 +136,9 @@
         RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
         RUST_BACKTRACE = "1";
         GST_PLUGIN_SYSTEM_PATH_1_0 = lib.makeSearchPath "lib/gstreamer-1.0" mediaPlugins;
+        # Nixpkgs installs this beside pacman, but makepkg defaults to /etc.
+        # Only metadata is generated on the host; package builds use Arch's root.
+        MAKEPKG_CONF = lib.optionalString stdenv.hostPlatform.isLinux "${pkgs.pacman}/etc/makepkg.conf";
 
         # wgpu/winit dlopen these at runtime; make them findable from `cargo run`.
         LD_LIBRARY_PATH = lib.optionalString stdenv.hostPlatform.isLinux (lib.makeLibraryPath linuxRuntimeLibs);
