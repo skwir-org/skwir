@@ -300,6 +300,9 @@ pub struct Shell {
     /// the last press closed from outside (`note_dismissed`).
     pub(crate) presses: u64,
     pub(crate) dismissed: Option<(u64, String)>,
+    /// A press on a button that does something else when held
+    /// (`toolbar::Button::on_hold`).
+    pub(crate) held: Option<crate::toolbar::Held>,
     /// A search chip's open choices.
     pub search_menu: Option<crate::search_bar::ChipMenu>,
     pub settings: Option<Entity<crate::settings::SettingsView>>,
@@ -567,6 +570,7 @@ impl Shell {
             nav_asked: 0,
             presses: 0,
             dismissed: None,
+            held: None,
             sidebar_drawn: 0.,
             more_anchor: crate::elements::popover::PopoverAnchor::default(),
             search_menu: None,

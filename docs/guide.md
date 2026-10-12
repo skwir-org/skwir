@@ -44,7 +44,7 @@ that work where the keyboard is.
 | --- | --- |
 | `Enter` | Open |
 | `Alt+Up`, `Backspace` | Parent folder |
-| `Alt+Left`, `Alt+Right` | Back, forward (right-click Back or Forward for the history) |
+| `Alt+Left`, `Alt+Right` | Back, forward (hold or right-click Back or Forward for the history) |
 | `Alt+Home` | Home folder |
 | `Ctrl+L` | Type a path |
 | `Ctrl+J` | Jump |

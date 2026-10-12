@@ -147,6 +147,8 @@ pub struct Button {
     pub enabled: bool,
     shape: Shape,
     tint: Option<Tint>,
+    /// What a long press runs instead of the click (`HOLD`).
+    hold: Option<Box<(SharedString, serde_json::Value)>>,
 }
 
 /// A tag's colors on a button (a narrowing by that tag), in place of
@@ -199,6 +201,7 @@ impl Button {
             enabled: true,
             tint: None,
             shape: Shape::Tool,
+            hold: None,
         }
     }
     pub fn title(&self) -> SharedString {
@@ -237,6 +240,12 @@ impl Button {
         self.active = active;
         self
     }
+    /// A press held `HOLD` runs `command` with `args` instead of the
+    /// click, as a browser's Back and Forward list their history.
+    pub fn on_hold(mut self, command: impl Into<SharedString>, args: serde_json::Value) -> Self {
+        self.hold = Some(Box::new((command.into(), args)));
+        self
+    }
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
@@ -271,6 +280,7 @@ impl Button {
             .map(crate::elements::clip::text)
             .map_or((None, None), |(label, clip)| (Some(label), Some(clip)));
         let id = self.id.clone();
+        let clicked = id.clone();
         // A tag's colors: the fill and the edge, then under the pointer.
         let tint = self.tint.map(|tint| {
             let color = usize::from(tint.color);
@@ -372,7 +382,48 @@ impl Button {
             })
             .children(self.anchor.map(|anchor| anchor.marker()))
             .when(revealed, |d| d.child(reveal_marker()))
+            // A long press: `HOLD` after the press, what it holds runs, and
+            // the release that follows clicks nothing.
+            .when_some(self.hold.filter(|_| enabled), |d, hold| {
+                let pressed = clicked.clone();
+                d.on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(move |this, _, window, cx| {
+                        let (id, hold) = (pressed.clone(), hold.clone());
+                        let timer = cx.spawn_in(window, async move |this, cx| {
+                            cx.background_executor().timer(HOLD).await;
+                            let _ = this.update_in(cx, |this, window, cx| {
+                                let Some(press) = this.held.as_mut().filter(|press| press.id == id)
+                                else {
+                                    return;
+                                };
+                                press.fired = true;
+                                let (command, args) = *hold;
+                                invoke(this, pane, &command, args, window, cx);
+                            });
+                        });
+                        this.held = Some(Held {
+                            id: pressed.clone(),
+                            fired: false,
+                            _timer: timer,
+                        });
+                    }),
+                )
+                // Let go elsewhere: no long press.
+                .on_mouse_up_out(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, _| this.held = None),
+                )
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
+                // The release of a long press: what it held ran instead.
+                if this
+                    .held
+                    .take()
+                    .is_some_and(|press| press.id == clicked && press.fired)
+                {
+                    return;
+                }
                 if enabled {
                     invoke(this, pane, &command, args.clone(), window, cx);
                 }
@@ -385,6 +436,19 @@ impl Button {
                 }
             }))
     }
+}
+
+/// How long a press is held before it is a long press: GTK's default
+/// (`gtk-long-press-time`).
+const HOLD: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// A press on a button that does something else when held (`on_hold`),
+/// the window's one: its timer runs the hold unless the press ends first.
+pub(crate) struct Held {
+    id: SharedString,
+    /// The hold ran: the release clicks nothing.
+    fired: bool,
+    _timer: gpui::Task<()>,
 }
 
 fn invoke(

@@ -94,8 +94,10 @@ of bars, split or not.
 - Tabs and history use the sidebar's name (`App::location_title`);
   listings, toasts and Details use the folder's own. Up goes to the real
   parent; Ctrl+L edits the real path.
-- Back and Forward list history on right-click (`ui.history_menu`;
-  `back`/`forward` take `steps`).
+- Back and Forward list history on right-click or a long press, as in a
+  browser (`ui.history_menu`; `back`/`forward` take `steps`). A long
+  press is any button's `toolbar::Button::on_hold`: held `HOLD`, it runs
+  its command, and the release clicks nothing.
 - Chevrons list on a worker (`nav_menu.rs`): each one the folders in the
   segment before it; one after the last the shown folder's places
   (`LocationProvider::places_of`), a separator, then its subfolders

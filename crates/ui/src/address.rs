@@ -869,7 +869,8 @@ fn taking_off(filter: &Pill) -> String {
     }
 }
 
-/// Back or Forward: its right button lists the history that way.
+/// Back or Forward: its right button, or a long press as in a browser,
+/// lists the history that way.
 fn history_button(
     shell: &Shell,
     row: &PaneRow,
@@ -878,13 +879,24 @@ fn history_button(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let (id, title, command, enabled) = if forward {
-        ("forward", "Forward", "forward", row.forward)
+        (
+            "forward",
+            "Forward · hold or right-click for the history",
+            "forward",
+            row.forward,
+        )
     } else {
-        ("back", "Back", "back", row.back)
+        (
+            "back",
+            "Back · hold or right-click for the history",
+            "back",
+            row.back,
+        )
     };
     let open = row.nav == Some(crate::nav_menu::NavWhat::History { forward });
     let pane = shell.pane;
     Button::new(id, id, title, command)
+        .on_hold("ui.history_menu", serde_json::json!({ "forward": forward }))
         .enabled(enabled)
         .active(open)
         .anchor_if(anchor, open)
