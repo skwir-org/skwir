@@ -1,6 +1,6 @@
 //! skwir's own folders, where each system keeps an application's: its
-//! settings, its state (the window as it was left) and its throwaway
-//! cache (ADR-035). On Linux the XDG base
+//! settings, its state (the window as it was left), the user's data (what
+//! they made in skwir) and its throwaway cache (ADR-035). On Linux the XDG base
 //! directories, read one way (`crate::xdg`); on macOS
 //! `~/Library/Application Support` and `~/Library/Caches`; on Windows the
 //! roaming and the local application data (`%APPDATA%`,
@@ -30,6 +30,18 @@ pub fn state() -> Option<PathBuf> {
     let dir = dirs::data_local_dir().map(|dir| dir.join("skwir"));
     #[cfg(not(any(target_os = "macos", windows)))]
     let dir = crate::xdg::state_home().map(|dir| dir.join("skwir"));
+    dir
+}
+
+/// The folder skwir keeps what the user made in it in (`…/skwir`): saved
+/// searches, pinned tags, tags' colours, apart from the settings
+/// (ADR-057). `$XDG_DATA_HOME` on Linux; the settings' own folder on macOS
+/// and Windows, whose application data is one folder.
+pub fn data() -> Option<PathBuf> {
+    #[cfg(any(target_os = "macos", windows))]
+    let dir = config();
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let dir = crate::xdg::data_home().map(|dir| dir.join("skwir"));
     dir
 }
 

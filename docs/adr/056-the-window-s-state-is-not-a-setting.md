@@ -1,6 +1,7 @@
 # ADR-056: The window's state is not a setting
 
-Status: accepted, 2026-10-12. Replaces decision 5 of ADR-055.
+Status: accepted, 2026-10-12. Replaces decision 5 of ADR-055. Its
+consequence on saved searches and tags revised by ADR-057.
 
 ## Context
 
@@ -52,6 +53,7 @@ Status: accepted, 2026-10-12. Replaces decision 5 of ADR-055.
   window's layout, tabs and hints are kept as before.
 - Saved searches, pinned tags, tag fields and colours stay settings, a
   declarative configuration's to declare: with a read-only file, the
-  command that changes them says it is not kept.
+  command that changes them says it is not kept. (Revised by ADR-057:
+  they are the user's data, kept in a file of their own.)
 - A plugin from outside is not loaded while the configuration builds: its
   keys are noted, never checked.

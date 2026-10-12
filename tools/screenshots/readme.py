@@ -266,7 +266,11 @@ class Window:
             (self.home / "Projects").as_uri() + " Projects\n"
         )
         (config / "skwir" / "settings.toml").write_text(
-            f'[ui]\ntheme = "{self.theme}"\nicon_theme = "Papirus"\n\n'
+            f'[ui]\ntheme = "{self.theme}"\nicon_theme = "Papirus"\n'
+        )
+        # The window as it was left is state, not a setting (ADR-056).
+        (self.root / "state" / "skwir").mkdir(parents=True, exist_ok=True)
+        (self.root / "state" / "skwir" / "state.toml").write_text(
             '[ui.session]\nview = "grid"\nzoom = 96\npreview = true\n'
             "preview_width = 480.0\nsidebar_width = 230.0\n\n"
             '[ui.session.sidebar_sections]\nhidden = ["devices"]\n'

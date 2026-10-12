@@ -300,7 +300,9 @@ is no longer TOML), Skwir starts with its defaults, keeps the file aside
 as `settings.toml.unreadable-…`, and says so. Edited while Skwir runs (by
 hand, by another Skwir window, by Home Manager), it is taken in at once.
 A settings file that cannot be written (Home Manager links it read-only)
-is said above every page: a change there is not kept.
+is said above every page: a change there is not kept. What you make in
+the window (its layout, saved searches, pinned tags, tags' colours) is
+kept in files of its own, so it is kept still.
 `skwir cmd settings.check '{"file": "/path/to/settings.toml"}'` says what
 in a file Skwir would not take.
 
@@ -310,6 +312,7 @@ in a file Skwir would not take.
 | --- | --- |
 | Settings | `~/.config/skwir/settings.toml` |
 | The window as you left it: its shape, tabs, the hints shown | `~/.local/state/skwir/state.toml` |
+| What you made in Skwir: saved searches, pinned tags, tags' colours and exclusive categories | `~/.local/share/skwir/data.toml`, kept even when the settings file is read-only |
 | The cache | `~/.cache/skwir`: delete it whenever you like, Skwir rebuilds what it needs |
 | Thumbnails it makes | The desktop's cache (`~/.cache/thumbnails`), shared unless Thumbnails › Share generated thumbnails is off |
 | Tags, ratings, comments | On the files (see above) |

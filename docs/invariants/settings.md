@@ -9,8 +9,10 @@ the reasoning.
 
 - Use the `SettingSpec` constructors: `toggle`, `choice`, `integer`,
   `number`, `text`, `path`, `command`; `records` for a list the user
-  builds in the dialog (tile servers); `data` for collections such as
-  saved queries, which stay application data managed by their commands.
+  builds in the dialog (tile servers); `data` for what the user makes
+  through commands rather than the dialog (saved searches, pinned tags),
+  kept in the data file (ADR-057); `state` for what skwir keeps of the
+  window (ADR-056).
 - What only the owner can check goes in `validate_with`.
 - The owner states the title, description, unit, step, choice labels and
   section, so the dialog, the palette and agents need no key-specific
@@ -47,27 +49,33 @@ The namespace is the page, and a preference goes where its subject is:
   writes the keys this process changed (`Settings::set`, `apply`,
   `rename`) over the file as it stands, and takes in the rest; never the
   whole table it holds.
-- What changes in the file is taken in as it changes (`settings::follow`
-  watches its folder; `Settings::reload`), under what this process
-  changed and has not saved yet, and reaches its owners as a change made
-  in the dialog does (`settings::changed`): a plugin turned on or off
-  there is. A setting that needs a restart waits for one, as from the
-  dialog.
+- What changes in the file, or in the data file, is taken in as it
+  changes (`settings::follow` watches their folders;
+  `Settings::reload`), under what this process changed and has not saved
+  yet, and reaches its owners as a change made in the dialog does
+  (`settings::changed`): a plugin turned on or off there is. A setting
+  that needs a restart waits for one, as from the dialog.
 - A file that is no TOML is never written over: the save fails and says
   why, and nothing is taken in from it until it is fixed.
 - **State is not a setting (ADR-056).** What skwir keeps of the window as
   it was left (its layout, tabs, last folder, hints shown) is declared
   `SettingSpec::state` and kept in `state.toml` in the state folder
-  (`folders::state`), never in the settings file. A preference, or data
-  the user may want to declare (saved searches, pinned tags), stays a
-  setting.
+  (`folders::state`), never in the settings file.
+- **What the user makes is not a setting (ADR-057).** What they make in
+  skwir through its commands (saved searches, pinned tags, tags' colours
+  and exclusive categories) is declared `SettingSpec::data` and kept in
+  `data.toml` in the data folder (`folders::data`): theirs, so one that is
+  no TOML is set aside, never written over. A key kept apart still in the
+  settings file is read until skwir keeps its own, and moves out where
+  that file can be written. Only what the dialog changes is a setting.
 - The settings file may be read-only (Home Manager's link): a save writes
   through a link to where it leads, says when it cannot, and undoes the
-  change; the dialog says so above every page. A change of state never
-  touches the settings file.
+  change; the dialog says so above every page. A change of state or of
+  the user's data never touches the settings file.
 - `settings.check` judges a file or a table as the dialog judges what is
   typed (`SettingSpec::check`); a new kind of setting is checked there
-  too. Home Manager's module runs it while the configuration builds.
+  too. A key kept apart (state, data) is a problem there: not a
+  setting. Home Manager's module runs it while the configuration builds.
 
 ## The dialog
 

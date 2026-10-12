@@ -2,9 +2,10 @@
 # and the settings declared checked by skwir itself, then either linked
 # read-only from the store (as Home Manager's modules do by default) or,
 # with `mutableSettings`, merged into the writable file at each
-# activation. skwir keeps the window's state in a file of its own, so a
-# read-only settings file costs only the dialog's changes, which it says
-# are not kept; it takes in a change of the file while it runs.
+# activation. skwir keeps the window's state, and what the user makes in it
+# (saved searches, pinned tags), in files of their own, so a read-only
+# settings file costs only the dialog's changes, which it says are not
+# kept; it takes in a change of the file while it runs.
 self: {
   config,
   lib,
@@ -67,7 +68,10 @@ in {
         plugin's id), and the search of skwir's Settings finds a setting by
         its key. They are checked by the skwir installed: a value a setting
         does not take, or a key no setting has, fails the build. The
-        window's state is kept elsewhere ({file}`$XDG_STATE_HOME/skwir`).
+        window's state ({file}`$XDG_STATE_HOME/skwir`) and what you make in
+        skwir, as saved searches, pinned tags and tags' colours
+        ({file}`$XDG_DATA_HOME/skwir`), are kept elsewhere, and are no
+        settings to declare.
       '';
     };
 

@@ -95,6 +95,10 @@ pub struct AppConfig {
     /// Where the window's state is kept apart from the settings (ADR-056);
     /// `None` keeps it with them.
     pub state_path: Option<PathBuf>,
+    /// Where what the user made in skwir (saved searches, pinned tags,
+    /// tags' colours) is kept apart from the settings (ADR-057); `None`
+    /// keeps it with them.
+    pub data_path: Option<PathBuf>,
     /// Scheduler threads; 0 picks a default.
     pub workers: usize,
     /// Entries per `Added` event.
@@ -107,6 +111,7 @@ impl Default for AppConfig {
             cache_root: Cache::default_root(),
             settings_path: Some(Settings::default_path()),
             state_path: Settings::default_state_path(),
+            data_path: Settings::default_data_path(),
             workers: 0,
             batch_size: 1024,
         }
@@ -120,6 +125,7 @@ impl AppConfig {
             cache_root: root.into().join("cache"),
             settings_path: None,
             state_path: None,
+            data_path: None,
             workers: 0,
             batch_size: 1024,
         }
@@ -198,10 +204,18 @@ impl App {
     pub fn new(config: AppConfig) -> anyhow::Result<Arc<Self>> {
         let scheduler = Scheduler::new(config.workers);
         let lifetime = CancelToken::new();
-        let settings = match (config.settings_path, config.state_path) {
-            (Some(path), Some(state)) => Settings::load(path).with_state(state),
-            (Some(path), None) => Settings::load(path),
-            (None, _) => Settings::in_memory(),
+        let settings = match config.settings_path {
+            Some(path) => {
+                let mut settings = Settings::load(path);
+                if let Some(state) = config.state_path {
+                    settings = settings.with_state(state);
+                }
+                if let Some(data) = config.data_path {
+                    settings = settings.with_data(data);
+                }
+                settings
+            }
+            None => Settings::in_memory(),
         };
         let cache = Cache::open(config.cache_root);
         let fields = Arc::new(crate::fields::Fields::new(cache.namespace("fields")));

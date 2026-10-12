@@ -172,10 +172,38 @@ pub struct SettingSpec {
     pub constraints: SettingConstraints,
     /// The change takes effect at the next start.
     pub restart_required: bool,
-    /// Kept in the state file, not the settings (`SettingSpec::state`).
-    pub state: bool,
+    /// The file it is kept in: the settings, or apart from them
+    /// (`SettingSpec::state`, `SettingSpec::data`).
+    pub store: Store,
     #[serde(skip)]
     pub validator: Option<Validator>,
+}
+
+/// The file a setting is kept in (ADR-056, ADR-057).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Store {
+    /// The settings file: preferences, which a configuration may declare,
+    /// and link read-only.
+    #[default]
+    Settings,
+    /// The state file (`folders::state`): the window as it was left,
+    /// skwir's own.
+    State,
+    /// The data file (`folders::data`): what the user made in skwir, as
+    /// saved searches, pinned tags and tags' colours.
+    Data,
+}
+
+impl Store {
+    /// What its file is called in a sentence.
+    fn file_words(self) -> &'static str {
+        match self {
+            Store::Settings => "settings file",
+            Store::State => "state file",
+            Store::Data => "data file",
+        }
+    }
 }
 
 /// Optional restrictions shared by editors and command validation.
@@ -220,7 +248,7 @@ impl SettingSpec {
                 ..SettingConstraints::default()
             },
             restart_required: false,
-            state: false,
+            store: Store::Settings,
             validator: None,
         }
     }
@@ -287,10 +315,14 @@ impl SettingSpec {
         spec
     }
 
-    /// Application data (e.g. saved queries) stored with the settings.
+    /// What the user makes in skwir rather than chooses in its Settings
+    /// (saved searches, pinned tags, tags' colours): kept in the data file,
+    /// apart from the settings (ADR-057), so it is kept when the settings
+    /// are read-only. Not shown in the dialog.
     pub fn data(key: &str, description: &str, default: toml::Value) -> Self {
         let mut spec = Self::new(key, key, description, default);
         spec.kind = SettingKind::Data;
+        spec.store = Store::Data;
         spec
     }
 
@@ -299,7 +331,7 @@ impl SettingSpec {
     /// settings (ADR-056), so the settings may be read-only.
     pub fn state(key: &str, description: &str, default: toml::Value) -> Self {
         let mut spec = Self::data(key, description, default);
-        spec.state = true;
+        spec.store = Store::State;
         spec
     }
 
@@ -816,52 +848,64 @@ pub(crate) fn changed(app: &crate::App, keys: &[String]) {
     app.plugins.settings_changed(keys, app);
 }
 
-/// Take in what changed in the settings file, then follow it: the folder
-/// holding it watched until the app ends. On a worker: the folder is made
-/// if missing, and watching may wait for its drive.
+/// Take in what changed in the settings file and the data file, then
+/// follow them: the folders holding them watched until the app ends. On a
+/// worker: a folder is made if missing, and watching may wait for its
+/// drive.
 pub(crate) fn follow(app: &std::sync::Arc<crate::App>) {
-    let Some(path) = app.settings.path().map(Path::to_path_buf) else {
-        return;
-    };
-    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
-        return;
-    };
-    if let Err(error) = std::fs::create_dir_all(dir) {
-        tracing::warn!(%error, "the settings folder cannot be made: not followed");
+    if app.settings.path().is_none() {
         return;
     }
-    let (scheduler, weak, cancel) = (app.scheduler.clone(), app.weak(), app.lifetime().child());
-    let name = name.to_os_string();
-    let reloading = cancel.clone();
-    let watched = crate::fs::watch::watch(
-        dir,
-        std::time::Duration::from_millis(200),
-        &cancel,
-        move |changes| {
-            if !changes.rescan && !changes.names.contains(&name) {
-                return;
-            }
-            let weak = weak.clone();
-            // Read on a worker, never on the watcher's thread.
-            scheduler.spawn(
-                crate::scheduler::Priority::Background,
-                "settings-reload",
-                reloading.clone(),
-                move || {
-                    let Some(app) = weak.upgrade() else { return };
-                    if let Some(keys) = app.settings.reload()
-                        && !keys.is_empty()
-                    {
-                        changed(&app, &keys);
-                        app.wake();
-                    }
-                },
-            );
-        },
-    );
-    match watched {
-        Ok(handle) => *app.settings.followed.lock() = Some(handle),
-        Err(error) => tracing::warn!(%error, "the settings file cannot be followed"),
+    // The files followed, by folder: one watch where they share one.
+    let mut folders: BTreeMap<PathBuf, Vec<std::ffi::OsString>> = BTreeMap::new();
+    for path in [app.settings.path(), app.settings.data_path()]
+        .into_iter()
+        .flatten()
+    {
+        if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
+            folders
+                .entry(dir.to_path_buf())
+                .or_default()
+                .push(name.to_os_string());
+        }
+    }
+    for (dir, names) in folders {
+        if let Err(error) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(%error, "a folder of the settings cannot be made: not followed");
+            continue;
+        }
+        let (scheduler, weak, cancel) = (app.scheduler.clone(), app.weak(), app.lifetime().child());
+        let reloading = cancel.clone();
+        let watched = crate::fs::watch::watch(
+            &dir,
+            std::time::Duration::from_millis(200),
+            &cancel,
+            move |changes| {
+                if !changes.rescan && !names.iter().any(|name| changes.names.contains(name)) {
+                    return;
+                }
+                let weak = weak.clone();
+                // Read on a worker, never on the watcher's thread.
+                scheduler.spawn(
+                    crate::scheduler::Priority::Background,
+                    "settings-reload",
+                    reloading.clone(),
+                    move || {
+                        let Some(app) = weak.upgrade() else { return };
+                        if let Some(keys) = app.settings.reload()
+                            && !keys.is_empty()
+                        {
+                            changed(&app, &keys);
+                            app.wake();
+                        }
+                    },
+                );
+            },
+        );
+        match watched {
+            Ok(handle) => app.settings.followed.lock().push(handle),
+            Err(error) => tracing::warn!(%error, "a file of the settings cannot be followed"),
+        }
     }
 }
 
@@ -928,20 +972,23 @@ pub fn remember_location(settings: &Settings, folder: &Path) -> bool {
 /// Loaded settings plus declared schema.
 pub struct Settings {
     path: Option<PathBuf>,
-    /// The state file (`with_state`): the keys declared state are kept
-    /// there. `None`: in the settings file, with the rest.
-    state_path: Option<PathBuf>,
-    /// The keys ever declared state in this process: a plugin turned off
-    /// keeps its state where it was.
-    state_keys: RwLock<BTreeSet<String>>,
+    /// The files kept apart from the settings (`with_state`, `with_data`):
+    /// the keys declared for one are kept there, or saved nowhere when it
+    /// is `None` (a data file that could neither be read nor set aside). A
+    /// store not here keeps its keys in the settings file, with the rest.
+    apart: BTreeMap<Store, Option<PathBuf>>,
+    /// The keys ever declared kept apart in this process, and where: a
+    /// plugin turned off keeps them where they were.
+    kept: RwLock<BTreeMap<String, Store>>,
     values: RwLock<toml::Table>,
     schema: RwLock<BTreeMap<String, SettingSpec>>,
     /// Serializes writers (readers never wait for file I/O), and holds the
     /// keys this process changed since its last save: what a save writes
     /// over the file as it stands.
     writer: Mutex<BTreeSet<String>>,
-    /// The watch on the file's folder (`follow`), while the app runs.
-    followed: Mutex<Option<crate::fs::watch::WatchHandle>>,
+    /// The watches on the settings' and the data's folders (`follow`),
+    /// while the app runs.
+    followed: Mutex<Vec<crate::fs::watch::WatchHandle>>,
     status: Mutex<(u64, SaveState)>,
     /// Advances when the schema or a live value changes, so editors compare
     /// one atomic instead of re-reading the schema on every frame.
@@ -998,12 +1045,12 @@ impl Settings {
     pub fn in_memory() -> Self {
         Settings {
             path: None,
-            state_path: None,
-            state_keys: RwLock::new(BTreeSet::new()),
+            apart: BTreeMap::new(),
+            kept: RwLock::new(BTreeMap::new()),
             values: RwLock::new(toml::Table::new()),
             schema: RwLock::new(BTreeMap::new()),
             writer: Mutex::new(BTreeSet::new()),
-            followed: Mutex::new(None),
+            followed: Mutex::new(Vec::new()),
             status: Mutex::new((0, SaveState::Idle)),
             revision: std::sync::atomic::AtomicU64::new(0),
             problem: Mutex::new(None),
@@ -1017,61 +1064,76 @@ impl Settings {
     /// memory, saved nowhere. `take_problem` says which.
     pub fn load(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        let mut problem = None;
-        let mut saved_to = Some(path.clone());
-        let values = match std::fs::read(&path) {
-            Ok(bytes) => match std::str::from_utf8(&bytes)
-                .map_err(|_| "it is not text".to_owned())
-                .and_then(|text| {
-                    text.parse::<toml::Table>()
-                        .map_err(|e| toml_problem(text, &e))
-                }) {
-                Ok(values) => values,
-                Err(why) => {
-                    tracing::warn!(path = %path.display(), "settings unreadable: {why}");
-                    match set_aside(&path) {
-                        Ok(aside) => {
-                            problem = Some(format!(
-                                "Your settings could not be read ({why}), so skwir started with its \
-                                 defaults. The file was kept beside them as “{}”.",
-                                aside.file_name().unwrap_or_default().display()
-                            ));
-                        }
-                        Err(error) => {
-                            saved_to = None;
-                            problem = Some(format!(
-                                "Your settings could not be read ({why}), so skwir started with its \
-                                 defaults, and saves nothing until “{}” is fixed or removed ({}).",
-                                path.display(),
-                                crate::op::io_words(&error)
-                            ));
-                        }
-                    }
-                    toml::Table::new()
-                }
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => toml::Table::new(),
-            Err(error) => {
-                saved_to = None;
-                problem = Some(format!(
-                    "Your settings could not be read ({}), so skwir started with its defaults, \
-                     and saves nothing this time.",
-                    crate::op::io_words(&error)
-                ));
-                toml::Table::new()
-            }
-        };
+        let (values, problem, saves) =
+            Self::read_or_set_aside(&path, "Your settings", "with its defaults");
         Settings {
-            path: saved_to,
-            state_path: None,
-            state_keys: RwLock::new(BTreeSet::new()),
+            path: saves.then_some(path),
+            apart: BTreeMap::new(),
+            kept: RwLock::new(BTreeMap::new()),
             values: RwLock::new(values),
             schema: RwLock::new(BTreeMap::new()),
             writer: Mutex::new(BTreeSet::new()),
-            followed: Mutex::new(None),
+            followed: Mutex::new(Vec::new()),
             status: Mutex::new((0, SaveState::Idle)),
             revision: std::sync::atomic::AtomicU64::new(0),
             problem: Mutex::new(problem),
+        }
+    }
+
+    /// The table in the file at `path` (empty when there is none), and
+    /// what to tell the user when it could not be read: one that is no TOML
+    /// set aside beside itself, never written over. False when nothing may
+    /// be saved there: it could neither be read nor set aside. `whose` and
+    /// `without` word the problem: "Your settings could not be read (…), so
+    /// skwir started with its defaults."
+    fn read_or_set_aside(
+        path: &Path,
+        whose: &str,
+        without: &str,
+    ) -> (toml::Table, Option<String>, bool) {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return (toml::Table::new(), None, true);
+            }
+            Err(error) => {
+                let problem = format!(
+                    "{whose} could not be read ({}), so skwir started {without}, and saves nothing \
+                     there this time.",
+                    crate::op::io_words(&error)
+                );
+                return (toml::Table::new(), Some(problem), false);
+            }
+        };
+        let parsed = std::str::from_utf8(&bytes)
+            .map_err(|_| "it is not text".to_owned())
+            .and_then(|text| {
+                text.parse::<toml::Table>()
+                    .map_err(|e| toml_problem(text, &e))
+            });
+        let why = match parsed {
+            Ok(values) => return (values, None, true),
+            Err(why) => why,
+        };
+        tracing::warn!(path = %path.display(), "unreadable: {why}");
+        match set_aside(path) {
+            Ok(aside) => {
+                let problem = format!(
+                    "{whose} could not be read ({why}), so skwir started {without}. The file was \
+                     set aside as “{}”.",
+                    aside.file_name().unwrap_or_default().display()
+                );
+                (toml::Table::new(), Some(problem), true)
+            }
+            Err(error) => {
+                let problem = format!(
+                    "{whose} could not be read ({why}), so skwir started {without}, and saves \
+                     nothing there until “{}” is fixed or removed ({}).",
+                    path.display(),
+                    crate::op::io_words(&error)
+                );
+                (toml::Table::new(), Some(problem), false)
+            }
         }
     }
 
@@ -1086,7 +1148,34 @@ impl Settings {
             Ok(state) => Self::merge_into(&mut self.values.write(), state),
             Err(error) => tracing::warn!("the window's state is started over: {error:#}"),
         }
-        self.state_path = Some(path);
+        self.apart.insert(Store::State, Some(path));
+        self
+    }
+
+    /// The same settings, what the user made in skwir (`SettingSpec::data`:
+    /// saved searches, pinned tags, tags' colours) kept in the file at
+    /// `path` (ADR-057), made at the first save: what it holds is read over
+    /// the settings', where an earlier skwir kept it. It is the user's: one
+    /// that is no TOML is set aside, as the settings file is, and said;
+    /// one that can be neither read nor set aside is never written, what
+    /// changes kept in memory until skwir starts again.
+    #[must_use]
+    pub fn with_data(mut self, path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        let (data, problem, saves) = Self::read_or_set_aside(
+            &path,
+            "Your saved searches, pinned tags and tags’ colours",
+            "without them",
+        );
+        Self::merge_into(&mut self.values.write(), data);
+        if let Some(problem) = problem {
+            let mut said = self.problem.lock();
+            *said = Some(match said.take() {
+                Some(before) => format!("{before} {problem}"),
+                None => problem,
+            });
+        }
+        self.apart.insert(Store::Data, saves.then_some(path));
         self
     }
 
@@ -1106,18 +1195,43 @@ impl Settings {
 
     /// The state file, where there is one.
     pub fn state_path(&self) -> Option<&Path> {
-        self.state_path.as_deref()
+        self.apart.get(&Store::State)?.as_deref()
     }
 
-    /// Whether `key` is kept in the state file: a key declared state, or
-    /// one within it.
-    fn is_state(state_keys: &BTreeSet<String>, key: &str) -> bool {
-        state_keys.iter().any(|state| {
-            key == state
-                || key
-                    .strip_prefix(state.as_str())
-                    .is_some_and(|rest| rest.starts_with('.'))
-        })
+    /// The data file, where there is one.
+    pub fn data_path(&self) -> Option<&Path> {
+        self.apart.get(&Store::Data)?.as_deref()
+    }
+
+    /// The system's file of what the user made in skwir
+    /// (`$XDG_DATA_HOME/skwir/data.toml` on Linux): in `crate::folders::data`.
+    pub fn default_data_path() -> Option<PathBuf> {
+        crate::folders::data().map(|dir| dir.join("data.toml"))
+    }
+
+    /// The file apart from the settings `key` is kept in: a key declared
+    /// for one, or one within it, where that store has a file. `None`: the
+    /// settings file.
+    fn apart_of(&self, kept: &BTreeMap<String, Store>, key: &str) -> Option<Store> {
+        kept.iter()
+            .find(|(declared, _)| {
+                key == declared.as_str()
+                    || key
+                        .strip_prefix(declared.as_str())
+                        .is_some_and(|rest| rest.starts_with('.'))
+            })
+            .map(|(_, &store)| store)
+            .filter(|store| self.apart.contains_key(store))
+    }
+
+    /// The keys kept in files apart from the settings, and which.
+    fn kept_apart(&self) -> Vec<(String, Store)> {
+        self.kept
+            .read()
+            .iter()
+            .filter(|(_, store)| self.apart.contains_key(store))
+            .map(|(key, &store)| (key.clone(), store))
+            .collect()
     }
 
     /// Why the file was not read, once: the app says it to the user.
@@ -1132,13 +1246,13 @@ impl Settings {
     /// Whether what changes in the file is taken in as it changes
     /// (`follow`): the watch is set up on a worker once the app starts.
     pub fn is_followed(&self) -> bool {
-        self.followed.lock().is_some()
+        !self.followed.lock().is_empty()
     }
 
     /// Declare a setting. Registered by plugins and the core.
     pub fn declare(&self, spec: SettingSpec) {
-        if spec.state {
-            self.state_keys.write().insert(spec.key.clone());
+        if spec.store != Store::Settings {
+            self.kept.write().insert(spec.key.clone(), spec.store);
         }
         self.schema.write().insert(spec.key.clone(), spec);
         self.bump();
@@ -1261,7 +1375,8 @@ impl Settings {
     /// plugins `plugins` names. A key no setting has, under an owner that
     /// declares settings (a typo, most likely), is a problem; one under an
     /// owner nothing here declares (a plugin turned off, or from outside)
-    /// is only noted.
+    /// is only noted. A key kept apart from the settings (the window's
+    /// state, the user's data) is a problem too.
     pub fn check(&self, table: &toml::Table, plugins: &[String]) -> Checked {
         let schema = self.schema.read();
         let owners: BTreeSet<&str> = schema.values().map(SettingSpec::owner).collect();
@@ -1275,6 +1390,22 @@ impl Settings {
                     format!("{prefix}.{name}")
                 };
                 if let Some(spec) = schema.get(&key) {
+                    // Kept apart, it is not read from the settings once
+                    // skwir keeps its own: declaring it would mislead.
+                    let apart = match spec.store {
+                        Store::Settings => None,
+                        Store::State => Some(
+                            "the window's state, which skwir keeps in its state file: not a setting",
+                        ),
+                        Store::Data => Some(
+                            "what you make in skwir (saved searches, pinned tags, tags' colours), \
+                             kept in its data file: not a setting",
+                        ),
+                    };
+                    if let Some(why) = apart {
+                        checked.problems.push((key, why.to_owned()));
+                        continue;
+                    }
                     let other = !spec.constraints.more_choices.is_empty()
                         && value.as_str().is_some_and(|value| {
                             !spec
@@ -1419,15 +1550,15 @@ impl Settings {
     ///
     /// # Errors
     /// When it cannot be written; a file that cannot be (a link into a
-    /// store, a file made read-only) says the settings are read-only.
-    fn write_whole(path: &Path, table: &toml::Table) -> anyhow::Result<()> {
+    /// store, a file made read-only) says it is read-only.
+    fn write_whole(path: &Path, store: Store, table: &toml::Table) -> anyhow::Result<()> {
         let target = if std::fs::symlink_metadata(path).is_ok_and(|m| m.is_symlink()) {
             std::fs::canonicalize(path)?
         } else {
             path.to_path_buf()
         };
         if Self::is_read_only(&target) {
-            anyhow::bail!(Self::read_only_words(path, &target));
+            anyhow::bail!(Self::read_only_words(store, path, &target));
         }
         let parent = target
             .parent()
@@ -1437,7 +1568,7 @@ impl Settings {
         let mut file =
             tempfile::NamedTempFile::new_in(parent).map_err(|error| match error.kind() {
                 std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem => {
-                    anyhow::anyhow!(Self::read_only_words(path, &target))
+                    anyhow::anyhow!(Self::read_only_words(store, path, &target))
                 }
                 _ => anyhow::Error::new(error),
             })?;
@@ -1457,13 +1588,16 @@ impl Settings {
         std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly())
     }
 
-    fn read_only_words(path: &Path, target: &Path) -> String {
+    fn read_only_words(store: Store, path: &Path, target: &Path) -> String {
+        let file = store.file_words();
         if target == path {
-            "the settings file is read-only, so the change is not kept".to_owned()
-        } else {
+            format!("the {file} is read-only, so the change is not kept")
+        } else if store == Store::Settings {
             "the settings file is a link to one that cannot be written (Home Manager's, say), \
              so the change is not kept: change it where it is declared"
                 .to_owned()
+        } else {
+            format!("the {file} is a link to one that cannot be written, so the change is not kept")
         }
     }
 
@@ -1475,24 +1609,32 @@ impl Settings {
     }
 
     /// Write the `keys` of `values` over the files as they stand, keeping
-    /// what another process or a hand changed there: the state's in the
-    /// state file, first, the others in the settings file; a state key
-    /// still in the settings file moves out where that file can be
-    /// written. A file whose table does not change is not written (a
-    /// read-only settings file is never touched by a change of the
-    /// window's state). What is saved: the settings file's table with the
-    /// state file's (`values` itself where there is no file).
+    /// what another process or a hand changed there: those kept apart in
+    /// their files first (the state, then the user's data), the others in
+    /// the settings file; a key kept apart still in the settings file moves
+    /// out where that file can be written. A file none of whose keys
+    /// changed is not touched (a read-only settings file never is by a
+    /// change of the window's state or of a saved search). What is saved:
+    /// the settings file's table with the others' (`values` itself where
+    /// there is no file).
     fn persist(
         &self,
         values: &toml::Table,
         keys: &BTreeSet<String>,
     ) -> anyhow::Result<toml::Table> {
-        let state_keys = self.state_keys.read().clone();
-        let splits = self.state_path.is_some();
-        let (mut moved, settings): (BTreeSet<String>, BTreeSet<String>) = keys
-            .iter()
-            .cloned()
-            .partition(|key| splits && Self::is_state(&state_keys, key));
+        let kept = self.kept.read().clone();
+        let mut moved: BTreeMap<Store, BTreeSet<String>> = BTreeMap::new();
+        let mut settings = BTreeSet::new();
+        for key in keys {
+            match self.apart_of(&kept, key) {
+                Some(store) => {
+                    moved.entry(store).or_default().insert(key.clone());
+                }
+                None => {
+                    settings.insert(key.clone());
+                }
+            }
+        }
         let (disk, mut saved) = match &self.path {
             Some(path) => {
                 let disk = Self::on_disk(path)?;
@@ -1501,41 +1643,47 @@ impl Settings {
             }
             None => (None, values.clone()),
         };
-        // State still in the settings file (an earlier skwir's) moves out.
-        if splits {
-            for key in &state_keys {
-                if Self::remove(&mut saved, key).is_some() {
-                    moved.insert(key.clone());
-                }
+        // What is kept apart, still in the settings file (an earlier
+        // skwir's), moves out.
+        for (key, store) in self.kept_apart() {
+            if Self::remove(&mut saved, &key).is_some() {
+                moved.entry(store).or_default().insert(key);
             }
         }
-        let mut state = None;
-        if let Some(path) = &self.state_path {
-            // Its own file: one that is no TOML is started over.
-            let disk = Self::on_disk(path).unwrap_or_default();
-            let mut kept = toml::Table::new();
-            for key in &moved {
-                if let Some(value) = Self::lookup(values, key) {
-                    Self::insert(&mut kept, key, value.clone())?;
+        let mut apart = toml::Table::new();
+        for (&store, path) in &self.apart {
+            let (Some(keys), Some(path)) = (moved.get(&store), path) else {
+                // Nothing of it changed, or it is saved nowhere: as this
+                // process holds it.
+                for (key, _) in kept.iter().filter(|(_, s)| **s == store) {
+                    if let Some(value) = Self::lookup(values, key) {
+                        Self::insert(&mut apart, key, value.clone())?;
+                    }
                 }
-            }
-            let merged = Self::overlay(disk.clone(), &kept, &moved)?;
+                continue;
+            };
+            let disk = match store {
+                // The user's: never written over when it cannot be read.
+                Store::Data => Self::on_disk(path)?,
+                // skwir's own: one that is no TOML is started over.
+                _ => Self::on_disk(path).unwrap_or_default(),
+            };
+            let merged = Self::overlay(disk.clone(), values, keys)?;
             if merged != disk {
-                Self::write_whole(path, &merged)?;
+                Self::write_whole(path, store, &merged)?;
             }
-            state = Some(merged);
+            Self::merge_into(&mut apart, merged);
         }
         if let (Some(path), Some(disk)) = (&self.path, disk) {
-            // Only what the settings say changed must be written: state
-            // left in a file that cannot be written stays there, unread.
+            // Only what the settings say changed must be written: what is
+            // kept apart, left in a file that cannot be written, stays
+            // there, unread.
             let asked = Self::overlay(disk.clone(), values, &settings)? != disk;
             if saved != disk && (asked || !Self::is_read_only(path)) {
-                Self::write_whole(path, &saved)?;
+                Self::write_whole(path, Store::Settings, &saved)?;
             }
         }
-        if let Some(state) = state {
-            Self::merge_into(&mut saved, state);
-        }
+        Self::merge_into(&mut saved, apart);
         Ok(saved)
     }
 
@@ -1563,12 +1711,13 @@ impl Settings {
         Ok(keys)
     }
 
-    /// Take in what changed in the file since this process read or saved
-    /// it (another skwir, a hand edit, Home Manager): the file as it
-    /// stands, with what this process changed and has not saved yet over
-    /// it. The declared keys whose value changed, and the plugins'
-    /// `enabled`; `None` when there is no file to follow, or it cannot be
-    /// read (it is left as it is, and the next save says why).
+    /// Take in what changed in the files since this process read or saved
+    /// them (another skwir, a hand edit, Home Manager): the settings file
+    /// and the data file as they stand, with what this process changed and
+    /// has not saved yet over them. The declared keys whose value changed,
+    /// and the plugins' `enabled`; `None` when there is no settings file to
+    /// follow, or it cannot be read (it is left as it is, and the next save
+    /// says why).
     pub fn reload(&self) -> Option<Vec<String>> {
         let path = self.path.as_ref()?;
         let pending = self.writer.lock();
@@ -1587,15 +1736,27 @@ impl Settings {
                 return None;
             }
         };
-        // The state is the state file's, not the settings file's.
-        if self.state_path.is_some() {
-            for key in self.state_keys.read().iter() {
-                Self::remove(&mut merged, key);
-                if let Some(value) = Self::lookup(&values, key) {
-                    // A parent that is not a table is refused, and the
-                    // value stays out: what the settings file says wins.
-                    let _ = Self::insert(&mut merged, key, value.clone());
-                }
+        // What is kept apart is its own file's, not the settings file's:
+        // the state as this process holds it, the user's data as its file
+        // stands (another skwir, `skwir cmd`), with what this process
+        // changed over it.
+        let data = self.data_path().and_then(|path| match Self::on_disk(path) {
+            Ok(disk) => Self::overlay(disk, &values, &pending).ok(),
+            Err(error) => {
+                tracing::warn!("{error:#}");
+                None
+            }
+        });
+        for (key, store) in self.kept_apart() {
+            Self::remove(&mut merged, &key);
+            let from = match (store, &data) {
+                (Store::Data, Some(data)) => data,
+                _ => &values,
+            };
+            if let Some(value) = Self::lookup(from, &key) {
+                // A parent that is not a table is refused, and the value
+                // stays out: what the settings file says wins.
+                let _ = Self::insert(&mut merged, &key, value.clone());
             }
         }
         if merged == values {
@@ -1640,17 +1801,18 @@ impl Settings {
         let saved = match self.persist(&values, &pending) {
             Ok(saved) => saved,
             // A change a read-only file cannot take is undone, once: the
-            // settings are what the file says (the state was saved first).
+            // settings are what the file says (what is kept apart was saved
+            // first).
             Err(error) if self.read_only() => {
                 pending.clear();
                 if let Some(path) = &self.path
                     && let Ok(disk) = Self::on_disk(path)
                 {
                     let mut back = disk;
-                    for key in self.state_keys.read().iter() {
-                        Self::remove(&mut back, key);
-                        if let Some(value) = Self::lookup(&values, key) {
-                            let _ = Self::insert(&mut back, key, value.clone());
+                    for (key, _) in self.kept_apart() {
+                        Self::remove(&mut back, &key);
+                        if let Some(value) = Self::lookup(&values, &key) {
+                            let _ = Self::insert(&mut back, &key, value.clone());
                         }
                     }
                     *self.values.write() = back;

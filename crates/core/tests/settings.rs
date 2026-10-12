@@ -814,6 +814,173 @@ fn read_only_settings_still_keep_the_window_s_state() {
     std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o644)).unwrap();
 }
 
+fn data_spec(key: &str) -> SettingSpec {
+    SettingSpec::data(key, "made", toml::Value::Array(Vec::new()))
+}
+
+fn searches(names: &[&str]) -> toml::Value {
+    toml::Value::Array(
+        names
+            .iter()
+            .map(|name| toml::Value::String((*name).to_owned()))
+            .collect(),
+    )
+}
+
+/// What the user made in skwir (saved searches, pinned tags) is kept in
+/// the data file, apart from the settings (ADR-057): kept when the settings
+/// file cannot be written, a declared value there read until skwir keeps
+/// its own.
+#[cfg(unix)]
+#[test]
+fn what_the_user_made_is_kept_when_the_settings_are_read_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    std::fs::write(
+        &path,
+        "[ui]\ntheme = 'dark'\n[sample]\nsaved = ['declared']\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let data = dir.path().join("data").join("data.toml");
+    let settings = Settings::load(&path).with_data(&data);
+    settings.declare(data_spec("sample.saved"));
+    assert!(settings.read_only());
+    assert_eq!(
+        settings.get::<Vec<String>>("sample.saved"),
+        Some(vec!["declared".to_owned()]),
+        "read where it was declared"
+    );
+    settings.set("sample.saved", searches(&["declared", "l'été « 2024 »"]));
+    settings.save().unwrap();
+    assert_eq!(
+        table(&data)["sample"]["saved"],
+        searches(&["declared", "l'été « 2024 »"])
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "[ui]\ntheme = 'dark'\n[sample]\nsaved = ['declared']\n",
+        "the settings file untouched"
+    );
+    // Read again: the data file's, over what the settings file declared.
+    let again = Settings::load(&path).with_data(&data);
+    assert_eq!(
+        again.get::<Vec<String>>("sample.saved"),
+        Some(vec!["declared".to_owned(), "l'été « 2024 »".to_owned()])
+    );
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+}
+
+/// The user's data in a settings file an earlier skwir wrote moves to the
+/// data file at the next save; a change of the data file from outside
+/// (another skwir, `skwir cmd`) is taken in, under what this process has
+/// not saved yet.
+#[test]
+fn the_user_s_data_moves_out_of_the_settings_and_is_followed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, data) = (
+        dir.path().join("settings.toml"),
+        dir.path().join("data.toml"),
+    );
+    std::fs::write(&path, "[ui]\ntheme = 'dark'\n[sample]\nsaved = ['old']\n").unwrap();
+    let settings = Settings::load(&path).with_data(&data);
+    settings.declare(data_spec("sample.saved"));
+    settings.declare(data_spec("sample.pinned"));
+    settings.set("ui.theme", toml::Value::String("light".into()));
+    settings.save().unwrap();
+    let kept = table(&path);
+    assert_eq!(kept["ui"]["theme"].as_str(), Some("light"));
+    assert!(!kept.contains_key("sample"), "moved out");
+    assert_eq!(table(&data)["sample"]["saved"], searches(&["old"]));
+
+    // Another process saves a search; this one pinned a tag, not saved.
+    settings.set("sample.pinned", searches(&["work"]));
+    std::fs::write(&data, "[sample]\nsaved = ['old', 'new']\n").unwrap();
+    let keys = settings.reload().expect("followed");
+    assert_eq!(keys, vec!["sample.saved".to_owned()]);
+    assert_eq!(
+        settings.get::<Vec<String>>("sample.saved"),
+        Some(vec!["old".to_owned(), "new".to_owned()])
+    );
+    settings.save().unwrap();
+    let both = table(&data);
+    assert_eq!(both["sample"]["saved"], searches(&["old", "new"]));
+    assert_eq!(both["sample"]["pinned"], searches(&["work"]));
+}
+
+/// A data file that is no TOML is the user's: set aside, never written
+/// over, and said; skwir starts without it.
+#[test]
+fn an_unreadable_data_file_is_set_aside_and_said() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, data) = (
+        dir.path().join("settings.toml"),
+        dir.path().join("data.toml"),
+    );
+    std::fs::write(&data, "saved = [unclosed\n").unwrap();
+    let settings = Settings::load(&path).with_data(&data);
+    settings.declare(data_spec("sample.saved"));
+    let problem = settings.take_problem().expect("said");
+    assert!(problem.contains("saved searches"), "{problem}");
+    assert!(problem.contains("data.toml.unreadable-"), "{problem}");
+    let aside: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("data.toml.unreadable-"))
+        .collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(
+        settings.get::<Vec<String>>("sample.saved"),
+        Some(Vec::new()),
+        "the default"
+    );
+    settings.set("sample.saved", searches(&["again"]));
+    settings.save().unwrap();
+    assert_eq!(table(&data)["sample"]["saved"], searches(&["again"]));
+}
+
+/// A data file that can be neither read nor set aside is never written,
+/// and what it would hold never reaches the settings file either.
+#[test]
+fn the_user_s_data_never_falls_back_into_the_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, data) = (
+        dir.path().join("settings.toml"),
+        dir.path().join("data.toml"),
+    );
+    // A folder where the file should be: it cannot be read.
+    std::fs::create_dir(&data).unwrap();
+    let settings = Settings::load(&path).with_data(&data);
+    settings.declare(data_spec("sample.saved"));
+    assert!(settings.take_problem().is_some(), "said");
+    settings.set("sample.saved", searches(&["kept in memory"]));
+    settings.set("ui.theme", toml::Value::String("dark".into()));
+    settings.save().unwrap();
+    assert!(!table(&path).contains_key("sample"), "not in the settings");
+    assert!(data.is_dir(), "never written");
+    assert_eq!(
+        settings.get::<Vec<String>>("sample.saved"),
+        Some(vec!["kept in memory".to_owned()])
+    );
+}
+
+/// What is kept apart from the settings is no setting to declare: a
+/// configuration that does is told so.
+#[test]
+fn what_is_kept_apart_is_no_setting_to_declare() {
+    let settings = Settings::in_memory();
+    settings.declare(data_spec("sample.saved"));
+    settings.declare(state_spec("sample.session"));
+    let table: toml::Table = "[sample]\nsaved = []\nsession = {}\n".parse().unwrap();
+    let checked = settings.check(&table, &[]);
+    let keys: Vec<&str> = checked.problems.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys, ["sample.saved", "sample.session"], "{checked:?}");
+    assert!(checked.problems[0].1.contains("data file"));
+    assert!(checked.problems[1].1.contains("state file"));
+}
+
 /// Settings read from a file are checked as the dialog checks what is
 /// typed: their kind, then their choices and ranges; a key no setting has
 /// under an owner that declares some is a problem, one under an owner

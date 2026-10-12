@@ -70,3 +70,4 @@ them by topic.
 | [054](054-a-name-already-taken.md) | A name already taken: keep both, replace, skip or merge, asked once | built; on Windows a replace undone restores the latest item |
 | [055](055-the-settings-file-is-shared.md) | The settings file is shared: saves merge, outside changes are taken in, Home Manager merges | built |
 | [056](056-the-window-s-state-is-not-a-setting.md) | The window's state is not a setting: a file of its own, read-only settings, settings checked by skwir | built |
+| [057](057-what-you-make-is-not-a-setting.md) | What you make in skwir is not a setting: saved searches and tags kept in a data file | built |
