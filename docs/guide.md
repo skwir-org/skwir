@@ -57,8 +57,10 @@ that work where the keyboard is.
   trail starts at the deepest sidebar place that holds the folder, under
   its sidebar name; Appearance › Show the full path starts it at `/`.
   Click beside the trail, or press `Ctrl+L`, to type.
-- **Typing in the address.** Words filter the folder shown as you type;
-  `Escape` shows everything again. The dropdown says what `Enter` does
+- **Typing in the address.** Words filter the folder shown as you type,
+  and stay after the trail as a pill with a funnel, as a Narrow by choice
+  does; `Escape` or its × shows everything again. A search, by contrast,
+  takes the trail's place. The dropdown says what `Enter` does
   and offers the rest: a path goes there, words search the folder shown
   (`Alt+Enter`: the home folder), `>` hands the rest to the palette.
 - **Type the first letters of a name** in the file list to go to it.

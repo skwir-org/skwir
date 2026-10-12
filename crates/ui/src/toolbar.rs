@@ -41,6 +41,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "grip",
         "calendar",
         "search",
+        "filter",
         "settings",
         "more",
         "contents",

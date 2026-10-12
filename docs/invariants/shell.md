@@ -137,6 +137,10 @@ of bars, split or not.
   shown; filtered-out entries are deselected). Showing another location
   clears it; Escape (`filtered` key context) shows everything; once the
   field lets go, the filter stays as a pill on the trail.
+- What narrows the folder shown (the filter typed, a Narrow by choice, a
+  tag location's `with`) is a pill after the trail with a funnel
+  (`filter`); a search's pills are drawn in the trail's place, its words
+  with the query's own icons. A funnel never stands for a search.
 
 ### Search pills (`search_bar.rs`)
 

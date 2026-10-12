@@ -813,12 +813,14 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
 
 /// The filter typed in the field, once the field let go of the keyboard:
 /// pressed, it is typed in again (Enter then searches the folders inside);
-/// its × shows everything, as Escape in the pane does.
+/// its × shows everything, as Escape in the pane does. A funnel, as every
+/// pill after the trail narrows the folder shown; a search's are its own,
+/// in place of the trail.
 fn filter_pill(shell: &Shell, filter: &str, cx: &mut Context<Shell>) -> AnyElement {
     let button = Button::new(
         "filter-pill",
-        "search",
-        format!("Only the names holding “{filter}”"),
+        "filter",
+        format!("Only the names in this folder holding “{filter}” (not a search)"),
         "ui.search",
     )
     .args(serde_json::json!({ "text": filter }))
@@ -840,7 +842,7 @@ fn narrowing_pill(shell: &Shell, i: usize, filter: &Pill, cx: &mut Context<Shell
     let tip = taking_off(filter);
     let button = Button::new(
         gpui::SharedString::from(format!("narrowing-{i}")),
-        "",
+        "filter",
         tip.clone(),
         filter.remove.name.to_string(),
     )
