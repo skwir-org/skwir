@@ -153,6 +153,12 @@ of bars, split or not.
   frame.
 - The text is the one truth: a part no facet holds is a pill of its own;
   clicking beside the pills edits the text.
+- The pills are one line, the richest that fits (`search_bar::Fit`, an
+  `AdaptiveRow`): every pill as it reads; else where it looks and
+  "+ Filter" as icons and each facet as its icon and value; else the
+  facets' values alone, cut short with both ends kept, the later giving
+  way first. Nothing is hidden by wrapping: a facet narrowed away is
+  still a pill, said in full in its tooltip.
 - Required tags are chips read as paths (`Places › France`) in the tag's
   color, "+" between them; an excluded tag (`not_tag`) is hollow.
 - An affordance on what it acts on (a pill's ×) takes no focus; the

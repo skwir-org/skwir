@@ -235,10 +235,47 @@ pub fn sync(shell: &mut Shell, window: &mut Window) {
 /// query plugin away): the field shows text. `anchor` goes to what the
 /// open popover hangs from. No width of its own, like the trail.
 pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    let chips = &shell.ui().chips.chips;
-    if chips.is_empty() {
+    if shell.ui().chips.chips.is_empty() {
         return None;
     }
+    // The richest that fits (`Fit`): the words searched stay in view
+    // however narrow the pane.
+    Some(
+        div()
+            .flex_1()
+            .w(px(0.))
+            .min_w_0()
+            .h(px(24.))
+            .child(crate::elements::adaptive::AdaptiveRow {
+                variants: [Fit::Full, Fit::Compact, Fit::Tight]
+                    .into_iter()
+                    .map(|fit| line(shell, anchor, fit, cx))
+                    .collect(),
+                height: 24.,
+                chosen: None,
+            })
+            .into_any_element(),
+    )
+}
+
+/// How the search's pills fit their room, richest first.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fit {
+    /// Every pill as it reads.
+    Full,
+    /// Where it looks and "+ Filter" as their icons alone, the facets as
+    /// their icon and value (`🔍 rapport`), each said in full in its
+    /// tooltip.
+    Compact,
+    /// The facets alone, each its value without icon (`rapport` for
+    /// "Name: rapport", said in full in its tooltip). Where it looks and
+    /// the facets to add are the field's, with Ctrl+F or a click beside.
+    Tight,
+}
+
+/// The search's pills on one line, as `fit` says.
+fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>) -> AnyElement {
+    let chips = &shell.ui().chips.chips;
     let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
     let open = shell
@@ -255,7 +292,7 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
     let order = chips
         .iter()
         .enumerate()
-        .filter(|(_, c)| c.is_scope())
+        .filter(|(_, c)| c.is_scope() && fit != Fit::Tight)
         .chain(
             chips
                 .iter()
@@ -263,18 +300,14 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
                 .filter(|(_, c)| !c.is_scope() && c.is_pill()),
         );
     let mut line = div()
-        .flex_1()
-        .w(px(0.))
-        .min_w_0()
-        .h(px(24.))
+        .size_full()
         .overflow_hidden()
         .flex()
-        .flex_wrap()
         .items_center()
         .gap(px(4.))
         .px(px(3.));
     let mut after_tag = false;
-    for (i, chip) in order {
+    for (shown, (i, chip)) in order.enumerate() {
         // Tags every match has, one after the other: "+" between them.
         let is_tag = chip.id == "tag" && !chip.segments.is_empty();
         if is_tag && after_tag {
@@ -305,22 +338,31 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
         };
         let tip = if chip.title.is_empty() {
             "Part of the search no chip holds".to_owned()
+        } else if fit != Fit::Full {
+            // Its icon or its value alone: the tooltip says it all.
+            chip.label()
         } else {
             chip.title.clone()
         };
+        let icon = match (chip.is_scope(), fit) {
+            (true, _) => "folder".to_owned(),
+            (false, Fit::Tight) => String::new(),
+            (false, _) => chip.icon.clone(),
+        };
         let mut button = Button::new(
             SharedString::from(format!("chip-{i}")),
-            if chip.is_scope() {
-                "folder".to_owned()
-            } else {
-                chip.icon.clone()
-            },
+            icon,
             tip,
             "ui.search_chip",
         )
         .args(serde_json::json!({ "pane": pane, "chip": i }));
-        if !is_tag {
-            button = button.label(chip.label());
+        match fit {
+            _ if is_tag => {}
+            Fit::Full => button = button.label(chip.label()),
+            Fit::Compact if chip.is_scope() => {}
+            Fit::Compact | Fit::Tight => {
+                button = button.label(chip.value.clone().unwrap_or_else(|| chip.label()));
+            }
         }
         let pill = button
             .active(!chip.is_scope())
@@ -330,7 +372,14 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
             .h(px(22.))
             .rounded_full()
             .when(chip.is_scope(), |d| d.border_color(theme.border))
-            .when(chip.clear.is_some(), |d| d.pr(px(2.)));
+            .when(chip.clear.is_some(), |d| d.pr(px(2.)))
+            // The last fit: cut short rather than gone, its label keeping
+            // both ends; the later a pill, the sooner it gives way, so the
+            // first facet (the words typed, usually) stays readable.
+            .when(fit == Fit::Tight, |mut d| {
+                d.style().flex_shrink = Some(1. + 3. * shown as f32);
+                d.min_w(px(32.))
+            });
         // A tag's categories go back up to them; the tag itself opens the
         // pill's choices, as the rest of it does.
         let pill = if is_tag {
@@ -353,22 +402,27 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
         };
         line = line.child(pill);
     }
-    if chips.iter().any(|c| !c.is_pill()) {
+    if fit != Fit::Tight && chips.iter().any(|c| !c.is_pill()) {
+        let facets = Button::new(
+            "chip-facets",
+            "plus",
+            "Narrow the search by name, kind, date, size, tag or contents",
+            "ui.search_chip",
+        )
+        .args(serde_json::json!({ "pane": pane, "facets": true }));
+        let facets = if fit == Fit::Full {
+            facets.label("Filter")
+        } else {
+            facets
+        };
         line = line.child(
-            Button::new(
-                "chip-facets",
-                "plus",
-                "Narrow the search by name, kind, date, size, tag or contents",
-                "ui.search_chip",
-            )
-            .args(serde_json::json!({ "pane": pane, "facets": true }))
-            .label("Filter")
-            .anchor_if(anchor, from_filter)
-            .active(open == Some(Target::Facets))
-            .render(shell, cx)
-            .h(px(22.))
-            .rounded_full()
-            .border_color(theme.border),
+            facets
+                .anchor_if(anchor, from_filter)
+                .active(open == Some(Target::Facets))
+                .render(shell, cx)
+                .h(px(22.))
+                .rounded_full()
+                .border_color(theme.border),
         );
     }
     // What is left edits the search as text, as a click beside the trail
@@ -376,14 +430,14 @@ pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
     let rest = div()
         .id(("chip-rest", pane.0 as usize))
         .flex_1()
-        .min_w(px(24.))
+        .min_w(px(if fit == Fit::Tight { 8. } else { 24. }))
         .h_full()
         .cursor_text()
         .on_click(cx.listener(move |this, _, window, cx| {
             this.activate_pane(pane, cx);
             this.run("ui.focus_address", serde_json::json!({}), window, cx);
         }));
-    Some(line.child(rest).into_any_element())
+    line.child(rest).into_any_element()
 }
 
 /// A tag's pill's segments: each category a link up to it, `›` between,
