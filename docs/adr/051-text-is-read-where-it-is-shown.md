@@ -79,5 +79,6 @@ ADR-009's bounds (`TEXT_PAGE`, `SOURCE_PAGE`).
   for text are gone; `[`/`]` still turn a book's chapters.
 - Highlighting can be wrong after a jump into a long multi-line string or
   comment, until the view has read up to it.
-- The byte view can be read the same way, rows of 16 bytes needing no
-  index; it still pages 4 KiB at a time.
+- The byte view is read the same way (2026-10-12): rows of 16 bytes need
+  no index, the file's length counts them, and its pages are asked of the
+  bytes view (a plugin from outside too) as they come into view.

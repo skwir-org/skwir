@@ -606,7 +606,17 @@ is still to come are in `docs/preview-frame.md`.
   find and copy keep working.
 - A selected row of the byte view is decoded in a strip under it
   (integers in both byte orders, a float, the text), outside the
-  sideways scroller.
+  sideways scroller; so is the vertical scrollbar of what scrolls
+  sideways (a table, bytes), kept in view.
+- **Bytes are read where they are shown** (`bytes_view.rs`, ADR-051). A
+  row is `HEX_ROW` bytes, so row `r` is at `r × HEX_ROW` and the file's
+  length (`Display::bytes`, read on the worker) says how many there are.
+  The rows stay the bytes view's (`PreviewProvider::shows_bytes`, a
+  plugin from outside too): each page around the rows laid out is asked
+  of it by name at its offset, one at a time, the one the view left
+  cancelled; a page holds as many rows as its first answer. Find asks it
+  to search from a byte and goes to the row it lands on, showing what it
+  says; Jump goes to a row. No page is turned.
 - A font's sheet is drawn for the panel's width, its blocks stacked, so
   a long specimen pushes the rest down.
 

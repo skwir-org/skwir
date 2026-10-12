@@ -1764,7 +1764,12 @@ impl Shell {
                         Ok(Some(data)) => {
                             let mut display = crate::inspector::Display::new(data, &code);
                             // Its pictures for later are asked for as it was.
-                            display.origin = Some((request.clone(), inspection.clone()));
+                            display.origin = Some(Box::new((request.clone(), inspection.clone())));
+                            // Bytes are shown whole: as many rows as the file
+                            // holds (`bytes_view`).
+                            if display.data.kind == skwir_core::inspection::InspectionKind::Hex {
+                                display.bytes = std::fs::metadata(&path).ok().map(|m| m.len());
+                            }
                             return send(PreviewContent::Inspection(display), true, None, None);
                         }
                         Err(error) => return fail(error),
@@ -2054,8 +2059,10 @@ impl Shell {
                 .focus
                 .get_or_insert_with(|| cx.focus_handle());
         }
-        // A text read where it is shown: its view, from its first rows.
+        // A text read where it is shown: its view, from its first rows;
+        // bytes, as many rows as the file holds.
         self.start_text(&mut content, refresh);
+        self.start_bytes(content.as_ref(), refresh);
         self.preview.content = content;
         // A link to a line of this file shows it now it is here.
         self.show_waiting_line();
@@ -2193,6 +2200,12 @@ impl Shell {
                 self.run("ui.inspect", args, window, cx);
             }
             return;
+        }
+        // Bytes shown whole go a screen on or back, not to another page.
+        if let Some(view) = self.preview.inspection.bytes.as_ref() {
+            let to = if delta < 0 { "page_up" } else { "page_down" };
+            crate::text_view::scroll(&view.scroll, &serde_json::json!({ "to": to }));
+            return cx.notify();
         }
         if let Some(PreviewContent::Inspection(display)) = &self.preview.content {
             if let Some(offset) = if delta < 0 {

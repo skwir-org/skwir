@@ -325,8 +325,11 @@ The player, in the panel or pinned at its foot:
   ASCII columns. Zero bytes and non-printing placeholders are muted,
   printable ASCII accented; font ligatures are off so adjacent
   characters stay distinct.
+- The whole file in one view, a row of 16 bytes for each, read as you
+  scroll: the scrollbar, `Ctrl+Home` and `Ctrl+End` reach any byte.
 - Jump to a decimal or `0x` offset; search text or bytes
-  (`hex: 00 ff 7a`).
+  (`hex: 00 ff 7a`), forward from the row selected, again from after the
+  match.
 
 ## Limits
 

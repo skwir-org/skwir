@@ -18,6 +18,7 @@ mod about;
 pub mod address;
 mod archive_preview;
 mod backdrop;
+pub mod bytes_view;
 pub mod choose;
 mod code_preview;
 pub mod commands;

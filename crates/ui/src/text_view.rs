@@ -173,6 +173,8 @@ pub struct TextView {
     wanted: Vec<u64>,
     laid: Range<u64>,
     asked: Latest<Reply>,
+    /// The chunk asked for, while it is.
+    asking: Option<u64>,
     pub(crate) scroll: Scroll,
     found: Latest<Found>,
     copied: Latest<anyhow::Result<Copied>>,
@@ -182,6 +184,39 @@ pub struct TextView {
     first: (u64, u64),
     /// The rows known at the last wake.
     seen: u64,
+}
+
+/// The chunks of `per` rows to have for rows `laid` of `rows`: those laid
+/// out, nearest their middle first, then the one after and the one before.
+/// And their middle, to tell what is far.
+pub(crate) fn around(laid: &Range<u64>, rows: u64, per: u64) -> (Vec<u64>, u64) {
+    let last = rows.saturating_sub(1) / per;
+    let (first, end) = (laid.start / per, laid.end.saturating_sub(1) / per);
+    let middle = u64::midpoint(first, end);
+    let mut wanted: Vec<u64> = (first..=end.min(last)).collect();
+    wanted.sort_by_key(|chunk| chunk.abs_diff(middle));
+    wanted.extend((end < last).then_some(end + 1));
+    wanted.extend(first.checked_sub(1));
+    (wanted, middle)
+}
+
+/// Past `KEPT`, the chunks farthest from `middle` that are not wanted go.
+/// Which went.
+pub(crate) fn let_go<T>(chunks: &mut HashMap<u64, T>, wanted: &[u64], middle: u64) -> Vec<u64> {
+    if chunks.len() <= KEPT {
+        return Vec::new();
+    }
+    let mut far: Vec<u64> = chunks
+        .keys()
+        .copied()
+        .filter(|chunk| !wanted.contains(chunk))
+        .collect();
+    far.sort_by_key(|chunk| std::cmp::Reverse(chunk.abs_diff(middle)));
+    far.truncate(chunks.len() - KEPT);
+    for chunk in &far {
+        chunks.remove(chunk);
+    }
+    far
 }
 
 impl Drop for TextView {
@@ -244,6 +279,7 @@ impl TextView {
             wanted: Vec::new(),
             laid: 0..0,
             asked: Latest::default(),
+            asking: None,
             scroll: scroll.unwrap_or_default(),
             found: Latest::default(),
             copied: Latest::default(),
@@ -319,28 +355,10 @@ impl TextView {
             return false;
         }
         self.laid = laid.clone();
-        let rows = self.rows();
-        let last = rows.saturating_sub(1) / STRIDE;
-        let (first, end) = (laid.start / STRIDE, laid.end.saturating_sub(1) / STRIDE);
-        let middle = u64::midpoint(first, end);
-        let mut wanted: Vec<u64> = (first..=end.min(last)).collect();
-        wanted.sort_by_key(|chunk| chunk.abs_diff(middle));
-        wanted.extend((end < last).then_some(end + 1));
-        wanted.extend(first.checked_sub(1));
+        let (wanted, middle) = around(&laid, self.rows(), STRIDE);
         self.wanted = wanted;
-        // Far from the view, past the budget: the farthest go.
-        if self.chunks.len() > KEPT {
-            let mut far: Vec<u64> = self
-                .chunks
-                .keys()
-                .copied()
-                .filter(|chunk| !self.wanted.contains(chunk))
-                .collect();
-            far.sort_by_key(|chunk| std::cmp::Reverse(chunk.abs_diff(middle)));
-            for chunk in far.into_iter().take(self.chunks.len() - KEPT) {
-                self.chunks.remove(&chunk);
-                self.starts.remove(&(chunk + 1));
-            }
+        for chunk in let_go(&mut self.chunks, &self.wanted, middle) {
+            self.starts.remove(&(chunk + 1));
         }
         true
     }
@@ -350,6 +368,14 @@ impl TextView {
     /// colored again when it started fresh and the one before has since
     /// been colored.
     fn request(&mut self, app: &Arc<skwir_core::App>) {
+        // One the view moved away from is let go for what it shows now.
+        if self
+            .asking
+            .is_some_and(|chunk| !self.wanted.contains(&chunk))
+        {
+            self.asked.forget();
+            self.asking = None;
+        }
         if self.asked.is_pending() {
             return;
         }
@@ -386,6 +412,7 @@ impl TextView {
         };
         let from = self.starts.get(&chunk).cloned();
         let (file, palette) = (self.file.clone(), Arc::clone(&self.palette));
+        self.asking = Some(chunk);
         self.asked.ask(
             app,
             &self.counting,
@@ -410,6 +437,7 @@ impl TextView {
         let Some(Reply { chunk, read }) = self.asked.take() else {
             return false;
         };
+        self.asking = None;
         match read {
             Ok((read, stop)) => {
                 if let Some(stop) = stop.filter(|_| read.exact) {
@@ -723,32 +751,55 @@ impl Shell {
                 }
             }
             "scroll" => {
-                let mut scroll = view.scroll.borrow_mut();
-                match args["to"].as_str().unwrap_or("") {
-                    "up" => {
-                        let row = scroll.row();
-                        scroll.scroll_by(-row);
-                    }
-                    "down" => {
-                        let row = scroll.row();
-                        scroll.scroll_by(row);
-                    }
-                    "page_up" => {
-                        let page = scroll.page();
-                        scroll.scroll_by(-page);
-                    }
-                    "page_down" => {
-                        let page = scroll.page();
-                        scroll.scroll_by(page);
-                    }
-                    "start" => scroll.to_edge(false),
-                    "end" => scroll.to_edge(true),
-                    _ => {}
-                }
+                scroll(&view.scroll, args);
                 cx.notify();
             }
             _ => return false,
         }
         true
+    }
+}
+
+/// `ui.inspect`'s `scroll` on rows read where they are shown (a text, a
+/// file's bytes): `to` a row up or down, a screen, either end.
+pub(crate) fn scroll(scroll: &Scroll, args: &serde_json::Value) {
+    let mut scroll = scroll.borrow_mut();
+    let by = match args["to"].as_str().unwrap_or("") {
+        "up" => -scroll.row(),
+        "down" => scroll.row(),
+        "page_up" => -scroll.page(),
+        "page_down" => scroll.page(),
+        "start" => return scroll.to_edge(false),
+        "end" => return scroll.to_edge(true),
+        _ => return,
+    };
+    scroll.scroll_by(by);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_chunks_laid_out_come_first_then_their_neighbours() {
+        // Rows 600 to 900 of 2000, chunks of 256: chunks 2 and 3 laid out,
+        // 3 then 2 nearest their middle (2.5 rounds down), then 4 and 1.
+        let (wanted, middle) = around(&(600..900), 2000, 256);
+        assert_eq!((wanted, middle), (vec![2, 3, 4, 1], 2));
+        // At the end: no chunk after the last; at the start, none before.
+        assert_eq!(around(&(1900..2000), 2000, 256).0, [7, 6]);
+        assert_eq!(around(&(0..30), 2000, 256).0, [0, 1]);
+        assert_eq!(around(&(0..0), 0, 256).0, [0], "nothing yet: the first");
+    }
+
+    #[test]
+    fn past_the_budget_the_farthest_chunks_go() {
+        let mut chunks: HashMap<u64, u64> =
+            (0..KEPT as u64 + 3).map(|chunk| (chunk, chunk)).collect();
+        let gone = let_go(&mut chunks, &[0, 1], 0);
+        assert_eq!(gone.len(), 3);
+        assert!(gone.iter().all(|chunk| *chunk >= KEPT as u64), "{gone:?}");
+        assert_eq!(chunks.len(), KEPT);
+        assert!(let_go(&mut chunks, &[], 0).is_empty(), "within it: none");
     }
 }

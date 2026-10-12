@@ -114,7 +114,7 @@ impl Shell {
         if display.data.kind != InspectionKind::Book {
             return false;
         }
-        let Some((request, view)) = display.origin.clone() else {
+        let Some((request, view)) = display.origin.as_deref().cloned() else {
             return false;
         };
         self.preview.inspection.notes.close(window);

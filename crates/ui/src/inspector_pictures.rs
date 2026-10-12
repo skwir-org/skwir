@@ -195,7 +195,7 @@ impl Shell {
         let Some(PreviewContent::Inspection(display)) = &self.preview.content else {
             return;
         };
-        let Some((request, view)) = display.origin.clone() else {
+        let Some((request, view)) = display.origin.as_deref().cloned() else {
             return;
         };
         let pictures = &mut self.preview.inspection.pictures;

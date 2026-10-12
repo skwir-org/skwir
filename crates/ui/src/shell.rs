@@ -2319,6 +2319,7 @@ impl Shell {
             this.sync_document_scroll(window, cx);
             this.sync_pictures(window, cx);
             this.sync_text(cx);
+            this.sync_bytes(cx);
             this.sync_notes(window, cx);
             this.sync_media(window, cx);
             this.sync_player(window, cx);

@@ -22,10 +22,12 @@ pub struct Display {
     /// The request this inspection answered, which its pictures for later
     /// are asked with (`inspector_pictures`); `None` for text the panel read
     /// itself.
-    pub origin: Option<(
-        skwir_core::preview::PreviewRequest,
-        skwir_core::inspection::InspectRequest,
-    )>,
+    pub origin: Option<
+        Box<(
+            skwir_core::preview::PreviewRequest,
+            skwir_core::inspection::InspectRequest,
+        )>,
+    >,
     /// A map's places, projected here on the worker (`map_preview`).
     pub map: Option<Arc<crate::elements::map::Shapes>>,
     /// Its lines' altitudes over distance, when they have some.
@@ -41,6 +43,9 @@ pub struct Display {
     /// colored here on the worker, until the view takes them
     /// (`Shell::start_text`).
     pub(crate) text: Option<Box<crate::text_view::Start>>,
+    /// The length of the file a byte view shows, read on the worker: how
+    /// many rows it has, read where they are shown (`bytes_view`).
+    pub(crate) bytes: Option<u64>,
 }
 impl Display {
     pub fn new(mut data: Inspection, code: &crate::code_preview::CodeTheme) -> Self {
@@ -177,6 +182,7 @@ impl Display {
             code_bg: palette.and_then(|palette| palette.background),
             code_dark: code.dark,
             text,
+            bytes: None,
         }
     }
     /// The next block or row (blocks first, then rows offset by the block
@@ -372,6 +378,8 @@ pub struct State {
     pub(crate) labels: Option<crate::links::Labels>,
     /// A text read where it is shown (ADR-051), drawn instead of the list.
     pub(crate) text: Option<crate::text_view::TextView>,
+    /// A file's bytes read where they are shown, drawn instead of the list.
+    pub(crate) bytes: Option<crate::bytes_view::BytesView>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -397,6 +405,7 @@ impl Default for State {
             notes: crate::note_popover::Notes::default(),
             labels: None,
             text: None,
+            bytes: None,
         }
     }
 }
@@ -1108,11 +1117,21 @@ impl Shell {
             Some(PreviewContent::Inspection(display)) => Some(display.data.kind),
             _ => None,
         };
-        // A text read where it is shown finds, copies and scrolls the file.
+        // A text or bytes read where they are shown find, copy and scroll
+        // the file.
         if matches!(action, "find" | "copy" | "select_all" | "scroll")
             && self.text_action(action, args, cx)
         {
             return;
+        }
+        if matches!(action, "find" | "copy" | "jump") && self.bytes_action(action, args, cx) {
+            return;
+        }
+        if action == "scroll"
+            && let Some(view) = self.preview.inspection.bytes.as_ref()
+        {
+            crate::text_view::scroll(&view.scroll, args);
+            return cx.notify();
         }
         if let Some(PreviewContent::Inspection(display)) = &self.preview.content {
             match action {
@@ -1839,6 +1858,9 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                 .map(|index| serde_json::json!({"action":"printed","index":index})),
             ("Previous page · [", "Next page · ]", "Go to page"),
         )
+    } else if state.bytes.is_some() {
+        // Bytes shown whole have no page to turn.
+        (None, None, ("", "", ""))
     } else {
         let offset = |offset: Option<u64>| {
             offset.map(|offset| serde_json::json!({"action":"page","offset":offset}))
@@ -2305,6 +2327,21 @@ pub fn content(
     // A text read where it is shown: its rows, scrolled by row, instead of
     // the list (`text_view`).
     let text = state.text.as_ref().filter(|_| data.text.is_some());
+    // A file's bytes, as many rows as it holds (`bytes_view`).
+    let bytes = state
+        .bytes
+        .as_ref()
+        .filter(|_| data.kind == InspectionKind::Hex);
+    let bytes_rows = bytes.map(|view| {
+        crate::bytes_view::element(
+            view,
+            list_theme.clone(),
+            hex_font.clone(),
+            selected,
+            pane,
+            entity.clone(),
+        )
+    });
     let wrap = shell.prefs.wrap_lines;
     let rows = text.map(|view| {
         crate::text_view::element(
@@ -2389,6 +2426,19 @@ pub fn content(
                 entity.clone(),
             );
         }
+        if data.kind == InspectionKind::Hex {
+            let ri = visible[i - data.blocks.len()];
+            let index = data.blocks.len() + ri;
+            return hex_row(
+                &data.rows[ri],
+                index,
+                selected == Some(index),
+                &hex_font,
+                theme,
+                pane,
+                entity.clone(),
+            );
+        }
         {
             // Where the row is drawn, which a sort makes differ from `ri`.
             let position = i - data.blocks.len();
@@ -2427,17 +2477,6 @@ pub fn content(
                                 d.hover(|d| d.bg(theme.hover))
                             })
                     })
-                    .when(data.kind == InspectionKind::Hex, |d| {
-                        d.font(hex_font.clone())
-                            .text_size(px(13.))
-                            .line_height(px(18.))
-                            .py(px(1.))
-                            .whitespace_nowrap()
-                            .when(ri % 2 == 1, |d| d.bg(theme.zebra))
-                            .when(selected != Some(data.blocks.len() + ri), |d| {
-                                d.hover(|d| d.bg(theme.hover))
-                            })
-                    })
             };
             if branch && data.kind != InspectionKind::Archive {
                 row = row.child(if collapsed.contains(&ri) {
@@ -2454,24 +2493,14 @@ pub fn content(
                     .as_ref()
                     .is_some_and(|shape| shape.numeric.get(column) == Some(&true));
                 // A cell cut by its column says the rest when pointed at.
-                let (cell, clip) = if data.kind == InspectionKind::Hex {
-                    (hex_cell(cell, column, theme), None)
-                } else {
-                    let (text, clip) =
-                        crate::elements::clip::text(cell.chars().take(512).collect::<String>());
-                    (text.into_any_element(), Some(clip))
-                };
+                let (cell, clip) =
+                    crate::elements::clip::text(cell.chars().take(512).collect::<String>());
                 row = row.child(
                     div()
                         .id(("cell", column))
-                        .when_some(clip, |d, clip| {
-                            d.optional_tooltip(clip.tooltip(None, ui_font.clone()))
-                        })
+                        .optional_tooltip(clip.tooltip(None, ui_font.clone()))
                         .w(px(column_width(shape.as_deref(), data.kind, column)))
                         .flex_none()
-                        .when(data.kind == InspectionKind::Hex && column < 2, |d| {
-                            d.border_r_1().border_color(theme.border)
-                        })
                         .when(data.kind == InspectionKind::Table, |d| {
                             d.px_2()
                                 .py(px(3.))
@@ -2511,6 +2540,17 @@ pub fn content(
         }
     })
     .size_full();
+    // A table and bytes scroll sideways when wider than the panel.
+    let wide = matches!(
+        display.data.kind,
+        InspectionKind::Table | InspectionKind::Hex
+    );
+    // What the vertical bar drives.
+    let scrolls = match (text, bytes) {
+        (Some(view), _) => crate::elements::scrollbar::Scrolls::Rows(view.scroll.clone()),
+        (_, Some(view)) => crate::elements::scrollbar::Scrolls::Rows(view.scroll.clone()),
+        _ => crate::elements::scrollbar::Scrolls::Items(state.list.clone()),
+    };
     let mut body = div()
         .flex_1()
         .min_h_0()
@@ -2521,7 +2561,7 @@ pub fn content(
             match (
                 kept_rows(display.data.kind),
                 state.labels.is_some(),
-                text.is_some(),
+                text.is_some() || bytes.is_some(),
             ) {
                 (true, false, _) => "Inspector PreviewMembers",
                 (true, true, _) => "Inspector PreviewMembers labelling",
@@ -2649,7 +2689,7 @@ pub fn content(
                     .w_full()
                     .h_full()
                     .when_some(measure, |d, measure| d.max_w(px(measure)))
-                    .map(|d| match rows {
+                    .map(|d| match rows.or(bytes_rows) {
                         Some(rows) => d.child(rows),
                         None => d.child(list),
                     }),
@@ -2676,13 +2716,14 @@ pub fn content(
                     .size_0(),
                 )
             })
-            .child(crate::elements::scrollbar::vertical(
-                "inspect-scrollbar",
-                match text {
-                    Some(view) => crate::elements::scrollbar::Scrolls::Rows(view.scroll.clone()),
-                    None => crate::elements::scrollbar::Scrolls::Items(state.list.clone()),
-                },
-            ))
+            // Over what does not scroll sideways: a table or bytes wider
+            // than the panel keep their bar in view (below).
+            .when(!wide, |d| {
+                d.child(crate::elements::scrollbar::vertical(
+                    "inspect-scrollbar",
+                    scrolls.clone(),
+                ))
+            })
             // Lines that do not wrap go on sideways.
             .when_some(text.filter(|_| !wrap), |d, view| {
                 d.child(crate::elements::scrollbar::horizontal(
@@ -2693,10 +2734,12 @@ pub fn content(
     );
     let mut decoded = None;
     if display.data.kind == InspectionKind::Hex
-        && let Some(row) = state
-            .selected
-            .and_then(|selected| selected.checked_sub(display.data.blocks.len()))
-            .and_then(|index| display.data.rows.get(index))
+        && let Some(row) = state.selected.and_then(|selected| match &state.bytes {
+            Some(bytes) => bytes.row(selected),
+            None => selected
+                .checked_sub(display.data.blocks.len())
+                .and_then(|index| display.data.rows.get(index)),
+        })
     {
         // What the bytes of the selected row mean: the questions a byte view
         // is opened to answer.
@@ -2723,10 +2766,7 @@ pub fn content(
         }
         decoded = Some(strip);
     }
-    if matches!(
-        display.data.kind,
-        InspectionKind::Table | InspectionKind::Hex
-    ) {
+    if wide {
         let gap = if display.data.kind == InspectionKind::Table {
             0.
         } else {
@@ -2745,11 +2785,23 @@ pub fn content(
             .flex_col()
             .child(
                 div()
-                    .id("inspection-horizontal")
+                    .relative()
                     .flex_1()
                     .min_h_0()
-                    .overflow_x_scroll()
-                    .child(body.w(px(width)).min_w_full().h_full()),
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .id("inspection-horizontal")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_x_scroll()
+                            .child(body.w(px(width)).min_w_full().h_full()),
+                    )
+                    .child(crate::elements::scrollbar::vertical(
+                        "inspect-scrollbar",
+                        scrolls,
+                    )),
             )
             .children(decoded)
             .into_any_element()
@@ -2771,6 +2823,60 @@ fn column_width(
             .and_then(|shape| shape.widths.get(index).copied())
             .unwrap_or(140.)
     }
+}
+
+/// A row of the byte view: its offset, its bytes and their characters, in
+/// the coding font with no ligatures, every other one tinted. A click
+/// selects it, and the strip under the view says what its bytes mean.
+/// `index` is the row's, as selection counts them.
+pub(crate) fn hex_row(
+    row: &skwir_core::inspection::Row,
+    index: usize,
+    selected: bool,
+    font: &gpui::Font,
+    theme: &Theme,
+    pane: skwir_core::workspace::PaneId,
+    entity: gpui::WeakEntity<Shell>,
+) -> AnyElement {
+    let mut line = div()
+        .id(("inspect-row", index))
+        .p_2()
+        .pl(px(8.))
+        .w_full()
+        .flex()
+        .gap_3()
+        .font(font.clone())
+        .text_size(px(13.))
+        .line_height(px(18.))
+        .py(px(1.))
+        .whitespace_nowrap()
+        .when(index % 2 == 1, |d| d.bg(theme.zebra))
+        .when(selected, |d| d.bg(theme.selection_bg))
+        .when(!selected, |d| d.hover(|d| d.bg(theme.hover)));
+    for (column, cell) in row.cells.iter().enumerate() {
+        line = line.child(
+            div()
+                .id(("cell", column))
+                .w(px(column_width(None, InspectionKind::Hex, column)))
+                .flex_none()
+                .when(column < 2, |d| d.border_r_1().border_color(theme.border))
+                .child(hex_cell(cell, column, theme)),
+        );
+    }
+    line.cursor_pointer()
+        .on_click(move |_, window, cx| {
+            let _ = entity.update(cx, |s, cx| {
+                s.with_pane(pane, |s| {
+                    s.run(
+                        "ui.inspect",
+                        serde_json::json!({"action":"select","index":index}),
+                        window,
+                        cx,
+                    );
+                });
+            });
+        })
+        .into_any_element()
 }
 
 fn hex_cell(text: &str, column: usize, theme: &Theme) -> AnyElement {

@@ -390,8 +390,16 @@ dates, measurements and what is left.
     never answered and the clipboard stopped answering until restarted.
     Vendored patch 0021 (2026-10-12) sends it in pieces (INCR), and Copy
     went back from 8 MiB to 16: xclip read 16 MiB whole, and a reader
-    killed mid-transfer left the next served. The byte view still pages
-    4 KiB at a time.
+    killed mid-transfer left the next served. The byte view reads the
+    same way since 2026-10-12, a row of 16 bytes each, its pages asked of
+    the bytes view as they come into view: on Xvfb, a 3 MB file to its
+    last row (0x2FFFF0), the scrollbar dragged mid-file, Jump to
+    0x123450, Find through three matches and "No further match", a row
+    copied and decoded. Its pages are asked of the bytes view by name
+    (chosen again, the providers before it tried the file first: 2 to 3 s
+    a page in a debug build, then about one), and one the view left is
+    cancelled: a page came 0.2 s after the scrollbar was let go in a
+    release build.
   - Mermaid by merman in `skwir-mermaid-worker`: linked into Skwir it
     added 14.7 MB of code (text 51.9 → 66.6 MB), so it is a helper
     (16.3 MB), a default member. Without it a diagram stays code.
