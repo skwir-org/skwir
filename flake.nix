@@ -8,6 +8,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
+    # Only for checking the Home Manager module (`checks.home-manager`).
+    home-manager = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -15,8 +20,17 @@
     nixpkgs,
     rust-overlay,
     flake-utils,
+    home-manager,
   }:
-    flake-utils.lib.eachDefaultSystem (system: let
+    {
+      # `programs.skwir` for Home Manager (ADR-055): skwir installed, its
+      # settings merged into the file skwir writes too.
+      homeManagerModules.default = import ./tools/package/nix/home-manager.nix self;
+      overlays.default = final: _: {
+        skwir = self.packages.${final.stdenv.hostPlatform.system}.default;
+      };
+    }
+    // flake-utils.lib.eachDefaultSystem (system: let
       pkgs = import nixpkgs {
         inherit system;
         overlays = [rust-overlay.overlays.default];
@@ -212,5 +226,66 @@
       devShells.windows = self.devShells.${system}.default.overrideAttrs (old: {
         nativeBuildInputs = old.nativeBuildInputs ++ lib.optionals stdenv.hostPlatform.isLinux [pkgs.wine64Packages.stable];
       });
+
+      # The Home Manager module's merge, run on a settings file as skwir
+      # writes it: what is declared wins, the rest (the window's layout)
+      # stays; a second activation changes nothing; a missing file is made
+      # readable by its owner alone. Without building skwir.
+      checks = lib.optionalAttrs stdenv.hostPlatform.isLinux {
+        home-manager = let
+          home = home-manager.lib.homeManagerConfiguration {
+            inherit pkgs;
+            modules = [
+              self.homeManagerModules.default
+              {
+                home = {
+                  username = "someone";
+                  homeDirectory = "/home/someone";
+                  stateVersion = "25.11";
+                };
+                programs.skwir = {
+                  enable = true;
+                  package = null;
+                  settings = {
+                    core.startup = "last";
+                    ui.theme = "dark";
+                    plugins.control.enabled = true;
+                  };
+                };
+              }
+            ];
+          };
+          merge = pkgs.writeText "skwir-settings-merge" home.config.home.activation.skwirSettings.data;
+        in
+          pkgs.runCommand "skwir-home-manager-check" {nativeBuildInputs = [pkgs.jaq];} ''
+            errorEcho() { echo "$@" >&2; }
+            export -f errorEcho
+            config=$TMPDIR/home/.config/skwir
+            sed "s|/home/someone|$TMPDIR/home|g" ${merge} > merge.sh
+            settled() { jaq --from toml -c "$1" "$config/settings.toml"; }
+
+            # Made where there is none, for its owner alone.
+            bash -eu merge.sh
+            [ "$(stat -c %a "$config/settings.toml")" = 600 ]
+            [ "$(settled .ui.theme)" = '"dark"' ]
+
+            # As skwir writes it: declared values win, the rest stays.
+            printf '%s\n' '[core]' 'last_location = "/example/folder"' \
+              '[ui]' 'theme = "light"' '[ui.session]' 'panes = 2' \
+              > "$config/settings.toml"
+            bash -eu merge.sh
+            [ "$(settled .ui.theme)" = '"dark"' ]
+            [ "$(settled .core.startup)" = '"last"' ]
+            [ "$(settled .plugins.control.enabled)" = true ]
+            [ "$(settled .ui.session.panes)" = 2 ]
+            [ "$(settled .core.last_location)" = '"/example/folder"' ]
+
+            # Again, nothing changes.
+            cp "$config/settings.toml" once.toml
+            bash -eu merge.sh
+            cmp once.toml "$config/settings.toml"
+            touch $out
+          '';
+      };
     });
 }

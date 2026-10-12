@@ -1,7 +1,13 @@
 //! Settings: a TOML file, validated against the schema plugins register,
 //! read through typed accessors. Plugins own the `plugin_id.*` namespace.
+//!
+//! The file is shared: another skwir, a hand edit or Home Manager may
+//! change it while this one runs. A save writes the keys this process
+//! changed over the file as it stands (`persist`), never its whole table,
+//! and what changed in the file is taken in as it changes (`reload`,
+//! watched by the app).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use parking_lot::{Mutex, RwLock};
@@ -643,25 +649,7 @@ pub(crate) fn register(app: &crate::App) {
                     let result = app.settings.apply(&args.changes);
                     guard.state = Some(match result {
                         Ok(keys) => {
-                            if keys.iter().any(|key| key == crate::tabs::SLEEP_KEY) {
-                                app.apply_tabs_sleep();
-                            }
-                            if keys
-                                .iter()
-                                .any(|key| crate::settings::owner_of(key) == crate::notes::SETTINGS)
-                            {
-                                app.apply_notes_settings();
-                            }
-                            if keys.iter().any(|key| key == crate::companions::SHOW) {
-                                app.companions.set_shown(
-                                    app.settings.get(crate::companions::SHOW).unwrap_or(false),
-                                );
-                                for pane in app.workspace.write().panes_mut() {
-                                    pane.companions_changed();
-                                }
-                                app.wake();
-                            }
-                            app.plugins.settings_changed(&keys, &app);
+                            changed(&app, &keys);
                             SaveState::Saved
                         }
                         Err(error) => SaveState::Failed(format!("{error:#}")),
@@ -672,6 +660,90 @@ pub(crate) fn register(app: &crate::App) {
             Ok(crate::command::Outcome::Value(serde_json::json!(id)))
         },
     );
+}
+
+/// What follows a change of `keys`, made in the dialog or found in the
+/// file (`Settings::reload`): what the core keeps of them is set again, a
+/// plugin turned on or off in the file is, and the plugins hear of theirs.
+/// On a worker.
+pub(crate) fn changed(app: &crate::App, keys: &[String]) {
+    if keys.iter().any(|key| key == crate::tabs::SLEEP_KEY) {
+        app.apply_tabs_sleep();
+    }
+    if keys
+        .iter()
+        .any(|key| owner_of(key) == crate::notes::SETTINGS)
+    {
+        app.apply_notes_settings();
+    }
+    if keys.iter().any(|key| key == crate::companions::SHOW) {
+        app.companions
+            .set_shown(app.settings.get(crate::companions::SHOW).unwrap_or(false));
+        for pane in app.workspace.write().panes_mut() {
+            pane.companions_changed();
+        }
+        app.wake();
+    }
+    for key in keys {
+        if let Some(id) = key
+            .strip_prefix("plugins.")
+            .and_then(|rest| rest.strip_suffix(".enabled"))
+            && let Some(enabled) = app.settings.get::<bool>(key)
+            && app.plugins.is_enabled(id) != enabled
+        {
+            app.plugins.set_enabled(id, enabled, app);
+        }
+    }
+    app.plugins.settings_changed(keys, app);
+}
+
+/// Take in what changed in the settings file, then follow it: the folder
+/// holding it watched until the app ends. On a worker: the folder is made
+/// if missing, and watching may wait for its drive.
+pub(crate) fn follow(app: &std::sync::Arc<crate::App>) {
+    let Some(path) = app.settings.path().map(Path::to_path_buf) else {
+        return;
+    };
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return;
+    };
+    if let Err(error) = std::fs::create_dir_all(dir) {
+        tracing::warn!(%error, "the settings folder cannot be made: not followed");
+        return;
+    }
+    let (scheduler, weak, cancel) = (app.scheduler.clone(), app.weak(), app.lifetime().child());
+    let name = name.to_os_string();
+    let reloading = cancel.clone();
+    let watched = crate::fs::watch::watch(
+        dir,
+        std::time::Duration::from_millis(200),
+        &cancel,
+        move |changes| {
+            if !changes.rescan && !changes.names.contains(&name) {
+                return;
+            }
+            let weak = weak.clone();
+            // Read on a worker, never on the watcher's thread.
+            scheduler.spawn(
+                crate::scheduler::Priority::Background,
+                "settings-reload",
+                reloading.clone(),
+                move || {
+                    let Some(app) = weak.upgrade() else { return };
+                    if let Some(keys) = app.settings.reload()
+                        && !keys.is_empty()
+                    {
+                        changed(&app, &keys);
+                        app.wake();
+                    }
+                },
+            );
+        },
+    );
+    match watched {
+        Ok(handle) => *app.settings.followed.lock() = Some(handle),
+        Err(error) => tracing::warn!(%error, "the settings file cannot be followed"),
+    }
 }
 
 /// Publishes the outcome of one save, or a failure if the job never completed.
@@ -739,8 +811,12 @@ pub struct Settings {
     path: Option<PathBuf>,
     values: RwLock<toml::Table>,
     schema: RwLock<BTreeMap<String, SettingSpec>>,
-    /// Serializes writers; readers never wait for file I/O.
-    writer: Mutex<()>,
+    /// Serializes writers (readers never wait for file I/O), and holds the
+    /// keys this process changed since its last save: what a save writes
+    /// over the file as it stands.
+    writer: Mutex<BTreeSet<String>>,
+    /// The watch on the file's folder (`follow`), while the app runs.
+    followed: Mutex<Option<crate::fs::watch::WatchHandle>>,
     status: Mutex<(u64, SaveState)>,
     /// Advances when the schema or a live value changes, so editors compare
     /// one atomic instead of re-reading the schema on every frame.
@@ -793,7 +869,8 @@ impl Settings {
             path: None,
             values: RwLock::new(toml::Table::new()),
             schema: RwLock::new(BTreeMap::new()),
-            writer: Mutex::new(()),
+            writer: Mutex::new(BTreeSet::new()),
+            followed: Mutex::new(None),
             status: Mutex::new((0, SaveState::Idle)),
             revision: std::sync::atomic::AtomicU64::new(0),
             problem: Mutex::new(None),
@@ -855,7 +932,8 @@ impl Settings {
             path: saved_to,
             values: RwLock::new(values),
             schema: RwLock::new(BTreeMap::new()),
-            writer: Mutex::new(()),
+            writer: Mutex::new(BTreeSet::new()),
+            followed: Mutex::new(None),
             status: Mutex::new((0, SaveState::Idle)),
             revision: std::sync::atomic::AtomicU64::new(0),
             problem: Mutex::new(problem),
@@ -871,6 +949,12 @@ impl Settings {
         self.path.as_deref()
     }
 
+    /// Whether what changes in the file is taken in as it changes
+    /// (`follow`): the watch is set up on a worker once the app starts.
+    pub fn is_followed(&self) -> bool {
+        self.followed.lock().is_some()
+    }
+
     /// Declare a setting. Registered by plugins and the core.
     pub fn declare(&self, spec: SettingSpec) {
         self.schema.write().insert(spec.key.clone(), spec);
@@ -883,7 +967,7 @@ impl Settings {
     /// chose; the file is rewritten at the next save, and until then the move
     /// is made again at each start, to the same effect.
     pub fn rename(&self, old: &str, new: &str) {
-        let _writer = self.writer.lock();
+        let mut pending = self.writer.lock();
         let mut values = self.values.write();
         if Self::lookup(&values, new).is_some() {
             return;
@@ -894,6 +978,7 @@ impl Settings {
         if let Err(error) = Self::insert(&mut values, new, value) {
             tracing::warn!(%error, "cannot move a setting");
         }
+        pending.extend([old.to_owned(), new.to_owned()]);
         drop(values);
         self.bump();
     }
@@ -977,9 +1062,12 @@ impl Settings {
     /// Set a dotted key, creating intermediate tables. Writers run off the UI
     /// thread; use `settings.apply` for user preference changes.
     pub fn set(&self, key: &str, value: toml::Value) {
-        let _writer = self.writer.lock();
-        if let Err(error) = Self::insert(&mut self.values.write(), key, value) {
-            tracing::warn!(%error, "cannot set setting");
+        let mut pending = self.writer.lock();
+        match Self::insert(&mut self.values.write(), key, value) {
+            Ok(()) => {
+                pending.insert(key.to_owned());
+            }
+            Err(error) => tracing::warn!(%error, "cannot set setting"),
         }
         self.bump();
     }
@@ -1005,29 +1093,81 @@ impl Settings {
             .collect()
     }
 
-    fn persist(&self, values: &toml::Table) -> anyhow::Result<()> {
-        if let Some(path) = &self.path {
-            let parent = path
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or_else(|| Path::new("."));
-            std::fs::create_dir_all(parent)?;
-            let mut file = tempfile::NamedTempFile::new_in(parent)?;
-            file.write_all(toml::to_string_pretty(values)?.as_bytes())?;
-            file.as_file().sync_all()?;
-            file.persist(path)?;
-            // The rename is durable only once the directory entry is
-            // flushed, on Unix; Windows journals it, and opens no folder so.
-            #[cfg(unix)]
-            std::fs::File::open(parent)?.sync_all()?;
+    /// The file as it stands: empty when there is none.
+    ///
+    /// # Errors
+    /// When it cannot be read, or is no TOML (a hand edit under way).
+    fn on_disk(path: &Path) -> anyhow::Result<toml::Table> {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(toml::Table::new()),
+            Err(e) => anyhow::bail!(
+                "“{}” could not be read: {}",
+                path.display(),
+                crate::op::io_words(&e)
+            ),
+        };
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| anyhow::anyhow!("“{}” is not text", path.display()))?;
+        text.parse::<toml::Table>().map_err(|e| {
+            anyhow::anyhow!(
+                "“{}” is not valid ({}): nothing is saved over it until it is fixed",
+                path.display(),
+                toml_problem(text, &e)
+            )
+        })
+    }
+
+    /// `base` with the `keys` of `values` over it: those `values` holds
+    /// set, the others taken out.
+    fn overlay(
+        mut base: toml::Table,
+        values: &toml::Table,
+        keys: &BTreeSet<String>,
+    ) -> anyhow::Result<toml::Table> {
+        for key in keys {
+            match Self::lookup(values, key) {
+                Some(value) => Self::insert(&mut base, key, value.clone())?,
+                None => {
+                    Self::remove(&mut base, key);
+                }
+            }
         }
-        Ok(())
+        Ok(base)
+    }
+
+    /// Write the `keys` of `values` over the file as it stands, keeping
+    /// what another process or a hand changed there: what is saved, the
+    /// file's whole table (`values` itself where there is no file).
+    fn persist(
+        &self,
+        values: &toml::Table,
+        keys: &BTreeSet<String>,
+    ) -> anyhow::Result<toml::Table> {
+        let Some(path) = &self.path else {
+            return Ok(values.clone());
+        };
+        let merged = Self::overlay(Self::on_disk(path)?, values, keys)?;
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        let mut file = tempfile::NamedTempFile::new_in(parent)?;
+        file.write_all(toml::to_string_pretty(&merged)?.as_bytes())?;
+        file.as_file().sync_all()?;
+        file.persist(path)?;
+        // The rename is durable only once the directory entry is
+        // flushed, on Unix; Windows journals it, and opens no folder so.
+        #[cfg(unix)]
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(merged)
     }
 
     /// A transaction: failed validation or persistence leaves live values intact.
     /// Only changed keys are merged; unrelated settings survive an open editor.
     fn apply(&self, changes: &BTreeMap<String, String>) -> anyhow::Result<Vec<String>> {
-        let _writer = self.writer.lock();
+        let mut pending = self.writer.lock();
         let parsed = self.validate(changes)?;
         let mut values = self.values.read().clone();
         let mut keys = Vec::new();
@@ -1038,17 +1178,85 @@ impl Settings {
             }
         }
         if !keys.is_empty() {
-            self.persist(&values)?;
-            *self.values.write() = values;
+            let mut written = pending.clone();
+            written.extend(keys.iter().cloned());
+            let saved = self.persist(&values, &written)?;
+            pending.clear();
+            *self.values.write() = saved;
             self.bump();
         }
         Ok(keys)
     }
 
-    /// Persist to the file, if any. Call from a worker, never during rendering.
-    pub fn save(&self) -> anyhow::Result<()> {
-        let _writer = self.writer.lock();
+    /// Take in what changed in the file since this process read or saved
+    /// it (another skwir, a hand edit, Home Manager): the file as it
+    /// stands, with what this process changed and has not saved yet over
+    /// it. The declared keys whose value changed, and the plugins'
+    /// `enabled`; `None` when there is no file to follow, or it cannot be
+    /// read (it is left as it is, and the next save says why).
+    pub fn reload(&self) -> Option<Vec<String>> {
+        let path = self.path.as_ref()?;
+        let pending = self.writer.lock();
+        let disk = match Self::on_disk(path) {
+            Ok(disk) => disk,
+            Err(error) => {
+                tracing::warn!("{error:#}");
+                return None;
+            }
+        };
         let values = self.values.read().clone();
-        self.persist(&values)
+        let merged = match Self::overlay(disk, &values, &pending) {
+            Ok(merged) => merged,
+            Err(error) => {
+                tracing::warn!("the settings file cannot take this window's: {error:#}");
+                return None;
+            }
+        };
+        if merged == values {
+            return Some(Vec::new());
+        }
+        let differs = |key: &str| Self::lookup(&values, key) != Self::lookup(&merged, key);
+        let mut keys: Vec<String> = self
+            .schema
+            .read()
+            .keys()
+            .filter(|key| differs(key))
+            .cloned()
+            .collect();
+        let plugins = |table: &toml::Table| {
+            table
+                .get("plugins")
+                .and_then(toml::Value::as_table)
+                .map(|plugins| plugins.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+        let mut ids = plugins(&values);
+        ids.extend(plugins(&merged));
+        ids.sort_unstable();
+        ids.dedup();
+        keys.extend(
+            ids.into_iter()
+                .map(|id| format!("plugins.{id}.enabled"))
+                .filter(|key| differs(key)),
+        );
+        *self.values.write() = merged;
+        drop(pending);
+        self.bump();
+        Some(keys)
+    }
+
+    /// Persist to the file, if any: what this process changed, over the
+    /// file as it stands, whose other changes it takes in. Call from a
+    /// worker, never during rendering.
+    pub fn save(&self) -> anyhow::Result<()> {
+        let mut pending = self.writer.lock();
+        let values = self.values.read().clone();
+        let saved = self.persist(&values, &pending)?;
+        pending.clear();
+        if saved != values {
+            *self.values.write() = saved;
+            self.bump();
+        }
+        Ok(())
     }
 }

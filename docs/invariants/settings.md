@@ -40,6 +40,22 @@ The namespace is the page, and a preference goes where its subject is:
 - `ui.*` is only how Skwir looks (Appearance). `core.*` is what it does
   with files (General).
 
+## The file is shared
+
+- Another skwir, a hand edit or Home Manager (`programs.skwir`, merged
+  at each activation) may change `settings.toml` while skwir runs. A save
+  writes the keys this process changed (`Settings::set`, `apply`,
+  `rename`) over the file as it stands, and takes in the rest; never the
+  whole table it holds.
+- What changes in the file is taken in as it changes (`settings::follow`
+  watches its folder; `Settings::reload`), under what this process
+  changed and has not saved yet, and reaches its owners as a change made
+  in the dialog does (`settings::changed`): a plugin turned on or off
+  there is. A setting that needs a restart waits for one, as from the
+  dialog.
+- A file that is no TOML is never written over: the save fails and says
+  why, and nothing is taken in from it until it is fixed.
+
 ## The dialog
 
 - It is a self-contained entity: it holds the `App`, never the shell,

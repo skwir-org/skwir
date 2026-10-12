@@ -134,6 +134,25 @@ make it executable and run it directly.
 The image includes the optional readers and player; system tools such as
 LibreOffice and bubblewrap remain the host's ([ADR-052](docs/adr/052-portable-appimage.md)).
 
+**Nix and Home Manager**: the flake builds skwir with its helpers
+(`nix build github:skwir-org/skwir`) and has an overlay. Its Home Manager
+module installs skwir and merges the settings you declare into the file skwir
+writes too, at each activation; a running skwir takes them in
+([ADR-055](docs/adr/055-the-settings-file-is-shared.md)):
+
+```nix
+imports = [ inputs.skwir.homeManagerModules.default ];
+programs.skwir = {
+  enable = true;
+  settings = {
+    core.startup = "last";
+    plugins.control.enabled = true;
+  };
+};
+```
+
+It needs a recent Home Manager, one with mutable settings.
+
 **From source**, with Rust 1.96 or later and the libraries `flake.nix` lists
 (the Nix flake has everything):
 

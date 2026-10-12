@@ -6,7 +6,7 @@ mod hydrate;
 mod path_provider;
 pub mod stat;
 pub mod volume;
-mod watch;
+pub(crate) mod watch;
 #[cfg(windows)]
 pub(crate) mod win;
 pub mod xattr;

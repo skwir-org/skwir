@@ -658,6 +658,15 @@ undone brings back what it replaced. Left: on Windows undoing a trash
 restores the latest item from its path (PORTING.md); `link` still
 refuses a name taken.
 
+The settings file is shared (ADR-055): a save writes the keys this
+process changed over the file as it stands, and what changes there
+(another skwir, a hand edit) is taken in while skwir runs, a plugin
+turned on or off included. The flake has a Home Manager module
+(`programs.skwir`) that merges declared settings at each activation, as
+Home Manager's `mutableSettings` does, checked by `checks.home-manager`;
+and an overlay. Left: the window's state still lives in
+`settings.toml`, so no read-only settings file.
+
 ---
 
 ## Maps

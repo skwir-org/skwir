@@ -309,6 +309,21 @@ impl App {
         if let Some(problem) = app.settings.take_problem() {
             app.notify(NotifyLevel::Warning, problem);
         }
+        // What changes in the settings file while skwir runs (another
+        // window, a hand edit, Home Manager) is taken in as it changes.
+        if app.settings.path().is_some() {
+            let following = Arc::downgrade(&app);
+            app.scheduler.spawn(
+                Priority::Background,
+                "settings-follow",
+                app.lifetime.child(),
+                move || {
+                    if let Some(app) = following.upgrade() {
+                        crate::settings::follow(&app);
+                    }
+                },
+            );
+        }
         Ok(app)
     }
 

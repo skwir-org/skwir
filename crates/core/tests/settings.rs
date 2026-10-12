@@ -559,3 +559,138 @@ fn a_settings_file_that_is_no_text_is_kept_aside_too() {
     );
     assert!(!path.exists());
 }
+
+/// The settings file is shared (another skwir, a hand edit, Home
+/// Manager): a save writes the keys this process changed over the file as
+/// it stands, and takes in the rest.
+#[test]
+fn a_save_writes_its_own_keys_over_the_file_as_it_stands() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    std::fs::write(&path, "[sample]\nengine = 'first'\nold = 1\n").unwrap();
+    let settings = Settings::load(&path);
+    settings.set("sample.budget", toml::Value::Integer(99));
+    settings.rename("sample.old", "sample.new");
+    // Meanwhile, written elsewhere.
+    std::fs::write(
+        &path,
+        "[sample]\nengine = 'second'\nold = 1\n[other]\nkept = 'theirs'\n",
+    )
+    .unwrap();
+    settings.save().unwrap();
+    let saved: toml::Table = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+    let sample = saved["sample"].as_table().unwrap();
+    assert_eq!(sample["engine"].as_str(), Some("second"), "theirs, kept");
+    assert_eq!(sample["budget"].as_integer(), Some(99), "ours, written");
+    assert_eq!(sample["new"].as_integer(), Some(1), "moved");
+    assert!(!sample.contains_key("old"), "the old name gone");
+    assert_eq!(saved["other"]["kept"].as_str(), Some("theirs"));
+    assert_eq!(
+        settings.get::<String>("sample.engine").as_deref(),
+        Some("second"),
+        "taken in"
+    );
+}
+
+/// What changed in the file is taken in, under what this process changed
+/// and has not saved yet; the declared keys that changed are said.
+#[test]
+fn an_outside_edit_is_taken_in_under_unsaved_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    std::fs::write(&path, "[sample]\nengine = 'first'\n").unwrap();
+    let settings = Settings::load(&path);
+    settings.declare(SettingSpec::choice(
+        "sample.engine",
+        "Engine",
+        "engine",
+        "first",
+        &[("first", "First"), ("second", "Second")],
+    ));
+    settings.set("sample.path", toml::Value::String("/example/mine".into()));
+    assert_eq!(settings.reload(), Some(Vec::new()), "nothing new");
+    let before = settings.revision();
+    std::fs::write(
+        &path,
+        "[sample]\nengine = 'second'\npath = '/example/theirs'\n[plugins.sample]\nenabled = false\n",
+    )
+    .unwrap();
+    assert_eq!(
+        settings.reload(),
+        Some(vec![
+            "sample.engine".to_owned(),
+            "plugins.sample.enabled".to_owned()
+        ])
+    );
+    assert!(settings.revision() > before);
+    assert_eq!(
+        settings.get::<String>("sample.engine").as_deref(),
+        Some("second")
+    );
+    assert_eq!(
+        settings.get::<String>("sample.path").as_deref(),
+        Some("/example/mine"),
+        "not saved yet, still this process's"
+    );
+    settings.save().unwrap();
+    let saved: toml::Table = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+    assert_eq!(saved["sample"]["path"].as_str(), Some("/example/mine"));
+    assert_eq!(saved["sample"]["engine"].as_str(), Some("second"));
+}
+
+/// A file that is no TOML (a hand edit under way) is never written over:
+/// the save says why, and nothing is taken in from it.
+#[test]
+fn a_broken_settings_file_is_never_saved_over() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    std::fs::write(&path, "[sample]\nengine = 'first'\n").unwrap();
+    let settings = Settings::load(&path);
+    settings.set("sample.budget", toml::Value::Integer(99));
+    let broken = "[sample\nengine = ";
+    std::fs::write(&path, broken).unwrap();
+    assert_eq!(settings.reload(), None);
+    let error = settings.save().unwrap_err().to_string();
+    assert!(error.contains("is not valid"), "{error}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
+    assert_eq!(
+        settings.get::<String>("sample.engine").as_deref(),
+        Some("first")
+    );
+    // Fixed, the next save writes what waited.
+    std::fs::write(&path, "[sample]\nengine = 'second'\n").unwrap();
+    settings.save().unwrap();
+    let saved: toml::Table = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+    assert_eq!(saved["sample"]["budget"].as_integer(), Some(99));
+}
+
+/// A running skwir follows its settings file: a value changed there
+/// reaches its owner, and a plugin turned off there is turned off.
+#[test]
+fn a_running_skwir_follows_its_settings_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("skwir").join("settings.toml");
+    let (_tmp, app, plugin) = fixture(Some(path.clone()));
+    let until = |done: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "never happened");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    until(&|| app.settings.is_followed());
+    let notified = plugin.0.load(Ordering::SeqCst);
+    std::fs::write(&path, "[sample]\nengine = 'second'\n").unwrap();
+    until(&|| app.settings.get::<String>("sample.engine").as_deref() == Some("second"));
+    until(&|| plugin.0.load(Ordering::SeqCst) > notified);
+    assert!(app.plugins.is_enabled("sample"));
+    // Put in place whole, as Home Manager's activation does.
+    let candidate = path.with_extension("toml.candidate");
+    std::fs::write(
+        &candidate,
+        "[sample]\nengine = 'second'\n\n[plugins.sample]\nenabled = false\n",
+    )
+    .unwrap();
+    std::fs::rename(&candidate, &path).unwrap();
+    until(&|| !app.plugins.is_enabled("sample"));
+}
