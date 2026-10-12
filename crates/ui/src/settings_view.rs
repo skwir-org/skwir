@@ -621,7 +621,7 @@ impl SettingsView {
                     .text_xs()
                     .text_color(theme.error)
                     .child(controls::glyph("warning", theme.error, 13.))
-                    .child(error),
+                    .child(div().flex_1().min_w_0().child(error)),
             );
         }
         // Left of the control, so controls stay aligned on the right edge
@@ -1153,6 +1153,24 @@ impl Render for SettingsView {
 
         let query = self.query(cx);
         let mut items: Vec<AnyElement> = Vec::new();
+        if self.read_only {
+            items.push(
+                div()
+                    .flex_none()
+                    .mt_4()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_sm()
+                    .text_color(theme.warning)
+                    .child(controls::glyph("lock", theme.warning, 14.))
+                    .child(div().flex_1().min_w_0().child(
+                        "Your settings file is read-only (Home Manager links it, say): \
+                         a change here is not kept. Change them where they are declared.",
+                    ))
+                    .into_any_element(),
+            );
+        }
         let (title, subtitle): (String, String) = if query.is_empty() {
             let page = self.page.clone();
             let subtitle = page.builtin().map_or("", |b| b.intro);

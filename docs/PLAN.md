@@ -664,8 +664,16 @@ process changed over the file as it stands, and what changes there
 turned on or off included. The flake has a Home Manager module
 (`programs.skwir`) that merges declared settings at each activation, as
 Home Manager's `mutableSettings` does, checked by `checks.home-manager`;
-and an overlay. Left: the window's state still lives in
-`settings.toml`, so no read-only settings file.
+and an overlay.
+
+The window's state is not a setting (ADR-056): its layout, tabs, last
+folder and hints shown are kept in `$XDG_STATE_HOME/skwir/state.toml`,
+moved out of an earlier skwir's settings at the next save. The settings
+file may then be read-only: a save writes through a link and says when it
+cannot, the dialog says so. `settings.check` checks a file against what
+skwir declares, with no window too; the Home Manager module runs it while
+the configuration builds, and links the settings read-only by default
+(`mutableSettings` merges them).
 
 ---
 

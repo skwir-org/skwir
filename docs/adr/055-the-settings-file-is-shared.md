@@ -1,6 +1,6 @@
 # ADR-055: The settings file is shared
 
-Status: accepted, 2026-10-12.
+Status: accepted, 2026-10-12. Decision 5 replaced by ADR-056.
 
 ## Context
 
@@ -42,7 +42,7 @@ Status: accepted, 2026-10-12.
    a file as skwir writes it.
 5. **No read-only settings file.** It would need the window's state out
    of `settings.toml` and the dialog to say a setting cannot change: not
-   done.
+   done. (Done by ADR-056.)
 
 ## Consequences
 

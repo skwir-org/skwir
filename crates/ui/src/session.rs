@@ -170,7 +170,7 @@ pub fn declare(app: &skwir_core::App) {
     app.settings
         .rename("ui.column_widths", &format!("{SESSION_KEY}.column_widths"));
     app.settings
-        .declare(skwir_core::settings::SettingSpec::data(
+        .declare(skwir_core::settings::SettingSpec::state(
             SESSION_KEY,
             "The last window's view, split, preview and timeline",
             toml::Value::Table(toml::map::Map::new()),

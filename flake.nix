@@ -227,35 +227,66 @@
         nativeBuildInputs = old.nativeBuildInputs ++ lib.optionals stdenv.hostPlatform.isLinux [pkgs.wine64Packages.stable];
       });
 
-      # The Home Manager module's merge, run on a settings file as skwir
-      # writes it: what is declared wins, the rest (the window's layout)
-      # stays; a second activation changes nothing; a missing file is made
-      # readable by its owner alone. Without building skwir.
+      # The Home Manager module (`programs.skwir`), without building skwir:
+      # the merge of mutable settings run on a file as skwir writes it
+      # (what is declared wins, the rest stays, a second activation changes
+      # nothing, a new file is its owner's alone); read-only settings linked
+      # as the merger writes them; and the settings checked by the skwir
+      # installed, here one that refuses "sepia", failing the build.
       checks = lib.optionalAttrs stdenv.hostPlatform.isLinux {
         home-manager = let
-          home = home-manager.lib.homeManagerConfiguration {
-            inherit pkgs;
-            modules = [
-              self.homeManagerModules.default
-              {
-                home = {
-                  username = "someone";
-                  homeDirectory = "/home/someone";
-                  stateVersion = "25.11";
-                };
-                programs.skwir = {
-                  enable = true;
-                  package = null;
-                  settings = {
-                    core.startup = "last";
-                    ui.theme = "dark";
-                    plugins.control.enabled = true;
+          home = skwir:
+            (home-manager.lib.homeManagerConfiguration {
+              inherit pkgs;
+              modules = [
+                self.homeManagerModules.default
+                {
+                  home = {
+                    username = "someone";
+                    homeDirectory = "/home/someone";
+                    stateVersion = "25.11";
                   };
-                };
-              }
-            ];
+                  programs.skwir = {enable = true;} // skwir;
+                }
+              ];
+            })
+            .config;
+          declared = {
+            core.startup = "last";
+            ui.theme = "dark";
+            plugins.control.enabled = true;
           };
-          merge = pkgs.writeText "skwir-settings-merge" home.config.home.activation.skwirSettings.data;
+          mutable = home {
+            package = null;
+            mutableSettings = true;
+            settings = declared;
+          };
+          linked = home {
+            package = null;
+            settings = declared;
+          };
+          refusing = pkgs.writeShellApplication {
+            name = "skwir";
+            runtimeInputs = [pkgs.jaq pkgs.gnugrep];
+            text = ''
+              file="$(printf '%s' "$3" | jaq -r .file)"
+              if grep -q sepia "$file"; then
+                echo "ui.theme: choose one of auto, light, dark" >&2
+                exit 1
+              fi
+            '';
+          };
+          checked = theme:
+            (home {
+              package = refusing;
+              settings.ui.theme = theme;
+            })
+            .xdg
+            .configFile
+            ."skwir/settings.toml"
+            .source;
+          merge = pkgs.writeText "skwir-settings-merge" mutable.home.activation.skwirSettings.data;
+          refused = pkgs.testers.testBuildFailure (checked "sepia");
         in
           pkgs.runCommand "skwir-home-manager-check" {nativeBuildInputs = [pkgs.jaq];} ''
             errorEcho() { echo "$@" >&2; }
@@ -271,19 +302,28 @@
 
             # As skwir writes it: declared values win, the rest stays.
             printf '%s\n' '[core]' 'last_location = "/example/folder"' \
-              '[ui]' 'theme = "light"' '[ui.session]' 'panes = 2' \
+              '[ui]' 'theme = "light"' 'date_format = "iso"' \
               > "$config/settings.toml"
             bash -eu merge.sh
             [ "$(settled .ui.theme)" = '"dark"' ]
             [ "$(settled .core.startup)" = '"last"' ]
             [ "$(settled .plugins.control.enabled)" = true ]
-            [ "$(settled .ui.session.panes)" = 2 ]
+            [ "$(settled .ui.date_format)" = '"iso"' ]
             [ "$(settled .core.last_location)" = '"/example/folder"' ]
 
             # Again, nothing changes.
             cp "$config/settings.toml" once.toml
             bash -eu merge.sh
             cmp once.toml "$config/settings.toml"
+
+            # Read-only: linked as the merger would write it, and a writable
+            # file left as declared gives way to the link.
+            [ "$(jaq --from toml -c .ui.theme ${linked.xdg.configFile."skwir/settings.toml".source})" = '"dark"' ]
+            [ -n ${lib.escapeShellArg linked.home.activation.skwirSettingsCleanup.data} ]
+
+            # Checked by the skwir installed: what it refuses fails the build.
+            [ "$(jaq --from toml -c .ui.theme ${checked "light"})" = '"light"' ]
+            grep -q "choose one of auto, light, dark" ${refused}/testBuildFailure.log
             touch $out
           '';
       };

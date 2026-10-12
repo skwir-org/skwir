@@ -5,7 +5,9 @@
 //! change it while this one runs. A save writes the keys this process
 //! changed over the file as it stands (`persist`), never its whole table,
 //! and what changed in the file is taken in as it changes (`reload`,
-//! watched by the app).
+//! watched by the app). What skwir keeps of the window as it was left
+//! (`SettingSpec::state`) goes to a file of its own, in the state folder
+//! (ADR-056): the settings file may then be read-only.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -170,6 +172,8 @@ pub struct SettingSpec {
     pub constraints: SettingConstraints,
     /// The change takes effect at the next start.
     pub restart_required: bool,
+    /// Kept in the state file, not the settings (`SettingSpec::state`).
+    pub state: bool,
     #[serde(skip)]
     pub validator: Option<Validator>,
 }
@@ -188,6 +192,10 @@ pub struct SettingConstraints {
     /// What one record is called ("tile server"), for "Add tile server".
     pub record_name: String,
     pub record_action: Option<RecordAction>,
+    /// The choices are what is known here and now: others may be found
+    /// where skwir runs (the themes a user added to bat). A file's value
+    /// outside them is noted by `Settings::check`, not refused.
+    pub more_choices: String,
 }
 
 impl SettingSpec {
@@ -212,6 +220,7 @@ impl SettingSpec {
                 ..SettingConstraints::default()
             },
             restart_required: false,
+            state: false,
             validator: None,
         }
     }
@@ -285,6 +294,15 @@ impl SettingSpec {
         spec
     }
 
+    /// What skwir keeps of the window as it was left (its layout, its tabs,
+    /// the hints it showed): data, in the state file rather than the
+    /// settings (ADR-056), so the settings may be read-only.
+    pub fn state(key: &str, description: &str, default: toml::Value) -> Self {
+        let mut spec = Self::data(key, description, default);
+        spec.state = true;
+        spec
+    }
+
     /// A list of records, each made of `fields` (see [`SettingKind::Records`]).
     pub fn records(
         key: &str,
@@ -317,6 +335,14 @@ impl SettingSpec {
         check: impl Fn(&toml::Value) -> anyhow::Result<()> + Send + Sync + 'static,
     ) -> Self {
         self.validator = Some(Validator(std::sync::Arc::new(check)));
+        self
+    }
+
+    /// Choices others may join where skwir runs, said in a few words
+    /// ("themes you added to bat"): see `SettingConstraints::more_choices`.
+    #[must_use]
+    pub fn more_choices(mut self, which: &str) -> Self {
+        self.constraints.more_choices = which.into();
         self
     }
 
@@ -475,6 +501,40 @@ impl SettingSpec {
         Ok(toml::Value::Array(out))
     }
 
+    /// Whether `value`, read from a file rather than typed, is one this
+    /// setting takes: its kind, then whatever the dialog checks of what is
+    /// typed (choices, ranges, the owner's own check). Data takes any
+    /// value of its default's kind; its owner reads it.
+    ///
+    /// # Errors
+    /// What is wrong, in the words the dialog uses.
+    pub fn check(&self, value: &toml::Value) -> anyhow::Result<()> {
+        let kind = |value: &toml::Value| match value {
+            toml::Value::String(_) => "text",
+            toml::Value::Integer(_) => "a whole number",
+            toml::Value::Float(_) => "a number",
+            toml::Value::Boolean(_) => "true or false",
+            toml::Value::Datetime(_) => "a date",
+            toml::Value::Array(_) => "a list",
+            toml::Value::Table(_) => "a table",
+        };
+        let fits = std::mem::discriminant(value) == std::mem::discriminant(&self.default)
+            || matches!(
+                (&self.default, value),
+                (toml::Value::Float(_), toml::Value::Integer(_))
+            );
+        anyhow::ensure!(
+            fits,
+            "expected {}, not {}",
+            kind(&self.default),
+            kind(value)
+        );
+        if !self.editable() {
+            return Ok(());
+        }
+        self.parse(&Self::format_value(value)).map(|_| ())
+    }
+
     pub fn parse(&self, text: &str) -> anyhow::Result<toml::Value> {
         anyhow::ensure!(
             self.editable(),
@@ -527,6 +587,14 @@ impl SettingSpec {
     }
 }
 
+/// What `Settings::check` found: problems, by key, and notes on keys it
+/// cannot judge.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Checked {
+    pub problems: Vec<(String, String)>,
+    pub notes: Vec<(String, String)>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum SaveState {
     #[default]
@@ -534,6 +602,16 @@ pub enum SaveState {
     Saving,
     Saved,
     Failed(String),
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct CheckArgs {
+    /// A settings file, by absolute path.
+    #[serde(default)]
+    file: Option<PathArg>,
+    /// Settings as a table (JSON), in place of a file.
+    #[serde(default)]
+    settings: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -609,11 +687,52 @@ pub(crate) fn register(app: &crate::App) {
         )
         .section("Startup"),
     );
-    app.settings.declare(SettingSpec::data(
+    app.settings.declare(SettingSpec::state(
         LAST_LOCATION,
         "The folder shown when the window was last closed",
         toml::Value::String(String::new()),
     ));
+    app.commands
+        .register::<CheckArgs, _>(
+            "core",
+            "settings.check",
+            "Check settings",
+            "Check a settings file, or settings given as a table, against the settings this skwir declares: fails with what is wrong (a value a setting does not take, a key no setting has), and notes the keys of owners it does not know",
+            |args, app| {
+                let table: toml::Table = match (&args.file, &args.settings) {
+                    (Some(file), None) => {
+                        let path = crate::os_path::absolute(file)?;
+                        let text = std::fs::read_to_string(path).map_err(|error| {
+                            anyhow::anyhow!(
+                                "“{}” cannot be read: {}",
+                                path.display(),
+                                crate::op::io_words(&error)
+                            )
+                        })?;
+                        text.parse()
+                            .map_err(|error: toml::de::Error| {
+                                anyhow::anyhow!("“{}” is not valid: {}", path.display(), toml_problem(&text, &error))
+                            })?
+                    }
+                    (None, Some(settings)) => toml::Table::try_from(settings)
+                        .map_err(|error| anyhow::anyhow!("not settings: {error}"))?,
+                    _ => anyhow::bail!("give a file or settings, one of them"),
+                };
+                let plugins: Vec<String> =
+                    app.plugins.list().into_iter().map(|plugin| plugin.id.to_owned()).collect();
+                let checked = app.settings.check(&table, &plugins);
+                if !checked.problems.is_empty() {
+                    let said: Vec<String> = checked
+                        .problems
+                        .iter()
+                        .map(|(key, problem)| format!("{key}: {problem}"))
+                        .collect();
+                    anyhow::bail!("{}", said.join("; "));
+                }
+                Ok(crate::command::Outcome::Value(serde_json::to_value(&checked)?))
+            },
+        )
+        .reads();
     app.commands.register::<ApplyArgs, _>(
         "core",
         "settings.apply",
@@ -809,6 +928,12 @@ pub fn remember_location(settings: &Settings, folder: &Path) -> bool {
 /// Loaded settings plus declared schema.
 pub struct Settings {
     path: Option<PathBuf>,
+    /// The state file (`with_state`): the keys declared state are kept
+    /// there. `None`: in the settings file, with the rest.
+    state_path: Option<PathBuf>,
+    /// The keys ever declared state in this process: a plugin turned off
+    /// keeps its state where it was.
+    state_keys: RwLock<BTreeSet<String>>,
     values: RwLock<toml::Table>,
     schema: RwLock<BTreeMap<String, SettingSpec>>,
     /// Serializes writers (readers never wait for file I/O), and holds the
@@ -863,10 +988,18 @@ impl Settings {
             .join("settings.toml")
     }
 
+    /// The system's file of skwir's state (`$XDG_STATE_HOME/skwir/state.toml`
+    /// on Linux): in `crate::folders::state`.
+    pub fn default_state_path() -> Option<PathBuf> {
+        crate::folders::state().map(|dir| dir.join("state.toml"))
+    }
+
     /// In-memory settings with no file.
     pub fn in_memory() -> Self {
         Settings {
             path: None,
+            state_path: None,
+            state_keys: RwLock::new(BTreeSet::new()),
             values: RwLock::new(toml::Table::new()),
             schema: RwLock::new(BTreeMap::new()),
             writer: Mutex::new(BTreeSet::new()),
@@ -930,6 +1063,8 @@ impl Settings {
         };
         Settings {
             path: saved_to,
+            state_path: None,
+            state_keys: RwLock::new(BTreeSet::new()),
             values: RwLock::new(values),
             schema: RwLock::new(BTreeMap::new()),
             writer: Mutex::new(BTreeSet::new()),
@@ -938,6 +1073,51 @@ impl Settings {
             revision: std::sync::atomic::AtomicU64::new(0),
             problem: Mutex::new(problem),
         }
+    }
+
+    /// The same settings, their state kept in the file at `path` (made at
+    /// the first save): what it holds is read over the settings', a key
+    /// that moved there being newer. One that cannot be read is started
+    /// over: it is skwir's own, and holds nothing the user chose.
+    #[must_use]
+    pub fn with_state(mut self, path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        match Self::on_disk(&path) {
+            Ok(state) => Self::merge_into(&mut self.values.write(), state),
+            Err(error) => tracing::warn!("the window's state is started over: {error:#}"),
+        }
+        self.state_path = Some(path);
+        self
+    }
+
+    /// `other`'s values set in `base`, tables merged.
+    fn merge_into(base: &mut toml::Table, other: toml::Table) {
+        for (key, value) in other {
+            match (base.get_mut(&key), value) {
+                (Some(toml::Value::Table(inner)), toml::Value::Table(more)) => {
+                    Self::merge_into(inner, more);
+                }
+                (_, value) => {
+                    base.insert(key, value);
+                }
+            }
+        }
+    }
+
+    /// The state file, where there is one.
+    pub fn state_path(&self) -> Option<&Path> {
+        self.state_path.as_deref()
+    }
+
+    /// Whether `key` is kept in the state file: a key declared state, or
+    /// one within it.
+    fn is_state(state_keys: &BTreeSet<String>, key: &str) -> bool {
+        state_keys.iter().any(|state| {
+            key == state
+                || key
+                    .strip_prefix(state.as_str())
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
     }
 
     /// Why the file was not read, once: the app says it to the user.
@@ -957,6 +1137,9 @@ impl Settings {
 
     /// Declare a setting. Registered by plugins and the core.
     pub fn declare(&self, spec: SettingSpec) {
+        if spec.state {
+            self.state_keys.write().insert(spec.key.clone());
+        }
         self.schema.write().insert(spec.key.clone(), spec);
         self.bump();
     }
@@ -1072,6 +1255,100 @@ impl Settings {
         self.bump();
     }
 
+    /// What is wrong in `table`, a settings file's or one to be (Home
+    /// Manager's declared settings): each value checked against its
+    /// setting (`SettingSpec::check`), a plugin's `enabled` against the
+    /// plugins `plugins` names. A key no setting has, under an owner that
+    /// declares settings (a typo, most likely), is a problem; one under an
+    /// owner nothing here declares (a plugin turned off, or from outside)
+    /// is only noted.
+    pub fn check(&self, table: &toml::Table, plugins: &[String]) -> Checked {
+        let schema = self.schema.read();
+        let owners: BTreeSet<&str> = schema.values().map(SettingSpec::owner).collect();
+        let mut checked = Checked::default();
+        let mut walk = vec![(String::new(), table)];
+        while let Some((prefix, table)) = walk.pop() {
+            for (name, value) in table {
+                let key = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{prefix}.{name}")
+                };
+                if let Some(spec) = schema.get(&key) {
+                    let other = !spec.constraints.more_choices.is_empty()
+                        && value.as_str().is_some_and(|value| {
+                            !spec
+                                .constraints
+                                .choices
+                                .iter()
+                                .any(|choice| choice == value)
+                        });
+                    if other {
+                        checked.notes.push((
+                            key,
+                            format!(
+                                "not one skwir knows here: it may be among {}",
+                                spec.constraints.more_choices
+                            ),
+                        ));
+                    } else if let Err(error) = spec.check(value) {
+                        checked.problems.push((key, error.to_string()));
+                    }
+                    continue;
+                }
+                if let Some(id) = key
+                    .strip_prefix("plugins.")
+                    .filter(|id| !id.contains('.'))
+                    .map(str::to_owned)
+                {
+                    match value.as_table() {
+                        Some(plugin) if plugins.contains(&id) => {
+                            for (field, value) in plugin {
+                                match (field.as_str(), value) {
+                                    ("enabled", toml::Value::Boolean(_)) => {}
+                                    ("enabled", _) => checked
+                                        .problems
+                                        .push((format!("{key}.enabled"), "expected true or false".into())),
+                                    _ => checked
+                                        .problems
+                                        .push((format!("{key}.{field}"), "no such setting".into())),
+                                }
+                            }
+                        }
+                        Some(_) => checked.notes.push((
+                            key,
+                            format!("no plugin “{id}” here: one from outside, or not built in, may take it"),
+                        )),
+                        None => checked.problems.push((key, "expected a table: enabled = true or false".into())),
+                    }
+                    continue;
+                }
+                let within = format!("{key}.");
+                if let Some(inner) = value.as_table()
+                    && (key == "plugins"
+                        || schema.keys().any(|declared| declared.starts_with(&within)))
+                {
+                    walk.push((key, inner));
+                    continue;
+                }
+                if owners.contains(owner_of(&key)) {
+                    checked.problems.push((key, "no such setting".into()));
+                } else {
+                    checked.notes.push((
+                        key.clone(),
+                        format!(
+                            "nothing here declares “{}”: a plugin turned off, or from outside, may",
+                            owner_of(&key)
+                        ),
+                    ));
+                }
+            }
+        }
+        checked.problems.sort();
+        checked.notes.sort();
+        checked
+    }
+
     pub fn save_status(&self) -> (u64, SaveState) {
         self.status.lock().clone()
     }
@@ -1136,32 +1413,130 @@ impl Settings {
         Ok(base)
     }
 
-    /// Write the `keys` of `values` over the file as it stands, keeping
-    /// what another process or a hand changed there: what is saved, the
-    /// file's whole table (`values` itself where there is no file).
+    /// Write `table` to `path` whole, put in place at once: through a link
+    /// to where it leads (a settings file kept with the user's other
+    /// configuration), never over the link.
+    ///
+    /// # Errors
+    /// When it cannot be written; a file that cannot be (a link into a
+    /// store, a file made read-only) says the settings are read-only.
+    fn write_whole(path: &Path, table: &toml::Table) -> anyhow::Result<()> {
+        let target = if std::fs::symlink_metadata(path).is_ok_and(|m| m.is_symlink()) {
+            std::fs::canonicalize(path)?
+        } else {
+            path.to_path_buf()
+        };
+        if Self::is_read_only(&target) {
+            anyhow::bail!(Self::read_only_words(path, &target));
+        }
+        let parent = target
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        let mut file =
+            tempfile::NamedTempFile::new_in(parent).map_err(|error| match error.kind() {
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem => {
+                    anyhow::anyhow!(Self::read_only_words(path, &target))
+                }
+                _ => anyhow::Error::new(error),
+            })?;
+        file.write_all(toml::to_string_pretty(table)?.as_bytes())?;
+        file.as_file().sync_all()?;
+        file.persist(&target)?;
+        // The rename is durable only once the directory entry is
+        // flushed, on Unix; Windows journals it, and opens no folder so.
+        #[cfg(unix)]
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    }
+
+    /// Whether the file at `path` (where a link leads) is there and
+    /// cannot be written.
+    fn is_read_only(path: &Path) -> bool {
+        std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly())
+    }
+
+    fn read_only_words(path: &Path, target: &Path) -> String {
+        if target == path {
+            "the settings file is read-only, so the change is not kept".to_owned()
+        } else {
+            "the settings file is a link to one that cannot be written (Home Manager's, say), \
+             so the change is not kept: change it where it is declared"
+                .to_owned()
+        }
+    }
+
+    /// Whether the settings cannot be saved because their file is
+    /// read-only (a link into the Nix store, as Home Manager makes it): the
+    /// dialog says so, and changes nothing.
+    pub fn read_only(&self) -> bool {
+        self.path.as_deref().is_some_and(Self::is_read_only)
+    }
+
+    /// Write the `keys` of `values` over the files as they stand, keeping
+    /// what another process or a hand changed there: the state's in the
+    /// state file, first, the others in the settings file; a state key
+    /// still in the settings file moves out where that file can be
+    /// written. A file whose table does not change is not written (a
+    /// read-only settings file is never touched by a change of the
+    /// window's state). What is saved: the settings file's table with the
+    /// state file's (`values` itself where there is no file).
     fn persist(
         &self,
         values: &toml::Table,
         keys: &BTreeSet<String>,
     ) -> anyhow::Result<toml::Table> {
-        let Some(path) = &self.path else {
-            return Ok(values.clone());
+        let state_keys = self.state_keys.read().clone();
+        let splits = self.state_path.is_some();
+        let (mut moved, settings): (BTreeSet<String>, BTreeSet<String>) = keys
+            .iter()
+            .cloned()
+            .partition(|key| splits && Self::is_state(&state_keys, key));
+        let (disk, mut saved) = match &self.path {
+            Some(path) => {
+                let disk = Self::on_disk(path)?;
+                let merged = Self::overlay(disk.clone(), values, &settings)?;
+                (Some(disk), merged)
+            }
+            None => (None, values.clone()),
         };
-        let merged = Self::overlay(Self::on_disk(path)?, values, keys)?;
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        std::fs::create_dir_all(parent)?;
-        let mut file = tempfile::NamedTempFile::new_in(parent)?;
-        file.write_all(toml::to_string_pretty(&merged)?.as_bytes())?;
-        file.as_file().sync_all()?;
-        file.persist(path)?;
-        // The rename is durable only once the directory entry is
-        // flushed, on Unix; Windows journals it, and opens no folder so.
-        #[cfg(unix)]
-        std::fs::File::open(parent)?.sync_all()?;
-        Ok(merged)
+        // State still in the settings file (an earlier skwir's) moves out.
+        if splits {
+            for key in &state_keys {
+                if Self::remove(&mut saved, key).is_some() {
+                    moved.insert(key.clone());
+                }
+            }
+        }
+        let mut state = None;
+        if let Some(path) = &self.state_path {
+            // Its own file: one that is no TOML is started over.
+            let disk = Self::on_disk(path).unwrap_or_default();
+            let mut kept = toml::Table::new();
+            for key in &moved {
+                if let Some(value) = Self::lookup(values, key) {
+                    Self::insert(&mut kept, key, value.clone())?;
+                }
+            }
+            let merged = Self::overlay(disk.clone(), &kept, &moved)?;
+            if merged != disk {
+                Self::write_whole(path, &merged)?;
+            }
+            state = Some(merged);
+        }
+        if let (Some(path), Some(disk)) = (&self.path, disk) {
+            // Only what the settings say changed must be written: state
+            // left in a file that cannot be written stays there, unread.
+            let asked = Self::overlay(disk.clone(), values, &settings)? != disk;
+            if saved != disk && (asked || !Self::is_read_only(path)) {
+                Self::write_whole(path, &saved)?;
+            }
+        }
+        if let Some(state) = state {
+            Self::merge_into(&mut saved, state);
+        }
+        Ok(saved)
     }
 
     /// A transaction: failed validation or persistence leaves live values intact.
@@ -1205,13 +1580,24 @@ impl Settings {
             }
         };
         let values = self.values.read().clone();
-        let merged = match Self::overlay(disk, &values, &pending) {
+        let mut merged = match Self::overlay(disk, &values, &pending) {
             Ok(merged) => merged,
             Err(error) => {
                 tracing::warn!("the settings file cannot take this window's: {error:#}");
                 return None;
             }
         };
+        // The state is the state file's, not the settings file's.
+        if self.state_path.is_some() {
+            for key in self.state_keys.read().iter() {
+                Self::remove(&mut merged, key);
+                if let Some(value) = Self::lookup(&values, key) {
+                    // A parent that is not a table is refused, and the
+                    // value stays out: what the settings file says wins.
+                    let _ = Self::insert(&mut merged, key, value.clone());
+                }
+            }
+        }
         if merged == values {
             return Some(Vec::new());
         }
@@ -1251,7 +1637,29 @@ impl Settings {
     pub fn save(&self) -> anyhow::Result<()> {
         let mut pending = self.writer.lock();
         let values = self.values.read().clone();
-        let saved = self.persist(&values, &pending)?;
+        let saved = match self.persist(&values, &pending) {
+            Ok(saved) => saved,
+            // A change a read-only file cannot take is undone, once: the
+            // settings are what the file says (the state was saved first).
+            Err(error) if self.read_only() => {
+                pending.clear();
+                if let Some(path) = &self.path
+                    && let Ok(disk) = Self::on_disk(path)
+                {
+                    let mut back = disk;
+                    for key in self.state_keys.read().iter() {
+                        Self::remove(&mut back, key);
+                        if let Some(value) = Self::lookup(&values, key) {
+                            let _ = Self::insert(&mut back, key, value.clone());
+                        }
+                    }
+                    *self.values.write() = back;
+                    self.bump();
+                }
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
         pending.clear();
         if saved != values {
             *self.values.write() = saved;

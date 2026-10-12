@@ -245,6 +245,7 @@ class Window:
             FONTCONFIG_FILE=str(self.root / "fonts.conf"),
             XDG_CONFIG_HOME=str(self.root / "config"),
             XDG_CACHE_HOME=str(self.root / "cache"),
+            XDG_STATE_HOME=str(self.root / "state"),
             XDG_DATA_HOME=str(self.root / "data"),
             XDG_DATA_DIRS=":".join(data_dirs),
             XDG_RUNTIME_DIR=str(self.root / "rt"),

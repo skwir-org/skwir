@@ -136,9 +136,12 @@ LibreOffice and bubblewrap remain the host's ([ADR-052](docs/adr/052-portable-ap
 
 **Nix and Home Manager**: the flake builds skwir with its helpers
 (`nix build github:skwir-org/skwir`) and has an overlay. Its Home Manager
-module installs skwir and merges the settings you declare into the file skwir
-writes too, at each activation; a running skwir takes them in
-([ADR-055](docs/adr/055-the-settings-file-is-shared.md)):
+module installs skwir and writes the settings you declare, checked by skwir
+while the configuration builds: linked read-only, or with `mutableSettings`
+merged into the writable file at each activation, so skwir's Settings can
+change the rest. A running skwir takes them in
+([ADR-055](docs/adr/055-the-settings-file-is-shared.md),
+[ADR-056](docs/adr/056-the-window-s-state-is-not-a-setting.md)):
 
 ```nix
 imports = [ inputs.skwir.homeManagerModules.default ];
@@ -151,7 +154,7 @@ programs.skwir = {
 };
 ```
 
-It needs a recent Home Manager, one with mutable settings.
+`mutableSettings` needs a recent Home Manager, one with mutable settings.
 
 **From source**, with Rust 1.96 or later and the libraries `flake.nix` lists
 (the Nix flake has everything):

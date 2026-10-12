@@ -60,6 +60,7 @@ class Window:
             VK_ICD_FILENAMES=self.args.icd,
             XDG_CONFIG_HOME=str(self.root / "config"),
             XDG_CACHE_HOME=str(self.root / "cache"),
+            XDG_STATE_HOME=str(self.root / "state"),
             XDG_DATA_HOME=str(self.root / "data"),
             XDG_RUNTIME_DIR=str(self.runtime),
         )

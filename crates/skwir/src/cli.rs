@@ -134,6 +134,11 @@ fn without_window(
             app.plugins.add(plugin, &app);
         }
     }
+    // The window's own settings (how it looks, how it reads, its state),
+    // declared as the window declares them: then a script sets or checks
+    // them with no window open.
+    skwir_ui::settings::declare(&app);
+    skwir_ui::session::declare(&app);
     let invocation = Invocation {
         name: name.into(),
         args: Value::Object(arguments),

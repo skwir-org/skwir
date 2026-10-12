@@ -694,3 +694,215 @@ fn a_running_skwir_follows_its_settings_file() {
     std::fs::rename(&candidate, &path).unwrap();
     until(&|| !app.plugins.is_enabled("sample"));
 }
+
+fn state_spec(key: &str) -> SettingSpec {
+    SettingSpec::state(key, "state", toml::Value::Table(toml::Table::new()))
+}
+
+fn table(path: &std::path::Path) -> toml::Table {
+    std::fs::read_to_string(path).unwrap().parse().unwrap()
+}
+
+/// What skwir keeps of the window goes to the state file (ADR-056); one
+/// still in the settings file, where an earlier skwir kept it, moves out at
+/// the next save.
+#[test]
+fn the_window_s_state_is_kept_apart_from_the_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, state) = (
+        dir.path().join("settings.toml"),
+        dir.path().join("state.toml"),
+    );
+    std::fs::write(
+        &path,
+        "[ui]\ntheme = 'dark'\n[ui.session]\npanes = 2\n[core]\nlast_tabs = { count = 1 }\n",
+    )
+    .unwrap();
+    let settings = Settings::load(&path).with_state(&state);
+    settings.declare(state_spec("ui.session"));
+    settings.declare(state_spec("core.last_tabs"));
+    assert_eq!(
+        settings.get::<i64>("ui.session.panes"),
+        Some(2),
+        "read where it was"
+    );
+    let mut session = toml::Table::new();
+    session.insert("panes".into(), toml::Value::Integer(3));
+    settings.set("ui.session", toml::Value::Table(session));
+    settings.save().unwrap();
+    let kept = table(&path);
+    assert_eq!(kept["ui"]["theme"].as_str(), Some("dark"));
+    assert!(!kept["ui"].as_table().unwrap().contains_key("session"));
+    assert!(
+        !kept.contains_key("core"),
+        "moved out, and its table with it"
+    );
+    let saved = table(&state);
+    assert_eq!(saved["ui"]["session"]["panes"].as_integer(), Some(3));
+    assert_eq!(saved["core"]["last_tabs"]["count"].as_integer(), Some(1));
+    // Read again, each from its file.
+    let again = Settings::load(&path).with_state(&state);
+    assert_eq!(again.get::<i64>("ui.session.panes"), Some(3));
+    assert_eq!(again.get::<String>("ui.theme").as_deref(), Some("dark"));
+}
+
+/// A settings file linked from elsewhere (the user's own configuration)
+/// is written where the link leads, and stays a link.
+#[cfg(unix)]
+#[test]
+fn a_linked_settings_file_is_written_where_it_leads() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("dotfiles").join("skwir.toml");
+    std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+    std::fs::write(&real, "[ui]\ntheme = 'dark'\n").unwrap();
+    let path = dir.path().join("settings.toml");
+    std::os::unix::fs::symlink(&real, &path).unwrap();
+    let settings = Settings::load(&path);
+    settings.set("ui.theme", toml::Value::String("light".into()));
+    settings.save().unwrap();
+    assert!(std::fs::symlink_metadata(&path).unwrap().is_symlink());
+    assert_eq!(table(&real)["ui"]["theme"].as_str(), Some("light"));
+}
+
+/// A settings file that cannot be written (Home Manager's link into the
+/// store): the window's state is still saved, and a change of a setting
+/// says the settings are read-only, the file untouched.
+#[cfg(unix)]
+#[test]
+fn read_only_settings_still_keep_the_window_s_state() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("store").join("settings.toml");
+    std::fs::create_dir_all(store.parent().unwrap()).unwrap();
+    std::fs::write(&store, "[ui]\ntheme = 'dark'\n").unwrap();
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let path = dir.path().join("settings.toml");
+    std::os::unix::fs::symlink(&store, &path).unwrap();
+    let state = dir.path().join("state.toml");
+    let settings = Settings::load(&path).with_state(&state);
+    settings.declare(state_spec("ui.session"));
+    assert!(settings.read_only());
+    let mut session = toml::Table::new();
+    session.insert("panes".into(), toml::Value::Integer(2));
+    settings.set("ui.session", toml::Value::Table(session));
+    settings.save().unwrap();
+    assert_eq!(
+        table(&state)["ui"]["session"]["panes"].as_integer(),
+        Some(2)
+    );
+    settings.set("ui.theme", toml::Value::String("light".into()));
+    let error = settings.save().unwrap_err().to_string();
+    assert!(error.contains("cannot be written"), "{error}");
+    assert!(std::fs::symlink_metadata(&path).unwrap().is_symlink());
+    assert_eq!(table(&store)["ui"]["theme"].as_str(), Some("dark"));
+    assert_eq!(
+        settings.get::<String>("ui.theme").as_deref(),
+        Some("dark"),
+        "undone: what the file says"
+    );
+    // The state is saved still, the change refused not asked again.
+    let mut session = toml::Table::new();
+    session.insert("panes".into(), toml::Value::Integer(1));
+    settings.set("ui.session", toml::Value::Table(session));
+    settings.save().unwrap();
+    assert_eq!(
+        table(&state)["ui"]["session"]["panes"].as_integer(),
+        Some(1)
+    );
+    assert_eq!(settings.get::<i64>("ui.session.panes"), Some(1));
+    // Writable again for the temporary folder's removal.
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o644)).unwrap();
+}
+
+/// Settings read from a file are checked as the dialog checks what is
+/// typed: their kind, then their choices and ranges; a key no setting has
+/// under an owner that declares some is a problem, one under an owner
+/// nothing declares only a note; a plugin's `enabled`, against the plugins.
+#[test]
+fn settings_from_a_file_are_checked_as_the_dialog_checks_them() {
+    let (_tmp, app, _plugin) = fixture(None);
+    let table: toml::Table = r#"
+        [sample]
+        engine = 'third'
+        budget = 5000
+        enabled = 'yes'
+        engin = 'first'
+        path = "/example/reader's library.so"
+        [core]
+        startup = 'last'
+        [elsewhere]
+        thing = 1
+        [plugins.sample]
+        enabled = 'no'
+        [plugins.ghost]
+        enabled = true
+    "#
+    .parse()
+    .unwrap();
+    // Choices found where skwir runs (a user's themes): another value is
+    // noted, never refused.
+    app.settings.declare(
+        SettingSpec::choice(
+            "sample.theme",
+            "Theme",
+            "theme",
+            "default",
+            &[("default", "Default")],
+        )
+        .more_choices("the themes you added"),
+    );
+    let mut table = table;
+    table["sample"]
+        .as_table_mut()
+        .unwrap()
+        .insert("theme".into(), toml::Value::String("Mine".into()));
+    let plugins = vec!["sample".to_owned()];
+    let checked = app.settings.check(&table, &plugins);
+    let keys: Vec<&str> = checked.problems.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "plugins.sample.enabled",
+            "sample.budget",
+            "sample.enabled",
+            "sample.engin",
+            "sample.engine",
+        ]
+    );
+    let said = |key: &str| {
+        checked
+            .problems
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, problem)| problem.clone())
+            .unwrap()
+    };
+    assert_eq!(said("sample.engine"), "choose one of first, second");
+    assert_eq!(said("sample.budget"), "enter a whole number from 4 to 4096");
+    assert_eq!(said("sample.enabled"), "expected true or false, not text");
+    assert_eq!(said("sample.engin"), "no such setting");
+    let noted: Vec<&str> = checked.notes.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(
+        noted,
+        ["elsewhere", "plugins.ghost", "sample.theme"],
+        "an owner noted once"
+    );
+
+    // Through the command, as agents and scripts ask: what is wrong fails.
+    let asked = app.dispatch(&Invocation::with_args(
+        "settings.check",
+        &serde_json::json!({ "settings": { "sample": { "engine": "third" } } }),
+    ));
+    let error = asked.err().unwrap().to_string();
+    assert!(error.contains("sample.engine: choose one of"), "{error}");
+    let Outcome::Value(fine) = app
+        .dispatch(&Invocation::with_args(
+            "settings.check",
+            &serde_json::json!({ "settings": { "sample": { "engine": "second" } } }),
+        ))
+        .unwrap()
+    else {
+        panic!("expected a value")
+    };
+    assert_eq!(fine["problems"], serde_json::json!([]));
+}

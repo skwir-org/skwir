@@ -55,6 +55,19 @@ The namespace is the page, and a preference goes where its subject is:
   dialog.
 - A file that is no TOML is never written over: the save fails and says
   why, and nothing is taken in from it until it is fixed.
+- **State is not a setting (ADR-056).** What skwir keeps of the window as
+  it was left (its layout, tabs, last folder, hints shown) is declared
+  `SettingSpec::state` and kept in `state.toml` in the state folder
+  (`folders::state`), never in the settings file. A preference, or data
+  the user may want to declare (saved searches, pinned tags), stays a
+  setting.
+- The settings file may be read-only (Home Manager's link): a save writes
+  through a link to where it leads, says when it cannot, and undoes the
+  change; the dialog says so above every page. A change of state never
+  touches the settings file.
+- `settings.check` judges a file or a table as the dialog judges what is
+  typed (`SettingSpec::check`); a new kind of setting is checked there
+  too. Home Manager's module runs it while the configuration builds.
 
 ## The dialog
 

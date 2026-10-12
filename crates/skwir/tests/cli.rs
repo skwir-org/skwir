@@ -116,3 +116,48 @@ fn skwir_says_its_version_and_how_to_use_it_without_opening_a_window() {
         "{help}"
     );
 }
+
+/// A settings file checked with no window open, as Home Manager's module
+/// checks the settings it declares: the window's own settings are known
+/// there too; a value a setting does not take fails, saying which; a key
+/// nothing here declares is noted.
+#[test]
+fn settings_are_checked_with_no_window_open() {
+    let tmp = home_tempdir();
+    let runtime = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("it's settings.toml");
+    std::fs::write(
+        &file,
+        "[ui]\ntheme = 'dark'\n[core]\nstartup = 'last'\n[elsewhere]\nthing = 1\n",
+    )
+    .unwrap();
+    let args = json!({ "file": file }).to_string();
+    let checked = printed(&skwir_cmd(runtime.path(), &["settings.check", &args]));
+    assert_eq!(checked["problems"], json!([]), "{checked}");
+    assert_eq!(checked["notes"][0][0], json!("elsewhere"), "{checked}");
+
+    // Themes found where skwir runs (bat's, the installed icons) are
+    // noted, not refused: none are there while a configuration builds.
+    std::fs::write(
+        &file,
+        "[ui]\nicon_theme = 'Some Icons'\n[reading]\ncode_light = 'My Theme'\n",
+    )
+    .unwrap();
+    let checked = printed(&skwir_cmd(runtime.path(), &["settings.check", &args]));
+    assert_eq!(checked["problems"], json!([]), "{checked}");
+    let noted: Vec<&str> = checked["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|note| note[0].as_str())
+        .collect();
+    assert_eq!(noted, ["reading.code_light", "ui.icon_theme"], "{checked}");
+
+    std::fs::write(&file, "[ui]\ntheme = 'sepia'\n[core]\nstartp = 'last'\n").unwrap();
+    let wrong = said(&skwir_cmd(runtime.path(), &["settings.check", &args]));
+    assert!(wrong.contains("core.startp: no such setting"), "{wrong}");
+    assert!(
+        wrong.contains("ui.theme: choose one of auto, light, dark"),
+        "{wrong}"
+    );
+}

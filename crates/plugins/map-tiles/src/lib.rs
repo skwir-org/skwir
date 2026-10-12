@@ -79,7 +79,8 @@ fn declare_source(app: &App) {
         "What maps are drawn on. The outline of the land needs no network. OpenStreetMap and other servers download the tiles you look at, which tells them where you look",
         OUTLINE,
         &choices,
-    ));
+    )
+    .more_choices("the tile servers you add"));
 }
 
 /// The single server of an earlier version (`map-tiles.url`) becomes the

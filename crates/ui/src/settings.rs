@@ -127,6 +127,7 @@ pub fn icon_theme_spec(
         ICON_THEME_AUTO,
         &pairs,
     )
+    .more_choices("the icon themes installed")
 }
 
 /// A look's code theme setting: skwir's own colors, bat's themes of that
@@ -156,6 +157,7 @@ pub fn code_theme_spec(
         crate::code_preview::DEFAULT,
         &pairs,
     )
+    .more_choices("the themes you added to bat")
     .section("Code")
 }
 
@@ -172,7 +174,10 @@ pub(crate) fn list_code_themes(app: &Arc<App>) {
             let user = crate::code_preview::user_themes(true);
             let Some(app) = weak.upgrade() else { return };
             for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
-                let chosen = app.settings.get::<String>(key).unwrap_or_default();
+                let chosen = app
+                    .settings
+                    .get::<String>(key)
+                    .unwrap_or_else(|| crate::code_preview::DEFAULT.to_owned());
                 app.settings
                     .declare(code_theme_spec(dark, &chosen, Some(&user)));
             }
@@ -333,10 +338,14 @@ pub fn declare(app: &App) {
         .section("Code"),
     );
     for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
-        let chosen = app.settings.get::<String>(key).unwrap_or_default();
+        // Nothing stored and nothing declared yet: the default is chosen.
+        let chosen = app
+            .settings
+            .get::<String>(key)
+            .unwrap_or_else(|| crate::code_preview::DEFAULT.to_owned());
         app.settings.declare(code_theme_spec(dark, &chosen, None));
     }
-    app.settings.declare(SettingSpec::data(
+    app.settings.declare(SettingSpec::state(
         crate::shortcuts::HINTS_KEY,
         "Commands whose shortcut hint was already shown",
         toml::Value::Array(Vec::new()),
@@ -614,6 +623,9 @@ pub struct SettingsView {
     flash_generation: u64,
     settings_revision: u64,
     plugins_revision: u64,
+    /// The settings file cannot be written (Home Manager's link): read
+    /// when the dialog opens and at each wake, never while drawing.
+    pub(crate) read_only: bool,
     /// Plugins whose toggle was requested and has not been observed yet.
     pub(crate) toggling: BTreeMap<String, bool>,
     pub(crate) reset_armed: bool,
@@ -679,6 +691,7 @@ impl SettingsView {
             plugins: app.plugins.list(),
             settings_revision: app.settings.revision(),
             plugins_revision: app.plugins.revision(),
+            read_only: app.settings.read_only(),
             key_words: key_words(&app, &key_hints),
             key_rows: std::cell::RefCell::default(),
             key_list: gpui::UniformListScrollHandle::new(),
@@ -927,6 +940,11 @@ impl SettingsView {
                 self.settings_revision = u64::MAX;
                 changed = true;
             }
+        }
+        let read_only = self.app.settings.read_only();
+        if read_only != self.read_only {
+            self.read_only = read_only;
+            changed = true;
         }
         let (settings, plugins) = (self.app.settings.revision(), self.app.plugins.revision());
         if plugins != self.plugins_revision {

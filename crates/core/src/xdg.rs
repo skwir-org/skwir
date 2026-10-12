@@ -27,6 +27,12 @@ fn home(name: &str, fallback: &str) -> Option<PathBuf> {
         .or_else(|| crate::os_path::home().map(|h| h.join(fallback)))
 }
 
+/// `$XDG_STATE_HOME`, what a program keeps between runs that is neither
+/// configuration nor data worth carrying elsewhere (`~/.local/state`).
+pub fn state_home() -> Option<PathBuf> {
+    home("XDG_STATE_HOME", ".local/state")
+}
+
 /// `$XDG_DATA_HOME`, the user's data (`~/.local/share`).
 pub fn data_home() -> Option<PathBuf> {
     home("XDG_DATA_HOME", ".local/share")

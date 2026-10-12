@@ -643,7 +643,7 @@ fn tab_position(len: usize, from: usize, index: Option<i64>, delta: Option<i64>)
 
 pub(crate) fn register(app: &App) {
     let c = &app.commands;
-    app.settings.declare(SettingSpec::data(
+    app.settings.declare(SettingSpec::state(
         LAST_TABS,
         "The tabs shown when the window was last closed",
         toml::Value::Table(toml::map::Map::new()),

@@ -92,6 +92,7 @@ def start(binary, folder, xdg, idle, log):
     env = dict(os.environ, RUST_LOG="skwir_ui=info", NO_COLOR="1",
                XDG_CONFIG_HOME=str(xdg / "config"),
                XDG_CACHE_HOME=str(xdg / "cache"),
+               XDG_STATE_HOME=str(xdg / "state"),
                XDG_DATA_HOME=str(xdg / "data"))
     with open(log, "w") as out:
         app = subprocess.Popen([binary, str(folder)], env=env,
