@@ -36,22 +36,25 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   4, 5a and 6 pass their gates. Maps and Notes everywhere are built, as
   is much that no phase planned
   ([Built beyond the plan](#built-beyond-the-plan)).
-- **Next:** finish [Release 0.1](#release-01-linux): confirm the history
-  scan, date the release metadata, commit/tag, build locally and review
-  the uploaded GitHub draft (ADR-053).
+- **Next:** finish [Release 0.1](#release-01-linux): date the release
+  metadata, commit and tag, build locally (`just release-build`), review
+  and publish the GitHub draft, then the AUR (ADR-053).
   Then skwird's steps (ADR-050) and Phase 7, which the user put after
   the release (2026-10-07).
 - **Blocked:** Phase 5b needs a Mac and a Windows machine
   (`docs/HELP-WANTED.md`). The user reports hosted CI is too slow;
   routine CI is now reduced to essentials, with full checks and package
   builds retained as manual fallbacks. Remote runs were not inspected.
-- **Budgets:** idle own share 94.8 MiB of 100 and first frame median
-  145.2 ms of 150 (session display, 2026-10-11); `just bench-check`
+- **Budgets:** idle own share 95.1 MiB of 100 and first frame median
+  140.0 ms of 150 (session display, 2026-10-12); `just bench-check`
   meets all 44 budgets (2026-10-11, load average 3 to 5.5).
-- **Latest work (2026-10-07 to 10-10):** drops that ask, plans that
-  pause, copies at a USB drive's pace, hard links as entries (ADR-049),
-  archives extracted (ADR-048), then about eighty commits removing work
-  done while nothing changed.
+- **Latest work (2026-10-11 to 10-12):** names already taken asked
+  about once, links included (ADR-054); the settings file shared and
+  followed, the window's state and the user's data in files of their own
+  so it may be read-only (ADR-055 to 057), with a Home Manager module;
+  Ubuntu's own package. Before (2026-10-07 to 10-10): drops that ask,
+  plans that pause, copies at a USB drive's pace, hard links as entries
+  (ADR-049), archives extracted (ADR-048).
 
 | Phase or plan | State | Planned size |
 |---|---|---|
@@ -531,7 +534,8 @@ dates, measurements and what is left.
   fires only on the element it went down on). The chips became pills in
   the address field on 2026-09-29.
 - **Saved searches** (2026-09-25): kept in Skwir's settings
-  (`query.saved`), under Searches. Rejected: the GTK bookmarks file
+  (`query.saved`), under Searches; since 2026-10-12 in its data file
+  (ADR-057). Rejected: the GTK bookmarks file
   (every GTK file chooser would show them as broken rows) and one list
   mixing both (an order file of our own over two stores). The core
   `keep` command hands a location to its scheme's `registry::Keeper`.
@@ -655,8 +659,10 @@ agents and scripts say beforehand (`on_conflict`). The answers are the
 plan's steps, checked and undone as any. On the way, undoing a trash
 restores its own item on Linux (it names its record), so a replace
 undone brings back what it replaced. Left: on Windows undoing a trash
-restores the latest item from its path (PORTING.md); `link` still
-refuses a name taken.
+restores the latest item from its path (PORTING.md). Then links: Link
+Here and `link` onto a name taken ask as a copy does, a file's choices
+for a link to a folder too (never merged); kept both, a link is named
+`name (link).ext`; one into its own folder is kept beside, unasked.
 
 The settings file is shared (ADR-055): a save writes the keys this
 process changed over the file as it stands, and what changes there
@@ -674,6 +680,18 @@ cannot, the dialog says so. `settings.check` checks a file against what
 skwir declares, with no window too; the Home Manager module runs it while
 the configuration builds, and links the settings read-only by default
 (`mutableSettings` merges them).
+
+What the user makes in skwir is not a setting either (ADR-057): saved
+searches, pinned tags, tags' colours and exclusive categories are kept in
+`$XDG_DATA_HOME/skwir/data.toml`, so a read-only settings file no longer
+stops them being saved. The data file is followed as the settings are,
+set aside when it is no TOML, never written over; `settings.check` says a
+key kept apart is no setting to declare. Checked in a window on Xvfb
+with a read-only linked settings file: a search saved and a tag pinned by
+`skwir cmd` reached the data file, showed in the sidebar and came back
+after a restart, the settings file untouched; Link Here onto a taken
+name asked ("Nothing is linked until you choose"), kept both as
+`plan (link).txt`, and Undo took it back.
 
 ---
 
@@ -1255,8 +1273,11 @@ Phase 7.
    in `vendor/patches/0001`'s `diff` lines (the patch recipe now drops
    them). Both stay in history until the one rewrite the user chose
    (2026-10-07), just before the first push, which also gives every
-   commit the author address chosen for the project (2026-10-10).
-   **Left:** the rewrite, then the scan again.
+   commit the author address chosen for the project (2026-10-10). Done
+   2026-10-11: 469 commits rewritten (the address, the two strings), the
+   scan again clean, then the first push. The commits made since are
+   searched before each push (2026-10-12: nine, their diffs and messages,
+   for home paths, mounts and addresses; none).
 2. **Panics.** Done 2026-10-07. Counted by clippy's restriction lints,
    tests left out: 4 `unwrap`, 77 `expect`, 5 `unreachable!`, 748
    indexing or slicing, 150 string slices. The `expect`s state what the
@@ -1364,6 +1385,7 @@ Phase 7.
      | 2026-10-10 | `just bench-check` | all 42 budgets (load average 4.6); a first run under load 8–20 missed three of `images10k`'s, as did the build before the rename, alternated with it |
      | 2026-10-10 | `just idle-pss`, Xvfb, software Vulkan | own share 76.0 MiB (median of 3); idle CPU 0.0 % |
      | 2026-10-11 | `just idle-pss`, the session's display | own share 94.8 MiB (median of 3; 91.1 on 2026-10-07; GPU buffers 19.6 of it); first frame 136–151 ms, median 145.2, within 150 by ADR-000's rule (the least of the runs; one of three above); idle CPU 0.2–0.4 % |
+     | 2026-10-12 | `just idle-pss`, the session's display, after the settings follow their files and links ask | own share 95.1 MiB (median of 3; GPU buffers 19.6 of it); first frame 131–143 ms, median 140.0; idle CPU 0.4–0.6 % |
 
    **Left** (not recorded as checked in a window): F5 in Usage,
    Alt+click on a tag's pill, an office document converted, a missing
@@ -1434,11 +1456,10 @@ Phase 7.
     retries and no force push. Validation: all 19 release-tool tests
     pass, including real Nix makepkg against a local AUR stand-in; the
     actual three-package SRCINFO and macOS shell evaluation also pass.
-    Dependency checks pass. The benchmark passes 43 of 44 budgets;
-    `images10k.stream_complete_us` measures 12,903 us against 12,000 us.
-    The full release gate was attempted but stopped at a Clippy
-    `items_after_statements` error in the concurrent, uncommitted
-    `crates/core/tests/clashes.rs` changes. No package has been published
+    Dependency checks pass. A first gate that day missed one budget under
+    load (`images10k.stream_complete_us`, 12,903 µs of 12,000) and stopped
+    at a lint in work then uncommitted; the full gate passed later the
+    same day (2026-10-12, all 44 budgets). No package has been published
     by this change. See [Releasing](RELEASING.md). The packages, built by `try.sh` in
     fresh Debian 13, Fedora 44 and Arch roots (2026-10-10), install alone
     and with the others,
@@ -1468,17 +1489,38 @@ Phase 7.
     change; its output isolation is tested with synthetic packages.
     GitHub CLI authentication and repository write access are verified;
     no real release upload has been attempted.
-    **Left:** confirm the history scan, date and commit the release,
-    create/push its tag, run the local release build and review/publish
-    its draft. Not done: AUR publication and Ubuntu's own package build.
+    **Ubuntu's own packages** (2026-10-12): built in an Ubuntu 24.04 root
+    by `try.sh ubuntu`, their revision naming the release
+    (`skwir_0.1.0-1ubuntu24.04_amd64.deb`, apart from Debian's in a
+    bundle), depending on Ubuntu's library packages; `skwir` installed
+    alone, then the others, every helper answering `--probe`. Ubuntu's
+    fontconfig gives a folder to the `staff` group, which a one-user
+    namespace lacks: dpkg now runs under fakeroot in the Debian and Ubuntu
+    roots (`linux/rootless-apt.sh`), as the AppImage's do. `release-build`
+    builds them with the others; the manual `packages` workflow too.
+    **The AUR** (2026-10-12): `skwir`, `skwir-mermaid` and `skwir-mupdf`
+    are free names there; the PKGBUILD names its maintainer and
+    `.SRCINFO` is current. Publication follows the pushed tag
+    (`aur-prepare`, `aur-publish`), with the maintainer's AUR SSH key.
+    **Before tagging** (2026-10-12, this tree): `just release-check`
+    passes (lint with the Windows and macOS cross checks, deny, 1,514
+    tests, smoke, both readers, all 44 budgets, the release tools; their
+    19 tests in the current Nix shell, real makepkg included); every
+    package built and checked as `release-build` makes them: Debian,
+    Ubuntu, Fedora and Arch in their roots (`skwir` alone, then the
+    others), the AppImage in its runtime-only root (both readers,
+    playback, the window's commands, the sandboxed archive helper); the
+    release metadata dated 2026-10-12 and agreeing (`release-metadata`).
+    **Left:** commit the release, create and push its tag, run the local
+    release build, review and publish its draft, then the AUR.
 
 **Done when:** every step above is done or says why not, the packages
-built by the local gate (or manual CI) install and run on Debian, Fedora
-and Arch, and the history scan finds nothing personal.
+built by the local gate (or manual CI) install and run on Debian, Ubuntu,
+Fedora and Arch, and the history scan finds nothing personal.
 
 **Status:** in progress: steps 1 to 9 done or say what is left; step
-10 waits for the final release metadata, tagged local build and publication;
-the history scan's completion has not been reverified here.
+10 waits for the final release metadata, tagged local build and
+publication.
 
 ---
 

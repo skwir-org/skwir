@@ -30,84 +30,33 @@ has never run on either system: see [how to help](docs/HELP-WANTED.md).
 
 ## Features
 
-**Browsing**
-
-- Views: list (columns chosen from its header), grid with thumbnails,
-  columns, tree, and a board of a folder's folders as card columns. Usage
-  draws what takes the room in a folder; Timeline charts when files changed;
-  Map places pictures, tracks and flight plans where they were taken or go.
-- Two panes (side by side or stacked) and tabs. Folders stream in as they
-  are read, however many entries they hold.
-- A sidebar of places you arrange: your folders, bookmarks, saved searches,
-  tags, Recent, the Trash, and drives, which mount and unlock (LUKS) from it.
-- Jump to folders you used before (zoxide's list and the desktop's recent
-  files); type a path or filter the folder from the address bar; a terminal
-  panel that follows the folder shown.
-
-**Searching**
-
-- A query language: names, extensions, kinds and MIME types, sizes, dates
-  (in your time zone and week), tags, ratings, comments, file contents (text
-  or a regex) and positions, combined with `OR`, `NOT` and parentheses.
-- A search is a location: Back returns to it, it opens in a tab, and it can
-  be kept in the sidebar. Baloo and plocate are used to go faster where they
-  run; the files themselves are always checked.
-
-**Changing files**
-
-- Copy, move, link, rename, trash and delete, from keys, menus or drag and
-  drop (which asks whether to move, copy or link). Bulk rename with a preview
-  of every name; a folder's names edited as text in `$EDITOR`.
-- Every change is a plan of steps with inverses: Undo and Redo cover them all,
-  and changes to many files, or proposed by a plugin or an agent, are reviewed
-  before they run.
-- Long operations can be paused and cancelled. Copies onto USB drives go at
-  the drive's pace; a copy short of room asks first; quitting mid-copy asks,
-  then removes the partial files; hard links stay hard links.
-- The Trash is a place: restore a file where it was, or wherever it is
-  dropped. Archives are browsed and extracted.
-
-**Tags, ratings and comments**
-
-- Kept on the files, where other applications read them: extended attributes
-  (Dolphin's keys), XMP sidecars (darktable, Lightroom), a Mac's Finder tags
-  and `._` files, TagSpaces' sidecars, tags in file names. Stores that
-  disagree are merged; copies keep everything.
-- Tags can have categories (`Places/France/Paris`) and are browsed as folders
-  (`tags:/`); a category can hold one tag at a time, like a field.
-
-**Previews**
-
-- Text and code highlighted with bat's grammars; Markdown and HTML in a
-  reading mode; CSV, JSON Lines, Excel and SQLite tables; JSON, YAML and TOML
-  folded.
-- PDFs in a reader (PDFium, Poppler or MuPDF) with search, contents and text
-  selection; Word and OpenDocument files, EPUB books, comics, e-mail and
-  Jupyter notebooks.
-- Pictures (HEIC, AVIF, RAW and more through the desktop's thumbnailers or
-  ImageMagick), and an audio and video player that can keep playing while you
-  browse, steered by the desktop's media keys.
-- Fonts, 3D models, CAD drawings and G-code, KiCad boards and Gerber files,
-  GPS tracks on a map, files inside archives, and any file's bytes.
-  [Previews](docs/previews.md) lists them all.
-
-**Design**
-
-- No daemon and no database: thumbnails, icons, the MIME database, bookmarks
-  and recent files are the desktop's, and Skwir's one cache can be deleted at
-  any time. Converters run sandboxed (bubblewrap).
-- Every action is a command with a JSON schema, shared by the keys, the
-  palette, the command line and AI agents ([Scripts and
-  agents](#scripts-and-agents)).
-- Everything beyond a small core is a plugin that can be turned off; plugins
-  from outside Skwir run as WebAssembly modules or isolated programs
-  ([below](#plugins-from-outside-skwir)).
+- **Fast on any folder**: entries stream in as they are read, however many;
+  list, grid, columns, tree and board views; two panes and tabs.
+- **Searches are places**: names, kinds, sizes, dates, tags, ratings and
+  contents in one query, kept in the sidebar if you like.
+- **Tags, ratings and comments** kept on the files, where Dolphin, darktable,
+  Lightroom, a Mac's Finder and TagSpaces read them.
+- **Previews of almost anything**: code, Markdown, tables, PDFs, office
+  documents, books, pictures, audio and video, fonts, 3D models, maps,
+  archives ([the list](docs/previews.md)).
+- **Every change undoable**: copies, moves and renames are plans with
+  inverses; changes to many files are reviewed first; a name already taken is
+  asked about once.
+- **Copies you can trust**: pause and cancel, a USB drive's pace, room checked
+  before starting.
+- **Views of data**: disk usage, a timeline of changes, a map of where
+  pictures were taken.
+- **Keys, scripts and agents**: every action is a command, from the palette,
+  `skwir cmd` or an MCP client, with private folders that never leave the
+  machine.
+- **Light**: no daemon, no database; the desktop's thumbnails, icons and
+  bookmarks; everything beyond a small core is a plugin you can turn off.
 
 ## Installing
 
-**Packages** for Debian and Ubuntu (`.deb`) and Fedora (`.rpm`) come with each
-release; Arch's are in the AUR. The `skwir` package holds the program and its
-PDF, archive and 3D-model helpers. The rest is optional:
+Each [release](https://github.com/skwir-org/skwir/releases) has packages for
+x86-64 Linux. `skwir` holds the program and its PDF, archive and 3D-model
+helpers; the rest is optional:
 
 | Package         | Adds                                                  |
 | --------------- | ----------------------------------------------------- |
@@ -116,32 +65,65 @@ PDF, archive and 3D-model helpers. The rest is optional:
 | `skwir-mermaid` | Mermaid diagrams in Markdown                          |
 | `skwir-mupdf`   | PDFs and books laid out in pages through MuPDF (AGPL) |
 
-On Arch, `skwir` includes the player and the Poppler reader, with their
-libraries as optional dependencies.
+Some previews use programs you may already have, such as LibreOffice or
+ffmpeg: [Previews](docs/previews.md) says which.
 
-**AppImage**, built on x86-64 Linux (NixOS included):
+### Debian 13 and Ubuntu 24.04
+
+Download the `.deb` files for your system from the release: Debian's end in
+`-1_amd64.deb`, Ubuntu's in `-1ubuntu24.04_amd64.deb`. Then, in the folder
+holding them:
 
 ```sh
-nix develop --command just package-appimage
+sudo apt install ./skwir_0.1.0-1_amd64.deb             # Ubuntu: ./skwir_0.1.0-1ubuntu24.04_amd64.deb
+sudo apt install ./skwir-media_0.1.0-1_amd64.deb       # optional, and so on
 ```
 
-The verified `skwir-<version>-x86_64.AppImage` and its checksum land in
-`target/package/appimage`.
-The build uses an Ubuntu 22.04 root of its own and keeps its cache in
-`target/appimage`; the first build downloads its toolchain and libraries.
-On NixOS, run the resulting image through `appimage-run`. On other desktops,
-make it executable and run it directly.
-The image includes the optional readers and player; system tools such as
-LibreOffice and bubblewrap remain the host's ([ADR-052](docs/adr/052-portable-appimage.md)).
+### Fedora 44
 
-**Nix and Home Manager**: the flake builds skwir with its helpers
-(`nix build github:skwir-org/skwir`) and has an overlay. Its Home Manager
-module installs skwir and writes the settings you declare, checked by skwir
-while the configuration builds: linked read-only, or with `mutableSettings`
-merged into the writable file at each activation, so skwir's Settings can
-change the rest. A running skwir takes them in
-([ADR-055](docs/adr/055-the-settings-file-is-shared.md),
-[ADR-056](docs/adr/056-the-window-s-state-is-not-a-setting.md)):
+```sh
+sudo dnf install ./skwir-0.1.0-1.x86_64.rpm
+sudo dnf install ./skwir-media-0.1.0-1.x86_64.rpm      # optional, and so on
+```
+
+### Arch Linux
+
+From the AUR, with an AUR helper or by hand:
+
+```sh
+paru -S skwir                                          # or: yay -S skwir
+git clone https://aur.archlinux.org/skwir.git && cd skwir && makepkg -si
+```
+
+Arch's `skwir` holds the player and the Poppler reader; install
+`gst-plugins-base` and `poppler-glib` to use them. `skwir-mermaid` and
+`skwir-mupdf` are packages of their own.
+
+### Any other distribution: AppImage
+
+The AppImage needs x86-64 Linux with glibc 2.35 or later, and holds the
+optional readers and the player. It was tried on Ubuntu 22.04 and 24.04 and on
+Fedora 44:
+
+```sh
+chmod +x skwir-0.1.0-x86_64.AppImage
+./skwir-0.1.0-x86_64.AppImage
+```
+
+### NixOS and Nix
+
+```sh
+nix run github:skwir-org/skwir
+```
+
+The flake has a package, an overlay and a Home Manager module. The module
+installs skwir and writes the settings you declare, checked by skwir while the
+configuration builds; they are linked read-only, or with `mutableSettings`
+merged into a writable file at each activation. Skwir keeps the window's state
+and what you make in it (saved searches, pinned tags) in files of their own, so
+both work
+([ADR-056](docs/adr/056-the-window-s-state-is-not-a-setting.md),
+[ADR-057](docs/adr/057-what-you-make-is-not-a-setting.md)):
 
 ```nix
 imports = [ inputs.skwir.homeManagerModules.default ];
@@ -154,20 +136,21 @@ programs.skwir = {
 };
 ```
 
-`mutableSettings` needs a recent Home Manager, one with mutable settings.
+`mutableSettings` needs a recent Home Manager, one with mutable settings. On
+NixOS, the AppImage runs through `appimage-run`.
 
-**From source**, with Rust 1.96 or later and the libraries `flake.nix` lists
-(the Nix flake has everything):
+### From source
 
-```
+With Rust 1.96 or later and the libraries `flake.nix` lists (the Nix flake has
+everything):
+
+```sh
 direnv allow                # or: nix develop
 just run ~/Documents        # or: cargo run --release -p skwir -- ~/Documents
 ```
 
-Maintainers can build checked Linux releases on a Nix host with
-`just release-build v<version>` and upload a GitHub draft with
-`just release-upload v<version>`. See [Releasing](docs/RELEASING.md) for
-the required clean tag, release metadata, checks and package outputs.
+Maintainers build and check the packages of a release with
+`just release-build v<version>` ([Releasing](docs/RELEASING.md)).
 
 ## First steps
 

@@ -30,7 +30,9 @@
         skwir = self.packages.${final.stdenv.hostPlatform.system}.default;
       };
     }
-    // flake-utils.lib.eachDefaultSystem (system: let
+    # Linux, and Apple's ARM Macs for macOS work (Phase 5b): nixpkgs has
+    # dropped Intel Macs.
+    // flake-utils.lib.eachSystem ["x86_64-linux" "aarch64-linux" "aarch64-darwin"] (system: let
       pkgs = import nixpkgs {
         inherit system;
         overlays = [rust-overlay.overlays.default];
