@@ -20,16 +20,17 @@
   only answers agents (the timeline's data). It offers what a command's
   forms make of it (Sort by size, Next tab).
 - **Properties** is what Details was, and the context menu's last item
-  opens it (Alt+Enter, Ctrl+I as before). Over a preview it takes the
-  room it needs, up to the whole panel. It counts what a folder holds
-  (at once when asked for, else on Count), says the room a file takes on
-  its drive, the drive itself, flags such as Immutable, and for several
-  items their kinds, total and the access they share. It changes who
-  may use them: each class's access in words, Allow running, the group,
-  or the mode as chmod takes it, a folder's contents too, undoable; a
-  script's `set_access` does the same. It names the application a file
-  opens with and changes it, and gives its SHA-256, MD5 and BLAKE3 when
-  asked (the checksums plugin), compared with one copied.
+  opens it (Alt+Enter, Ctrl+I as before); over a preview it takes the
+  room it needs. It counts what a folder holds (at once when opened, else
+  on Count), says the room a file takes on its drive, the drive, flags
+  such as Immutable, and for several items their kinds, total and shared
+  access. It names the application a file opens with, and changes it,
+  and gives its SHA-256, MD5 and BLAKE3 when asked (the checksums
+  plugin), compared with one copied.
+- **Who may use a file** changes from Properties: each class's access in
+  words, Allow running, the group, or the mode as chmod takes it, a
+  folder's contents too, undoable. Scripts and agents use `set_access`.
+  The owner never changes: skwir asks for no administrator rights.
 
 ## 0.1.0 (2026-10-13)
 
