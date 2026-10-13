@@ -14,12 +14,12 @@ use common::synthetic_png;
 fn app(root: &Path) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(root.join("state"))).unwrap();
     for plugin in [
-        Arc::new(skwir_plugin_preview_markdown::PreviewPlugin) as Arc<dyn Plugin>,
-        Arc::new(skwir_plugin_preview_tables::PreviewPlugin),
-        Arc::new(skwir_plugin_preview_structured::PreviewPlugin),
-        Arc::new(skwir_plugin_preview_email::PreviewPlugin),
-        Arc::new(skwir_plugin_preview_epub::PreviewPlugin),
-        Arc::new(skwir_plugin_preview_hex::PreviewPlugin),
+        Arc::new(skwir_plugin_markdown::PreviewPlugin) as Arc<dyn Plugin>,
+        Arc::new(skwir_plugin_tables::PreviewPlugin),
+        Arc::new(skwir_plugin_structured_data::PreviewPlugin),
+        Arc::new(skwir_plugin_email::PreviewPlugin),
+        Arc::new(skwir_plugin_epub::PreviewPlugin),
+        Arc::new(skwir_plugin_hex::PreviewPlugin),
     ] {
         app.plugins.add(plugin, &app);
     }
@@ -63,10 +63,8 @@ fn asf_media_ownership_precedes_hex_fallback_but_allows_explicit_hex() {
     let path = tmp.path().join("Synthetic container.ASF");
     std::fs::write(&path, b"synthetic container marker").unwrap();
     let app = app(tmp.path());
-    app.plugins.add(
-        Arc::new(skwir_plugin_preview_media::PreviewPlugin::default()),
-        &app,
-    );
+    app.plugins
+        .add(Arc::new(skwir_plugin_media::PreviewPlugin::default()), &app);
     // Windows Media by its name, though its bytes are no film.
     let request = request(&path);
     let default = InspectRequest::default();
@@ -77,15 +75,15 @@ fn asf_media_ownership_precedes_hex_fallback_but_allows_explicit_hex() {
             .is_none()
     );
     let explicit = InspectRequest {
-        provider: Some("preview-hex".into()),
+        provider: Some("hex".into()),
         ..InspectRequest::default()
     };
     assert!(inspect(&app, &path, &explicit).title.starts_with("Hex"));
-    assert!(app.plugins.set_enabled("preview-media", false, &app));
+    assert!(app.plugins.set_enabled("media", false, &app));
     // Nothing else takes a film; its bytes are still there to ask for.
     assert!(try_inspect(&app, &path, &default).is_none());
     assert!(inspect(&app, &path, &explicit).title.starts_with("Hex"));
-    assert!(app.plugins.set_enabled("preview-media", true, &app));
+    assert!(app.plugins.set_enabled("media", true, &app));
     assert!(
         app.previews
             .inspect(&request, &default, &CancelToken::new())
@@ -151,11 +149,11 @@ fn markdown_styles_source_and_plugin_fallback() {
     // Said as any text is: the lit Source says it is the source.
     assert_eq!(source.title, "12 lines");
     assert!(source.source_available, "and switches back");
-    assert!(app.plugins.set_enabled("preview-markdown", false, &app));
+    assert!(app.plugins.set_enabled("markdown", false, &app));
     // Text is never the byte view's: with Markdown off, nothing claims the
     // file and the worker shows it as the plain code view.
     assert!(try_inspect(&app, &path, &InspectRequest::default()).is_none());
-    assert!(app.plugins.set_enabled("preview-markdown", true, &app));
+    assert!(app.plugins.set_enabled("markdown", true, &app));
     // Registry order cannot let the fallback claim a known format on re-enable.
     assert_eq!(
         inspect(&app, &path, &InspectRequest::default()).title,
@@ -243,7 +241,7 @@ fn hex_ranges_search_and_truncation() {
     bytes[4094..4100].copy_from_slice(b"needle");
     std::fs::write(&path, &bytes).unwrap();
     let view = InspectRequest {
-        provider: Some("preview-hex".into()),
+        provider: Some("hex".into()),
         ..InspectRequest::default()
     };
     let first = inspect(&app, &path, &view);
@@ -491,18 +489,18 @@ fn format_providers_never_compete_for_the_same_file() {
         shown.push((name, accepting.first().map(|(owner, _, _)| owner.clone())));
     }
     let owner = |name: &str| shown.iter().find(|(n, _)| *n == name).unwrap().1.clone();
-    assert_eq!(owner("notes.md").as_deref(), Some("preview-markdown"));
-    assert_eq!(owner("table.csv").as_deref(), Some("preview-tables"));
+    assert_eq!(owner("notes.md").as_deref(), Some("markdown"));
+    assert_eq!(owner("table.csv").as_deref(), Some("tables"));
     assert_eq!(owner("mission.csv").as_deref(), Some("geo"));
-    assert_eq!(owner("data.yml").as_deref(), Some("preview-structured"));
-    assert_eq!(owner("bundle.tar.gz").as_deref(), Some("preview-archives"));
-    assert_eq!(owner("pages.cbr").as_deref(), Some("preview-comics"));
-    assert_eq!(owner("clip.asf").as_deref(), Some("preview-media"));
-    assert_eq!(owner("song.mp3").as_deref(), Some("preview-media"));
-    assert_eq!(owner("paper.pdf").as_deref(), Some("preview-documents"));
+    assert_eq!(owner("data.yml").as_deref(), Some("structured-data"));
+    assert_eq!(owner("bundle.tar.gz").as_deref(), Some("archives"));
+    assert_eq!(owner("pages.cbr").as_deref(), Some("comics"));
+    assert_eq!(owner("clip.asf").as_deref(), Some("media"));
+    assert_eq!(owner("song.mp3").as_deref(), Some("media"));
+    assert_eq!(owner("paper.pdf").as_deref(), Some("documents"));
     assert_eq!(
         owner("blob.bin").as_deref(),
-        Some("preview-hex"),
+        Some("hex"),
         "only the fallback owns generic bytes"
     );
     assert_eq!(
@@ -519,7 +517,7 @@ fn font_specimens_render_and_search_sets_the_sample() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(skwir_plugin_preview_fonts::PreviewPlugin), &app);
+        .add(Arc::new(skwir_plugin_fonts::PreviewPlugin), &app);
     let path = tmp.path().join("Synthetic face.ttf");
     std::fs::write(&path, b"not a font at all").unwrap();
     let request = request(&path);
@@ -579,7 +577,7 @@ fn with_archive_worker() -> bool {
 fn archives_app(root: &Path) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(root.join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(skwir_plugin_preview_archives::PreviewPlugin), &app);
+        .add(Arc::new(skwir_plugin_archives::PreviewPlugin), &app);
     app
 }
 
@@ -734,7 +732,7 @@ fn a_comic_is_a_document_of_pages() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(skwir_plugin_preview_comics::PreviewPlugin), &app);
+        .add(Arc::new(skwir_plugin_comics::PreviewPlugin), &app);
     let path = tmp.path().join("Synthetic comic's pages.cbz");
     // Within one stored deflate block, as `synthetic_png` writes them.
     let (big, small) = (synthetic_png(120, 180), synthetic_png(30, 40));
@@ -784,7 +782,7 @@ fn a_comic_cover_is_its_first_page() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
     app.plugins
-        .add(Arc::new(skwir_plugin_preview_comics::PreviewPlugin), &app);
+        .add(Arc::new(skwir_plugin_comics::PreviewPlugin), &app);
     let path = tmp.path().join("Synthetic issue n\u{b0} 2.cbz");
     let (first, later) = (synthetic_png(4, 6), synthetic_png(6, 4));
     write_zip(

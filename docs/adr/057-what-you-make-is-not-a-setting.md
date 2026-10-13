@@ -31,10 +31,10 @@ searches and tags.
    written over; a save writes the keys this process changed over the
    file as it stands; a change from outside (another skwir, `skwir cmd`)
    is taken in as it happens (`settings::follow` watches its folder too).
-3. **Moved out of the settings.** One still in the settings file, where an
-   earlier skwir kept it or a configuration declared it, is read until
-   skwir keeps its own, and moves to the data file at the next save where
-   the settings file can be written.
+3. **Read under the data file.** One still in the settings file (written
+   by hand) is read until skwir keeps its own, which wins. (2026-10-13: it
+   no longer moves to the data file at the next save, which only carried
+   an earlier skwir's; no one used skwir yet.)
 4. **Not declared.** `settings.check` says a key kept apart (the state or
    the data) is no setting, so Home Manager's build refuses one in
    `programs.skwir.settings`.
@@ -45,6 +45,7 @@ searches and tags.
   is kept: its state, its saved searches and tags. Only the dialog's
   changes are not.
 - Saved searches and tag colours can no longer be declared in a
-  configuration; they belong to the machine's user, as bookmarks do. A
-  declared one in a settings file is taken once, then skwir's own wins.
+  configuration; they belong to the machine's user, as bookmarks do. One
+  written in a settings file by hand is read until skwir keeps its own,
+  which wins.
 - A third file to back up beside the settings: `data.toml`.

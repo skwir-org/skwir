@@ -17,21 +17,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const THUMBNAILS: &str = "thumbnails";
-const FALLBACK_PLUGINS: [&str; 4] = [
-    "preview-documents",
-    "preview-media",
-    "preview-epub",
-    "preview-comics",
-];
+const FALLBACK_PLUGINS: [&str; 4] = ["documents", "media", "epub", "comics"];
 
 /// The plugins with fallbacks first: the reverse of the binary's order.
 fn app(root: &Path) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(root.join("state"))).unwrap();
     for plugin in [
-        Arc::new(skwir_plugin_preview_documents::PreviewPlugin::default()) as Arc<dyn Plugin>,
-        Arc::new(skwir_plugin_preview_media::PreviewPlugin::default()),
-        Arc::new(skwir_plugin_preview_epub::PreviewPlugin),
-        Arc::new(skwir_plugin_preview_comics::PreviewPlugin),
+        Arc::new(skwir_plugin_documents::PreviewPlugin::default()) as Arc<dyn Plugin>,
+        Arc::new(skwir_plugin_media::PreviewPlugin::default()),
+        Arc::new(skwir_plugin_epub::PreviewPlugin),
+        Arc::new(skwir_plugin_comics::PreviewPlugin),
         Arc::new(skwir_plugin_thumbnails::ThumbnailsPlugin::default()),
     ] {
         app.plugins.add(plugin, &app);
@@ -85,9 +80,9 @@ fn fallbacks_come_after_the_desktop_whoever_registers_first() {
         assert_order(&app, id);
     }
     for (key, value) in [
-        ("preview-documents.backend", "poppler"),
-        ("preview-epub.backend", "mupdf"),
-        ("preview-media.backend", "stills"),
+        ("documents.backend", "poppler"),
+        ("epub.backend", "mupdf"),
+        ("media.backend", "stills"),
         ("thumbnails.write_cache", "false"),
     ] {
         let value = if value == "false" {

@@ -23,7 +23,7 @@ tempfile.workspace = true
 blake3.workspace = true
 
 [dev-dependencies]
-skwir-plugin-preview-hex = { path = "../plugins/preview-hex" }
+skwir-plugin-hex = { path = "../plugins/hex" }
 
 [lints]
 workspace = true

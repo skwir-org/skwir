@@ -87,7 +87,7 @@ in `crates/ui/src/` and the table plugin:
 | Item | State |
 |---|---|
 | Tables: header above the scrolling rows, grid lines, numbers right-aligned, horizontal scroll, sort by a header click | done (`inspector.rs`) |
-| Tables: a rows × columns caption | not a caption: rows and columns are Properties facts (`preview-tables`) |
+| Tables: a rows × columns caption | not a caption: rows and columns are Properties facts (`tables`) |
 | Hex: offsets in normal text, a strip decoding the selected row | done |
 | Hex: the selection mirrored between bytes and text | not done (left out) |
 | Fonts: specimen on paper, drawn for the panel's width | done |

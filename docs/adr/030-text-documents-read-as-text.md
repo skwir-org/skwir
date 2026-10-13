@@ -22,14 +22,14 @@ mail as semantic blocks (ADR-009, ADR-012). Word and OpenDocument text
 are zips of XML that map onto those blocks. Also, a document's
 thumbnail existed only once previewed (`OfficePages` never converts),
 though most files carry a first-page picture. Spreadsheets already
-worked this way (`preview-tables.spreadsheets`: cells by default,
+worked this way (`tables.spreadsheets`: cells by default,
 LibreOffice's pages on request).
 
 ## Decision
 
 ### Three presentations, one setting
 
-`preview-documents.text_documents` ("Text documents") for Word (`.docx`,
+`documents.text_documents` ("Text documents") for Word (`.docx`,
 `.docm`, `.dotx`, `.dotm`), OpenDocument text (`.odt`, `.ott`) and RTF:
 
 | Choice | What | If its program is missing |

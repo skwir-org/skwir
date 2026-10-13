@@ -58,9 +58,7 @@ pub struct Session {
     /// How tall the preview is when it is at the bottom, once dragged; 0
     /// until then (the default makes room for a pinned player).
     pub preview_height: f32,
-    /// Whether Properties is open under the preview (`details` until it
-    /// was renamed, ADR-058).
-    #[serde(alias = "details")]
+    /// Whether Properties is open under the preview.
     pub properties: bool,
     /// Its share of the room above a preview, and at its left, as their
     /// edge was dragged each way.
@@ -77,29 +75,7 @@ pub struct Session {
     pub terminal_height: f32,
     /// The list's detail columns dragged to another width than their own,
     /// by `Column::key`.
-    #[serde(deserialize_with = "widths")]
     pub column_widths: std::collections::BTreeMap<String, f32>,
-}
-
-/// Widths by column; a list is the setting they were kept in before
-/// (`ui.column_widths`, moved here by `declare`), in its order.
-fn widths<'de, D: serde::Deserializer<'de>>(
-    from: D,
-) -> Result<std::collections::BTreeMap<String, f32>, D::Error> {
-    #[derive(serde::Deserialize)]
-    #[serde(untagged)]
-    enum Saved {
-        Named(std::collections::BTreeMap<String, f32>),
-        Listed(Vec<f32>),
-    }
-    Ok(match serde::Deserialize::deserialize(from)? {
-        Saved::Named(widths) => widths,
-        Saved::Listed(widths) => ["size", "modified", "type", "rating", "folder"]
-            .into_iter()
-            .map(str::to_owned)
-            .zip(widths)
-            .collect(),
-    })
 }
 
 impl Shell {
@@ -177,9 +153,6 @@ pub fn restore(app: &skwir_core::App) -> Option<Session> {
 }
 
 pub fn declare(app: &skwir_core::App) {
-    // The columns' widths were a setting of their own.
-    app.settings
-        .rename("ui.column_widths", &format!("{SESSION_KEY}.column_widths"));
     app.settings
         .declare(skwir_core::settings::SettingSpec::state(
             SESSION_KEY,
@@ -207,25 +180,11 @@ mod tests {
             let value = toml::Value::try_from(&session).unwrap();
             assert_eq!(value.try_into::<Session>().unwrap(), session);
         }
-        // A file written before the arrangement existed reads as automatic.
-        let old: Session = toml::from_str("split = true\npreview = true").unwrap();
-        assert_eq!((old.panes, old.preview_at), (Panes::Auto, Preview::Auto));
-    }
-
-    #[test]
-    fn column_widths_kept_as_a_setting_are_read_by_name() {
-        let old: Session = toml::from_str("column_widths = [90, 136, 150]").unwrap();
-        let widths: Vec<(&str, f32)> = old
-            .column_widths
-            .iter()
-            .map(|(key, width)| (key.as_str(), *width))
-            .collect();
-        assert_eq!(widths, [("modified", 136.), ("size", 90.), ("type", 150.)]);
-        let named: Session = toml::from_str(
-            "[column_widths]
-folder = 200.0",
-        )
-        .unwrap();
-        assert_eq!(named.column_widths.get("folder"), Some(&200.));
+        // What a file does not say reads as the default: automatic.
+        let sparse: Session = toml::from_str("split = true\npreview = true").unwrap();
+        assert_eq!(
+            (sparse.panes, sparse.preview_at),
+            (Panes::Auto, Preview::Auto)
+        );
     }
 }

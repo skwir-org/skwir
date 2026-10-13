@@ -85,7 +85,7 @@ More examples:
 
 - `crates/plugins-outside/netpbm`: thumbnails, and previews converted to
   PNG (a file of several pictures shown one picture a page).
-- `crates/plugins-outside/preview-hex`: the built-in hexadecimal preview,
+- `crates/plugins-outside/hex-view`: the built-in hexadecimal preview,
   again as a module.
 
 ## The manifest

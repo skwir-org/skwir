@@ -74,13 +74,13 @@ fn seen(page: &Inspection) -> String {
 
 #[test]
 fn the_hex_view_as_a_module_shows_what_the_built_in_one_shows() {
-    let module = common::module("skwir-outside-preview-hex");
+    let module = common::module("skwir-outside-hex-view");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
     common::install(
         &plugins,
         "hex-view",
-        &manifest("crates/plugins-outside/preview-hex"),
+        &manifest("crates/plugins-outside/hex-view"),
         &module,
         "hex_view.wasm",
     );
@@ -91,8 +91,8 @@ fn the_hex_view_as_a_module_shows_what_the_built_in_one_shows() {
     ))
     .unwrap();
     app.plugins
-        .add(Arc::new(skwir_plugin_preview_hex::PreviewPlugin), &app);
-    for plugin in skwir_extend::discover(std::slice::from_ref(&plugins), &["preview-hex"]) {
+        .add(Arc::new(skwir_plugin_hex::PreviewPlugin), &app);
+    for plugin in skwir_extend::discover(std::slice::from_ref(&plugins), &["hex"]) {
         app.plugins.add(plugin, &app);
     }
     assert!(app.plugins.set_enabled("hex-view", true, &app));
@@ -156,7 +156,7 @@ fn the_hex_view_as_a_module_shows_what_the_built_in_one_shows() {
         let path = files.join(name);
         std::fs::write(&path, bytes).unwrap();
         for view in &views {
-            let built_in = shown(&app, "preview-hex", &path, view);
+            let built_in = shown(&app, "hex", &path, view);
             let module = shown(&app, "hex-view", &path, view);
             match (&built_in, &module) {
                 (Ok(a), Ok(b)) => assert_eq!(seen(a), seen(b), "{name} {view:?}"),
@@ -169,18 +169,18 @@ fn the_hex_view_as_a_module_shows_what_the_built_in_one_shows() {
     assert_eq!(compared, cases.len() * views.len());
 
     // The view every file offers is the module's once the built-in one is off.
-    assert_eq!(app.previews.bytes_view(), Some("preview-hex"));
-    assert!(app.plugins.set_enabled("preview-hex", false, &app));
+    assert_eq!(app.previews.bytes_view(), Some("hex"));
+    assert!(app.plugins.set_enabled("hex", false, &app));
     assert_eq!(app.previews.bytes_view(), Some("hex-view"));
 }
 
 #[test]
 fn a_module_reads_only_what_it_may_and_never_a_private_file() {
-    let module = common::module("skwir-outside-preview-hex");
+    let module = common::module("skwir-outside-hex-view");
     let tmp = common::home_tempdir();
     let plugins = tmp.path().join("plugins");
     // Declared without `read`: it may not read what files hold.
-    let blind = manifest("crates/plugins-outside/preview-hex")
+    let blind = manifest("crates/plugins-outside/hex-view")
         .replace("capabilities = [\"read\"]", "capabilities = []");
     common::install(&plugins, "hex-view", &blind, &module, "hex_view.wasm");
     let app = common::app_with(&tmp.path().join("state"), &plugins, &[]);
@@ -203,7 +203,7 @@ fn a_module_reads_only_what_it_may_and_never_a_private_file() {
     common::install(
         &readable,
         "hex-view",
-        &manifest("crates/plugins-outside/preview-hex"),
+        &manifest("crates/plugins-outside/hex-view"),
         &module,
         "hex_view.wasm",
     );

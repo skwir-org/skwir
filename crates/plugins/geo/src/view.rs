@@ -668,7 +668,8 @@ impl Scanner {
         if let Some(found) = self.remembered.lock().get(&identity) {
             return Some(found.clone());
         }
-        // Versioned: what an older skwir kept did not have the clock.
+        // Versioned (`FOUND_VERSION`): what a `Found` of another shape
+        // kept is never read as one.
         let key = format!(
             "{FOUND_VERSION}:{}:{}:{}:{}",
             candidate.id.file.dev, candidate.id.file.ino, identity.1, identity.2

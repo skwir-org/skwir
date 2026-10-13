@@ -40,8 +40,8 @@ reaches only what its imports give, on every system, without a sandbox.
    - **Bounded calls:** about twenty billion instructions of fuel and
      256 MiB of memory; one call at a time; a trapped module is
      re-instantiated for its next call.
-4. **Gate plugin: the hex preview** (`crates/plugins-outside/
-   preview-hex`, id `hex-view`), its bytes read through Skwir.
+4. **Gate plugin: the hex preview** (`crates/plugins-outside/hex-view`,
+   id `hex-view`), its bytes read through Skwir.
    `crates/extend/tests/modules.rs` asks it and the built-in the same
    pages, searches and failed searches on synthetic files (a match
    across 64 KiB search chunks, an empty file, a name with an apostrophe

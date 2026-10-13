@@ -9,16 +9,16 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 
 - GStreamer loads only in `skwir-media-worker`. The media provider owns the
   runtime setting; the session interface stays independent of GPUI.
-- One plugin, `preview-media`, registers the audio and video providers and
+- One plugin, `media`, registers the audio and video providers and
   declares every playback preference. Audio and video share one player, so
   no player preference belongs to one kind; with the plugin off there is no
   player (ADR-016).
-- A changed engine (`preview-media.backend`) re-registers only the video
+- A changed engine (`media.backend`) re-registers only the video
   provider (`PreviewRegistry::unregister`), so audio playing goes on.
 
 ## Sessions and threads
 
-- Playback starts paused unless `preview-media.autoplay` is on, and follows
+- Playback starts paused unless `media.autoplay` is on, and follows
   the selected preview and the provider's lifetime.
 - UI controls only enqueue. The manager owns child cleanup and pixel I/O.
 - The manager owns the one startup deadline (20 s to the first preroll) and
@@ -135,7 +135,7 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   position (`media::amplitude`), so half the control sounds half as loud.
 - The filter is `scaletempo` (pitch kept at other speeds), then `spectrum`
   for audio. Either may be missing; playback does without.
-- ReplayGain (`preview-media.replay_gain`: off, track, album) reaches the
+- ReplayGain (`media.replay_gain`: off, track, album) reaches the
   worker as `Tuning` when a session opens, so it applies from the next track,
   never mid-stream. `rgvolume` and `rglimiter` then go first; `rgvolume`
   reads the stream's tags itself; untagged tracks pass unchanged.
@@ -154,11 +154,11 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - Stepping (`ui.media_step`) moves the pane's selection and the preview
   follows, so the list shows what plays; it keeps playing if it was
   (`PreviewState::autoplay`).
-- At a track's end, `preview-media.continue` (`player::Continue`) stops (the
+- At a track's end, `media.continue` (`player::Continue`) stops (the
   default), plays the next, or one at random. The pin draws a shuffle once,
   from the track playing, and walks it, so Previous retraces Next; a step
   within the same folder keeps it.
-- Playlists (`preview-playlists`) are read, not obeyed: nothing is fetched,
+- Playlists (`playlists`) are read, not obeyed: nothing is fetched,
   remote entries are only named, missing ones marked, nothing written or
   removed. A track is a member that is a file of its own
   (`Member::own_file`).
@@ -169,7 +169,7 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 
 - A preview's session ends with the selection; a pinned session belongs to
   the window (`player.rs`).
-- With `preview-media.keep_playing` on (the default), a track is pinned when
+- With `media.keep_playing` on (the default), a track is pinned when
   it starts to play (`Shell::media_started`, from `media_send`, the one path
   every start takes). `ui.media_pin` pins or releases by hand.
 - A media session has its own lifetime (`MediaState`). The pin takes it and

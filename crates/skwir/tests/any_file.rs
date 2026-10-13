@@ -241,7 +241,7 @@ fn samples() -> Vec<(&'static str, Vec<u8>)> {
         ),
         (
             "font.woff2",
-            include_bytes!("../../plugins/preview-fonts/src/testdata/synthetic.woff2").to_vec(),
+            include_bytes!("../../plugins/fonts/src/testdata/synthetic.woff2").to_vec(),
         ),
         (
             "comic.cbz",

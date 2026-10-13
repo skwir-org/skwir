@@ -109,7 +109,8 @@ says so; a store that can hold none of the edit is left alone.
 `set_notes` records the exact bytes it replaced in each store. Undo
 puts them back, depending on no parser being perfect; a store changed
 since is a conflict, never overwritten. `set_tags`, `set_rating` and
-`set_comment` stay readable for old journals.
+`set_comment` are gone (2026-10-13: no plan of theirs outlived them, no
+one using skwir yet).
 
 ### Names that hold tags
 

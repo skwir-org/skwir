@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct InspectRequest {
-    /// Explicit provider, e.g. `preview-hex`; None chooses by type.
+    /// Explicit provider, e.g. `hex`; None chooses by type.
     pub provider: Option<String>,
     pub source: bool,
     pub offset: u64,

@@ -208,24 +208,6 @@ fn it_is_kept_in_pieces_read_when_needed_and_moves_carry_tags_along() {
     assert_eq!(again.tally(Path::new("/q")).1, 1);
 }
 
-#[test]
-fn an_older_index_is_learned_into_pieces() {
-    let tmp = home_tempdir();
-    let slot = skwir_core::cache::Cache::new(tmp.path()).namespace("tags");
-    slot.put(
-        b"index.2",
-        serde_json::to_string(&[("/r/a", ["x"])])
-            .unwrap()
-            .as_bytes(),
-    )
-    .unwrap();
-    let index = index(Some(slot.clone()), 64);
-    assert_eq!(index.tally(Path::new("/r")).1, 1);
-    index.write();
-    assert!(slot.get(b"index.2").is_none(), "read once");
-    assert!(slot.get(META).is_some());
-}
-
 /// What the index takes, against `FILE_BYTES` and `FOLDER_BYTES`:
 /// `cargo nextest run --release -p skwir-plugin-tags scale_probe
 /// --run-ignored only --no-capture`.

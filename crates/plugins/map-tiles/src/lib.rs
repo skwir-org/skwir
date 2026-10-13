@@ -83,44 +83,6 @@ fn declare_source(app: &App) {
     .more_choices("the tile servers you add"));
 }
 
-/// The single server of an earlier version (`map-tiles.url`) becomes the
-/// first of the list, chosen if it was.
-fn migrate(app: &App) {
-    let old = |key| {
-        app.settings
-            .get::<String>(key)
-            .filter(|v| !v.trim().is_empty())
-    };
-    let Some(url) = old("map-tiles.url") else {
-        return;
-    };
-    if !servers(app).is_empty() {
-        return;
-    }
-    let mut record = toml::Table::new();
-    record.insert("id".into(), toml::Value::String("custom".into()));
-    record.insert("name".into(), toml::Value::String("Custom server".into()));
-    record.insert("url".into(), toml::Value::String(url));
-    if let Some(attribution) = old("map-tiles.url_attribution") {
-        record.insert("attribution".into(), toml::Value::String(attribution));
-    }
-    app.settings.set(
-        SERVERS_KEY,
-        toml::Value::Array(vec![toml::Value::Table(record)]),
-    );
-    app.settings
-        .set("map-tiles.url", toml::Value::String(String::new()));
-    if app.settings.get::<String>(SOURCE_KEY).as_deref() == Some("custom") {
-        app.settings.set(
-            SOURCE_KEY,
-            toml::Value::String(format!("{SERVER_CHOICE}custom")),
-        );
-    }
-    if let Err(error) = app.settings.save() {
-        tracing::warn!("map tiles: cannot keep the server of an earlier version: {error:#}");
-    }
-}
-
 /// The chosen background was a server just removed: the outline again,
 /// so the choice shows what the maps are drawn on. Runs on the save's
 /// worker, after the settings were written.
@@ -194,7 +156,6 @@ impl Plugin for MapTilesPlugin {
             .section("Other servers")
             .validate_with(|value, _| server::check_servers(value)),
         );
-        migrate(app);
         declare_source(app);
         forget_removed(app);
         let source = Arc::new(Source {
@@ -419,15 +380,24 @@ mod tests {
     }
 
     #[test]
-    fn servers_become_choices_and_an_old_single_server_is_kept() {
+    fn servers_become_choices_and_a_removed_one_chooses_the_outline() {
         let dir = tempfile::tempdir().unwrap();
         let app = App::new(skwir_core::app::AppConfig::ephemeral(dir.path())).unwrap();
-        app.settings.set(
-            "map-tiles.url",
+        let mut record = toml::Table::new();
+        record.insert("id".into(), toml::Value::String("custom".into()));
+        record.insert("name".into(), toml::Value::String("Custom server".into()));
+        record.insert(
+            "url".into(),
             toml::Value::String("https://x.org/{z}/{x}/{y}.png".into()),
         );
-        app.settings
-            .set(SOURCE_KEY, toml::Value::String("custom".into()));
+        app.settings.set(
+            SERVERS_KEY,
+            toml::Value::Array(vec![toml::Value::Table(record)]),
+        );
+        app.settings.set(
+            SOURCE_KEY,
+            toml::Value::String(format!("{SERVER_CHOICE}custom")),
+        );
         MapTilesPlugin::default().register(&app);
         assert_eq!(servers(&app).len(), 1);
         assert_eq!(

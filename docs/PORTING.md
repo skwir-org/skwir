@@ -283,7 +283,7 @@ Left:
   AppContainer is to be built and tried on the machine **(5b)**.
   - Without isolation LibreOffice (`platform/preview.rs`) and ImageMagick
     (`platform/magick.rs`; `convert` is a system tool on Windows) are
-    refused. Pandoc (`preview-documents/pandoc.rs`) runs in its own
+    refused. Pandoc (`documents/pandoc.rs`) runs in its own
     `--sandbox` (2.15 or later) on every system, and alone where the system
     isolates nothing.
 - System thumbnails (ADR-041, `platform/system_thumbs.rs`), at the Generate

@@ -75,17 +75,17 @@ pub const CODE_APPEARANCE_KEY: &str = "reading.code_appearance";
 /// (`code_preview::CodeTheme`).
 pub const CODE_LIGHT_KEY: &str = "reading.code_light";
 pub const CODE_DARK_KEY: &str = "reading.code_dark";
-/// The player's preferences. The audio and video plugin (`preview-media`)
+/// The player's preferences. The audio and video plugin (`media`)
 /// declares them, with the rest of what concerns playback; the shell's
 /// player reads them. With the plugin off there is no player, and they are
 /// gone with it. `crates/skwir/tests/settings.rs` holds the two to the
 /// same names and choices.
 /// Whether a track that starts to play keeps playing while you browse.
-pub const KEEP_PLAYING_KEY: &str = "preview-media.keep_playing";
+pub const KEEP_PLAYING_KEY: &str = "media.keep_playing";
 /// Whether audio and video start to play as soon as they are selected.
-pub const AUTOPLAY_KEY: &str = "preview-media.autoplay";
+pub const AUTOPLAY_KEY: &str = "media.autoplay";
 /// What follows a track that ends (`player::Continue`).
-pub const CONTINUE_KEY: &str = "preview-media.continue";
+pub const CONTINUE_KEY: &str = "media.continue";
 /// What the player does with nothing stored, as the plugin must declare it.
 pub const KEEP_PLAYING_DEFAULT: bool = true;
 pub const AUTOPLAY_DEFAULT: bool = false;
@@ -216,14 +216,6 @@ pub(crate) fn list_icon_themes(app: &Arc<App>) {
 /// (`ui`, `reading`) and exist only while a shell does, so headless tools
 /// never see them.
 pub fn declare(app: &App) {
-    // Where they were before they had a page of their own.
-    for (old, new) in [
-        ("ui.reader_continuous", READER_CONTINUOUS_KEY),
-        ("ui.reading_width", READING_WIDTH_KEY),
-        ("ui.printed_pages", PRINTED_PAGES_KEY),
-    ] {
-        app.settings.rename(old, new);
-    }
     app.settings.declare(SettingSpec::choice(
         THEME_KEY,
         "Theme",

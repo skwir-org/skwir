@@ -1,0 +1,19 @@
+[package]
+name = "skwir-plugin-comics"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+skwir-core.workspace = true
+skwir-platform.workspace = true
+anyhow.workspace = true
+
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

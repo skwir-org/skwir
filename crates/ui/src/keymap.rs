@@ -919,8 +919,8 @@ const fn inside(token: &'static str, context: &'static str, label: &'static str)
 
 /// Every place a binding can name, once, in the order the Keyboard page
 /// lists them. `context_of`, `context_label` and `place_of` read it, so a
-/// new place is one row. A context named as it is (`ContextMenu`) is taken
-/// too, as plugins wrote them before.
+/// new place is one row. Any other token is taken as it is: a condition
+/// (`single`), or a context by its own name (`ContextMenu`).
 pub(crate) const PLACES: &[Place] = &[
     place("pane", PANE, "File list"),
     place("sidebar", SIDEBAR, "Sidebar"),
@@ -971,10 +971,10 @@ pub fn context_of(when: Option<&str>) -> String {
         return ROOT.to_owned();
     };
     let one = |t: &str| {
-        PLACES.iter().find(|place| place.token == t).map_or_else(
-            || crate::menu::canonical_token(t).to_owned(),
-            |place| place.context.to_owned(),
-        )
+        PLACES
+            .iter()
+            .find(|place| place.token == t)
+            .map_or_else(|| t.to_owned(), |place| place.context.to_owned())
     };
     let parts: Vec<String> = when
         .split_whitespace()
@@ -2039,11 +2039,6 @@ mod tests {
         assert_eq!(context_of(Some("pane single")), "Pane && single");
         assert_eq!(context_of(Some("address")), "AddressBar");
         assert_eq!(context_of(Some("  ")), "Shell");
-        assert_eq!(
-            context_of(Some("pane none")),
-            "Pane && empty",
-            "the old spelling of nothing selected"
-        );
         assert_eq!(
             context_of(Some("pane selection|folder")),
             "Pane && (selection || folder)"

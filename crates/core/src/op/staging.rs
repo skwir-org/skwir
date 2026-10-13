@@ -15,7 +15,7 @@
 //! before it stages there, and a run sweeps at its start the folders an
 //! earlier one was copying into when it ended ([`UnderWay`]). A folder
 //! whose copy still runs, in this skwir or another, keeps its lock; one
-//! without a lock (being made, or made before locks) is left. Only where
+//! without a lock (being made) is left. Only where
 //! this machine alone writes (`fs::volume::only_here`): a lock taken by
 //! another machine on a shared drive is not seen here.
 
@@ -245,8 +245,8 @@ mod tests {
         assert!(crate::fs::volume::only_here(dest), "a disk of this machine");
         let left = cut_short(dest);
         let running = Staging::new(dest).unwrap();
-        // Being made, or made before locks: nothing tells it is over.
-        let unlocked = dest.join(".skwir-copy-made-before");
+        // Being made: nothing tells it is over.
+        let unlocked = dest.join(".skwir-copy-being-made");
         std::fs::create_dir(&unlocked).unwrap();
         // The user's own, named alike.
         let theirs = dest.join(".skwir-copy-notes.txt");

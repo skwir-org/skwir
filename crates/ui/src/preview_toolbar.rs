@@ -216,7 +216,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
     }
     if hex_available(shell) {
         bar.push(Item::menu_only(
-            Button::new("preview-hex", "grid", label::HEX, "ui.inspect")
+            Button::new("hex", "grid", label::HEX, "ui.inspect")
                 .args(serde_json::json!({"action":"hex"})),
         ));
     }

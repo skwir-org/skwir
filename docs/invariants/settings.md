@@ -35,8 +35,9 @@ the reasoning.
   only says one is there. Never put a secret in any other kind of
   setting. Test the keyring only through
   `tools/test/private-keyring.sh`, never against the user's.
-- Renaming or moving a key: call `Settings::rename(old, new)` before
-  declaring it, so the user's value follows.
+- Renaming or moving a key: while no one uses skwir, outright, carrying
+  nothing of the old name. Once people do, call `Settings::rename(old,
+  new)` before declaring it, so the user's value follows.
 
 ## Where a setting goes
 
@@ -75,9 +76,10 @@ The namespace is the page, and a preference goes where its subject is:
   skwir through its commands (saved searches, pinned tags, tags' colours
   and exclusive categories) is declared `SettingSpec::data` and kept in
   `data.toml` in the data folder (`folders::data`): theirs, so one that is
-  no TOML is set aside, never written over. A key kept apart still in the
-  settings file is read until skwir keeps its own, and moves out where
-  that file can be written. Only what the dialog changes is a setting.
+  no TOML is set aside, never written over. A key kept apart found in the
+  settings file (a hand's edit) is read until skwir keeps its own, which
+  wins; `settings.check` says it is no setting. Only what the dialog
+  changes is a setting.
 - The settings file may be read-only (Home Manager's link): a save writes
   through a link to where it leads, says when it cannot, and undoes the
   change; the dialog says so above every page. A change of state or of

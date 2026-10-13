@@ -11,9 +11,8 @@
 - **One command each** for hidden files, sorting and opening in a tab:
   `toggle_hidden`, `sort` and `tab.open`, which the shell's
   `ui.toggle_hidden`, `ui.sort` and `ui.open_in_tab` only ran. Scripts
-  and agents use the core's names; a shortcut saved with an old name
-  keeps working. Ctrl+Enter no longer opens files: only folders and places
-  open in a tab.
+  and agents use the core's names. Ctrl+Enter no longer opens files: only
+  folders and places open in a tab.
 - **The palette** names each thing once: Copy to…, Move to… and Link
   to… beside Copy, Rename several from a template beside the dialog,
   each store's Read and Write under its name; it no longer lists what

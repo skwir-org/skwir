@@ -1,0 +1,25 @@
+[package]
+name = "skwir-plugin-epub"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version = "1.88"
+
+[dependencies]
+skwir-core.workspace = true
+skwir-platform.workspace = true
+anyhow.workspace = true
+rbook = "0.7"
+# rbook already selects flate2 with zlib-rs; zopfli (a compressor) is never needed.
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+roxmltree.workspace = true
+percent-encoding = "2"
+# The key of EPUB's font obfuscation; the version already in the tree.
+sha1_smol = "1"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

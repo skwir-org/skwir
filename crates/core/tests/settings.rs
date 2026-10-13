@@ -727,9 +727,8 @@ fn table(path: &std::path::Path) -> toml::Table {
     std::fs::read_to_string(path).unwrap().parse().unwrap()
 }
 
-/// What skwir keeps of the window goes to the state file (ADR-056); one
-/// still in the settings file, where an earlier skwir kept it, moves out at
-/// the next save.
+/// What skwir keeps of the window goes to the state file (ADR-056), never
+/// to the settings file.
 #[test]
 fn the_window_s_state_is_kept_apart_from_the_settings() {
     let dir = tempfile::tempdir().unwrap();
@@ -737,30 +736,21 @@ fn the_window_s_state_is_kept_apart_from_the_settings() {
         dir.path().join("settings.toml"),
         dir.path().join("state.toml"),
     );
-    std::fs::write(
-        &path,
-        "[ui]\ntheme = 'dark'\n[ui.session]\npanes = 2\n[core]\nlast_tabs = { count = 1 }\n",
-    )
-    .unwrap();
+    std::fs::write(&path, "[ui]\ntheme = 'dark'\n").unwrap();
     let settings = Settings::load(&path).with_state(&state);
     settings.declare(state_spec("ui.session"));
     settings.declare(state_spec("core.last_tabs"));
-    assert_eq!(
-        settings.get::<i64>("ui.session.panes"),
-        Some(2),
-        "read where it was"
-    );
     let mut session = toml::Table::new();
     session.insert("panes".into(), toml::Value::Integer(3));
     settings.set("ui.session", toml::Value::Table(session));
+    let mut tabs = toml::Table::new();
+    tabs.insert("count".into(), toml::Value::Integer(1));
+    settings.set("core.last_tabs", toml::Value::Table(tabs));
     settings.save().unwrap();
     let kept = table(&path);
     assert_eq!(kept["ui"]["theme"].as_str(), Some("dark"));
     assert!(!kept["ui"].as_table().unwrap().contains_key("session"));
-    assert!(
-        !kept.contains_key("core"),
-        "moved out, and its table with it"
-    );
+    assert!(!kept.contains_key("core"));
     let saved = table(&state);
     assert_eq!(saved["ui"]["session"]["panes"].as_integer(), Some(3));
     assert_eq!(saved["core"]["last_tabs"]["count"].as_integer(), Some(1));
@@ -896,26 +886,26 @@ fn what_the_user_made_is_kept_when_the_settings_are_read_only() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 }
 
-/// The user's data in a settings file an earlier skwir wrote moves to the
-/// data file at the next save; a change of the data file from outside
-/// (another skwir, `skwir cmd`) is taken in, under what this process has
-/// not saved yet.
+/// The user's data goes to the data file, never to the settings file; a
+/// change of the data file from outside (another skwir, `skwir cmd`) is
+/// taken in, under what this process has not saved yet.
 #[test]
-fn the_user_s_data_moves_out_of_the_settings_and_is_followed() {
+fn the_user_s_data_is_kept_apart_and_followed() {
     let dir = tempfile::tempdir().unwrap();
     let (path, data) = (
         dir.path().join("settings.toml"),
         dir.path().join("data.toml"),
     );
-    std::fs::write(&path, "[ui]\ntheme = 'dark'\n[sample]\nsaved = ['old']\n").unwrap();
+    std::fs::write(&path, "[ui]\ntheme = 'dark'\n").unwrap();
     let settings = Settings::load(&path).with_data(&data);
     settings.declare(data_spec("sample.saved"));
     settings.declare(data_spec("sample.pinned"));
     settings.set("ui.theme", toml::Value::String("light".into()));
+    settings.set("sample.saved", searches(&["old"]));
     settings.save().unwrap();
     let kept = table(&path);
     assert_eq!(kept["ui"]["theme"].as_str(), Some("light"));
-    assert!(!kept.contains_key("sample"), "moved out");
+    assert!(!kept.contains_key("sample"));
     assert_eq!(table(&data)["sample"]["saved"], searches(&["old"]));
 
     // Another process saves a search; this one pinned a tag, not saved.

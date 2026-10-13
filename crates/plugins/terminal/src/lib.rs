@@ -37,7 +37,7 @@ const SCROLLBACK: i64 = 10_000;
 /// The most lines of history the setting allows: about 86 MB once full at
 /// 120 columns, 145 MB at 200. A hundred thousand held 290 to 480 MB for
 /// a terminal beside a file manager, a terminal of its own's to keep.
-/// A value saved before above it is read as it.
+/// A value above it (a hand's edit) is read as it.
 const SCROLLBACK_MOST: i64 = 30_000;
 
 struct Provider {
@@ -171,7 +171,7 @@ mod tests {
     use super::*;
 
     /// History is read as set, up to the most the setting allows: a
-    /// value saved when more was allowed is read as that most.
+    /// value above it (a hand's edit) is read as that most.
     #[test]
     fn history_is_capped_whatever_was_saved() {
         let tmp = tempfile::tempdir().unwrap();

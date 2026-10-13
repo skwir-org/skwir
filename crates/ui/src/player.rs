@@ -28,7 +28,7 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::toolbar::Button;
 
-/// What follows a track that plays to its end (`preview-media.continue`,
+/// What follows a track that plays to its end (`media.continue`,
 /// set with `ui.media_continue`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Continue {
@@ -90,11 +90,11 @@ impl Continue {
 /// video plugin and read with the others when the settings change.
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerPrefs {
-    /// `preview-media.keep_playing`: a track that starts to play is pinned.
+    /// `media.keep_playing`: a track that starts to play is pinned.
     pub keep_playing: bool,
-    /// `preview-media.autoplay`: audio and video play once selected.
+    /// `media.autoplay`: audio and video play once selected.
     pub autoplay: bool,
-    /// `preview-media.continue`: what follows a track that ends.
+    /// `media.continue`: what follows a track that ends.
     pub continue_with: Continue,
 }
 

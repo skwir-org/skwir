@@ -16,8 +16,9 @@ applied.
 - **On by default.** `core.preserve_tags_on_copy` (now
   `core.preserve_attributes_on_copy`) defaults to true. Every copy path builds
   the operation through `Copy::from_settings`, which records the choice in the
-  serialized operation: apply and redo never read a changed setting. Older
-  plans without the field take the default. The tags provider and the copier
+  serialized operation: apply and redo never read a changed setting. A
+  plan without the field (an agent's, a script's) takes the default. The
+  tags provider and the copier
   share only the storage key.
 - **What is copied.** The tag attribute of regular files and directories,
   recursively, before source permissions are restored. Symlinks stay
@@ -54,9 +55,9 @@ The tags plugin also keeps a rating (`user.baloo.rating`) and a comment
   capabilities) are left to the destination.
 - The rules above hold for all of them, cross-device moves included.
 - The key is now `core.preserve_attributes_on_copy` ("Keep tags and
-  attributes when copying"); `Settings::rename` carries the old choice. The
-  operation's field is now `preserve_attributes`, and a plan serialized with
-  `preserve_tags` reads as it, so older journals keep their meaning.
+  attributes when copying"), and the operation's field
+  `preserve_attributes`. (2026-10-13: nothing reads the old names any more:
+  no one used skwir yet.)
 
 ### 2026-09-30: attributes beside the file (ADR-028)
 

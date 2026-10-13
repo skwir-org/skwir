@@ -92,9 +92,9 @@ The player, in the panel or pinned at its foot:
   can be colored wrongly until it ends.
 - The text is decoded once, from its first bytes: UTF-8, UTF-16 by its
   mark, else Windows-1252 (and the bar says so).
-- Any file can be shown as bytes (see [Bytes](#bytes-preview-hex)).
+- Any file can be shown as bytes (see [Bytes](#bytes-hex)).
 
-### Structured data (`preview-structured`)
+### Structured data (`structured-data`)
 
 - JSON, YAML and TOML with syntax colors, line numbers and folding.
   Click a gutter arrow to fold an object, array or section; the bar
@@ -108,7 +108,7 @@ The player, in the panel or pinned at its foot:
   brackets say.
 - Find reveals matching lines; copying keeps blank lines. Read-only.
 
-### Markdown, HTML and notebooks (`preview-markdown`)
+### Markdown, HTML and notebooks (`markdown`)
 
 - Markdown and HTML in reading mode, with a source toggle: headings,
   emphasis, lists, tables, highlighted code, links and local images.
@@ -120,7 +120,7 @@ The player, in the panel or pinned at its foot:
   kernel's language, and what each cell printed, returned, raised or
   plotted.
 
-### Tables (`preview-tables`)
+### Tables (`tables`)
 
 - CSV and TSV, quoted multi-line cells included, with horizontal
   scrolling and section navigation.
@@ -131,14 +131,14 @@ The player, in the panel or pinned at its foot:
 - SQLite databases: each table's rows, opened read-only so nothing is
   written beside them.
 
-### Documents (`preview-documents`)
+### Documents (`documents`)
 
 - **PDF** in the document reader: continuous or a page at a time, zoom,
   search, contents, links, text selection and copy. **Document engine**:
   Automatic prefers PDFium and falls back to Poppler; MuPDF is used only
   when chosen. A PDF that names its pages (roman numerals for the front
   matter, a body starting at 1 further in) can be counted by those
-  names, as a book by its printed pages (see [Books](#books-preview-epub)).
+  names, as a book by its printed pages (see [Books](#books-epub)).
 - **Office documents** as pages, converted by LibreOffice in a sandbox.
 - **Word** (`.docx`, `.docm`, `.dotx`, `.dotm`), **OpenDocument text**
   (`.odt`, `.ott`) and **RTF** follow the **Text documents** setting:
@@ -155,7 +155,7 @@ The player, in the panel or pinned at its foot:
 - The grid shows the picture of the first page that an Office or
   OpenDocument file stores, before any preview.
 
-### Books (`preview-epub`)
+### Books (`epub`)
 
 - EPUB in reading mode, not a browser: chapters reflow, with contents,
   embedded images, links, text size, selection and copy, source, and
@@ -184,13 +184,13 @@ The player, in the panel or pinned at its foot:
   pages in the document reader instead; the size keys then lay it out
   again at a larger or smaller text size, keeping the place.
 
-### Comics (`preview-comics`)
+### Comics (`comics`)
 
 - CBZ, CBR, CB7 and CBT in the document reader, continuously or a page
   at a time. Pages are in numeric file-name order, each decoded at the
   size shown.
 
-### E-mail (`preview-email`)
+### E-mail (`email`)
 
 - EML messages: headers, the body as inert HTML or text, embedded
   pictures, and attachments, each previewed as the file it is. Remote
@@ -211,7 +211,7 @@ The player, in the panel or pinned at its foot:
   network where bubblewrap works
   ([ADR-031](adr/031-pictures-by-imagemagick-thumbnailers-isolated.md)).
 
-### Audio and video (`preview-media`)
+### Audio and video (`media`)
 
 - One player for both: play, seek, volume, speed (pitch kept), audio and
   subtitle tracks, fullscreen for video. Audio shows its tags, its
@@ -230,14 +230,14 @@ The player, in the panel or pinned at its foot:
   video plays in the video player, audio alone shows the audio
   presentation and spectrum.
 
-### Playlists (`preview-playlists`)
+### Playlists (`playlists`)
 
 - M3U and M3U8, PLS, XSPF and CUE as a list of tracks with titles,
   artists and lengths; missing and remote entries are marked.
 - A track on this machine opens in the player, whose Previous and Next
   then walk the playlist. Nothing is fetched.
 
-### Archives (`preview-archives`)
+### Archives (`archives`)
 
 - ZIP, tar, 7z and other archives as a tree: folders first, icons,
   aligned sizes, expand and collapse. A file selected in it opens as what
@@ -255,13 +255,13 @@ The player, in the panel or pinned at its foot:
   **Compress with a Password…** (under More) makes an encrypted ZIP.
   Tags kept on files travel in a tar, not in a ZIP or a 7z.
 
-### Fonts (`preview-fonts`)
+### Fonts (`fonts`)
 
 - TTF, OTF, TTC, WOFF and WOFF2 as specimens and character sheets,
   without installing them. Find sets the specimen text; sections step
   through the supported characters.
 
-### 3D models, drawings and prints (`preview-models`)
+### 3D models, drawings and prints (`models`)
 
 - **Stored pictures**, in the panel and the grid: Blender files (and
   their `.blend1` backups, compressed or not), 3MF packages (the package
@@ -295,7 +295,7 @@ The player, in the panel or pinned at its foot:
 - Other models (STEP, IGES…) are shown when an installed thumbnailer
   (f3d, Blender) claims their type, isolated like picture thumbnailers.
 
-### Circuit boards (`preview-circuits`)
+### Circuit boards (`circuits`)
 
 - **KiCad**: boards (`.kicad_pcb`) as pcbnew shows them (both sides'
   copper with filled zones, pads, vias and holes, silkscreens, outline);
@@ -327,7 +327,7 @@ The player, in the panel or pinned at its foot:
   choose OpenStreetMap or a tile server you add (Settings › Map
   backgrounds). `map-tiles` is the only plugin that uses the network.
 
-### Bytes (`preview-hex`)
+### Bytes (`hex`)
 
 - **View as hex**, for any file: read-only, compact rows with
   byte-position headers, groups of eight bytes, separate offset and

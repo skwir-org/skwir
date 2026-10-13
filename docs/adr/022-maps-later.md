@@ -24,7 +24,7 @@ Constraints binding every part:
 - **Plugins do not depend on each other:** query and geo meet only in core
   data or commands.
 - **Mutations are plans with inverses:** a plugin may register an operation
-  kind (`OpRegistry`, owner-tagged, like `set_tags`); a batch, or anything
+  kind (`OpRegistry`, owner-tagged, like `extract`); a batch, or anything
   not from a single user gesture, goes through `App::propose`; undo and
   redo go through the journal.
 - **The network is `map-tiles`' only** (ADR-020); a new use needs its own

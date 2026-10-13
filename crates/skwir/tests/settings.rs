@@ -15,13 +15,11 @@ fn changing_document_engine_refreshes_only_document_previews() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
     app.plugins.add(
-        Arc::new(skwir_plugin_preview_documents::PreviewPlugin::default()),
+        Arc::new(skwir_plugin_documents::PreviewPlugin::default()),
         &app,
     );
-    app.plugins.add(
-        Arc::new(skwir_plugin_preview_media::PreviewPlugin::default()),
-        &app,
-    );
+    app.plugins
+        .add(Arc::new(skwir_plugin_media::PreviewPlugin::default()), &app);
     let revision = app.previews.revision();
     let providers = app.previews.ids();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -32,7 +30,7 @@ fn changing_document_engine_refreshes_only_document_previews() {
         "settings.apply",
         &BTreeMap::from([(
             "changes",
-            BTreeMap::from([("preview-documents.backend", "poppler")]),
+            BTreeMap::from([("documents.backend", "poppler")]),
         )]),
     ))
     .unwrap();
@@ -53,12 +51,10 @@ fn changing_document_engine_refreshes_only_document_previews() {
     after.sort_unstable();
     before.sort_unstable();
     assert_eq!(after, before);
-    assert!(app.plugins.is_enabled("preview-documents"));
-    assert!(app.plugins.is_enabled("preview-media"));
+    assert!(app.plugins.is_enabled("documents"));
+    assert!(app.plugins.is_enabled("media"));
     assert_eq!(
-        app.settings
-            .get::<String>("preview-documents.backend")
-            .as_deref(),
+        app.settings.get::<String>("documents.backend").as_deref(),
         Some("poppler")
     );
 }
@@ -75,10 +71,8 @@ fn the_player_reads_what_the_media_plugin_declares() {
     };
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
-    app.plugins.add(
-        Arc::new(skwir_plugin_preview_media::PreviewPlugin::default()),
-        &app,
-    );
+    app.plugins
+        .add(Arc::new(skwir_plugin_media::PreviewPlugin::default()), &app);
     let spec = |key: &str| {
         app.settings
             .spec(key)
@@ -100,7 +94,7 @@ fn the_player_reads_what_the_media_plugin_declares() {
         toml::Value::String(CONTINUE_CHOICES[0].into())
     );
     assert!(
-        app.plugins.set_enabled("preview-media", false, &app),
+        app.plugins.set_enabled("media", false, &app),
         "the plugin switches off"
     );
     assert!(

@@ -7065,35 +7065,35 @@ dependencies = [
  "skwir-core",
  "skwir-extend",
  "skwir-platform",
+ "skwir-plugin-archives",
  "skwir-plugin-checksums",
+ "skwir-plugin-circuits",
+ "skwir-plugin-comics",
  "skwir-plugin-control",
+ "skwir-plugin-documents",
  "skwir-plugin-edit-as-buffer",
+ "skwir-plugin-email",
+ "skwir-plugin-epub",
+ "skwir-plugin-fonts",
  "skwir-plugin-geo",
+ "skwir-plugin-hex",
  "skwir-plugin-jump",
  "skwir-plugin-map-tiles",
+ "skwir-plugin-markdown",
+ "skwir-plugin-media",
+ "skwir-plugin-models",
  "skwir-plugin-mpris",
  "skwir-plugin-name-tags",
  "skwir-plugin-open-with",
  "skwir-plugin-ops-basic",
  "skwir-plugin-places",
- "skwir-plugin-preview-archives",
- "skwir-plugin-preview-circuits",
- "skwir-plugin-preview-comics",
- "skwir-plugin-preview-documents",
- "skwir-plugin-preview-email",
- "skwir-plugin-preview-epub",
- "skwir-plugin-preview-fonts",
- "skwir-plugin-preview-hex",
- "skwir-plugin-preview-markdown",
- "skwir-plugin-preview-media",
- "skwir-plugin-preview-models",
- "skwir-plugin-preview-playlists",
- "skwir-plugin-preview-structured",
- "skwir-plugin-preview-tables",
+ "skwir-plugin-playlists",
  "skwir-plugin-query",
  "skwir-plugin-rename-bulk",
  "skwir-plugin-shelf",
  "skwir-plugin-shell",
+ "skwir-plugin-structured-data",
+ "skwir-plugin-tables",
  "skwir-plugin-tags",
  "skwir-plugin-tagspaces",
  "skwir-plugin-terminal",
@@ -7197,7 +7197,7 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "skwir-plugin-api",
- "skwir-plugin-preview-hex",
+ "skwir-plugin-hex",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
@@ -7261,14 +7261,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "skwir-outside-netpbm"
+name = "skwir-outside-hex-view"
 version = "0.1.0"
 dependencies = [
  "skwir-plugin-api",
 ]
 
 [[package]]
-name = "skwir-outside-preview-hex"
+name = "skwir-outside-netpbm"
 version = "0.1.0"
 dependencies = [
  "skwir-plugin-api",
@@ -7356,6 +7356,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "skwir-plugin-archives"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs 7.0.0",
+ "flate2",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tracing",
+ "zip",
+]
+
+[[package]]
 name = "skwir-plugin-checksums"
 version = "0.1.0"
 dependencies = [
@@ -7371,6 +7388,26 @@ dependencies = [
  "skwir-core",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-circuits"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-comics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
 ]
 
 [[package]]
@@ -7393,6 +7430,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "skwir-plugin-documents"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "roxmltree 0.21.1",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "zip",
+]
+
+[[package]]
 name = "skwir-plugin-edit-as-buffer"
 version = "0.1.0"
 dependencies = [
@@ -7403,6 +7454,47 @@ dependencies = [
  "skwir-platform",
  "tempfile",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "skwir-plugin-email"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mail-parser",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-epub"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "percent-encoding",
+ "rbook",
+ "roxmltree 0.21.1",
+ "sha1_smol",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "zip",
+]
+
+[[package]]
+name = "skwir-plugin-fonts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "proptest",
+ "skrifa",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "wuff",
+ "zeno",
 ]
 
 [[package]]
@@ -7423,6 +7515,17 @@ dependencies = [
  "tiny-skia",
  "tracing",
  "zip",
+]
+
+[[package]]
+name = "skwir-plugin-hex"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "memchr",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
 ]
 
 [[package]]
@@ -7474,6 +7577,47 @@ dependencies = [
  "tokio-rustls",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-markdown"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "pulldown-cmark",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-media"
+version = "0.1.0"
+dependencies = [
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "skwir-plugin-models"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "flate2",
+ "image",
+ "quick-xml 0.42.0",
+ "ruzstd",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tiny-skia",
+ "zip",
 ]
 
 [[package]]
@@ -7542,151 +7686,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "skwir-plugin-preview-archives"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dirs 7.0.0",
- "flate2",
- "schemars",
- "serde",
- "serde_json",
- "skwir-core",
- "skwir-platform",
- "tempfile",
- "tracing",
- "zip",
-]
-
-[[package]]
-name = "skwir-plugin-preview-circuits"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "skwir-core",
- "skwir-platform",
- "tempfile",
-]
-
-[[package]]
-name = "skwir-plugin-preview-comics"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "skwir-core",
- "skwir-platform",
- "tempfile",
-]
-
-[[package]]
-name = "skwir-plugin-preview-documents"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "parking_lot",
- "roxmltree 0.21.1",
- "skwir-core",
- "skwir-platform",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
- "zip",
-]
-
-[[package]]
-name = "skwir-plugin-preview-email"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "mail-parser",
- "skwir-core",
- "skwir-platform",
- "tempfile",
-]
-
-[[package]]
-name = "skwir-plugin-preview-epub"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "percent-encoding",
- "rbook",
- "roxmltree 0.21.1",
- "sha1_smol",
- "skwir-core",
- "skwir-platform",
- "tempfile",
- "zip",
-]
-
-[[package]]
-name = "skwir-plugin-preview-fonts"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "flate2",
- "proptest",
- "skrifa",
- "skwir-core",
- "skwir-platform",
- "tempfile",
- "wuff",
- "zeno",
-]
-
-[[package]]
-name = "skwir-plugin-preview-hex"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "memchr",
- "skwir-core",
- "skwir-platform",
- "tempfile",
-]
-
-[[package]]
-name = "skwir-plugin-preview-markdown"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "pulldown-cmark",
- "serde_json",
- "skwir-core",
- "skwir-platform",
- "tempfile",
- "tracing",
-]
-
-[[package]]
-name = "skwir-plugin-preview-media"
-version = "0.1.0"
-dependencies = [
- "skwir-core",
- "skwir-platform",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
-name = "skwir-plugin-preview-models"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "flate2",
- "image",
- "quick-xml 0.42.0",
- "ruzstd",
- "skwir-core",
- "skwir-platform",
- "tempfile",
- "tiny-skia",
- "zip",
-]
-
-[[package]]
-name = "skwir-plugin-preview-playlists"
+name = "skwir-plugin-playlists"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7695,36 +7695,6 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
-]
-
-[[package]]
-name = "skwir-plugin-preview-structured"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde_json",
- "skwir-core",
- "skwir-platform",
- "tempfile",
- "toml_edit 0.25.15+spec-1.1.0",
- "yaml-rust2",
-]
-
-[[package]]
-name = "skwir-plugin-preview-tables"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "calamine",
- "csv",
- "indexmap",
- "rusqlite",
- "serde",
- "serde_json",
- "skwir-core",
- "skwir-platform",
- "tempfile",
- "zip",
 ]
 
 [[package]]
@@ -7792,6 +7762,36 @@ dependencies = [
  "skwir-platform",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "skwir-plugin-structured-data"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "toml_edit 0.25.15+spec-1.1.0",
+ "yaml-rust2",
+]
+
+[[package]]
+name = "skwir-plugin-tables"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "calamine",
+ "csv",
+ "indexmap",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "zip",
 ]
 
 [[package]]

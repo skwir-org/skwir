@@ -46,9 +46,6 @@ const BUCKETS: usize = 256;
 const META: &[u8] = b"index.4";
 /// The folders it holds files of.
 const FOLDERS: &[u8] = b"index.4.folders";
-/// The indexes before this one: a list of files and their tags, read once
-/// and written in pieces.
-const OLD: [&[u8]; 2] = [b"index.3", b"index.2"];
 const PIECE_MAGIC: &[u8; 4] = b"BTI1";
 
 /// How long a piece stays read unused.
@@ -273,10 +270,6 @@ struct Meta {
     home_counts: Vec<(u32, u64)>,
     /// A file was not learned for want of room.
     refused: bool,
-    /// `home_counts` count each category once per file within it: those
-    /// of an index from before are made again.
-    #[serde(default)]
-    nested: bool,
 }
 
 #[derive(Default)]
@@ -321,8 +314,7 @@ impl State {
         id
     }
 
-    /// Each tag's category, the categories missing given a number (an
-    /// index from before had only the tags files carry).
+    /// Each tag's category, the categories missing given a number.
     fn link_categories(&mut self) {
         self.parents.clear();
         let mut at = 0;
@@ -545,34 +537,11 @@ impl TagIndex {
             .and_then(|s| s.get(META))
             .and_then(|b| serde_json::from_slice(&b).ok());
         let Some(meta) = meta else {
-            // Nothing stored this way: every piece is empty and read, and
-            // an older index, if any, is learned into them.
+            // Nothing stored: every piece is empty and read.
             for piece in &mut state.pieces {
                 piece.loaded = true;
             }
             state.home = home;
-            let old = OLD.iter().find_map(|key| {
-                let bytes = slot?.get(key)?;
-                // The second index was a list; the third, an object.
-                serde_json::from_slice::<Vec<(String, Vec<String>)>>(&bytes)
-                    .ok()
-                    .or_else(|| {
-                        let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-                        serde_json::from_value(v.get("tags")?.clone()).ok()
-                    })
-            });
-            if let Some(old) = old {
-                let read = old
-                    .into_iter()
-                    .map(|(p, t)| (PathBuf::from(p), t))
-                    .collect();
-                Self::learn_into(state, read, u64::MAX);
-                if let Some(slot) = slot {
-                    for key in OLD {
-                        let _ = slot.remove(key);
-                    }
-                }
-            }
             return;
         };
         state.ids = meta
@@ -592,12 +561,11 @@ impl TagIndex {
             .and_then(|s| s.get(FOLDERS))
             .map(|b| decode_folders(&b))
             .unwrap_or_default();
-        if meta.home == home && meta.nested {
+        if meta.home == home {
             state.home_counts = meta.home_counts.into_iter().collect();
             state.home = home;
         } else {
-            // Another home, or counts from before categories: made again
-            // from every piece.
+            // Another home: made again from every piece.
             state.home = home;
             self.load_all(state);
             state.home_counts.clear();
@@ -1200,7 +1168,6 @@ impl TagIndex {
                     home: state.home.clone(),
                     home_counts: state.home_counts.iter().map(|(t, n)| (*t, *n)).collect(),
                     refused: state.refused,
-                    nested: true,
                 })
             });
             (pieces, folders, meta)

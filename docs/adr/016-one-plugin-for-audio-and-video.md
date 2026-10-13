@@ -5,7 +5,7 @@ ADR-009 (the structured preview plugins, `preview-audio` among them).
 
 ## Context
 
-Audio and video were two plugins, `preview-audio` and `preview-media`, with
+Audio and video were two plugins, `preview-audio` and `media`, with
 no decision behind the split. Both registered the same provider
 (`MediaPreviews`) over the same GStreamer worker, and one player in the
 shell plays both (panel controls, pin, dock, footer strip, `NowPlaying`).
@@ -19,8 +19,8 @@ Video engine's Still frames choice already gives.
 
 ## Decision
 
-- One plugin, `preview-media` ("Audio and video"), registers both
-  providers (`preview-media.audio`, `preview-media.video`) and declares
+- One plugin, `media` ("Audio and video"), registers both
+  providers (`media.audio`, `media.video`) and declares
   every playback preference: Playback (`keep_playing`, `autoplay`,
   `continue`), Audio (`replay_gain`), Video (`backend`). `preview-audio` is
   removed.
@@ -37,5 +37,5 @@ Video engine's Still frames choice already gives.
 
 - One Plugins toggle for playback, its settings on one page.
 - `preview-audio.replay_gain` and the shell's `ui.media_*` became
-  `preview-media.*`; stored values move through `Settings::rename`.
+  `media.*`, renamed outright (2026-10-13: no one used skwir yet).
 - Video can be disabled apart from audio only through Still frames.

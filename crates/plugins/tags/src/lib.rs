@@ -24,7 +24,6 @@ mod follow;
 mod hints;
 pub mod index;
 pub mod location;
-mod ops;
 mod sidebar;
 mod vocabulary;
 pub mod xdg;
@@ -577,7 +576,6 @@ impl Plugin for TagsPlugin {
         }
         app.companions
             .register(ID, Arc::new(appledouble::AsideCompanion));
-        ops::register_legacy(app);
         // The tags as places to browse (ADR-032): `tags:` locations.
         let places = location::Places::new(Arc::clone(&index), app, lifetime.clone());
         app.register_provider(
@@ -1654,50 +1652,6 @@ mod tests {
     // Extended attributes: Unix's.
     #[cfg(unix)]
     #[test]
-    fn a_plan_written_before_the_stores_is_read_as_the_edit_it_was() {
-        let tmp = home_tempdir();
-        let f = tmp.path().join("it's old.txt");
-        std::fs::write(&f, b"x").unwrap();
-        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
-        app.plugins.add(Arc::new(TagsPlugin::default()), &app);
-        let entry = serde_json::to_value(EntryRef::from_path(&f).unwrap()).unwrap();
-        for (kind, args) in [
-            (
-                "set_tags",
-                serde_json::json!({ "entry": entry, "tags": ["old"], "finder_colors": [] }),
-            ),
-            (
-                "set_rating",
-                serde_json::json!({ "entry": entry, "rating": 6 }),
-            ),
-            (
-                "set_comment",
-                serde_json::json!({ "entry": entry, "comment": "kept" }),
-            ),
-        ] {
-            let op = app
-                .ops
-                .build(&skwir_core::op::OpData {
-                    kind: kind.into(),
-                    args,
-                })
-                .unwrap();
-            assert_eq!(op.kind(), "set_notes");
-            let mut plan = Plan::new(kind);
-            plan.steps.push(op);
-            let r = app.executor.execute_blocking(&plan, app.lifetime());
-            assert!(r.error.is_none(), "{kind}: {:?}", r.error);
-        }
-        let notes = read_notes(&f);
-        assert_eq!(
-            (notes.tag_names(), notes.rating, notes.comment.as_deref()),
-            (vec!["old".to_owned()], Some(6), Some("kept"))
-        );
-    }
-
-    // Extended attributes: Unix's.
-    #[cfg(unix)]
-    #[test]
     fn a_macs_edit_after_skwir_wrote_wins_and_the_stores_are_made_to_agree() {
         const FINDER: &str = "user.com.apple.metadata:_kMDItemUserTags";
         let tmp = home_tempdir();
@@ -2144,19 +2098,9 @@ mod tests {
         };
         assert_eq!(v["old"], 1);
 
-        // Disabling withdraws the provider, the op kinds, and the contributions.
+        // Disabling withdraws the provider and the contributions.
         app.plugins.set_enabled("tags", false, &app);
         assert!(!app.metadata.ids().contains(&"tags"));
-        for kind in ["set_tags", "set_rating", "set_comment"] {
-            assert!(
-                app.ops
-                    .build(&skwir_core::op::OpData {
-                        kind: kind.into(),
-                        args: serde_json::json!({})
-                    })
-                    .is_err()
-            );
-        }
         assert!(app.commands.get("tags.set").is_none());
         assert!(app.registry.menus.all().iter().all(|m| m.title != "Tags…"));
     }

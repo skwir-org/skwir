@@ -55,7 +55,7 @@ image. A page that states no size is read as text.
 ### 2026-09-24: a book of pages is a document
 
 A fixed-layout book opens in the document reader like a PDF, through an
-in-process `DocumentSession` (`preview-epub/src/pages.rs`); comics too
+in-process `DocumentSession` (`epub/src/pages.rs`); comics too
 (ADR-015). Pages are drawn at the side the reader asks. A page with no size
 holding one picture is that picture; other pages with no size take the size
 of the book's first pages. The contents become the outline; search finds

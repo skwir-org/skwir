@@ -350,7 +350,7 @@ dates, measurements and what is left.
   MuPDF's `system-fonts` feature is replaced by our own fontconfig
   loader (its `font-kit` broke the workspace build).
 - **One plugin for audio and video** (2026-09-25, ADR-016):
-  `preview-audio` folded into `preview-media`.
+  `preview-audio` folded into `media`.
 - **More formats** (2026-09-28):
   - SVG by resvg; OpenEXR and DDS decoded in process; HEIC, AVIF, JPEG
     XL and raw by the desktop's thumbnailer at 1024 px. Code highlighted
@@ -406,7 +406,7 @@ dates, measurements and what is left.
   - Mermaid by merman in `skwir-mermaid-worker`: linked into Skwir it
     added 14.7 MB of code (text 51.9 → 66.6 MB), so it is a helper
     (16.3 MB), a default member. Without it a diagram stays code.
-  - 3D models: `preview-models` (~120 KB of code) shows the picture
+  - 3D models: `models` (~120 KB of code) shows the picture
     Blender, 3MF, FreeCAD, DWG, DXF and G-code files store, with print
     facts; `skwir-model-worker` (pure Rust, 1 MB) draws meshes without
     one (STL, OBJ, PLY, OFF, glTF): 3DBenchy (225,706 triangles) in
@@ -416,7 +416,7 @@ dates, measurements and what is left.
     SketchUp, LayOut and Rhino pictures checked on two SketchUp 2021
     models, a LayOut 2021 document and two Rhino 5 models; older
     SketchUp and newer Rhino files only on synthetic ones.
-  - Circuits (`preview-circuits`): KiCad boards (since 4), footprints,
+  - Circuits (`circuits`): KiCad boards (since 4), footprints,
     schematics and symbols (KiCad 6 on), matching `kicad-cli`'s SVG on
     KiCad 9 and 10 demo projects; 50 to 600 ms a file at 2048 px
     (release), peak about 25 MB beyond the file (an 84 MB board: 3.3 s,
@@ -429,7 +429,7 @@ dates, measurements and what is left.
     1024 px as at 128; the three that compute moves with parameters
     stay text.
 - **Text documents** (2026-10-03, ADR-030): Word, OpenDocument text and
-  RTF read by Skwir (`preview-documents`, the default), LibreOffice
+  RTF read by Skwir (`documents`, the default), LibreOffice
   pages or Pandoc, each giving way to the next when missing. Measured
   once (a small synthetic Word file): LibreOffice 1.2 to 2.7 s and up to
   370 MB, Pandoc 0.03 s and 120 MB. Not covered: `.fodt`, presentations
@@ -673,8 +673,8 @@ Home Manager's `mutableSettings` does, checked by `checks.home-manager`;
 and an overlay.
 
 The window's state is not a setting (ADR-056): its layout, tabs, last
-folder and hints shown are kept in `$XDG_STATE_HOME/skwir/state.toml`,
-moved out of an earlier skwir's settings at the next save. The settings
+folder and hints shown are kept in `$XDG_STATE_HOME/skwir/state.toml`.
+The settings
 file may then be read-only: a save writes through a link and says when it
 cannot, the dialog says so. `settings.check` checks a file against what
 skwir declares, with no window too; the Home Manager module runs it while
@@ -766,6 +766,16 @@ companions and pausing are checked by tests, not in the window. Not
 done: Merge for an extraction onto a folder (its undo would need each
 file it placed), passwords for agents, 7z and RAR decryption (libarchive
 has none).
+
+Plugin ids lost their `preview-` prefix with their titles (`media`,
+`documents`, `structured-data`…; crates and folders alike), and the
+migrations carried for earlier skwirs went, no one using it yet: settings
+renamed at start, the session's old field and widths, state and data
+moved out of the settings file, map tiles' single server, the tag notes'
+old operations and index formats, copy plans' `preserve_tags`, keys bound
+by old command names, `path` for `location`, the `when` token `none`.
+`Settings::rename` and the cache's layout number stay, for the first
+change after people use skwir.
 
 ---
 
@@ -915,8 +925,7 @@ every store it knows by default and writes the ones the user chooses.
   file's attributes first and, where refused, the store its folder
   already uses, else AppleDouble (now created); `restore_notes` refuses
   when another application changed a store since. One batch per folder,
-  one `listxattr` per file. Old `set_tags`, `set_rating`, `set_comment`
-  plans still load. The index learns from `Executor::observe`.
+  one `listxattr` per file. The index learns from `Executor::observe`.
 - **B. Merge against what Skwir wrote.** A snapshot per file in the
   cache; another application's edit in one store wins; the union
   without a snapshot. Details lists where the notes are and offers to
@@ -1281,7 +1290,7 @@ rename-and-move task over MCP that ends in a reviewable plan.
   median of 7), and a sandboxed helper restart took 23 ms against
   231 ms the first time.
 - **Gate, first half:** the hexadecimal preview as a module
-  (`crates/plugins-outside/preview-hex`), the same page for page, match
+  (`crates/plugins-outside/hex-view`), the same page for page, match
   for match and error for error (`crates/extend/tests/modules.rs`, nine
   views of four synthetic files), and in the window the preview panel
   differs by no pixel.
@@ -1408,8 +1417,9 @@ Phase 7.
    memory, so Undo does not outlive Skwir (by design: no database).
 5. **What users keep from 0.1 on.** Done 2026-10-07: settings are read
    with defaults for what is missing and nothing refused for what is
-   unknown (the session included); renamed keys follow
-   (`Settings::rename`). Fixed: a settings file that is not TOML or not
+   unknown (the session included); a renamed key can follow
+   (`Settings::rename`, called by none while no one uses skwir). Fixed: a
+   settings file that is not TOML or not
    text stopped Skwir from starting; it is now set aside
    (`settings.toml.unreadable-…`), never overwritten, and Skwir starts
    with defaults and says so (if it cannot set it aside, it saves

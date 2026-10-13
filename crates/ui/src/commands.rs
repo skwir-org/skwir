@@ -175,9 +175,6 @@ mod args {
         /// The place whose folders, or the folders above which, are listed.
         #[serde(default)]
         location: Option<PathArg>,
-        /// `location`'s old name.
-        #[serde(default)]
-        path: Option<PathArg>,
         /// Where the trail goes on, marked in the list.
         #[serde(default)]
         current: Option<PathArg>,

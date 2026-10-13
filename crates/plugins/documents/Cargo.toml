@@ -1,0 +1,25 @@
+[package]
+name = "skwir-plugin-documents"
+description = "skwir plugin: documents previews"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+skwir-core.workspace = true
+skwir-platform.workspace = true
+toml.workspace = true
+anyhow.workspace = true
+parking_lot.workspace = true
+roxmltree.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+# Word and OpenDocument files are zips (read by `skwir_platform::package`);
+# the tests write some.
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[lints]
+workspace = true

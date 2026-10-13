@@ -67,15 +67,10 @@ pub const SELECTION_TOKENS: [&str; 11] = [
     "restores",
 ];
 
-/// A token as the table spells it: `none` is the old spelling of `empty`.
-pub fn canonical_token(token: &str) -> &str {
-    if token == "none" { "empty" } else { token }
-}
-
 impl SelectionCtx {
     /// Whether one selection token holds; unknown tokens do not.
     pub fn holds(self, token: &str) -> bool {
-        match canonical_token(token) {
+        match token {
             "empty" => self.count == 0,
             "selection" => self.count > 0,
             "single" => self.count == 1,
@@ -1187,8 +1182,8 @@ mod tests {
     #[test]
     fn when_evaluation() {
         assert!(when_holds(None, ctx(0, true, true)));
-        assert!(when_holds(Some("none"), ctx(0, true, true)), "old spelling");
-        assert!(!when_holds(Some("none"), ctx(1, true, true)));
+        assert!(when_holds(Some("empty"), ctx(0, true, true)));
+        assert!(!when_holds(Some("empty"), ctx(1, true, true)));
         assert!(!when_holds(Some("selection"), ctx(0, true, true)));
         assert!(when_holds(Some("selection"), ctx(2, false, true)));
         assert!(!when_holds(Some("single"), ctx(2, false, true)));

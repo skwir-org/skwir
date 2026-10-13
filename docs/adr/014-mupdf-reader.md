@@ -23,7 +23,7 @@ layout" EPUB engine. It is AGPL-3.0 or commercial.
 - **Outside `default-members`,** like Poppler's. `just workers`, `just run`,
   `just test-all`, `just lint-all` and CI build it; `just mupdf-check` runs
   the shared reader fixtures against it, in CI too.
-- **Opt-in:** `preview-documents.backend` gains `mupdf`; `auto` stays
+- **Opt-in:** `documents.backend` gains `mupdf`; `auto` stays
   PDFium, then Poppler, until measurements say otherwise.
 - **Licensing.** The main binary never links MuPDF and talks to the worker
   only over its protocol; no other crate depends on it (as with the GPL
@@ -48,7 +48,7 @@ layout" EPUB engine. It is AGPL-3.0 or commercial.
 
 ### 2026-09-24: books, text size and fonts
 
-- **Book engine:** `preview-epub.backend` is `builtin` (also `auto`:
+- **Book engine:** `epub.backend` is `builtin` (also `auto`:
   reading mode, drawn fixed-layout pages, ADR-012/013) or `mupdf`, which
   opens every book in the document reader. With `mupdf` the plugin answers
   `open_document`, never `inspect`; a missing worker is an error naming the

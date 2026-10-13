@@ -1,0 +1,29 @@
+[package]
+name = "skwir-plugin-fonts"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+skwir-core.workspace = true
+skwir-platform.workspace = true
+anyhow.workspace = true
+# Fonts read by skrifa (fontations, maintained) and drawn by zeno, the two
+# already in the tree with gpui's glyph rasterizer (swash).
+skrifa = "0.44"
+zeno = "0.3"
+# Web fonts: WOFF2's decoder (brotli, transformed tables) in pure Rust; WOFF
+# is inflated here, within the input bound, by the flate2 already in the tree.
+wuff = { version = "0.2", default-features = false, features = ["brotli"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+
+[dev-dependencies]
+skwir-core = { workspace = true, features = ["testing"] }
+proptest.workspace = true
+tempfile.workspace = true
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+
+[lints]
+workspace = true

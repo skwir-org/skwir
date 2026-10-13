@@ -709,9 +709,6 @@ pub(crate) fn register(app: &crate::App) {
         )
         .section("Startup"),
     );
-    // Copies kept only tags before they kept every user attribute.
-    app.settings
-        .rename("core.preserve_tags_on_copy", PRESERVE_ATTRIBUTES_ON_COPY);
     app.settings.declare(
         SettingSpec::toggle(
             PRESERVE_ATTRIBUTES_ON_COPY,
@@ -1176,9 +1173,9 @@ impl Settings {
     }
 
     /// The same settings, their state kept in the file at `path` (made at
-    /// the first save): what it holds is read over the settings', a key
-    /// that moved there being newer. One that cannot be read is started
-    /// over: it is skwir's own, and holds nothing the user chose.
+    /// the first save): what it holds is read over the settings'. One that
+    /// cannot be read is started over: it is skwir's own, and holds nothing
+    /// the user chose.
     #[must_use]
     pub fn with_state(mut self, path: impl Into<PathBuf>) -> Self {
         let path = path.into();
@@ -1193,7 +1190,7 @@ impl Settings {
     /// The same settings, what the user made in skwir (`SettingSpec::data`:
     /// saved searches, pinned tags, tags' colours) kept in the file at
     /// `path` (ADR-057), made at the first save: what it holds is read over
-    /// the settings', where an earlier skwir kept it. It is the user's: one
+    /// the settings'. It is the user's: one
     /// that is no TOML is set aside, as the settings file is, and said;
     /// one that can be neither read nor set aside is never written, what
     /// changes kept in memory until skwir starts again.
@@ -1305,7 +1302,9 @@ impl Settings {
     /// nothing is stored under the new name yet. The owner calls it before
     /// declaring the new key, so a moved preference keeps what the user
     /// chose; the file is rewritten at the next save, and until then the move
-    /// is made again at each start, to the same effect.
+    /// is made again at each start, to the same effect. Nothing calls it
+    /// while no one uses skwir (keys are renamed outright): it is for the
+    /// first rename after people do.
     pub fn rename(&self, old: &str, new: &str) {
         let mut pending = self.writer.lock();
         let mut values = self.values.write();
@@ -1665,24 +1664,22 @@ impl Settings {
     /// Write the `keys` of `values` over the files as they stand, keeping
     /// what another process or a hand changed there: those kept apart in
     /// their files first (the state, then the user's data), the others in
-    /// the settings file; a key kept apart still in the settings file moves
-    /// out where that file can be written. A file none of whose keys
-    /// changed is not touched (a read-only settings file never is by a
-    /// change of the window's state or of a saved search). What is saved:
-    /// the settings file's table with the others' (`values` itself where
-    /// there is no file).
+    /// the settings file. A file none of whose keys changed is not touched
+    /// (a read-only settings file never is by a change of the window's
+    /// state or of a saved search). What is saved: the settings file's
+    /// table with the others' (`values` itself where there is no file).
     fn persist(
         &self,
         values: &toml::Table,
         keys: &BTreeSet<String>,
     ) -> anyhow::Result<toml::Table> {
         let kept = self.kept.read().clone();
-        let mut moved: BTreeMap<Store, BTreeSet<String>> = BTreeMap::new();
+        let mut apart_keys: BTreeMap<Store, BTreeSet<String>> = BTreeMap::new();
         let mut settings = BTreeSet::new();
         for key in keys {
             match self.apart_of(&kept, key) {
                 Some(store) => {
-                    moved.entry(store).or_default().insert(key.clone());
+                    apart_keys.entry(store).or_default().insert(key.clone());
                 }
                 None => {
                     settings.insert(key.clone());
@@ -1697,16 +1694,9 @@ impl Settings {
             }
             None => (None, values.clone()),
         };
-        // What is kept apart, still in the settings file (an earlier
-        // skwir's), moves out.
-        for (key, store) in self.kept_apart() {
-            if Self::remove(&mut saved, &key).is_some() {
-                moved.entry(store).or_default().insert(key);
-            }
-        }
         let mut apart = toml::Table::new();
         for (&store, path) in &self.apart {
-            let (Some(keys), Some(path)) = (moved.get(&store), path) else {
+            let (Some(keys), Some(path)) = (apart_keys.get(&store), path) else {
                 // Nothing of it changed, or it is saved nowhere: as this
                 // process holds it.
                 for (key, _) in kept.iter().filter(|(_, s)| **s == store) {
@@ -1728,14 +1718,10 @@ impl Settings {
             }
             Self::merge_into(&mut apart, merged);
         }
-        if let (Some(path), Some(disk)) = (&self.path, disk) {
-            // Only what the settings say changed must be written: what is
-            // kept apart, left in a file that cannot be written, stays
-            // there, unread.
-            let asked = Self::overlay(disk.clone(), values, &settings)? != disk;
-            if saved != disk && (asked || !Self::is_read_only(path)) {
-                Self::write_whole(path, Store::Settings, &saved)?;
-            }
+        if let (Some(path), Some(disk)) = (&self.path, disk)
+            && saved != disk
+        {
+            Self::write_whole(path, Store::Settings, &saved)?;
         }
         Self::merge_into(&mut saved, apart);
         Ok(saved)

@@ -22,7 +22,7 @@ choice.
   supplies the pinned runtime). The binding is pinned to 0.8.35 with the
   `pdfium_6721` ABI surface, exercised against PDFium 7749; any library or
   binding upgrade reruns the native checks.
-- **Choice.** `preview-documents.backend` is `auto`, `pdfium` or `poppler`
+- **Choice.** `documents.backend` is `auto`, `pdfium` or `poppler`
   (ADR-014 adds `mupdf`). Auto prefers PDFium and falls back only when its
   worker or library is missing; an explicit PDFium choice reports what is
   missing. Office documents keep ADR-003's isolated LibreOffice conversion and

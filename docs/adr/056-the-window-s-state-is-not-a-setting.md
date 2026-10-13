@@ -22,9 +22,9 @@ consequence on saved searches and tags revised by ADR-057.
    (`folders::state`: `$XDG_STATE_HOME/skwir` on Linux, the settings'
    folder on macOS, the local application data on Windows). Callers read
    and set it as any setting. A save writes each file only when its table
-   changes, the state first; a state key still in the settings file (an
-   earlier skwir's) moves out where that file can be written. The state
-   file is skwir's own: one that is no TOML is started over.
+   changes, the state first. The state file is skwir's own: one that is no
+   TOML is started over. (2026-10-13: a state key an earlier skwir left in
+   the settings file no longer moves out; no one used skwir yet.)
 2. **The settings file may be read-only.** A save writes through a link,
    to where it leads (a settings file kept with the user's other
    configuration stays a link). One that cannot be written (Home

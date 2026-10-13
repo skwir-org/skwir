@@ -580,10 +580,9 @@ pub struct Copy {
     pub new_name: Option<OsString>,
     /// Whether the copy keeps the source's `user.*` extended attributes
     /// (tags, rating, comment, where it was downloaded from). Captured when
-    /// the plan is created, so redo does not consult live settings; plans
-    /// written before attributes other than tags were kept say
-    /// `preserve_tags`, which means the same now.
-    #[serde(default = "preserve_attributes_default", alias = "preserve_tags")]
+    /// the plan is created, so redo does not consult live settings; a plan
+    /// that does not say (an agent's, a script's) keeps them.
+    #[serde(default = "preserve_attributes_default")]
     pub preserve_attributes: bool,
 }
 

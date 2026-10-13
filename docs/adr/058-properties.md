@@ -87,7 +87,6 @@ Status: accepted, 2026-10-13. Built.
 
 - One surface: the keys, the menu, the palette, agents and scripts reach
   the same rows and the same commands.
-- A shortcut saved for `ui.preview_details` runs `ui.properties`.
 - Properties over a preview leaves the preview at least half the room
   unless its edge is dragged, and the preview keeps its toolbar however
   far it is; hiding Properties gives the room back.

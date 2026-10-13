@@ -5,7 +5,7 @@ video). Area rules: `docs/invariants/media.md`.
 
 ## Context
 
-ADR-003 left playback for later: `preview-media` showed FFmpeg stills with
+ADR-003 left playback for later: `media` showed FFmpeg stills with
 five-second seeking. A player needs a persistent session (decoding, sync,
 streams, subtitles, seeking, speed) without a media framework in the UI
 process, without a polling or animation loop, and without unsafe
@@ -13,7 +13,7 @@ cross-process mappings.
 
 ## Decision
 
-- **Worker.** `preview-media` gains a persistent session that starts paused.
+- **Worker.** `media` gains a persistent session that starts paused.
   `skwir-media-worker` links GStreamer; the UI and platform adapter do not.
   `playbin3` does decoding, sync, stream selection, subtitles, seeking and
   speed, its flags left intact. Commands and small state updates are JSON
@@ -54,7 +54,7 @@ cross-process mappings.
   `Rejected` reply, shown as a transient status; the session goes on. Only
   decoder errors and a lost runtime end it, and the UI withdraws the
   controls. Errors are reported, never hidden by trying another decoder.
-- **Choice.** `preview-media.backend` is `auto`, `gstreamer` or `stills`;
+- **Choice.** `media.backend` is `auto`, `gstreamer` or `stills`;
   auto keeps FFmpeg stills when the player or its runtime is absent.
 
 Licensing and alternatives: GStreamer is LGPL-2.1 (less restrictive than

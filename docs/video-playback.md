@@ -36,7 +36,7 @@ binding rules are in `docs/invariants/media.md`; the decision is ADR-008.
 
 ## Engine and installation
 
-`preview-media.backend`:
+`media.backend`:
 
 | Value | Behaviour |
 | --- | --- |

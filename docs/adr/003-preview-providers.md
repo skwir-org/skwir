@@ -19,7 +19,7 @@ engines loaded at startup.
   `EntryRef`, MIME type, page or video position and pixel limit; a result
   holds RGBA pixels plus document/video navigation metadata. Providers run on
   scheduler workers, never during rendering.
-- **Plugins.** `preview-media` and `preview-documents` register
+- **Plugins.** `media` and `documents` register
   independently. Disabling one cancels its requests; a registration change
   invalidates the current preview. Image and text rendering stay in the UI.
 - **Tools, not libraries.** Installed FFmpeg/ffprobe for video stills,

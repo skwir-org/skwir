@@ -154,8 +154,8 @@ fn finish(
 pub type SharedTuning = std::sync::Arc<parking_lot::Mutex<crate::media::Tuning>>;
 
 /// The ids of the audio and the video provider (`PreviewProvider::id`).
-pub const AUDIO_PROVIDER: &str = "preview-media.audio";
-pub const VIDEO_PROVIDER: &str = "preview-media.video";
+pub const AUDIO_PROVIDER: &str = "media.audio";
+pub const VIDEO_PROVIDER: &str = "media.video";
 
 pub struct MediaPreviews {
     audio: bool,
@@ -623,7 +623,7 @@ impl PreviewProvider for DocumentPreviews {
     }
 
     fn id(&self) -> &'static str {
-        "preview-documents"
+        "documents"
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
         is_pdf(req) || is_office(&req.entry.path, req.mime.as_deref())

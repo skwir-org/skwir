@@ -218,7 +218,7 @@ impl Shell {
     }
 
     /// `ui.subfolder_menu { location, current }`: the folders inside
-    /// `location` (a folder; `path` is its old name), or the places a
+    /// `location` (a folder), or the places a
     /// provider says are inside one that is no folder, `current` (where
     /// the trail goes on) marked; `{ close: true }` closes it. Hidden
     /// folders are listed when the pane shows hidden files.
@@ -234,7 +234,7 @@ impl Shell {
                 .map(|arg| skwir_core::Location::parse_os(arg.as_os_str()))
         };
         cx.notify();
-        let of = location("location").or_else(|| location("path"));
+        let of = location("location");
         let what = of.clone().map(|of| NavWhat::Subfolders { of });
         // A later request, or a close, makes an answer on its way unwanted
         // (`toggle_popup` counts it in `nav_asked`).

@@ -1203,7 +1203,7 @@ impl Shell {
         let ctx = self.selection_ctx();
         keymap::keys_for_where(self.key_hints.of(command), command, args, |flag| {
             crate::menu::SELECTION_TOKENS
-                .contains(&crate::menu::canonical_token(flag))
+                .contains(&flag)
                 .then(|| ctx.holds(flag))
         })
     }

@@ -1,0 +1,20 @@
+[package]
+name = "skwir-plugin-hex"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+skwir-core.workspace = true
+skwir-platform.workspace = true
+anyhow.workspace = true
+memchr = "2"
+
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

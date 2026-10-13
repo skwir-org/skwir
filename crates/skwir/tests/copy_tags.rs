@@ -217,8 +217,9 @@ fn failed_copy_does_not_publish_a_partial_tree_or_touch_an_existing_target() {
     std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// A copy plan that does not say (an agent's, a script's) keeps them.
 #[test]
-fn old_serialized_copy_plans_default_to_preserving_attributes() {
+fn copy_plans_that_do_not_say_preserve_attributes() {
     let tmp = tempdir();
     let source = tmp.path().join("source.txt");
     std::fs::write(&source, "synthetic").unwrap();
@@ -229,14 +230,6 @@ fn old_serialized_copy_plans_default_to_preserving_attributes() {
     }))
     .unwrap();
     assert!(copy.preserve_attributes);
-    // A plan from when only tags were kept says so under the old name.
-    let copy: Copy = serde_json::from_value(json!({
-        "entry": EntryRef::from_path(tmp.path().join("source.txt")).unwrap(),
-        "dest_dir": tmp.path(),
-        "preserve_tags": false
-    }))
-    .unwrap();
-    assert!(!copy.preserve_attributes);
 }
 
 /// A tmpfs mount on another device that supports user xattrs, if any.

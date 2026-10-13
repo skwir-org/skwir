@@ -121,7 +121,7 @@ A name that says nothing is not a binary file.
 ## Models, drawings and diagrams
 
 - A model, drawing or print shows the picture its application stored
-  (`preview-models`), read from where the format keeps it and no
+  (`models`), read from where the format keeps it and no
   further: a Blender file's blocks before `TEST` (a compressed one
   stream-decoded that far), a package's named members, a G-code's first
   `TEXT_INPUT` and last `TAIL` bytes, a DWG's listed pictures.
@@ -131,8 +131,8 @@ A name that says nothing is not a binary file.
   the model's folder, and returns a line of measures and a PNG. Without
   the helper the plugin declines the mesh, leaving it to a desktop
   thumbnailer.
-- A drawing made from content (`preview-circuits`: KiCad boards,
-  footprints, schematics, symbol libraries; `preview-models`: DXF) is SVG
+- A drawing made from content (`circuits`: KiCad boards,
+  footprints, schematics, symbol libraries; `models`: DXF) is SVG
   rasterized by `inspection::drawing`, the inert path of every drawing:
   nothing outside it is read, and text uses the system's fonts (KiCad's
   stroke font is GPL, not ours to carry).
@@ -155,7 +155,7 @@ A name that says nothing is not a binary file.
 
 A text document is read as its structure, or laid out as pages.
 
-- Word and OpenDocument text become blocks in `preview-documents`
+- Word and OpenDocument text become blocks in `documents`
   (`docx.rs`, `odt.rs`, `blocks::Builder`), never via HTML, so lists keep
   their document's markers and headings their numbers. Pandoc's HTML
   (RTF, or any format when chosen) goes through `rich_preview::html`.
@@ -260,7 +260,7 @@ A text document is read as its structure, or laid out as pages.
 - **A book's rows are its contents** (`inspector::listed`), shown in the
   Contents drawer, never as list items after the text nor read by find
   and copy. They are the table of contents alone
-  (`preview-epub::table_of_contents`: the EPUB 3 `toc` nav, else the NCX
+  (`epub::table_of_contents`: the EPUB 3 `toc` nav, else the NCX
   `navMap`), never the landmarks, the printed page list or the NCX's
   copy of the chapters, which `rbook::Epub::toc` also iterates.
 - **A book counts chapters or printed pages** (`Inspection::printed_pages`,
@@ -281,7 +281,7 @@ A text document is read as its structure, or laid out as pages.
 - **A book of pages is a document** (ADR-013 addendum). A fixed-layout
   book (`rendition:layout pre-paginated`) with the built-in engine, or a
   comic, opens in the document reader through an in-process
-  `DocumentSession` (`preview-epub/src/pages.rs`, `preview-comics`),
+  `DocumentSession` (`epub/src/pages.rs`, `comics`),
   continuous or a page at a time like a PDF, never as an inspection
   (`inspect` returns `None`). A page is drawn or decoded at the side
   length the reader asks, 100% being its own size (CSS pixels for a
@@ -303,7 +303,7 @@ A text document is read as its structure, or laid out as pages.
 ## Markdown and blocks
 
 - Markdown events become semantic blocks directly
-  (`crates/plugins/preview-markdown/src/markdown.rs`): heading level,
+  (`crates/plugins/markdown/src/markdown.rs`): heading level,
   list depth and marker, quotes and table cells stay in
   `inspection::Block`, never flattened to HTML and scraped back. Raw HTML
   blocks are read in place by `rich_preview::html`: dropping them loses a

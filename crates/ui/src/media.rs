@@ -466,7 +466,7 @@ impl Shell {
                     None => window.focus(&self.ui().focus),
                 }
             }
-            self.set_status_about(error, "preview-media.backend", cx);
+            self.set_status_about(error, "media.backend", cx);
         }
         if hand_over {
             return self.media_step(1, window, cx);
