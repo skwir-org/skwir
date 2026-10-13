@@ -124,8 +124,9 @@ impl<'a> IntoIterator for &'a Hints {
 
 /// Bindings the shell always needs, independent of plugins: every `ui.*`
 /// command the shell owns has its key here, so disabling a plugin never
-/// takes the palette or Quit with it. Keys for core and plugin commands are
-/// the plugins' (ops-basic binds the file operations).
+/// takes the palette or Quit with it, and so do the core's commands no
+/// plugin is about (hidden files, the filter). Keys for the other core and
+/// plugin commands are the plugins' (ops-basic binds the file operations).
 const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("f2", "ui.rename_prompt", Some("pane single !restores")),
     // Into the folder shown, like Ctrl+V: a search or the shelf has none.
@@ -135,9 +136,9 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("secondary-l", "ui.focus_address", None),
     ("secondary-shift-p", "ui.palette", None),
     ("secondary-q", "ui.quit", None),
-    ("ctrl-h", "ui.toggle_hidden", None),
+    ("ctrl-h", "toggle_hidden", None),
     // Dolphin's key for it, beside GNOME's.
-    ("alt-.", "ui.toggle_hidden", None),
+    ("alt-.", "toggle_hidden", None),
     ("f9", "ui.toggle_sidebar", None),
     // The keyboard into the sidebar, and back to the files.
     ("f6", "ui.focus_sidebar", None),

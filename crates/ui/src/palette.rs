@@ -59,7 +59,6 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ),
     ("ui.find_next", r#"{"delta":1}"#, "Find the next name"),
     ("ui.find_next", r#"{"delta":-1}"#, "Find the previous name"),
-    ("ui.toggle_hidden", "{}", "Toggle hidden files"),
     ("ui.toggle_sidebar", "{}", "Toggle sidebar"),
     ("ui.focus_sidebar", "{}", "Focus sidebar"),
     (

@@ -20,6 +20,11 @@ pub const OWNER: &str = "keyboard";
 pub const LIKE: &str = "keys.like";
 pub const BINDINGS_KEY: &str = "keyboard.bindings";
 
+/// Commands a record may name as they were once called, and what they are
+/// now: a shortcut keeps working when its command is renamed. The shell's
+/// `ui.toggle_hidden` only ran the core's (2026-10-13).
+const RENAMED: [(&str, &str); 1] = [("ui.toggle_hidden", "toggle_hidden")];
+
 /// One of the user's bindings. Without a command it unbinds the keys where
 /// it applies: the key then does what it would with nothing bound there.
 #[derive(Clone, Debug, PartialEq)]
@@ -107,7 +112,11 @@ fn binding(record: &toml::Value) -> anyhow::Result<UserBinding> {
         id: text("id").unwrap_or_default().to_owned(),
         keys: keys.split_whitespace().collect::<Vec<_>>().join(" "),
         command: text("command").map(|name| Invocation {
-            name: name.into(),
+            name: RENAMED
+                .iter()
+                .find(|(old, _)| *old == name)
+                .map_or(name, |(_, new)| new)
+                .into(),
             args,
         }),
         when: text("when").map(str::to_owned),
@@ -289,6 +298,20 @@ mod tests {
             spec.check(&kept_value).is_ok(),
             "the file as it stands is fine"
         );
+    }
+
+    /// A shortcut to a command by the name it once had runs it as it is
+    /// called now.
+    #[test]
+    fn a_renamed_command_is_bound_by_its_old_name_too() {
+        let settings = Settings::in_memory();
+        declare(&settings, std::sync::Weak::new());
+        let spec = settings.spec(BINDINGS_KEY).unwrap();
+        let text = r#"[{"id": "1", "keys": "ctrl-j", "command": "ui.toggle_hidden"}]"#;
+        settings.set(BINDINGS_KEY, spec.parse(text).unwrap());
+        let bindings = user_bindings(&settings);
+        let command = bindings[0].command.as_ref().unwrap();
+        assert_eq!(&*command.name, "toggle_hidden");
     }
 
     #[test]

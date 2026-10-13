@@ -635,7 +635,7 @@ mod tests {
     fn an_action_is_one_row_with_all_its_keys() {
         let (_tmp, app) = app();
         let (keyboard, _) = read(&app, &[]);
-        let hidden = action(&keyboard, "Anywhere", "ui.toggle_hidden");
+        let hidden = action(&keyboard, "Anywhere", "toggle_hidden");
         let keys: Vec<&str> = hidden.chips.iter().map(|c| c.keys.as_str()).collect();
         assert_eq!(keys, ["ctrl-h", "alt-."]);
         assert_eq!(hidden.title, "Toggle hidden files");
@@ -661,7 +661,7 @@ mod tests {
         let mine = [record(&[
             ("id", "1"),
             ("keys", "ctrl-j"),
-            ("command", "ui.toggle_hidden"),
+            ("command", "toggle_hidden"),
         ])];
         let (keyboard, _) = read(&app, &mine);
         let folded = rows(&keyboard, Show::Keyed, "", None, false);
@@ -768,7 +768,7 @@ mod tests {
         assert!(records.is_empty());
 
         let (keyboard, _) = read(&app, &[]);
-        let hidden = action(&keyboard, "Anywhere", "ui.toggle_hidden");
+        let hidden = action(&keyboard, "Anywhere", "toggle_hidden");
         let mut records = Vec::new();
         apply(&mut records, &Edit::Remove(&hidden.chips[0]));
         assert_eq!(written(&records), [("ctrl-h".into(), None, None)]);
@@ -780,7 +780,7 @@ mod tests {
                 context: hidden.context(),
             },
         );
-        assert_eq!(written(&records)[1].1.as_deref(), Some("ui.toggle_hidden"));
+        assert_eq!(written(&records)[1].1.as_deref(), Some("toggle_hidden"));
     }
 
     /// Before saving: what the keys do now where they would work, a place
@@ -807,7 +807,7 @@ mod tests {
             ("command", "gone.open"),
         ])];
         let (keyboard, bound) = read(&app, &waiting);
-        let hidden = action(&keyboard, "Anywhere", "ui.toggle_hidden");
+        let hidden = action(&keyboard, "Anywhere", "toggle_hidden");
         let anywhere = hidden.context();
         let say = |keys: &str, context: &str| {
             verdict(&app, &keyboard, &bound, keys, context, hidden, None)

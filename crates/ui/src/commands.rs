@@ -396,7 +396,6 @@ const SHOWS: &[&str] = &[
     "ui.zoom",
     "ui.grid_fill",
     "ui.narrow_folders",
-    "ui.toggle_hidden",
     "ui.peek",
     "ui.peek_close",
     "ui.usage_refresh",
@@ -980,11 +979,6 @@ pub fn declare_all(app: &App) {
         "ui.narrow_folders",
         "Toggle the Narrow by bar over folders",
         "Offer the Narrow by bar over folders too",
-    );
-    none(
-        "ui.toggle_hidden",
-        "Toggle hidden files",
-        "Show or hide hidden files",
     );
     none(
         "ui.peek",

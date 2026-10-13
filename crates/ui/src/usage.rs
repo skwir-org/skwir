@@ -1267,7 +1267,12 @@ fn click(
             }
         }
         Part::Hidden(_) if double => {
-            shell.run("ui.toggle_hidden", serde_json::json!({}), window, cx);
+            shell.run(
+                "toggle_hidden",
+                serde_json::json!({ "pane": pane }),
+                window,
+                cx,
+            );
         }
         Part::Rest(_) if double && block.depth == 0 => {
             shell.run("ui.view", serde_json::json!({"id": "list"}), window, cx);

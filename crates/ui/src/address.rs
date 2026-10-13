@@ -219,13 +219,8 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         })
         .collect();
     let mut show = vec![menu_item(
-        Button::new(
-            "menu-hidden",
-            "eye",
-            "Show hidden files",
-            "ui.toggle_hidden",
-        )
-        .active(spec.show_hidden),
+        Button::new("menu-hidden", "eye", "Show hidden files", "toggle_hidden")
+            .active(spec.show_hidden),
         "Hidden files",
     )];
     // With hidden files, the files that keep another's notes beside it

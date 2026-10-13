@@ -401,15 +401,6 @@ impl Shell {
             .map_or_else(SortSpec::default, |p| p.sort)
     }
 
-    /// Toggle hidden files for this pane through the core command.
-    pub fn toggle_hidden(&mut self, cx: &mut Context<Self>) {
-        self.dispatch_core(
-            "toggle_hidden",
-            serde_json::json!({ "pane": self.pane }),
-            cx,
-        );
-    }
-
     /// Sort this pane by `key` through the core command (same key again flips the direction).
     pub fn sort_by(&mut self, key: SortKey, cx: &mut Context<Self>) {
         self.sort(Some(key), None, cx);

@@ -156,7 +156,7 @@ const KEYS: &[(&str, &str, &str, &str)] = &[
     ("a", "ui.new_file_prompt", "{}", "pane folder"),
     // Several renamed at once, one on its own: F2.
     ("r", LIKE, r#"{"keys":"f2"}"#, "pane"),
-    (".", "ui.toggle_hidden", "{}", "pane"),
+    (".", "toggle_hidden", "{}", "pane"),
     ("s", "ui.search", "{}", "pane"),
     ("S", "ui.search", r#"{"text":"content:"}"#, "pane"),
     ("z", "ui.jump", "{}", "pane"),

@@ -1861,7 +1861,6 @@ impl Shell {
             "move_other" => self.send_to_other_pane("move", window, cx),
             "accept" => self.confirm_accept(window, cx),
             "dismiss" => self.confirm_dismiss(window, cx),
-            "toggle_hidden" => self.toggle_hidden(cx),
             "toggle_sidebar" => self.toggle_sidebar(window, cx),
             "sidebar_section" => self.sidebar_section(args, cx),
             "sidebar_place" => self.sidebar_place(args, cx),

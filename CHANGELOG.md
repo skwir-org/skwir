@@ -8,6 +8,10 @@
   go to) through New shortcut. Every action is called by what it does
   (no more four "Preview action" rows). A shortcut of a plugin turned
   off waits for it, where it blocked every later change to the keys.
+- **Hidden files** are one command, `toggle_hidden`: the shell's
+  `ui.toggle_hidden` only ran it, and the palette listed it twice.
+  Scripts and agents use `toggle_hidden`; a shortcut saved with the old
+  name keeps working.
 
 ## 0.1.0 (2026-10-13)
 
