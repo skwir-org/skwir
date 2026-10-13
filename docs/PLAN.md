@@ -1510,7 +1510,8 @@ Phase 7.
     Ubuntu, Fedora and Arch in their roots (`skwir` alone, then the
     others), the AppImage in its runtime-only root (both readers,
     playback, the window's commands, the sandboxed archive helper); the
-    release metadata dated 2026-10-12 and agreeing (`release-metadata`).
+    release metadata dated 2026-10-12 and agreeing (`release-metadata`),
+    dated 2026-10-13 the next day.
     **The tarball** (2026-10-13, ADR-052 decision 7):
     `skwir-0.1.0-linux-x86_64.tar.gz`, the AppImage's `usr` tree under
     one folder with the program linked at its top, for a system without

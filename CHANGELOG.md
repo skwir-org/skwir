@@ -1,6 +1,6 @@
 # Changes
 
-## 0.1.0 (2026-10-12)
+## 0.1.0 (2026-10-13)
 
 The first release, for Linux.
 
