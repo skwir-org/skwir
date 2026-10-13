@@ -195,16 +195,23 @@ fn a_folder_made_an_archive_of_each_format_is_extracted_back_as_it_was() {
 
         let back = tmp.path().join(format!("back {}", format.name()));
         std::fs::create_dir(&back).unwrap();
-        applied(
+        let extract = plan_of(
             &app,
-            &plan_of(
-                &app,
-                "archive.extract",
-                &json!({ "entries": [archive], "dest": back }),
-            ),
+            "archive.extract",
+            &json!({ "entries": [archive], "dest": back }),
         );
+        applied(&app, &extract);
         let extracted = back.join("Synthetic album l'été");
         assert_eq!(tree(&extracted), before, "{}", format.name());
+        // Again: what it extracts is there, links and other names alike.
+        assert_eq!(
+            app.executor
+                .execute_blocking(&extract, app.lifetime())
+                .applied,
+            0,
+            "{}",
+            format.name()
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
@@ -651,6 +658,7 @@ fn making_an_archive_waits_while_held_and_stops_when_cancelled() {
         item: archive::Item::File {
             path: big.clone(),
             size: 4 << 20,
+            id: None,
         },
         mode: 0o644,
         modified: None,
@@ -733,4 +741,467 @@ fn compress_is_offered_for_files_and_folders_in_their_menu() {
             .iter()
             .any(|item| item.command.name.starts_with("archive.compress"))
     );
+}
+
+/// `path`'s modification time moved `by` from now, later or earlier.
+fn touch(path: &Path, later: bool, by: Duration) {
+    let now = std::time::SystemTime::now();
+    let at = if later { now + by } else { now - by };
+    std::fs::File::open(path).unwrap().set_modified(at).unwrap();
+}
+
+/// A file's text changed, its size kept, its time later: what a copy and
+/// an archive tell apart from the file they hold by its time alone.
+fn edit_in_place(path: &Path, text: &str) {
+    assert_eq!(std::fs::metadata(path).unwrap().len(), text.len() as u64);
+    std::fs::write(path, text).unwrap();
+    touch(path, true, Duration::from_secs(60));
+}
+
+/// The status the dry run gives the plan's first step.
+fn first_status(plan: &Plan) -> skwir_core::op::StepStatus {
+    plan.diff(&Arc::default()).steps[0].1.clone()
+}
+
+#[test]
+fn an_archive_is_done_only_while_what_it_holds_is_unchanged() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    app.set_window_shown();
+    let notes = tmp.path().join("notes");
+    std::fs::create_dir(&notes).unwrap();
+    std::fs::write(notes.join("config.txt"), "value 1").unwrap();
+    let again = |app: &App| {
+        plan_of(
+            app,
+            "archive.compress",
+            &json!({ "entries": [notes], "on_conflict": { "files": "keep_both" } }),
+        )
+    };
+    // The dry run of the plan with nothing said of a name taken.
+    let asked = |app: &App| plan_of(app, "archive.compress", &json!({ "entries": [notes] }));
+    let made = whole(&app, again(&app), |_| {});
+    assert!(matches!(made, ExecEvent::Finished { error: None, .. }));
+    assert!(matches!(
+        first_status(&asked(&app)),
+        skwir_core::op::StepStatus::AlreadyDone
+    ));
+
+    // One digit changed, the size kept: not the archive's any more.
+    edit_in_place(&notes.join("config.txt"), "value 2");
+    assert!(matches!(
+        first_status(&asked(&app)),
+        skwir_core::op::StepStatus::Conflict { .. }
+    ));
+    let made = whole(&app, again(&app), |_| {});
+    assert!(matches!(made, ExecEvent::Finished { error: None, .. }));
+    let fresh = tmp.path().join("notes (2).zip");
+    assert!(fresh.is_file(), "made again, beside");
+
+    // Extracted, the second holds the change.
+    let back = tmp.path().join("back");
+    std::fs::create_dir(&back).unwrap();
+    applied(
+        &app,
+        &plan_of(
+            &app,
+            "archive.extract",
+            &json!({ "entries": [fresh], "dest": back }),
+        ),
+    );
+    assert_eq!(
+        // Not unwrapped: what it holds is named `notes`, not `notes (2)`.
+        std::fs::read_to_string(back.join("notes (2)/notes/config.txt")).unwrap(),
+        "value 2"
+    );
+}
+
+#[test]
+fn replace_if_newer_reads_the_files_a_folder_holds() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    app.set_window_shown();
+    let deep = tmp.path().join("deep");
+    std::fs::create_dir_all(deep.join("inner")).unwrap();
+    std::fs::write(deep.join("inner/file.txt"), "first").unwrap();
+    let plan = |app: &App| {
+        plan_of(
+            app,
+            "archive.compress",
+            &json!({ "entries": [deep], "on_conflict": { "files": "replace_if_newer" } }),
+        )
+    };
+    assert!(matches!(
+        whole(&app, plan(&app), |_| {}),
+        ExecEvent::Finished { error: None, .. }
+    ));
+    let archive_path = tmp.path().join("deep.zip");
+    // The folders older than the archive; a file deep inside changed
+    // after it.
+    edit_in_place(&deep.join("inner/file.txt"), "again");
+    touch(&deep.join("inner"), false, Duration::from_secs(3600));
+    touch(&deep, false, Duration::from_secs(3600));
+    let replaced = whole(&app, plan(&app), |_| {});
+    assert!(
+        matches!(replaced, ExecEvent::Finished { error: None, .. }),
+        "{replaced:?}"
+    );
+    let into = tmp.path().join("into");
+    std::fs::create_dir(&into).unwrap();
+    applied(
+        &app,
+        &plan_of(
+            &app,
+            "archive.extract",
+            &json!({ "entries": [archive_path], "dest": into }),
+        ),
+    );
+    assert_eq!(
+        std::fs::read_to_string(into.join("deep/inner/file.txt")).unwrap(),
+        "again",
+        "replaced: something it holds is newer"
+    );
+    assert!(!tmp.path().join("deep (2).zip").exists());
+
+    // Nothing newer than the archive: kept as it is.
+    touch(&archive_path, true, Duration::from_secs(7200));
+    std::fs::write(deep.join("inner/file.txt"), "third, longer").unwrap();
+    touch(
+        &deep.join("inner/file.txt"),
+        true,
+        Duration::from_secs(3600),
+    );
+    let kept = whole(&app, plan(&app), |_| {});
+    assert!(matches!(
+        kept,
+        ExecEvent::Finished {
+            error: None,
+            applied: 0,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn replace_never_puts_in_the_trash_what_it_reads() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    app.set_window_shown();
+    let replace = json!({ "files": "replace" });
+
+    // An archive made before, among what is compressed under its name.
+    let holiday = tmp.path().join("Holiday");
+    std::fs::create_dir(&holiday).unwrap();
+    std::fs::write(holiday.join("a.txt"), "a").unwrap();
+    std::fs::write(holiday.join("b.txt"), "b").unwrap();
+    applied(
+        &app,
+        &plan_of(
+            &app,
+            "archive.compress",
+            &json!({ "entries": [holiday.join("a.txt"), holiday.join("b.txt")] }),
+        ),
+    );
+    let old = holiday.join("Holiday.zip");
+    let before = std::fs::read(&old).unwrap();
+    let ended = whole(
+        &app,
+        plan_of(
+            &app,
+            "archive.compress",
+            &json!({
+                "entries": [holiday.join("a.txt"), old],
+                "on_conflict": replace,
+            }),
+        ),
+        |_| {},
+    );
+    let ExecEvent::Finished { error, .. } = ended else {
+        panic!("{ended:?}")
+    };
+    let error = error.expect("refused");
+    assert!(error.contains("is among what it compresses"), "{error}");
+    assert_eq!(std::fs::read(&old).unwrap(), before, "never trashed");
+
+    // A folder holding the archive extracted under its name.
+    let x = tmp.path().join("x");
+    let photos = x.join("photos");
+    std::fs::create_dir_all(&photos).unwrap();
+    std::fs::write(photos.join("pic.txt"), "pic").unwrap();
+    applied(
+        &app,
+        &plan_of(&app, "archive.compress", &json!({ "entries": [photos] })),
+    );
+    let inside = photos.join("photos.zip");
+    std::fs::rename(x.join("photos.zip"), &inside).unwrap();
+    std::fs::write(photos.join("pic.txt"), "pic, since").unwrap();
+    let ended = whole(
+        &app,
+        plan_of(
+            &app,
+            "archive.extract",
+            &json!({ "entries": [inside], "dest": x }),
+        ),
+        |app| {
+            let question = clashes_asked(app);
+            let replace = Answer::all(Policy {
+                files: FileChoice::Replace,
+                ..Policy::default()
+            });
+            assert!(app.answer_clashes(question.id, Some(replace)));
+        },
+    );
+    let ExecEvent::Finished { error, .. } = ended else {
+        panic!("{ended:?}")
+    };
+    let error = error.expect("refused");
+    assert!(error.contains("holds “photos.zip”"), "{error}");
+    assert!(inside.is_file(), "never trashed");
+    assert_eq!(
+        std::fs::read_to_string(photos.join("pic.txt")).unwrap(),
+        "pic, since"
+    );
+}
+
+#[test]
+fn compress_asking_its_name_is_the_users_alone() {
+    use skwir_core::command::Effect;
+    let tmp = scratch();
+    let app = app(tmp.path());
+    let effect = |name: &str| app.commands.get(name).expect(name).effect;
+    // A prompt that runs what is answered as the user's own: never an
+    // agent's, whose folder the prompt would not show.
+    assert_eq!(effect("archive.compress_ask"), Effect::UserOnly);
+    // What an agent may run is proposed for review.
+    assert_eq!(effect("archive.compress"), Effect::Plans);
+    assert_eq!(effect("archive.extract"), Effect::Plans);
+}
+
+#[test]
+fn a_one_file_archive_kept_beside_keeps_the_files_extension() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    app.set_window_shown();
+    let report = tmp.path().join("report.pdf");
+    std::fs::write(&report, "the report").unwrap();
+    applied(
+        &app,
+        &plan_of(&app, "archive.compress", &json!({ "entries": [report] })),
+    );
+    std::fs::write(&report, "the report, since").unwrap();
+    let kept = whole(
+        &app,
+        plan_of(
+            &app,
+            "archive.extract",
+            &json!({ "entries": [tmp.path().join("report.pdf.zip")] }),
+        ),
+        |app| {
+            let question = clashes_asked(app);
+            assert!(app.answer_clashes(question.id, Some(Answer::all(Policy::default()))));
+        },
+    );
+    assert!(matches!(kept, ExecEvent::Finished { error: None, .. }));
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("report (2).pdf")).unwrap(),
+        "the report"
+    );
+    assert!(!tmp.path().join("report.pdf (2)").exists());
+}
+
+#[test]
+fn a_file_that_changes_as_it_is_read_is_not_archived() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let file = tmp.path().join("growing.log");
+    std::fs::write(&file, "line one\n").unwrap();
+    let meta = std::fs::metadata(&file).unwrap();
+    let id = skwir_core::fs::stat::id_of(&file);
+    let part = |size: u64, id, modified| archive::Part {
+        name: b"growing.log".to_vec(),
+        item: archive::Item::File {
+            path: file.clone(),
+            size,
+            id,
+        },
+        mode: 0o644,
+        modified,
+        attributes: Vec::new(),
+    };
+    let make = |part: archive::Part, name: &str| {
+        let into = tmp.path().join(name);
+        std::fs::create_dir(&into).unwrap();
+        archive::create(
+            &[part],
+            Format::Tar,
+            None,
+            &into.join("archive"),
+            &skwir_core::CancelToken::new(),
+            |_| {},
+            || false,
+        )
+    };
+    let walked = meta.modified().ok();
+    // As walked: made.
+    make(part(meta.len(), id, walked), "as-walked").unwrap();
+    // Longer than walked: never cut short in the archive.
+    let error = make(part(meta.len() - 1, id, walked), "longer").unwrap_err();
+    assert!(
+        error.to_string().contains("changed as it was read"),
+        "{error}"
+    );
+    // Another file at its name.
+    let other = skwir_core::fs::stat::id_of(tmp.path());
+    let error = make(part(meta.len(), other, walked), "another").unwrap_err();
+    assert!(
+        error.to_string().contains("changed as it was read"),
+        "{error}"
+    );
+    // Written to since it was walked.
+    let earlier = walked.map(|t| t - Duration::from_secs(5));
+    let error = make(part(meta.len(), id, earlier), "written").unwrap_err();
+    assert!(
+        error.to_string().contains("changed as it was read"),
+        "{error}"
+    );
+    // A link put at its name leads elsewhere: not the file walked.
+    #[cfg(unix)]
+    {
+        let secret = tmp.path().join("elsewhere.txt");
+        std::fs::write(&secret, "not to be archived").unwrap();
+        std::fs::remove_file(&file).unwrap();
+        std::os::unix::fs::symlink(&secret, &file).unwrap();
+        let error = make(part(meta.len(), id, walked), "linked").unwrap_err();
+        assert!(
+            error.to_string().contains("changed as it was read"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn an_empty_password_is_asked_again() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    let folder = tmp.path().join("locked");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("secret.txt"), "the secret").unwrap();
+    app.set_window_shown();
+    let made_it = whole(
+        &app,
+        plan_of(
+            &app,
+            "archive.compress",
+            &json!({ "entries": [folder], "password": true }),
+        ),
+        |app| {
+            for _ in 0..2 {
+                let asked = secret_asked(app);
+                assert!(app.answer_secret(asked.id, Some("words".into())));
+            }
+        },
+    );
+    assert!(matches!(made_it, ExecEvent::Finished { error: None, .. }));
+    let into = tmp.path().join("into");
+    std::fs::create_dir(&into).unwrap();
+    let extracted = whole(
+        &app,
+        plan_of(
+            &app,
+            "archive.extract",
+            &json!({ "entries": [tmp.path().join("locked.zip")], "dest": into }),
+        ),
+        |app| {
+            let asked = secret_asked(app);
+            assert!(app.answer_secret(asked.id, Some(String::new())));
+            let asked = secret_asked(app);
+            assert!(
+                asked.title.ends_with("it cannot be empty"),
+                "{}",
+                asked.title
+            );
+            assert!(app.answer_secret(asked.id, Some("words".into())));
+        },
+    );
+    assert!(
+        matches!(extracted, ExecEvent::Finished { error: None, .. }),
+        "{extracted:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(into.join("locked/secret.txt")).unwrap(),
+        "the secret"
+    );
+}
+
+#[test]
+fn room_is_asked_for_what_is_made_and_extracted() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    app.set_window_shown();
+    let folder = tmp.path().join("bulky");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("a.bin"), vec![1u8; 3000]).unwrap();
+    std::fs::write(folder.join("b.bin"), vec![2u8; 2000]).unwrap();
+    applied(
+        &app,
+        &plan_of(&app, "archive.compress", &json!({ "entries": [folder] })),
+    );
+    // A drive with a byte free; the room asked is answered no.
+    app.executor.set_free(Arc::new(|_| Some(1)));
+    for (args, needs) in [
+        (json!({ "entries": [folder], "name": "bulky.tar" }), 5000),
+        (json!({ "entries": [folder], "name": "bulky.7z" }), 10_000),
+        (
+            json!({ "entries": [tmp.path().join("bulky.zip")], "dest": tmp.path().join("bulky") }),
+            5000,
+        ),
+    ] {
+        let command = if args["name"].is_null() {
+            "archive.extract"
+        } else {
+            "archive.compress"
+        };
+        let ended = whole(&app, plan_of(&app, command, &args), |app| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let question = loop {
+                if let Some(q) = app.take_questions().pop() {
+                    break q;
+                }
+                assert!(Instant::now() < deadline, "room never asked: {args}");
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            let needed = format!("{} needed", skwir_core::fs::size_said(needs));
+            assert!(
+                question.title.contains(&needed),
+                "{}: {args}",
+                question.title
+            );
+            assert!(app.answer(question.id, false));
+        });
+        let ExecEvent::Finished { error, .. } = ended else {
+            panic!("{ended:?}")
+        };
+        let error = error.expect("short of room");
+        assert!(error.contains("Not enough room"), "{error}");
+    }
 }

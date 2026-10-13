@@ -45,7 +45,14 @@ mod native {
             offset: *mut i64,
         ) -> c_int;
         fn archive_error_string(a: *mut c_void) -> *const c_char;
+        fn archive_errno(a: *mut c_void) -> c_int;
         fn archive_read_free(a: *mut c_void) -> c_int;
+        fn archive_entry_mtime(e: *mut c_void) -> i64;
+        fn archive_entry_mtime_nsec(e: *mut c_void) -> c_long;
+        fn archive_entry_mtime_is_set(e: *mut c_void) -> c_int;
+        fn archive_entry_symlink(e: *mut c_void) -> *const c_char;
+        fn archive_entry_symlink_utf8(e: *mut c_void) -> *const c_char;
+        fn archive_entry_hardlink_utf8(e: *mut c_void) -> *const c_char;
         fn archive_filter_bytes(a: *mut c_void, n: c_int) -> i64;
         fn archive_entry_hardlink(e: *mut c_void) -> *const c_char;
         fn archive_entry_set_pathname_utf8(e: *mut c_void, name: *const c_char);
@@ -129,9 +136,14 @@ mod native {
     const ARCHIVE_EOF: c_int = 1;
     /// `ARCHIVE_FORMAT_RAW`: no archive at all, one stream of data.
     const ARCHIVE_FORMAT_RAW: c_int = 0x90000;
-    /// A warning is not a failure: libarchive reports one when, for instance,
-    /// a name cannot be converted to the locale's charset, and the entry is
-    /// still there to read. Only `ARCHIVE_FAILED` and `ARCHIVE_FATAL` stop us.
+    /// A warning is not a failure where it reports a name or a header:
+    /// libarchive reports one when, for instance, a name cannot be
+    /// converted to the locale's charset, and the entry is still there to
+    /// read. Only `ARCHIVE_FAILED` and `ARCHIVE_FATAL` stop those ([`check`]).
+    /// Where it reports a member's bytes (a ZIP's CRC or AES authentication
+    /// that does not match, a size that is not the one declared, more data
+    /// than the header said), it says what was read is not what was stored:
+    /// that stops everything ([`data`]).
     const ARCHIVE_WARN: c_int = -20;
 
     /// How a whole archive is extracted (`archive.h`): modification times
@@ -194,17 +206,60 @@ mod native {
     /// it failed; a warning is not a failure.
     fn check(a: *mut c_void, status: c_int) -> anyhow::Result<()> {
         if status < ARCHIVE_WARN {
-            let p = unsafe { archive_error_string(a) };
-            let error = if p.is_null() {
-                "Archive error".into()
-            } else {
-                unsafe { CStr::from_ptr(p) }.to_string_lossy()
-            };
-            anyhow::bail!("{error}");
+            anyhow::bail!("{}", said(a));
         }
         Ok(())
     }
-    /// `skwir-archive-worker <archive> --members N --names N` lists members;
+    /// What libarchive said of the last call on `a`.
+    fn said(a: *mut c_void) -> String {
+        let p = unsafe { archive_error_string(a) };
+        if p.is_null() {
+            "Archive error".into()
+        } else {
+            unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+        }
+    }
+    /// `status` of a call reading or writing a member's bytes: a warning
+    /// stops it as a failure does (`ARCHIVE_WARN`). Encrypted, what does
+    /// not match may be a wrong password as well as a damaged archive.
+    fn data(a: *mut c_void, status: c_int, name: &str, encrypted: bool) -> anyhow::Result<()> {
+        if status >= ARCHIVE_OK {
+            return Ok(());
+        }
+        let error = said(a);
+        if encrypted {
+            anyhow::bail!("“{name}”: wrong password or damaged archive ({error})");
+        }
+        anyhow::bail!("“{name}” is damaged: {error}")
+    }
+    /// Whether the warning of the last call on `a` (a member finished:
+    /// its times, its mode, its attributes put back) is the drive refusing
+    /// what it does not keep, which a copy does not keep either: a volume
+    /// without extended attributes, a link that takes none, a drive that
+    /// takes no times. Anything else stops the extraction.
+    fn refused_by_the_drive(a: *mut c_void) -> bool {
+        let errno = unsafe { archive_errno(a) };
+        if errno <= 0 {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::io::ErrorKind;
+            matches!(
+                std::io::Error::from_raw_os_error(errno).kind(),
+                ErrorKind::Unsupported | ErrorKind::PermissionDenied
+            )
+        }
+        // libarchive reports the C runtime's numbers there, not the
+        // system's: EPERM, EACCES, ENOSYS, ENOTSUP, EOPNOTSUPP.
+        #[cfg(not(unix))]
+        {
+            matches!(errno, 1 | 13 | 40 | 129 | 130)
+        }
+    }
+    /// `skwir-archive-worker <archive> --members N --names N` lists members
+    /// (each with its kind, size, time, a link's target and a hard link's
+    /// first name);
     /// `skwir-archive-worker <archive> <index> <output> --name NAME --bytes N`
     /// streams the member at `index`, provided it is still called `NAME`, so
     /// an archive rewritten since its listing never yields another member;
@@ -376,6 +431,10 @@ mod native {
             .to_string_lossy()
             .into_owned())
     }
+    /// A string libarchive returns, read lossily; `None` for none.
+    fn text(p: *const c_char) -> Option<String> {
+        (!p.is_null()).then(|| unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned())
+    }
     /// A file that is only compressed (`notes.txt.gz`, `dump.sql.xz`) is read
     /// as an archive of one member, which libarchive calls `data`; it is
     /// named after the file instead, less its compression suffix. Anything
@@ -407,6 +466,9 @@ mod native {
     struct Tickets {
         taken: Cell<u64>,
         banked: Cell<u64>,
+        /// Passphrases asked for the member being read: each member's
+        /// attempts count from 1, so a second one says the first was wrong
+        /// for it, not for another member.
         asked: Cell<u32>,
         /// What was given, while libarchive may still read it.
         given: RefCell<Vec<CString>>,
@@ -495,10 +557,15 @@ mod native {
 
     /// Whether an attribute an archive carries is put back on what is
     /// extracted: those a copy keeps (`skwir_core::fs::xattr::kept`), the
-    /// user's on Linux, all but what the system sets itself on a Mac.
+    /// user's on Linux, all but what the system sets itself on a Mac. Of
+    /// an archive nobody vouched for, not what tells the Mac which
+    /// application opens the file (`com.apple.LaunchServices.*`): the
+    /// archive's author would choose it (ADR-059).
     fn kept(name: &[u8]) -> bool {
         if cfg!(target_vendor = "apple") {
-            name != b"com.apple.rootless" && name != b"com.apple.provenance"
+            name != b"com.apple.rootless"
+                && name != b"com.apple.provenance"
+                && !name.starts_with(b"com.apple.LaunchServices.")
         } else {
             name.starts_with(b"user.")
         }
@@ -547,8 +614,9 @@ mod native {
     /// a file, a link (one the archive makes is never written through),
     /// and nothing else, with the attributes a copy keeps (`kept`); one
     /// the guards refuse stops it all, and so does an encrypted member
-    /// unless the caller gives its passphrase (`passwords`). A file only
-    /// compressed is written under `stem`.
+    /// unless the caller gives its passphrase (`passwords`), and a member
+    /// whose bytes are not those stored (`data`). A file only compressed is
+    /// written under `stem`.
     fn extract(
         reader: &Reader,
         tickets: &Tickets,
@@ -592,10 +660,13 @@ mod native {
                 unsafe { archive_entry_set_pathname_utf8(entry, stem.as_ptr()) };
             }
             let name = entry_name(entry)?;
+            let encrypted = unsafe { archive_entry_is_encrypted(entry) } != 0;
             anyhow::ensure!(
-                passwords || unsafe { archive_entry_is_encrypted(entry) } == 0,
+                passwords || !encrypted,
                 "“{name}” is encrypted: open the archive in an archive application"
             );
+            // Its passphrase, if it needs one, is asked from the first.
+            tickets.asked.set(0);
             keep_attributes(entry);
             check(writer.0, unsafe { archive_write_header(writer.0, entry) })
                 .map_err(|e| anyhow::anyhow!("“{name}”: {e}"))?;
@@ -615,16 +686,15 @@ mod native {
                 if status == ARCHIVE_EOF {
                     break;
                 }
-                reader
-                    .check(status)
-                    .map_err(|e| anyhow::anyhow!("“{name}”: {e}"))?;
+                // A warning here says the bytes read are not those stored.
+                data(reader.0, status, &name, encrypted)?;
                 if size == 0 {
                     continue;
                 }
                 let written = unsafe { archive_write_data_block(writer.0, block, size, offset) };
                 if written < 0 {
-                    check(writer.0, c_int::try_from(written)?)
-                        .map_err(|e| anyhow::anyhow!("“{name}”: {e}"))?;
+                    // More bytes than its header said: it is cut there.
+                    data(writer.0, c_int::try_from(written)?, &name, false)?;
                 }
                 unit += size;
                 while unit >= UNIT_BYTES {
@@ -632,8 +702,14 @@ mod native {
                     tickets.take(reader)?;
                 }
             }
-            check(writer.0, unsafe { archive_write_finish_entry(writer.0) })
-                .map_err(|e| anyhow::anyhow!("“{name}”: {e}"))?;
+            // Its times, mode and attributes put back: a warning is one
+            // the drive refused, or a failure.
+            let status = unsafe { archive_write_finish_entry(writer.0) };
+            anyhow::ensure!(
+                status >= ARCHIVE_OK || status == ARCHIVE_WARN && refused_by_the_drive(writer.0),
+                "“{name}”: {}",
+                said(writer.0)
+            );
         }
         // Folders get their times and modes last, once filled.
         check(writer.0, unsafe { archive_write_close(writer.0) })?;
@@ -911,9 +987,9 @@ mod native {
             reader.check(status)?;
             anyhow::ensure!(!entry.is_null(), "Missing archive header");
             if member == Some(index) {
+                let name = member_name(&reader, entry, &stem)?;
                 anyhow::ensure!(
-                    expected.as_deref().and_then(|e| e.to_str())
-                        == Some(member_name(&reader, entry, &stem)?.as_str()),
+                    expected.as_deref().and_then(|e| e.to_str()) == Some(name.as_str()),
                     "Archive changed since it was listed; select it again"
                 );
                 anyhow::ensure!(
@@ -931,32 +1007,52 @@ mod native {
                 let mut file = std::fs::File::create(output)?;
                 let mut total = 0usize;
                 let mut buf = vec![0u8; 64 * 1024];
-                loop {
-                    let n =
-                        unsafe { archive_read_data(reader.0, buf.as_mut_ptr().cast(), buf.len()) };
-                    if n == ARCHIVE_WARN as isize {
-                        // The block is kept and handed out by the next call.
-                        continue;
+                let streamed = (|| -> anyhow::Result<()> {
+                    loop {
+                        let n = unsafe {
+                            archive_read_data(reader.0, buf.as_mut_ptr().cast(), buf.len())
+                        };
+                        if n < 0 {
+                            // A warning too: the bytes are not those stored
+                            // (a CRC that does not match).
+                            data(reader.0, c_int::try_from(n)?, &name, false)?;
+                            anyhow::bail!("Archive decompression failed");
+                        }
+                        if n == 0 {
+                            return Ok(());
+                        }
+                        let n = usize::try_from(n)?;
+                        total += n;
+                        // The caller names its bound in its own words; this
+                        // is the backstop for a member larger than it
+                        // declared.
+                        anyhow::ensure!(total <= limit, "Member exceeds the preview limit");
+                        file.write_all(&buf[..n])?;
                     }
-                    if n < 0 {
-                        reader.check(c_int::try_from(n)?)?;
-                        anyhow::bail!("Archive decompression failed");
-                    }
-                    if n == 0 {
-                        break;
-                    }
-                    let n = usize::try_from(n)?;
-                    total += n;
-                    // The caller names its bound in its own words; this is
-                    // the backstop for a member larger than it declared.
-                    anyhow::ensure!(total <= limit, "Member exceeds the preview limit");
-                    file.write_all(&buf[..n])?;
+                })();
+                if streamed.is_err() {
+                    // Nothing of a member not read whole is shown.
+                    drop(file);
+                    let _ = std::fs::remove_file(output);
                 }
-                return Ok(());
+                return streamed;
             }
             if member.is_none() {
                 let name = member_name(&reader, entry, &stem)?;
-                names += name.len();
+                let kind = unsafe { archive_entry_filetype(entry) };
+                // What a link says, and the first name of a hard link: as
+                // names, they count against the names' bound.
+                let link = (kind == AE_IFLNK)
+                    .then(|| {
+                        text(unsafe { archive_entry_symlink_utf8(entry) })
+                            .or_else(|| text(unsafe { archive_entry_symlink(entry) }))
+                    })
+                    .flatten();
+                let hardlink = text(unsafe { archive_entry_hardlink_utf8(entry) })
+                    .or_else(|| text(unsafe { archive_entry_hardlink(entry) }));
+                names += name.len()
+                    + link.as_ref().map_or(0, String::len)
+                    + hardlink.as_ref().map_or(0, String::len);
                 // Past either bound the listing ends there: what was
                 // listed is shown, with a word that it is not all.
                 // So past the time given: a large compressed tar is read
@@ -968,19 +1064,32 @@ mod native {
                     complete = false;
                     break;
                 }
-                let kind = unsafe { archive_entry_filetype(entry) };
                 let size = if unsafe { archive_entry_size_is_set(entry) } != 0 {
                     unsafe { archive_entry_size(entry) }
                 } else {
                     -1
                 };
+                // Its time as libarchive reads it (a ZIP's local time
+                // without a zone in this process's): what extracting it
+                // gives the file, to tell an extraction done (ADR-059).
+                // A `long`, 32 bits on Windows.
+                #[allow(clippy::useless_conversion)]
+                let mtime = (unsafe { archive_entry_mtime_is_set(entry) } != 0).then(|| {
+                    [
+                        unsafe { archive_entry_mtime(entry) },
+                        i64::from(unsafe { archive_entry_mtime_nsec(entry) }),
+                    ]
+                });
                 entries.push(serde_json::json!({
                     "index": index,
                     "name": name,
                     "size": size,
-                    "directory": kind == 0o040_000,
-                    "regular": kind == 0o100_000,
+                    "directory": kind == AE_IFDIR,
+                    "regular": kind == AE_IFREG,
                     "encrypted": unsafe { archive_entry_is_encrypted(entry) } != 0,
+                    "mtime": mtime,
+                    "link": link,
+                    "hardlink": hardlink,
                 }));
             }
             index += 1;

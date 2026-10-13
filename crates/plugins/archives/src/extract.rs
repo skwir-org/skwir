@@ -149,18 +149,49 @@ impl op::Effect for Extract {
         // Applied already, or another file under the name.
         if holds_extracted(&src, &target, &extracted_name(&self.entry.path), ctx) {
             StepStatus::AlreadyDone
+        } else if src.starts_with(&target) {
+            // Never replaced: it would take the archive with it.
+            conflict(format!(
+                "“{}” holds “{}”, which it would be extracted from",
+                display_name(&target),
+                display_name(&src)
+            ))
         } else {
             conflict(format!("“{}” is already there", display_name(&target)))
         }
     }
 
     fn makes(&self) -> Option<Made> {
+        // A file, whose name kept beside another keeps its extension last,
+        // where the archive is listed already (`check` lists it) as one
+        // member of its own name, not a folder: `report.pdf.zip` gives
+        // `report (2).pdf`. Else as its name says.
+        let folder = archive::listed(&self.entry.path).map_or_else(
+            || !only_compressed(&self.entry.path),
+            |listing| !unwraps_to_one_file(&listing, &extracted_name(&self.entry.path)),
+        );
         Some(Made {
             target: self.target(),
             from: self.entry.path.clone(),
-            folder: !only_compressed(&self.entry.path),
+            inputs: vec![self.entry.path.clone()],
+            folder,
             words: ("Extract", "extracted"),
         })
+    }
+
+    /// What it extracts, by the archive's listing: its members' sizes,
+    /// those listed when the listing was cut short (a lower bound). A
+    /// compressed tar not listed before is read once to be counted.
+    fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
+        let src = self.entry.resolve().ok()?;
+        let listing = archive::list(&src, ctx.cancel_token()).ok()?;
+        let bytes = listing
+            .members
+            .iter()
+            .filter(|m| m.regular && m.hardlink.is_none())
+            .filter_map(|m| u64::try_from(m.size).ok())
+            .fold(0u64, u64::saturating_add);
+        Some((self.dest_dir.clone(), bytes))
     }
 
     fn made_as(&self, name: OsString) -> Option<Box<dyn Operation>> {
@@ -197,14 +228,29 @@ impl op::Effect for Extract {
                     },
                     || ctx.is_paused(),
                     |attempt| {
-                        let title = if attempt == 1 {
+                        // Each member's attempts count from 1: a second
+                        // says the first was wrong for it.
+                        let mut title = if attempt == 1 {
                             format!("Password for “{archive_name}”")
                         } else {
                             format!("Wrong password for “{archive_name}”: try again")
                         };
-                        ctx.ask_secret(&title, "Extract")
-                            .map_err(|why| unanswered.set(Some(why)))
-                            .ok()
+                        // Nothing typed is asked again, as making one
+                        // asks; Cancel gives up.
+                        loop {
+                            match ctx.ask_secret(&title, "Extract") {
+                                Ok(given) if given.is_empty() => {
+                                    title = format!(
+                                        "Password for “{archive_name}”: it cannot be empty"
+                                    );
+                                }
+                                Ok(given) => return Some(given),
+                                Err(why) => {
+                                    unanswered.set(Some(why));
+                                    return None;
+                                }
+                            }
+                        }
                     },
                 )
             })
@@ -254,11 +300,92 @@ fn only_member(made: &Path, name: &OsStr) -> Option<PathBuf> {
     (members.next().is_none() && first.file_name() == name).then(|| first.path())
 }
 
-/// Whether `target` holds what extracting `src` made: every member its
-/// listing names, at its place, a file of its size; all of them under one
-/// member called `name`, the archive's own (`extracted_name`), that
-/// member's. A listing cut short (`archive::list`'s bounds) says no: then
-/// nobody can tell.
+/// Whether the archive's listing is one member named `name` that is no
+/// folder: extracted, it is that file (or link) itself.
+fn unwraps_to_one_file(listing: &archive::Listing, name: &OsStr) -> bool {
+    let [member] = listing.members.as_slice() else {
+        return false;
+    };
+    listing.complete
+        && !member.directory
+        && OsStr::new(member.name.trim_start_matches("./")) == name
+}
+
+/// What extracting an archive leaves at a path, by its listing.
+#[derive(Debug, PartialEq)]
+enum Left {
+    Folder,
+    /// A file of this size (`None`: not said) and time.
+    File {
+        size: Option<u64>,
+        modified: Option<std::time::SystemTime>,
+    },
+    /// A link saying this.
+    Link(String),
+    /// Another name of the file at this path.
+    Hard(PathBuf),
+}
+
+/// What extracting the listed archive leaves, by path in the folder it is
+/// extracted into: each member where the extraction puts it, the folders
+/// above it, a later member of a name over an earlier one; pipes, devices
+/// and sockets left out, as they are. `None` when a member would leave the
+/// folder (`..`, absolute): the extraction refuses the whole archive.
+fn left_by(listing: &archive::Listing) -> Option<std::collections::BTreeMap<PathBuf, Left>> {
+    // Its names, `.` left out (`./a/`, `.`).
+    let relative = |name: &str| -> Option<PathBuf> {
+        let mut path = PathBuf::new();
+        for part in Path::new(name).components() {
+            match part {
+                Component::Normal(part) => path.push(part),
+                Component::CurDir => {}
+                _ => return None,
+            }
+        }
+        Some(path)
+    };
+    let mut left = std::collections::BTreeMap::new();
+    for member in &listing.members {
+        let path = relative(&member.name)?;
+        if path.as_os_str().is_empty() {
+            continue;
+        }
+        let what = if let Some(first) = &member.hardlink {
+            Left::Hard(relative(first)?)
+        } else if member.directory {
+            Left::Folder
+        } else if let Some(link) = &member.link {
+            Left::Link(link.clone())
+        } else if member.regular {
+            Left::File {
+                size: u64::try_from(member.size).ok(),
+                modified: member.modified(),
+            }
+        } else {
+            continue;
+        };
+        for above in path.ancestors().skip(1) {
+            if above.as_os_str().is_empty() {
+                break;
+            }
+            left.entry(above.to_path_buf()).or_insert(Left::Folder);
+        }
+        left.insert(path, what);
+    }
+    Some(left)
+}
+
+/// How far a file's time on the disk may be from the archive's: a FAT
+/// drive keeps two-second times.
+const TIME_KEPT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Whether `target` holds what extracting `src` made, and nothing else, as
+/// a copy is told done (`same_tree`): the folders and their names alike,
+/// each file of its size and time (what the extraction gave it), each
+/// link saying the same, each hard link to its first name; all of it under
+/// one member called `name`, the archive's own (`extracted_name`), that
+/// member's. A listing cut short (`archive::list`'s bounds), or a file of
+/// no size or time said, says no: then nobody can tell.
 fn holds_extracted(src: &Path, target: &Path, name: &OsStr, ctx: &StepContext) -> bool {
     let Ok(listing) = archive::list(src, ctx.cancel_token()) else {
         return false;
@@ -266,44 +393,91 @@ fn holds_extracted(src: &Path, target: &Path, name: &OsStr, ctx: &StepContext) -
     if !listing.complete || listing.members.is_empty() {
         return false;
     }
-    // A name the extraction refused (`..`, absolute) was never made.
-    let inside = |member: &str| {
-        Path::new(member)
-            .components()
-            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
-    };
-    if !listing.members.iter().all(|m| inside(&m.name)) {
+    let Some(mut left) = left_by(&listing) else {
         return false;
-    }
-    let name = name.to_string_lossy();
-    let place = |member: &str| -> Option<PathBuf> {
-        let member = member.trim_start_matches("./").trim_end_matches('/');
-        let rest = member.strip_prefix(name.as_ref())?;
-        rest.strip_prefix('/')
-            .or(rest.is_empty().then_some(""))
-            .map(|rest| target.join(rest))
     };
-    // All under one folder of its name, or one file of it: that member is
-    // the target; else the target holds them all.
-    let unwrapped = listing.members.iter().all(|m| place(&m.name).is_some());
-    listing.members.iter().all(|member| {
-        let path = if unwrapped {
-            place(&member.name)
+    // All under one member of its name: that member is the target. Else
+    // the target is the folder holding them all.
+    let own = Path::new(name);
+    let unwrapped = left.keys().all(|path| path.starts_with(own));
+    let mut expected: std::collections::BTreeMap<PathBuf, Left> = if unwrapped {
+        std::mem::take(&mut left)
+            .into_iter()
+            .filter_map(|(path, what)| {
+                let path = path.strip_prefix(own).ok()?.to_path_buf();
+                let what = match what {
+                    Left::Hard(first) => Left::Hard(first.strip_prefix(own).ok()?.to_path_buf()),
+                    other => other,
+                };
+                Some((path, what))
+            })
+            .collect()
+    } else {
+        let mut all = std::mem::take(&mut left);
+        all.insert(PathBuf::new(), Left::Folder);
+        all
+    };
+    // The target itself for the empty path: never `target/`, which follows
+    // a link.
+    let at = |relative: &Path| {
+        if relative.as_os_str().is_empty() {
+            target.to_path_buf()
         } else {
-            Some(target.join(member.name.trim_start_matches("./")))
-        };
-        let Some(path) = path else {
+            target.join(relative)
+        }
+    };
+    // What is there, a link never followed; no more than what is expected
+    // and one, so a folder of other things is not read whole.
+    let mut there: Vec<(PathBuf, std::fs::Metadata)> = Vec::new();
+    let mut walk = vec![PathBuf::new()];
+    while let Some(relative) = walk.pop() {
+        if there.len() > expected.len() || ctx.cancel_token().is_cancelled() {
+            return false;
+        }
+        let path = at(&relative);
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
             return false;
         };
-        match std::fs::symlink_metadata(&path) {
-            Ok(m) if member.directory => m.is_dir(),
-            Ok(m) if member.regular && member.size >= 0 => {
-                m.is_file() && i64::try_from(m.len()).is_ok_and(|len| len == member.size)
-            }
-            Ok(_) => true,
-            Err(_) => false,
+        if meta.is_dir() {
+            let Ok(read) = std::fs::read_dir(&path) else {
+                return false;
+            };
+            walk.extend(read.flatten().map(|entry| relative.join(entry.file_name())));
         }
-    })
+        there.push((relative, meta));
+    }
+    there.len() == expected.len()
+        && there.iter().all(|(relative, meta)| {
+            let Some(what) = expected.remove(relative) else {
+                return false;
+            };
+            let path = at(relative);
+            match what {
+                Left::Folder => meta.is_dir(),
+                Left::File { size, modified } => {
+                    let near = |a: std::time::SystemTime, b: std::time::SystemTime| {
+                        a.duration_since(b)
+                            .or_else(|_| b.duration_since(a))
+                            .is_ok_and(|apart| apart < TIME_KEPT)
+                    };
+                    meta.is_file()
+                        && size == Some(meta.len())
+                        && modified
+                            .zip(meta.modified().ok())
+                            .is_some_and(|(a, b)| near(a, b))
+                }
+                Left::Link(says) => {
+                    meta.is_symlink()
+                        && std::fs::read_link(&path)
+                            .is_ok_and(|read| read.as_os_str().to_string_lossy() == says)
+                }
+                Left::Hard(first) => {
+                    meta.is_file()
+                        && skwir_core::fs::stat::id_of(&path)
+                            .is_some_and(|id| skwir_core::fs::stat::id_of(&at(&first)) == Some(id))
+                }
+            }
+        })
 }
 
 /// `archive.extract`: what the menus run.

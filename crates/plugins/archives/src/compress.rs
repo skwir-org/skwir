@@ -177,6 +177,17 @@ impl op::Effect for Compress {
         // Applied already, or another file under the name.
         if holds_compressed(self, format, &target, ctx) {
             StepStatus::AlreadyDone
+        } else if let Some(input) = self.entries.iter().find(|e| e.path.starts_with(&target)) {
+            // Never replaced: it would take what goes in with it.
+            conflict(if input.path == target {
+                format!("“{}” is among what it compresses", display_name(&target))
+            } else {
+                format!(
+                    "“{}” holds “{}”, which it compresses",
+                    display_name(&target),
+                    display_name(&input.path)
+                )
+            })
         } else {
             conflict(format!("“{}” is already there", display_name(&target)))
         }
@@ -190,9 +201,46 @@ impl op::Effect for Compress {
                 .first()
                 .map(|e| e.path.clone())
                 .unwrap_or_default(),
+            inputs: self.entries.iter().map(|e| e.path.clone()).collect(),
             folder: false,
             words: ("Compress", "compressed"),
         })
+    }
+
+    /// What goes in, as stored whole (a tar's other names once): what the
+    /// archive takes at most, compressed or not; a 7z twice, written whole
+    /// to a temporary file beside it first.
+    fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
+        let format = format_of(&self.name).ok()?;
+        let mut once = HashSet::new();
+        let mut bytes = 0u64;
+        let mut left: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .filter_map(|e| e.resolve().ok())
+            .collect();
+        while let Some(path) = left.pop() {
+            if ctx.cancel_token().is_cancelled() {
+                return None;
+            }
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.is_dir() {
+                if let Ok(read) = std::fs::read_dir(&path) {
+                    left.extend(read.flatten().map(|entry| entry.path()));
+                }
+            } else if meta.is_file()
+                && (!format.keeps_hard_links()
+                    || stat::identity(&path, &meta).is_none_or(|id| once.insert(id)))
+            {
+                bytes = bytes.saturating_add(meta.len());
+            }
+        }
+        if format == Format::SevenZip {
+            bytes = bytes.saturating_mul(2);
+        }
+        Some((self.dest_dir.clone(), bytes))
     }
 
     fn made_as(&self, name: OsString) -> Option<Box<dyn Operation>> {
@@ -262,9 +310,14 @@ impl op::Effect for Compress {
     }
 }
 
-/// Whether the archive at `target` holds what `step` would put in it: each
-/// part under its name, a folder as a folder, a file of its size, and
-/// nothing else. A listing cut short (`archive::list`'s bounds) says no.
+/// Whether the archive at `target` holds what `step` would put in it, and
+/// nothing else, as a copy is told done (`same_tree`): each part under its
+/// name, a folder as a folder, a file of its size and time, a link saying
+/// the same, a second name of the same first. Times are compared to the
+/// second, the format's (a tar's and a ZIP's extended time keep seconds);
+/// a ZIP without its extended time keeps a local time to two seconds,
+/// read in this machine's zone: one made elsewhere is not told done. A
+/// listing cut short (`archive::list`'s bounds) says no.
 fn holds_compressed(step: &Compress, format: Format, target: &Path, ctx: &StepContext) -> bool {
     let Ok(listing) = archive::list(target, ctx.cancel_token()) else {
         return false;
@@ -280,20 +333,49 @@ fn holds_compressed(step: &Compress, format: Format, target: &Path, ctx: &StepCo
         .iter()
         .map(|m| (m.name.trim_end_matches('/'), m))
         .collect();
+    let lossy = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
     parts.len() == listed.len()
         && parts.iter().all(|part| {
-            let name = String::from_utf8_lossy(&part.name);
-            let Some(member) = listed.get(name.as_ref()) else {
+            let Some(member) = listed.get(lossy(&part.name).as_str()) else {
                 return false;
             };
             match &part.item {
                 Item::Folder => member.directory,
                 Item::File { size, .. } => {
-                    member.regular && u64::try_from(member.size).is_ok_and(|s| s == *size)
+                    member.regular
+                        && member.hardlink.is_none()
+                        && u64::try_from(member.size).is_ok_and(|s| s == *size)
+                        && same_second(part.modified, member.mtime, format)
                 }
-                Item::Link { .. } | Item::SecondName { .. } => true,
+                Item::Link { target } => member.link.as_deref() == Some(lossy(target).as_str()),
+                Item::SecondName { first } => {
+                    member.hardlink.as_deref() == Some(lossy(first).as_str())
+                }
             }
         })
+}
+
+/// Whether a file's time `walked` is the one an archive of `format` keeps
+/// as `listed` (seconds, nanoseconds): the same second, or for a ZIP, the
+/// same two seconds (MS-DOS's, where the extended time is missing).
+fn same_second(
+    walked: Option<std::time::SystemTime>,
+    listed: Option<[i64; 2]>,
+    format: Format,
+) -> bool {
+    let (Some(walked), Some([listed, _])) = (walked, listed) else {
+        return walked.is_none() && listed.is_none();
+    };
+    // Whole seconds, rounded down, as the archive's header was written.
+    let walked = match walked.duration_since(std::time::UNIX_EPOCH) {
+        Ok(after) => after.as_secs().cast_signed(),
+        Err(before) => {
+            let before = before.duration();
+            -before.as_secs().cast_signed() - i64::from(before.subsec_nanos() > 0)
+        }
+    };
+    let apart = walked - listed;
+    apart == 0 || format == Format::Zip && apart == 1
 }
 
 /// What goes into the archive, in order (a folder before what it holds):
@@ -396,6 +478,7 @@ fn add(
                     Item::File {
                         path: path.clone(),
                         size: own.size,
+                        id: Some(own.id),
                     }
                 }
             },
@@ -676,8 +759,9 @@ pub fn register(app: &App, owner: &str) {
             Ok(Outcome::Done)
         },
     )
-    // A prompt for the user, which runs what they answer.
-    .shows();
+    // A prompt for the user, which runs what they answer as their own:
+    // never an agent's, whose `dest` the prompt would not show.
+    .user_only();
     // Beside Extract Here: the one that asks nothing first, a name kept
     // beside one taken; then the one that asks the name, and the format
     // with it.

@@ -390,3 +390,51 @@ fn extract_here_is_offered_for_archives_in_their_menu_and_a_drops() {
             .any(|item| &*item.command.name == "archive.extract")
     );
 }
+
+/// An extraction is done, as a copy is, only while what it made holds what
+/// the archive lists and nothing else, each file at its size and time.
+#[test]
+fn an_extraction_is_done_only_while_it_is_as_extracted() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    let dest = tmp.path().join("into");
+    std::fs::create_dir(&dest).unwrap();
+    let archive = tmp.path().join("settings.zip");
+    write_zip(
+        &archive,
+        &[
+            ("one.conf", b"value 1"),
+            ("nested/", b""),
+            ("nested/two.conf", b"two"),
+        ],
+    );
+    let status = || {
+        extract(&app, &archive, &dest).diff(&Arc::default()).steps[0]
+            .1
+            .clone()
+    };
+    let result = app
+        .executor
+        .execute_blocking(&extract(&app, &archive, &dest), app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(status(), StepStatus::AlreadyDone);
+
+    // Something else in it: not what the extraction made.
+    let made = dest.join("settings");
+    std::fs::write(made.join("nested/mine.txt"), "mine").unwrap();
+    assert!(matches!(status(), StepStatus::Conflict { .. }));
+    std::fs::remove_file(made.join("nested/mine.txt")).unwrap();
+    assert_eq!(status(), StepStatus::AlreadyDone);
+
+    // A file changed in place, its size kept.
+    std::fs::write(made.join("one.conf"), "value 2").unwrap();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+    std::fs::File::open(made.join("one.conf"))
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
+    assert!(matches!(status(), StepStatus::Conflict { .. }));
+}

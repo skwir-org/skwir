@@ -258,6 +258,7 @@ mod tests {
             directory: false,
             regular: i != 6,
             encrypted: i == 5,
+            ..Default::default()
         })
         .collect();
         let rows = member_rows(&members, &CancelToken::new()).unwrap();
@@ -299,6 +300,7 @@ mod tests {
                 directory: false,
                 regular: true,
                 encrypted: false,
+                ..Default::default()
             })
             .collect();
         let rows = member_rows(&members, &CancelToken::new()).unwrap();

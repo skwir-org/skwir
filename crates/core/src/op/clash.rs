@@ -475,13 +475,21 @@ impl Walk<'_> {
     /// What `op` makes ([`Made`]), its name settled: made beside what
     /// an earlier step makes there (two archives of one name extracted
     /// into one folder), or as the answer says where something is there,
-    /// with a file's choices. Made there already, it is done.
+    /// with a file's choices. Made there already, it is done. What is
+    /// there is never put in the trash when it is, or holds, what the step
+    /// reads (`Made::inputs`): the step's check says so instead.
     fn make(&mut self, step: usize, op: &dyn Operation, made: &Made) {
         let target = &made.target;
-        if self.ctx.made(target) {
+        let earlier = self.ctx.made(target);
+        // Checked first where something is there: the step reads what it
+        // makes of (an archive's listing), then says better what it makes
+        // (a file, not a folder, whose name keeps its extension last).
+        let status = (earlier || self.ctx.exists(target)).then(|| op.check(self.ctx));
+        let made = &op.makes().unwrap_or_else(|| made.clone());
+        if earlier {
             return self.make_beside(op, made);
         }
-        if !self.ctx.exists(target) || op.check(self.ctx) == StepStatus::AlreadyDone {
+        if status.is_none_or(|status| status == StepStatus::AlreadyDone) {
             return self.push(op.clone_box());
         }
         let (verb, done) = made.words;
@@ -493,7 +501,9 @@ impl Walk<'_> {
             there: Side::of(target),
         };
         let choice = self.answer.choice(&clash);
-        let newer = matches!((clash.source.modified, clash.there.modified),
+        // Newer: anything it is made of changed after what is there, a
+        // file deep in a folder as well as the folder.
+        let newer = matches!((newest(&made.inputs, self.ctx), clash.there.modified),
             (Some(source), Some(there)) if source > there);
         self.clashes.push(clash);
         self.changed = true;
@@ -501,7 +511,8 @@ impl Walk<'_> {
             Choice::Skip => {}
             Choice::ReplaceIfNewer if !newer => {}
             Choice::Replace | Choice::ReplaceIfNewer => {
-                if let Some(there) = EntryRef::from_path(target) {
+                let holds_input = made.inputs.iter().any(|input| input.starts_with(target));
+                if !holds_input && let Some(there) = EntryRef::from_path(target) {
                     self.push(Box::new(Trash { entry: there }));
                 }
                 self.push(op.clone_box());
@@ -567,6 +578,29 @@ impl Walk<'_> {
             }));
         }
     }
+}
+
+/// When anything among `paths`, or held in them, last changed: a link's
+/// own time, never followed. What Replace if newer compares a step's
+/// inputs with (`Made::inputs`). Reads them all: on the plan's thread.
+fn newest(paths: &[PathBuf], ctx: &StepContext) -> Option<SystemTime> {
+    let mut newest = None;
+    let mut left = paths.to_vec();
+    while let Some(path) = left.pop() {
+        if ctx.cancel_token().is_cancelled() {
+            break;
+        }
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        newest = newest.max(meta.modified().ok());
+        if meta.is_dir()
+            && let Ok(read) = std::fs::read_dir(&path)
+        {
+            left.extend(read.flatten().map(|entry| entry.path()));
+        }
+    }
+    newest
 }
 
 /// The longest name a folder takes, in bytes.

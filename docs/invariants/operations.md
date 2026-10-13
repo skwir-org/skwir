@@ -126,7 +126,12 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   (`photos (2).zip`, `clash::kept_name` with no word), what is there
   replaced through the trash, or skipped. It is never merged. A plan
   with such a step is settled even with no copy in it
-  (`clash::takes_names`).
+  (`clash::takes_names`). What is there is never trashed when it is, or
+  holds, what the step reads (`Made::inputs`): the step's check refuses
+  instead. Replace if newer compares the latest change among the inputs,
+  deep in a folder. `makes` is asked again after `check`, which may read
+  what the step is made of (a one-file archive keeps its extension:
+  `report (2).pdf`).
 - A dry run foresees what each earlier step takes and makes
   (`StepContext::foresee`): a check asks the context whether a name is
   free (`exists`, `made`, `empty_after`), never the disk alone.

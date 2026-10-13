@@ -555,8 +555,13 @@ pub struct Made {
     /// What it is made from (the archive extracted), or, for what is made
     /// of several, the first: shown beside what is there.
     pub from: PathBuf,
+    /// Everything it reads to make it (the archive; what an archive is
+    /// made of): never put in the trash to make room for it, and what
+    /// Replace if newer compares with what is there.
+    pub inputs: Vec<PathBuf>,
     /// Whether it is a folder: a name kept beside a file's keeps its
-    /// extension last.
+    /// extension last. A step may know better once checked (an archive
+    /// listed): `clash` asks `makes` again after `check`.
     pub folder: bool,
     /// What the question says of it: the verb on its button and what
     /// nothing is until it is answered ("Extract", "extracted").

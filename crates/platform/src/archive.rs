@@ -8,7 +8,7 @@ use skwir_core::CancelToken;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct Member {
     pub index: u64,
     pub name: String,
@@ -16,11 +16,37 @@ pub struct Member {
     pub directory: bool,
     pub regular: bool,
     pub encrypted: bool,
+    /// Its modification time as libarchive reads it, seconds and
+    /// nanoseconds since 1970: what extracting it gives the file. A ZIP
+    /// made without its extended time says a local time with no zone,
+    /// read in this machine's, to two seconds.
+    #[serde(default)]
+    pub mtime: Option<[i64; 2]>,
+    /// What a link says.
+    #[serde(default)]
+    pub link: Option<String>,
+    /// The first name of the file this is another name of (a tar's hard
+    /// link).
+    #[serde(default)]
+    pub hardlink: Option<String>,
 }
 impl Member {
     /// The last component of the member's path: what it is called.
     pub fn file_name(&self) -> &str {
         self.name.rsplit('/').next().unwrap_or(&self.name)
+    }
+
+    /// Its modification time ([`Self::mtime`]), when the archive says one.
+    pub fn modified(&self) -> Option<std::time::SystemTime> {
+        let [seconds, nanoseconds] = self.mtime?;
+        let nanoseconds = u32::try_from(nanoseconds).ok()?;
+        let at = std::time::Duration::new(seconds.unsigned_abs(), 0);
+        let whole = if seconds >= 0 {
+            std::time::UNIX_EPOCH.checked_add(at)?
+        } else {
+            std::time::UNIX_EPOCH.checked_sub(at)?
+        };
+        whole.checked_add(std::time::Duration::from_nanos(u64::from(nanoseconds)))
     }
 }
 /// The helper. Plugins that require it name this, not the literals.
@@ -55,8 +81,9 @@ const LISTINGS_KEPT: usize = 4;
 
 type ListingKey = (std::path::PathBuf, u64, u64, Option<std::time::SystemTime>);
 
-pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Arc<Listing>> {
-    let key = std::fs::metadata(path).ok().map(|meta| {
+/// The key `path`'s listing is kept under, as it is now.
+fn listing_key(path: &Path) -> Option<ListingKey> {
+    std::fs::metadata(path).ok().map(|meta| {
         let id = skwir_core::fs::stat::identity(path, &meta);
         (
             path.to_path_buf(),
@@ -64,7 +91,23 @@ pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Arc<Listing>> {
             meta.len(),
             meta.modified().ok(),
         )
-    });
+    })
+}
+
+/// The listing of the archive at `path` read last, if it was read as it is
+/// now: nothing is read but the file's metadata. What a step says it makes
+/// without running the helper (`Operation::makes`).
+pub fn listed(path: &Path) -> Option<Arc<Listing>> {
+    let key = listing_key(path)?;
+    LISTINGS
+        .lock()
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, listing)| Arc::clone(listing))
+}
+
+pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Arc<Listing>> {
+    let key = listing_key(path);
     if let Some(key) = &key
         && let Some((_, listing)) = LISTINGS.lock().iter().find(|(k, _)| k == key)
     {
@@ -249,7 +292,70 @@ pub fn extract_all(
 ) -> anyhow::Result<()> {
     let worker = worker()?;
     extract_all_with(&worker, path, into, cancel, read, held, passphrase)
-        .map_err(|error| crate::process::explain(&worker, cancel, error))
+        .map_err(|error| crate::process::explain(&worker, cancel, error))?;
+    #[cfg(target_os = "macos")]
+    quarantine(path, into)?;
+    Ok(())
+}
+
+/// What the Mac's quarantine attribute names: where a file came from,
+/// which Gatekeeper reads before it first opens.
+#[cfg(target_os = "macos")]
+const QUARANTINE: &str = "com.apple.quarantine";
+
+/// What is extracted from an archive the Mac holds in quarantine (one
+/// downloaded) is held there too, as the Mac's own Archive Utility does:
+/// Gatekeeper asks before an application or a script from it first runs.
+/// `into` was just made by the helper: it is walked without following a
+/// link, and each entry, a link's own, takes the archive's attribute.
+/// Compiled on a Mac, never run there yet (ADR-035).
+#[cfg(target_os = "macos")]
+fn quarantine(archive: &Path, into: &Path) -> anyhow::Result<()> {
+    use skwir_core::fs::xattr;
+    let value = match xattr::get_deref(archive, QUARANTINE) {
+        Ok(Some(value)) => value,
+        Ok(None) => return Ok(()),
+        Err(error) if xattr::refused(&error) => return Ok(()),
+        Err(error) => return Err(error).context("the archive's quarantine could not be read"),
+    };
+    // A file the archive made read-only is opened to its owner for it,
+    // and closed again: what is not held in quarantine is not placed.
+    let hold = |path: &Path| -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let held = match xattr::set(path, QUARANTINE, &value) {
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                let meta = std::fs::symlink_metadata(path)?;
+                if meta.file_type().is_symlink() {
+                    return Err(error.into());
+                }
+                let mode = meta.permissions().mode();
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode | 0o200))?;
+                let held = xattr::set(path, QUARANTINE, &value);
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
+                held
+            }
+            other => other,
+        };
+        held.with_context(|| {
+            format!(
+                "“{}” could not be held in quarantine",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            )
+        })
+    };
+    hold(into)?;
+    let mut folders = vec![into.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder)? {
+            let entry = entry?;
+            let path = entry.path();
+            hold(&path)?;
+            if entry.file_type()?.is_dir() {
+                folders.push(path);
+            }
+        }
+    }
+    Ok(())
 }
 fn extract_all_with(
     worker: &Path,
@@ -480,6 +586,8 @@ pub enum Item {
     File {
         path: std::path::PathBuf,
         size: u64,
+        /// The file walked: another put at its name since is not it.
+        id: Option<skwir_core::entry::FileId>,
     },
     /// A link that says `target`.
     Link {
@@ -543,16 +651,19 @@ impl Part {
 /// nobody else writes in, of `parts` in order (a folder before what it
 /// holds). The helper writes there and nowhere else, isolated where the
 /// system can (`sandbox::fed`), and opens no file of the user's: they are
-/// read here (`file::open_regular`) and handed to it. `sent` hears the
-/// files' bytes handed so far, as they grow; while `held` says so no more
-/// is handed (a paused plan). With `passphrase`, a ZIP encrypted by it
-/// (AES-256), handed through standard input, never its arguments. Cancel
-/// stops it at once; what it wrote is the caller's to remove.
+/// read here (`file::open_regular`) and handed to it, each the file walked
+/// (its identity, size and time), read to its end and no further. `sent`
+/// hears the files' bytes handed so far, as they grow; while `held` says
+/// so no more is handed (a paused plan). With `passphrase`, a ZIP
+/// encrypted by it (AES-256), handed through standard input, never its
+/// arguments. Cancel stops it at once; what it wrote is the caller's to
+/// remove.
 ///
 /// # Errors
-/// Why it could not be made: a file that could not be read or became
-/// shorter as it was, a name the format cannot hold, a full disk; or that
-/// it was cancelled.
+/// Why it could not be made: a file that could not be read, or that
+/// changed as it was read (another at its name, longer, shorter, written
+/// to), a name the format cannot hold, a full disk; or that it was
+/// cancelled.
 pub fn create(
     parts: &[Part],
     format: Format,
@@ -593,12 +704,15 @@ fn create_with(
     // made on, in the folder it is made in, not in a sandbox's `/tmp`,
     // which is memory.
     let scratch = tempfile::Builder::new().prefix(".tmp-").tempdir_in(into)?;
+    let scratch_inside = run
+        .work
+        .join(scratch.path().file_name().unwrap_or_default());
+    // libarchive asks `TMPDIR` on Unix and `GetTempPathW` on Windows,
+    // which reads `TMP`, then `TEMP`.
     run.command
-        .env(
-            "TMPDIR",
-            run.work
-                .join(scratch.path().file_name().unwrap_or_default()),
-        )
+        .env("TMPDIR", &scratch_inside)
+        .env("TMP", &scratch_inside)
+        .env("TEMP", &scratch_inside)
         .arg(run.work.join(name))
         .arg("--create")
         .arg(format.name());
@@ -716,23 +830,45 @@ fn hand(
     for part in parts {
         held()?;
         writeln!(out, "{}", part.header())?;
-        let Item::File { path, size } = &part.item else {
+        let Item::File { path, size, id } = &part.item else {
             continue;
         };
         let shown = String::from_utf8_lossy(&part.name).into_owned();
-        let mut file = crate::file::open_regular(path)
-            .with_context(|| format!("“{shown}” could not be read"))?;
+        let unread = || format!("“{shown}” could not be read");
+        let changed = || anyhow::anyhow!("“{shown}” changed as it was read");
+        let mut file = crate::file::open_regular(path).with_context(unread)?;
+        // The file walked, as it was walked: not another put at its name
+        // since (a link, a file saved anew), nor one written to meanwhile.
+        let opened = file.metadata().with_context(unread)?;
+        let walked = id.is_none_or(|id| skwir_core::fs::stat::identity(path, &opened) == Some(id))
+            && opened.len() == *size
+            && part
+                .modified
+                .is_none_or(|time| opened.modified().ok() == Some(time));
+        if !walked {
+            return Err(changed());
+        }
         let mut left = *size;
         while left > 0 {
             held()?;
             let chunk = usize::try_from(left.min(buffer.len() as u64))?;
-            let got = file
-                .read(&mut buffer[..chunk])
-                .with_context(|| format!("“{shown}” could not be read"))?;
-            anyhow::ensure!(got > 0, "“{shown}” became shorter as it was read");
+            let got = file.read(&mut buffer[..chunk]).with_context(unread)?;
+            if got == 0 {
+                return Err(changed());
+            }
             out.write_all(&buffer[..got])?;
             left -= got as u64;
             handed.fetch_add(got as u64, Ordering::Relaxed);
+        }
+        // Its size and no more, and written to by nobody while it was read:
+        // a file cut short in the archive is never taken for the file.
+        let mut more = [0u8; 1];
+        let after = file.metadata().with_context(unread)?;
+        if file.read(&mut more).with_context(unread)? != 0
+            || after.len() != *size
+            || after.modified().ok() != opened.modified().ok()
+        {
+            return Err(changed());
         }
     }
     writeln!(out, "{{\"end\":true}}")?;

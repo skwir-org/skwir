@@ -376,14 +376,25 @@ A text document is read as its structure, or laid out as pages.
   set-id bits; of attributes, only those a copy keeps), in the sandbox
   writing only where it extracts, into a staging folder put in place
   whole.
+- A member's bytes that are not those stored (a CRC or an AES
+  authentication that does not match, a size not the one declared) stop
+  an extraction and a preview alike, a libarchive warning as well as a
+  failure; encrypted, it says "wrong password or damaged archive". A
+  warning on a name or a header is not a failure; one putting a member's
+  metadata back is, unless the drive refuses what it does not keep.
 - An archive is made (`--create`, ADR-059) of what skwir hands the
   helper on its standard input: skwir walks and reads the files
   (`compress::walk`, `archive::create`), the helper opens none, and
   writes only the archive in its staging folder. A pipe, a socket or a
-  device is left out.
+  device is left out. Each file handed is the one walked (identity, size,
+  time), read to its size and no further: one changed fails the step.
 - A password reaches the helper through its standard input, never its
   arguments, a plan or a log: asked by the step (`StepContext::ask_secret`)
-  each time it is needed, Redo included.
+  each time it is needed, Redo included; an empty answer is asked again,
+  and each member's attempts count from the first.
+- Made or extracted, an archive is done already as a copy is
+  (`same_tree`): the listing's names, kinds, sizes and times
+  (`archive::Member::mtime`, `link`, `hardlink`), nothing more on the disk.
 
 ## The preview frame
 

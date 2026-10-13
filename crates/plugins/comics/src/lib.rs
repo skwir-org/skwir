@@ -215,6 +215,7 @@ mod tests {
             directory: false,
             regular: true,
             encrypted,
+            ..Default::default()
         }
     }
 
