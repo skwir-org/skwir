@@ -2,9 +2,10 @@
 
 Read this before touching `crates/core/src/inspection.rs`,
 `crates/platform/src/{archive,inspection,rich_preview}.rs`,
-`crates/archive-worker`, any `crates/plugins/preview-*` crate, or
-`crates/ui/src/inspector*.rs`, `code_preview.rs` or `markdown.rs`. It is
-binding, like `AGENTS.md`.
+`crates/archive-worker`, a plugin of the Previews category
+(`Category::Previews`: `crates/plugins/archives`, `documents`, `media`…),
+or `crates/ui/src/inspector*.rs`, `code_preview.rs` or `markdown.rs`. It
+is binding, like `AGENTS.md`.
 
 ## Providers
 

@@ -355,6 +355,8 @@ sys.exit(subprocess.call([service, os.environ['AUR_TEST_REMOTE']]))
         self.assertIn("dated section", self.cli("metadata", ok=False))
         changelog.write_text(original.replace("2026-10-11", "2026-10-12"))
         self.assertIn("AppStream", self.cli("metadata", ok=False))
+        changelog.write_text(original.replace("# Changes\n\n", "# Changes\n\n## Unreleased\n\n- More.\n\n"))
+        self.assertIn("“## Unreleased” above 1.2.3", self.cli("metadata", ok=False))
         self.cli("metadata", ok=False, tag="v1.2.4")
         self.cli("metadata", ok=False, tag="v1.2.3;echo unsafe")
 

@@ -14,8 +14,10 @@ workers, check performance or build packages.
    names in `README.md`'s install commands.
 2. Date that version's `CHANGELOG.md` heading, for example
    `## 0.1.0 (2026-10-11)`. AppStream must have the same date. The section
-   supplies the GitHub release notes. Only stable `v<major>.<minor>.<patch>`
-   tags are currently supported.
+   supplies the GitHub release notes, so it must be the first: an
+   `## Unreleased` section above it, which the tag would hold but its
+   notes leave out, stops the release. Only stable
+   `v<major>.<minor>.<patch>` tags are currently supported.
 3. Run `just release-metadata v0.1.0`, review and commit the release source,
    then create its tag (`git tag -a v0.1.0 -m 'Release 0.1.0'`). Check out
    that commit. Builds and uploads require HEAD to equal the tag and the

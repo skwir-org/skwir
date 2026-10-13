@@ -212,7 +212,8 @@ working in an area, also read that area's rules (see
   rows while rendering. A fact too costly for every listing (a picture's
   position) is a field read on demand (`App::fields`, ADR-023): a plugin
   registers a `FieldProvider`, a caller on a worker asks `Fields::get`,
-  answers are kept by file identity, and a labelled key shows in Details.
+  answers are kept by file identity, and a labelled key shows in
+  Properties.
 - **Virtual locations.** A search or the shelf is not a directory: use
   `OpenLocation::path_of` or `App::selected_refs`. A command that works in
   a folder but can run from a search uses `App::work_dir`, not

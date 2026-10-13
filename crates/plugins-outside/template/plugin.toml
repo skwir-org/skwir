@@ -2,7 +2,7 @@
 # give it your own id, and build it with `just plugins`.
 id = "word-count"
 title = "Word count"
-description = "How many words a text holds, in Details, and for the selection"
+description = "How many words a text holds, in Properties, and for the selection"
 category = "files"
 capabilities = ["read"]
 

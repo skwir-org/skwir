@@ -57,6 +57,10 @@ def metadata(tag):
     section = re.search(rf"^## {re.escape(version)} \((\d{{4}}-\d{{2}}-\d{{2}})\)\n"
                         r"(.*?)(?=^## |\Z)", changelog, re.M | re.S)
     require(section, f"CHANGELOG.md needs a dated section for {version}")
+    # The tag holds everything above too: its notes would leave it out.
+    first = re.search(r"^## .*$", changelog, re.M)
+    require(first.start() == section.start(),
+            f"CHANGELOG.md has “{first[0]}” above {version}: fold it into the release's section")
     date = section[1]
     datetime.date.fromisoformat(date)
     notes = section[2].strip() + "\n"

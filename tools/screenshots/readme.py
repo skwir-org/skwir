@@ -17,8 +17,8 @@ Nothing personal can reach the pictures: HOME, the XDG folders and the
 runtime folder are under ~/.cache/skwir-tests/screenshots-*, and the
 sidebar's drives are hidden, since mountinfo lists the machine's real ones
 whatever HOME says. A file is selected before the capture, so the preview
-panel shows it rather than Details (which says where the folder is and
-who owns it). Look at the result before committing it all the same.
+panel shows it rather than Properties (which says where the folder is
+and who owns it). Look at the result before committing it all the same.
 """
 
 import argparse

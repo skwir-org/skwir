@@ -547,7 +547,8 @@ dates, measurements and what is left.
 ### Tags, places and the trash
 
 - **Tag-preserving copies** (2026-09-19, ADR-006):
-  `core.preserve_tags_on_copy`, on by default (`docs/STATUS-LOG.md`).
+  `core.preserve_tags_on_copy` (now `core.preserve_attributes_on_copy`),
+  on by default (`docs/STATUS-LOG.md`).
 - **Tags and notes** (2026-09-30): rating (`user.baloo.rating`),
   comment (`user.xdg.comment`), origin read only; the tag editor applies
   only what moved (`tags.edit`); Details' Notes and Source groups; a

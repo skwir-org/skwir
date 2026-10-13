@@ -1,6 +1,6 @@
 [package]
 name = "skwir-plugin-xmp"
-description = "skwir plugin: XMP sidecars as a notes store, and XMP inside files read for Details"
+description = "skwir plugin: XMP sidecars as a notes store, and XMP inside files read for Properties"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true
