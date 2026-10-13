@@ -192,7 +192,7 @@ impl Plugin for MapTilesPlugin {
             .record_action("Test", "map-tiles.test_server")
             // After the choice they add to: sections follow what has none.
             .section("Other servers")
-            .validate_with(server::check_servers),
+            .validate_with(|value, _| server::check_servers(value)),
         );
         migrate(app);
         declare_source(app);

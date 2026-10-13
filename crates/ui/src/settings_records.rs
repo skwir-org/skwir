@@ -375,7 +375,8 @@ impl SettingsView {
         }
         let text = serde_json::to_string(&list).unwrap_or_default();
         // Refused as a whole before anything reaches the keyring.
-        if let Err(error) = spec.parse(&text) {
+        let stored = self.app.settings.get::<toml::Value>(key);
+        if let Err(error) = spec.parse_over(&text, stored.as_ref()) {
             if let Some(draft) = self.drafts.get_mut(key) {
                 draft.error = Some(format!("{error:#}"));
             }

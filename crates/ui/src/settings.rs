@@ -1020,10 +1020,11 @@ impl SettingsView {
     pub(crate) fn change(&mut self, key: &str, text: String, cx: &mut Context<Self>) {
         self.highlight = None;
         self.reset_armed = false;
+        let stored = self.app.settings.get::<toml::Value>(key);
         let Some(row) = self.rows.iter_mut().find(|row| row.spec.key == key) else {
             return;
         };
-        if let Err(error) = row.spec.parse(&text) {
+        if let Err(error) = row.spec.parse_over(&text, stored.as_ref()) {
             self.errors.insert(key.to_owned(), format!("{error:#}"));
             cx.notify();
             return;

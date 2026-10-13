@@ -24,14 +24,17 @@ pub const BINDINGS_KEY: &str = "keyboard.bindings";
 /// it applies: the key then does what it would with nothing bound there.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UserBinding {
+    /// The record's id, which the Keyboard page edits it by.
+    pub id: String,
     pub keys: String,
     pub command: Option<Invocation>,
     pub when: Option<String>,
 }
 
-/// Declare the setting. `app` checks each binding's command when the
-/// user saves it: a name no command has, or arguments it does not take,
-/// are refused then, never at the press.
+/// Declare the setting. `app` checks the command of each binding a save
+/// adds or changes: a name no command has, or arguments it does not take,
+/// are refused then, never at the press. A binding stored as it is passes:
+/// its plugin may be off, and it waits for it (ADR-024).
 pub fn declare(settings: &Settings, app: std::sync::Weak<crate::App>) {
     settings.declare(
         SettingSpec::records(
@@ -67,7 +70,7 @@ pub fn declare(settings: &Settings, app: std::sync::Weak<crate::App>) {
                 ),
             ],
         )
-        .validate_with(move |value| check(value, app.upgrade().as_deref())),
+        .validate_with(move |value, stored| check(value, stored, app.upgrade().as_deref())),
     );
 }
 
@@ -101,6 +104,7 @@ fn binding(record: &toml::Value) -> anyhow::Result<UserBinding> {
         "the arguments of {keys} are an object: {{\"name\": value}}"
     );
     Ok(UserBinding {
+        id: text("id").unwrap_or_default().to_owned(),
         keys: keys.split_whitespace().collect::<Vec<_>>().join(" "),
         command: text("command").map(|name| Invocation {
             name: name.into(),
@@ -110,12 +114,24 @@ fn binding(record: &toml::Value) -> anyhow::Result<UserBinding> {
     })
 }
 
-fn check(value: &toml::Value, app: Option<&crate::App>) -> anyhow::Result<()> {
+fn check(
+    value: &toml::Value,
+    stored: Option<&toml::Value>,
+    app: Option<&crate::App>,
+) -> anyhow::Result<()> {
     let Some(records) = value.as_array() else {
         return Ok(());
     };
+    let kept: &[toml::Value] = stored
+        .and_then(toml::Value::as_array)
+        .map_or(&[], Vec::as_slice);
     records.iter().try_for_each(|r| {
         let binding = binding(r)?;
+        // Kept as it was: a command nothing registers is a plugin's that
+        // is off, and the binding waits for it.
+        if kept.contains(r) {
+            return Ok(());
+        }
         let Some(command) = binding.command.filter(|c| &*c.name != LIKE) else {
             return Ok(());
         };
@@ -222,10 +238,56 @@ mod tests {
         assert_eq!(
             bindings[1],
             UserBinding {
+                id: "2".into(),
                 keys: "ctrl-q".into(),
                 command: None,
                 when: None,
             }
+        );
+    }
+
+    /// A shortcut kept for a plugin turned off never blocks a save: only
+    /// a binding the save adds or changes must name a command that is
+    /// there (ADR-024).
+    #[test]
+    fn a_shortcut_kept_for_a_plugin_that_is_off_waits_for_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let spec = app.settings.spec(BINDINGS_KEY).unwrap();
+        let kept = r#"[{"id": "1", "keys": "ctrl-m", "command": "gone.open"}]"#;
+        let stored = toml::Value::Array(Vec::new());
+        assert!(
+            spec.parse_over(kept, Some(&stored))
+                .unwrap_err()
+                .to_string()
+                .contains("gone.open"),
+            "a new binding to nothing is refused"
+        );
+        let stored = spec.parse(r#"[{"id": "1", "keys": "ctrl-m"}]"#).unwrap();
+        let kept_value = {
+            let mut value = stored.clone();
+            value.as_array_mut().unwrap()[0]
+                .as_table_mut()
+                .unwrap()
+                .insert("command".into(), "gone.open".into());
+            value
+        };
+        let both = r#"[
+            {"id": "1", "keys": "ctrl-m", "command": "gone.open"},
+            {"id": "2", "keys": "ctrl-j", "command": "settings.apply", "args": "{\"changes\": {}}"}
+        ]"#;
+        assert!(
+            spec.parse_over(both, Some(&kept_value)).is_ok(),
+            "the binding stored as it was passes beside a new one"
+        );
+        let changed = r#"[{"id": "1", "keys": "ctrl-n", "command": "gone.open"}]"#;
+        assert!(
+            spec.parse_over(changed, Some(&kept_value)).is_err(),
+            "changed, it is checked again"
+        );
+        assert!(
+            spec.check(&kept_value).is_ok(),
+            "the file as it stands is fine"
         );
     }
 

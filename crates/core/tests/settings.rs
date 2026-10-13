@@ -528,7 +528,7 @@ fn records_are_checked_field_by_field_and_never_hold_a_secret() {
 #[test]
 fn an_owner_check_runs_after_the_kind() {
     use skwir_core::settings::SettingSpec;
-    let spec = SettingSpec::text("sample.url", "Address", "", "").validate_with(|value| {
+    let spec = SettingSpec::text("sample.url", "Address", "", "").validate_with(|value, _| {
         anyhow::ensure!(
             value
                 .as_str()

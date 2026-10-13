@@ -143,9 +143,15 @@ pub struct RecordAction {
 
 /// The owner's own check of a value, after the kind's: what only it knows
 /// (a tile address needs `{z}`, `{x}` and `{y}`). Runs wherever a value is
-/// validated, in the dialog and in `settings.apply`.
+/// validated, in the dialog and in `settings.apply`, given the value
+/// stored then (`None` when there is none): a check may spare what was
+/// already kept (a shortcut for a plugin turned off, ADR-024).
 #[derive(Clone)]
-pub struct Validator(pub std::sync::Arc<dyn Fn(&toml::Value) -> anyhow::Result<()> + Send + Sync>);
+pub struct Validator(pub std::sync::Arc<ValidatorFn>);
+
+/// What a [`Validator`] runs: the value, beside the one stored.
+pub type ValidatorFn =
+    dyn Fn(&toml::Value, Option<&toml::Value>) -> anyhow::Result<()> + Send + Sync;
 
 impl std::fmt::Debug for Validator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -309,7 +315,7 @@ impl SettingSpec {
     /// a name is refused, which would not start (`bash -l`), saying why. A
     /// path may hold spaces.
     pub fn command(key: &str, title: &str, description: &str, default: &str) -> Self {
-        let mut spec = Self::text(key, title, description, default).validate_with(|value| {
+        let mut spec = Self::text(key, title, description, default).validate_with(|value, _| {
             let program = value.as_str().unwrap_or_default().trim();
             anyhow::ensure!(
                 !program.contains(char::is_whitespace)
@@ -367,12 +373,13 @@ impl SettingSpec {
         self
     }
 
-    /// The owner's own check, after the kind's (see [`Validator`]).
+    /// The owner's own check, after the kind's (see [`Validator`]): of
+    /// the value, beside the one stored.
     #[must_use]
-    pub fn validate_with(
-        mut self,
-        check: impl Fn(&toml::Value) -> anyhow::Result<()> + Send + Sync + 'static,
-    ) -> Self {
+    pub fn validate_with<F>(mut self, check: F) -> Self
+    where
+        F: Fn(&toml::Value, Option<&toml::Value>) -> anyhow::Result<()> + Send + Sync + 'static,
+    {
         self.validator = Some(Validator(std::sync::Arc::new(check)));
         self
     }
@@ -571,10 +578,28 @@ impl SettingSpec {
         if !self.editable() {
             return Ok(());
         }
-        self.parse(&Self::format_value(value)).map(|_| ())
+        self.parse_over(&Self::format_value(value), Some(value))
+            .map(|_| ())
     }
 
+    /// The value `text` says, checked as if nothing were stored.
+    ///
+    /// # Errors
+    /// What is wrong, in the words the dialog uses.
     pub fn parse(&self, text: &str) -> anyhow::Result<toml::Value> {
+        self.parse_over(text, None)
+    }
+
+    /// The value `text` says, to replace `stored`: the owner's check sees
+    /// both (see [`Validator`]).
+    ///
+    /// # Errors
+    /// What is wrong, in the words the dialog uses.
+    pub fn parse_over(
+        &self,
+        text: &str,
+        stored: Option<&toml::Value>,
+    ) -> anyhow::Result<toml::Value> {
         anyhow::ensure!(
             self.editable(),
             "{} is managed by its owning commands",
@@ -620,7 +645,7 @@ impl SettingSpec {
             );
         }
         if let Some(Validator(check)) = &self.validator {
-            check(&value)?;
+            check(&value, stored)?;
         }
         Ok(value)
     }
@@ -1507,6 +1532,14 @@ impl Settings {
         changes: &BTreeMap<String, String>,
     ) -> anyhow::Result<BTreeMap<String, toml::Value>> {
         use anyhow::Context as _;
+        // What each holds now, read before the schema's lock is taken.
+        let stored: BTreeMap<&String, Option<toml::Value>> = {
+            let values = self.values.read();
+            changes
+                .keys()
+                .map(|key| (key, Self::lookup(&values, key).cloned()))
+                .collect()
+        };
         let schema = self.schema.read();
         changes
             .iter()
@@ -1514,7 +1547,10 @@ impl Settings {
                 let spec = schema
                     .get(key)
                     .ok_or_else(|| anyhow::anyhow!("unknown setting: {key}"))?;
-                Ok((key.clone(), spec.parse(text).with_context(|| key.clone())?))
+                let value = spec
+                    .parse_over(text, stored.get(key).and_then(Option::as_ref))
+                    .with_context(|| key.clone())?;
+                Ok((key.clone(), value))
             })
             .collect()
     }

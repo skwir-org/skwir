@@ -1182,20 +1182,22 @@ pub struct Keymap {
     pub typeahead: bool,
 }
 
-/// What a keymap was built from: the registries' revisions and the user's
-/// bindings.
+/// What a keymap was built from: the registries' revisions, the plugins'
+/// (a binding of the user's waits for its plugin's command), and the
+/// user's bindings.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Stamp {
-    pub revisions: (u64, u64),
+    pub revisions: (u64, u64, u64),
     pub user: Vec<UserBinding>,
 }
 
 impl Stamp {
     /// The registries' revisions now, for a cheap comparison per sync.
-    pub fn revisions(app: &App) -> (u64, u64) {
+    pub fn revisions(app: &App) -> (u64, u64, u64) {
         (
             app.registry.keymap.revision(),
             app.registry.schemes.revision(),
+            app.plugins.revision(),
         )
     }
 }
@@ -1281,7 +1283,9 @@ fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
             context,
             layer: Layer::Shell,
         }));
-    let mine = user.iter().map(|b| Spec {
+    // A binding to a command nothing registers waits for its plugin: it
+    // binds nothing meanwhile, and the keys under it work (ADR-024).
+    let mine = user.iter().filter(|b| !dormant(app, b)).map(|b| Spec {
         keys: b.keys.clone(),
         command: b
             .command
@@ -1314,6 +1318,14 @@ fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
         .collect();
     kept.reverse();
     kept
+}
+
+/// Whether a binding of the user's runs a command nothing registers now:
+/// its plugin's, turned off. It is kept, and waits for it.
+pub fn dormant(app: &App, binding: &UserBinding) -> bool {
+    binding.command.as_ref().is_some_and(|command| {
+        &*command.name != skwir_core::keymap::LIKE && app.commands.get(&command.name).is_none()
+    })
 }
 
 /// A binding to `keys.like` as the bindings of the keys it names, under
@@ -1616,6 +1628,7 @@ mod tests {
             .keymap
             .add("late-plugin", bind("space", "late"));
         let user = [UserBinding {
+            id: "1".into(),
             keys: "space".into(),
             command: None,
             when: Some("pane".into()),
@@ -1634,6 +1647,47 @@ mod tests {
                 (None, Layer::User),
             ]
         );
+    }
+
+    /// A binding of the user's to a command nothing registers (its plugin
+    /// is off) binds nothing: the key under it works until the plugin is
+    /// back, and then the binding is the user's again.
+    #[test]
+    fn a_binding_waits_for_the_plugin_of_its_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        app.registry.keymap.add(
+            "plugin",
+            KeyBinding {
+                keys: "ctrl-m".into(),
+                command: Invocation::new("plugin.default"),
+                when: None,
+            },
+        );
+        let user = [UserBinding {
+            id: "1".into(),
+            keys: "ctrl-m".into(),
+            command: Some(Invocation::new("later.open")),
+            when: None,
+        }];
+        let on_ctrl_m = |app: &skwir_core::App| -> Vec<String> {
+            specs(app, &user)
+                .into_iter()
+                .filter(|s| s.keys == "ctrl-m")
+                .filter_map(|s| s.command.map(|(name, _)| name))
+                .collect()
+        };
+        assert!(super::dormant(&app, &user[0]));
+        assert_eq!(on_ctrl_m(&app), ["plugin.default"]);
+        app.commands.register::<skwir_core::command::NoArgs, _>(
+            "later",
+            "later.open",
+            "Open",
+            "",
+            |_, _| Ok(skwir_core::command::Outcome::Done),
+        );
+        assert!(!super::dormant(&app, &user[0]));
+        assert_eq!(on_ctrl_m(&app), ["plugin.default", "later.open"]);
     }
 
     /// A key GPUI cannot parse is skipped with a warning at startup: the
