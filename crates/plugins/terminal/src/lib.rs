@@ -115,14 +115,14 @@ impl Plugin for TerminalPlugin {
         app.settings.declare(SettingSpec::command(
             PROGRAM_KEY,
             "Shell",
-            "The program the terminal runs. Leave empty for your login shell",
+            "The program the terminal runs. Leave empty for your login shell.",
             "",
         ));
         app.settings.declare(
             SettingSpec::integer(
                 SCROLLBACK_KEY,
                 "History",
-                "How many lines you can scroll back to, for terminals opened from now on, at most 30,000. Once full, every 10,000 lines of a wide terminal take about 30 MB",
+                "How many lines you can scroll back to, for terminals opened from now on, at most 30,000. Once full, every 10,000 lines of a wide terminal take about 30 MB.",
                 SCROLLBACK,
                 (0, SCROLLBACK_MOST),
             )
@@ -132,7 +132,7 @@ impl Plugin for TerminalPlugin {
         app.settings.declare(SettingSpec::toggle(
             FOLLOW_KEY,
             "Follow the folder shown",
-            "The terminal changes to the folder the pane shows, and the pane goes where you cd. Nothing is typed while a program runs in the terminal",
+            "The terminal changes to the folder the pane shows, and the pane goes where you cd. Nothing is typed while a program runs in the terminal.",
             true,
         ));
         app.registry.keymap.add(

@@ -362,7 +362,7 @@ impl Plugin for ThumbnailsPlugin {
         app.settings.declare(SettingSpec::toggle(
             IMAGEMAGICK,
             "Use ImageMagick",
-            "Draw the pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images…) with ImageMagick when it is installed, isolated from your files and the network.",
+            "Draw the thumbnails and previews of the pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images…) with ImageMagick when it is installed, isolated from your files and the network.",
             true,
         ));
         budget(app);

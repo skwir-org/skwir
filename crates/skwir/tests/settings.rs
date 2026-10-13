@@ -3,7 +3,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use skwir_core::{App, app::AppConfig, command::Invocation, settings::SaveState};
+use skwir_core::{
+    App,
+    app::AppConfig,
+    command::Invocation,
+    settings::{SaveState, SettingSpec},
+};
 
 #[test]
 fn changing_document_engine_refreshes_only_document_previews() {
@@ -102,4 +107,43 @@ fn the_player_reads_what_the_media_plugin_declares() {
         app.settings.spec(CONTINUE_KEY).is_none(),
         "and its preferences go with it"
     );
+}
+
+/// Every page of the dialog reads alike (`docs/invariants/settings.md`):
+/// a title in sentence case that is not its plugin's name, a description
+/// in sentences. Every plugin on, and the shell's own preferences.
+#[test]
+fn every_setting_has_a_title_and_a_description_in_sentences() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+    for plugin in skwir::plugins() {
+        let id = plugin.id();
+        app.plugins.add(plugin, &app);
+        if !app.plugins.is_enabled(id) {
+            assert!(app.plugins.set_enabled(id, true, &app), "{id}: toggle on");
+        }
+    }
+    skwir_ui::settings::declare(&app);
+    let plugins = app.plugins.list();
+    let mut problems = Vec::new();
+    for spec in app
+        .settings
+        .schema()
+        .into_iter()
+        .filter(SettingSpec::editable)
+    {
+        let key = &spec.key;
+        if !spec.title.starts_with(char::is_uppercase) {
+            problems.push(format!("{key}: its title starts in lowercase"));
+        }
+        if plugins.iter().any(|plugin| {
+            plugin.id == spec.owner() && plugin.title.eq_ignore_ascii_case(&spec.title)
+        }) {
+            problems.push(format!("{key}: its title is its plugin's name"));
+        }
+        if !spec.description.ends_with('.') {
+            problems.push(format!("{key}: its description does not end a sentence"));
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
 }

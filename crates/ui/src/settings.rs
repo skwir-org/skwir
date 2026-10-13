@@ -483,7 +483,7 @@ static BUILTIN: [Builtin; 7] = [
         owner: Some(CORE_OWNER),
         title: "General",
         icon: "sliders",
-        intro: "How skwir handles files. Changes apply as you make them.",
+        intro: "What skwir does: with files, at startup, with tabs and the split. Changes apply as you make them.",
         when_used: false,
     },
     Builtin {

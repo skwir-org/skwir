@@ -556,7 +556,7 @@ impl Plugin for TagsPlugin {
             SettingSpec::integer(
                 index::LIMIT_SETTING,
                 "Room for tagged files",
-                "How much memory skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches. Past it, new tagged files are left out of the tags' folders, and skwir says so",
+                "How much memory skwir may give what it knows of tagged files, about sixteen thousand files a megabyte, for tags browsed as folders, the sidebar's suggestions and quicker tag searches. Past it, new tagged files are left out of the tags' folders, and skwir says so.",
                 index::LIMIT_DEFAULT,
                 (8, 4096),
             )
@@ -760,7 +760,7 @@ impl Plugin for TagsPlugin {
             SettingSpec::integer(
                 sidebar::SETTING,
                 "Tags suggested in the sidebar",
-                "Until a tag is pinned, how many the sidebar suggests, those on the most files first; 0 suggests none",
+                "Until a tag is pinned, how many the sidebar suggests, those on the most files first; 0 suggests none.",
                 sidebar::DEFAULT,
                 (0, 50),
             ),

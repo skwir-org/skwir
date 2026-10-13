@@ -270,7 +270,8 @@ impl Shell {
         if arrived {
             cx.notify();
         }
-        let setting = crate::map_tiles::SETTING;
+        // The setting that chooses the background is the source's to say.
+        let setting = info.as_ref().and_then(|info| info.setting.clone());
         match failure.filter(|_| shown) {
             Some(failure) if failure.source != 0 => {
                 // A damaged file: no setting fixes it.
@@ -285,17 +286,18 @@ impl Shell {
             }
             Some(failure) if self.map_notes.failed != Some(failure.revision) => {
                 self.map_notes.failed = Some(failure.revision);
-                self.set_status_about(
-                    format!("Map tiles could not be loaded: {}", failure.error),
-                    setting,
-                    cx,
-                );
+                let text = format!("Map tiles could not be loaded: {}", failure.error);
+                match &setting {
+                    Some(setting) => self.set_status_about(text, setting, cx),
+                    None => self.set_status(text, true, cx),
+                }
             }
             _ => {}
         }
         // A file that holds its own tiles shows its streets where it has
         // them: the background's lack of them is not worth a word there.
         if let Some(info) = info
+            && let Some(setting) = &setting
             && !info.detailed
             && !self.map_notes.hinted
             && !self.map_has_file_tiles()
@@ -304,7 +306,7 @@ impl Shell {
             self.map_notes.hinted = true;
             self.set_hint_about(
                 "Streets are not drawn on this map background; another one can show them",
-                info.setting.as_deref().unwrap_or(setting),
+                setting,
                 cx,
             );
         }

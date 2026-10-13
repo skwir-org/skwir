@@ -76,7 +76,7 @@ fn declare_source(app: &App) {
     app.settings.declare(SettingSpec::choice(
         SOURCE_KEY,
         "Map background",
-        "What maps are drawn on. The outline of the land needs no network. OpenStreetMap and other servers download the tiles you look at, which tells them where you look",
+        "What maps are drawn on. The outline of the land needs no network. OpenStreetMap and other servers download the tiles you look at, which tells them where you look.",
         OUTLINE,
         &choices,
     )
@@ -167,7 +167,7 @@ impl Plugin for MapTilesPlugin {
             SettingSpec::records(
                 SERVERS_KEY,
                 "Tile servers",
-                "Backgrounds from other servers, to choose in Map background or from a map",
+                "Backgrounds from other servers, to choose in Map background or from a map.",
                 "tile server",
                 vec![
                     RecordField::text("name", "Name", "What the server is called in the list", "Topographic").required(),

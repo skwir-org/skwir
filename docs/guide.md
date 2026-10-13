@@ -288,13 +288,16 @@ a hint shows what can follow.
 
 | Page | What it sets |
 | --- | --- |
-| General | What Skwir does with files: startup, drops, copies, split, tabs |
-| Appearance | How it looks: theme, icons, dates, the path, tabs |
-| Keyboard | The keys |
-| Reading | The reader shared by documents, books, Markdown and code |
+| General | What Skwir does: at startup, with files (copies, drops, companion files), with the split and tabs |
+| Appearance | How it looks: theme, icons, dates, tabs, the path, the Narrow by bar, the grid, the list's columns |
+| Reading | The reader shared by documents, books, comics, Markdown and code: pages, line length, code's colors |
 | Notes | Where tags, ratings and comments are read and written |
 | Privacy | Folders that never leave the machine |
-| Plugins | Every plugin, on or off, what it may do and what it needs; each plugin's own options |
+| Plugins | Every plugin, on or off, what it may do and what it needs |
+| Keyboard | The keys |
+
+A plugin with options of its own (an engine, the terminal's shell) has a
+page of its own, listed under the others.
 
 If the settings file cannot be read (edited by hand into something that
 is no longer TOML), Skwir starts with its defaults, keeps the file aside

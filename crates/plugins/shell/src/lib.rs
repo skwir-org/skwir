@@ -160,9 +160,10 @@ fn run(
         }
         None => (app.pane_dir(app.pane_or_active(pane))?, Vec::new()),
     };
-    let program: String = app
+    let program = app
         .settings
-        .get(PROGRAM_KEY)
+        .get::<String>(PROGRAM_KEY)
+        .filter(|program| !program.is_empty())
         .unwrap_or_else(default_program);
     let argv = run_argv(&program, command, &paths);
     // The terminal outlives the command; the platform's reaper collects it.
@@ -192,11 +193,14 @@ impl Plugin for ShellPlugin {
         skwir_core::permissions::Capabilities::of(&[Capability::Programs])
     }
     fn register(&self, app: &App) {
+        // Empty is the user's shell, found when a command runs: a default
+        // read from the environment would differ from one machine to the
+        // next.
         app.settings.declare(SettingSpec::command(
             PROGRAM_KEY,
-            "Shell",
-            "Program that runs commands on the selection: a POSIX shell or fish. Defaults to $SHELL.",
-            &default_program(),
+            "Program for commands",
+            "The shell that runs a command on the selection: a POSIX shell or fish. Leave empty for yours ($SHELL) when it is one of them, else sh.",
+            "",
         ));
         app.commands
             .register::<TargetsArgs, _>(

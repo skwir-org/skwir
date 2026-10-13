@@ -23,8 +23,10 @@ the reasoning.
   Declared again, or by a plugin turned on again, a setting keeps its
   place. Never sort a page by key or title.
 - Titles are sentence case, without the plugin's name. Descriptions say
-  what changes for the user, not what the key is called. Choice labels
-  are a word or two; the description explains them.
+  what changes for the user, not what the key is called, in sentences.
+  Choice labels are a word or two; the description explains them.
+  `crates/skwir/tests/settings.rs` checks the titles and the sentences
+  of every plugin's settings.
 - **Secrets** are a record's `secret` field only: they go to the desktop's
   keyring (`skwir_platform::secrets`, on a worker), and the settings file
   only says one is there. Never put a secret in any other kind of
@@ -45,7 +47,7 @@ The namespace is the page, and a preference goes where its subject is:
   Markdown and the code view); `notes.*` (Notes, the core's: each store's
   Read and Write, declared by `App::register_notes_store`).
 - `ui.*` is only how Skwir looks (Appearance). `core.*` is what it does
-  with files (General).
+  (General): with files, at startup, with tabs and the split.
 
 ## The file is shared
 

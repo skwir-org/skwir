@@ -21,9 +21,6 @@ use skwir_core::tiles::{Layer, NoTile, Palette, SourceInfo, TileRequest, Tiles};
 /// How long a tile that failed is left blank before it is asked again.
 const RETRY: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// The setting that chooses the background (the map-tiles plugin's).
-pub const SETTING: &str = "map-tiles.source";
-
 /// Decoded tiles kept: at 256 pixels a side, about 190 of them; at 512,
 /// about 48, several screens of a large panel.
 const BUDGET: usize = 48 * 1024 * 1024;
