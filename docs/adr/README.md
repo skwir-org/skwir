@@ -65,7 +65,7 @@ them by topic.
 | [049](049-a-file-and-its-names.md) | A file and its names are two identities | built |
 | [050](050-names-are-indexed-by-skwird.md) | Names are indexed by skwird | not built |
 | [051](051-text-is-read-where-it-is-shown.md) | Text is read where it is shown | built |
-| [052](052-portable-appimage.md) | A portable AppImage built in a distribution root | built and tried on x86-64 Linux |
+| [052](052-portable-appimage.md) | A portable AppImage built in a distribution root, and its tree as a tarball | built and tried on x86-64 Linux |
 | [053](053-local-releases-minimal-ci.md) | Local Linux releases; minimal routine GitHub CI | implemented; upload tested with a fake GitHub CLI |
 | [054](054-a-name-already-taken.md) | A name already taken: keep both, replace, skip or merge, asked once | built; on Windows a replace undone restores the latest item |
 | [055](055-the-settings-file-is-shared.md) | The settings file is shared: saves merge, outside changes are taken in, Home Manager merges | built |

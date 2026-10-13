@@ -1,8 +1,9 @@
 #!/bin/sh
-# A portable AppImage built on any x86-64 Linux, including NixOS, in an
-# Ubuntu 22.04 root of its own (ADR-052). No container engine or root.
-# The build root, downloads and Cargo artifacts stay in target/appimage;
-# the distributable and its checksum land in target/package/appimage.
+# A portable AppImage, and the same tree as a tarball, built on any x86-64
+# Linux, including NixOS, in an Ubuntu 22.04 root of its own (ADR-052). No
+# container engine or root. The build root, downloads and Cargo artifacts
+# stay in target/appimage; the distributables and their checksums land in
+# target/package/appimage.
 # Set SKWIR_PACKAGE_OUT to select a different destination for verified outputs.
 set -eu
 case "$(uname -sm)" in
@@ -56,7 +57,8 @@ enter() {
         ' sh "$@"
 }
 enter "$root" sh tools/package/appimage/prepare.sh
-enter "$root" sh tools/package/appimage/build.sh
+# The tarball is dated by the commit, not by the build.
+enter "$root" sh tools/package/appimage/build.sh "$(git -C "$tree" log -1 --format=%ct)"
 # A separate root has desktop runtime packages, no compiler, development
 # libraries, Nix store or host profile. Hidden build dependencies fail here.
 test_root="$cache/test-root"
@@ -72,11 +74,16 @@ mkdir -p "$test_root/src" "$test_root/out" "$test_root/inputs"
 # shellcheck disable=SC2046 # one argument per runtime dependency
 enter "$test_root" sh tools/package/appimage/install-deps.sh $(cat "$tree/tools/package/appimage/test-deps")
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$tree/Cargo.toml" | head -1)"
-enter "$test_root" python3 tools/package/appimage/check.py "/out/skwir-$version-x86_64.AppImage"
-# Only a verified candidate replaces the previous distributable.
-name="skwir-$version-x86_64.AppImage"
-install -m755 "$out/$name" "$dist/$name.part"
-mv "$dist/$name.part" "$dist/$name"
-install -m644 "$out/$name.sha256" "$dist/$name.sha256.part"
-mv "$dist/$name.sha256.part" "$dist/$name.sha256"
-echo "AppImage and checksum: $dist"
+image="skwir-$version-x86_64.AppImage"
+tarball="skwir-$version-linux-x86_64.tar.gz"
+enter "$test_root" python3 tools/package/appimage/check.py "/out/$image"
+enter "$test_root" python3 tools/package/appimage/check.py "/out/$tarball"
+# Only verified candidates replace the previous distributables.
+install -m755 "$out/$image" "$dist/$image.part"
+install -m644 "$out/$tarball" "$dist/$tarball.part"
+for name in "$image" "$tarball"; do
+    install -m644 "$out/$name.sha256" "$dist/$name.sha256.part"
+    mv "$dist/$name.part" "$dist/$name"
+    mv "$dist/$name.sha256.part" "$dist/$name.sha256"
+done
+echo "AppImage, tarball and their checksums: $dist"

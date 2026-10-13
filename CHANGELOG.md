@@ -52,8 +52,8 @@ The first release, for Linux.
   programs. Their protocol is experimental and may change before it is
   declared stable.
 - **Packages** for Debian 13, Ubuntu 24.04 and Fedora 44, Arch's on the
-  AUR, an AppImage for other x86-64 Linux, and a Nix flake with a Home
-  Manager module.
+  AUR, an AppImage and a tarball for other x86-64 Linux, and a Nix flake
+  with a Home Manager module.
 
 Known limits: the macOS and Windows builds compile but have never run
 ([how to help](docs/HELP-WANTED.md)); no screen reader support yet (the

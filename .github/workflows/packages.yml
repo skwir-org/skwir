@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   appimage:
-    name: AppImage (Ubuntu 22.04 baseline)
+    name: AppImage and tarball (Ubuntu 22.04 baseline)
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
@@ -30,7 +30,7 @@ jobs:
 
   appimage-portability:
     needs: appimage
-    name: AppImage on ${{ matrix.image }}
+    name: AppImage and tarball on ${{ matrix.image }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -55,15 +55,16 @@ jobs:
             # shellcheck disable=SC2046 # one package name per line
             apt-get install -y --no-install-recommends $(sed 's/^libasound2$/libasound2t64/' tools/package/appimage/test-deps)
           else
-            dnf install -y python3 binutils bubblewrap xorg-x11-server-Xvfb \
+            dnf install -y python3 binutils tar gzip bubblewrap xorg-x11-server-Xvfb \
               mesa-vulkan-drivers vulkan-loader libwayland-client libxkbcommon \
               libX11 libxcb libXcursor libXi libXrandr fontconfig dejavu-sans-fonts \
               alsa-lib mesa-libgbm libglvnd-egl shared-mime-info
           fi
-      - name: Check the same artifact
+      - name: Check the same artifacts
         run: |
           cd appimage && sha256sum -c ./*.sha256 && chmod +x ./*.AppImage && cd ..
           python3 tools/package/appimage/check.py appimage/*.AppImage
+          python3 tools/package/appimage/check.py appimage/*.tar.gz
 
   linux:
     strategy:

@@ -5,7 +5,8 @@ Amended the same day by ADR-041 (packages carry PDFium; rarely needed
 helpers are separate packages, optional libraries on Arch) and ADR-042
 (Apache-2.0 alone; the Poppler reader under GPL-3.0).
 Amended 2026-10-11 by ADR-052: a conventional AppImage built in an
-Ubuntu root, including from a Nix host, supplements these formats.
+Ubuntu root, including from a Nix host, supplements these formats; since
+2026-10-13, its tree as a tarball too.
 Amended 2026-10-11 by ADR-053: local release builds and draft uploads;
 hosted package builds are a manual fallback.
 

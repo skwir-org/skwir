@@ -99,16 +99,36 @@ Arch's `skwir` holds the player and the Poppler reader; install
 `gst-plugins-base` and `poppler-glib` to use them. `skwir-mermaid` and
 `skwir-mupdf` are packages of their own.
 
-### Any other distribution: AppImage
+### Any other distribution: AppImage or tarball
 
-The AppImage needs x86-64 Linux with glibc 2.35 or later, and holds the
-optional readers and the player. It was tried on Ubuntu 22.04 and 24.04 and on
-Fedora 44:
+Both hold the same files, the optional readers and the player among them, and
+need x86-64 Linux with glibc 2.35 or later. They were tried on Ubuntu 22.04 and
+24.04 and on Fedora 44. The AppImage runs as it is:
 
 ```sh
 chmod +x skwir-0.1.0-x86_64.AppImage
 ./skwir-0.1.0-x86_64.AppImage
 ```
+
+The tarball needs no FUSE and goes where you like, here `~/.local/opt`:
+
+```sh
+mkdir -p ~/.local/opt ~/.local/bin
+tar -xzf skwir-0.1.0-linux-x86_64.tar.gz -C ~/.local/opt
+ln -sfn ~/.local/opt/skwir-0.1.0-linux-x86_64/skwir ~/.local/bin/skwir
+```
+
+To list it among your applications, add its desktop entry and icon:
+
+```sh
+cd ~/.local/opt/skwir-0.1.0-linux-x86_64/usr/share
+mkdir -p ~/.local/share/applications ~/.local/share/icons/hicolor/scalable/apps
+sed "s|^Exec=skwir|Exec=\"$HOME/.local/bin/skwir\"|" applications/org.skwir.skwir.desktop \
+  > ~/.local/share/applications/org.skwir.skwir.desktop
+cp icons/hicolor/scalable/apps/org.skwir.skwir.svg ~/.local/share/icons/hicolor/scalable/apps/
+```
+
+A later version goes beside it; run the `ln` line again with its name.
 
 ### NixOS and Nix
 

@@ -44,16 +44,17 @@ It then runs the existing packagers with separate fresh output directories:
 
 | Command | Build and installation checks |
 | --- | --- |
-| `just package-appimage` | Ubuntu 22.04 build root; separate runtime root, ELF/glibc checks, helpers, PDFs, audio and window commands |
+| `just package-appimage` | Ubuntu 22.04 build root; the AppImage, and its tree as a tarball, each checked in a separate runtime root: ELF/glibc checks, helpers, PDFs, audio and window commands |
 | `just package-try debian` | Debian 13 build; fresh installation of main package alone, then optional packages |
 | `just package-try ubuntu` | Ubuntu 24.04 build, its revision naming the release (`-1ubuntu24.04`); the same installations |
 | `just package-try fedora` | Fedora 44 build; fresh installation of main package alone, then optional packages |
 | `just package-try arch` | Arch build; fresh installation of main package alone, then optional packages |
 
 The final bundle is `target/releases/v0.1.0/`. It contains the lowercase
-`skwir-0.1.0-x86_64.AppImage` and its companion checksum, all current-version
-Debian, Ubuntu, RPM and Arch split packages, `notes.md`, `manifest.json`
-and `SHA256SUMS`. The package manifests supply the expected split package names. Missing,
+`skwir-0.1.0-x86_64.AppImage` and `skwir-0.1.0-linux-x86_64.tar.gz`, each
+with its companion checksum, all current-version Debian, Ubuntu, RPM and
+Arch split packages, `notes.md`, `manifest.json` and `SHA256SUMS`. The
+package manifests supply the expected split package names. Missing,
 duplicate, unexpected or old-version assets fail the build. The manifest
 records the source commit, platform, checks and each asset's size and SHA256.
 It is a local build record, not signed CI provenance.
@@ -63,16 +64,16 @@ bundle is never overwritten: move it aside explicitly before rebuilding.
 Builds reuse the AppImage and Debian/Ubuntu/Fedora Cargo caches and
 prepared roots; Arch currently retains downloads but rebuilds its source
 tree. First builds still take substantial time and disk space.
-Distribution roots are cached under `~/.cache/skwir-tests/roots`; AppImage inputs and build cache live in
-`target/appimage`. Package scripts also accept `SKWIR_PACKAGE_OUT` to direct
-their verified outputs elsewhere.
+Distribution roots are cached under `~/.cache/skwir-tests/roots`; AppImage
+inputs and build cache live in `target/appimage`. Package scripts also
+accept `SKWIR_PACKAGE_OUT` to direct their verified outputs elsewhere.
 
 Manually try the AppImage on the desktop and hardware you intend to support.
-The automated AppImage check uses software Vulkan in its baseline root;
-it cannot establish actual audio output or every GPU driver's behavior.
-The manual `packages` workflow additionally tests the same AppImage on
-Ubuntu 24.04 and Fedora 44. Those two checks are not part of the local
-release command.
+The automated AppImage and tarball checks use software Vulkan in their
+baseline root; they cannot establish actual audio output or every GPU
+driver's behavior. The manual `packages` workflow additionally tests the
+same AppImage and tarball on Ubuntu 24.04 and Fedora 44. Those checks
+are not part of the local release command.
 
 ## Upload a draft
 
@@ -151,9 +152,9 @@ checkout before preparing again. A dirty checkout is never overwritten.
 native macOS/Windows jobs and package builds, only through **Run workflow**.
 Native jobs retain their existing nonblocking Phase 5b status. `packages`
 can also run on its own; it builds and install-tests Linux packages and
-checks AppImage portability. Both upload workflow artifacts, not GitHub
-release assets. A tag push only checks release metadata; it starts no
-compilation and creates no release.
+checks the AppImage's and the tarball's portability. Both upload
+workflow artifacts, not GitHub release assets. A tag push only checks
+release metadata; it starts no compilation and creates no release.
 
 After pushing the workflow changes, review any repository branch protection
 that requires the old `lint`, `test`, `window` or `readers` jobs. Routine CI's

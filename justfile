@@ -182,8 +182,9 @@ aur-publish tag:
 package-try distribution:
     tools/package/try.sh {{distribution}}
 
-# A portable x86-64 AppImage built in Ubuntu 22.04, checked in a separate
-# runtime-only root; runs on NixOS too. Into target/package/appimage.
+# A portable x86-64 AppImage, and the same tree as a tarball, built in Ubuntu
+# 22.04 and checked in a separate runtime-only root; builds on NixOS too. Into
+# target/package/appimage.
 package-appimage:
     tools/package/appimage.sh
 

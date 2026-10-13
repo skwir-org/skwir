@@ -1511,6 +1511,15 @@ Phase 7.
     others), the AppImage in its runtime-only root (both readers,
     playback, the window's commands, the sandboxed archive helper); the
     release metadata dated 2026-10-12 and agreeing (`release-metadata`).
+    **The tarball** (2026-10-13, ADR-052 decision 7):
+    `skwir-0.1.0-linux-x86_64.tar.gz`, the AppImage's `usr` tree under
+    one folder with the program linked at its top, for a system without
+    FUSE or a folder of the user's choosing. `package-appimage` builds
+    and checks it with the AppImage; `release-build` expects it and its
+    checksum (15 files in a bundle); the manual `packages` workflow checks
+    it too. It passed the AppImage's checks in the Ubuntu 22.04, 24.04
+    and Fedora 44 runtime roots, and the README's commands installed it
+    as written; the release tools' 20 tests pass in the Nix shell.
     **Left:** commit the release, create and push its tag, run the local
     release build, review and publish its draft, then the AUR.
 

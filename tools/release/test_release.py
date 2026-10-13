@@ -28,10 +28,10 @@ if len(args) == 1 and args[0] in ['lint-all', 'deny', 'test-all', 'smoke', 'popp
     sys.exit(1 if os.getenv('FAIL_RECIPE') == args[0] else 0)
 out = pathlib.Path(os.environ['SKWIR_PACKAGE_OUT'])
 if args == ['package-appimage']:
-    name = 'skwir-1.2.3-x86_64.AppImage'
-    (out / name).write_bytes(b'synthetic image')
-    sha = hashlib.sha256((out / name).read_bytes()).hexdigest()
-    (out / (name + '.sha256')).write_text(f'{sha}  {name}\n')
+    for name in ['skwir-1.2.3-x86_64.AppImage', 'skwir-1.2.3-linux-x86_64.tar.gz']:
+        (out / name).write_bytes(b'synthetic ' + name.encode())
+        sha = hashlib.sha256((out / name).read_bytes()).hexdigest()
+        (out / (name + '.sha256')).write_text(f'{sha}  {name}\n')
 elif args == ['package-try', 'debian']:
     for name in ['skwir', 'skwir-media']:
         (out / f'{name}_1.2.3-1_amd64.deb').write_bytes(b'synthetic deb')
@@ -52,6 +52,9 @@ if os.getenv('MISSING_ASSET'):
     next(out.iterdir()).unlink()
 if os.getenv('CHANGE_SOURCE'):
     pathlib.Path('CHANGELOG.md').write_text('changed during build')
+if os.getenv('WRONG_COMPANION') and args == ['package-appimage']:
+    (out / 'skwir-1.2.3-linux-x86_64.tar.gz.sha256').write_text(
+        f"{'0' * 64}  skwir-1.2.3-linux-x86_64.tar.gz\n")
 '''
 
 FAKE_GH = r'''#!/usr/bin/env python3
@@ -328,7 +331,7 @@ sys.exit(subprocess.call([service, os.environ['AUR_TEST_REMOTE']]))
         stale.write_bytes(b"old release")
         self.cli("build")
         self.cli("verify")
-        self.assertEqual(len(list(self.bundle.iterdir())), 13)
+        self.assertEqual(len(list(self.bundle.iterdir())), 15)
         self.assertNotIn("Old notes", (self.bundle / "notes.md").read_text())
         self.assertTrue(stale.exists())
         self.assertEqual(self.calls("just"), [["release-check"], ["package-appimage"],
@@ -376,6 +379,10 @@ sys.exit(subprocess.call([service, os.environ['AUR_TEST_REMOTE']]))
                 self.cli("build", ok=False, **{flag: "1"})
                 self.assertFalse(self.bundle.exists())
                 self.git("checkout", "--", "CHANGELOG.md")
+
+    def test_a_wrong_companion_checksum_leaves_no_bundle(self):
+        self.assertIn("companion checksum", self.cli("build", ok=False, WRONG_COMPANION="1"))
+        self.assertFalse(self.bundle.exists())
 
     def test_modified_assets_refuse_upload_before_gh(self):
         self.cli("build")

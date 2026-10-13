@@ -2,6 +2,8 @@
 
 Status: accepted, 2026-10-11 (the user requested the implementation).
 Amends ADR-040's Linux formats and Phase 5's packaging deviation.
+Decision 7, the same tree as a tarball, added 2026-10-13 (the user
+requested it).
 
 ## Context
 
@@ -59,12 +61,22 @@ filesystem, as `tools/package/try.sh` already does.
    that same artifact on Ubuntu 24.04 and Fedora 44. Hardware Vulkan and
    Wayland need separate real-system
    checks; software rendering alone proves neither.
+7. **The same tree as a tarball** (2026-10-13), for a system without
+   FUSE and a folder of the user's choosing:
+   `skwir-<version>-linux-x86_64.tar.gz` holds the AppImage's `usr` tree
+   under one folder, with a `skwir` link to the program at its top, and
+   none of the AppImage's own files. Names are sorted, owned by root and
+   dated by the commit, and gzip records no name or date. It is checked
+   as the AppImage is, in the same runtime-only roots, after its members
+   are: one folder, no absolute or parent paths, no special files. No
+   installer: the README says how to link the program onto `PATH` and
+   add the desktop entry and icon.
 
 ## Consequences
 
-- `just package-appimage` writes the AppImage and its SHA-256 file to
-  `target/package/appimage`. Build roots and artifacts stay under
-  `target/appimage`; deleting that folder resets the build.
+- `just package-appimage` writes the AppImage, the tarball and their
+  SHA-256 files to `target/package/appimage`. Build roots and artifacts
+  stay under `target/appimage`; deleting that folder resets the build.
 - Building on a Nix host is supported. Running a conventional AppImage
   on NixOS may still need `appimage-run` for its FHS runtime.
 - The bundled player and alternative readers make this larger than
@@ -72,8 +84,10 @@ filesystem, as `tools/package/try.sh` already does.
   notices ship with them; source remains in the release's repository.
 - System tools remain optional. Bubblewrap and usable user namespaces
   are host requirements for features that require isolation, as before.
-- The Debian, RPM, AUR and Nix packages remain available. AppImage is an
-  additional format, with bundled-library updates our responsibility.
+- The Debian, RPM, AUR and Nix packages remain available. The AppImage
+  and the tarball are additional formats, with bundled-library updates
+  our responsibility. A release carries the portable tree twice (156 MB
+  as an AppImage, about 169 MB as a tarball).
 
 ## Verification
 
@@ -93,3 +107,13 @@ one hardware configuration; it does not establish other GPUs or actual
 audio output. CI's Ubuntu 24.04/Fedora 44 checks passed locally but have
 not run remotely. Phase 5, step K, in `docs/PLAN.md` records the wider
 packaging status.
+
+The tarball, 2026-10-13: `just package-appimage` made a 168.5 MB
+`skwir-0.1.0-linux-x86_64.tar.gz` beside a 155.9 MB image. It passed the
+same checks in the Ubuntu 22.04, Ubuntu 24.04 and Fedora 44 runtime
+roots: its members first, then all 573 ELFs, helper probes, three PDF
+engines, WAV playback, window commands, sandboxed archive extraction and
+undo, and unchanged host terminal paths. The README's commands, run as
+written in a home whose name has a space, installed it, ran it through
+its link on `PATH`, and wrote a desktop entry `desktop-file-validate`
+accepts.

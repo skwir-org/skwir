@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Check the real artifact in a runtime-only root (no Nix or build libraries).
 
-Extract into a path with spaces and an apostrophe; check every helper and
-ELF, render synthetic PDFs, then run the existing real-window smoke test.
-The caller also uses this on other distributions in CI.
+The AppImage or the tarball: extract it into a path with spaces and an
+apostrophe; check every helper and ELF, render synthetic PDFs, then run the
+existing real-window smoke test. The caller also uses this on other
+distributions in CI.
 """
 
 import argparse
@@ -16,6 +17,7 @@ import selectors
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import wave
@@ -64,6 +66,32 @@ def check_elf(app):
         libraries = run(["ldd", path], capture_output=True, text=True).stdout
         assert "not found" not in libraries, (path, libraries)
     print(f"ok: {count} ELFs resolve their libraries; glibc <= 2.35, relative runtime paths", flush=True)
+
+
+def unpack(artifact, work):
+    """The tree an artifact holds, extracted as its user would, and the
+    program that starts it."""
+    if artifact.name.endswith(".AppImage"):
+        run([artifact, "--appimage-extract"], cwd=work, stdout=subprocess.DEVNULL)
+        return work / "squashfs-root", "AppRun"
+    top = artifact.name.removesuffix(".tar.gz")
+    with tarfile.open(artifact) as archive:
+        members = archive.getmembers()
+    for member in members:
+        path = pathlib.PurePosixPath(member.name)
+        assert path.parts[0] == top and ".." not in path.parts and not path.is_absolute(), member.name
+        assert member.isfile() or member.isdir() or member.issym() or member.islnk(), \
+            (member.name, "not a file, folder or link")
+        if member.islnk():
+            target = pathlib.PurePosixPath(member.linkname)
+            assert target.parts[0] == top and ".." not in target.parts, (member.name, member.linkname)
+        assert (member.uid, member.gid, member.uname, member.gname) == (0, 0, "", ""), (member.name, "owner")
+    assert {pathlib.PurePosixPath(m.name).parts[1:2] for m in members} == {(), ("skwir",), ("usr",)}, \
+        "the tarball holds more than the program and its usr tree"
+    run(["tar", "-xzf", artifact], cwd=work)
+    assert os.readlink(work / top / "skwir") == "usr/bin/skwir"
+    print("ok: the tarball holds one folder, its program and usr tree, owned by root", flush=True)
+    return work / top, "skwir"
 
 
 def check_media(app, work):
@@ -115,7 +143,7 @@ def check_media(app, work):
         assert "CRITICAL" not in output, "media runtime or plugin scanner reported a critical error"
 
 
-def check_window(app, work):
+def check_window(app, work, launcher):
     # Reuse the real-window harness, then exercise a packaged helper
     # through its user-facing command and a host program through Skwir.
     sys.path.insert(0, str(ROOT / "tools/test"))
@@ -140,7 +168,7 @@ def check_window(app, work):
 
     icds = list(pathlib.Path("/usr/share/vulkan/icd.d").glob("lvp_icd*.json"))
     assert len(icds) == 1, f"expected one lavapipe ICD, found {icds}"
-    window = Window(argparse.Namespace(skwir=str(app / "AppRun"), xvfb="/usr/bin/Xvfb",
+    window = Window(argparse.Namespace(skwir=str(app / launcher), xvfb="/usr/bin/Xvfb",
                                       icd=str(icds[0])))
     passed = False
     try:
@@ -171,16 +199,16 @@ def check_window(app, work):
 
 
 def main():
-    image = pathlib.Path(sys.argv[1]).resolve()
+    artifact = pathlib.Path(sys.argv[1]).resolve()
     base = pathlib.Path.home() / ".cache/skwir-tests"
     base.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="AppImage check's ", dir=base) as directory:
+    with tempfile.TemporaryDirectory(prefix="package check's ", dir=base) as directory:
         work = pathlib.Path(directory)
-        run([image, "--appimage-extract"], cwd=work, stdout=subprocess.DEVNULL)
-        app = work / "squashfs-root"
+        app, launcher = unpack(artifact, work)
         check_elf(app)
-        run([image, "--version"], env=dict(os.environ, APPIMAGE_EXTRACT_AND_RUN="1"))
-        run([app / "AppRun", "--version"])
+        if artifact.name.endswith(".AppImage"):
+            run([artifact, "--version"], env=dict(os.environ, APPIMAGE_EXTRACT_AND_RUN="1"))
+        run([app / launcher, "--version"])
         programs = (ROOT / "tools/package/programs").read_text().splitlines()
         for program in programs:
             if program != "skwir":
@@ -191,8 +219,8 @@ def main():
             run(["python3", ROOT / "tools/pdf/check.py", "--engine", engine,
                  "--worker", app / "usr/lib/skwir" / worker])
         check_media(app, work)
-        check_window(app, work)
-        print("AppImage: passed", flush=True)
+        check_window(app, work, launcher)
+        print(f"{artifact.name}: passed", flush=True)
 
 
 if __name__ == "__main__":

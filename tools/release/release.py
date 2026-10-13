@@ -77,11 +77,16 @@ def source(tag):
     return commit
 
 
+def portable(version):
+    """The AppImage and the tarball of the same tree (ADR-052)."""
+    return [f"skwir-{version}-x86_64.AppImage", f"skwir-{version}-linux-x86_64.tar.gz"]
+
+
 def patterns(version):
     """Derive split package names from their owning manifests, not a second list."""
     package = tomllib.loads((ROOT / "crates/skwir/Cargo.toml").read_text())["package"]
-    result = {"appimage": [rf"skwir-{re.escape(version)}-x86_64\.AppImage",
-                           rf"skwir-{re.escape(version)}-x86_64\.AppImage\.sha256"]}
+    result = {"appimage": [rf"{re.escape(name)}{suffix}" for name in portable(version)
+                           for suffix in ("", r"\.sha256")]}
     for distro, key, template in (
         ("debian", "deb", r"{}_{version}-[0-9]+_amd64\.deb"),
         # Ubuntu's revision names the release it was made on (deb.sh).
@@ -144,9 +149,9 @@ def verify(directory, tag, commit, version, notes):
     require(assets == manifest["assets"], "An asset changed since the release build")
     require((directory / "notes.md").read_text() == notes, "Bundle notes disagree with the changelog")
     require((directory / "SHA256SUMS").read_text() == checksums(directory), "SHA256SUMS does not match")
-    image = f"skwir-{version}-x86_64.AppImage"
-    require((directory / (image + ".sha256")).read_text().strip() == f"{digest(directory / image)}  {image}",
-            "AppImage companion checksum does not match")
+    for name in portable(version):
+        require((directory / (name + ".sha256")).read_text().strip() == f"{digest(directory / name)}  {name}",
+                f"{name}'s companion checksum does not match")
     return files
 
 
