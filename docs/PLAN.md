@@ -29,18 +29,16 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-10-11)
+## Current status (2026-10-14)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.1.0. Phases 0 to
+  version 0.1.0, [released](#release-01-linux) 2026-10-13 on GitHub and
+  the AUR. Phases 0 to
   4, 5a and 6 pass their gates. Maps and Notes everywhere are built, as
   is much that no phase planned
   ([Built beyond the plan](#built-beyond-the-plan)).
-- **Next:** finish [Release 0.1](#release-01-linux): date the release
-  metadata, commit and tag, build locally (`just release-build`), review
-  and publish the GitHub draft, then the AUR (ADR-053).
-  Then skwird's steps (ADR-050) and Phase 7, which the user put after
-  the release (2026-10-07).
+- **Next:** skwird's steps (ADR-050) and Phase 7, which the user put
+  after the release (2026-10-07).
 - **Blocked:** Phase 5b needs a Mac and a Windows machine
   (`docs/HELP-WANTED.md`). The user reports hosted CI is too slow;
   routine CI is now reduced to essentials, with full checks and package
@@ -48,11 +46,14 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 - **Budgets:** idle own share 95.1 MiB of 100 and first frame median
   140.0 ms of 150 (session display, 2026-10-12); `just bench-check`
   meets all 44 budgets (2026-10-11, load average 3 to 5.5).
-- **Latest work (2026-10-11 to 10-12):** names already taken asked
+- **Latest work (2026-10-13):** Release 0.1.0; before it, Properties
+  (ADR-058), archives made (ADR-059), keys changed where they are listed
+  (ADR-024), the tarball, and a review before tagging. Before (2026-10-11
+  to 10-12): names already taken asked
   about once, links included (ADR-054); the settings file shared and
   followed, the window's state and the user's data in files of their own
   so it may be read-only (ADR-055 to 057), with a Home Manager module;
-  Ubuntu's own package. Before (2026-10-07 to 10-10): drops that ask,
+  Ubuntu's own package. Before that (2026-10-07 to 10-10): drops that ask,
   plans that pause, copies at a USB drive's pace, hard links as entries
   (ADR-049), archives extracted (ADR-048).
 
@@ -68,7 +69,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Notes everywhere](#notes-everywhere) | steps built 2026-09-30; gate in part (no Mac) | — |
 | [Phase 5: Cross-platform](#phase-5-cross-platform) | 5a gate passed 2026-10-06; 5b waits for machines | ~6 weeks |
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
-| [Release 0.1: Linux](#release-01-linux) | in progress: last step left | — |
+| [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
 | [Names indexed by skwird](#names-indexed-by-skwird) | planned (ADR-050) | — |
 | [Phase 7: AI](#phase-7-ai) | planned, after Release 0.1 | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
@@ -1415,7 +1416,8 @@ Phase 7.
    2026-10-11: 469 commits rewritten (the address, the two strings), the
    scan again clean, then the first push. The commits made since are
    searched before each push (2026-10-12: nine, their diffs and messages,
-   for home paths, mounts and addresses; none).
+   for home paths, mounts and addresses; none. 2026-10-13: 27, for home
+   paths and the old address; none, every one by the project's address).
 2. **Panics.** Done 2026-10-07. Counted by clippy's restriction lints,
    tests left out: 4 `unwrap`, 77 `expect`, 5 `unreachable!`, 748
    indexing or slicing, 150 string slices. The `expect`s state what the
@@ -1660,16 +1662,23 @@ Phase 7.
     it too. It passed the AppImage's checks in the Ubuntu 22.04, 24.04
     and Fedora 44 runtime roots, and the README's commands installed it
     as written; the release tools' 20 tests pass in the Nix shell.
-    **Left:** commit the release, create and push its tag, run the local
-    release build, review and publish its draft, then the AUR.
+    **Released** (2026-10-13): `v0.1.0`, an annotated tag on 34a7b9b
+    after the review before tagging
+    ([2026-10-13](#2026-10-13)). `release-build` passed (the full gate,
+    then every package built and checked in its root, 25 files in the
+    bundle) and `release-verify` agreed; `main` and the tag were pushed,
+    `release-upload` made the draft (GitHub's SHA-256 of each of the 25
+    assets equal to the bundle's), and the user published it at 23:55.
+    The AUR's `skwir` base (`skwir`, `skwir-mermaid`, `skwir-mupdf`) is at
+    0.1.0-1. The notes' link to `docs/HELP-WANTED.md` is relative in the
+    changelog; it was made absolute in the draft, by hand.
 
 **Done when:** every step above is done or says why not, the packages
 built by the local gate (or manual CI) install and run on Debian, Ubuntu,
 Fedora and Arch, and the history scan finds nothing personal.
 
-**Status:** in progress: steps 1 to 9 done or say what is left; step
-10 waits for the final release metadata, tagged local build and
-publication.
+**Status:** released 2026-10-13 as 0.1.0. Steps 1 to 10 are done or say
+what is left (macOS and Windows notices, step 8).
 
 ---
 
