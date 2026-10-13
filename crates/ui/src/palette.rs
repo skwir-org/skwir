@@ -67,12 +67,6 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         "Sidebar: show every group in its place",
     ),
     ("ui.open_in_tab", "{}", "Open in new tab"),
-    ("ui.sort", r#"{"key":"name"}"#, "Sort by name"),
-    ("ui.sort", r#"{"key":"size"}"#, "Sort by size"),
-    ("ui.sort", r#"{"key":"modified"}"#, "Sort by date modified"),
-    ("ui.sort", r#"{"key":"rating"}"#, "Sort by rating"),
-    ("ui.sort", r#"{"ascending":true}"#, "Sort ascending"),
-    ("ui.sort", r#"{"ascending":false}"#, "Sort descending"),
     ("ui.grid_fill", "{}", "Toggle filled thumbnails"),
     (
         "ui.narrow_folders",
@@ -314,12 +308,24 @@ impl Shell {
             // arguments that make each a thing to do; most are keys of a
             // place (a menu's arrows), nothing to run from here.
             .filter(|c| &*c.owner != crate::commands::OWNER)
-            .map(|c| PaletteItem {
-                keys: self.keys_for(&c.name, &no_args),
-                name: c.name.to_string(),
-                args: serde_json::json!({}),
-                title: c.title.clone(),
-                required: c.required_args(),
+            // Each as it is, then each thing its forms make of it (Sort by
+            // size, Next tab).
+            .flat_map(|c| {
+                let bare = PaletteItem {
+                    keys: self.keys_for(&c.name, &no_args),
+                    name: c.name.to_string(),
+                    args: serde_json::json!({}),
+                    title: c.title.clone(),
+                    required: c.required_args(),
+                };
+                let forms = c.forms.iter().map(|form| PaletteItem {
+                    keys: self.keys_for(&c.name, &form.args),
+                    name: c.name.to_string(),
+                    args: form.args.clone(),
+                    title: form.title.clone(),
+                    required: Vec::new(),
+                });
+                std::iter::once(bare).chain(forms).collect::<Vec<_>>()
             })
             .collect();
         for spec in self.available_views() {

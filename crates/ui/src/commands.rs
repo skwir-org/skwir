@@ -21,7 +21,6 @@ pub const OWNER: &str = "ui";
 mod args {
     use schemars::JsonSchema;
     use serde::Deserialize;
-    use skwir_core::location::SortKey;
     use skwir_core::op::EntryRef;
     use skwir_core::os_path::PathArg;
 
@@ -71,15 +70,6 @@ mod args {
     pub(super) struct Text {
         #[serde(default)]
         text: Option<String>,
-    }
-
-    #[derive(Deserialize, JsonSchema)]
-    pub(super) struct Sort {
-        /// What to sort by; the direction alone when absent.
-        #[serde(default)]
-        key: Option<SortKey>,
-        #[serde(default)]
-        ascending: Option<bool>,
     }
 
     /// Where the cursor goes.
@@ -376,7 +366,7 @@ mod args {
 use args::{
     Amount, Ask, Bucket, Close, Continue, CopyText, Cursor, Delta, Dir, Find, Folders, History,
     Key, Layout, ListMoveArgs, Object, On, Page, PageLink, Pages, Pan, Pick, Player, Pointer,
-    Popup, Scrub, Settings, Sort, Split, Submit, TagsPrompt, Text, Unlock, Url, UsageMode, View,
+    Popup, Scrub, Settings, Split, Submit, TagsPrompt, Text, Unlock, Url, UsageMode, View,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -389,7 +379,6 @@ const SHOWS: &[&str] = &[
     "ui.open_in_tab",
     "ui.find",
     "ui.find_next",
-    "ui.sort",
     "ui.view",
     "ui.columns",
     "ui.columns_reset",
@@ -940,12 +929,6 @@ pub fn declare_all(app: &App) {
         "ui.find_next",
         "Find the next name",
         "Find the name last looked for again, after the cursor (or before it)",
-    );
-    declare::<Sort>(
-        app,
-        "ui.sort",
-        "Sort",
-        "Sort the pane by a key, or turn its direction",
     );
     declare::<View>(
         app,
@@ -1659,7 +1642,7 @@ mod tests {
                 "{name}"
             );
         }
-        let wrong = Invocation::with_args("ui.sort", &serde_json::json!({ "key": "type" }));
+        let wrong = Invocation::with_args("ui.cursor", &serde_json::json!({ "to": "sideways" }));
         assert!(matches!(
             app.commands.check(&wrong),
             Err(CommandError::InvalidArgs { .. })

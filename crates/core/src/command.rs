@@ -207,7 +207,7 @@ impl Serialize for ArgsSchema {
 }
 
 /// Arguments that make a command one thing to do, with that thing's
-/// title: `ui.sort {"key": "size"}` is Sort by size (ADR-024).
+/// title: `sort {"key": "size"}` is Sort by size (ADR-024).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Form {
     pub args: serde_json::Value,

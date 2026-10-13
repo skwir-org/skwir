@@ -13,7 +13,7 @@ use skwir_core::app::NotifyLevel;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::os_path::PathArg;
 use skwir_core::workspace::PaneId;
-use skwir_core::{App, Location, Plan, SortKey};
+use skwir_core::{App, Location, Plan};
 
 use crate::choose::ChooseState;
 use crate::icons::IconCache;
@@ -1872,15 +1872,6 @@ impl Shell {
             }
             "context_menu" => self.open_context_menu_here(window, cx),
             "open_in_tab" => self.open_selection_in_tabs(window, cx),
-            "sort" => {
-                let ascending = args.get("ascending").and_then(serde_json::Value::as_bool);
-                // Without a key, the direction alone turns.
-                let key = args
-                    .get("key")
-                    .and_then(|key| serde_json::from_value::<SortKey>(key.clone()).ok())
-                    .or(ascending.is_none().then_some(SortKey::Name));
-                self.sort(key, ascending, cx);
-            }
             "view" => {
                 // With a location, shown there (the sidebar's All Tags).
                 if let Some(location) = args.get("location").filter(|l| !l.is_null()) {

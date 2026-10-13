@@ -182,7 +182,7 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
                     format!("sort-{sort_key:?}"),
                     if current { "check" } else { "" },
                     format!("Sort by {}", label.to_lowercase()),
-                    "ui.sort",
+                    "sort",
                 )
                 .args(args)
                 .active(current),
@@ -210,7 +210,7 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
                     },
                     if current { "check" } else { "" },
                     label,
-                    "ui.sort",
+                    "sort",
                 )
                 .args(serde_json::json!({"ascending": ascending}))
                 .active(current),

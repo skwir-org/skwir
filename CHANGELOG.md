@@ -8,10 +8,12 @@
   go to) through New shortcut. Every action is called by what it does
   (no more four "Preview action" rows). A shortcut of a plugin turned
   off waits for it, where it blocked every later change to the keys.
-- **Hidden files** are one command, `toggle_hidden`: the shell's
-  `ui.toggle_hidden` only ran it, and the palette listed it twice.
-  Scripts and agents use `toggle_hidden`; a shortcut saved with the old
-  name keeps working.
+- **Hidden files and sorting** are one command each, `toggle_hidden` and
+  `sort`: the shell's `ui.toggle_hidden` and `ui.sort` only ran them, and
+  the palette listed Toggle hidden files twice. Scripts and agents use
+  the core's names; a shortcut saved with an old name keeps working. The
+  palette offers what a command's forms make of it (Sort by size, Next
+  tab).
 
 ## 0.1.0 (2026-10-13)
 
