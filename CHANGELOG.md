@@ -24,7 +24,10 @@
   room it needs, up to the whole panel. It counts what a folder holds
   (at once when asked for, else on Count), says the room a file takes on
   its drive, the drive itself, flags such as Immutable, and for several
-  items their kinds, total and the access they share.
+  items their kinds, total and the access they share. It changes who
+  may use them: each class's access in words, Allow running, the group,
+  or the mode as chmod takes it, a folder's contents too, undoable; a
+  script's `set_access` does the same.
 
 ## 0.1.0 (2026-10-13)
 

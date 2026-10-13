@@ -77,6 +77,12 @@ Left:
   entries carry no mode or owner (`keys::MODE`, `UID`, `GID` unset), and
   Properties omits those rows (step E: owners by SID).
 - `platform/src/access.rs` **(c)**: POSIX ACLs, capabilities, SELinux.
+- `core/src/op/access.rs` **(c)**: on Windows `set_access` sets the
+  read-only attribute (the owner's write bit) and refuses a group; with
+  no mode on Windows entries, Properties offers neither (ADR-058).
+  `fs::count` counts each name of a file of several there (`std` gives
+  no link count), and `stat::flags` reads compressed, encrypted and
+  read-only from the attributes.
 - Hidden by name alone **(c)**: `query/plocate.rs`, `tags/index.rs`,
   `tags/count.rs`; on macOS the `read_dir` walks (`fs::is_hidden`).
 

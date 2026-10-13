@@ -24,6 +24,19 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   starting when one is short. It never refuses unasked (network shares
   may under-report).
 
+- **Access (ADR-058).** `set_access` changes a mode as chmod takes it
+  (`op::access::Mode`: octal, a folder's set-ID bits kept unless five
+  digits say otherwise; symbolic clauses with `X`, `s`, `t` and copies),
+  and a group by number, never the owner. Its step changes what a link
+  leads to, and with `inside` what a folder holds: no link inside is
+  followed, no other drive mounted inside is reached. It reads the mode
+  back and fails, putting back what it changed, when the drive kept
+  nothing; a failure partway puts back the same way. Its inverse
+  (`access_back`) holds each changed item's mode and group, which the
+  journal counts (`Effect::held`). `check` refuses what the user does
+  not own (root aside), a group they are not in, a read-only drive and
+  the trash's files, in words.
+
 ## Running
 
 - Plans run on a thread of their own, never a worker.

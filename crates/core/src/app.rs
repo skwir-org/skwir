@@ -1657,6 +1657,26 @@ pub struct TargetsArgs {
     pub pane: Option<PaneId>,
 }
 
+/// `set_access`: who may use the entries.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AccessArgs {
+    /// The mode, as chmod takes it: `644`, `u+x`, `go-w`, `a=rX` (`X`:
+    /// folders, and what someone may run already). A class left out is
+    /// everyone, the umask aside.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// The group to give them, by number (as Properties and `ls -n` show
+    /// it): one of the user's.
+    #[serde(default)]
+    pub group: Option<u32>,
+    /// What the folders hold too, never through a link nor onto another
+    /// drive mounted inside.
+    #[serde(default)]
+    pub inside: bool,
+    #[serde(flatten)]
+    pub targets: TargetsArgs,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MkdirArgs {
     pub name: PathArg,
@@ -2356,6 +2376,36 @@ mod builtin {
                     )?,
                     a.on_conflict,
                 ))
+            },
+        )
+        .plans();
+
+        c.register::<AccessArgs, _>(
+            "core",
+            "set_access",
+            "Change access",
+            "Change who may read, write and run the selection, or the entries given: `mode` as chmod takes it, `group` by number, `inside` for what folders hold (plan). What a link leads to changes; the owner never does",
+            |a, app| {
+                anyhow::ensure!(
+                    a.mode.is_some() || a.group.is_some(),
+                    "say a mode, a group or both"
+                );
+                if let Some(mode) = &a.mode {
+                    op::access::Mode::parse(mode)?;
+                }
+                let title = match (&a.mode, a.group) {
+                    (Some(mode), None) => format!("change access ({mode})"),
+                    (None, Some(group)) => format!("change group ({group})"),
+                    _ => "change access and group".to_owned(),
+                };
+                targets_plan(app, a.targets.pane, a.targets.entries, &title, |e| {
+                    Box::new(op::access::SetAccess {
+                        entry: e,
+                        mode: a.mode.clone(),
+                        group: a.group,
+                        inside: a.inside,
+                    })
+                })
             },
         )
         .plans();

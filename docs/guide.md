@@ -278,6 +278,15 @@ it is on. On the folder's background it describes the folder shown.
   is said, not counted.
 - **Several selected**: how many of each kind, their total (Count when
   folders are among them), and the owner, group and access they share.
+- **Who may use it**, in words: what its owner, its group and others
+  can do, who can run it, and the mode as `chmod` writes it. Change…
+  beside each changes it; on a folder, Also everything inside (`Alt+A`)
+  reaches what it holds, giving folders inside what they need to be
+  opened and leaving files as runnable as they were. Allow running makes
+  a script or an AppImage a program. The group goes to one of yours; the
+  owner stays (giving a file away needs an administrator). Undo takes a
+  change back. Files that are not yours, in the trash or on a read-only
+  drive say why they cannot change.
 - Flags the system keeps say why a file resists: Immutable (no one can
   delete it), Append only, Compressed, Encrypted.
 - Over a preview, Properties takes the room it needs; `Alt+Enter` again

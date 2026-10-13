@@ -6,6 +6,7 @@
 //! inverse so that everything is undoable. Applying a plan twice is a no-op:
 //! each step checks whether it is already done before acting.
 
+pub mod access;
 mod builtin;
 pub mod clash;
 mod context;
@@ -546,6 +547,10 @@ pub trait Effect: Send + Sync + fmt::Debug {
         let _ = ctx;
         None
     }
+    /// `Operation::held`.
+    fn held(&self) -> usize {
+        0
+    }
 }
 
 /// An operation that is its own data: the kind it is registered and
@@ -579,6 +584,9 @@ impl<T: Kind> Operation for T {
     }
     fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
         Effect::writes(self, ctx)
+    }
+    fn held(&self) -> usize {
+        Effect::held(self)
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)

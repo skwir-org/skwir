@@ -1,7 +1,8 @@
 # ADR-058: Properties
 
 Status: accepted, 2026-10-13. Built: the panel renamed, its menu item
-and keys (point 1); what it says (points 2 and 3).
+and keys (point 1); what it says (points 2 and 3); access changed by
+plans (points 4 and 5).
 
 ## Context
 

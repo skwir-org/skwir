@@ -1818,3 +1818,51 @@ fn a_subvolume_s_files_go_to_the_home_trash_and_back_across_filesystems() {
     // An empty subvolume is removed as a folder by its owner.
     let _ = std::fs::remove_dir(&sub);
 }
+
+/// `set_access` on the selection, through the command, applied, undone
+/// and redone by the journal; applied again, nothing changes (ADR-058).
+#[cfg(unix)]
+#[test]
+fn access_changed_by_the_command_is_undone_and_redone() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    std::fs::create_dir_all(&root).unwrap();
+    let mode = |name: &str| {
+        std::fs::metadata(root.join(name))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777
+    };
+    for name in ["it's a tool", "café.sh"] {
+        std::fs::write(root.join(name), b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(root.join(name), std::fs::Permissions::from_mode(0o640)).unwrap();
+    }
+    let app = app(tmp.path());
+    navigate(&app, &root);
+    select(&app, &["it's a tool", "café.sh"]);
+    let changed = plan(&app, "set_access", serde_json::json!({ "mode": "u+x,o+r" }));
+    assert_eq!(changed.len(), 2);
+    let r = app.executor.execute_blocking(&changed, app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    assert_eq!((mode("it's a tool"), mode("café.sh")), (0o744, 0o744));
+    let again = app.executor.execute_blocking(&changed, app.lifetime());
+    assert_eq!(
+        (again.applied, again.skipped),
+        (0, 2),
+        "applied twice is once"
+    );
+    let u = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(u.error.is_none(), "{:?}", u.error);
+    assert_eq!((mode("it's a tool"), mode("café.sh")), (0o640, 0o640));
+    let rd = app.executor.redo_blocking(app.lifetime()).unwrap();
+    assert!(rd.error.is_none(), "{:?}", rd.error);
+    assert_eq!((mode("it's a tool"), mode("café.sh")), (0o744, 0o744));
+    // What is no mode is said before anything runs.
+    let wrong = app.dispatch(&skwir_core::command::Invocation::with_args(
+        "set_access",
+        &serde_json::json!({ "mode": "u+q" }),
+    ));
+    assert!(wrong.unwrap_err().to_string().contains("is not a mode"));
+}

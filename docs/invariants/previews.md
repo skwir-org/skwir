@@ -497,6 +497,18 @@ is still to come are in `docs/preview-frame.md`.
 - What the file takes on its drive, its flags (`stat::flags`) and the
   drive it is on (the Volume group, kept a few seconds per device) are
   read on the fields worker with the rest, for the one entry shown.
+- **Who may use it** (`properties::access_rows`, one builder for an
+  entry and for a selection): owner, group, each class's level in words
+  (a file's read and write, a folder's List items only, Open items,
+  Create and delete items), who can run a file, the mode as chmod writes
+  it (`users::mode`, `ls`'s letters) and what its special bits do. Each
+  change is a `set_access` through `ui.choose` (a folder's switch adds
+  `inside`; its levels use `X`) or `ui.ask` (the mode), on the entry by
+  `EntryRef` or on the pane's selection by `pane`. Nothing is offered to
+  a user who does not own them all (root aside, `users::me`) or for the
+  trash's files, and a row says why; a read-only drive, read on the
+  worker, takes the links away (`Row::edits_access`). The group is one
+  of the user's (`users::my_groups`).
 
 ### The toolbar
 

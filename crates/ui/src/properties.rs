@@ -61,6 +61,9 @@ pub struct Row {
     pub source: Option<SharedString>,
     /// Links after the value: their words and the commands they run.
     pub actions: Vec<(SharedString, Invocation)>,
+    /// Its links change who may use the file: a read-only drive takes
+    /// them away (`render`).
+    pub edits_access: bool,
 }
 
 impl Row {
@@ -71,7 +74,15 @@ impl Row {
             show: Show::Text,
             source: None,
             actions: Vec::new(),
+            edits_access: false,
         }
+    }
+
+    /// A link that changes who may use the file.
+    fn edit(mut self, words: &'static str, command: Invocation) -> Self {
+        self.actions.push((words.into(), command));
+        self.edits_access = true;
+        self
     }
 
     fn action(mut self, words: &'static str, command: Invocation) -> Self {
@@ -307,7 +318,12 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
 /// What the entry itself says; with `notes`, what the user noted on it
 /// (the tags plugin is on), the categories it holds one tag at a time of
 /// as fields. Pure, so it is tested without a window.
-pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: Option<&[String]>) -> Vec<Group> {
+pub fn entry_groups(
+    entry: &Entry,
+    path: &std::path::Path,
+    notes: Option<&[String]>,
+    user: &User,
+) -> Vec<Group> {
     let meta = &entry.metadata;
     let uint = |key| meta.value(key).and_then(Value::as_u64);
     let time = |key| meta.value(key).and_then(Value::as_time);
@@ -351,16 +367,27 @@ pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: Option<&[Strin
         location.push(Row::new("Links to", target.to_owned()));
     }
 
-    let mut permissions = Vec::new();
-    if let Some(uid) = uint(keys::UID) {
-        permissions.push(Row::new("Owner", owner_named(uid)));
-    }
-    if let Some(gid) = uint(keys::GID) {
-        permissions.push(Row::new("Group", group_named(gid)));
-    }
-    if let Some(mode) = uint(keys::MODE) {
-        permissions.push(Row::new("Access", skwir_platform::users::mode(mode)));
-    }
+    let mut permissions = if let Some(subject) = Subject::of(entry) {
+        access_rows(
+            &[subject],
+            &Targets::Entry(EntryRef::new(entry.file(), path)),
+            meta.value(keys::TRASHED).is_some(),
+            user,
+        )
+    } else {
+        // A mode alone, or an owner alone: what is known, read-only.
+        let mut rows = Vec::new();
+        if let Some(uid) = uint(keys::UID) {
+            rows.push(Row::new("Owner", owner_named(uid)));
+        }
+        if let Some(gid) = uint(keys::GID) {
+            rows.push(Row::new("Group", group_named(gid)));
+        }
+        if let Some(mode) = uint(keys::MODE) {
+            rows.push(Row::new("Access", skwir_platform::users::mode(mode)));
+        }
+        rows
+    };
     if let Some(links) = uint(keys::NLINK).filter(|links| *links > 1 && !entry.is_dir()) {
         permissions.push(Row::new("Hard links", links.to_string()));
     }
@@ -426,7 +453,13 @@ fn named(id: u64, name: Option<String>) -> String {
 /// a count where folders are among them), and the owner, group and access
 /// they share, "Mixed" where they differ. A fact some entry does not say
 /// yet is left out. Pure, so it is tested without a window.
-pub fn selection_group(entries: &[&Entry], selected: usize, bytes: Option<u64>) -> Group {
+pub fn selection_group(
+    entries: &[&Entry],
+    selected: usize,
+    bytes: Option<u64>,
+    pane: skwir_core::workspace::PaneId,
+    user: &User,
+) -> Group {
     let folders = entries.iter().filter(|e| e.is_dir()).count();
     let mut rows = vec![Row::new("Selected", format::count(selected, "item"))];
     if folders > 0 && folders < entries.len() {
@@ -447,38 +480,392 @@ pub fn selection_group(entries: &[&Entry], selected: usize, bytes: Option<u64>) 
     } else if let Some(bytes) = bytes {
         rows.push(Row::new("Total size", format::size(bytes)));
     }
-    // Shared, mixed, or unknown (None) while some entry does not say it.
-    let shared = |key: &str, bits: u64| -> Option<Option<u64>> {
-        let mut values = entries.iter().map(|e| {
-            e.metadata
-                .value(key)
-                .and_then(Value::as_u64)
-                .map(|v| v & bits)
-        });
-        let first = values.next()??;
-        let mut mixed = false;
-        for value in values {
-            mixed |= value? != first;
-        }
-        Some((!mixed).then_some(first))
-    };
-    let mixed = || "Mixed".to_owned();
-    if let Some(uid) = shared(keys::UID, u64::MAX) {
-        rows.push(Row::new("Owner", uid.map_or_else(mixed, owner_named)));
-    }
-    if let Some(gid) = shared(keys::GID, u64::MAX) {
-        rows.push(Row::new("Group", gid.map_or_else(mixed, group_named)));
-    }
-    if let Some(mode) = shared(keys::MODE, 0o7777) {
-        rows.push(Row::new(
-            "Access",
-            mode.map_or_else(mixed, skwir_platform::users::mode),
+    // Who may use them, once every entry says it.
+    let subjects: Option<Vec<Subject>> = entries.iter().map(|e| Subject::of(e)).collect();
+    if let Some(subjects) = subjects.filter(|s| !s.is_empty()) {
+        let trashed = entries
+            .iter()
+            .any(|e| e.metadata.value(keys::TRASHED).is_some());
+        rows.extend(access_rows(
+            &subjects,
+            &Targets::Selection(pane),
+            trashed,
+            user,
         ));
     }
     Group {
         title: "Selection".into(),
         rows,
     }
+}
+
+/// The user Properties offers changes to: who they are and their groups
+/// (`skwir_platform::users`), asked when Properties is collected.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct User {
+    /// `None` where users are not numbers (Windows): nothing is offered.
+    pub id: Option<u64>,
+    pub groups: Vec<u64>,
+}
+
+impl User {
+    pub fn current() -> Self {
+        User {
+            id: skwir_platform::users::me(),
+            groups: skwir_platform::users::my_groups(),
+        }
+    }
+}
+
+/// What a change of access acts on: the entry shown, or a pane's
+/// selection.
+#[derive(Clone, Debug)]
+pub enum Targets {
+    Entry(EntryRef),
+    Selection(skwir_core::workspace::PaneId),
+}
+
+impl Targets {
+    /// `set_access`'s arguments for them, with `more`.
+    fn args(&self, more: &serde_json::Value) -> serde_json::Value {
+        let mut args = match self {
+            Targets::Entry(entry) => serde_json::json!({ "entries": [entry] }),
+            Targets::Selection(pane) => serde_json::json!({ "pane": pane }),
+        };
+        if let (Some(args), Some(more)) = (args.as_object_mut(), more.as_object()) {
+            args.extend(more.clone());
+        }
+        args
+    }
+
+    /// How a picker's title names them.
+    fn named(&self, count: usize) -> String {
+        match self {
+            Targets::Entry(entry) => format!(
+                "“{}”",
+                entry
+                    .path
+                    .file_name()
+                    .unwrap_or(entry.path.as_os_str())
+                    .to_string_lossy()
+            ),
+            Targets::Selection(_) => format::count(count, "item"),
+        }
+    }
+}
+
+/// What a change of access needs to know of an entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Subject {
+    /// Its permission bits.
+    pub mode: u64,
+    pub uid: u64,
+    pub gid: u64,
+    pub folder: bool,
+    /// A file that could be run: not a folder, a pipe or a device.
+    pub regular: bool,
+}
+
+impl Subject {
+    /// What `entry` says of its access, once it says all of it.
+    pub fn of(entry: &Entry) -> Option<Subject> {
+        let meta = &entry.metadata;
+        let uint = |key| meta.value(key).and_then(Value::as_u64);
+        Some(Subject {
+            mode: uint(keys::MODE)? & 0o7777,
+            uid: uint(keys::UID)?,
+            gid: uint(keys::GID)?,
+            folder: entry.is_dir(),
+            regular: !entry.is_dir() && entry.inode_type().is_none(),
+        })
+    }
+}
+
+/// The three classes a mode speaks to: as `chmod` names each, the row's
+/// label, how a picker's title says it, and where its bits are.
+const CLASSES: [(char, &str, &str, u32); 3] = [
+    ('u', "Owner can", "its owner", 6),
+    ('g', "Group can", "its group", 3),
+    ('o', "Others can", "others", 0),
+];
+
+/// A file's levels (its run bit is "Can run"'s), in the order offered:
+/// each in words, its read and write bits, and the clause that sets them
+/// and keeps the run bit.
+fn file_levels(c: char) -> Vec<(&'static str, u64, String)> {
+    vec![
+        ("None", 0, format!("{c}-rw")),
+        ("Read", 4, format!("{c}+r,{c}-w")),
+        ("Read and write", 6, format!("{c}+rw")),
+    ]
+}
+
+/// A folder's levels, with the clause that sets each: `X` gives search to
+/// the folders inside and leaves files that no one runs as they were.
+fn folder_levels(c: char) -> Vec<(&'static str, u64, String)> {
+    vec![
+        ("None", 0, format!("{c}=")),
+        ("List items only", 4, format!("{c}=r")),
+        ("Open items", 5, format!("{c}=rX")),
+        ("Create and delete items", 7, format!("{c}=rwX")),
+    ]
+}
+
+/// A class's level in words: of a file its read and write bits, of a
+/// folder all three.
+fn level_said(bits: u64, folder: bool) -> String {
+    if !folder {
+        return match bits & 6 {
+            0 => "None",
+            4 => "Read",
+            6 => "Read and write",
+            _ => "Write only",
+        }
+        .to_owned();
+    }
+    folder_levels('u')
+        .into_iter()
+        .find(|(_, at, _)| *at == bits)
+        .map_or_else(
+            || {
+                // A combination no one picks (-wx): its letters.
+                let letter = |bit, c| if bits & bit == 0 { '-' } else { c };
+                [letter(4, 'r'), letter(2, 'w'), letter(1, 'x')]
+                    .iter()
+                    .collect()
+            },
+            |(words, ..)| words.to_owned(),
+        )
+}
+
+/// Who may run a file, from its run bits.
+fn runners(mode: u64) -> &'static str {
+    match (mode & 0o100 != 0, mode & 0o010 != 0, mode & 0o001 != 0) {
+        (false, false, false) => "No one",
+        (true, false, false) => "Its owner",
+        (true, true, false) => "Its owner and group",
+        (true, true, true) => "Everyone",
+        (true, false, true) => "Its owner and others",
+        (false, true, false) => "Its group",
+        (false, true, true) => "Its group and others",
+        (false, false, true) => "Others",
+    }
+}
+
+/// What its set-ID and sticky bits do, in words.
+fn specials(mode: u64, folder: bool) -> Vec<&'static str> {
+    let setuid = if folder {
+        "Set-user-ID"
+    } else {
+        "Runs as its owner, whoever starts it"
+    };
+    let setgid = if folder {
+        "New items take the folder's group"
+    } else {
+        "Runs as its group"
+    };
+    [
+        (0o4000, setuid),
+        (0o2000, setgid),
+        (0o1000, "Only an item's owner may rename or delete it"),
+    ]
+    .into_iter()
+    .filter(|(bit, _)| mode & bit != 0)
+    .map(|(_, words)| words)
+    .collect()
+}
+
+/// Who may use `subjects` (one entry, or a selection) and the ways to
+/// change it: the owner, the group (to one of the user's), what each class
+/// can do in words, who can run a file, the mode as `chmod` writes it, and
+/// what its special bits do. A value they do not share says Mixed; levels
+/// are offered where all are files or all folders. Nothing is offered to a
+/// user who does not own them all (root aside), nor for the trash's files:
+/// a row says why. Pure, so it is tested without a window.
+pub fn access_rows(
+    subjects: &[Subject],
+    targets: &Targets,
+    trashed: bool,
+    user: &User,
+) -> Vec<Row> {
+    let Some(first) = subjects.first().copied() else {
+        return Vec::new();
+    };
+    let shared = |of: &dyn Fn(&Subject) -> u64| {
+        let value = of(&first);
+        subjects.iter().all(|s| of(s) == value).then_some(value)
+    };
+    let mixed = || "Mixed".to_owned();
+    let owns = user
+        .id
+        .is_some_and(|me| me == 0 || subjects.iter().all(|s| s.uid == me));
+    let editable = owns && !trashed;
+    let folders = subjects.iter().all(|s| s.folder);
+    let files = subjects.iter().all(|s| !s.folder);
+    let count = subjects.len();
+    let set = |mode: String| {
+        serde_json::json!({
+            "name": "set_access",
+            "args": targets.args(&serde_json::json!({ "mode": mode })),
+        })
+    };
+    // A picker whose choices each run a `set_access`; for folders, with a
+    // switch that reaches what they hold.
+    let choose = |title: String, choices: Vec<serde_json::Value>| {
+        let mut args = serde_json::json!({ "title": title, "choices": choices });
+        if subjects.iter().any(|s| s.folder) {
+            args["option"] = serde_json::json!({
+                "title": "Also everything inside",
+                "field": "inside",
+            });
+        }
+        Invocation::with_args("ui.choose", &args)
+    };
+    let choice = |title: &str, now: bool, command: serde_json::Value| {
+        let mut choice = serde_json::json!({ "title": title, "command": command });
+        if now {
+            choice["detail"] = "Now".into();
+        }
+        choice
+    };
+
+    let mut rows = vec![Row::new(
+        "Owner",
+        shared(&|s| s.uid).map_or_else(mixed, owner_named),
+    )];
+    let mut group = Row::new("Group", shared(&|s| s.gid).map_or_else(mixed, group_named));
+    if editable && !user.groups.is_empty() {
+        let now = shared(&|s| s.gid);
+        let mut groups: Vec<(String, u64)> = user
+            .groups
+            .iter()
+            .map(|&gid| {
+                (
+                    skwir_platform::users::group(gid).unwrap_or_else(|| gid.to_string()),
+                    gid,
+                )
+            })
+            .collect();
+        groups.sort();
+        let choices = groups
+            .into_iter()
+            .map(|(name, gid)| {
+                choice(
+                    &name,
+                    now == Some(gid),
+                    serde_json::json!({
+                        "name": "set_access",
+                        "args": targets.args(&serde_json::json!({ "group": gid })),
+                    }),
+                )
+            })
+            .collect();
+        group = group.edit(
+            "Change…",
+            choose(
+                format!("Give {} to the group", targets.named(count)),
+                choices,
+            ),
+        );
+    }
+    rows.push(group);
+
+    // A file's level leaves its run bit to "Can run".
+    let level_bits = if folders { 0o7 } else { 0o6 };
+    for (c, label, whose, shift) in CLASSES {
+        let bits = shared(&|s| (s.mode >> shift) & level_bits);
+        let mut row = Row::new(
+            label,
+            bits.map_or_else(mixed, |bits| level_said(bits, folders)),
+        );
+        if editable && (folders || files) {
+            let levels = if folders {
+                folder_levels(c)
+            } else {
+                file_levels(c)
+            };
+            let choices = levels
+                .into_iter()
+                .map(|(words, at, clause)| choice(words, bits == Some(at), set(clause)))
+                .collect();
+            row = row.edit(
+                "Change…",
+                choose(
+                    format!("What {whose} may do with {}", targets.named(count)),
+                    choices,
+                ),
+            );
+        }
+        rows.push(row);
+    }
+
+    if subjects.iter().all(|s| s.regular) {
+        let runs = shared(&|s| s.mode & 0o111);
+        let mut row = Row::new(
+            "Can run",
+            runs.map_or_else(mixed, |m| runners(m).to_owned()),
+        );
+        if editable {
+            let to = |mode: String| {
+                Invocation::with_args(
+                    "set_access",
+                    &targets.args(&serde_json::json!({ "mode": mode })),
+                )
+            };
+            row = if runs == Some(0) || runs.is_none() {
+                // Everyone who can read it may run it, its owner at least.
+                let readers: String = CLASSES
+                    .iter()
+                    .filter(|(c, _, _, shift)| {
+                        *c == 'u' || subjects.iter().all(|s| (s.mode >> shift) & 4 != 0)
+                    })
+                    .map(|(c, ..)| c)
+                    .collect();
+                row.edit("Allow running", to(format!("{readers}+x")))
+            } else {
+                row.edit("Stop running", to("a-x".into()))
+            };
+        }
+        rows.push(row);
+    }
+
+    let mode = shared(&|s| s.mode);
+    let mut access = Row::new(
+        "Access",
+        mode.map_or_else(mixed, skwir_platform::users::mode),
+    );
+    if editable {
+        let mut ask = serde_json::json!({
+            "title": format!("Access of {}", targets.named(count)),
+            "placeholder": "As chmod takes it: 644, u+x, go-w, a=rX",
+            "command": "set_access",
+            "field": "mode",
+            "args": targets.args(&serde_json::json!({})),
+        });
+        if let Some(mode) = mode {
+            ask["text"] = format!("{mode:o}").into();
+        }
+        access = access.edit("Change…", Invocation::with_args("ui.ask", &ask));
+    }
+    rows.push(access);
+    if let Some(mode) = mode {
+        rows.extend(
+            specials(mode, first.folder)
+                .into_iter()
+                .map(|words| Row::new("Special", words)),
+        );
+    }
+    if !editable && user.id.is_some() {
+        let why = if trashed {
+            "Restore it to change who may use it"
+        } else if count > 1 {
+            "Only their owner can change who may use them"
+        } else {
+            "Only its owner can change who may use it"
+        };
+        rows.push(Row::new("Changes", why));
+    }
+    rows
 }
 
 /// The rows of a count of what folders hold (`Show::Count`), labelled
@@ -781,6 +1168,15 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
             if group.title.as_ref() == "General" {
                 group.rows.extend(preview.general.iter().cloned());
             }
+            // Nothing on a read-only drive changes who may use it.
+            if preview.read_only && group.rows.iter().any(|row| row.edits_access) {
+                for row in group.rows.iter_mut().filter(|row| row.edits_access) {
+                    row.actions.clear();
+                }
+                group
+                    .rows
+                    .push(Row::new("Changes", "The drive is read-only"));
+            }
             // A count as it stands. Of the entry shown only when it is
             // all that is selected: with several, the selection's.
             group.rows = std::mem::take(&mut group.rows)
@@ -953,7 +1349,7 @@ mod tests {
             },
         );
         let path = std::path::Path::new("/data/notes/it's a café.txt");
-        let groups = entry_groups(&entry, path, Some(&[]));
+        let groups = entry_groups(&entry, path, Some(&[]), &User::default());
         let find = |title: &str, label: &str| {
             groups
                 .iter()
@@ -1027,7 +1423,7 @@ mod tests {
             ]),
             Provenance::User,
         );
-        let with_field = entry_groups(&tagged, path, Some(&fields));
+        let with_field = entry_groups(&tagged, path, Some(&fields), &User::default());
         let notes = with_field.iter().find(|g| g.title == "Notes").unwrap();
         let status = notes.rows.iter().find(|r| r.label == "Status").unwrap();
         assert_eq!(status.value.as_ref(), "In review");
@@ -1039,7 +1435,7 @@ mod tests {
             "the field's value is not a tag twice"
         );
         // With the tags plugin off, no notes to take and none to show.
-        let without = entry_groups(&entry, path, None);
+        let without = entry_groups(&entry, path, None, &User::default());
         assert!(
             without
                 .iter()
@@ -1066,7 +1462,7 @@ mod tests {
             "Ünïcode folder",
             EntryKind::Directory,
         );
-        let general = entry_groups(&folder, path, None);
+        let general = entry_groups(&folder, path, None, &User::default());
         let size = &general.iter().find(|g| g.title == "General").unwrap().rows[0];
         assert_eq!(size.show, Show::Count { selection: false });
     }
@@ -1082,6 +1478,7 @@ mod tests {
         );
         let meta = &mut entry.metadata;
         meta.set(keys::UID, Value::UInt(uid), Provenance::Filesystem);
+        meta.set(keys::GID, Value::UInt(100), Provenance::Filesystem);
         if let Some(mode) = mode {
             meta.set(keys::MODE, Value::UInt(mode), Provenance::Filesystem);
         }
@@ -1168,40 +1565,167 @@ mod tests {
 
     #[test]
     fn several_entries_say_what_they_share() {
+        let pane = skwir_core::workspace::PaneId(3);
+        let me = User {
+            id: Some(1000),
+            groups: vec![100],
+        };
         let a = entry(10, "a's file.txt", EntryKind::File, 1000, Some(0o100_644));
-        let b = entry(11, "b café", EntryKind::File, 1000, Some(0o100_644));
-        let group = selection_group(&[&a, &b], 2, Some(2048));
+        let b = entry(11, "b café", EntryKind::File, 1000, Some(0o100_755));
+        let group = selection_group(&[&a, &b], 2, Some(2048), pane, &me);
+        let find = |group: &Group, label: &str| {
+            group
+                .rows
+                .iter()
+                .find(|r| r.label == label)
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(find(&group, "Selected").value, "2 items");
+        assert_eq!(find(&group, "Total size").value, "2.0 KB");
+        assert_eq!(find(&group, "Owner can").value, "Read and write");
+        assert_eq!(find(&group, "Access").value, "Mixed");
+        let run = find(&group, "Can run");
+        assert_eq!(run.value, "Mixed");
+        assert_eq!(run.actions[0].0.as_ref(), "Allow running");
         assert_eq!(
-            said(&group.rows)
-                .into_iter()
-                .map(|(l, v, _)| (l, v))
-                .filter(|(l, _)| l != "Owner")
-                .collect::<Vec<_>>(),
-            [
-                ("Selected".to_owned(), "2 items".to_owned()),
-                ("Total size".to_owned(), "2.0 KB".to_owned()),
-                ("Access".to_owned(), "rw-r--r-- (644)".to_owned()),
-            ]
+            run.actions[0].1.args,
+            serde_json::json!({ "pane": pane, "mode": "ugo+x" }),
+            "the selection, by its pane"
         );
         let dir = entry(12, "a folder", EntryKind::Directory, 0, Some(0o040_755));
-        let group = selection_group(&[&a, &b, &dir], 3, Some(2048));
-        let find = |label: &str| group.rows.iter().find(|r| r.label == label).cloned();
-        assert_eq!(find("Of which").unwrap().value, "1 folder, 2 files");
+        let group = selection_group(&[&a, &b, &dir], 3, Some(2048), pane, &me);
+        assert_eq!(find(&group, "Of which").value, "1 folder, 2 files");
         assert_eq!(
-            find("Total size").unwrap().show,
+            find(&group, "Total size").show,
             Show::Count { selection: true },
             "a folder's files are counted, not left out"
         );
-        assert_eq!(find("Owner").unwrap().value, "Mixed");
-        assert_eq!(find("Access").unwrap().value, "Mixed");
+        assert_eq!(find(&group, "Owner").value, "Mixed");
+        assert_eq!(
+            find(&group, "Changes").value,
+            "Only their owner can change who may use them"
+        );
+        assert!(
+            group
+                .rows
+                .iter()
+                .all(|r| r.actions.is_empty() || !r.edits_access)
+        );
         let unknown = entry(13, "not stat-ed yet", EntryKind::File, 1000, None);
-        let group = selection_group(&[&a, &unknown], 2, None);
+        let group = selection_group(&[&a, &unknown], 2, None, pane, &me);
         assert!(
             group
                 .rows
                 .iter()
                 .all(|r| r.label != "Access" && r.label != "Total size"),
             "nothing said before every entry says it"
+        );
+    }
+
+    fn subject(mode: u64, uid: u64, folder: bool) -> Subject {
+        Subject {
+            mode,
+            uid,
+            gid: 100,
+            folder,
+            regular: !folder,
+        }
+    }
+
+    #[test]
+    fn access_is_said_in_words_with_the_ways_to_change_it() {
+        let me = User {
+            id: Some(1000),
+            groups: vec![100, 10],
+        };
+        let target = Targets::Entry(EntryRef::new(
+            skwir_core::FileId { dev: 1, ino: 2 },
+            "/data/it's a script.sh",
+        ));
+        let rows = access_rows(&[subject(0o644, 1000, false)], &target, false, &me);
+        assert_eq!(
+            said(&rows)
+                .into_iter()
+                .map(|(l, v, a)| format!("{l}: {v} {a:?}"))
+                .collect::<Vec<_>>(),
+            [
+                "Owner: 1000 []",
+                "Group: 100 [\"Change…\"]",
+                "Owner can: Read and write [\"Change…\"]",
+                "Group can: Read [\"Change…\"]",
+                "Others can: Read [\"Change…\"]",
+                "Can run: No one [\"Allow running\"]",
+                "Access: rw-r--r-- (644) [\"Change…\"]",
+            ]
+        );
+        let allow = &rows[5].actions[0].1;
+        assert_eq!(allow.name.as_ref(), "set_access");
+        assert_eq!(allow.args["mode"], "ugo+x", "everyone who reads it");
+        assert_eq!(allow.args["entries"][0]["id"]["ino"], 2);
+        // A level's choices keep the run bit, the current one said.
+        let owner = &rows[2].actions[0].1;
+        assert_eq!(owner.name.as_ref(), "ui.choose");
+        let choices = owner.args["choices"].as_array().unwrap();
+        assert_eq!(choices[1]["command"]["args"]["mode"], "u+r,u-w");
+        assert_eq!(choices[2]["detail"], "Now");
+        assert!(owner.args.get("option").is_none(), "a file holds nothing");
+        // The group goes to one of the user's.
+        let groups = rows[1].actions[0].1.args["choices"].as_array().unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0]["command"]["args"]["group"], 10);
+        // The mode as chmod writes it, ready to edit.
+        assert_eq!(rows[6].actions[0].1.args["text"], "644");
+        assert!(
+            rows.iter()
+                .filter(|r| !r.actions.is_empty())
+                .all(|r| r.edits_access)
+        );
+
+        // A folder: its levels in a folder's words, a switch that reaches
+        // inside, what its set-group-ID bit does, no running.
+        let rows = access_rows(&[subject(0o2775, 1000, true)], &target, false, &me);
+        let row = |label: &str| rows.iter().find(|r| r.label == label).unwrap();
+        assert_eq!(row("Group can").value, "Create and delete items");
+        assert_eq!(row("Others can").value, "Open items");
+        assert_eq!(row("Special").value, "New items take the folder's group");
+        assert!(rows.iter().all(|r| r.label != "Can run"));
+        let others = &row("Others can").actions[0].1.args;
+        assert_eq!(others["option"]["field"], "inside");
+        assert_eq!(others["choices"][2]["command"]["args"]["mode"], "o=rX");
+
+        // Someone else's, the trash's, or where users are no numbers.
+        let theirs = access_rows(&[subject(0o644, 0, false)], &target, false, &me);
+        assert!(theirs.iter().all(|r| r.actions.is_empty()));
+        assert_eq!(
+            theirs.last().unwrap().value,
+            "Only its owner can change who may use it"
+        );
+        let trashed = access_rows(&[subject(0o644, 1000, false)], &target, true, &me);
+        assert_eq!(
+            trashed.last().unwrap().value,
+            "Restore it to change who may use it"
+        );
+        let nobody = access_rows(
+            &[subject(0o644, 1000, false)],
+            &target,
+            false,
+            &User::default(),
+        );
+        assert!(
+            nobody
+                .iter()
+                .all(|r| r.actions.is_empty() && r.label != "Changes")
+        );
+        // Root may change anyone's.
+        let root = User {
+            id: Some(0),
+            groups: vec![0],
+        };
+        assert!(
+            !access_rows(&[subject(0o644, 1000, false)], &target, false, &root)[2]
+                .actions
+                .is_empty()
         );
     }
 

@@ -2878,6 +2878,8 @@ pub fn register_builtin(reg: &OpRegistry) {
     reg.register::<RemoveEmptyFile>("core");
     reg.register::<Link>("core");
     reg.register::<Unlink>("core");
+    reg.register::<super::access::SetAccess>("core");
+    reg.register::<super::access::AccessBack>("core");
 }
 
 #[cfg(test)]

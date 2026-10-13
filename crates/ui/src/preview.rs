@@ -226,6 +226,8 @@ struct FieldRows {
     general: Vec<crate::properties::Row>,
     /// The drive it is on (the folder shown has its own, `Here`).
     volume: Option<crate::properties::Group>,
+    /// That drive is mounted read-only: nothing on it changes access.
+    read_only: bool,
 }
 
 impl FieldRows {
@@ -235,6 +237,7 @@ impl FieldRows {
             && self.beside.is_empty()
             && self.general.is_empty()
             && self.volume.is_none()
+            && !self.read_only
     }
 }
 
@@ -387,6 +390,9 @@ pub struct PreviewState {
     /// The drive the entry is on, read with `fields`; the folder shown has
     /// its own (`Here::volume`).
     pub volume: Option<crate::properties::Group>,
+    /// That drive is mounted read-only, read with `fields`: Properties
+    /// offers no change of access there.
+    pub read_only: bool,
     /// The volume last read for an entry (`VolumeFacts::kept`).
     volume_cache: VolumeCache,
     /// A count of what folders hold, asked for.
@@ -585,6 +591,7 @@ impl Default for PreviewState {
             access: Vec::new(),
             general: Vec::new(),
             volume: None,
+            read_only: false,
             volume_cache: VolumeCache::default(),
             count: None,
             count_generation: 0,
@@ -1233,10 +1240,12 @@ impl Shell {
             // Notes while a store keeps some (`NoteStores::held`).
             let held = self.app.notes.held();
             let notes = held.tags || held.rating || held.comment;
+            let user = crate::properties::User::current();
             self.preview.properties = crate::properties::entry_groups(
                 &entry,
                 &key.path,
                 notes.then_some(self.tag_fields.as_slice()),
+                &user,
             );
             if here && let Some(volume) = self.preview.here.as_ref().and_then(|h| h.volume.clone())
             {
@@ -1260,7 +1269,13 @@ impl Shell {
                     .map(|p| p.selection.iter().filter_map(|id| p.entry(id)).collect())
                     .unwrap_or_default();
                 // The whole size once every file's is known, never a part.
-                crate::properties::selection_group(&entries, selection.count, selection.bytes)
+                crate::properties::selection_group(
+                    &entries,
+                    selection.count,
+                    selection.bytes,
+                    self.pane,
+                    &user,
+                )
             });
         }
         while let Ok((generation, read)) = self.preview.fields_rx.try_recv() {
@@ -1270,6 +1285,7 @@ impl Shell {
                 self.preview.beside = read.beside;
                 self.preview.general = read.general;
                 self.preview.volume = read.volume;
+                self.preview.read_only = read.read_only;
                 cx.notify();
             }
         }
@@ -2169,6 +2185,7 @@ impl Shell {
         self.preview.beside.clear();
         self.preview.general.clear();
         self.preview.volume = None;
+        self.preview.read_only = false;
         // A folder, a pipe, a device: no file to read a field of. Their
         // access is read all the same: without opening anything.
         let shown = if entry.inode_type().is_some() {
@@ -2239,6 +2256,7 @@ impl Shell {
                     beside: beside_rows(&companions, &path),
                     general,
                     volume,
+                    read_only: skwir_core::fs::volume::read_only(&path).unwrap_or(false),
                 };
                 if !read.is_empty() && tx.send((generation, read)).is_ok() {
                     wake();
