@@ -54,7 +54,7 @@ impl Plugin for PreviewPlugin {
         ID
     }
     fn title(&self) -> &'static str {
-        "Preview: documents"
+        "Documents"
     }
     fn description(&self) -> &'static str {
         "Read PDF and office documents: continuous scrolling, search, text selection, links and contents; Word and OpenDocument text also as text that fits the panel"

@@ -13,7 +13,7 @@ impl Plugin for PreviewPlugin {
         "preview-hex"
     }
     fn title(&self) -> &'static str {
-        "Preview: hexadecimal"
+        "Hexadecimal"
     }
     fn description(&self) -> &'static str {
         "Inspect any file as hexadecimal bytes"

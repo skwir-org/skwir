@@ -119,7 +119,7 @@ impl Plugin for PreviewPlugin {
         ID
     }
     fn title(&self) -> &'static str {
-        "Preview: audio and video"
+        "Audio and video"
     }
     fn description(&self) -> &'static str {
         "Play audio and video files in the preview panel: audio with its cover and a spectrum, video with a still frame when playback is unavailable"

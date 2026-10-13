@@ -18,7 +18,7 @@ impl Plugin for PreviewPlugin {
         "preview-email"
     }
     fn title(&self) -> &'static str {
-        "Preview: email"
+        "Email"
     }
     fn description(&self) -> &'static str {
         "Read EML messages: headers, body and attachments, with remote content blocked"

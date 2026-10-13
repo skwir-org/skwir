@@ -41,6 +41,9 @@
   (keep both, replace, skip) rather than failing. With two panes,
   `Shift+F7` asks what the selection does in the other pane, as a drop
   does: extracting there among the choices.
+- **Plugins are named by what they handle** in Settings (Fonts, Documents,
+  Audio and video): their group, Previews and thumbnails, no longer
+  prefixes each with "Preview:".
 - **Who may use a file** changes from Properties: each class's access in
   words, Allow running, the group, or the mode as chmod takes it, a
   folder's contents too, undoable. Scripts and agents use `set_access`.

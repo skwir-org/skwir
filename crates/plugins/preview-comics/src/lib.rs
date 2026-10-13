@@ -16,7 +16,7 @@ impl Plugin for PreviewPlugin {
         "preview-comics"
     }
     fn title(&self) -> &'static str {
-        "Preview: comics"
+        "Comics"
     }
     fn description(&self) -> &'static str {
         "Read CBZ and CBR comic books, continuously or a page at a time, and show their covers"

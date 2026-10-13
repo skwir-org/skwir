@@ -29,7 +29,7 @@ impl Plugin for PreviewPlugin {
         ID
     }
     fn title(&self) -> &'static str {
-        "Preview: tables"
+        "Tables"
     }
     fn description(&self) -> &'static str {
         "Show CSV, TSV and JSON Lines files, spreadsheets and SQLite databases as aligned tables"

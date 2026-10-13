@@ -1,7 +1,7 @@
 # The hexadecimal preview as a WebAssembly module: what the built-in
 # preview-hex plugin shows, the same (Phase 6's gate, ADR-046).
 id = "hex-view"
-title = "Preview: hexadecimal (WebAssembly)"
+title = "Hexadecimal (WebAssembly)"
 description = "Inspect any file as hexadecimal bytes, from a WebAssembly module"
 category = "previews"
 capabilities = ["read"]

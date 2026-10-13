@@ -14,7 +14,7 @@ impl Plugin for PreviewPlugin {
         "preview-fonts"
     }
     fn title(&self) -> &'static str {
-        "Preview: fonts"
+        "Fonts"
     }
     fn description(&self) -> &'static str {
         "Show a specimen of font files without installing them"

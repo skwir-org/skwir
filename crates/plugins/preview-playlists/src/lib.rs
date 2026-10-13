@@ -23,7 +23,7 @@ impl Plugin for PreviewPlugin {
         "preview-playlists"
     }
     fn title(&self) -> &'static str {
-        "Preview: playlists"
+        "Playlists"
     }
     fn description(&self) -> &'static str {
         "List the tracks of M3U, PLS, XSPF and CUE files, and play the ones that are on this machine. Remote entries are named, never fetched"

@@ -19,7 +19,7 @@ Video engine's Still frames choice already gives.
 
 ## Decision
 
-- One plugin, `preview-media` ("Preview: audio and video"), registers both
+- One plugin, `preview-media` ("Audio and video"), registers both
   providers (`preview-media.audio`, `preview-media.video`) and declares
   every playback preference: Playback (`keep_playing`, `autoplay`,
   `continue`), Audio (`replay_gain`), Video (`backend`). `preview-audio` is

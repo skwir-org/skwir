@@ -38,7 +38,7 @@ impl Plugin for PreviewPlugin {
         ID
     }
     fn title(&self) -> &'static str {
-        "Preview: circuit boards and schematics"
+        "Circuit boards and schematics"
     }
     fn description(&self) -> &'static str {
         "Draw KiCad boards, footprints, schematics and symbol libraries, and Gerber and drill files; board size, layers, footprints, nets, symbols and holes in Properties"

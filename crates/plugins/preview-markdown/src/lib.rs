@@ -20,7 +20,7 @@ impl Plugin for PreviewPlugin {
         "preview-markdown"
     }
     fn title(&self) -> &'static str {
-        "Preview: Markdown, HTML and notebooks"
+        "Markdown, HTML and notebooks"
     }
     fn description(&self) -> &'static str {
         "Read Markdown and HTML files and Jupyter notebooks as documents, with headings, tables, code, Mermaid diagrams and local images; switch to the source at any time. HTML is inert: no scripts, fonts or remote content"

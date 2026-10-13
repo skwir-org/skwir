@@ -13,7 +13,7 @@ impl Plugin for PreviewPlugin {
         "preview-structured"
     }
     fn title(&self) -> &'static str {
-        "Preview: structured data"
+        "Structured data"
     }
     fn description(&self) -> &'static str {
         "Show JSON (with comments, and JSON5), YAML and TOML with syntax colors and foldable blocks"

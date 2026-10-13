@@ -40,7 +40,7 @@ impl Plugin for PreviewPlugin {
         ID
     }
     fn title(&self) -> &'static str {
-        "Preview: 3D models and prints"
+        "3D models and prints"
     }
     fn description(&self) -> &'static str {
         "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings, G-code toolpaths and STL, OBJ, PLY, OFF and glTF models; print time, filament, size, volume and version in Properties"

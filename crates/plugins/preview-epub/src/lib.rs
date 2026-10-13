@@ -26,7 +26,7 @@ impl Plugin for PreviewPlugin {
         "preview-epub"
     }
     fn title(&self) -> &'static str {
-        "Preview: EPUB"
+        "EPUB"
     }
     fn description(&self) -> &'static str {
         "Read EPUB books with their table of contents"
