@@ -77,7 +77,7 @@ impl PreviewProvider for Provider {
     }
 }
 /// A web font unpacked into the font it carries, and what it was packed
-/// as, for Details; any other font as it is. Bounded like every input:
+/// as, for Properties; any other font as it is. Bounded like every input:
 /// WOFF is inflated table by table within `limits::BINARY_INPUT` (a table
 /// can declare any size), WOFF2 within its decoder's own bound (at most
 /// 100 times its size, and 128 MB).
@@ -138,7 +138,7 @@ fn specimen(
     };
     let name = named(StringId::FULL_NAME).unwrap_or_else(|| "Font specimen".into());
     let glyphs = font.maxp().map_or(0, |maxp| maxp.num_glyphs());
-    // What the name table says, for the panel's Details, then what the
+    // What the name table says, for the panel's Properties, then what the
     // tables hold.
     let has = |tag: &[u8; 4]| font.table_data(skrifa::Tag::new(tag)).is_some();
     let outlines = if has(b"glyf") {
@@ -567,7 +567,7 @@ mod tests {
         let data = render(synthetic_ttf(1000, 400, 400), Some("AAA")).unwrap();
         assert_eq!(data.kind, skwir_core::inspection::InspectionKind::Font);
         assert!(data.title.starts_with("Font · "));
-        // What the font is made of is Details, never a sentence in the sheet.
+        // What the font is made of is Properties, never a sentence in the sheet.
         assert!(data.blocks.is_empty());
         let fact = |label: &str| {
             data.details

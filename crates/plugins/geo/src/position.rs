@@ -3,7 +3,7 @@
 //! hydration (ADR-020). Pictures by their EXIF, videos by their MP4 or
 //! `QuickTime` location; the answer is kept by the file's identity in the
 //! core's fields cache. And `geo.place`, the words for that position
-//! (`places::describe`), which Details shows as "Place", and `geo.clock`,
+//! (`places::describe`), which Properties shows as "Place", and `geo.clock`,
 //! the camera's clock, which orders the pictures taken at one place on
 //! the Map. Asked together (`Fields::get_all`), they are one read.
 use std::ffi::OsStr;

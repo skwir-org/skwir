@@ -13,7 +13,7 @@ use std::path::Path;
 const BEFORE_PICTURE: u64 = 1024 * 1024;
 /// The longest side of a picture believed: Blender writes 128 or 256.
 const PICTURE_SIDE: u32 = 4096;
-/// Scenes named in Details.
+/// Scenes named in Properties.
 const SCENES: usize = 8;
 /// Frames of a Zstandard stream held at once: Blender compresses with a
 /// window of a few megabytes; a file that claims more is refused.

@@ -45,11 +45,11 @@ changed during the build:
   variant. The draft kept More always present so it never moved; as
   built, it appears only when it holds something.
 - **Copy** takes the selection, else the focused block.
-- **Details placement (revised).** Clicking the header card, or Ctrl+I,
-  opens Details under the card. A bottom bar came first and was dropped:
+- **Properties placement (revised).** Clicking the header card, or Ctrl+I,
+  opens Properties under the card. A bottom bar came first and was dropped:
   it repeated the header. With no preview (folders, several entries
-  selected) Details is always open.
-- **Details groups.** General · Location (path, link target) ·
+  selected) Properties is always open.
+- **Properties groups.** General · Location (path, link target) ·
   Permissions (owner, group, mode in words) · Times (modified, created,
   accessed) · Tags · then what the format knows. The draft had preview
   plugins publish format facts as metadata fields (`MetadataProvider`);
@@ -67,7 +67,7 @@ changed during the build:
 ## Left out
 
 - A folder's total size from the Usage cache: the cache belongs to a
-  plugin the UI cannot depend on. Details shows what the listing
+  plugin the UI cannot depend on. Properties shows what the listing
   counted.
 - A hit counter in the structured previews' find field: their providers
   search as they go and do not know the total. The field says "Enter for
@@ -77,7 +77,7 @@ changed during the build:
   selected row is decoded in a strip instead.
 - `InspectionKind::Tree`, which nothing produced: removed.
 - EXIF was first left out for want of a metadata crate; it was added the
-  same day (`skwir_platform::exif`, kamadak-exif) and shows in Details.
+  same day (`skwir_platform::exif`, kamadak-exif) and shows in Properties.
 
 ## The planned polish, as of 2026-10-11
 
@@ -87,7 +87,7 @@ in `crates/ui/src/` and the table plugin:
 | Item | State |
 |---|---|
 | Tables: header above the scrolling rows, grid lines, numbers right-aligned, horizontal scroll, sort by a header click | done (`inspector.rs`) |
-| Tables: a rows × columns caption | not a caption: rows and columns are Details facts (`preview-tables`) |
+| Tables: a rows × columns caption | not a caption: rows and columns are Properties facts (`preview-tables`) |
 | Hex: offsets in normal text, a strip decoding the selected row | done |
 | Hex: the selection mirrored between bytes and text | not done (left out) |
 | Fonts: specimen on paper, drawn for the panel's width | done |
@@ -142,7 +142,7 @@ more as data, and have the UI ask what a preview can do, not what it is.
    move out of `preview::compute` into a built-in plugin of the lowest
    priority, so everything takes one path and a plugin can replace the
    folder card (a repository summary, an album's contact sheet).
-7. **Anyone can add to Details:** fields with a group, label, value and
+7. **Anyone can add to Properties:** fields with a group, label, value and
    provenance, produced in batches on workers. Some are on demand
    ("Compute SHA-256"): a field may be an action until it has a value.
 8. **Several entries, and virtual ones.** The request carries the

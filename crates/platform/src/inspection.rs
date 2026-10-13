@@ -79,7 +79,7 @@ pub mod limits {
     pub const TABLE_COLUMNS: usize = 64;
     /// Characters kept per table cell; longer cells are marked truncated.
     pub const TABLE_CELL: usize = 1024;
-    /// Characters of one fact in the panel's Details.
+    /// Characters of one fact in the panel's Properties.
     pub const DETAIL_CHARS: usize = 256;
     pub const ATTACHMENTS: usize = 100;
     pub const ADDRESSES: usize = 50;
@@ -750,7 +750,7 @@ fn roman(mut n: u32) -> String {
     }
     out
 }
-/// One fact for the panel's Details, or nothing when the format left it
+/// One fact for the panel's Properties, or nothing when the format left it
 /// blank. Bounded: a title can be a whole abstract.
 pub fn detail(label: &str, value: impl AsRef<str>) -> Option<skwir_core::inspection::Detail> {
     let value = value.as_ref().trim();
@@ -777,7 +777,7 @@ pub fn details<'a, V: Into<Option<String>>>(
         .collect()
 }
 /// The Map view's id (the `geo` plugin's lens): a position shown in
-/// Details leads to it, and the view opens on the selected file.
+/// Properties leads to it, and the view opens on the selected file.
 pub const MAP_VIEW: &str = "map";
 
 /// A position row that shows the file on the map, through the shell's
@@ -794,7 +794,7 @@ pub fn on_map(detail: skwir_core::inspection::Detail) -> skwir_core::inspection:
     )
 }
 
-/// A count worth stating: nothing for zero, where a Details row would only
+/// A count worth stating: nothing for zero, where a Properties row would only
 /// say that something is absent.
 pub fn count(n: usize) -> Option<String> {
     (n > 0).then(|| n.to_string())

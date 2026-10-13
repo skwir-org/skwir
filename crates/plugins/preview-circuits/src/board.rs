@@ -605,7 +605,7 @@ fn release(generator: Option<&str>, version: Option<u64>) -> Option<String> {
     )
 }
 
-/// A millimetre length as Details says it.
+/// A millimetre length as Properties says it.
 fn mm(value: f64) -> String {
     let rounded = (value * 100.).round() / 100.;
     format!("{rounded}")

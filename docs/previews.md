@@ -12,10 +12,10 @@ contributors). The rules for working on preview code are in
   preview panel, which follows the selection; `F11` or the Preview button
   closes it.
 - **The header** shows the file's icon, name, type, size and date. Click
-  it, or press `Ctrl+I`, for **Details**: exact size, folder, owner and
+  it, or press `Ctrl+I`, for **Properties**: exact size, folder, owner and
   access, times, tags, and what the format says (a book's author, a
   font's family, an archive's unpacked size, a picture's dimensions).
-  Details fills the panel when there is nothing to preview. Click a value
+  Properties fills the panel when there is nothing to preview. Click a value
   to copy it.
 - **The bar** holds the tools of the kind shown; in a narrow panel the
   less used ones move into More. Every tool is also a palette command
@@ -47,7 +47,7 @@ contributors). The rules for working on preview code are in
 | --- | --- | --- |
 | Arrows | Peek | Previous or next file |
 | `Space`, `Escape` | Peek | Close |
-| `Ctrl+I`, `Alt+Enter` | Anywhere | Details |
+| `Ctrl+I`, `Alt+Enter` | Anywhere | Properties |
 | `Ctrl+F`; `F3`, `Shift+F3` | Preview | Find; next or previous match |
 | `Ctrl+C`, `Ctrl+A` | Preview | Copy; select all |
 | `Page Up`, `Page Down` | Reader | Previous or next page |
@@ -262,7 +262,7 @@ The player, in the panel or pinned at its foot:
 - **DXF** drawings are drawn from what they hold, as a CAD program shows
   model space, in AutoCAD's colors: lines, arcs, circles, polylines,
   ellipses, splines, solids, hatches, text and inserted blocks
-  (dimensions among them). Details gives the size in the drawing's unit,
+  (dimensions among them). Properties gives the size in the drawing's unit,
   entities and blocks. A DXF over 32 MiB shows its stored picture, if
   any.
 - **Meshes** that store no picture (STL, OBJ, PLY, OFF, glTF and GLB, a
@@ -276,10 +276,10 @@ The player, in the panel or pinned at its foot:
     marks, or by height;
   - a milling, engraving or laser program (also `.nc`, `.ngc`, `.tap`,
     `.cnc`) from above, cuts colored by depth, rapid moves faint;
-    Details adds the size of the work;
+    Properties adds the size of the work;
   - a program that computes its moves (LinuxCNC's parameters,
     subroutines) reads as text. The text is always one toggle away.
-- **Details** lists what the file says: the Blender version and scenes,
+- **Properties** lists what the file says: the Blender version and scenes,
   the SketchUp or Rhino version and a model's scenes or a LayOut
   document's pages, a print's time, filament, material, layer height,
   printer and slicer, a drawing's DWG or DXF version.
@@ -293,18 +293,18 @@ The player, in the panel or pinned at its foot:
   footprints (`.kicad_mod`); schematics (`.kicad_sch`) as eeschema draws
   them (symbols with pins and fields, wires, buses, junctions, labels,
   notes, sheets); a symbol library's (`.kicad_sym`) first symbol.
-  Details lists the KiCad version, title block, board size, copper
+  Properties lists the KiCad version, title block, board size, copper
   layers, thickness, footprints, pads, nets, tracks and vias, or a
   schematic's paper, symbols and sheets. Text is set in a system font
   (KiCad's is not carried): close to KiCad's, not identical.
 - **Gerber** layers (`.gbr`, `.gtl`, `.gbl`, `.gts`, `.gto`, `.gm1`,
   `.g2`…, from any design program), one at a time in the color KiCad
   gives their layer: macros, regions, arcs, clear polarity, step and
-  repeat, aperture blocks. Details names the layer (from the file's X2
+  repeat, aperture blocks. Properties names the layer (from the file's X2
   attributes, else its name), the program that made it and its size. A
   `.gbr` that is a GIMP brush goes to the picture previews.
 - **Excellon** drill files (`.drl`, `.xln`, `.exc`): holes, slots and
-  routes, with holes, tools and sizes in Details.
+  routes, with holes, tools and sizes in Properties.
 - The text is one toggle away. Files over 32 MiB are not drawn.
 
 ### Maps and tracks (`geo`, `map-tiles`)

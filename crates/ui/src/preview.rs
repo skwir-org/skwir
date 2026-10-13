@@ -47,7 +47,7 @@ pub enum PreviewContent {
         detail: Option<PreviewInfo>,
         document: Option<Arc<skwir_core::document::PageContent>>,
         /// What the file says about the picture (EXIF), read on the worker
-        /// that decoded it, for the panel's Details.
+        /// that decoded it, for the panel's Properties.
         facts: Vec<skwir_core::inspection::Detail>,
         /// How many pixels it can have, which bounds a zoom's sharpening.
         pixels: Pixels,
@@ -216,18 +216,18 @@ pub(crate) enum PreviewPhase {
 /// What the fields worker answers: rows about the content, rows about
 /// access, and rows about the files beside it.
 type FieldRows = (
-    Vec<crate::details::Row>,
-    Vec<crate::details::Row>,
-    Vec<crate::details::Row>,
+    Vec<crate::properties::Row>,
+    Vec<crate::properties::Row>,
+    Vec<crate::properties::Row>,
 );
 
-/// What Details says of files beside a file (ADR-028): those beside the
+/// What Properties says of files beside a file (ADR-028): those beside the
 /// file at `path`, or, for a companion whose file is gone, what it was.
 /// Looks at the disk: call on a worker.
 fn beside_rows(
     companions: &skwir_core::companions::Companions,
     path: &std::path::Path,
-) -> Vec<crate::details::Row> {
+) -> Vec<crate::properties::Row> {
     let mut rows = Vec::new();
     let names: Vec<String> = companions
         .existing(path)
@@ -238,13 +238,13 @@ fn beside_rows(
         })
         .collect();
     if !names.is_empty() {
-        rows.push(crate::details::Row::new("Beside it", names.join(", ")));
+        rows.push(crate::properties::Row::new("Beside it", names.join(", ")));
     }
     if let (Some(dir), Some(name)) = (path.parent(), path.file_name())
         && let Some(owner) = companions.owner(name)
     {
         let gone = std::fs::symlink_metadata(dir.join(&owner)).is_err();
-        rows.push(crate::details::Row::new(
+        rows.push(crate::properties::Row::new(
             "Beside",
             if gone {
                 format!("“{}”, which is gone", owner.to_string_lossy())
@@ -312,7 +312,7 @@ pub struct PreviewState {
     pub peek_focus: Option<FocusHandle>,
     /// The files of the same kind (music, or films) before and after this
     /// one in the pane's order; found when the listing, its order or the
-    /// entry changes (`details_at`), never while painting.
+    /// entry changes (`properties_at`), never while painting.
     pub neighbours: (Option<EntryId>, Option<EntryId>),
     /// The track to start once shown: the one before it ended, or the user
     /// stepped to it while listening.
@@ -343,17 +343,17 @@ pub struct PreviewState {
     pub(crate) menu_parked: bool,
     nested_tx: flume::Sender<(u64, Arc<Nested>)>,
     nested_rx: flume::Receiver<(u64, Arc<Nested>)>,
-    /// Fields read on demand that Details shows (a picture's place,
-    /// `skwir_core::fields`), for the entry of `details_at`: read on a
+    /// Fields read on demand that Properties shows (a picture's place,
+    /// `skwir_core::fields`), for the entry of `properties_at`: read on a
     /// worker, arriving with the generation they were asked at.
-    pub fields: Vec<crate::details::Row>,
+    pub fields: Vec<crate::properties::Row>,
     fields_generation: u64,
     /// What the system adds to the file's mode (ACLs, capabilities),
     /// read with `fields`, shown under Permissions.
-    pub access: Vec<crate::details::Row>,
+    pub access: Vec<crate::properties::Row>,
     /// The files beside the entry (ADR-028), or the file an orphan belonged
     /// to, read on the same worker.
-    pub beside: Vec<crate::details::Row>,
+    pub beside: Vec<crate::properties::Row>,
     fields_tx: flume::Sender<(u64, FieldRows)>,
     fields_rx: flume::Receiver<(u64, FieldRows)>,
     /// The file the fields were read of, as of its version (its path,
@@ -366,18 +366,18 @@ pub struct PreviewState {
     )>,
     /// The reading of the fields under way, cancelled by the next.
     fields_cancel: Option<CancelToken>,
-    /// The entry Details was collected for: collected again when it
+    /// The entry Properties was collected for: collected again when it
     /// changes, whatever else the listing does.
-    details_entry: Option<skwir_core::entry::Entry>,
+    properties_entry: Option<skwir_core::entry::Entry>,
     /// What the entry says about itself, collected when it or its listing
-    /// changes (`details_at`), never while painting.
-    pub details: Vec<crate::details::Group>,
-    details_at: Option<u64>,
+    /// changes (`properties_at`), never while painting.
+    pub properties: Vec<crate::properties::Group>,
+    properties_at: Option<u64>,
     /// Several entries selected: how many, and what they weigh together.
-    pub selection_summary: Option<crate::details::Group>,
-    /// Whether Details is open under a preview; part of the window's shape.
-    pub details_open: bool,
-    pub details_scroll: gpui::ScrollHandle,
+    pub selection_summary: Option<crate::properties::Group>,
+    /// Whether Properties is open under a preview; part of the window's shape.
+    pub properties_open: bool,
+    pub properties_scroll: gpui::ScrollHandle,
     /// Focus of a picture, so the zoom keys reach it once it is clicked.
     pub image_focus: Option<FocusHandle>,
     /// Where a map preview is moved and zoomed to: the file's, kept when
@@ -403,7 +403,7 @@ struct Here {
     /// the entry is the one kept from before).
     answers: u64,
     entry: Option<skwir_core::entry::Entry>,
-    volume: Option<crate::details::Group>,
+    volume: Option<crate::properties::Group>,
 }
 
 /// What the worker learns of the volume holding a folder: the mount it is
@@ -426,9 +426,9 @@ impl VolumeFacts {
         }
     }
 
-    /// Details' Volume group, the volume named as the sidebar names it.
-    fn group(self, app: &skwir_core::App) -> Option<crate::details::Group> {
-        use crate::details::Row;
+    /// Properties' Volume group, the volume named as the sidebar names it.
+    fn group(self, app: &skwir_core::App) -> Option<crate::properties::Group> {
+        use crate::properties::Row;
         let mut rows = Vec::new();
         if let Some(mount) = &self.mount {
             let name = app.location_title(&skwir_core::Location::from_path(&mount.path));
@@ -450,7 +450,7 @@ impl VolumeFacts {
                 mount.path.to_string_lossy().into_owned(),
             ));
         }
-        (!rows.is_empty()).then(|| crate::details::Group {
+        (!rows.is_empty()).then(|| crate::properties::Group {
             title: "Volume".into(),
             rows,
         })
@@ -514,12 +514,12 @@ impl Default for PreviewState {
             fields_rx,
             fields_for: None,
             fields_cancel: None,
-            details_entry: None,
-            details: Vec::new(),
-            details_at: None,
+            properties_entry: None,
+            properties: Vec::new(),
+            properties_at: None,
             selection_summary: None,
-            details_open: false,
-            details_scroll: gpui::ScrollHandle::new(),
+            properties_open: false,
+            properties_scroll: gpui::ScrollHandle::new(),
             image_focus: None,
             map: crate::map_preview::MapState::default(),
             hex_provider: std::cell::Cell::new(None),
@@ -1010,10 +1010,10 @@ impl Shell {
             ws.pane(self.pane).and_then(|pane| {
                 let e = pane.entry(id)?;
                 let path = pane.path_of(id)?;
-                // What Details and the neighbouring tracks were collected
+                // What Properties and the neighbouring tracks were collected
                 // for: the listing's names, in the order shown (a new sort
                 // is a new order), and what is selected; the entry itself
-                // is compared whole (`details_entry`). Not the listing's
+                // is compared whole (`properties_entry`). Not the listing's
                 // version, which every batch of metadata moves.
                 let order = std::sync::Arc::as_ptr(&self.ui().list.sorted).cast::<()>() as u64;
                 let seen = pane
@@ -1090,7 +1090,7 @@ impl Shell {
                 self.type_names.get(&m);
                 m.to_string()
             });
-            self.preview.details_at = None;
+            self.preview.properties_at = None;
             let app = Arc::clone(&self.app);
             self.type_names.request(&app);
             let identified = entry.inode_type().is_some()
@@ -1140,22 +1140,22 @@ impl Shell {
         if self.preview.info.icon.is_none() {
             self.preview.info.icon = self.icons.for_entry(&entry, || Some(key.path.clone()), 48);
         }
-        if self.preview.details_at != Some(seen)
-            || self.preview.details_entry.as_ref() != Some(&entry)
+        if self.preview.properties_at != Some(seen)
+            || self.preview.properties_entry.as_ref() != Some(&entry)
         {
-            self.preview.details_at = Some(seen);
-            self.preview.details_entry = Some(entry.clone());
+            self.preview.properties_at = Some(seen);
+            self.preview.properties_entry = Some(entry.clone());
             // Notes while a store keeps some (`NoteStores::held`).
             let held = self.app.notes.held();
             let notes = held.tags || held.rating || held.comment;
-            self.preview.details = crate::details::entry_groups(
+            self.preview.properties = crate::properties::entry_groups(
                 &entry,
                 &key.path,
                 notes.then_some(self.tag_fields.as_slice()),
             );
             if here && let Some(volume) = self.preview.here.as_ref().and_then(|h| h.volume.clone())
             {
-                self.preview.details.push(volume);
+                self.preview.properties.push(volume);
             }
             // Fields read of the file: again when the file changed, never
             // for a batch of metadata, which would blank them meanwhile.
@@ -1168,20 +1168,19 @@ impl Shell {
                 .media_kind()
                 .map_or((None, None), |kind| self.media_neighbours(id, kind));
             let selection = self.selection_ctx();
-            self.preview.selection_summary = (selection.count > 1).then(|| crate::details::Group {
-                title: "Selection".into(),
-                rows: std::iter::once(crate::details::Row::new(
-                    "Selected",
-                    format::count(selection.count, "item"),
-                ))
-                // The whole size once every file's is known, never a part.
-                .chain(
-                    selection
-                        .bytes
-                        .map(|bytes| crate::details::Row::new("Total size", format::size(bytes))),
-                )
-                .collect(),
-            });
+            self.preview.selection_summary =
+                (selection.count > 1).then(|| crate::properties::Group {
+                    title: "Selection".into(),
+                    rows: std::iter::once(crate::properties::Row::new(
+                        "Selected",
+                        format::count(selection.count, "item"),
+                    ))
+                    // The whole size once every file's is known, never a part.
+                    .chain(selection.bytes.map(|bytes| {
+                        crate::properties::Row::new("Total size", format::size(bytes))
+                    }))
+                    .collect(),
+                });
         }
         while let Ok((generation, (rows, access, beside))) = self.preview.fields_rx.try_recv() {
             if generation == self.preview.fields_generation {
@@ -1215,7 +1214,7 @@ impl Shell {
     /// What the panel shows while nothing is selected in the active pane:
     /// the folder it shows, once read on a worker with its volume (`Here`)
     /// as a selected folder would be, its fields included (its tags, its
-    /// rating), with a Volume group in Details. It is read again when the
+    /// rating), with a Volume group in Properties. It is read again when the
     /// listing completes changed, or when the folder itself changes
     /// (`Listing::itself_version`: its tags edited). `None` for a location that is not a folder (a search, the
     /// shelf), or until the worker answers.
@@ -1231,7 +1230,7 @@ impl Shell {
             let p = ws.pane(pane)?;
             let location = p.location()?;
             let listing = &p.listing;
-            // What the folder's Details read: what it holds (its names),
+            // What the folder's Properties read: what it holds (its names),
             // not each batch of its entries' metadata.
             (
                 location.to_string(),
@@ -1328,9 +1327,9 @@ impl Shell {
         } else {
             format::count(count, "item")
         });
-        self.preview.details.clear();
-        self.preview.details_at = None;
-        self.preview.details_entry = None;
+        self.preview.properties.clear();
+        self.preview.properties_at = None;
+        self.preview.properties_entry = None;
     }
 
     /// The header's size and date, from the listing's metadata.
@@ -1338,8 +1337,8 @@ impl Shell {
         // A folder's own size says nothing about what it holds.
         self.preview.info.size = version.size.filter(|_| !is_dir).map(format::size);
         self.preview.info.modified = version.modified.map(format::time);
-        self.preview.details_at = None;
-        self.preview.details_entry = None;
+        self.preview.properties_at = None;
+        self.preview.properties_entry = None;
     }
 
     /// The shown file changed, or the theme did: read it again without
@@ -1590,7 +1589,7 @@ impl Shell {
         let Some(content) = key.content.clone() else {
             // Nothing is: a link that leads nowhere says so, not as the
             // error opening its missing target gives; a pipe, a socket or a
-            // device is what the header and Details say, and never opened
+            // device is what the header and Properties say, and never opened
             // (a pipe waits for a writer, a device may act).
             let content = if entry.is_broken_link() {
                 PreviewContent::Error("Nothing is at the link's target".into())
@@ -1858,7 +1857,7 @@ impl Shell {
                                 height: preview.image.height,
                                 detail: Some(preview.info),
                                 document: None,
-                                // Where it was recorded, which Details
+                                // Where it was recorded, which Properties
                                 // shows beside what the player says.
                                 facts: skwir_platform::mp4::details(&path),
                                 pixels: Pixels::Own,
@@ -1919,7 +1918,7 @@ impl Shell {
                 let content = match result {
                     Ok(Some(preview)) => match crate::thumbs::to_render_image(&preview.image) {
                         // Drawn by another program: its own size, not the
-                        // one drawn, is what 100% and Details say.
+                        // one drawn, is what 100% and Properties say.
                         Some(image) => match preview.info {
                             PreviewInfo::Picture { width, height } => PreviewContent::Image {
                                 image,
@@ -2068,7 +2067,7 @@ impl Shell {
         self.show_waiting_line();
     }
 
-    /// The fields Details shows for `entry` at `path` (a picture's place,
+    /// The fields Properties shows for `entry` at `path` (a picture's place,
     /// `skwir_core::fields`) and what the system adds to its mode
     /// (`skwir_platform::access`), read on a worker; what was shown for
     /// another entry goes at once, and a late answer for it is dropped.
@@ -2102,20 +2101,20 @@ impl Shell {
             "detail-fields",
             cancel.clone(),
             move || {
-                let access: Vec<crate::details::Row> = skwir_platform::access::facts(&path)
+                let access: Vec<crate::properties::Row> = skwir_platform::access::facts(&path)
                     .into_iter()
-                    .map(|(label, value)| crate::details::Row::new(label, value))
+                    .map(|(label, value)| crate::properties::Row::new(label, value))
                     .collect();
-                let rows: Vec<crate::details::Row> = shown
+                let rows: Vec<crate::properties::Row> = shown
                     .into_iter()
                     .filter_map(|(key, label)| {
                         let text = match fields.get(key, &path, &cancel)? {
                             skwir_core::entry::Value::Text(text) => text.to_string(),
                             _ => return None,
                         };
-                        Some(crate::details::Row {
+                        Some(crate::properties::Row {
                             source: fields.credit(key, &name).map(Into::into),
-                            ..crate::details::Row::new(label, text)
+                            ..crate::properties::Row::new(label, text)
                         })
                     })
                     .collect();
@@ -2525,17 +2524,29 @@ impl Shell {
         }
     }
 
-    /// `ui.preview_details`: open or close Details under the preview.
-    pub fn preview_details(&mut self, cx: &mut Context<Self>) {
-        // With the panel closed, Ctrl+I asks for the details: open both.
-        if !self.preview.open && !self.preview.peek {
-            self.preview.open = true;
-            self.preview.details_open = true;
+    /// `ui.properties` (Alt+Enter, Ctrl+I, the context menu): show the
+    /// properties of the selection, or of the folder shown, opening the
+    /// panel when it is closed; hide them where they cover a preview.
+    pub fn properties(&mut self, cx: &mut Context<Self>) {
+        if self.properties_hide() {
+            self.preview.properties_open = false;
         } else {
-            self.preview.details_open = !self.preview.details_open;
+            if !self.preview.open && !self.preview.peek {
+                self.preview.open = true;
+            }
+            self.preview.properties_open = true;
         }
         self.remember_session();
         cx.notify();
+    }
+
+    /// Whether `ui.properties` would hide Properties: they are on screen
+    /// over a preview. With nothing to preview they are all the panel
+    /// holds, and stay.
+    pub fn properties_hide(&self) -> bool {
+        (self.preview.open || self.preview.peek)
+            && self.preview.properties_open
+            && !crate::properties::alone(self)
     }
 
     /// `ui.preview_copy_path`: the path of what is shown, as text.
@@ -2837,14 +2848,14 @@ impl Shell {
     }
 }
 
-/// Everything under the header's card: Details, then the toolbar and the
-/// content (`body`). This is the one place Details is put, for every kind
+/// Everything under the header's card: Properties, then the toolbar and the
+/// content (`body`). This is the one place Properties is put, for every kind
 /// of preview: right under the card that opens it, above the toolbar,
 /// whether a preview follows or not, and above the container's view and
 /// the member alike when a member is shown under its container's view
 /// (`members::split`), since it is about what the card names: the
 /// container. `body` never draws it, so nothing a kind or the split does
-/// can come between the card and Details. `wide` is whether the room is wider than tall.
+/// can come between the card and Properties. `wide` is whether the room is wider than tall.
 fn under_card(
     shell: &Shell,
     theme: &Theme,
@@ -2857,12 +2868,12 @@ fn under_card(
     // with nothing to preview (a folder, an unknown file, an error), so
     // the toolbar and what the content says (why the preview failed)
     // follow right under it. While peek shows the preview, the panel
-    // behind it is only a picture and keeps Details only when it is all
+    // behind it is only a picture and keeps Properties only when it is all
     // there is.
-    let alone = crate::details::alone(shell);
+    let alone = crate::properties::alone(shell);
     let details = Some(())
         .filter(|()| interactive || alone)
-        .and_then(|()| crate::details::render(shell, theme, cx));
+        .and_then(|()| crate::properties::render(shell, theme, cx));
     let body = body(shell, theme, interactive, cx);
     div()
         .flex_1()
@@ -2893,7 +2904,7 @@ fn discard_parked(parked: crate::members::Parked, window: &mut Window, cx: &mut 
     }
 }
 
-/// The toolbar and the content. Details is not its to draw (`under_card`).
+/// The toolbar and the content. Properties is not its to draw (`under_card`).
 fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
     let document = matches!(
         &shell.preview.content,
@@ -2903,9 +2914,9 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
         })
     );
     let inspection = matches!(&shell.preview.content, Some(PreviewContent::Inspection(_)));
-    // With nothing to preview Details gives way first: the toolbar and
+    // With nothing to preview Properties gives way first: the toolbar and
     // what the content says (why the preview failed) keep their height.
-    let alone = crate::details::alone(shell);
+    let alone = crate::properties::alone(shell);
     let mut frame = div()
         .flex_1()
         .when(!alone, gpui::Styled::min_h_0)
@@ -3103,7 +3114,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
             .text_color(theme.text_muted)
             .child("Loading…")
             .into_any_element(),
-        // Nothing to look at: the header says what it is and Details the rest.
+        // Nothing to look at: the header says what it is and Properties the rest.
         None | Some(PreviewContent::Generic | PreviewContent::Dir { .. }) => {
             div().into_any_element()
         }
@@ -3228,8 +3239,8 @@ fn failure(error: &str, theme: &Theme) -> AnyElement {
 /// `bundle.zip › notes.md`, and every step before the last leads back to it.
 /// While a container's view is kept above the member (`members.rs`), the
 /// card names that container, the member's bar names the member, and the
-/// trail is only words: the card is what opens Details, and the member's ×
-/// and the container's rows lead elsewhere, so a click meant for Details
+/// trail is only words: the card is what opens Properties, and the member's ×
+/// and the container's rows lead elsewhere, so a click meant for Properties
 /// never leaves the member.
 fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
     let preview = &shell.preview;
@@ -3294,18 +3305,18 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
 
 /// Everything the panel knows at a glance: the entry's icon, its name (a
 /// trail inside a container), and one line of type, size and date. The card
-/// is the one place that says what the panel shows; Details, which opens
-/// right under it when the card or the Details button beside it is clicked
+/// is the one place that says what the panel shows; Properties, which opens
+/// right under it when the card or the Properties button beside it is clicked
 /// (or Ctrl+I), holds the rest and repeats none of it. With nothing to
-/// preview Details is always open and there is no button. The peek overlay
+/// preview Properties is always open and there is no button. The peek overlay
 /// alone keeps a close button: the panel is closed by the Preview button
 /// that opened it.
 fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let preview = &shell.preview;
     let info = &preview.info;
-    let alone = crate::details::alone(shell);
+    let alone = crate::properties::alone(shell);
     let toggles = !alone && !info.name.is_empty();
-    let open = alone || preview.details_open;
+    let open = alone || preview.properties_open;
     // Each fact is one unbreakable segment of a wrapping line: a narrow
     // panel wraps between the facts, never inside the date. One alone on
     // its line and still too wide is cut, and says itself whole, before
@@ -3346,7 +3357,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
             d.cursor_pointer()
                 .hover(|d| d.bg(theme.hover))
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.run("ui.preview_details", serde_json::json!({}), window, cx);
+                    this.run("ui.properties", serde_json::json!({}), window, cx);
                 }))
         })
         .children(info.icon.as_ref().map(|icon| {
@@ -3390,18 +3401,13 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
         .items_center()
         .gap_1()
         .child(card)
-        // The card opens Details too, but nothing about it says so: the
+        // The card opens Properties too, but nothing about it says so: the
         // button does, as Preview's does for its panel, lit while open.
         .when(toggles, |d| {
             d.child(
-                crate::toolbar::Button::new(
-                    "preview-details",
-                    "info",
-                    "Details",
-                    "ui.preview_details",
-                )
-                .active(open)
-                .render(shell, cx),
+                crate::toolbar::Button::new("properties", "info", "Properties", "ui.properties")
+                    .active(open)
+                    .render(shell, cx),
             )
         })
         .when(preview.peek, |d| {

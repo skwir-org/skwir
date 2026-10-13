@@ -19,6 +19,9 @@
   each store's Read and Write under its name; it no longer lists what
   only answers agents (the timeline's data). It offers what a command's
   forms make of it (Sort by size, Next tab).
+- **Properties** is what Details was, and the context menu's last item
+  opens it (Alt+Enter, Ctrl+I as before). Over a preview it takes the
+  room it needs, up to the whole panel.
 
 ## 0.1.0 (2026-10-13)
 

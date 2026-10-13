@@ -1,7 +1,7 @@
 //! What the system adds to a file's mode: POSIX ACLs (`ls` shows them as
 //! a `+` after the mode), file capabilities (what `setcap` gave a program)
 //! and a security label (`SELinux`). They are the system's, not notes: read here,
-//! for the one file Details shows, on a worker; never per row.
+//! for the one file Properties shows, on a worker; never per row.
 //!
 //! All three are extended attributes in the `system.` and `security.`
 //! namespaces, read through what a link leads to, as its permissions are.
@@ -14,7 +14,7 @@ const CAPABILITIES: &str = "security.capability";
 const SELINUX: &str = "security.selinux";
 
 /// The facts of `path` beyond its mode, each with its label, in the
-/// order Details shows them; nothing for a file that has none.
+/// order Properties shows them; nothing for a file that has none.
 pub fn facts(path: &Path) -> Vec<(&'static str, String)> {
     let Ok(names) = skwir_core::fs::xattr::list_deref(path) else {
         return Vec::new();

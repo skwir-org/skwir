@@ -284,7 +284,7 @@ pub struct Inspection {
     /// A line over the page: what a search found, what was left out.
     #[serde(default)]
     pub notice: String,
-    /// Facts the format knows, for Details.
+    /// Facts the format knows, for Properties.
     #[serde(default)]
     pub details: Vec<Detail>,
 }

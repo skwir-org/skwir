@@ -18,7 +18,7 @@ pub const OUTPUT: &str = "notebook-output:";
 /// Lines of one output kept: a training loop can print thousands.
 const OUTPUT_LINES: usize = 200;
 
-/// What the notebook says of itself, for Details.
+/// What the notebook says of itself, for Properties.
 pub struct Notebook {
     pub markdown: String,
     pub cells: usize,

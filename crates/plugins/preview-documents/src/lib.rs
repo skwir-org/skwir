@@ -417,7 +417,7 @@ fn converted_from(
     Some((html.to_owned(), cut, sizes))
 }
 
-/// What a Word or `OpenDocument` file says about itself, for Details; none
+/// What a Word or `OpenDocument` file says about itself, for Properties; none
 /// for another format.
 fn about(path: &Path, cancel: &CancelToken) -> Vec<(&'static str, String)> {
     let read = match builtin(path) {
@@ -428,7 +428,7 @@ fn about(path: &Path, cancel: &CancelToken) -> Vec<(&'static str, String)> {
     read.unwrap_or_default()
 }
 
-/// Details in their order: what the document states, and its words.
+/// Properties in their order: what the document states, and its words.
 fn details(facts: &[(&'static str, String)], words: usize) -> Vec<skwir_core::inspection::Detail> {
     let fact = |label: &str| {
         facts

@@ -77,7 +77,7 @@ pub struct MapView {
     counts: (usize, usize, usize, bool),
     selection: (u64, Arc<HashSet<EntryId>>),
     /// The file the map opens on, once it is placed: the one selected
-    /// when the view was shown ("Show on map" in Details).
+    /// when the view was shown ("Show on map" in Properties).
     focus: Option<EntryId>,
     /// The placeholder was drawn last, and since when it is held for the
     /// location shown now (`HOLD`).

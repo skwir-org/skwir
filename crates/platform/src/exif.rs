@@ -1,4 +1,4 @@
-//! What a camera wrote into a picture, for the panel's Details.
+//! What a camera wrote into a picture, for the panel's Properties.
 //!
 //! Read by `kamadak-exif`: pure Rust, always there, a few hundred microseconds
 //! on the container's header. `exiftool` knows more formats but is a Perl

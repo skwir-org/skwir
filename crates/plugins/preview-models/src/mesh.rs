@@ -1,6 +1,6 @@
 //! Meshes that carry no picture of their own (STL, OBJ, PLY, OFF, glTF, a
 //! 3MF its slicer did not picture), drawn and measured by
-//! `skwir-model-worker` (`skwir_platform::model`). Details says what a
+//! `skwir-model-worker` (`skwir_platform::model`). Properties says what a
 //! print needs: its size, whether it is watertight and what it holds.
 use crate::Found;
 use skwir_core::CancelToken;
@@ -21,7 +21,7 @@ fn volume(value: f64, unit: &str) -> Option<String> {
     Some(format!("{} {unit}", crate::gcode::short(value)))
 }
 
-/// What the measures say, in the order Details shows them.
+/// What the measures say, in the order Properties shows them.
 pub fn details(format: MeshFormat, measures: &Measures) -> Vec<(String, String)> {
     // An STL states no unit; every slicer reads it in millimetres.
     let unit = measures

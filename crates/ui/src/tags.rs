@@ -140,7 +140,7 @@ pub fn chip(tag: &str, color: usize, theme: &Theme) -> Div {
 }
 
 /// A tag as a chip with its categories before its name, dimmed, where
-/// there is room for them (Details).
+/// there is room for them (Properties).
 pub fn chip_in_full(tag: &str, color: usize, theme: &Theme) -> Div {
     match tag_parent(tag) {
         Some(categories) => chip_frame(color, theme)
@@ -482,7 +482,7 @@ pub struct TagEditor {
 
 impl Shell {
     /// `ui.tags_prompt { entries?, text? }`: edit the tags of `entries`
-    /// (Details names the entry it shows), or of what is selected, `text`
+    /// (Properties names the entry it shows), or of what is selected, `text`
     /// typed already (`Status/`: a field's values).
     pub fn open_tag_editor(
         &mut self,

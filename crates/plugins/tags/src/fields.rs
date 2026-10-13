@@ -2,7 +2,7 @@
 //! marked so makes `Status/Draft`, `Status/Review` and `Status/Final` the
 //! values of a field `Status`: a file given one loses the other
 //! (`metadata::with_exclusive`), the tag editor offers them as a choice,
-//! and Details shows the field with its value. A field is still a
+//! and Properties shows the field with its value. A field is still a
 //! category of tags, kept on the file as any tag is; only the mark is
 //! skwir's (`metadata::TAG_EXCLUSIVE_SETTING`), and it follows the
 //! category renamed (`follow.rs`).

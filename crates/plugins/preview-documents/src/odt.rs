@@ -1062,7 +1062,7 @@ impl Walk<'_> {
     }
 }
 
-/// What an `OpenDocument` file says about itself, for Details.
+/// What an `OpenDocument` file says about itself, for Properties.
 pub(crate) fn about(
     path: &Path,
     cancel: &CancelToken,

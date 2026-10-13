@@ -3,7 +3,7 @@
 //! Gerber and Excellon drill files any design program sends to the board
 //! maker, are text, read here and written as SVG, which skwir's inert
 //! rasterizer draws (`inspection::drawing`): in the preview panel, with
-//! what the file holds in Details and its text one toggle away, and as
+//! what the file holds in Properties and its text one toggle away, and as
 //! the grid's thumbnails. Nothing outside the file is read.
 mod board;
 mod drill;
@@ -41,7 +41,7 @@ impl Plugin for PreviewPlugin {
         "Preview: circuit boards and schematics"
     }
     fn description(&self) -> &'static str {
-        "Draw KiCad boards, footprints, schematics and symbol libraries, and Gerber and drill files; board size, layers, footprints, nets, symbols and holes in Details"
+        "Draw KiCad boards, footprints, schematics and symbol libraries, and Gerber and drill files; board size, layers, footprints, nets, symbols and holes in Properties"
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

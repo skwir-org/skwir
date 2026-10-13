@@ -620,7 +620,7 @@ impl Plugin for TagsPlugin {
             },
         );
         // A tag's one menu wherever else it is shown: its pill in the
-        // sidebar (asked with the place's location), its chip in Details
+        // sidebar (asked with the place's location), its chip in Properties
         // (with its name).
         for menu in ["place", "tag"] {
             app.registry.menu_sources.add(
@@ -1111,7 +1111,7 @@ impl Plugin for TagsPlugin {
             ID,
             "tags.tag_menu",
             "A tag's menu",
-            "The items of a tag's menu where it is shown: its chip in Details (tags), its pill in the sidebar (location). Answers from memory",
+            "The items of a tag's menu where it is shown: its chip in Properties (tags), its pill in the sidebar (location). Answers from memory",
             |a, app| Ok(browse::tag_menu(app, a)),
         )
         .reads();
@@ -1725,7 +1725,7 @@ mod tests {
         assert_eq!(now.differ, ["xdg"]);
         // Without what skwir wrote (another machine, a cache deleted): all.
         assert_eq!(read_tags(&f), ["a", "b", "x", "mac"]);
-        // Details says where they are, and where they differ.
+        // Properties says where they are, and where they differ.
         hydrate_all(&app, pane);
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {

@@ -1,6 +1,6 @@
 //! skwir plugin: 3D models, drawings and prints, shown by the picture their
 //! own application stored in them, with what the file says of itself in
-//! Details. A Blender file, a 3MF package, a `FreeCAD` document, a DWG
+//! Properties. A Blender file, a 3MF package, a `FreeCAD` document, a DWG
 //! drawing, a `SketchUp` or Rhino model and a G-code print each carry one;
 //! reading it costs a few hundred kilobytes. A DXF drawing is drawn from
 //! its entities (`dxf`), which most never picture, and G-code that stores
@@ -43,7 +43,7 @@ impl Plugin for PreviewPlugin {
         "Preview: 3D models and prints"
     }
     fn description(&self) -> &'static str {
-        "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings, G-code toolpaths and STL, OBJ, PLY, OFF and glTF models; print time, filament, size, volume and version in Details"
+        "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings, G-code toolpaths and STL, OBJ, PLY, OFF and glTF models; print time, filament, size, volume and version in Properties"
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews

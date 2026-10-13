@@ -442,7 +442,7 @@ const SHOWS: &[&str] = &[
     "ui.menu_close",
     "ui.toggle_preview",
     "ui.preview_close",
-    "ui.preview_details",
+    "ui.properties",
     "ui.preview_menu",
     "ui.preview_page",
     "ui.preview_seek",
@@ -1322,9 +1322,9 @@ pub fn declare_all(app: &App) {
     );
     none("ui.preview_close", "Preview: close", "Close the preview");
     none(
-        "ui.preview_details",
-        "Preview: show or hide details",
-        "Show or hide the preview's details",
+        "ui.properties",
+        "Properties",
+        "Show the properties of the selection (or of the folder shown), opening the panel; hide them where they cover a preview",
     );
     declare::<Popup>(
         app,

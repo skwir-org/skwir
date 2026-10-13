@@ -1,5 +1,5 @@
 //! A plugin from outside skwir, to start one from (`docs/plugins/README.md`):
-//! a field Details shows (how many words a text holds) and a command
+//! a field Properties shows (how many words a text holds) and a command
 //! (how many words the files given hold). The same code is a WebAssembly
 //! module (`export!`, built by `just plugins`) and a program that speaks
 //! the protocol (`main.rs`).

@@ -605,7 +605,7 @@ pub fn place_menu(app: &App, a: PaneOnly) -> Outcome {
     Outcome::Value(serde_json::json!({ "items": tag_items(app, &tags, root.as_ref(), false) }))
 }
 
-/// `tags.tag_menu`'s arguments: tags by name (a chip in Details), or a
+/// `tags.tag_menu`'s arguments: tags by name (a chip in Properties), or a
 /// place of the sidebar (`location`), which is a tag's when it is a tag
 /// folder of the home folder.
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
@@ -617,7 +617,7 @@ pub struct TagMenuArgs {
 }
 
 /// `tags.tag_menu`: a tag's menu where it is shown outside a tag location:
-/// its chip in Details (`tags`), its pill in the sidebar (`location`,
+/// its chip in Properties (`tags`), its pill in the sidebar (`location`,
 /// whose pin the sidebar takes out itself). Nothing for a place that is no
 /// tag's. Answers from memory.
 pub fn tag_menu(app: &App, a: TagMenuArgs) -> Outcome {
@@ -639,7 +639,7 @@ pub fn tag_menu(app: &App, a: TagMenuArgs) -> Outcome {
 }
 
 /// The one menu of tags, wherever they are shown (a tag location's
-/// entries, a sidebar pill, a chip in Details), answered from memory (the
+/// entries, a sidebar pill, a chip in Properties), answered from memory (the
 /// pins, the fields, the colors' names): pin or unpin them (not `on_pin`,
 /// a pin of the sidebar, which takes itself out), their color, put them in
 /// a category or out of it, one tag at a time, merge them, take them off

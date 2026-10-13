@@ -53,7 +53,7 @@ pub struct Inspection {
     pub printed_pages: Vec<PrintedPage>,
     pub source_available: bool,
     pub notice: String,
-    /// What the format knows about the file, for the panel's Details: a
+    /// What the format knows about the file, for the panel's Properties: a
     /// book's author, a font's family, an archive's unpacked size. Facts read
     /// from the content, in the order they should be shown, bounded like the
     /// rest: a provider already parsed the file to build this inspection, so

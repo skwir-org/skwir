@@ -245,7 +245,7 @@ fn the_template_counts_words_as_a_module_a_field_and_a_command() {
     assert_eq!(
         app.fields.shown_for(std::ffi::OsStr::new("a note.txt")),
         [("word-count.words", "Words")],
-        "Details shows it, labelled"
+        "Properties shows it, labelled"
     );
     let other = tmp.path().join("other.md");
     std::fs::write(&other, "two words").unwrap();

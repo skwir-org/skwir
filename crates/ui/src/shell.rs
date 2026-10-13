@@ -400,7 +400,7 @@ impl Shell {
         // an agent can choose one before the settings ever open.
         crate::settings::list_code_themes(&app);
         crate::session::declare(&app);
-        // Owner and group names for Details: two small files, but a read can
+        // Owner and group names for Properties: two small files, but a read can
         // block, so not here.
         let wake = app.waker_handle();
         app.scheduler.spawn(
@@ -669,7 +669,7 @@ impl Shell {
             self.split_share = session.split_share;
         }
         self.preview.open = session.preview;
-        self.preview.details_open = session.details;
+        self.preview.properties_open = session.properties;
         if session.preview_width > 0. {
             self.preview.width = session.preview_width;
         }
@@ -1802,7 +1802,7 @@ impl Shell {
                 let text = arg("text");
                 self.open_tag_editor(entries, text, window, cx);
             }
-            // A value to copy, from a link beside it (Details).
+            // A value to copy, from a link beside it (Properties).
             "copy_text" => {
                 if let Some(text) = arg("text") {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -2025,7 +2025,7 @@ impl Shell {
             "reader_page_cancel" => self.reader_page_cancel(window, cx),
             "preview_open_external" => self.preview_open_external(cx),
             "preview_copy_path" => self.preview_copy_path(cx),
-            "preview_details" => self.preview_details(cx),
+            "properties" => self.properties(cx),
             "preview_copy" => self.preview_copy(window, cx),
             "preview_select_all" => self.preview_select_all(window, cx),
             "preview_contents" => self.preview_contents(window, cx),

@@ -118,7 +118,7 @@ Answer `null` (nothing to show), or an inspection:
 | `previous`, `next` | null | Where the page before and after starts, if any. |
 | `position` | 0 | Where what was asked (found) is. |
 | `notice` | `""` | A line over the page: what a search found, what was left out. |
-| `details` | `[]` | `{ label, value }` facts the format knows, for Details. |
+| `details` | `[]` | `{ label, value }` facts the format knows, for Properties. |
 
 A preview that converts or shows pages is not asked `inspect`.
 

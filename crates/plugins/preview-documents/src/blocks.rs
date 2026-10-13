@@ -415,11 +415,11 @@ pub(crate) struct Read {
     pub part: u64,
     pub parts: u64,
     pub words: usize,
-    /// Facts for Details, as the document states them.
+    /// Facts for Properties, as the document states them.
     pub details: Vec<(&'static str, String)>,
 }
 
-/// Words of running text: what Details counts.
+/// Words of running text: what Properties counts.
 fn words(blocks: &[Block]) -> usize {
     blocks
         .iter()

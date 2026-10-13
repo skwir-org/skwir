@@ -2,7 +2,7 @@
 //! to read for every listing, read only when something asks. A picture's
 //! position is the first: reading EXIF during hydration would slow every
 //! folder for users who never search by place (ADR-020), but a search
-//! with `near:` and Details want it.
+//! with `near:` and Properties want it.
 //!
 //! A plugin registers a [`FieldProvider`] for the keys it answers; a
 //! caller on a worker asks [`Fields::get`] for a key of a file, or
@@ -41,12 +41,12 @@ pub trait FieldProvider: Send + Sync {
     /// The keys it answers: core keys (`entry::keys::POSITION`) or its
     /// own, namespaced (`geo.place`).
     fn keys(&self) -> &'static [&'static str];
-    /// The words Details labels `key` with; `None` keeps it out of
-    /// Details (a position, which the picture's own facts show).
+    /// The words Properties labels `key` with; `None` keeps it out of
+    /// Properties (a position, which the picture's own facts show).
     fn label(&self, _key: &str) -> Option<&'static str> {
         None
     }
-    /// Whom Details credits for `key`'s answers, when their data asks
+    /// Whom Properties credits for `key`'s answers, when their data asks
     /// for it (a licence's attribution). Asked on a worker.
     fn credit(&self, _key: &str) -> Option<String> {
         None
@@ -131,7 +131,7 @@ impl Fields {
             .any(|(_, p)| p.keys().contains(&key))
     }
 
-    /// The keys shown in Details for a file named `name`, with their
+    /// The keys shown in Properties for a file named `name`, with their
     /// labels, in the order they were registered.
     pub fn shown_for(&self, name: &OsStr) -> Vec<(&'static str, &'static str)> {
         let mut shown = Vec::new();
@@ -148,7 +148,7 @@ impl Fields {
         shown
     }
 
-    /// Whom Details credits for `key`, for a file named `name`. On a worker.
+    /// Whom Properties credits for `key`, for a file named `name`. On a worker.
     pub fn credit(&self, key: &str, name: &OsStr) -> Option<String> {
         self.provider(key, name)?.credit(key)
     }

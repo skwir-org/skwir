@@ -142,7 +142,7 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - `SPECTRUM_BINS` linear bins fold into `SPECTRUM_BANDS` logarithmic ones
   (`media::log_bands`), with the usual analyser tilt: music is heard in
   octaves, and linear bands put nearly all of it in the first five.
-- Stream facts beyond title, artist and album reach Details through
+- Stream facts beyond title, artist and album reach Properties through
   `Playback::details`, bounded by the worker.
 
 ## Tracks and playlists

@@ -126,7 +126,7 @@ impl PreviewProvider for Provider {
     }
 }
 
-/// What the listing says about the archive, for the panel's Details.
+/// What the listing says about the archive, for the panel's Properties.
 fn facts(members: &[archive::Member], rows: &[Row]) -> Vec<skwir_core::inspection::Detail> {
     let folders = rows.iter().filter(|r| r.branch).count();
     // Declared sizes are the archive's word: a hostile one must not

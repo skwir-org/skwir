@@ -383,23 +383,23 @@ is still to come are in `docs/preview-frame.md`.
 ### Location and waiting
 
 - **Nothing selected shows where the pane is.** A folder is previewed as
-  a selected one would be (its items, Details), named as the sidebar
-  names it, with a Volume group in Details (the volume's sidebar name,
+  a selected one would be (its items, Properties), named as the sidebar
+  names it, with a Volume group in Properties (the volume's sidebar name,
   device, filesystem, free space). The folder is stat-ed and the volume
   measured on a worker (`Shell::here`, `VolumeFacts`), again when the
   pane shows another location or its listing completes a change; what
   was shown stays until the answer.
 - A location that is not a folder (a search, the shelf, Recent) shows
   its name and count in the header and nothing below: no tools, no empty
-  Details.
+  Properties.
 - **A wait shows only once it has lasted.** The panel has one delayed
   loading signal (`Shell::sync_busy`, `preview_busy`), like the pane's
   (`loading.rs`): a request slower than `BUSY_AFTER` (200 ms) shows
   "Loading…" in the body and caption, and the bar under the toolbar; a
   quicker one shows nothing in between. Each request (generation) has
   its own grace. Nothing draws from the phase directly.
-- A preview on its way is not "nothing to preview": Details fills the
-  body only when the phase is idle (`details::alone`), never for the
+- A preview on its way is not "nothing to preview": Properties fills the
+  body only when the phase is idle (`properties::alone`), never for the
   instant before a picture arrives.
 - **The desktop's thumbnail is the wait's picture, not a preview.** Sent
   ahead and kept aside (`PreviewState::placeholder`), it replaces
@@ -443,33 +443,37 @@ is still to come are in `docs/preview-frame.md`.
   dimmed data is what stands for nothing: a zero byte, the dot of an
   unprintable one.
 
-### Header and Details
+### Header and Properties
 
 - **The header is a card** (`preview::header`): the entry's icon, its
   name (a trail inside a container) and one line of type, size and date.
   It names what the panel shows: under a container's view kept above a
   member, the container (the member's bar names the member).
-- Clicking the card opens Details. So does the (i) button beside it,
+- Clicking the card opens Properties. So does the (i) button beside it,
   since what the card does is not seen until tried; the button is lit
-  while Details is open, as Preview's is while its panel is.
+  while Properties is open, as Preview's is while its panel is. So do
+  Alt+Enter, Ctrl+I and the context menu's last item: one command
+  (`ui.properties`), which hides them again where they cover a preview,
+  the menu's item then saying Hide Properties (ADR-058).
 - The card has no close button: the Preview button closes the panel.
   Only the peek overlay keeps one.
-- **Details** (`details.rs`) is a section of the frame, not a kind of
+- **Properties** (`properties.rs`) is a section of the frame, not a kind of
   preview: everything known that the header does not say (no Name or
   Type row).
   - With nothing to preview (a folder, an unknown file, an error) it is
     always open, as tall as its content, the toolbar and the content's
     message (why the preview failed) right under it. Not while a
-    container's view is kept above the member (`details::alone`): that
-    view is content, so Details stays as the card left it.
+    container's view is kept above the member (`properties::alone`): that
+    view is content, so Properties stays as the card left it.
   - Under a preview it opens on demand in the same place: under the
-    card, above the toolbar, up to half the panel (Ctrl+I; with the
-    panel closed, Ctrl+I opens both).
+    card, above the toolbar, as tall as what it says, up to the whole
+    panel; the preview takes what is left. With the panel closed,
+    `ui.properties` opens both. No dialog repeats it.
   - Whether it is open belongs to the window's shape (`session.rs`).
   - Only `preview::under_card` places it. The toolbar and the content
     (`preview::body`, what a container's split holds under its view)
     never draw it, so neither a kind nor the split can come between the
-    card and Details.
+    card and Properties.
 - Its facts come from three places, none read while painting: the
   entry's metadata with its provenance, collected when the entry, its
   listing or the selection changes (`entry_groups`, pure and tested);
@@ -482,7 +486,7 @@ is still to come are in `docs/preview-frame.md`.
   it; a model's suggestion says so.
 - Owner and group names come from `skwir_platform::users`, loaded once
   on a worker, never read on the UI thread.
-- Details never starts a scan: a folder says what its listing already
+- Properties never starts a scan: a folder says what its listing already
   counted. A click copies a value.
 
 ### The toolbar
@@ -574,7 +578,7 @@ is still to come are in `docs/preview-frame.md`.
 ### Maps
 
 - A map (`map_preview.rs`, `elements/map.rs`, ADR-020) is an inspection
-  (`InspectionKind::Map`), so Details, the switch to the source and the
+  (`InspectionKind::Map`), so Properties, the switch to the source and the
   way out of a container are the frame's. Its places are projected once
   on the worker (`Display::map`), never while painting.
 - The pointer drags it; the wheel (no Ctrl: nothing scrolls) and a
@@ -635,7 +639,7 @@ is still to come are in `docs/preview-frame.md`.
 - The panel follows containers `NESTING` deep. The header's trail and
   the × at the end of every bar lead out. While a container's view is
   kept above the member, the trail is only words: the card opens
-  Details, and that click must not leave the member.
+  Properties, and that click must not leave the member.
 - These directories live in the one deletable cache under the process
   id and are removed only on a worker; what a killed process left is
   swept at the next start.
@@ -662,7 +666,7 @@ is still to come are in `docs/preview-frame.md`.
   - Their edge is dragged like a split's and stores the view's share,
     one per direction (`members::Share`), in the window's shape. Each
     side keeps a minimum.
-  - Details stays under the card, above both (`preview::under_card`):
+  - Properties stays under the card, above both (`preview::under_card`):
     it is about what the card names.
 - The highlight leads: a click on a file, the arrows (`PreviewMembers`:
   Up and Down walk the rows, Left and Right fold a folder or go up to

@@ -156,7 +156,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ),
     ("ui.media_step", r#"{"delta":1}"#, "Player: next track"),
     ("ui.media_step", r#"{"delta":-1}"#, "Player: previous track"),
-    ("ui.preview_details", "{}", "Preview: show or hide details"),
+    ("ui.properties", "{}", "Properties"),
     ("ui.inspect", r#"{"action":"hex"}"#, "Preview: hexadecimal"),
     (
         "ui.inspect",

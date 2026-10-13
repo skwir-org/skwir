@@ -784,7 +784,7 @@ fn summary(doc: &GeoDoc, c: &Collector) -> String {
     .join(", ")
 }
 
-/// Read a file into what the map shows and what Details says.
+/// Read a file into what the map shows and what Properties says.
 pub(crate) fn inspect_file(path: &Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
     let format = Format::detect(path).ok_or_else(|| anyhow::anyhow!("Not a map file"))?;
     inspect_as(path, format, cancel)

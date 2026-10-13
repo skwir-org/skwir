@@ -35,7 +35,7 @@ pub struct Playback {
     pub spectrum: Vec<f32>,
     /// What the stream says about itself beyond title, artist and album
     /// (track, year, genre, codec, bitrate, sample rate, channels), as label
-    /// and value, for the panel's Details. Bounded by the worker.
+    /// and value, for the panel's Properties. Bounded by the worker.
     #[serde(default)]
     pub details: Vec<(String, String)>,
     /// Determined from decoded streams, since container MIME types may be ambiguous.

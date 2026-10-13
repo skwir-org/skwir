@@ -734,7 +734,7 @@ pub(crate) fn register(app: &crate::App) {
         SettingSpec::toggle(
             crate::companions::SHOW,
             "Show companion files",
-            "With hidden files shown, also list the files that keep another file's notes beside it: a Mac's ._ files, XMP and TagSpaces sidecars. Details lists a file's companions either way.",
+            "With hidden files shown, also list the files that keep another file's notes beside it: a Mac's ._ files, XMP and TagSpaces sidecars. Properties lists a file's companions either way.",
             false,
         )
         .section("Files"),

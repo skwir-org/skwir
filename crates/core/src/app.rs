@@ -1151,7 +1151,7 @@ impl App {
     }
 
     /// What a command acts on: the entries it names (a surface acting on
-    /// what it showed: Details, the tag editor; a script or an agent, which
+    /// what it showed: Properties, the tag editor; a script or an agent, which
     /// names files rather than select them, ADR-043), else the selection
     /// of `pane`, the active one when `None`. Every command that acts on
     /// entries asks this, so each can be given them. None at all is

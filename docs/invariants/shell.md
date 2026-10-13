@@ -92,7 +92,7 @@ of bars, split or not.
   `address::crumbs`): `Papers › 2026`, `stick › Photos`, else Home. With
   `ui.full_path`, every trail starts at `/` under real names.
 - Tabs and history use the sidebar's name (`App::location_title`);
-  listings, toasts and Details use the folder's own. Up goes to the real
+  listings, toasts and Properties use the folder's own. Up goes to the real
   parent; Ctrl+L edits the real path.
 - Back and Forward list history on right-click or a long press, as in a
   browser (`ui.history_menu`; `back`/`forward` take `steps`). A long
@@ -216,7 +216,7 @@ of bars, split or not.
   drops and the menu still work. The banner above the view is only for an
   error beside existing entries.
 
-## Details and links
+## Properties and links
 
 - A provider's fact can carry a command (`Detail::with_action`), drawn as
   a link after the value and run through `Shell::run`. Clicking the row

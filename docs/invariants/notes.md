@@ -15,7 +15,7 @@ registered in `App::notes` by its plugin); all share one model,
 | Plugin | Stores |
 | --- | --- |
 | `tags` | `user.*` attributes (`xdg.rs`, Dolphin's keys); a Mac's Finder attributes, under whichever name they reached Linux (`finder.rs`); `._` files on volumes without attributes (`appledouble.rs`, which also keeps the desktop's attributes as `xdg.tags`) |
-| `xmp` | sidecars `x.jpg.xmp`, and Adobe's `x.xmp` while its stem is its file's alone, edited in place so unknown content stays; embedded XMP, read for Details only |
+| `xmp` | sidecars `x.jpg.xmp`, and Adobe's `x.xmp` while its stem is its file's alone, edited in place so unknown content stays; embedded XMP, read for Properties only |
 | `tagspaces` | `.ts/x.json`, a folder's `.ts/tsm.json` (exact color kept, read as the palette's nearest), `.ts/tsi.json` as a search hint |
 | `name-tags` | `name[a b].ext` (TagSpaces, read only where a `.ts` folder exists); `name -- a b.ext` (filetags, off until asked) |
 
@@ -45,11 +45,11 @@ registered in `App::notes` by its plugin); all share one model,
   other attribute and its mode; one laid out otherwise is never written.
 - An edit of several files applies the change (`tags.edit`: add these,
   remove those), never a list written over each file.
-- Commands take `entries`, so Details and the tag editor act on what they
+- Commands take `entries`, so Properties and the tag editor act on what they
   showed, not on the selection at the time.
 - Stores that disagree are merged against what Skwir last wrote (a
   snapshot in the cache): another application's later edit wins; an
-  emptied store is not an edit. Details shows where notes are and which
+  emptied store is not an edit. Properties shows where notes are and which
   stores differ; `notes.agree` aligns them.
 
 ## Tags
@@ -63,12 +63,12 @@ registered in `App::notes` by its plugin); all share one model,
   (`metadata::tag_within`): searches, index counts (each file once),
   renames (`Places` takes `Places/France` along, pin and color included),
   removals. Nothing writes categories onto files. A chip shows the leaf
-  (`metadata::tag_leaf`), Details the path. `tags.move` moves tags into a
+  (`metadata::tag_leaf`), Properties the path. `tags.move` moves tags into a
   category.
 - **Exclusive categories** are Skwir's `key:value`: a category holding
   one tag at a time (`tags.exclusive`, `metadata::TAG_EXCLUSIVE_SETTING`)
   replaces its value on every edit (`metadata::with_exclusive`), takes
-  one tag in the tag editor, shows as its own Details row (`Status:
+  one tag in the tag editor, shows as its own Properties row (`Status:
   Draft`), and keeps the mark when renamed.
 
 ## The tags index
@@ -108,7 +108,7 @@ registered in `App::notes` by its plugin); all share one model,
   file (`._` copied whole or created); where attributes are kept, a `._`
   file's are taken in. A copy fails only when nothing can keep them.
   Copies keep every `user.*` attribute (ADR-006).
-- Details lists a file's companions, and an orphan's owner.
+- Properties lists a file's companions, and an orphan's owner.
 - A batch whose folder's names are all known is filled with them
   (`MetadataProvider::fill_listed`): stores find companions in the
   listing, not the folder.

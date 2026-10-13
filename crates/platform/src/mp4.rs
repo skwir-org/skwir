@@ -50,7 +50,7 @@ pub fn taken(path: &Path) -> Taken {
     }
 }
 
-/// The facts for Details: the position, which shows the video on the map.
+/// The facts for Properties: the position, which shows the video on the map.
 pub fn details(path: &Path) -> Vec<Detail> {
     taken(path)
         .at

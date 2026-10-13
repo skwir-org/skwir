@@ -1,16 +1,19 @@
-//! Details: everything known about what the panel shows.
+//! Properties: everything known about what the panel shows (ADR-058).
 //!
-//! A section of the preview frame, not a kind of preview. With nothing to
-//! preview (a folder, an unknown file, several entries) it is always open;
-//! under a preview it opens on demand in the same place, under the header's
-//! card and above the toolbar (`preview::under_card`, the one place that
-//! draws it).
+//! A section of the preview frame, not a kind of preview and not a dialog
+//! of its own: what other file managers open as a Properties window
+//! (Alt+Enter, Ctrl+I, the context menu's last item) is this, following
+//! the selection. With nothing to preview (a folder, an unknown file,
+//! several entries) it is always open; under a preview it opens on demand
+//! in the same place, under the header's card and above the toolbar
+//! (`preview::under_card`, the one place that draws it), as tall as what
+//! it says, up to the whole panel.
 //!
 //! Facts come from three places, none of them read while painting: the entry's
 //! metadata, with its provenance, collected when the entry or its listing
 //! changes (`entry_groups`); what the preview already holds in memory (a
 //! picture's size, a document's pages, a film's length); and what the format
-//! itself told us (`Inspection::details`). Details never starts a scan.
+//! itself told us (`Inspection::details`). Properties never starts a scan.
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 use skwir_core::command::Invocation;
@@ -126,7 +129,7 @@ fn label_of(key: &str) -> String {
     })
 }
 
-/// The fields Details names itself; any other is shown under More.
+/// The fields Properties names itself; any other is shown under More.
 const CORE: [&str; 19] = [
     keys::SIZE,
     keys::MODIFIED,
@@ -547,11 +550,11 @@ fn star_picker(
         }))
 }
 
-/// Whether there is nothing to show but the details. A preview still on
-/// its way is not nothing: Details waits for the answer rather than
+/// Whether there is nothing to show but the properties. A preview still on
+/// its way is not nothing: Properties waits for the answer rather than
 /// filling the body for the instant before a picture replaces it. Nor is
 /// a member with no preview of its own while its container's view is kept
-/// above it (`PreviewState::parked`): that view is content, so Details
+/// above it (`PreviewState::parked`): that view is content, so Properties
 /// stays as the card left it, opened and closed on demand.
 pub fn alone(shell: &Shell) -> bool {
     shell.preview.media.session.is_none()
@@ -567,23 +570,24 @@ pub fn alone(shell: &Shell) -> bool {
 
 /// The section: right under the header's card, above the toolbar
 /// (`preview::under_card` puts it there, and nothing else draws it). Opened
-/// on demand under a preview or above a container's kept rows, taking up
-/// to half the panel; always open when `alone`, as tall as what it says,
-/// scrolling only when the panel is too short. The header's card (or its
-/// Details button) is what opens it, and holds the name, type, size and date, so the groups here
-/// repeat none of those.
+/// on demand under a preview or above a container's kept rows; always
+/// open when `alone`. As tall as what it says, up to the whole panel (what
+/// is under it takes the rest), scrolling only when the panel is too
+/// short. The header's card (or its Properties button) is what opens it,
+/// and holds the name, type, size and date, so the groups here repeat none
+/// of those.
 pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let preview = &shell.preview;
     // Nothing to say (a search named with nothing selected): no section,
     // not an empty one with its scrollbar.
-    let nothing = preview.details.is_empty()
+    let nothing = preview.properties.is_empty()
         && preview.selection_summary.is_none()
         && preview.fields.is_empty();
     if preview.info.name.is_empty() || nothing {
         return None;
     }
     let alone = alone(shell);
-    if !alone && !preview.details_open {
+    if !alone && !preview.properties_open {
         return None;
     }
     let section = div()
@@ -593,13 +597,12 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         .bg(theme.bg)
         .border_b_1()
         .border_color(theme.border)
-        .when(alone, gpui::Styled::flex_initial)
-        .when(!alone, |d| d.flex_none().max_h(gpui::relative(0.5)));
+        .flex_initial();
     let groups = preview
         .selection_summary
         .iter()
         .chain(preview_group(shell).iter())
-        .chain(preview.details.iter())
+        .chain(preview.properties.iter())
         .cloned()
         .map(|mut group| {
             // What the system adds to the mode, read after the rest.
@@ -615,7 +618,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         .collect::<Vec<_>>();
     let mut list = div()
         .id("details-list")
-        .track_scroll(&preview.details_scroll)
+        .track_scroll(&preview.properties_scroll)
         .overflow_y_scroll()
         .flex_1()
         .min_h_0()
@@ -716,7 +719,9 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
                     .child(list)
                     .child(crate::elements::scrollbar::vertical(
                         "details-scrollbar",
-                        crate::elements::scrollbar::Scrolls::Offset(preview.details_scroll.clone()),
+                        crate::elements::scrollbar::Scrolls::Offset(
+                            preview.properties_scroll.clone(),
+                        ),
                     )),
             )
             .into_any_element(),

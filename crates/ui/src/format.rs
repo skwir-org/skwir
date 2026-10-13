@@ -2,7 +2,7 @@
 
 use std::time::SystemTime;
 
-/// `1.2 MB`, `512 B`: as every preview and Details say it.
+/// `1.2 MB`, `512 B`: as every preview and Properties say it.
 pub use skwir_platform::inspection::size;
 
 /// `YYYY-MM-DD HH:MM` in the local time zone.
@@ -10,7 +10,7 @@ pub fn time(t: SystemTime) -> String {
     local(t, "%Y-%m-%d %H:%M")
 }
 
-/// With the seconds, where the exact value is asked for (Details).
+/// With the seconds, where the exact value is asked for (Properties).
 pub fn exact_time(t: SystemTime) -> String {
     local(t, "%Y-%m-%d %H:%M:%S")
 }

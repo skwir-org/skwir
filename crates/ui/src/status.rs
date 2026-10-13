@@ -3,7 +3,7 @@
 //! waiting for a paste, proposals to review, the shelf, Undo) ends the
 //! footer of the last pane, at the window's bottom right whichever way a
 //! split runs. The side panels have none: the sidebar's facts are on its
-//! rows and the preview's in Details, so they run to the window's foot.
+//! rows and the preview's in Properties, so they run to the window's foot.
 //! Messages are toasts (`set_status`), never a footer's.
 
 use gpui::{AnyElement, Context, div, prelude::*, px};

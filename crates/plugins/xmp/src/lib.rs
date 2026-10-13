@@ -2,7 +2,7 @@
 //! beside it or inside it (ADR-027). A sidecar is a notes store: read with
 //! the others, updated where it is, created only when the user asks
 //! (Notes page); it is a companion of its file (ADR-028), which it follows.
-//! XMP inside a file (a picture's, a PDF's) is read on demand for Details,
+//! XMP inside a file (a picture's, a PDF's) is read on demand for Properties,
 //! never written: that would change the file's content.
 //!
 //! Sidecars are named two ways: darktable, digiKam and others add `.xmp`
@@ -262,7 +262,7 @@ impl Companion for XmpCompanion {
     }
 }
 
-/// XMP inside a file, read for Details: what it says of its keywords,
+/// XMP inside a file, read for Properties: what it says of its keywords,
 /// rating and description.
 pub struct Embedded;
 
@@ -332,7 +332,7 @@ impl Plugin for XmpPlugin {
         "XMP"
     }
     fn description(&self) -> &'static str {
-        "Tags, ratings and descriptions in XMP sidecars, as photo applications keep them; XMP inside pictures and PDFs shown in Details"
+        "Tags, ratings and descriptions in XMP sidecars, as photo applications keep them; XMP inside pictures and PDFs shown in Properties"
     }
     fn category(&self) -> Category {
         Category::Files

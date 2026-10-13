@@ -1166,7 +1166,7 @@ pub(crate) fn read(path: &Path, wanted: u64, cancel: &CancelToken) -> anyhow::Re
     })
 }
 
-/// What a Word document says about itself, for Details.
+/// What a Word document says about itself, for Properties.
 pub(crate) fn about(
     path: &Path,
     cancel: &CancelToken,

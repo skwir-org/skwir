@@ -427,6 +427,7 @@ impl Shell {
             .filter(|m| when_holds(m.when.as_deref(), ctx, &types))
             .collect();
         items.extend(self.verb_items(ctx));
+        items.push(self.properties_item());
         let answers = sources
             .into_iter()
             .filter(|source| when_holds(source.when.as_deref(), ctx, &types))
@@ -461,6 +462,25 @@ impl Shell {
                 Vec::new()
             }
         }
+    }
+
+    /// The menu's last item, as other file managers have it: Properties of
+    /// what it is about (the folder, on its background), or hiding them
+    /// where they cover a preview. One command either way, so the item
+    /// names its keys.
+    fn properties_item(&self) -> MenuItem {
+        let title = if self.properties_hide() {
+            "Hide Properties"
+        } else {
+            "Properties"
+        };
+        MenuItem::new(
+            "context",
+            title,
+            "info",
+            490,
+            skwir_core::command::Invocation::new("ui.properties"),
+        )
     }
 
     /// `ui.context_menu` (Menu key, Shift+F10): the menu a right-click on
@@ -668,7 +688,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// A tag's menu where a file shows it (Details): the tag's own menu,
+    /// A tag's menu where a file shows it (Properties): the tag's own menu,
     /// as the sources of tags' menus answer it (the tags plugin's: the same
     /// as its pill's and its place's in a tag location).
     pub fn open_tag_menu(

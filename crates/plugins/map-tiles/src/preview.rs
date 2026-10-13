@@ -1,5 +1,5 @@
 //! Tile archives previewed as the maps they hold: what the file says of
-//! itself in Details, and on the preview's map its tiles over the
+//! itself in Properties, and on the preview's map its tiles over the
 //! background where it has them (`Inspection::tiles`), fitted to its area.
 //! Tiles skwir does not draw (vector shapes, AVIF, Brotli) leave the area
 //! outlined instead, and the notice says why.

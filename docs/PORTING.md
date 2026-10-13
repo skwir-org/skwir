@@ -73,9 +73,9 @@ Left:
   elsewhere (`Scanner::list_root`). Windows needs allocation sizes and link
   counts from a handle.
 - `platform/src/users.rs` **(c)**: `/etc/passwd`, `/etc/group`,
-  `users::mode`; shown in `ui/details.rs`, loaded in `ui/shell.rs`. Windows
+  `users::mode`; shown in `ui/properties.rs`, loaded in `ui/shell.rs`. Windows
   entries carry no mode or owner (`keys::MODE`, `UID`, `GID` unset), and
-  Details omits those rows (step E: owners by SID).
+  Properties omits those rows (step E: owners by SID).
 - `platform/src/access.rs` **(c)**: POSIX ACLs, capabilities, SELinux.
 - Hidden by name alone **(c)**: `query/plocate.rs`, `tags/index.rs`,
   `tags/count.rs`; on macOS the `read_dir` walks (`fs::is_hidden`).

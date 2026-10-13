@@ -320,7 +320,7 @@ impl PreviewProvider for Provider {
                 })
                 .collect();
         }
-        // What the package says about the book, for the panel's Details.
+        // What the package says about the book, for the panel's Properties.
         let metadata = book.metadata();
         let people = |names: Vec<&str>| names.join(", ");
         let details = inspection::details([
@@ -898,7 +898,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [("Start", 0), ("Middle", 1), ("End", 0)]
         );
-        // What the package says about the book reaches the panel's Details;
+        // What the package says about the book reaches the panel's Properties;
         // a field the book leaves blank (no author here) is not a row.
         assert_eq!(
             first

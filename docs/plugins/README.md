@@ -5,7 +5,7 @@ runs it: a **WebAssembly module** (ADR-046) or a **program** (ADR-045).
 Skwir finds it in a plugin folder, lists it on Settings › Plugins with what
 it may do, and runs it once the user turns it on. It can provide:
 
-- **fields** shown in Details (a text's word count, a format's version);
+- **fields** shown in Properties (a text's word count, a format's version);
 - **thumbnails** for files of some types;
 - **previews**, one of:
   - an inspection: text, code, hexadecimal rows or a table, a page at a
@@ -93,7 +93,7 @@ More examples:
 ```toml
 id = "word-count"            # lowercase, digits, dashes: names its commands and fields
 title = "Word count"
-description = "How many words a text holds, in Details"
+description = "How many words a text holds, in Properties"
 category = "files"           # browsing, files (default), previews or desktop
 capabilities = ["read"]      # read, write, network, programs
 api = 1                      # the protocol version it speaks (default 1)
@@ -103,7 +103,7 @@ module = "word_count.wasm"   # or: program = "bin/word-count", args = [...]
 
 [[fields]]
 key = "word-count.words"     # under the id
-label = "Words"              # what Details calls it; none keeps it out of Details
+label = "Words"              # what Properties calls it; none keeps it out of Properties
 types = ["text/plain"]       # MIME types, matched with their aliases
 
 [[thumbnails]]

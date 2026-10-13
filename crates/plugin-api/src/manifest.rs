@@ -4,7 +4,7 @@
 //! ```toml
 //! id = "word-count"
 //! title = "Word count"
-//! description = "How many words a text holds, in Details"
+//! description = "How many words a text holds, in Properties"
 //! category = "files"
 //! capabilities = ["read"]
 //!
@@ -110,13 +110,13 @@ pub struct Run {
     pub args: Vec<String>,
 }
 
-/// A field it reads on demand, shown in Details.
+/// A field it reads on demand, shown in Properties.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FieldDecl {
     /// `<id>.name`.
     pub key: String,
-    /// What Details calls it; none keeps it out of Details.
+    /// What Properties calls it; none keeps it out of Properties.
     #[serde(default)]
     pub label: Option<String>,
     /// The MIME types of the files it reads it from.

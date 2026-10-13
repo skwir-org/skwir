@@ -58,8 +58,10 @@ pub struct Session {
     /// How tall the preview is when it is at the bottom, once dragged; 0
     /// until then (the default makes room for a pinned player).
     pub preview_height: f32,
-    /// Whether Details is open under the preview.
-    pub details: bool,
+    /// Whether Properties is open under the preview (`details` until it
+    /// was renamed, ADR-058).
+    #[serde(alias = "details")]
+    pub properties: bool,
     pub timeline: bool,
     /// How tall the pinned player's dock was dragged.
     pub player_height: f32,
@@ -117,7 +119,7 @@ impl Shell {
             members_height_share: self.preview.members_share.above,
             members_width_share: self.preview.members_share.beside,
             preview_height: self.preview.height.unwrap_or(0.),
-            details: self.preview.details_open,
+            properties: self.preview.properties_open,
             timeline: self.timeline.open,
             player_height: self.player.height,
             terminal: self.terminal.open,

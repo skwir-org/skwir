@@ -703,7 +703,7 @@ fn handle_message(
             if let Some(v) = tags.get::<gst::tags::Album>() {
                 player.state.album = v.get().chars().take(512).collect();
             }
-            // The rest of what the stream says, for the panel's Details.
+            // The rest of what the stream says, for the panel's Properties.
             let mut note = |label: &str, value: Option<String>| {
                 let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
                     return;

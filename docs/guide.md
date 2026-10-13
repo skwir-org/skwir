@@ -210,7 +210,7 @@ the text can be typed as is:
 ## Tags, ratings and comments
 
 `Ctrl+Shift+G` edits the tags of the selection (`Ctrl+Enter` applies).
-Details (`Ctrl+I`, or `Alt+Enter` on a file) shows them with the rating
+Properties (`Ctrl+I`, or `Alt+Enter` on a file) shows them with the rating
 and the comment.
 
 - **Where they are kept.** Where other applications keep them: the
@@ -220,7 +220,7 @@ and the comment.
   in names (TagSpaces' `name[a b].ext` where you use TagSpaces;
   filetags' `name -- a b.ext` once turned on). Settings › Notes says
   which to read and which to write. When two disagree, the latest change
-  wins and Details says so.
+  wins and Properties says so.
 - **Categories.** A tag named `Places/France/Paris` is within
   `Places/France` and `Places`: a search for `Places` finds it. A
   category can hold one tag at a time (Status: Draft, Done).

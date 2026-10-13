@@ -1,7 +1,7 @@
 //! A map preview: a GPS track, a route, a file of places (the `geo`
 //! plugin's `InspectionKind::Map`), drawn by `elements::map`.
 //!
-//! It is an inspection like any other, so Details, the switch to the
+//! It is an inspection like any other, so Properties, the switch to the
 //! file's source and the way back out of a container are the frame's.
 //! What is its own: the map takes the pointer (drag to move, the wheel or a
 //! double click to zoom) and, once clicked, the keys (arrows move it, the
