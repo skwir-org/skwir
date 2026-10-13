@@ -180,6 +180,14 @@ type_complexity = "allow"
 return_self_not_must_use = "allow"
 wildcard_imports = "allow"
 
+# Debug info stays in `.dwo` files beside the objects, out of the link:
+# it was 92 % of a test binary (646 of 702 MB for skwir-ui's), and eight
+# such links at once ran a 30 GB machine out of memory. Backtraces and
+# debuggers read it where it is. macOS splits it so already; Cargo leaves
+# the option out where a target lacks it (Windows).
+[profile.dev]
+split-debuginfo = "unpacked"
+
 [profile.release]
 debug = 1          # keep symbols for flamegraphs
 lto = "thin"
