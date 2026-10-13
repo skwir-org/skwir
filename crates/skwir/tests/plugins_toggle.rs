@@ -18,6 +18,7 @@ struct Snapshot {
     menus: usize,
     /// Items made when a menu opens (the default application named).
     menu_sources: usize,
+    property_sources: usize,
     places: usize,
     /// What keeps a kind of location in the sidebar (bookmarks, searches).
     keepers: Vec<String>,
@@ -71,6 +72,7 @@ fn snapshot(app: &App) -> Snapshot {
         schemes: app.registry.schemes.all().len(),
         menus: app.registry.menus.all().len(),
         menu_sources: app.registry.menu_sources.all().len(),
+        property_sources: app.registry.property_sources.all().len(),
         places: app.registry.places.all().len(),
         keepers: app
             .registry

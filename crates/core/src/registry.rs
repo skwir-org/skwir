@@ -491,6 +491,53 @@ pub struct MenuSource {
     pub replaces: Vec<Invocation>,
 }
 
+/// A plugin's rows in Properties (ADR-058). `command`, dispatched on a
+/// worker with `entries` (the entry Properties shows, as an `EntryRef`),
+/// answers `{ "rows": [Property] }`. Properties asks when it shows
+/// another entry, and again when `revision` moves: the plugin moves it
+/// when what it would answer changed (a checksum computed, a default
+/// application chosen). An error, or an answer it cannot read, is no rows.
+#[derive(Clone, Debug)]
+pub struct PropertySource {
+    pub command: Invocation,
+    pub revision: Arc<AtomicU64>,
+}
+
+impl PropertySource {
+    /// A source answered by `command`, with a revision of its own.
+    pub fn new(command: Invocation) -> Self {
+        PropertySource {
+            command,
+            revision: Arc::default(),
+        }
+    }
+
+    /// Say that what it answers changed: Properties asks again.
+    pub fn changed(&self) {
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// A row a property source answers: the group it joins (`General`, or one
+/// of its own named so), its label and value, and links after the value.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Property {
+    pub group: String,
+    pub label: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub actions: Vec<PropertyAction>,
+}
+
+/// A link after a property's value: its words and what it runs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PropertyAction {
+    pub words: String,
+    pub command: Invocation,
+}
+
 /// A key binding. `keys` uses the `ctrl-shift-n` notation; chords are
 /// space-separated. Plugins add their defaults to `Registry::keymap`, below
 /// the shell's own keys; a key scheme adds its keys to `Registry::schemes`,
@@ -509,6 +556,8 @@ pub struct Registry {
     pub places: Contributions<Place>,
     pub menus: Contributions<MenuItem>,
     pub menu_sources: Contributions<MenuSource>,
+    /// Plugins' rows in Properties.
+    pub property_sources: Contributions<PropertySource>,
     pub keymap: Contributions<KeyBinding>,
     /// A key scheme's bindings (the `vim` plugin's): over the shell's own
     /// and every plugin's defaults, whatever order plugins were enabled in.
@@ -531,6 +580,7 @@ impl Default for Registry {
             places: Contributions::gated(Arc::clone(&gate)),
             menus: Contributions::gated(Arc::clone(&gate)),
             menu_sources: Contributions::gated(Arc::clone(&gate)),
+            property_sources: Contributions::gated(Arc::clone(&gate)),
             keymap: Contributions::gated(Arc::clone(&gate)),
             schemes: Contributions::gated(Arc::clone(&gate)),
             keepers: Contributions::gated(Arc::clone(&gate)),
@@ -582,6 +632,7 @@ impl Registry {
         self.places.remove_owner(owner);
         self.menus.remove_owner(owner);
         self.menu_sources.remove_owner(owner);
+        self.property_sources.remove_owner(owner);
         self.keymap.remove_owner(owner);
         self.schemes.remove_owner(owner);
         self.keepers.remove_owner(owner);

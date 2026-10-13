@@ -395,6 +395,21 @@ pub struct PreviewState {
     pub read_only: bool,
     /// The volume last read for an entry (`VolumeFacts::kept`).
     volume_cache: VolumeCache,
+    /// What plugins say of the entry shown (`Registry::property_sources`),
+    /// each row with the group it joins.
+    pub plugin_rows: Vec<(gpui::SharedString, crate::properties::Row)>,
+    /// What the sources were last asked of: the file as `fields_for` says
+    /// it, and their revisions.
+    sources_asked: Option<(
+        std::path::PathBuf,
+        Option<std::time::SystemTime>,
+        Option<u64>,
+        u64,
+    )>,
+    sources_generation: u64,
+    sources_cancel: Option<CancelToken>,
+    sources_tx: flume::Sender<(u64, Vec<(gpui::SharedString, crate::properties::Row)>)>,
+    sources_rx: flume::Receiver<(u64, Vec<(gpui::SharedString, crate::properties::Row)>)>,
     /// A count of what folders hold, asked for.
     pub count: Option<Counting>,
     count_generation: u64,
@@ -542,6 +557,7 @@ impl Default for PreviewState {
         let (nested_tx, nested_rx) = flume::unbounded();
         let (fields_tx, fields_rx) = flume::unbounded();
         let (count_tx, count_rx) = flume::unbounded();
+        let (sources_tx, sources_rx) = flume::unbounded();
         PreviewState {
             reader: crate::reader::ReaderState::default(),
             inspection: crate::inspector::State::default(),
@@ -593,6 +609,12 @@ impl Default for PreviewState {
             volume: None,
             read_only: false,
             volume_cache: VolumeCache::default(),
+            plugin_rows: Vec::new(),
+            sources_asked: None,
+            sources_generation: 0,
+            sources_cancel: None,
+            sources_tx,
+            sources_rx,
             count: None,
             count_generation: 0,
             count_wanted: false,
@@ -1277,6 +1299,13 @@ impl Shell {
                     &user,
                 )
             });
+        }
+        self.ask_sources(&entry, &key.path);
+        while let Ok((generation, rows)) = self.preview.sources_rx.try_recv() {
+            if generation == self.preview.sources_generation {
+                self.preview.plugin_rows = rows;
+                cx.notify();
+            }
         }
         while let Ok((generation, read)) = self.preview.fields_rx.try_recv() {
             if generation == self.preview.fields_generation {
@@ -2259,6 +2288,64 @@ impl Shell {
                     read_only: skwir_core::fs::volume::read_only(&path).unwrap_or(false),
                 };
                 if !read.is_empty() && tx.send((generation, read)).is_ok() {
+                    wake();
+                }
+            },
+        );
+    }
+
+    /// Ask the plugins what they say of the entry shown, on a worker
+    /// (their commands may read the file): again when the file changes or
+    /// a source says its answers did. Rows of another file go at once; a
+    /// source's new answer replaces its old one when it comes.
+    fn ask_sources(&mut self, entry: &skwir_core::entry::Entry, path: &std::path::Path) {
+        let sources = self.app.registry.property_sources.all();
+        let revision = sources.iter().fold(
+            self.app.registry.property_sources.revision(),
+            |sum, source| {
+                sum.wrapping_add(source.revision.load(std::sync::atomic::Ordering::Acquire))
+            },
+        );
+        let Some((at, modified, size)) = self.preview.fields_for.clone() else {
+            return;
+        };
+        let asked = (at, modified, size, revision);
+        if self.preview.sources_asked.as_ref() == Some(&asked) {
+            return;
+        }
+        if self
+            .preview
+            .sources_asked
+            .as_ref()
+            .is_none_or(|before| (&before.0, before.1, before.2) != (&asked.0, asked.1, asked.2))
+        {
+            self.preview.plugin_rows.clear();
+        }
+        self.preview.sources_asked = Some(asked);
+        self.preview.sources_generation += 1;
+        if let Some(before) = self.preview.sources_cancel.take() {
+            before.cancel();
+        }
+        if sources.is_empty() {
+            return;
+        }
+        let generation = self.preview.sources_generation;
+        let cancel = self.app.lifetime().child();
+        self.preview.sources_cancel = Some(cancel.clone());
+        let tx = self.preview.sources_tx.clone();
+        let wake = self.app.waker_handle();
+        let weak = self.app.weak();
+        let target = skwir_core::op::EntryRef::new(entry.file(), path);
+        self.app.scheduler.spawn(
+            skwir_core::scheduler::Priority::Visible,
+            "properties-sources",
+            cancel,
+            move || {
+                let Some(app) = weak.upgrade() else {
+                    return;
+                };
+                let rows = crate::properties::plugin_rows(&app, &sources, &target);
+                if tx.send((generation, rows)).is_ok() {
                     wake();
                 }
             },

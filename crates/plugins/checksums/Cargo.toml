@@ -1,0 +1,27 @@
+[package]
+name = "skwir-plugin-checksums"
+description = "skwir plugin: a file's SHA-256, MD5 and BLAKE3 in Properties, computed when asked"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+skwir-core.workspace = true
+anyhow.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+indexmap.workspace = true
+tracing.workspace = true
+blake3.workspace = true
+md5.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

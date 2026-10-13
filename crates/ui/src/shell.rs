@@ -1810,6 +1810,17 @@ impl Shell {
                     self.set_status(format!("Copied {what}"), false, cx);
                 }
             }
+            "compare_copied" => {
+                if let Some(text) = arg("text") {
+                    let copied = cx
+                        .read_from_clipboard()
+                        .and_then(|item| item.text())
+                        .unwrap_or_default();
+                    let what = arg("what").unwrap_or_else(|| "text".into());
+                    let (said, wrong) = compared(&text, &copied, &what);
+                    self.set_status(said, wrong, cx);
+                }
+            }
             "tag_editor_apply" => self.tag_editor_apply(window, cx),
             // An address followed (a document's link, one found in text,
             // where a file was downloaded from), opened by the desktop when
@@ -2722,5 +2733,47 @@ impl Render for Shell {
             self.pane = pane;
         }
         self.resize_hook(root, cx)
+    }
+}
+
+/// Whether `copied` holds `text` (a checksum), ignoring case: the whole
+/// clipboard or one of its words (`sha256sum` writes the name after it),
+/// in words, and whether that is wrong. One word as long as it, but
+/// another, differs; nothing of its length is nothing to compare.
+fn compared(text: &str, copied: &str, what: &str) -> (String, bool) {
+    let same = |word: &str| word.eq_ignore_ascii_case(text);
+    let words = || copied.split_whitespace();
+    if same(copied.trim()) || words().any(same) {
+        (format!("The {what} is the one copied"), false)
+    } else if words().any(|word| word.len() == text.len()) {
+        (format!("The {what} differs from the one copied"), true)
+    } else {
+        (format!("No {what} is copied to compare with"), true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_checksum_is_compared_with_what_is_copied() {
+        let sum = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        let said = |copied: &str| super::compared(sum, copied, "SHA-256");
+        assert_eq!(
+            said(&sum.to_uppercase()),
+            ("The SHA-256 is the one copied".into(), false)
+        );
+        assert_eq!(
+            said(&format!("{sum}  it's a café.iso\n")),
+            ("The SHA-256 is the one copied".into(), false),
+            "as sha256sum writes it"
+        );
+        assert_eq!(
+            said(&"0".repeat(64)),
+            ("The SHA-256 differs from the one copied".into(), true)
+        );
+        assert_eq!(
+            said("a sentence"),
+            ("No SHA-256 is copied to compare with".into(), true)
+        );
     }
 }

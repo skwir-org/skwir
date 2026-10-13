@@ -289,6 +289,13 @@ it is on. On the folder's background it describes the folder shown.
   drive say why they cannot change.
 - Flags the system keeps say why a file resists: Immutable (no one can
   delete it), Append only, Compressed, Encrypted.
+- **Opens with** names the application a file's type opens with; Change…
+  makes another the default for every file of that type (Undo in the
+  message takes it back).
+- **Checksums**: SHA-256, MD5 and BLAKE3, each computed when you click
+  Compute. Copy puts one on the clipboard; Compare with copied says
+  whether a checksum you copied (from a download page, or `sha256sum`'s
+  line) is the same.
 - Over a preview, Properties takes the room it needs; `Alt+Enter` again
   gives it back to the preview.
 

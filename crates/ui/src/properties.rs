@@ -499,6 +499,54 @@ pub fn selection_group(
     }
 }
 
+/// What `sources` say of the entry `target`, each row with the group it
+/// joins: their commands dispatched in turn, a source that fails or
+/// answers what is no rows saying nothing. On a worker.
+pub fn plugin_rows(
+    app: &skwir_core::App,
+    sources: &[skwir_core::registry::PropertySource],
+    target: &EntryRef,
+) -> Vec<(SharedString, Row)> {
+    #[derive(serde::Deserialize)]
+    struct Answer {
+        rows: Vec<skwir_core::registry::Property>,
+    }
+    let mut rows = Vec::new();
+    for source in sources {
+        let command = source
+            .command
+            .clone()
+            .with("entries", serde_json::json!([target]));
+        let answer = match app.dispatch(&command) {
+            Ok(skwir_core::command::Outcome::Value(value)) => {
+                serde_json::from_value::<Answer>(value)
+            }
+            Ok(_) => continue,
+            Err(e) => {
+                tracing::debug!(command = %command.name, "property source: {e:#}");
+                continue;
+            }
+        };
+        match answer {
+            Ok(answer) => rows.extend(answer.rows.into_iter().map(|property| {
+                (
+                    SharedString::from(property.group),
+                    Row {
+                        actions: property
+                            .actions
+                            .into_iter()
+                            .map(|a| (a.words.into(), a.command))
+                            .collect(),
+                        ..Row::new(property.label, property.value)
+                    },
+                )
+            })),
+            Err(e) => tracing::debug!(command = %command.name, "property source answer: {e}"),
+        }
+    }
+    rows
+}
+
 /// The user Properties offers changes to: who they are and their groups
 /// (`skwir_platform::users`), asked when Properties is collected.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1193,6 +1241,26 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         })
         .filter(|group| !group.rows.is_empty())
         .collect::<Vec<_>>();
+    // What plugins say: in the group each names, or one of its own before
+    // the drive's.
+    let mut groups = groups;
+    for (title, row) in &preview.plugin_rows {
+        if let Some(group) = groups.iter_mut().find(|g| &g.title == title) {
+            group.rows.push(row.clone());
+        } else {
+            let at = groups
+                .iter()
+                .position(|g| g.title.as_ref() == "Volume")
+                .unwrap_or(groups.len());
+            groups.insert(
+                at,
+                Group {
+                    title: title.clone(),
+                    rows: vec![row.clone()],
+                },
+            );
+        }
+    }
     let mut list = div()
         .id("details-list")
         .track_scroll(&preview.properties_scroll)

@@ -27,7 +27,9 @@
   items their kinds, total and the access they share. It changes who
   may use them: each class's access in words, Allow running, the group,
   or the mode as chmod takes it, a folder's contents too, undoable; a
-  script's `set_access` does the same.
+  script's `set_access` does the same. It names the application a file
+  opens with and changes it, and gives its SHA-256, MD5 and BLAKE3 when
+  asked (the checksums plugin), compared with one copied.
 
 ## 0.1.0 (2026-10-13)
 

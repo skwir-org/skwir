@@ -7065,6 +7065,7 @@ dependencies = [
  "skwir-core",
  "skwir-extend",
  "skwir-platform",
+ "skwir-plugin-checksums",
  "skwir-plugin-control",
  "skwir-plugin-edit-as-buffer",
  "skwir-plugin-geo",
@@ -7352,6 +7353,24 @@ dependencies = [
  "serde_json",
  "toml 0.9.12+spec-1.1.0",
  "wit-bindgen",
+]
+
+[[package]]
+name = "skwir-plugin-checksums"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "indexmap",
+ "md5",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "skwir-core",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

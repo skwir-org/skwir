@@ -1,8 +1,6 @@
 # ADR-058: Properties
 
-Status: accepted, 2026-10-13. Built: the panel renamed, its menu item
-and keys (point 1); what it says (points 2 and 3); access changed by
-plans (points 4 and 5).
+Status: accepted, 2026-10-13. Built.
 
 ## Context
 
@@ -79,3 +77,5 @@ plans (points 4 and 5).
 - A shortcut saved for `ui.preview_details` runs `ui.properties`.
 - Properties over a preview may leave the preview no room; hiding it
   gives the room back.
+- A plugin from outside skwir adds fields to Properties, not property
+  sources: its protocol has no rows with links yet.

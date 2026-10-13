@@ -502,6 +502,7 @@ const ACTS: &[&str] = &[
     "ui.preview_open_external",
     "ui.map_open",
     "ui.copy_text",
+    "ui.compare_copied",
     "ui.preview_copy",
     "ui.preview_copy_path",
     "ui.terminal_copy",
@@ -1131,6 +1132,12 @@ pub fn declare_all(app: &App) {
         "Show a file in its folder, at a line of its preview",
     );
     declare::<CopyText>(app, "ui.copy_text", "Copy", "Put a text on the clipboard");
+    declare::<CopyText>(
+        app,
+        "ui.compare_copied",
+        "Compare with copied",
+        "Say whether the clipboard holds a text (a checksum a download page gives, one word of it or all), ignoring case",
+    );
     none("ui.jump", "Jump…", "Go to a folder or file Jump knows");
     // The window.
     none("ui.palette", "Command palette", "Find a command and run it");

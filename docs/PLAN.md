@@ -710,6 +710,27 @@ the list walked with the arrows; the place's caption kept at the list's
 top. Not done: a key scheme chosen from the page, and "Set shortcut…"
 from F1 or the palette.
 
+Properties (ADR-058): Details renamed, the context menu's last item
+(after the submenus, Alt+Enter), up to the whole panel over a preview. A
+folder's total counted on request by the core (`fs::count`), not by
+Usage as first planned (its requests are a pane's view's); room on the
+drive, the drive, the system's flags; several entries' kinds, total and
+shared access. Access changed by plans (`set_access`: chmod's grammar,
+a group, what folders hold; no owner, no administrator rights), offered
+in words. Plugins add rows through property sources: Open with's Opens
+with, a new checksums plugin (SHA-256, MD5, BLAKE3, compared with one
+copied). Checked in a window on Xvfb: Properties from the menu counted a
+folder at once (a hard link once); `/` counted with 16 drives mounted
+inside left out; the Nix store's count stopped and kept; a sparse 50 MB
+image said 0 B on disk; Allow running made a script 755 and Undo 644; a
+folder's others set to None with what it holds (750 and 640) and undone;
+a group changed to one of the user's and back; `u+q` refused in words;
+root's `/etc` read-only with why; a default application changed (written
+to the test's own lists); a SHA-256 equal to `sha256sum`'s and compared
+with its copied line. Not checked in a window: a read-only drive's
+links taken away, a drive keeping no permissions (FAT), Windows' and
+macOS' code (compiled and linted only).
+
 ---
 
 ## Maps

@@ -99,6 +99,7 @@ skwir-plugin-terminal = { path = "crates/plugins/terminal" }
 skwir-plugin-geo = { path = "crates/plugins/geo" }
 skwir-plugin-map-tiles = { path = "crates/plugins/map-tiles" }
 skwir-plugin-vim = { path = "crates/plugins/vim" }
+skwir-plugin-checksums = { path = "crates/plugins/checksums" }
 
 # UI toolkit (ADR-001). Pinned exactly: the API moves between releases.
 gpui = "=0.2.2"
@@ -119,6 +120,8 @@ open = "5"
 xdg-mime = "0.4"
 mime = "0.3"
 md5 = "0.8"
+# SHA-256 for the checksums plugin: the version the tree already links.
+sha2 = "0.10"
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

@@ -49,6 +49,7 @@ skwir-plugin-preview-epub.workspace = true
 skwir-plugin-preview-tables.workspace = true
 skwir-plugin-preview-playlists.workspace = true
 skwir-plugin-mpris.workspace = true
+skwir-plugin-checksums.workspace = true
 skwir-plugin-control.workspace = true
 skwir-extend.workspace = true
 skwir-plugin-preview-structured.workspace = true

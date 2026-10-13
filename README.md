@@ -46,6 +46,9 @@ has never run on either system: see [how to help](docs/HELP-WANTED.md).
   before starting.
 - **Views of data**: disk usage, a timeline of changes, a map of where
   pictures were taken.
+- **Properties** of anything selected: what a folder holds, the room a file
+  takes, who may use it in words (changed and undone like any change), the
+  application it opens with, its checksums.
 - **Keys, scripts and agents**: every action is a command, from the palette,
   `skwir cmd` or an MCP client, with private folders that never leave the
   machine.

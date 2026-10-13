@@ -509,6 +509,13 @@ is still to come are in `docs/preview-frame.md`.
   trash's files, and a row says why; a read-only drive, read on the
   worker, takes the links away (`Row::edits_access`). The group is one
   of the user's (`users::my_groups`).
+- **Plugins' rows** come from property sources
+  (`Registry::property_sources`): each source's command is dispatched on
+  a worker with the entry shown (`properties::plugin_rows`), again when
+  the file changes or a source's revision moves, never while painting; a
+  row joins the group it names, or a group of its own before the drive's.
+  The shell names no plugin: Opens with is Open with's answer, the
+  checksums the checksums plugin's.
 
 ### The toolbar
 

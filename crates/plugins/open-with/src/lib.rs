@@ -45,6 +45,9 @@ struct CatalogCache {
     last: Mutex<Option<(Stamp, Arc<Catalog>)>>,
     /// A worker is reading the catalog again for the menu (`refresh`).
     refreshing: AtomicBool,
+    /// The revision of Properties' Opens with (`open_with.properties`),
+    /// moved when a default changes.
+    properties: Arc<std::sync::atomic::AtomicU64>,
     /// What that worker lives for: until the plugin is disabled.
     work: Mutex<Option<CancelToken>>,
 }
@@ -599,7 +602,63 @@ fn rank<'a>(catalog: &'a Catalog, types: &[Mime]) -> Vec<(&'a Application, Optio
     ranked
 }
 
-fn choices(args: TargetArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ChoicesArgs {
+    #[serde(flatten)]
+    target: TargetArgs,
+    /// Choices that make the application the default for the entries'
+    /// type (they must share one) instead of opening them.
+    #[serde(default)]
+    defaults: bool,
+}
+
+/// `open_with.properties`: Properties' Opens with (ADR-058) for one file:
+/// the application its type opens with, and the way to change it. Reads
+/// the catalog where it changed and the head of a file whose name does
+/// not say its type: on Properties' worker.
+fn properties(args: TargetArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
+    let named = args.entries.clone();
+    let (_, _, targets) = targets(args, app)?;
+    let rows = match targets.as_slice() {
+        [one]
+            if one
+                .entry
+                .as_ref()
+                .is_some_and(|e| e.opens() == EntryKind::File) =>
+        {
+            let m = one.mime();
+            let catalog = catalog(cache);
+            let value = catalog
+                .default_for_lineage(&mime::lineage(&m))
+                .map_or_else(|| "No application".to_owned(), |a| a.name.clone());
+            let change = Invocation::with_args(
+                "ui.choose",
+                &serde_json::json!({
+                    "title": format!("Open {} with", files_of(m.as_str())),
+                    "placeholder": "Search applications",
+                    "source": {
+                        "name": "open_with.choices",
+                        "args": { "entries": named, "defaults": true },
+                    },
+                }),
+            );
+            vec![serde_json::json!({
+                "group": "General",
+                "label": "Opens with",
+                "value": value,
+                "actions": [{ "words": "Change…", "command": change }],
+            })]
+        }
+        _ => Vec::new(),
+    };
+    Ok(Outcome::Value(serde_json::json!({ "rows": rows })))
+}
+
+fn choices(args: ChoicesArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
+    let ChoicesArgs {
+        target: args,
+        defaults,
+    } = args;
     let here = args.here;
     // A choice opens what was asked about, as it was named.
     let named = args.entries.clone();
@@ -612,6 +671,12 @@ fn choices(args: TargetArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcom
         }
     }
     let catalog = catalog(cache);
+    if defaults {
+        let [only] = types.as_slice() else {
+            anyhow::bail!("A default application is chosen for one type of file at a time");
+        };
+        return Ok(Outcome::Value(default_choices(&catalog, only)));
+    }
     let title = match targets.as_slice() {
         [one] => {
             let name = one
@@ -664,6 +729,35 @@ fn choices(args: TargetArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcom
         });
     }
     Ok(Outcome::Value(answer))
+}
+
+/// The choices that make an application the default for `only`, the one
+/// that is now first: what Properties' Opens with changes.
+fn default_choices(catalog: &Catalog, only: &Mime) -> serde_json::Value {
+    let choices: Vec<Choice> = rank(catalog, std::slice::from_ref(only))
+        .into_iter()
+        .map(|(application, fit, is_default)| Choice {
+            title: application.name.clone(),
+            detail: is_default
+                .then(|| "Now".to_owned())
+                .or_else(|| application.generic_name.clone()),
+            icon: application.icon.clone(),
+            section: match fit {
+                Some(Fit::Exact) => "Recommended",
+                Some(Fit::Related) => "Related",
+                None => "Other applications",
+            },
+            command: Invocation::with_args(
+                "open_with.set_default",
+                &serde_json::json!({ "mime": only.as_str(), "app": application.id }),
+            ),
+        })
+        .collect();
+    serde_json::json!({
+        "title": format!("Open {} with", files_of(only.as_str())),
+        "empty": "No applications found",
+        "choices": choices,
+    })
 }
 
 fn open_with(args: OpenWithArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
@@ -761,6 +855,9 @@ fn apply_edit(app: &App, cache: &Cached, edit: &AssociationEdit, undo: bool) {
     match skwir_platform::apps::edit_associations(edit) {
         Ok(changed) => {
             let catalog = catalog(cache);
+            // Properties says the application again.
+            cache.properties.fetch_add(1, Ordering::Release);
+            app.wake();
             // What opens the type now, named or not: an undo may leave
             // the desktop's own choice.
             let now = catalog.default_for_lineage(&mime::lineage(&Mime(edit.mime.clone())));
@@ -861,14 +958,30 @@ impl Plugin for OpenWithPlugin {
             .when("selection|folder !place"),
         );
         let cache = Arc::clone(&self.catalog);
-        app.commands.register::<TargetArgs, _>(
+        app.commands.register::<ChoicesArgs, _>(
             ID,
             "open_with.choices",
             "List applications for the selection",
-            "List the applications that open the selected entries (or the pane's folder with `here`), recommended first, each with the `open_with` invocation that opens them",
+            "List the applications that open the selected entries (or the pane's folder with `here`), recommended first, each with the `open_with` invocation that opens them; with `defaults`, each with the `open_with.set_default` that makes it the default for their type",
             move |a, app| choices(a, &cache, app),
         )
         .reads();
+        let cache = Arc::clone(&self.catalog);
+        app.commands.register::<TargetArgs, _>(
+            ID,
+            "open_with.properties",
+            "Name the default application in Properties",
+            "Properties' Opens with row for one file: the application its type opens with, and the way to change it",
+            move |a, app| properties(a, &cache, app),
+        )
+        .reads();
+        app.registry.property_sources.add(
+            ID,
+            skwir_core::registry::PropertySource {
+                command: Invocation::new("open_with.properties"),
+                revision: Arc::clone(&self.catalog.properties),
+            },
+        );
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<OpenWithArgs, _>(
             ID,
@@ -1198,6 +1311,7 @@ mod tests {
             )),
             last: Mutex::default(),
             refreshing: AtomicBool::default(),
+            properties: Arc::default(),
             work: Mutex::default(),
         })
     }
@@ -1563,6 +1677,87 @@ mod tests {
         let said = next_notification(&app);
         assert_eq!(said.text, "Editor now opens PNG image files");
         assert_eq!(said.action.expect("Undo again").label, "Undo");
+    }
+
+    /// Properties' Opens with: the application a file's type opens with,
+    /// a picker of choices that change it, and a new answer once changed.
+    // The free desktops' files (step E, ADR-035).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn properties_say_what_a_file_opens_with_and_change_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let photo = root.join("it's a “photo” .png");
+        std::fs::write(&photo, b"").unwrap();
+        fake_catalog(tmp.path(), std::path::Path::new("record"));
+        let cache = cached(tmp.path());
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(
+            Arc::new(OpenWithPlugin {
+                catalog: Arc::clone(&cache),
+            }),
+            &app,
+        );
+        let source = app.registry.property_sources.all();
+        assert_eq!(source.len(), 1);
+        let ask = |path: &std::path::Path| {
+            let Outcome::Value(answer) = app
+                .dispatch(&source[0].command.clone().with(
+                    "entries",
+                    serde_json::json!([skwir_core::op::EntryRef::from_path(path).unwrap()]),
+                ))
+                .unwrap()
+            else {
+                panic!("rows are a value")
+            };
+            answer["rows"].clone()
+        };
+        let rows = ask(&photo);
+        assert_eq!(rows[0]["group"], "General");
+        assert_eq!(rows[0]["label"], "Opens with");
+        assert_eq!(rows[0]["value"], "Viewer");
+        let change = &rows[0]["actions"][0]["command"];
+        assert_eq!(change["name"], "ui.choose");
+        assert_eq!(change["args"]["title"], "Open PNG image files with");
+        let source_args = &change["args"]["source"];
+        let Outcome::Value(choices) = app
+            .dispatch(&Invocation::with_args(
+                source_args["name"].as_str().unwrap(),
+                &source_args["args"],
+            ))
+            .unwrap()
+        else {
+            panic!("choices are a value")
+        };
+        let editor = choices["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["title"] == "Editor")
+            .unwrap();
+        assert_eq!(choices["choices"][0]["detail"], "Now");
+        assert_eq!(editor["command"]["name"], "open_with.set_default");
+        assert!(choices.get("option").is_none(), "choosing is the change");
+        let before = source[0]
+            .revision
+            .load(std::sync::atomic::Ordering::Acquire);
+        app.dispatch(&serde_json::from_value(editor["command"].clone()).unwrap())
+            .unwrap();
+        assert_eq!(
+            next_notification(&app).text,
+            "Editor now opens PNG image files"
+        );
+        assert!(
+            source[0]
+                .revision
+                .load(std::sync::atomic::Ordering::Acquire)
+                > before,
+            "Properties asks again"
+        );
+        assert_eq!(ask(&photo)[0]["value"], "Editor");
+        // A folder opens in skwir: nothing to say.
+        assert_eq!(ask(&root), serde_json::json!([]));
     }
 
     #[test]
