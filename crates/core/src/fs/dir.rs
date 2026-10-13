@@ -69,6 +69,23 @@ mod unix {
             Ok(Self(fd, std::sync::OnceLock::new()))
         }
 
+        /// The folder `name` in this one, opened never through a link: a
+        /// link there fails (`ELOOP`), whatever it leads to. What a walk
+        /// that must not leave the folders it was given opens
+        /// (`op::access`), checking then that it is the folder it stat-ed.
+        ///
+        /// # Errors
+        /// When it is no folder, a link, or cannot be opened.
+        pub(crate) fn open_folder(&self, name: &OsStr) -> io::Result<Self> {
+            let fd = rustix::fs::openat(
+                &self.0,
+                name,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )?;
+            Ok(Self(fd, std::sync::OnceLock::new()))
+        }
+
         pub(crate) fn fd(&self) -> BorrowedFd<'_> {
             self.0.as_fd()
         }
@@ -238,6 +255,28 @@ mod windows {
             Ok(Self {
                 file,
                 path: Mutex::new(path.to_path_buf()),
+                id: std::sync::OnceLock::new(),
+            })
+        }
+
+        /// The folder `name` in this one, never through a link (a
+        /// symbolic link or a junction there fails), by its path in the
+        /// folder: what a walk that must not leave the folders it was
+        /// given opens (`op::access`).
+        ///
+        /// # Errors
+        /// When it is no folder, a link, or cannot be opened.
+        pub(crate) fn open_folder(&self, name: &OsStr) -> io::Result<Self> {
+            let path = self
+                .path_to(name)
+                .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+            let file = win::open(&path, true, false)?;
+            if win::info(&file)?.kind != EntryKind::Directory {
+                return Err(io::Error::from(io::ErrorKind::NotADirectory));
+            }
+            Ok(Self {
+                file,
+                path: Mutex::new(path),
                 id: std::sync::OnceLock::new(),
             })
         }

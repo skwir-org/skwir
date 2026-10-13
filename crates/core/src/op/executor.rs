@@ -854,7 +854,7 @@ impl Executor {
                             // nothing.
                             let refused = whole
                                 .then(|| {
-                                    first_conflict(&plan, &companions)
+                                    first_conflict(&plan, &companions, &job.cancel)
                                         .or_else(|| self.short_of_room(&plan, &job.cancel))
                                 })
                                 .flatten();
@@ -1160,9 +1160,15 @@ impl Executor {
 }
 
 /// The reason the first conflicting step gives, after a dry run of every
-/// step with one shared context.
-fn first_conflict(plan: &Plan, companions: &Arc<crate::companions::Companions>) -> Option<String> {
-    super::dry_run(&plan.steps, companions).find_map(|(_, status)| match status {
+/// step with one shared context, which stops when the plan is cancelled
+/// (a check walking a tree says then what it has seen).
+fn first_conflict(
+    plan: &Plan,
+    companions: &Arc<crate::companions::Companions>,
+    cancel: &CancelToken,
+) -> Option<String> {
+    let ctx = StepContext::with_cancel(cancel.clone()).with_companions(Arc::clone(companions));
+    super::dry_run_in(&plan.steps, ctx).find_map(|(_, status)| match status {
         StepStatus::Conflict { reason } => Some(reason),
         _ => None,
     })

@@ -54,7 +54,18 @@ pub(crate) fn dry_run<'a>(
     steps: &'a [Box<dyn Operation>],
     companions: &Arc<crate::companions::Companions>,
 ) -> impl Iterator<Item = (Change, StepStatus)> + 'a {
-    let ctx = StepContext::detached().with_companions(Arc::clone(companions));
+    dry_run_in(
+        steps,
+        StepContext::detached().with_companions(Arc::clone(companions)),
+    )
+}
+
+/// [`dry_run`] in `ctx`: a step whose check walks a tree (a change of
+/// access with what a folder holds) stops when its plan is cancelled.
+pub(crate) fn dry_run_in(
+    steps: &[Box<dyn Operation>],
+    ctx: StepContext,
+) -> impl Iterator<Item = (Change, StepStatus)> + '_ {
     steps.iter().map(move |step| {
         let change = step.describe();
         let status = guarded(|| Ok(step.check(&ctx)))

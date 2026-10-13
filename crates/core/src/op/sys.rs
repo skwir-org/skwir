@@ -547,3 +547,560 @@ pub(super) fn trash_restore(items: Vec<trash::TrashItem>) -> Result<(), trash::E
         })
     }
 }
+
+/// What a change of access (`access.rs`, ADR-058) asks of the system: what
+/// an item is, without following a link inside a folder; a hold on an
+/// item through which its mode and group change, never through a link
+/// or another file put in its place since; who the user is; and the umask
+/// `chmod` applies to a clause that names no class.
+pub(super) mod access {
+    use std::ffi::OsStr;
+    use std::io;
+    use std::path::Path;
+
+    use crate::entry::FileId;
+    use crate::fs::Dir;
+
+    /// What a change of access reads of an item.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Meta {
+        pub id: FileId,
+        /// Its permission bits (`0o7777`). On Windows, the read-only
+        /// attribute as the owner's write bit, the rest as Windows lets
+        /// everyone have it.
+        pub mode: u32,
+        /// Its owner and group; `None` where they are not numbers
+        /// (Windows).
+        pub uid: Option<u32>,
+        pub gid: Option<u32>,
+        pub folder: bool,
+        pub link: bool,
+    }
+
+    /// Who runs skwir: whose files it may change, and the groups it may
+    /// give them to.
+    #[derive(Clone, Debug)]
+    pub struct Me {
+        pub uid: u32,
+        pub root: bool,
+        pub groups: Vec<u32>,
+    }
+
+    impl Me {
+        /// Whether a file of theirs may be given to the group `gid`, or
+        /// given back to it.
+        pub fn may_give(&self, gid: u32) -> bool {
+            self.root || self.groups.contains(&gid)
+        }
+    }
+
+    /// The user skwir runs as and their groups; `None` where users are not
+    /// numbers (Windows).
+    #[cfg(unix)]
+    #[allow(clippy::unnecessary_wraps)] // Windows' answer is `None`.
+    pub fn me() -> Option<Me> {
+        let uid = rustix::process::geteuid();
+        let mut groups = vec![rustix::process::getegid().as_raw()];
+        for group in rustix::process::getgroups().unwrap_or_default() {
+            if !groups.contains(&group.as_raw()) {
+                groups.push(group.as_raw());
+            }
+        }
+        Some(Me {
+            uid: uid.as_raw(),
+            root: uid.is_root(),
+            groups,
+        })
+    }
+
+    #[cfg(windows)]
+    pub fn me() -> Option<Me> {
+        None
+    }
+
+    /// The umask, as `chmod` applies it to a clause naming no class: read
+    /// on Linux from `/proc/self/status` (never by setting it and setting
+    /// it back, which races with every thread creating a file meanwhile).
+    /// skwir never changes it, so it is read once. `None` where it cannot
+    /// be read (macOS, a Linux before 4.7 or without `/proc`). Windows
+    /// keeps none: a mode there is the read-only attribute alone.
+    // Windows' answer is always `Some(0)`; the others' may be `None`.
+    #[cfg_attr(windows, allow(clippy::unnecessary_wraps))]
+    pub fn umask() -> Option<u32> {
+        #[cfg(target_os = "linux")]
+        {
+            static UMASK: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+            *UMASK.get_or_init(|| {
+                let status = std::fs::read_to_string("/proc/self/status").ok()?;
+                let line = status.lines().find_map(|l| l.strip_prefix("Umask:"))?;
+                u32::from_str_radix(line.trim(), 8)
+                    .ok()
+                    .map(|mask| mask & 0o777)
+            })
+        }
+        #[cfg(all(unix, not(target_os = "linux")))]
+        {
+            None
+        }
+        #[cfg(windows)]
+        {
+            Some(0)
+        }
+    }
+
+    /// What a hold found in place of the item it was asked for.
+    #[derive(Debug)]
+    struct Replaced(&'static str);
+
+    impl std::fmt::Display for Replaced {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl std::error::Error for Replaced {}
+
+    /// Another file where the one asked for was.
+    pub fn replaced() -> io::Error {
+        io::Error::other(Replaced("it is now another file"))
+    }
+
+    fn a_link() -> io::Error {
+        io::Error::other(Replaced("it is a link now"))
+    }
+
+    /// The folder at `path`, a link there followed, opened to be listed:
+    /// the one `expect` names, not another put in its place since.
+    pub fn open_top(path: &Path, expect: FileId) -> io::Result<Dir> {
+        let folder = Dir::open(path)?;
+        if folder_id(&folder)? == expect {
+            Ok(folder)
+        } else {
+            Err(replaced())
+        }
+    }
+
+    /// The folder `name` in `dir`, opened to be listed: the one `expect`
+    /// names, never through a link (one put there since is said to be a
+    /// link) nor another folder put in its place.
+    pub fn open_folder(dir: &Dir, name: &OsStr, expect: FileId) -> io::Result<Dir> {
+        match dir.open_folder(name) {
+            Ok(folder) if folder_id(&folder)? == expect => Ok(folder),
+            Ok(_) => Err(replaced()),
+            Err(e) if stat_at(dir, name).is_ok_and(|meta| meta.link) => {
+                let _ = e;
+                Err(a_link())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Whether `e` says the item asked for is not there any more: gone, a
+    /// path through it gone, or another file (a link) in its place.
+    pub fn is_gone(e: &io::Error) -> bool {
+        matches!(
+            e.kind(),
+            io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+        ) || e
+            .get_ref()
+            .is_some_and(<dyn std::error::Error + Send + Sync>::is::<Replaced>)
+    }
+
+    // ---------------------------------------------------------------- Linux
+
+    #[cfg(target_os = "linux")]
+    use rustix::fs::{AtFlags, StatxFlags};
+
+    #[cfg(target_os = "linux")]
+    const ASKED: StatxFlags = StatxFlags::TYPE
+        .union(StatxFlags::MODE)
+        .union(StatxFlags::UID)
+        .union(StatxFlags::GID)
+        .union(StatxFlags::INO);
+
+    #[cfg(target_os = "linux")]
+    fn of(st: &rustix::fs::Statx) -> Meta {
+        use rustix::fs::FileType;
+        let mode = u32::from(st.stx_mode);
+        let kind = FileType::from_raw_mode(mode);
+        Meta {
+            // As `fs::stat` names a file.
+            id: FileId {
+                dev: rustix::fs::makedev(st.stx_dev_major, st.stx_dev_minor),
+                ino: st.stx_ino,
+            },
+            mode: mode & 0o7777,
+            uid: Some(st.stx_uid),
+            gid: Some(st.stx_gid),
+            folder: kind == FileType::Directory,
+            link: kind == FileType::Symlink,
+        }
+    }
+
+    /// The item at `path`, what a link there leads to when `follow`.
+    #[cfg(target_os = "linux")]
+    pub fn stat(path: &Path, follow: bool) -> io::Result<Meta> {
+        let flags = if follow {
+            AtFlags::empty()
+        } else {
+            AtFlags::SYMLINK_NOFOLLOW
+        };
+        Ok(of(&rustix::fs::statx(rustix::fs::CWD, path, flags, ASKED)?))
+    }
+
+    /// The item `name` in `dir`, itself: a link is not followed.
+    #[cfg(target_os = "linux")]
+    pub fn stat_at(dir: &Dir, name: &OsStr) -> io::Result<Meta> {
+        Ok(of(&rustix::fs::statx(
+            dir.fd(),
+            name,
+            AtFlags::SYMLINK_NOFOLLOW,
+            ASKED,
+        )?))
+    }
+
+    /// The identity of the folder `dir` holds open, as [`stat`] says it.
+    #[cfg(target_os = "linux")]
+    pub fn folder_id(dir: &Dir) -> io::Result<FileId> {
+        Ok(of(&rustix::fs::statx(
+            dir.fd(),
+            c"",
+            AtFlags::EMPTY_PATH,
+            ASKED,
+        )?)
+        .id)
+    }
+
+    /// An item held to change who may use it. On Linux a descriptor that
+    /// opens nothing (`O_PATH`: no read access needed, a pipe or a device
+    /// not opened), checked to be the item stat-ed and no link: its group
+    /// changes through it (`fchownat` on the descriptor itself), its mode
+    /// through `/proc/self/fd`, which names the very file it holds (as
+    /// glibc's own `fchmodat` does for `AT_SYMLINK_NOFOLLOW`): Linux's
+    /// `fchmodat` takes no flags before `fchmodat2` (6.6), and `fchmod`
+    /// refuses such a descriptor.
+    #[cfg(target_os = "linux")]
+    pub struct Held(rustix::fd::OwnedFd);
+
+    #[cfg(target_os = "linux")]
+    impl Held {
+        /// Hold the item at `path`, the one `expect` names; what a link
+        /// there leads to when `follow`, else the item itself, which must
+        /// be no link.
+        pub fn path(path: &Path, expect: FileId, follow: bool) -> io::Result<Held> {
+            use rustix::fs::{Mode, OFlags};
+            let mut flags = OFlags::PATH | OFlags::CLOEXEC;
+            if !follow {
+                flags |= OFlags::NOFOLLOW;
+            }
+            Self::checked(rustix::fs::open(path, flags, Mode::empty())?, expect)
+        }
+
+        /// Hold the item `name` in `dir`, the one `expect` names, itself:
+        /// a link put there since is refused.
+        pub fn at(dir: &Dir, name: &OsStr, expect: FileId) -> io::Result<Held> {
+            use rustix::fs::{Mode, OFlags};
+            let fd = rustix::fs::openat(
+                dir.fd(),
+                name,
+                OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )?;
+            Self::checked(fd, expect)
+        }
+
+        fn checked(fd: rustix::fd::OwnedFd, expect: FileId) -> io::Result<Held> {
+            let held = Held(fd);
+            let meta = held.stat()?;
+            if meta.link {
+                return Err(a_link());
+            }
+            if meta.id != expect {
+                return Err(replaced());
+            }
+            Ok(held)
+        }
+
+        /// What the held item is now.
+        pub fn stat(&self) -> io::Result<Meta> {
+            Ok(of(&rustix::fs::statx(
+                &self.0,
+                c"",
+                AtFlags::EMPTY_PATH,
+                ASKED,
+            )?))
+        }
+
+        /// Give it to the group `gid`.
+        pub fn set_group(&self, gid: u32) -> io::Result<()> {
+            rustix::fs::chownat(
+                &self.0,
+                c"",
+                None,
+                Some(rustix::fs::Gid::from_raw(gid)),
+                AtFlags::EMPTY_PATH,
+            )?;
+            Ok(())
+        }
+
+        /// Set its permission bits to `mode`.
+        pub fn set_mode(&self, mode: u32) -> io::Result<()> {
+            use std::os::fd::AsRawFd;
+            let at = format!("/proc/self/fd/{}", self.0.as_raw_fd());
+            match rustix::fs::chmod(at.as_str(), rustix::fs::Mode::from_raw_mode(mode & 0o7777)) {
+                Err(rustix::io::Errno::NOENT) if !Path::new("/proc/self/fd").is_dir() => {
+                    Err(io::Error::other(
+                        "the system's /proc is not mounted, which changing access needs",
+                    ))
+                }
+                r => r.map_err(io::Error::from),
+            }
+        }
+    }
+
+    // ----------------------------------------------------- macOS (other Unix)
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    fn of(st: &rustix::fs::Stat) -> Meta {
+        use rustix::fs::FileType;
+        let kind = FileType::from_raw_mode(st.st_mode);
+        Meta {
+            id: FileId {
+                dev: crate::fs::stat::device_number(st.st_dev),
+                ino: st.st_ino,
+            },
+            mode: u32::from(st.st_mode) & 0o7777,
+            uid: Some(st.st_uid),
+            gid: Some(st.st_gid),
+            folder: kind == FileType::Directory,
+            link: kind == FileType::Symlink,
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    fn follow_flags(follow: bool) -> rustix::fs::AtFlags {
+        if follow {
+            rustix::fs::AtFlags::empty()
+        } else {
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW
+        }
+    }
+
+    /// The item at `path`, what a link there leads to when `follow`.
+    #[cfg(all(unix, not(target_os = "linux")))]
+    pub fn stat(path: &Path, follow: bool) -> io::Result<Meta> {
+        Ok(of(&rustix::fs::statat(
+            rustix::fs::CWD,
+            path,
+            follow_flags(follow),
+        )?))
+    }
+
+    /// The item `name` in `dir`, itself: a link is not followed.
+    #[cfg(all(unix, not(target_os = "linux")))]
+    pub fn stat_at(dir: &Dir, name: &OsStr) -> io::Result<Meta> {
+        Ok(of(&rustix::fs::statat(
+            dir.fd(),
+            name,
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+        )?))
+    }
+
+    /// The identity of the folder `dir` holds open, as [`stat`] says it.
+    #[cfg(all(unix, not(target_os = "linux")))]
+    pub fn folder_id(dir: &Dir) -> io::Result<FileId> {
+        Ok(of(&rustix::fs::fstat(dir.fd())?).id)
+    }
+
+    /// An item held to change who may use it: its name in a folder held
+    /// open (or its path), changed with `AT_SYMLINK_NOFOLLOW`, which these
+    /// systems' `fchmodat` and `fchownat` take: a link put in its place
+    /// since is changed itself, never what it leads to. Checked to be the
+    /// item stat-ed when held.
+    #[cfg(all(unix, not(target_os = "linux")))]
+    pub struct Held {
+        /// The folder it is named in; `None` for a path.
+        dir: Option<rustix::fd::OwnedFd>,
+        name: std::path::PathBuf,
+        follow: bool,
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    impl Held {
+        /// Hold the item at `path`, the one `expect` names; what a link
+        /// there leads to when `follow`, else the item itself, which must
+        /// be no link.
+        pub fn path(path: &Path, expect: FileId, follow: bool) -> io::Result<Held> {
+            Held {
+                dir: None,
+                name: path.to_path_buf(),
+                follow,
+            }
+            .checked(expect)
+        }
+
+        /// Hold the item `name` in `dir`, the one `expect` names, itself.
+        pub fn at(dir: &Dir, name: &OsStr, expect: FileId) -> io::Result<Held> {
+            Held {
+                dir: Some(dir.fd().try_clone_to_owned()?),
+                name: name.into(),
+                follow: false,
+            }
+            .checked(expect)
+        }
+
+        fn checked(self, expect: FileId) -> io::Result<Held> {
+            let meta = self.stat()?;
+            if meta.link {
+                return Err(a_link());
+            }
+            if meta.id != expect {
+                return Err(replaced());
+            }
+            Ok(self)
+        }
+
+        fn base(&self) -> rustix::fd::BorrowedFd<'_> {
+            use rustix::fd::AsFd;
+            self.dir.as_ref().map_or(rustix::fs::CWD, |dir| dir.as_fd())
+        }
+
+        /// What the held item is now.
+        pub fn stat(&self) -> io::Result<Meta> {
+            Ok(of(&rustix::fs::statat(
+                self.base(),
+                &self.name,
+                follow_flags(self.follow),
+            )?))
+        }
+
+        /// Give it to the group `gid`.
+        pub fn set_group(&self, gid: u32) -> io::Result<()> {
+            rustix::fs::chownat(
+                self.base(),
+                &self.name,
+                None,
+                Some(rustix::fs::Gid::from_raw(gid)),
+                follow_flags(self.follow),
+            )?;
+            Ok(())
+        }
+
+        /// Set its permission bits to `mode`.
+        pub fn set_mode(&self, mode: u32) -> io::Result<()> {
+            let bits = rustix::fs::RawMode::try_from(mode & 0o7777).unwrap_or_default();
+            rustix::fs::chmodat(
+                self.base(),
+                &self.name,
+                rustix::fs::Mode::from_raw_mode(bits),
+                follow_flags(self.follow),
+            )?;
+            Ok(())
+        }
+    }
+
+    // -------------------------------------------------------------- Windows
+
+    /// The item at `path`, what a link there leads to when `follow`.
+    #[cfg(windows)]
+    pub fn stat(path: &Path, follow: bool) -> io::Result<Meta> {
+        use crate::entry::EntryKind;
+        use crate::fs::win;
+        let info = win::info(&win::open(path, false, follow)?)?;
+        let meta = if follow {
+            std::fs::metadata(path)?
+        } else {
+            std::fs::symlink_metadata(path)?
+        };
+        let folder = info.kind == EntryKind::Directory;
+        let base = if folder { 0o777 } else { 0o666 };
+        Ok(Meta {
+            id: info.id,
+            mode: if meta.permissions().readonly() {
+                base & !0o222
+            } else {
+                base
+            },
+            uid: None,
+            gid: None,
+            folder,
+            link: info.kind == EntryKind::Symlink,
+        })
+    }
+
+    /// The item `name` in `dir`, itself: a link is not followed.
+    #[cfg(windows)]
+    pub fn stat_at(dir: &Dir, name: &OsStr) -> io::Result<Meta> {
+        let path = dir
+            .path_to(name)
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+        stat(&path, false)
+    }
+
+    /// The identity of the folder `dir` holds open.
+    #[cfg(windows)]
+    pub fn folder_id(dir: &Dir) -> io::Result<FileId> {
+        dir.identity()
+    }
+
+    /// An item held to change who may use it: on Windows its path,
+    /// checked to be the item stat-ed and no link when held, and changed
+    /// by that path (a link put there between the two aside: see
+    /// PORTING.md).
+    #[cfg(windows)]
+    pub struct Held {
+        path: std::path::PathBuf,
+        follow: bool,
+    }
+
+    #[cfg(windows)]
+    impl Held {
+        /// Hold the item at `path`, the one `expect` names; what a link
+        /// there leads to when `follow`, else the item itself.
+        pub fn path(path: &Path, expect: FileId, follow: bool) -> io::Result<Held> {
+            Held {
+                path: path.to_path_buf(),
+                follow,
+            }
+            .checked(expect)
+        }
+
+        /// Hold the item `name` in `dir`, the one `expect` names, itself.
+        pub fn at(dir: &Dir, name: &OsStr, expect: FileId) -> io::Result<Held> {
+            let path = dir
+                .path_to(name)
+                .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+            Self::path(&path, expect, false)
+        }
+
+        fn checked(self, expect: FileId) -> io::Result<Held> {
+            let meta = self.stat()?;
+            if meta.link {
+                return Err(a_link());
+            }
+            if meta.id != expect {
+                return Err(replaced());
+            }
+            Ok(self)
+        }
+
+        /// What the held item is now.
+        pub fn stat(&self) -> io::Result<Meta> {
+            stat(&self.path, self.follow)
+        }
+
+        /// Windows says no group by number.
+        #[allow(clippy::unused_self)]
+        pub fn set_group(&self, gid: u32) -> io::Result<()> {
+            let _ = gid;
+            Err(crate::system::not_yet("Changing a file's group"))
+        }
+
+        /// The owner's write bit of `mode` as the read-only attribute.
+        pub fn set_mode(&self, mode: u32) -> io::Result<()> {
+            let mut permissions = std::fs::metadata(&self.path)?.permissions();
+            permissions.set_readonly(mode & 0o200 == 0);
+            std::fs::set_permissions(&self.path, permissions)
+        }
+    }
+}

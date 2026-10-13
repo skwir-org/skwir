@@ -79,7 +79,10 @@ Left:
 - `platform/src/access.rs` **(c)**: POSIX ACLs, capabilities, SELinux.
 - `core/src/op/access.rs` **(c)**: on Windows `set_access` sets the
   read-only attribute (the owner's write bit) and refuses a group; with
-  no mode on Windows entries, Properties offers neither (ADR-058).
+  no mode on Windows entries, Properties offers neither (ADR-058). It
+  changes an item by its path, checked to be the item stat-ed and no
+  link just before (`op::sys::access::Held`): a link put there between
+  the two is followed, where Unix holds the item itself.
   `fs::count` counts each name of a file of several there (`std` gives
   no link count), and `stat::flags` reads compressed, encrypted and
   read-only from the attributes.

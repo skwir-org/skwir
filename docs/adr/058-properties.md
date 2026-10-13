@@ -46,17 +46,26 @@ Status: accepted, 2026-10-13. Built.
    several names once, streams what it has so far, and is cancelled when
    Properties shows something else.
 4. **Access is changed by plans.** `set_access` (the core's, `plans`)
-   takes chmod's grammar (`644`, `u+x`, `go-w`, `a=rX`), a group by name
-   or number, and `inside`: everything a folder holds, where `X` gives
-   folders their search bit and keeps files as they were. Its step changes
-   what a link leads to, as chmod does, never through a link inside; its
-   inverse puts back each item's mode and group. A drive that kept
-   nothing (FAT) is said after the change, read back, never guessed from
-   its type. Properties offers it where it can take: the user owns the
-   file (or is root), the drive is not read-only, the file is not in the
-   trash. Levels are said in words (Read, Read and write; a folder's
-   List only, Open items, Create and delete items); a file's search bit
-   is "Runs as a program"; the mode itself takes chmod's text.
+   takes chmod's grammar (`644`, `u+x`, `go-w`, `a=rX`; a clause naming
+   no class leaves out the umask's bits, as chmod, and is refused where
+   the system does not say its umask and the clause would give
+   something), a group by number (as `ls -n` and Properties show it),
+   and `inside`: everything a folder holds, where `X` gives folders their
+   search bit and keeps files as they were. Its step changes what a link
+   leads to, as chmod does, never through a link inside, a link put in
+   place mid-walk, another drive or a trash; a folder whose owner keeps
+   access to it is changed before what it holds, any other after, so
+   every level reaches every item. A new group clears the set-ID bits
+   the system clears, as chgrp. Its inverse puts back each item's mode
+   and group, and says what it could not. A drive that kept nothing
+   (FAT) is said after the change, read back, never guessed from its
+   type. Its dry run walks what it would change: a change already made
+   is done, and an item of someone else's inside is a conflict.
+   Properties offers it where it can take: the user owns the file (or
+   is root), the drive is not read-only, the file is not in the trash.
+   Levels are said in words (Read, Read and write; a folder's List
+   only, Open items, Create and delete items); a file's search bit is
+   "Runs as a program"; the mode itself takes chmod's text.
    On Windows the step sets the read-only attribute (the owner's write
    bit); a group is not yet.
 5. **No owner changes, no administrator rights.** Giving a file to

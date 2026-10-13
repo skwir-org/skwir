@@ -1757,7 +1757,9 @@ pub struct TargetsArgs {
 pub struct AccessArgs {
     /// The mode, as chmod takes it: `644`, `u+x`, `go-w`, `a=rX` (`X`:
     /// folders, and what someone may run already). A class left out is
-    /// everyone, the umask aside.
+    /// everyone but what the umask leaves out, as chmod; where the system
+    /// does not say its umask (macOS), such a clause that gives something
+    /// is refused.
     #[serde(default)]
     pub mode: Option<String>,
     /// The group to give them, by number (as Properties and `ls -n` show
@@ -1765,7 +1767,7 @@ pub struct AccessArgs {
     #[serde(default)]
     pub group: Option<u32>,
     /// What the folders hold too, never through a link nor onto another
-    /// drive mounted inside.
+    /// drive mounted inside, nor into a trash.
     #[serde(default)]
     pub inside: bool,
     #[serde(flatten)]

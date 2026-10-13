@@ -26,16 +26,42 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 
 - **Access (ADR-058).** `set_access` changes a mode as chmod takes it
   (`op::access::Mode`: octal, a folder's set-ID bits kept unless five
-  digits say otherwise; symbolic clauses with `X`, `s`, `t` and copies),
-  and a group by number, never the owner. Its step changes what a link
-  leads to, and with `inside` what a folder holds: no link inside is
-  followed, no other drive mounted inside is reached. It reads the mode
-  back and fails, putting back what it changed, when the drive kept
-  nothing; a failure partway puts back the same way. Its inverse
-  (`access_back`) holds each changed item's mode and group, which the
-  journal counts (`Effect::held`). `check` refuses what the user does
-  not own (root aside), a group they are not in, a read-only drive and
-  the trash's files, in words.
+  digits say otherwise; symbolic clauses with `X`, `s`, `t` and copies;
+  a clause naming no class leaves out what the umask does, read from
+  `/proc/self/status` on Linux and never by setting it, and where the
+  system does not say it (macOS) one that would give something is
+  refused), and a group by number, never the owner.
+  - It changes what a link given leads to, and with `inside` what a
+    folder holds: no link inside is followed, no other drive mounted
+    inside is reached, no trash (`.Trash-<uid>`, a home's `Trash`,
+    `$Recycle.Bin`) is changed, no folder met above is walked again.
+  - Nothing is reached by a path that a link put in place mid-walk
+    could redirect: each folder is listed through its descriptor
+    (`Dir::open_folder`, no link followed, checked to be the folder
+    stat-ed), and each item is changed through a hold on it
+    (`op::sys::access::Held`: `O_PATH` checked against the stat, the
+    mode set through `/proc/self/fd` on Linux; `AT_SYMLINK_NOFOLLOW`
+    on macOS). Windows changes by path ([PORTING.md](../PORTING.md)).
+  - A folder whose owner can still list and open it once changed is
+    changed before what it holds, any other after it, so `u=r` and `u=`
+    reach every item. Putting back orders by the modes put back the
+    same way (`back_order`), so Undo and Redo reach what the change did.
+  - A new group is given first and the mode worked out from what the
+    system left: the set-ID bits a group change clears stay cleared
+    unless the mode asked sets them (chgrp, then chmod).
+  - It reads the root's mode back and fails, putting back what it
+    changed, when the drive kept nothing; a failure partway puts back the
+    same way, and says what it could not put back. Its inverse
+    (`access_back`) holds each changed item's mode and group, which the
+    journal counts (`Effect::held`); it puts back what it can, leaves
+    what is gone since, and fails naming what it could not.
+  - `check` walks what it would change (stopping when the plan is):
+    nothing to change is already done, so a recursive plan applied again
+    is too. It refuses what the user does not own (root aside), an item
+    inside of someone else's that would change (named), a group they
+    are not in, a read-only drive and the trash's files, in words; a
+    group given to an item whose group the user is not in is pending
+    but not undoable.
 
 ## Running
 
