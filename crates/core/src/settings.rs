@@ -163,7 +163,8 @@ pub struct SettingSpec {
     /// Short human label ("Memory budget").
     pub title: String,
     pub description: String,
-    /// Optional group heading within the owner's page.
+    /// Optional group heading within the owner's page. Sections stand in
+    /// the order their first setting was declared, after what has none.
     pub section: String,
     /// Unit shown after a numeric value ("MB").
     pub unit: String,
@@ -177,6 +178,11 @@ pub struct SettingSpec {
     pub store: Store,
     #[serde(skip)]
     pub validator: Option<Validator>,
+    /// When its key was first declared in this process, which
+    /// `Settings::declare` sets: a page shows its settings in that order,
+    /// so the owner orders them by declaring them in it.
+    #[serde(skip)]
+    pub order: u64,
 }
 
 /// The file a setting is kept in (ADR-056, ADR-057).
@@ -250,6 +256,7 @@ impl SettingSpec {
             restart_required: false,
             store: Store::Settings,
             validator: None,
+            order: 0,
         }
     }
 
@@ -655,6 +662,28 @@ struct ApplyArgs {
 /// Register the nonblocking settings command. Validation is repeated on the
 /// worker in case a plugin was disabled after the command was queued.
 pub(crate) fn register(app: &crate::App) {
+    app.settings.declare(
+        SettingSpec::choice(
+            STARTUP,
+            "Open at startup",
+            "Where a new window starts when no folder is given on the command line.",
+            "folder",
+            &[
+                ("folder", "A chosen folder"),
+                ("last", "The folders and tabs left open"),
+            ],
+        )
+        .section("Startup"),
+    );
+    app.settings.declare(
+        SettingSpec::path(
+            STARTUP_FOLDER,
+            "Startup folder",
+            "Used when a chosen folder opens at startup. Leave empty for your home folder.",
+            "",
+        )
+        .section("Startup"),
+    );
     // Copies kept only tags before they kept every user attribute.
     app.settings
         .rename("core.preserve_tags_on_copy", PRESERVE_ATTRIBUTES_ON_COPY);
@@ -696,28 +725,6 @@ pub(crate) fn register(app: &crate::App) {
             &[("other", "Other"), ("active", "Active"), ("right", "Right")],
         )
         .section("Split"),
-    );
-    app.settings.declare(
-        SettingSpec::choice(
-            STARTUP,
-            "Open at startup",
-            "Where a new window starts when no folder is given on the command line.",
-            "folder",
-            &[
-                ("folder", "A chosen folder"),
-                ("last", "The folders and tabs left open"),
-            ],
-        )
-        .section("Startup"),
-    );
-    app.settings.declare(
-        SettingSpec::path(
-            STARTUP_FOLDER,
-            "Startup folder",
-            "Used when a chosen folder opens at startup. Leave empty for your home folder.",
-            "",
-        )
-        .section("Startup"),
     );
     app.settings.declare(SettingSpec::state(
         LAST_LOCATION,
@@ -982,6 +989,10 @@ pub struct Settings {
     kept: RwLock<BTreeMap<String, Store>>,
     values: RwLock<toml::Table>,
     schema: RwLock<BTreeMap<String, SettingSpec>>,
+    /// Every key declared in this process, by when it first was
+    /// (`SettingSpec::order`): declared again, or by a plugin turned on
+    /// again, a setting keeps its place.
+    declared: Mutex<BTreeMap<String, u64>>,
     /// Serializes writers (readers never wait for file I/O), and holds the
     /// keys this process changed since its last save: what a save writes
     /// over the file as it stands.
@@ -1049,6 +1060,7 @@ impl Settings {
             kept: RwLock::new(BTreeMap::new()),
             values: RwLock::new(toml::Table::new()),
             schema: RwLock::new(BTreeMap::new()),
+            declared: Mutex::new(BTreeMap::new()),
             writer: Mutex::new(BTreeSet::new()),
             followed: Mutex::new(Vec::new()),
             status: Mutex::new((0, SaveState::Idle)),
@@ -1072,6 +1084,7 @@ impl Settings {
             kept: RwLock::new(BTreeMap::new()),
             values: RwLock::new(values),
             schema: RwLock::new(BTreeMap::new()),
+            declared: Mutex::new(BTreeMap::new()),
             writer: Mutex::new(BTreeSet::new()),
             followed: Mutex::new(Vec::new()),
             status: Mutex::new((0, SaveState::Idle)),
@@ -1250,9 +1263,14 @@ impl Settings {
     }
 
     /// Declare a setting. Registered by plugins and the core.
-    pub fn declare(&self, spec: SettingSpec) {
+    pub fn declare(&self, mut spec: SettingSpec) {
         if spec.store != Store::Settings {
             self.kept.write().insert(spec.key.clone(), spec.store);
+        }
+        {
+            let mut declared = self.declared.lock();
+            let next = declared.len() as u64;
+            spec.order = *declared.entry(spec.key.clone()).or_insert(next);
         }
         self.schema.write().insert(spec.key.clone(), spec);
         self.bump();

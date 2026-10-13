@@ -17,6 +17,11 @@ the reasoning.
 - The owner states the title, description, unit, step, choice labels and
   section, so the dialog, the palette and agents need no key-specific
   branches.
+- The owner states the order too, by declaring in it: a page shows its
+  settings as they were first declared (`SettingSpec::order`), what has
+  no section first, then each section where its first setting was.
+  Declared again, or by a plugin turned on again, a setting keeps its
+  place. Never sort a page by key or title.
 - Titles are sentence case, without the plugin's name. Descriptions say
   what changes for the user, not what the key is called. Choice labels
   are a word or two; the description explains them.

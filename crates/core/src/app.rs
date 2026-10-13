@@ -320,9 +320,11 @@ impl App {
         }
         builtin::register(&app);
         crate::notes::commands::register(&app);
+        // General's own settings before the tabs': a page shows its
+        // settings in the order they are declared.
+        crate::settings::register(&app);
         crate::tabs::register(&app);
         crate::keymap::declare(&app.settings, app.weak());
-        crate::settings::register(&app);
         crate::permissions::declare(&app.settings);
         crate::plugin::register(&app);
         crate::playing::register(&app);

@@ -310,6 +310,30 @@ fn the_revision_advances_on_declare_apply_and_undeclare_only() {
     assert!(app.settings.revision() > applied);
 }
 
+/// A setting stands where it was first declared: declared again, or by a
+/// plugin turned on again, it keeps its place.
+#[test]
+fn a_setting_keeps_the_place_it_was_first_declared_in() {
+    let settings = Settings::in_memory();
+    for key in ["sample.second", "sample.first", "sample.third"] {
+        settings.declare(SettingSpec::toggle(key, "Title", "Description.", true));
+    }
+    let order = |key: &str| settings.spec(key).unwrap().order;
+    assert!(order("sample.second") < order("sample.first"));
+    assert!(order("sample.first") < order("sample.third"));
+    let first = order("sample.first");
+    settings.declare(SettingSpec::toggle(
+        "sample.first",
+        "Title",
+        "Again.",
+        false,
+    ));
+    assert_eq!(order("sample.first"), first);
+    settings.undeclare("sample.first");
+    settings.declare(SettingSpec::toggle("sample.first", "Title", "Back.", true));
+    assert_eq!(order("sample.first"), first);
+}
+
 #[test]
 fn plugins_toggle_through_the_command_and_the_choice_is_persisted() {
     let dir = tempfile::tempdir().unwrap();

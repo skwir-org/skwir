@@ -152,7 +152,7 @@ pub fn code_theme_spec(
         key,
         title,
         &format!(
-            "The colors of source files and of code in documents when code is {look}: while skwir is {look}, or always with Appearance set to {choice}. Default is skwir's own, on its {look} background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own."
+            "The colors of source files and of code in documents when code is {look}: while skwir is {look}, or always when Light or dark above says {choice}. Default is skwir's own, on its {look} background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own."
         ),
         crate::code_preview::DEFAULT,
         &pairs,
@@ -269,21 +269,21 @@ pub fn declare(app: &App) {
     );
     app.settings.declare(
         SettingSpec::toggle(
-            GRID_FILL_KEY,
-            "Fill thumbnails",
-            "Crop each thumbnail in the grid to a square, so a folder of pictures reads as a gallery. Off shows every picture whole.",
-            false,
-        )
-        .section("Grid"),
-    );
-    app.settings.declare(
-        SettingSpec::toggle(
             NARROW_FOLDERS_KEY,
             "Narrow folders",
             "Show the Narrow by bar above a folder's files: their kinds, the years they were modified and their tags, each with how many files, to show only those. The choice stays while you browse the folders inside. A search and a tag's folder offer it whatever this says.",
             false,
         )
         .section("Folders"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            GRID_FILL_KEY,
+            "Fill thumbnails",
+            "Crop each thumbnail in the grid to a square, so a folder of pictures reads as a gallery. Off shows every picture whole.",
+            false,
+        )
+        .section("Grid"),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -325,12 +325,12 @@ pub fn declare(app: &App) {
             "Wrap a text file's long lines to the panel, a line's number on its first row. Off, they go on sideways and the panel scrolls with them.",
             true,
         )
-        .section("Code"),
+        .section("Text"),
     );
     app.settings.declare(
         SettingSpec::choice(
             CODE_APPEARANCE_KEY,
-            "Appearance",
+            "Light or dark",
             "Draw source files and code in documents light or dark. Automatic follows skwir's theme; Light or Dark keeps code in the theme chosen below for that look, with its gutter, selection and background, whatever skwir is.",
             "auto",
             &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
@@ -428,6 +428,24 @@ pub fn remember_reader_mode(
 /// stored one.
 pub fn reader_mode(shell: &crate::shell::Shell) -> bool {
     preference(shell, READER_CONTINUOUS_KEY).is_none_or(|mode| mode != "false")
+}
+
+/// Settings by page (their owner), each page in the order its settings
+/// were declared (`SettingSpec::order`): what has no section first, then
+/// each section where its first setting was.
+fn page_order(specs: &mut [SettingSpec]) {
+    let mut sections: HashMap<(String, String), u64> = HashMap::new();
+    for spec in specs.iter() {
+        sections
+            .entry((spec.owner().to_owned(), spec.section.clone()))
+            .and_modify(|first| *first = (*first).min(spec.order))
+            .or_insert(spec.order);
+    }
+    specs.sort_by_cached_key(|spec| {
+        let at = (spec.owner().to_owned(), spec.section.clone());
+        let section = sections[&at];
+        (at.0, !spec.section.is_empty(), section, spec.order)
+    });
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -821,9 +839,7 @@ impl SettingsView {
             .into_iter()
             .filter(SettingSpec::editable)
             .collect();
-        // Declaration order is alphabetical by key; group sections together
-        // while keeping that order inside each.
-        specs.sort_by(|a, b| (a.owner(), &a.section).cmp(&(b.owner(), &b.section)));
+        page_order(&mut specs);
         for spec in specs {
             let live = self.live(&spec);
             let row = match previous.remove(&spec.key) {
@@ -1422,7 +1438,11 @@ impl crate::shell::Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{ICON_THEME_AUTO, Page, icon_theme_spec};
+    use super::{
+        App, CODE_APPEARANCE_KEY, CODE_DARK_KEY, CODE_LIGHT_KEY, CORE_OWNER, ICON_THEME_AUTO, Page,
+        READING_OWNER, SettingSpec, THEME_KEY, UI_OWNER, code_theme_spec, declare, icon_theme_spec,
+        page_order,
+    };
     use skwir_platform::icons::Theme;
 
     #[test]
@@ -1461,6 +1481,79 @@ mod tests {
             gone.constraints.choice_labels.last().map(String::as_str),
             Some("Papirus (not installed)")
         );
+    }
+
+    /// A page shows its settings as they were declared, each section where
+    /// its first setting was: Theme first, the list's columns in the order
+    /// they stand. Declared again, a setting keeps its place.
+    #[test]
+    fn a_page_shows_its_settings_as_declared() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        declare(&app);
+        let pages = || {
+            let mut specs: Vec<SettingSpec> = app
+                .settings
+                .schema()
+                .into_iter()
+                .filter(SettingSpec::editable)
+                .collect();
+            page_order(&mut specs);
+            specs
+        };
+        let page = |specs: &[SettingSpec], owner: &str| -> Vec<(String, String)> {
+            specs
+                .iter()
+                .filter(|spec| spec.owner() == owner)
+                .map(|spec| (spec.section.clone(), spec.key.clone()))
+                .collect()
+        };
+        // Each section once, in the page's order.
+        let sections = |specs: &[SettingSpec], owner: &str| -> Vec<String> {
+            let mut seen: Vec<String> = Vec::new();
+            for (section, _) in page(specs, owner) {
+                if seen.last() != Some(&section) {
+                    seen.push(section);
+                }
+            }
+            seen
+        };
+        let specs = pages();
+        assert_eq!(page(&specs, UI_OWNER)[0].1, THEME_KEY);
+        assert_eq!(
+            sections(&specs, UI_OWNER)[1..],
+            ["Tabs", "Address", "Folders", "Grid", "List columns"]
+        );
+        let columns: Vec<String> = page(&specs, UI_OWNER)
+            .into_iter()
+            .filter(|(section, _)| section == "List columns")
+            .map(|(_, key)| key)
+            .collect();
+        let standing: Vec<&str> = crate::views::list::COLUMNS
+            .iter()
+            .map(|column| column.setting)
+            .collect();
+        assert_eq!(columns, standing);
+        assert_eq!(sections(&specs, READING_OWNER), ["Pages", "Text", "Code"]);
+        assert_eq!(
+            page(&specs, READING_OWNER)
+                .into_iter()
+                .filter(|(section, _)| section == "Code")
+                .map(|(_, key)| key)
+                .collect::<Vec<_>>(),
+            [CODE_APPEARANCE_KEY, CODE_LIGHT_KEY, CODE_DARK_KEY]
+        );
+        assert_eq!(
+            sections(&specs, CORE_OWNER),
+            ["Startup", "Files", "Split", "Tabs"]
+        );
+        // The code themes are declared again once bat's are read.
+        app.settings.declare(code_theme_spec(
+            false,
+            crate::code_preview::DEFAULT,
+            Some(&[][..]),
+        ));
+        assert_eq!(page(&pages(), READING_OWNER), page(&specs, READING_OWNER));
     }
 
     #[test]
