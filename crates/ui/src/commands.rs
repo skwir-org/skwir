@@ -376,7 +376,6 @@ const SHOWS: &[&str] = &[
     "ui.cursor_pick",
     "ui.cursor_toggle",
     "ui.context_menu",
-    "ui.open_in_tab",
     "ui.find",
     "ui.find_next",
     "ui.view",
@@ -912,11 +911,6 @@ pub fn declare_all(app: &App) {
         "ui.context_menu",
         "Open the menu",
         "Open the menu of the selection, or of the folder shown",
-    );
-    none(
-        "ui.open_in_tab",
-        "Open in new tab",
-        "Open the selected folders and places in tabs behind the one shown, else the selection",
     );
     declare::<Find>(
         app,

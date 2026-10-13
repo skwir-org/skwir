@@ -259,11 +259,19 @@ fn folders_open_behind_the_shown_tab_in_the_order_they_were_opened() {
     for tab in app.tab_list().into_iter().skip(1) {
         assert!(tab.panes.iter().all(|p| p.dormant));
     }
-    // A folder is needed: files do not open in tabs.
+    // A folder is needed: files do not open in tabs, nor anywhere else.
     select(&app, &["a file.txt"]);
+    let tabs = app.tab_list().len();
     let error = app
         .dispatch(&Invocation::new("tab.open"))
         .expect_err("no folder selected");
+    assert!(!skwir_core::command::is_nothing_selected(&error));
+    assert_eq!(error.to_string(), "Only folders and places open in a tab");
+    assert_eq!(app.tab_list().len(), tabs, "no tab opened");
+    select(&app, &[]);
+    let error = app
+        .dispatch(&Invocation::new("tab.open"))
+        .expect_err("nothing selected");
     assert!(skwir_core::command::is_nothing_selected(&error));
 }
 

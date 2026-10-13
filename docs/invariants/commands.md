@@ -32,6 +32,15 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   offers the shell's commands as `UI_COMMANDS` lists them, each with the
   arguments that make it one thing to do; those and the keys' own
   (`KEY_FORMS`) are the commands' forms.
+- **One thing, one command, one title.** The palette (`palette::offered`)
+  offers each core and plugin command as it is and each of its forms,
+  never what only answers (`Effect::Reads`: nothing shows when run from
+  there), and a setting by its page, section and title.
+  `keymap_titles.rs` holds that no two of its entries read alike. A
+  shell command that only ran a core one for the pane is that core
+  command instead (`toggle_hidden`, `sort`, `tab.open`): a pane's button
+  names its pane, a key acts on the active one. A record naming a
+  command by an old name runs it by its new one (`keymap::RENAMED`).
 - A `ui.*` command dispatched from elsewhere (an agent, a script) waits
   for the window (`App::request_front`).
 - Mutating commands return a `Plan` ([operations.md](operations.md)). No

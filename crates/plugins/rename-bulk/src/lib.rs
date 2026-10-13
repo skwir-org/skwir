@@ -512,7 +512,7 @@ impl Plugin for RenameBulkPlugin {
         app.commands.register::<Args, _>(
             ID,
             "rename_bulk",
-            "Rename several…",
+            "Rename several from a template",
             "Rename the selection, or the entries given, from a template, regex, and case rule (plan)",
             |a, app| Ok(Outcome::Plan(plan_bulk(app, a)?.plan)),
         )

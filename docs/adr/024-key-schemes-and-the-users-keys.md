@@ -111,7 +111,8 @@ blocked every later save.
   to, a view, a choice's own title) is worked out
   (`keymap::title`). `crates/skwir/tests/keymap_titles.rs` holds that
   every built-in key with arguments has a form and that no place lists
-  two actions under one title.
+  two actions under one title, nor the palette two entries (it offers
+  each command's forms too, never what only answers).
 - **Editing.** A chip, or a row's +, opens a bar under the list that
   takes the next key pressed before any binding sees it
   (`App::intercept_keystrokes`: Ctrl+Q is recorded, not run); *Then

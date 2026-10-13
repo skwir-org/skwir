@@ -66,3 +66,40 @@ fn no_place_lists_two_actions_under_one_title() {
         unnamed.join("\n")
     );
 }
+
+/// The palette offers each thing to do under a title of its own: two
+/// entries of one title were two commands for one thing (the shell's
+/// `ui.toggle_hidden` beside the core's `toggle_hidden`), or two things
+/// read alike (copying for a paste and copying to a folder).
+#[test]
+fn the_palette_names_each_thing_to_do_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = Arc::new(App::new(AppConfig::ephemeral(tmp.path())).unwrap());
+    for spec in skwir_ui::views::specs() {
+        app.registry.views.add("ui", spec);
+    }
+    skwir_ui::commands::declare_all(&app);
+    skwir_ui::settings::declare(&app);
+    for plugin in skwir::plugins() {
+        let id = plugin.id();
+        let on = plugin.enabled_by_default();
+        app.plugins.add(plugin, &app);
+        if !on {
+            assert!(app.plugins.set_enabled(id, true, &app), "{id}: toggle on");
+        }
+    }
+    let views = app.registry.views.all();
+    let mut offered: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for offer in skwir_ui::palette::offered(&app, &views) {
+        offered
+            .entry(offer.title)
+            .or_default()
+            .push(format!("{} {}", offer.name, offer.args));
+    }
+    let twice: Vec<String> = offered
+        .into_iter()
+        .filter(|(_, actions)| actions.len() > 1)
+        .map(|(title, actions)| format!("“{title}” is {actions:?}"))
+        .collect();
+    assert!(twice.is_empty(), "offered twice:\n{}", twice.join("\n"));
+}

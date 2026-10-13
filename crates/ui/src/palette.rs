@@ -66,7 +66,6 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         r#"{"reset":true}"#,
         "Sidebar: show every group in its place",
     ),
-    ("ui.open_in_tab", "{}", "Open in new tab"),
     ("ui.grid_fill", "{}", "Toggle filled thumbnails"),
     (
         "ui.narrow_folders",
@@ -294,111 +293,120 @@ pub fn ui_commands() -> &'static [(&'static str, serde_json::Value, &'static str
     })
 }
 
+/// One thing the palette offers to do: a command with the arguments that
+/// make it that thing, what it is called, and what it still asks for.
+#[derive(Clone, Debug)]
+pub struct Offer {
+    pub name: String,
+    pub args: serde_json::Value,
+    pub title: String,
+    /// Required argument names from the command's schema.
+    pub required: Vec<String>,
+}
+
+impl Offer {
+    fn of(name: &str, args: serde_json::Value, title: impl Into<String>) -> Self {
+        Offer {
+            name: name.to_owned(),
+            args,
+            title: title.into(),
+            required: Vec::new(),
+        }
+    }
+}
+
+/// Everything the palette offers to do, with `views` (those the window
+/// shows): each core and plugin command as it is and each thing its forms
+/// make of it (Sort by size, Next tab), the shell's own as `UI_COMMANDS`
+/// says, a view, a setting by name. Each is called by a title of its own
+/// (`crates/skwir/tests/keymap_titles.rs`).
+pub fn offered(app: &skwir_core::App, views: &[skwir_core::registry::ViewSpec]) -> Vec<Offer> {
+    let mut offers: Vec<Offer> = Vec::new();
+    for spec in app.commands.list() {
+        // Structured preference batches are edited by the Settings dialog;
+        // the shell's own are offered as `UI_COMMANDS` says, most being
+        // keys of a place (a menu's arrows), nothing to run from here; and
+        // what only answers (an agent's question, a panel's data) shows
+        // nothing run from here.
+        if matches!(&*spec.name, "settings.apply" | "plugins.set_enabled")
+            || &*spec.owner == crate::commands::OWNER
+            || spec.effect == skwir_core::command::Effect::Reads
+        {
+            continue;
+        }
+        offers.push(Offer {
+            required: spec.required_args(),
+            ..Offer::of(&spec.name, serde_json::json!({}), spec.title.clone())
+        });
+        for form in &spec.forms {
+            offers.push(Offer::of(&spec.name, form.args.clone(), form.title.clone()));
+        }
+    }
+    for view in views {
+        offers.push(Offer::of(
+            "ui.view",
+            serde_json::json!({ "id": view.id }),
+            format!("{} view", view.title),
+        ));
+    }
+    // Every setting is reachable by name, like a command: its page, its
+    // section (a store of notes reads and writes), its title.
+    let plugins = app.plugins.list();
+    for spec in app.settings.schema() {
+        if !spec.editable() {
+            continue;
+        }
+        let mut path = vec![crate::settings::owner_title(spec.owner(), &plugins)];
+        if !spec.section.is_empty() {
+            path.push(spec.section.clone());
+        }
+        path.push(spec.title.clone());
+        offers.push(Offer::of(
+            "ui.settings",
+            serde_json::json!({ "key": spec.key }),
+            format!("Settings: {}", path.join(" › ")),
+        ));
+    }
+    for (page, title) in [("plugins", "Plugins"), ("keyboard", "Keyboard shortcuts")] {
+        offers.push(Offer::of(
+            "ui.settings",
+            serde_json::json!({ "page": page }),
+            format!("Settings: {title}"),
+        ));
+    }
+    for (name, args, title) in ui_commands() {
+        offers.push(Offer::of(name, args.clone(), *title));
+    }
+    // A plugin's context-menu item that runs a shell command with its
+    // own arguments (Open With… is `ui.choose` over the plugin's list)
+    // has no command of its own to be listed by: list the item.
+    for item in app.registry.menus.all() {
+        let command = &item.command;
+        if item.menu != "context"
+            || !command.name.starts_with("ui.")
+            || offers
+                .iter()
+                .any(|o| *o.name == *command.name && o.args == command.args)
+        {
+            continue;
+        }
+        offers.push(Offer::of(&command.name, command.args.clone(), item.title));
+    }
+    offers
+}
+
 impl Shell {
     fn palette_items(&self) -> Vec<PaletteItem> {
-        let no_args = serde_json::json!({});
-        let mut items: Vec<PaletteItem> = self
-            .app
-            .commands
-            .list()
+        offered(&self.app, &self.available_views())
             .into_iter()
-            // Structured preference batches are edited by the Settings dialog.
-            .filter(|c| !matches!(&*c.name, "settings.apply" | "plugins.set_enabled"))
-            // The shell's own are offered as `UI_COMMANDS` says, with the
-            // arguments that make each a thing to do; most are keys of a
-            // place (a menu's arrows), nothing to run from here.
-            .filter(|c| &*c.owner != crate::commands::OWNER)
-            // Each as it is, then each thing its forms make of it (Sort by
-            // size, Next tab).
-            .flat_map(|c| {
-                let bare = PaletteItem {
-                    keys: self.keys_for(&c.name, &no_args),
-                    name: c.name.to_string(),
-                    args: serde_json::json!({}),
-                    title: c.title.clone(),
-                    required: c.required_args(),
-                };
-                let forms = c.forms.iter().map(|form| PaletteItem {
-                    keys: self.keys_for(&c.name, &form.args),
-                    name: c.name.to_string(),
-                    args: form.args.clone(),
-                    title: form.title.clone(),
-                    required: Vec::new(),
-                });
-                std::iter::once(bare).chain(forms).collect::<Vec<_>>()
+            .map(|offer| PaletteItem {
+                keys: self.keys_for(&offer.name, &offer.args),
+                name: offer.name,
+                args: offer.args,
+                title: offer.title,
+                required: offer.required,
             })
-            .collect();
-        for spec in self.available_views() {
-            items.push(PaletteItem {
-                name: "ui.view".into(),
-                args: serde_json::json!({"id": spec.id}),
-                title: format!("{} view", spec.title),
-                keys: self.keys_for("ui.view", &serde_json::json!({ "id": spec.id })),
-                required: Vec::new(),
-            });
-        }
-        // Every setting is reachable by name, like a command.
-        let plugins = self.app.plugins.list();
-        for spec in self.app.settings.schema() {
-            if !spec.editable() {
-                continue;
-            }
-            let owner = match spec.owner() {
-                crate::settings::CORE_OWNER => "General".to_owned(),
-                crate::settings::UI_OWNER => "Appearance".to_owned(),
-                id => plugins
-                    .iter()
-                    .find(|plugin| plugin.id == id)
-                    .map_or_else(|| id.to_owned(), |plugin| plugin.title.clone()),
-            };
-            items.push(PaletteItem {
-                name: "ui.settings".into(),
-                args: serde_json::json!({ "key": spec.key }),
-                title: format!("Settings: {owner} › {}", spec.title),
-                keys: None,
-                required: Vec::new(),
-            });
-        }
-        for (page, title) in [("plugins", "Plugins"), ("keyboard", "Keyboard shortcuts")] {
-            items.push(PaletteItem {
-                name: "ui.settings".into(),
-                args: serde_json::json!({ "page": page }),
-                title: format!("Settings: {title}"),
-                keys: None,
-                required: Vec::new(),
-            });
-        }
-        for (name, args, title) in ui_commands() {
-            items.push(PaletteItem {
-                name: (*name).into(),
-                args: args.clone(),
-                title: (*title).into(),
-                keys: self.keys_for(name, args),
-                required: Vec::new(),
-            });
-        }
-        // A plugin's context-menu item that runs a shell command with its
-        // own arguments (Open With… is `ui.choose` over the plugin's list)
-        // has no command of its own to be listed by: list the item.
-        for item in self.app.registry.menus.all() {
-            let command = &item.command;
-            if item.menu != "context"
-                || !command.name.starts_with("ui.")
-                || items
-                    .iter()
-                    .any(|i| *i.name == *command.name && i.args == command.args)
-            {
-                continue;
-            }
-            items.push(PaletteItem {
-                keys: self.keys_for(&command.name, &command.args),
-                name: command.name.to_string(),
-                args: command.args.clone(),
-                title: item.title,
-                required: Vec::new(),
-            });
-        }
-        items
+            .collect()
     }
 
     pub fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {

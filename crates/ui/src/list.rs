@@ -799,22 +799,6 @@ impl Shell {
         cx.notify();
     }
 
-    /// Ctrl+Enter: the selected folders and places each in a tab behind
-    /// the one shown, as the middle button opens one (`tab.open`); with
-    /// none selected, the selection opens as Enter would.
-    pub fn open_selection_in_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let leads = {
-            let ws = self.app.workspace.read();
-            ws.pane(self.pane)
-                .is_some_and(|p| p.selection.iter().any(|id| p.leads_to(id).is_some()))
-        };
-        if !leads {
-            return self.open_selection(window, cx);
-        }
-        let pane = self.pane;
-        self.run("tab.open", serde_json::json!({ "pane": pane }), window, cx);
-    }
-
     /// Open entry `id` of the pane in a tab behind the one shown, if it
     /// leads somewhere: a folder, a place, a trashed folder.
     fn open_in_tab(&mut self, id: EntryId, window: &mut Window, cx: &mut Context<Self>) {

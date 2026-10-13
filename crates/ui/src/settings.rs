@@ -468,7 +468,7 @@ pub(crate) struct Builtin {
     page: Page,
     name: &'static str,
     owner: Option<&'static str>,
-    title: &'static str,
+    pub(crate) title: &'static str,
     pub(crate) icon: &'static str,
     pub(crate) intro: &'static str,
     /// Listed only while a setting is on it.
@@ -563,6 +563,20 @@ impl Page {
     /// The dialog's own page this is; `None` for a plugin's.
     pub(crate) fn builtin(&self) -> Option<&'static Builtin> {
         BUILTIN.iter().find(|b| &b.page == self)
+    }
+}
+
+/// What a settings namespace is called, as its page is: one of the
+/// dialog's own (`notes` is Notes), else its plugin's title, else its id.
+pub(crate) fn owner_title(owner: &str, plugins: &[PluginInfo]) -> String {
+    match Page::of_owner(owner) {
+        Page::Plugin(id) => plugins
+            .iter()
+            .find(|plugin| plugin.id == id)
+            .map_or(id, |plugin| plugin.title.clone()),
+        page => page
+            .builtin()
+            .map_or_else(|| owner.to_owned(), |b| b.title.to_owned()),
     }
 }
 

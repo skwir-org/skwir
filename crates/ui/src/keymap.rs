@@ -184,7 +184,7 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("shift-f10", "ui.context_menu", Some("pane")),
     ("menu", "ui.context_menu", Some("pane")),
     // What the middle button does to a folder: a tab behind this one.
-    ("secondary-enter", "ui.open_in_tab", Some("pane selection")),
+    ("secondary-enter", "tab.open", Some("pane selection")),
     ("enter", "ui.accept", Some("confirm")),
     ("escape", "ui.dismiss", Some("confirm")),
     ("space", "ui.peek", Some("pane")),

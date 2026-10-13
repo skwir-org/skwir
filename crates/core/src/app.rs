@@ -2300,7 +2300,7 @@ mod builtin {
         c.register::<TransferArgs, _>(
             "core",
             "move",
-            "Move",
+            "Move to…",
             "Move the selection, or the entries given, to a directory (plan); on_conflict says what becomes of a name taken there",
             |a, app| {
                 let dest = destination(&a.dest)?;
@@ -2321,7 +2321,7 @@ mod builtin {
         c.register::<TransferArgs, _>(
             "core",
             "copy",
-            "Copy",
+            "Copy to…",
             "Copy the selection, or the entries given, to a directory (plan); on_conflict says what becomes of a name taken there",
             |a, app| {
                 let dest = destination(&a.dest)?;
@@ -2342,7 +2342,7 @@ mod builtin {
         c.register::<TransferArgs, _>(
             "core",
             "link",
-            "Link",
+            "Link to…",
             "Make a link in a directory to each of the selection, or the entries given, under its name (plan); on_conflict says what becomes of a name taken there",
             |a, app| {
                 let dest = destination(&a.dest)?;

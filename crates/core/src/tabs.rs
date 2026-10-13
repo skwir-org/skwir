@@ -676,10 +676,10 @@ pub(crate) fn register(app: &App) {
         "core",
         "tab.open",
         "Open in new tab",
-        "Open each selected folder in a tab of its own, behind the tab shown",
+        "Open each selected folder in a tab of its own, behind the tab shown; files do not open in tabs",
         |a, app| {
             let pane = app.pane_or_active(a.pane);
-            let folders: Vec<Location> = {
+            let (asked, folders): (bool, Vec<Location>) = {
                 let ws = app.workspace.read();
                 let Some(p) = ws.pane(pane) else {
                     anyhow::bail!("no such pane");
@@ -697,9 +697,13 @@ pub(crate) fn register(app: &App) {
                 };
                 // A place (a tag's), or a folder that does not open at its
                 // path (a trashed one), opens where it leads.
-                ids.into_iter().filter_map(|id| p.leads_to(id)).collect()
+                (
+                    !ids.is_empty(),
+                    ids.into_iter().filter_map(|id| p.leads_to(id)).collect(),
+                )
             };
             if folders.is_empty() {
+                anyhow::ensure!(!asked, "Only folders and places open in a tab");
                 return Err(crate::command::NothingSelected.into());
             }
             let mut tabs = Vec::new();

@@ -22,8 +22,13 @@ pub const BINDINGS_KEY: &str = "keyboard.bindings";
 
 /// Commands a record may name as they were once called, and what they are
 /// now: a shortcut keeps working when its command is renamed. The shell's
-/// `ui.toggle_hidden` and `ui.sort` only ran the core's (2026-10-13).
-const RENAMED: [(&str, &str); 2] = [("ui.toggle_hidden", "toggle_hidden"), ("ui.sort", "sort")];
+/// `ui.toggle_hidden`, `ui.sort` and `ui.open_in_tab` only ran the core's
+/// (2026-10-13).
+const RENAMED: [(&str, &str); 3] = [
+    ("ui.toggle_hidden", "toggle_hidden"),
+    ("ui.sort", "sort"),
+    ("ui.open_in_tab", "tab.open"),
+];
 
 /// One of the user's bindings. Without a command it unbinds the keys where
 /// it applies: the key then does what it would with nothing bound there.

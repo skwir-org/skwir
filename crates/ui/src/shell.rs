@@ -1871,7 +1871,6 @@ impl Shell {
                 }
             }
             "context_menu" => self.open_context_menu_here(window, cx),
-            "open_in_tab" => self.open_selection_in_tabs(window, cx),
             "view" => {
                 // With a location, shown there (the sidebar's All Tags).
                 if let Some(location) = args.get("location").filter(|l| !l.is_null()) {
