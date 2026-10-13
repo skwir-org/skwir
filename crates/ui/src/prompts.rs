@@ -5,7 +5,10 @@
 
 use gpui::{AnyElement, Context, Entity, FocusHandle, Subscription, Window, div, prelude::*, px};
 use skwir_core::Plan;
-use skwir_core::command::Invocation;
+use skwir_core::command::{CommandSpec, Invocation};
+use skwir_core::op::{EntryArg, EntryRef};
+use skwir_core::os_path::PathArg;
+use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
@@ -105,6 +108,64 @@ pub struct ConfirmState {
     back: FocusReturn,
 }
 
+/// Name in `args` what a question is about as it is asked (AGENTS.md,
+/// "Pane ownership"): the pane, what is selected there and the folder it
+/// shows, each that the asked command takes (`pane`, `entries`, `in`,
+/// commands.md) and the asker left out. The answer acts on what the
+/// question was put about (the file Rename was opened for), never on what
+/// is selected or shown by the time it comes.
+fn asked_about(
+    spec: &CommandSpec,
+    args: &mut serde_json::Value,
+    pane: PaneId,
+    selection: impl FnOnce() -> Vec<EntryRef>,
+    folder: impl FnOnce() -> Option<std::path::PathBuf>,
+) {
+    let Some(named) = args.as_object_mut() else {
+        return;
+    };
+    let wants = |named: &serde_json::Map<String, serde_json::Value>, arg: &str| {
+        spec.takes(arg) && named.get(arg).is_none_or(serde_json::Value::is_null)
+    };
+    if wants(named, "pane") {
+        named.insert("pane".into(), serde_json::json!(pane));
+    }
+    if wants(named, "entries") {
+        let entries: Vec<EntryArg> = selection().into_iter().map(EntryArg::from).collect();
+        if !entries.is_empty() {
+            named.insert("entries".into(), serde_json::json!(entries));
+        }
+    }
+    if wants(named, "in")
+        && let Some(folder) = folder()
+    {
+        named.insert("in".into(), serde_json::json!(PathArg(folder)));
+    }
+}
+
+impl PromptState {
+    /// What Tab walks: the field, Cancel, the answer (`Shell::walk_dialog`).
+    pub(crate) fn walk(&self, cx: &gpui::App) -> Vec<FocusHandle> {
+        use gpui::Focusable as _;
+        vec![
+            self.input.read(cx).focus_handle(cx),
+            self.cancel_focus.clone(),
+            self.accept_focus.clone(),
+        ]
+    }
+}
+
+impl ConfirmState {
+    /// The panel's own focus, which Enter and Escape answer from, and what
+    /// Tab walks from there: Cancel, then the answer.
+    pub(crate) fn walk(&self) -> (FocusHandle, Vec<FocusHandle>) {
+        (
+            self.focus.clone(),
+            vec![self.cancel.clone(), self.accept.clone()],
+        )
+    }
+}
+
 /// What answering yes does.
 pub enum Confirmed {
     /// Apply a plan Undo cannot take back. The plan itself, built when
@@ -202,7 +263,7 @@ impl Shell {
             .get("select")
             .and_then(|s| serde_json::from_value::<[usize; 2]>(s.clone()).ok())
             .map(|[start, end]| start..end);
-        let command = Invocation {
+        let mut command = Invocation {
             name: command.into(),
             args: args
                 .get("args")
@@ -210,6 +271,21 @@ impl Shell {
                 .filter(serde_json::Value::is_object)
                 .unwrap_or_else(|| serde_json::json!({})),
         };
+        if let Some(spec) = self.app.commands.get(&command.name) {
+            let pane = command
+                .args
+                .get("pane")
+                .and_then(|pane| serde_json::from_value::<PaneId>(pane.clone()).ok())
+                .unwrap_or(self.pane);
+            let app = &self.app;
+            asked_about(
+                &spec,
+                &mut command.args,
+                pane,
+                || app.selected_refs(pane),
+                || app.pane_dir(pane).ok(),
+            );
+        }
         let ask = Ask {
             command,
             field: field.to_owned(),
@@ -542,4 +618,64 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
         &theme,
         cx,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use skwir_core::FileId;
+    use skwir_core::app::{App, AppConfig};
+    use skwir_core::op::EntryRef;
+    use skwir_core::workspace::PaneId;
+
+    use super::asked_about;
+
+    fn selected() -> Vec<EntryRef> {
+        vec![EntryRef::new(
+            FileId { dev: 1, ino: 7 },
+            "/tmp/example/a file's name.txt",
+        )]
+    }
+
+    /// Rename asks about the file selected when it opens: the answer names
+    /// it, whatever is selected by then.
+    #[test]
+    fn a_question_names_what_it_is_about_when_asked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let rename = app.commands.get("rename").unwrap();
+        let mut args = serde_json::json!({ "pane": 3 });
+        asked_about(&rename, &mut args, PaneId(9), selected, || None);
+        assert_eq!(args["pane"], 3, "the pane the asker named");
+        assert_eq!(
+            args["entries"],
+            serde_json::json!([{ "id": { "dev": 1, "ino": 7 }, "path": "/tmp/example/a file's name.txt" }])
+        );
+        assert!(app.commands.check(&skwir_core::command::Invocation {
+            name: "rename".into(),
+            args: serde_json::json!({ "new_name": "b", "entries": args["entries"].clone() }),
+        })
+        .is_ok());
+
+        // A new folder is made in the folder shown when it was asked.
+        let mkdir = app.commands.get("mkdir").unwrap();
+        let mut args = serde_json::json!({});
+        let folder = || Some(PathBuf::from("/tmp/example/shown"));
+        asked_about(&mkdir, &mut args, PaneId(2), Vec::new, folder);
+        assert_eq!(
+            args,
+            serde_json::json!({ "pane": 2, "in": "/tmp/example/shown" })
+        );
+
+        // What the asker named stays; what the command does not take is
+        // never added.
+        let mut args = serde_json::json!({ "entries": ["/tmp/example/b"] });
+        asked_about(&rename, &mut args, PaneId(2), selected, || None);
+        assert_eq!(args["entries"], serde_json::json!(["/tmp/example/b"]));
+        let hidden = app.commands.get("toggle_hidden").unwrap();
+        let mut args = serde_json::json!({});
+        asked_about(&hidden, &mut args, PaneId(2), selected, folder);
+        assert_eq!(args, serde_json::json!({ "pane": 2 }));
+    }
 }

@@ -226,6 +226,20 @@ impl Shell {
         }
     }
 
+    /// What the pane sorts by here, each with its column's label: Name,
+    /// then each column that sorts and applies here (`column_applies`). The
+    /// View menu offers these, and the palette only their sorts.
+    pub fn sort_keys(&self) -> Vec<(&'static str, SortKey)> {
+        std::iter::once(("Name", SortKey::Name))
+            .chain(
+                COLUMNS
+                    .iter()
+                    .filter(|column| self.column_applies(column.detail))
+                    .filter_map(|column| Some((column.label, column.sort?))),
+            )
+            .collect()
+    }
+
     /// Whether `detail` can be shown here: Rating only while ratings are
     /// kept, Folder only where files from many folders are listed (a
     /// folder's are in it, as a trashed folder's are), Deleted where the

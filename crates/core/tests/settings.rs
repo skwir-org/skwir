@@ -981,7 +981,8 @@ fn the_user_s_data_never_falls_back_into_the_settings() {
 }
 
 /// What is kept apart from the settings is no setting to declare: a
-/// configuration that does is told so.
+/// configuration that does is told so, in a note (it is read until skwir
+/// keeps its own, never a problem the file would carry forever).
 #[test]
 fn what_is_kept_apart_is_no_setting_to_declare() {
     let settings = Settings::in_memory();
@@ -989,10 +990,107 @@ fn what_is_kept_apart_is_no_setting_to_declare() {
     settings.declare(state_spec("sample.session"));
     let table: toml::Table = "[sample]\nsaved = []\nsession = {}\n".parse().unwrap();
     let checked = settings.check(&table, &[]);
-    let keys: Vec<&str> = checked.problems.iter().map(|(k, _)| k.as_str()).collect();
+    assert!(checked.problems.is_empty(), "{checked:?}");
+    let keys: Vec<&str> = checked.notes.iter().map(|(k, _)| k.as_str()).collect();
     assert_eq!(keys, ["sample.saved", "sample.session"], "{checked:?}");
-    assert!(checked.problems[0].1.contains("data file"));
-    assert!(checked.problems[1].1.contains("state file"));
+    assert!(checked.notes[0].1.contains("data file"), "{checked:?}");
+    assert!(
+        checked.notes[0].1.contains("until skwir keeps"),
+        "{checked:?}"
+    );
+    assert!(checked.notes[1].1.contains("state file"), "{checked:?}");
+}
+
+/// A key kept apart is its file's, whole: a table the settings file still
+/// holds (an earlier skwir's, a hand's) is read only while the data or
+/// state file has none, never merged with theirs. A colour taken away
+/// stays away, after the load and after a save; the settings file is not
+/// written.
+#[test]
+fn a_key_kept_apart_replaces_the_settings_file_s_copy_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    let data = dir.path().join("data.toml");
+    let state = dir.path().join("state.toml");
+    let declared = "[ui]\ntheme = 'dark'\n[sample.colors]\nfoo = 'red'\nbar = 'green'\n\
+                    [sample.session]\nsplit = true\nview = 'list'\n[sample.unkept]\nold = 1\n";
+    std::fs::write(&path, declared).unwrap();
+    // The user took foo's colour away: the data file no longer has it.
+    std::fs::write(&data, "[sample.colors]\nbar = 'blue'\n").unwrap();
+    std::fs::write(&state, "[sample.session]\nview = 'grid'\n").unwrap();
+    let settings = Settings::load(&path).with_state(&state).with_data(&data);
+    let colors = SettingSpec::data(
+        "sample.colors",
+        "colours",
+        toml::Value::Table(toml::Table::new()),
+    );
+    settings.declare(colors.clone());
+    settings.declare(state_spec("sample.session"));
+    settings.declare(SettingSpec::data(
+        "sample.unkept",
+        "nothing kept yet",
+        toml::Value::Table(toml::Table::new()),
+    ));
+    let read = |settings: &Settings, key: &str| settings.get::<toml::Value>(key).unwrap();
+    let only = |text: &str| text.parse::<toml::Table>().map(toml::Value::Table).unwrap();
+    assert_eq!(read(&settings, "sample.colors"), only("bar = 'blue'"));
+    assert_eq!(read(&settings, "sample.session"), only("view = 'grid'"));
+    assert_eq!(
+        read(&settings, "sample.unkept"),
+        only("old = 1"),
+        "read from the settings until skwir keeps its own"
+    );
+    // Declared again (its plugin turned on again): still the data file's.
+    settings.declare(colors);
+    assert_eq!(read(&settings, "sample.colors"), only("bar = 'blue'"));
+
+    settings.set("ui.theme", toml::Value::String("light".into()));
+    settings.set("sample.colors", only("bar = 'blue'\nbaz = 'red'"));
+    settings.save().unwrap();
+    assert_eq!(
+        read(&settings, "sample.colors"),
+        only("bar = 'blue'\nbaz = 'red'"),
+        "after the save, foo stays away"
+    );
+    assert_eq!(read(&settings, "sample.session"), only("view = 'grid'"));
+    assert_eq!(
+        table(&data)["sample"]["colors"],
+        only("bar = 'blue'\nbaz = 'red'")
+    );
+    let file = table(&path);
+    assert_eq!(file["ui"]["theme"].as_str(), Some("light"));
+    assert_eq!(
+        file["sample"]["colors"],
+        only("foo = 'red'\nbar = 'green'"),
+        "the settings file's copy is left as it was"
+    );
+
+    // Read again from the files; then the data file changed from outside.
+    let again = Settings::load(&path).with_state(&state).with_data(&data);
+    again.declare(SettingSpec::data(
+        "sample.colors",
+        "colours",
+        toml::Value::Table(toml::Table::new()),
+    ));
+    again.declare(state_spec("sample.session"));
+    assert_eq!(
+        read(&again, "sample.colors"),
+        only("bar = 'blue'\nbaz = 'red'")
+    );
+    assert_eq!(read(&again, "sample.session"), only("view = 'grid'"));
+    std::fs::write(&data, "[sample.colors]\nbaz = 'red'\n").unwrap();
+    assert_eq!(again.reload(), Some(vec!["sample.colors".to_owned()]));
+    assert_eq!(read(&again, "sample.colors"), only("baz = 'red'"));
+
+    // The settings file's copy is noted as one never read now.
+    let checked = again.check(&file, &[]);
+    let note = checked
+        .notes
+        .iter()
+        .find(|(key, _)| key == "sample.colors")
+        .map(|(_, note)| note.as_str())
+        .unwrap_or_default();
+    assert!(note.contains("never this one"), "{checked:?}");
 }
 
 /// Settings read from a file are checked as the dialog checks what is

@@ -636,7 +636,7 @@ impl Plugin for ShelfPlugin {
                     Ok(Outcome::Value(serde_json::to_value(items)?))
                 },
             )
-            .reads();
+            .data();
         let st = Arc::clone(&self.state);
         app.commands
             .register::<PaneArg, _>(

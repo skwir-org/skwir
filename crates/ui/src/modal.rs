@@ -1,12 +1,23 @@
 //! What every dialog and popup shares: where the keyboard goes back to when
-//! it closes, the dimmed backdrop, panel and buttons of a modal dialog, and
-//! the window of rows a long picker list shows.
+//! it closes, the dimmed backdrop, panel and buttons of a modal dialog, how
+//! its keys stay in it, and the window of rows a long picker list shows.
 
-use gpui::{AnyElement, App, Context, Div, FocusHandle, MouseButton, Window, deferred, div};
+use std::rc::Rc;
+
+use gpui::{
+    AnyElement, App, Context, Div, FocusHandle, Focusable, KeyDownEvent, MouseButton, Stateful,
+    Window, deferred, div,
+};
 use gpui::{prelude::*, px};
 
+use crate::keymap::RunCommand;
 use crate::shell::Shell;
 use crate::theme::Theme;
+
+/// The shared button's key context (`keymap::PLACES`' `toolbar_button`):
+/// Enter and Space press the focused button, before a dialog's own Enter
+/// answers it (`ui.accept`, `ui.review_apply`).
+const BUTTON: &str = "ToolbarButton";
 
 /// The focus to give back when a popup or dialog closes: whatever had it
 /// when it opened (a preview's reader, the address bar, a pane), not
@@ -32,10 +43,11 @@ impl FocusReturn {
     }
 }
 
-/// Tab and Shift+Tab in a dialog one reads (About, F1's overview): the next
-/// or the previous of its `buttons`, round their ends. Its panel takes them
-/// before the shell, which would close it for a key meant for the window
-/// behind.
+/// Tab and Shift+Tab in a dialog: the next or the previous of its
+/// `buttons` (its fields too), round their ends; from none of them, the
+/// first or the last. A dialog one reads (About, F1's overview) takes them
+/// in its panel, before the shell, which would close it for a key meant
+/// for the window behind; one that asks, through `Shell::walk_dialog`.
 pub fn tab_among(buttons: &[&FocusHandle], delta: isize, window: &mut Window) {
     let len = buttons.len().cast_signed();
     if len == 0 {
@@ -49,7 +61,99 @@ pub fn tab_among(buttons: &[&FocusHandle], delta: isize, window: &mut Window) {
     window.focus(buttons[next.cast_unsigned()]);
 }
 
+/// What Tab walks in one dialog: its fields, then Cancel and its answer;
+/// `home`, the panel's own focus (a confirmation's, a review's), holds the
+/// keyboard before Tab first reaches them.
+struct Walk {
+    home: Option<FocusHandle>,
+    stops: Vec<FocusHandle>,
+}
+
+impl Walk {
+    fn holds(&self, window: &Window) -> bool {
+        self.home
+            .iter()
+            .chain(&self.stops)
+            .any(|h| h.is_focused(window))
+    }
+}
+
 impl Shell {
+    /// Tab (`forward`) or Shift+Tab while a dialog is open: the next or the
+    /// previous of its controls, round their ends (`tab_among`), never the
+    /// window behind it, whose toolbars' buttons `window.focus_next` would
+    /// reach. The dialog is the one that has the keyboard, else the one on
+    /// top. False, with no dialog open: Tab walks the window.
+    pub(crate) fn walk_dialog(&self, forward: bool, window: &mut Window, cx: &App) -> bool {
+        let walks = self.dialog_walks(cx);
+        let Some(walk) = walks
+            .iter()
+            .find(|walk| walk.holds(window))
+            .or_else(|| walks.first())
+        else {
+            return false;
+        };
+        let stops: Vec<&FocusHandle> = walk.stops.iter().collect();
+        tab_among(&stops, if forward { 1 } else { -1 }, window);
+        true
+    }
+
+    /// The open dialogs' walks, the one drawn on top first: a review, a
+    /// confirmation, a prompt, Rename several, the tag editor, then the
+    /// lists one picks from (a choice, Jump, the palette), whose rows are
+    /// the arrows': Tab stays in their field.
+    fn dialog_walks(&self, cx: &App) -> Vec<Walk> {
+        let field = |input: &gpui::Entity<crate::input::TextInput>| input.read(cx).focus_handle(cx);
+        let mut walks = Vec::new();
+        if let Some(review) = self
+            .review_focus
+            .as_ref()
+            .filter(|_| !self.reviews.is_empty())
+        {
+            walks.push(Walk {
+                home: Some(review.focus.clone()),
+                stops: vec![review.cancel.clone(), review.apply.clone()],
+            });
+        }
+        if let Some(confirm) = &self.confirm {
+            let (home, stops) = confirm.walk();
+            walks.push(Walk {
+                home: Some(home),
+                stops,
+            });
+        }
+        if let Some(prompt) = &self.prompt {
+            walks.push(Walk {
+                home: None,
+                stops: prompt.walk(cx),
+            });
+        }
+        if let Some(bulk) = &self.bulk {
+            walks.push(Walk {
+                home: None,
+                stops: bulk.walk(cx),
+            });
+        }
+        if let Some(editor) = &self.tag_editor {
+            walks.push(Walk {
+                home: None,
+                stops: editor.walk(cx),
+            });
+        }
+        let pickers = [
+            self.choose.as_ref().map(|c| &c.input),
+            self.jump.as_ref().map(|j| &j.input),
+            self.palette.as_ref().map(|p| &p.input),
+        ];
+        for input in pickers.into_iter().flatten() {
+            walks.push(Walk {
+                home: None,
+                stops: vec![field(input)],
+            });
+        }
+        walks
+    }
+
     /// Whether a dialog that owns the keyboard is open. A proposal waits
     /// for these to close before it takes the keyboard for its review.
     pub fn modal_open(&self) -> bool {
@@ -68,8 +172,10 @@ impl Shell {
 }
 
 /// A modal dialog: `panel` on a scrim, `top` px from the top of the window.
-/// A press outside the panel runs `dismiss`; the panel keeps its presses.
-/// `priority` orders deferred overlays (menus above dialogs).
+/// A press outside the panel runs `dismiss`, and so does Escape that
+/// nothing in the dialog answered (its field's, its context's): with one
+/// of its buttons focused, Escape still cancels. The panel keeps its
+/// presses. `priority` orders deferred overlays (menus above dialogs).
 pub fn modal(
     panel: Div,
     top: f32,
@@ -78,6 +184,8 @@ pub fn modal(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
+    let dismiss = Rc::new(dismiss);
+    let escape = Rc::clone(&dismiss);
     deferred(
         div()
             .absolute()
@@ -92,6 +200,13 @@ pub fn modal(
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| dismiss(this, window, cx)),
             )
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                let key = &event.keystroke;
+                if key.key == "escape" && !key.modifiers.modified() {
+                    cx.stop_propagation();
+                    escape(this, window, cx);
+                }
+            }))
             .child(panel.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())),
     )
     .with_priority(priority)
@@ -114,9 +229,13 @@ pub fn panel(width: f32, theme: &Theme) -> Div {
 /// The end of a dialog that waits for an answer: what its keys do, muted,
 /// then its buttons, Cancel first and the answer last, named by its verb
 /// (Rename, Unlock, Delete). Every answer the keys give, a click gives.
+/// Each button is pressed by Enter or Space when Tab reached it (a focused
+/// Cancel cancels, whatever Enter does elsewhere in the dialog), and a
+/// press on one leaves the keyboard where it was, in the field: one that
+/// clicks nothing (a dimmed button, a release outside) strands nothing.
 pub fn footer(
     hint: impl Into<gpui::SharedString>,
-    buttons: impl IntoIterator<Item = gpui::Stateful<Div>>,
+    buttons: impl IntoIterator<Item = Stateful<Div>>,
     theme: &Theme,
 ) -> Div {
     div()
@@ -131,7 +250,17 @@ pub fn footer(
                 .text_color(theme.text_muted)
                 .child(hint.into()),
         )
-        .children(buttons)
+        .children(buttons.into_iter().map(|button| {
+            button
+                .key_context(BUTTON)
+                // Taken here: the key's release on this button clicks it.
+                .on_action(|action: &RunCommand, _, cx| {
+                    if action.name != "ui.toolbar_activate" {
+                        cx.propagate();
+                    }
+                })
+                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+        }))
 }
 
 /// Rows a picker (the palette, Jump) shows at once.

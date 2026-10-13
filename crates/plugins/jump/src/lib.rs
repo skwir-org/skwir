@@ -293,7 +293,7 @@ impl Plugin for JumpPlugin {
                 Ok(Outcome::Value(serde_json::to_value(ranked)?))
             },
         )
-        .reads();
+        .data();
         app.commands
             .register::<ToArgs, _>(
                 ID,

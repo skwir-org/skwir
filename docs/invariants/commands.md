@@ -33,9 +33,9 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   arguments that make it one thing to do; those and the keys' own
   (`KEY_FORMS`) are the commands' forms.
 - **One thing, one command, one title.** The palette (`palette::offered`)
-  offers each core and plugin command as it is and each of its forms,
-  never what only answers (`Effect::Reads`: nothing shows when run from
-  there), and a setting by its page, section and title.
+  offers each core and plugin command as it is and each of its forms
+  (a sort only by what a column shows there, as the View menu offers
+  it), never what is data, and a setting by its page, section and title.
   `keymap_titles.rs` holds that no two of its entries read alike. A
   shell command that only ran a core one for the pane is that core
   command instead (`toggle_hidden`, `sort`, `tab.open`): a pane's button
@@ -52,6 +52,14 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   command (`ui.*`) is the user's alone unless `commands.rs` lists it among
   those that show or act: one that answers a dialog or presses for the
   user must never be an agent's.
+- **Data.** A command that only answers whoever asks (an agent's
+  question, a menu's items, Properties' rows, the timeline's bars) is
+  registered `.data()`: it reads, and run by a person it would show
+  nothing, so the palette and the Keyboard page leave it out. One that
+  changes nothing yet shows its answer from the window (Copy paths, a
+  plugin from outside's command, whose answer the window says) is
+  `.reads()` and offered. `keymap_titles.rs` names those, so a new
+  command that reads says which it is.
 
 ## Agents and scripts drive the window (ADR-043)
 

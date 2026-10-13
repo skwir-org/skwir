@@ -965,7 +965,7 @@ impl Plugin for OpenWithPlugin {
             "List the applications that open the selected entries (or the pane's folder with `here`), recommended first, each with the `open_with` invocation that opens them; with `defaults`, each with the `open_with.set_default` that makes it the default for their type",
             move |a, app| choices(a, &cache, app),
         )
-        .reads();
+        .data();
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<TargetArgs, _>(
             ID,
@@ -974,7 +974,7 @@ impl Plugin for OpenWithPlugin {
             "Properties' Opens with row for one file: the application its type opens with, and the way to change it",
             move |a, app| properties(a, &cache, app),
         )
-        .reads();
+        .data();
         app.registry.property_sources.add(
             ID,
             skwir_core::registry::PropertySource {
@@ -1061,7 +1061,7 @@ impl Plugin for OpenWithPlugin {
             "The context menu's Open for the selection, naming the default application its files share; no items when the selection's types or the applications are not known yet. Answers from memory",
             move |a, app| menu(a.pane, &cache, app),
         )
-        .reads();
+        .data();
         app.registry.menu_sources.add(
             ID,
             MenuSource {

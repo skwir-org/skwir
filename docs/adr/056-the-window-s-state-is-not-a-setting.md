@@ -24,7 +24,9 @@ consequence on saved searches and tags revised by ADR-057.
    and set it as any setting. A save writes each file only when its table
    changes, the state first. The state file is skwir's own: one that is no
    TOML is started over. (2026-10-13: a state key an earlier skwir left in
-   the settings file no longer moves out; no one used skwir yet.)
+   the settings file no longer moves out; no one used skwir yet. It is read
+   until the state file has the key, which then replaces it whole, never
+   merged with it: a field the window cleared stays cleared.)
 2. **The settings file may be read-only.** A save writes through a link,
    to where it leads (a settings file kept with the user's other
    configuration stays a link). One that cannot be written (Home
@@ -38,7 +40,10 @@ consequence on saved searches and tags revised by ADR-057.
    owner's check); a key no setting has, under an owner that declares
    settings, is a problem; an owner nothing declares (a plugin turned off,
    or from outside) is noted. `skwir cmd` without a window declares the
-   window's own settings too, so it checks them.
+   window's own settings too, so it checks them. (2026-10-13: a shortcut
+   to a command nothing has is a problem again, unless it is named under
+   a namespace nothing there registers, a plugin's that is off or the
+   window's own with no window: it waits for it.)
 4. **Home Manager.** `programs.skwir.mutableSettings` (default false, as
    Home Manager's modules): off, the settings are linked read-only from
    the store, a writable file left as declared giving way to the link

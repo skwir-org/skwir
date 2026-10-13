@@ -193,7 +193,7 @@ pub(crate) fn register(app: &App) {
                 )?))
             },
         )
-        .reads();
+        .data();
 }
 
 /// Summary of a plugin for settings UIs.

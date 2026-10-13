@@ -138,7 +138,7 @@ impl Plugin for Control {
                 })))
             },
         )
-        .reads();
+        .data();
         let Some(address) = address else {
             tracing::warn!("no channel for agents and scripts on this system");
             return;

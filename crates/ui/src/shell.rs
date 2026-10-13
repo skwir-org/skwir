@@ -437,7 +437,13 @@ impl Shell {
         // focus cannot ask for the frame that shows it.
         subs.push(cx.on_focus_lost(window, |_, window, cx| {
             cx.defer_in(window, |this, window, cx| {
-                if let Some(focus) = this.drawn_focus() {
+                // The Settings dialog, while it is open, over the pane
+                // behind it: what it drew last went (a bar closed).
+                let focus = match &this.settings {
+                    Some(settings) => Some(gpui::Focusable::focus_handle(settings, cx)),
+                    None => this.drawn_focus(),
+                };
+                if let Some(focus) = focus {
                     window.focus(&focus);
                     cx.notify();
                 }
@@ -1623,6 +1629,9 @@ impl Shell {
             // The focused button and the open popup answer these; one
             // that reaches here found neither.
             "toolbar_activate" | "toolbar_close" => {}
+            // A dialog keeps the keyboard: Tab walks its own controls.
+            "toolbar_next" | "toolbar_prev"
+                if self.walk_dialog(name == "toolbar_next", window, cx) => {}
             "toolbar_next" => {
                 window.focus_next();
                 self.reveal_focused_row(window, cx);

@@ -1052,7 +1052,7 @@ fn register_commands(app: &App, trashes: &Trashes) {
             Ok(Outcome::Value(serde_json::to_value(listed)?))
         },
     )
-        .reads();
+        .data();
 }
 
 // ------------------------------------------------------------------ plugin

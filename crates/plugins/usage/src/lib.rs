@@ -326,7 +326,7 @@ impl Plugin for UsagePlugin {
                     Ok(Outcome::Value(serde_json::to_value(status)?))
                 },
             )
-            .reads();
+            .data();
         for (name, title, release) in [
             ("usage.cancel", "Cancel disk usage scan", false),
             ("usage.release", "Release disk usage view", true),

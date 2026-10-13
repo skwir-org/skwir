@@ -2389,7 +2389,7 @@ mod builtin {
                 })))
             },
         )
-        .reads();
+        .data();
 
         c.register::<RenameArgs, _>(
             "core",
@@ -2604,7 +2604,7 @@ mod builtin {
                 )?))
             },
         )
-        .reads();
+        .data();
 
         c.register::<ApplyPlanArgs, _>(
             "core",
@@ -2663,7 +2663,7 @@ mod builtin {
             "Return every registered command with its argument schema",
             |_, app| Ok(Outcome::Value(serde_json::to_value(app.commands.list())?)),
         )
-        .reads();
+        .data();
     }
 }
 

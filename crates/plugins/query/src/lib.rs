@@ -648,7 +648,7 @@ impl Plugin for QueryPlugin {
                 "Return the saved searches, in sidebar order",
                 |_, app| Ok(Outcome::Value(serde_json::to_value(saved(app))?)),
             )
-            .reads();
+            .data();
         app.commands.register::<DescribeArgs, _>(
             ID,
             "query.describe",
@@ -665,7 +665,7 @@ impl Plugin for QueryPlugin {
                 Ok(Outcome::Value(serde_json::to_value(description)?))
             },
         )
-        .reads();
+        .data();
         app.commands.register::<PaneOnly, _>(
             ID,
             "query.tag_choices",
@@ -690,7 +690,7 @@ impl Plugin for QueryPlugin {
                 Ok(Outcome::Value(facets::tag_choices(&counts)))
             },
         )
-        .reads();
+        .data();
         let similar_lifetime = lifetime.clone();
         app.commands.register::<SimilarArgs, _>(
             ID,
@@ -798,7 +798,7 @@ impl Plugin for QueryPlugin {
                 ))
             },
         )
-        .reads();
+        .data();
         app.registry.keepers.add(
             ID,
             Keeper {

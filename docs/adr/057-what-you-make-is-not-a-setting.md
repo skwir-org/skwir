@@ -32,12 +32,18 @@ searches and tags.
    file as it stands; a change from outside (another skwir, `skwir cmd`)
    is taken in as it happens (`settings::follow` watches its folder too).
 3. **Read under the data file.** One still in the settings file (written
-   by hand) is read until skwir keeps its own, which wins. (2026-10-13: it
-   no longer moves to the data file at the next save, which only carried
-   an earlier skwir's; no one used skwir yet.)
+   by hand) is read until skwir keeps its own, which wins whole: the data
+   file's value replaces the settings file's, never merged with it key by
+   key, so a tag's colour taken away does not come back from a stale copy.
+   The settings file is not written for it (it may be read-only, and is
+   shared). (2026-10-13: it no longer moves to the data file at the next
+   save, which only carried an earlier skwir's; no one used skwir yet. The
+   same day, a table merged key by key with that copy at each start and
+   save was found and made whole.)
 4. **Not declared.** `settings.check` says a key kept apart (the state or
-   the data) is no setting, so Home Manager's build refuses one in
-   `programs.skwir.settings`.
+   the data) is no setting. (2026-10-13: in a note, read only until skwir
+   keeps its own, no longer a problem: one a settings file still held was
+   flagged at every check, though harmless once skwir kept its own.)
 
 ## Consequences
 

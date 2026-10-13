@@ -535,7 +535,7 @@ impl Plugin for RenameBulkPlugin {
                 .collect();
             Ok(Outcome::Value(serde_json::json!({ "renames": shown, "count": renames.len() })))
         })
-        .reads();
+        .data();
         app.registry.keymap.add(
             ID,
             KeyBinding {

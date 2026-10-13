@@ -827,7 +827,7 @@ pub(crate) fn register(app: &App) {
         "The tabs in order: each one's panes, their locations, which pane is active and which tab is shown",
         |_, app| Ok(Outcome::Value(serde_json::to_value(app.tab_list())?)),
     )
-        .reads();
+        .data();
 }
 
 #[cfg(test)]

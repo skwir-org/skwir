@@ -155,12 +155,13 @@ impl Keyboard {
             let Some((command, args)) = &binding.command else {
                 continue;
             };
-            // A default the user's binding hides stays listed, struck
-            // through; one a scheme or the shell hides is not the user's
-            // doing, and is left out as it never runs.
+            // A binding the user's hides stays listed, struck through: a
+            // default, or a shortcut of theirs written before (by hand:
+            // the page never leaves one). One a scheme or the shell hides
+            // is not the user's doing, and is left out as it never runs.
             let hidden_by = match binding.hidden_by.map(|i| &bound[i]) {
                 None => None,
-                Some(later) if later.layer == Layer::User && binding.layer != Layer::User => {
+                Some(later) if later.layer == Layer::User && later.record != binding.record => {
                     later.record.clone()
                 }
                 Some(_) => continue,
@@ -273,8 +274,7 @@ fn unkeyed<'a>(
     specs
         .iter()
         .filter(|spec| {
-            !matches!(&*spec.name, "settings.apply" | "plugins.set_enabled")
-                && spec.effect != skwir_core::command::Effect::Reads
+            !matches!(&*spec.name, "settings.apply" | "plugins.set_enabled") && !spec.data
         })
         .flat_map(|spec| {
             let shell = &*spec.owner == crate::commands::OWNER;
@@ -408,11 +408,41 @@ fn id_of(record: &Record) -> Option<&str> {
     record.get("id").and_then(Value::as_str)
 }
 
+/// A record's keys as GPUI reads them, and the conditions of its `when`.
+fn keys_and_conditions(record: &Record) -> Option<(String, Vec<String>)> {
+    let text = |key: &str| record.get(key).and_then(Value::as_str).map(str::trim);
+    let keys = keymap::normal_keys(text("keys").filter(|keys| !keys.is_empty())?);
+    let context = keymap::context_of(text("when").filter(|when| !when.is_empty()));
+    let conditions = keymap::conditions(&context)
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    Some((keys, conditions))
+}
+
+/// `record` after the others, so it wins where it applies (GPUI runs a
+/// place's latest binding), and without the user's records of the same
+/// keys whose conditions it covers: it hides them, and kept, they would
+/// come back once it goes (a shortcut it replaced, a default's keys freed
+/// before).
+fn put(records: &mut Vec<Record>, record: Record) {
+    if let Some((keys, mine)) = keys_and_conditions(&record) {
+        records.retain(|other| {
+            !keys_and_conditions(other).is_some_and(|(theirs_keys, theirs)| {
+                theirs_keys == keys && mine.iter().all(|atom| theirs.contains(atom))
+            })
+        });
+    }
+    records.push(record);
+}
+
 /// `records` once `edit` is made: what the page saves (ADR-024). New keys
 /// for an action are a record; new keys in place of a default are that
 /// record and one freeing the default's keys where they worked; removing
-/// a default frees its keys; removing or changing one of the user's edits
-/// its record.
+/// a default frees its keys; removing one of the user's takes its record
+/// out, changing one moves it last with its new keys. A record written
+/// goes last and takes out the user's own it covers (`put`), so it is the
+/// one that runs. Keys changed to the same keys change nothing.
 pub(crate) fn apply(records: &mut Vec<Record>, edit: &Edit) {
     let drop_ids = |records: &mut Vec<Record>, ids: &[&str]| {
         records.retain(|record| !id_of(record).is_some_and(|id| ids.contains(&id)));
@@ -422,27 +452,33 @@ pub(crate) fn apply(records: &mut Vec<Record>, edit: &Edit) {
             action,
             keys,
             context,
-        } => records.push(record(keys, Some((&action.command, &action.args)), context)),
+        } => put(
+            records,
+            record(keys, Some((&action.command, &action.args)), context),
+        ),
+        Edit::Change { chip, keys, .. }
+            if keymap::normal_keys(keys) == keymap::normal_keys(&chip.keys) => {}
         Edit::Change { action, chip, keys } => {
             if let Some(id) = &chip.record {
-                if let Some(mine) = records
-                    .iter_mut()
-                    .find(|record| id_of(record) == Some(id.as_str()))
+                if let Some(at) = records
+                    .iter()
+                    .position(|record| id_of(record) == Some(id.as_str()))
                 {
+                    let mut mine = records.remove(at);
                     mine.insert("keys".into(), keys.as_str().into());
+                    put(records, mine);
                 }
             } else {
-                records.push(record(
-                    keys,
-                    Some((&action.command, &action.args)),
-                    &chip.context,
-                ));
-                records.push(record(&chip.keys, None, &chip.context));
+                put(
+                    records,
+                    record(keys, Some((&action.command, &action.args)), &chip.context),
+                );
+                put(records, record(&chip.keys, None, &chip.context));
             }
         }
         Edit::Remove(chip) => match &chip.record {
             Some(id) => drop_ids(records, &[id.as_str()]),
-            None => records.push(record(&chip.keys, None, &chip.context)),
+            None => put(records, record(&chip.keys, None, &chip.context)),
         },
         Edit::Restore(chip) => {
             if let Some(id) = &chip.hidden_by {
@@ -450,15 +486,133 @@ pub(crate) fn apply(records: &mut Vec<Record>, edit: &Edit) {
             }
         }
         Edit::Reset(action) => {
+            // Its own records, and those of the user's that hide its
+            // defaults; not one that hides a shortcut of its own, which
+            // goes with that shortcut's record.
             let ids: Vec<&str> = action
                 .chips
                 .iter()
-                .flat_map(|chip| [chip.record.as_deref(), chip.hidden_by.as_deref()])
+                .flat_map(|chip| {
+                    let hider = chip.hidden_by.as_deref().filter(|_| chip.record.is_none());
+                    [chip.record.as_deref(), hider]
+                })
                 .flatten()
                 .collect();
             drop_ids(records, &ids);
         }
     }
+}
+
+/// Where a binding runs, as `effects` compares the keymap before and after
+/// a change: its action, its keys as GPUI reads them, its context, and its
+/// keys as written and its command's arguments, to say what is lost.
+struct Running {
+    id: ActionId,
+    command: String,
+    args: Value,
+    keys: String,
+    normal: String,
+    context: String,
+}
+
+/// Every binding that runs with `records` as the user's: the keymap built
+/// from them as `keymap::install` builds it.
+fn running(app: &App, records: &[Record]) -> Vec<Running> {
+    let value = toml::Value::try_from(records).unwrap_or(toml::Value::Array(Vec::new()));
+    let user = skwir_core::keymap::bindings_in(&value);
+    keymap::bindings(app, &user)
+        .into_iter()
+        .filter(|binding| binding.hidden_by.is_none())
+        .filter_map(|binding| {
+            let (command, args) = binding.command?;
+            Some(Running {
+                id: ActionId {
+                    place: keymap::place_of(&binding.context).place,
+                    command: command.clone(),
+                    args: args.to_string(),
+                },
+                command,
+                args,
+                normal: keymap::normal_keys(&binding.keys),
+                keys: binding.keys,
+                context: binding.context,
+            })
+        })
+        .collect()
+}
+
+/// Keys another action would no longer run, where they ran.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Lost {
+    pub title: String,
+    /// Where, with its conditions in words (`context_label`).
+    pub place: String,
+    pub keys: String,
+}
+
+/// What a change leaves of the other actions' keys, and whether it may be
+/// made at all.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Effects {
+    /// Keys other actions than `editing` would no longer run: those the
+    /// new keys replace, and those freeing a key in a place frees beside
+    /// it (Escape freed in the file list stops clearing the filter too).
+    pub lost: Vec<Lost>,
+    /// Why it cannot be made: an action that keeps a key would have none
+    /// left in a place (`CommandSpec::keeps_a_key`).
+    pub refused: Option<String>,
+}
+
+/// What making `edit` to `records` (the user's, as the dialog holds them)
+/// would do to every action's keys: the keymap built before and after,
+/// compared. `editing` is the action changed, whose own keys are its
+/// business.
+pub(crate) fn effects(
+    app: &App,
+    records: &[Record],
+    edit: &Edit,
+    editing: Option<&ActionId>,
+) -> Effects {
+    let mut changed = records.to_vec();
+    apply(&mut changed, edit);
+    if changed == records {
+        return Effects::default();
+    }
+    let before = running(app, records);
+    let after = running(app, &changed);
+    let still: std::collections::HashSet<(&ActionId, &str, &str)> = after
+        .iter()
+        .map(|run| (&run.id, run.normal.as_str(), run.context.as_str()))
+        .collect();
+    let left: std::collections::HashSet<&ActionId> = after.iter().map(|run| &run.id).collect();
+    let kept: std::collections::HashSet<String> = app
+        .commands
+        .list()
+        .into_iter()
+        .filter(|spec| spec.keeps_a_key)
+        .map(|spec| spec.name.to_string())
+        .collect();
+    let mut effects = Effects::default();
+    for run in &before {
+        if effects.refused.is_none() && kept.contains(&run.command) && !left.contains(&run.id) {
+            let title = keymap::title(app, &run.command, &run.args);
+            effects.refused = Some(needs_a_key(&title, &run.id.place));
+        }
+        if Some(&run.id) == editing
+            || still.contains(&(&run.id, run.normal.as_str(), run.context.as_str()))
+        {
+            continue;
+        }
+        let lost = Lost {
+            title: keymap::title(app, &run.command, &run.args),
+            place: keymap::context_label(&run.context),
+            keys: run.keys.clone(),
+        };
+        if !effects.lost.contains(&lost) {
+            effects.lost.push(lost);
+        }
+    }
+    effects
 }
 
 /// What new keys would do where they work, said before they are saved.
@@ -472,10 +626,14 @@ pub(crate) enum Note {
         place: String,
         why: Stay,
     },
-    /// A shortcut of the user's on the same keys waits for its plugin.
-    Waits { title: String },
+    /// A shortcut of the user's on the same keys waits for its plugin; it
+    /// `goes` when the new keys cover where it would work.
+    Waits { title: String, goes: bool },
     /// A character bound in the file list stops typing a name there.
     Typing,
+    /// A key that types a character still types it in a text field: the
+    /// field keeps its characters (`keymap::typed_in_fields`).
+    Fields,
     /// The action has these keys there already.
     Has,
 }
@@ -514,14 +672,21 @@ pub(crate) fn verdict(
 ) -> Verdict {
     let mut verdict = Verdict::default();
     let keys = keymap::normal_keys(keys);
+    // The keys it has, pressed again: nothing to change.
+    if replacing.is_some_and(|chip| keymap::normal_keys(&chip.keys) == keys) {
+        verdict.notes.push(Note::Has);
+        return verdict;
+    }
     let mine = keymap::conditions(context);
     for binding in bound.iter().filter(|b| b.hidden_by.is_none()) {
         let Some((command, args)) = &binding.command else {
             continue;
         };
-        if keymap::normal_keys(&binding.keys) != keys
-            || replacing
-                .is_some_and(|chip| chip.keys == binding.keys && chip.context == binding.context)
+        let theirs_keys = keymap::normal_keys(&binding.keys);
+        if theirs_keys != keys
+            || replacing.is_some_and(|chip| {
+                keymap::normal_keys(&chip.keys) == theirs_keys && chip.context == binding.context
+            })
         {
             continue;
         }
@@ -563,13 +728,21 @@ pub(crate) fn verdict(
         if keymap::normal_keys(&waiting.keys) == keys
             && let Some(command) = &waiting.command
         {
+            // Covered, it goes as any shortcut of the user's the new keys
+            // replace (`put`).
+            let theirs = keymap::context_of(waiting.when.as_deref());
+            let theirs = keymap::conditions(&theirs);
             verdict.notes.push(Note::Waits {
                 title: keymap::title(app, &command.name, &command.args),
+                goes: mine.iter().all(|atom| theirs.contains(atom)),
             });
         }
     }
     if keymap::takes_a_character(&keys, context, true) {
         verdict.notes.push(Note::Typing);
+    }
+    if keymap::types_a_character(&keys) {
+        verdict.notes.push(Note::Fields);
     }
     verdict
 }
@@ -593,7 +766,7 @@ fn needs_a_key(title: &str, place: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Edit, Keyboard, Note, Row, Show, apply, removal_refused, rows, verdict};
+    use super::{Edit, Keyboard, Note, Row, Show, apply, effects, removal_refused, rows, verdict};
     use crate::settings_records::Record;
     use skwir_core::App;
     use skwir_core::command::{Invocation, NoArgs, Outcome};
@@ -759,8 +932,12 @@ mod tests {
                 keys: "ctrl-e".into(),
             },
         );
-        assert_eq!(written(&again)[0].0, "ctrl-e", "the record is edited");
         assert_eq!(again.len(), 2);
+        assert_eq!(
+            written(&again)[1].0,
+            "ctrl-e",
+            "the record is edited, and moved last to run"
+        );
         let mut restored = records.clone();
         apply(&mut restored, &Edit::Restore(struck));
         assert_eq!(written(&restored).len(), 1, "the freeing record went");
@@ -827,12 +1004,15 @@ mod tests {
         ));
         assert!(matches!(
             say("ctrl-alt-w", &anywhere).notes.as_slice(),
-            [Note::Waits { title }] if title == "Gone open"
+            [Note::Waits { title, goes: true }] if title == "Gone open"
         ));
         assert_eq!(
             say("j", &crate::keymap::context_of(Some("pane"))).notes,
-            [Note::Typing]
+            [Note::Typing, Note::Fields]
         );
+        // A character bound anywhere still types in a text field.
+        assert!(say(".", &anywhere).notes.contains(&Note::Fields));
+        assert!(!say("ctrl-.", &anywhere).notes.contains(&Note::Fields));
         assert_eq!(say("ctrl-h", &anywhere).notes, [Note::Has]);
         // The palette keeps a key: its last cannot go, nor be taken.
         let palette = action(&keyboard, "Anywhere", "ui.palette");
@@ -843,5 +1023,266 @@ mod tests {
             "binding its key to another"
         );
         assert!(removal_refused(hidden, &hidden.chips[0]).is_none());
+    }
+
+    fn keys_of(action: &super::Action) -> Vec<&str> {
+        action.running().map(|chip| chip.keys.as_str()).collect()
+    }
+
+    /// One of the user's keys changed is moved last and frees the freeing
+    /// record it covers: F2 changed to Ctrl+R, then back to F2, renames
+    /// with F2 again. Changed onto another shortcut of the user's keys, it
+    /// takes them, as the verdict says.
+    #[test]
+    fn a_key_of_one_s_own_changed_is_the_one_that_runs() {
+        let (_tmp, app) = app();
+        let (keyboard, _) = read(&app, &[]);
+        let rename = action(&keyboard, "File list", "ui.rename_prompt");
+        let f2 = rename.chips.iter().find(|c| c.keys == "f2").unwrap();
+        let mut records = Vec::new();
+        apply(
+            &mut records,
+            &Edit::Change {
+                action: rename,
+                chip: f2,
+                keys: "ctrl-r".into(),
+            },
+        );
+        let (keyboard, _) = read(&app, &records);
+        let rename = action(&keyboard, "File list", "ui.rename_prompt");
+        assert_eq!(keys_of(rename), ["ctrl-r"]);
+        let mine = rename.chips.iter().find(|c| c.keys == "ctrl-r").unwrap();
+        apply(
+            &mut records,
+            &Edit::Change {
+                action: rename,
+                chip: mine,
+                keys: "f2".into(),
+            },
+        );
+        assert_eq!(records.len(), 1, "the record freeing F2 went: {records:?}");
+        let (keyboard, _) = read(&app, &records);
+        let rename = action(&keyboard, "File list", "ui.rename_prompt");
+        assert_eq!(keys_of(rename), ["f2"], "F2 renames again");
+
+        // Ctrl+1 changed to Ctrl+2, which another of the user's has.
+        let mut records = vec![
+            record(&[
+                ("id", "a"),
+                ("keys", "ctrl-1"),
+                ("command", "toggle_hidden"),
+            ]),
+            record(&[
+                ("id", "b"),
+                ("keys", "ctrl-2"),
+                ("command", "ui.toggle_sidebar"),
+            ]),
+        ];
+        let (keyboard, bound) = read(&app, &records);
+        let hidden = action(&keyboard, "Anywhere", "toggle_hidden");
+        let one = hidden.chips.iter().find(|c| c.keys == "ctrl-1").unwrap();
+        let said = verdict(
+            &app,
+            &keyboard,
+            &bound,
+            "ctrl-2",
+            &one.context,
+            hidden,
+            Some(one),
+        );
+        assert!(
+            matches!(said.notes.as_slice(), [Note::Replaces { .. }]),
+            "{said:?}"
+        );
+        apply(
+            &mut records,
+            &Edit::Change {
+                action: hidden,
+                chip: one,
+                keys: "ctrl-2".into(),
+            },
+        );
+        let (keyboard, _) = read(&app, &records);
+        assert!(keys_of(action(&keyboard, "Anywhere", "toggle_hidden")).contains(&"ctrl-2"));
+        assert!(!keys_of(action(&keyboard, "Anywhere", "ui.toggle_sidebar")).contains(&"ctrl-2"));
+        assert_eq!(records.len(), 1, "the one it replaced went: {records:?}");
+    }
+
+    /// A shortcut the new keys replace goes from the file: taking the new
+    /// keys away never brings it back.
+    #[test]
+    fn a_shortcut_replaced_does_not_come_back() {
+        let (_tmp, app) = app();
+        let (keyboard, _) = read(&app, &[]);
+        let mut records = Vec::new();
+        let hidden = action(&keyboard, "Anywhere", "toggle_hidden");
+        apply(
+            &mut records,
+            &Edit::Add {
+                action: hidden,
+                keys: "ctrl-j".into(),
+                context: hidden.context(),
+            },
+        );
+        let sidebar = action(&keyboard, "Anywhere", "ui.toggle_sidebar");
+        apply(
+            &mut records,
+            &Edit::Add {
+                action: sidebar,
+                keys: "ctrl-j".into(),
+                context: sidebar.context(),
+            },
+        );
+        assert_eq!(records.len(), 1, "{records:?}");
+        let (keyboard, _) = read(&app, &records);
+        let sidebar = action(&keyboard, "Anywhere", "ui.toggle_sidebar");
+        let mine = sidebar.chips.iter().find(|c| c.keys == "ctrl-j").unwrap();
+        apply(&mut records, &Edit::Remove(mine));
+        let (keyboard, _) = read(&app, &records);
+        assert!(!keys_of(action(&keyboard, "Anywhere", "toggle_hidden")).contains(&"ctrl-j"));
+
+        // Written by hand, one hidden by a later one of the user's is
+        // listed struck, to be seen and restored.
+        let hand = [
+            record(&[
+                ("id", "a"),
+                ("keys", "ctrl-j"),
+                ("command", "toggle_hidden"),
+            ]),
+            record(&[
+                ("id", "b"),
+                ("keys", "ctrl-j"),
+                ("command", "ui.toggle_sidebar"),
+            ]),
+        ];
+        let (keyboard, _) = read(&app, &hand);
+        let hidden = action(&keyboard, "Anywhere", "toggle_hidden");
+        let struck = hidden.chips.iter().find(|c| c.keys == "ctrl-j").unwrap();
+        assert_eq!(struck.hidden_by.as_deref(), Some("b"));
+        assert!(hidden.changed());
+    }
+
+    /// The keys it has, pressed again for one of its keys, change nothing:
+    /// the verdict says it has them, and nothing is written.
+    #[test]
+    fn the_keys_it_has_pressed_again_change_nothing() {
+        let (_tmp, app) = app();
+        let (keyboard, bound) = read(&app, &[]);
+        let rename = action(&keyboard, "File list", "ui.rename_prompt");
+        let f2 = rename.chips.iter().find(|c| c.keys == "f2").unwrap();
+        let said = verdict(&app, &keyboard, &bound, "f2", &f2.context, rename, Some(f2));
+        assert_eq!(said.notes, [Note::Has]);
+        let mut records = Vec::new();
+        apply(
+            &mut records,
+            &Edit::Change {
+                action: rename,
+                chip: f2,
+                keys: "f2".into(),
+            },
+        );
+        assert!(records.is_empty());
+        // Spelt otherwise: `secondary-shift-p` is Ctrl+Shift+P off a Mac.
+        let palette = action(&keyboard, "Anywhere", "ui.palette");
+        let chip = &palette.chips[0];
+        let pressed = if cfg!(target_os = "macos") {
+            "cmd-shift-p"
+        } else {
+            "ctrl-shift-p"
+        };
+        let said = verdict(
+            &app,
+            &keyboard,
+            &bound,
+            pressed,
+            &chip.context,
+            palette,
+            Some(chip),
+        );
+        assert_eq!(said.notes, [Note::Has]);
+    }
+
+    /// Escape freed in the file list frees it where narrower bindings of
+    /// other actions had it too (clearing the filter, the clipboard): the
+    /// change says which before it is saved.
+    #[test]
+    fn freeing_keys_in_a_place_says_what_it_frees_beside_them() {
+        let (_tmp, app) = app();
+        for (command, when) in [("select_none", "pane"), ("clipboard_clear", "pane empty")] {
+            app.registry.keymap.add(
+                "plugin",
+                KeyBinding {
+                    keys: "escape".into(),
+                    command: Invocation::new(command),
+                    when: Some(when.into()),
+                },
+            );
+            if !app.commands.contains(command) {
+                app.commands
+                    .register::<NoArgs, _>("plugin", command, command, "", |_, _| {
+                        Ok(Outcome::Done)
+                    });
+            }
+        }
+        let (keyboard, _) = read(&app, &[]);
+        let none = action(&keyboard, "File list", "select_none");
+        let escape = none.chips.iter().find(|c| c.keys == "escape").unwrap();
+        let freed = effects(&app, &[], &Edit::Remove(escape), Some(&none.id()));
+        let lost: Vec<&str> = freed.lost.iter().map(|lost| lost.title.as_str()).collect();
+        let filter = crate::keymap::title(&app, "filter", &serde_json::json!({}));
+        let clipboard = crate::keymap::title(&app, "clipboard_clear", &serde_json::json!({}));
+        assert!(lost.contains(&filter.as_str()), "{lost:?}");
+        assert!(lost.contains(&clipboard.as_str()), "{lost:?}");
+        assert!(freed.refused.is_none());
+        // Changed to other keys, the same: the old ones are freed.
+        let changed = effects(
+            &app,
+            &[],
+            &Edit::Change {
+                action: none,
+                chip: escape,
+                keys: "ctrl-d".into(),
+            },
+            Some(&none.id()),
+        );
+        assert!(changed.lost.iter().any(|lost| lost.title == filter));
+    }
+
+    /// Restoring a default, or going back to skwir's keys, never takes the
+    /// last key of an action that keeps one: the palette moved to F9
+    /// keeps it when Toggle sidebar asks for F9 back.
+    #[test]
+    fn restore_and_reset_never_take_the_last_key_of_one_that_keeps_one() {
+        let (_tmp, app) = app();
+        let (keyboard, _) = read(&app, &[]);
+        let palette = action(&keyboard, "Anywhere", "ui.palette");
+        let mut records = Vec::new();
+        apply(
+            &mut records,
+            &Edit::Change {
+                action: palette,
+                chip: &palette.chips[0],
+                keys: "f9".into(),
+            },
+        );
+        let (keyboard, _) = read(&app, &records);
+        let sidebar = action(&keyboard, "Anywhere", "ui.toggle_sidebar");
+        let struck = sidebar.chips.iter().find(|c| c.keys == "f9").unwrap();
+        assert!(!struck.runs());
+        let restored = effects(&app, &records, &Edit::Restore(struck), Some(&sidebar.id()));
+        assert!(
+            restored
+                .refused
+                .as_deref()
+                .is_some_and(|why| why.contains("needs a key")),
+            "{restored:?}"
+        );
+        let reset = effects(&app, &records, &Edit::Reset(sidebar), Some(&sidebar.id()));
+        assert!(reset.refused.is_some(), "{reset:?}");
+        // The palette given back its own key first, Toggle sidebar may
+        // have F9 again.
+        let palette = action(&keyboard, "Anywhere", "ui.palette");
+        let back = effects(&app, &records, &Edit::Reset(palette), Some(&palette.id()));
+        assert!(back.refused.is_none(), "{back:?}");
     }
 }

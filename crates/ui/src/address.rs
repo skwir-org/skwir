@@ -162,13 +162,9 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         .collect();
     let spec = shell.sort_spec();
     // By name, then by what each column that sorts shows, in its words.
-    let order: Vec<Button> = std::iter::once(("Name", SortKey::Name))
-        .chain(
-            crate::views::list::COLUMNS
-                .iter()
-                .filter(|column| shell.column_applies(column.detail))
-                .filter_map(|column| Some((column.label, column.sort?))),
-        )
+    let order: Vec<Button> = shell
+        .sort_keys()
+        .into_iter()
         .map(|(label, sort_key)| {
             let current = spec.key == sort_key;
             // The current key again keeps its direction: the next group says it.

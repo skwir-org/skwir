@@ -260,9 +260,27 @@ pub struct CommandSpec {
     /// dialog, or to every command (ADR-024).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub keeps_a_key: bool,
+    /// It only answers whoever asks: an agent or a script, or a part of
+    /// the window that draws the answer (a menu's items, Properties' rows,
+    /// the timeline's bars). Run by a person from a list of actions it
+    /// would show nothing, so the palette and the keyboard's lists leave
+    /// it out (`Declared::data`). A command that changes nothing yet shows
+    /// something run from the window (copying paths, a plugin from
+    /// outside's answer) is `Effect::Reads` without being data.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub data: bool,
 }
 
 impl CommandSpec {
+    /// Whether it takes the argument `name`, as its schema declares.
+    pub fn takes(&self, name: &str) -> bool {
+        self.args_schema
+            .as_object()
+            .and_then(|o| o.get("properties"))
+            .and_then(|p| p.as_object())
+            .is_some_and(|p| p.contains_key(name))
+    }
+
     /// The form of these arguments: `None` for none declared.
     pub fn form(&self, args: &serde_json::Value) -> Option<&Form> {
         let none = serde_json::Value::Object(serde_json::Map::new());
@@ -337,6 +355,16 @@ impl Declared<'_> {
     /// It answers, and changes nothing.
     pub fn reads(self) {
         self.effect(Effect::Reads);
+    }
+
+    /// It answers whoever asks and nothing else: it changes nothing, and
+    /// run from the window it would show nothing (see
+    /// `CommandSpec::data`).
+    pub fn data(self) {
+        self.update(|spec| {
+            spec.effect = Effect::Reads;
+            spec.data = true;
+        });
     }
 
     /// It changes only what the window shows.
@@ -546,6 +574,7 @@ impl CommandRegistry {
             effect: Effect::default(),
             forms: Vec::new(),
             keeps_a_key: false,
+            data: false,
         };
         let mut commands = self.commands.write();
         let stack = commands.entry(name).or_default();

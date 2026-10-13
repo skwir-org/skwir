@@ -22,8 +22,8 @@ use crate::input::{InputEvent, TextInput};
 use crate::keymap::{self, Bound};
 use crate::settings::SettingsView;
 use crate::settings_keys::{
-    Action, ActionId, Chip, Edit, Keyboard, Note, Row, Show, Stay, Verdict, apply, removal_refused,
-    rows, verdict,
+    Action, ActionId, Chip, Edit, Effects, Keyboard, Note, Row, Show, Stay, Verdict, apply,
+    effects, removal_refused, rows, verdict,
 };
 use crate::settings_records::{Record, records};
 use crate::settings_view::{Edge, card_row};
@@ -99,6 +99,8 @@ pub(crate) enum Target {
     Change(ActionId, Chip),
     /// A default the user's record hides.
     Restore(ActionId, Chip),
+    /// Back to skwir's keys, when that takes keys from other actions.
+    Reset(ActionId),
     /// Keys whose actions to list.
     Find,
     /// The keys of a new shortcut (`settings_keys_new`).
@@ -108,9 +110,38 @@ pub(crate) enum Target {
 impl Target {
     fn action(&self) -> Option<&ActionId> {
         match self {
-            Target::Add(id) | Target::Change(id, _) | Target::Restore(id, _) => Some(id),
+            Target::Add(id)
+            | Target::Change(id, _)
+            | Target::Restore(id, _)
+            | Target::Reset(id) => Some(id),
             Target::Find | Target::New => None,
         }
+    }
+
+    /// Whether keys are taken for it.
+    fn takes_keys(&self) -> bool {
+        !matches!(self, Target::Restore(..) | Target::Reset(_))
+    }
+}
+
+/// What the bar says of its change before it is saved: what the keys
+/// pressed would do there (`verdict`), and what the change leaves of every
+/// action's keys (`effects`). Worked out when the keys or the change
+/// change, not at each frame.
+pub(crate) struct Judged {
+    pub verdict: Verdict,
+    pub effects: Effects,
+    /// The keys pressed, empty for none.
+    pub keys: String,
+}
+
+impl Judged {
+    /// Why the change cannot be made, if it cannot.
+    fn refused(&self) -> Option<&str> {
+        self.verdict
+            .refused
+            .as_deref()
+            .or(self.effects.refused.as_deref())
     }
 }
 
@@ -129,6 +160,8 @@ pub(crate) struct KeyEditor {
     intercept: Option<Subscription>,
     /// What its typed keys' field says, while it is open.
     subscriptions: Vec<Subscription>,
+    /// What the bar says of the change, for what it was worked out for.
+    judged: RefCell<Option<(String, Rc<Judged>)>>,
 }
 
 impl KeyEditor {
@@ -523,10 +556,10 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let hover = theme.hover;
+        // As high as every row: the list draws them all in one height.
         div()
             .id("keys-inside")
             .h(px(ROW))
-            .mt_2()
             .px_2()
             .flex()
             .items_center()
@@ -656,11 +689,9 @@ impl SettingsView {
                         crate::toolbar::tooltip("Back to skwir's keys".into(), font.clone(), cx)
                     }
                 })
-                .on_click(cx.listener(move |this, _, _, cx| {
+                .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
-                    if let Some(action) = this.keys.keyboard.find(&id).cloned() {
-                        this.save_keys(&Edit::Reset(&action), cx);
-                    }
+                    this.reset_keys(&id, window, cx);
                 }))
         });
         let mut texts = div()
@@ -798,7 +829,8 @@ impl SettingsView {
     }
 
     /// The actions a search finds, as rows of the page's own (not drawn
-    /// in a list: a search's results are few); how many.
+    /// in a list: a search's results are few), in one block that has the
+    /// list's keyboard, walked as the list is; how many.
     pub(crate) fn keys_found(
         &mut self,
         query: &str,
@@ -808,11 +840,13 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> usize {
         let rows = self.key_rows(query);
-        let focused = self.keys.focus.contains_focused(window, cx);
+        let focus = self.keys.focus.clone();
+        let focused = focus.contains_focused(window, cx);
         let mut found = 0;
+        let mut block: Vec<AnyElement> = Vec::new();
         for (n, row) in rows.iter().enumerate() {
             match row {
-                Row::Place(place) => items.push(
+                Row::Place(place) => block.push(
                     div()
                         .flex_none()
                         .pt_5()
@@ -825,13 +859,27 @@ impl SettingsView {
                 Row::Inside { .. } => {}
                 Row::Action(index) => {
                     found += 1;
-                    items.push(
+                    block.push(
                         self.action_row(*index, edge(&rows, n), focused, theme, cx)
                             .flex_none()
                             .into_any_element(),
                     );
                 }
             }
+        }
+        if found > 0 {
+            self.stop(&focus, Some(items.len()), None);
+            items.push(
+                div()
+                    .id("keyboard-found")
+                    .track_focus(&focus)
+                    .key_context("SettingKeys")
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .children(block)
+                    .into_any_element(),
+            );
         }
         found
     }
@@ -846,17 +894,25 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) {
         let focus = cx.focus_handle();
+        // With no keys to take, the bar's answer has the keyboard: the
+        // recorder is not drawn, and focus there would leave the dialog.
+        let first = if target.takes_keys() {
+            focus.clone()
+        } else {
+            self.handle("keys-save", cx)
+        };
         self.keys.editor = Some(KeyEditor {
-            recording: !matches!(target, Target::Restore(..)),
+            recording: target.takes_keys(),
             target,
             strokes: Vec::new(),
             typed: None,
             error: None,
-            focus: focus.clone(),
+            focus,
             intercept: None,
             subscriptions: Vec::new(),
+            judged: RefCell::default(),
         });
-        window.focus(&focus);
+        window.focus(&first);
         self.listen_for_keys(cx);
         cx.notify();
     }
@@ -976,71 +1032,124 @@ impl SettingsView {
         cx.notify();
     }
 
-    /// What the bar's keys would do, for its action.
-    fn editor_verdict(&self, cx: &App) -> Option<(Verdict, String)> {
+    /// What the bar says of its change: what the keys pressed would do
+    /// where they work, and what the change leaves of every action's keys.
+    /// Worked out again only when the keys or the change itself change
+    /// (a keymap built twice is too much for every frame).
+    pub(crate) fn judged(&self, cx: &App) -> Option<Rc<Judged>> {
         let editor = self.keys.editor.as_ref()?;
-        let keys = editor.keys(cx);
-        if keys.is_empty() || skwir_core::keymap::valid_keys(&keys).is_err() {
-            return None;
-        }
-        let (action, context, replacing) = match &editor.target {
+        let typed = editor.keys(cx);
+        let keys = if typed.is_empty() || skwir_core::keymap::valid_keys(&typed).is_err() {
+            String::new()
+        } else {
+            typed
+        };
+        let (action, context, chip) = match &editor.target {
             Target::Add(id) => {
-                let action = self.keys.keyboard.find(id)?;
-                (action.clone(), action.context(), None)
+                let action = self.keys.keyboard.find(id)?.clone();
+                let context = action.context();
+                (action, context, None)
             }
-            Target::Change(id, chip) => (
+            Target::Change(id, chip) | Target::Restore(id, chip) => (
                 self.keys.keyboard.find(id)?.clone(),
                 chip.context.clone(),
                 Some(chip.clone()),
             ),
+            Target::Reset(id) => (self.keys.keyboard.find(id)?.clone(), String::new(), None),
             Target::New => {
                 let (action, context) = self.new_shortcut_action(cx)?;
                 (action, context, None)
             }
-            Target::Restore(..) | Target::Find => return None,
+            Target::Find => return None,
         };
-        let verdict = verdict(
-            &self.app,
-            &self.keys.keyboard,
-            &self.keys.bound,
-            &keys,
-            &context,
-            &action,
-            replacing.as_ref(),
+        let asked = format!(
+            "{:?}\u{1f}{keys}\u{1f}{context}\u{1f}{}\u{1f}{}",
+            editor.target, action.command, action.args
         );
-        Some((verdict, keys))
+        if let Some((kept, judged)) = editor.judged.borrow().as_ref()
+            && *kept == asked
+        {
+            return Some(Rc::clone(judged));
+        }
+        let edit = match (&editor.target, chip.as_ref()) {
+            (Target::Restore(..), Some(chip)) => Some(Edit::Restore(chip)),
+            (Target::Reset(_), _) => Some(Edit::Reset(&action)),
+            // No keys yet: what freeing these would leave, which changing
+            // them leaves too.
+            (Target::Change(..), Some(chip)) if keys.is_empty() => Some(Edit::Remove(chip)),
+            (Target::Change(..), Some(chip)) => Some(Edit::Change {
+                action: &action,
+                chip,
+                keys: keys.clone(),
+            }),
+            _ if keys.is_empty() => None,
+            _ => Some(Edit::Add {
+                action: &action,
+                keys: keys.clone(),
+                context: context.clone(),
+            }),
+        };
+        let verdict = if keys.is_empty() {
+            Verdict::default()
+        } else {
+            let replacing = chip
+                .as_ref()
+                .filter(|_| matches!(editor.target, Target::Change(..)));
+            verdict(
+                &self.app,
+                &self.keys.keyboard,
+                &self.keys.bound,
+                &keys,
+                &context,
+                &action,
+                replacing,
+            )
+        };
+        let effects = match &edit {
+            Some(edit) => effects(&self.app, &self.key_records(), edit, Some(&action.id())),
+            None => Effects::default(),
+        };
+        let judged = Rc::new(Judged {
+            verdict,
+            effects,
+            keys,
+        });
+        *editor.judged.borrow_mut() = Some((asked, Rc::clone(&judged)));
+        Some(judged)
     }
 
-    /// Save what the bar holds, unless the keys cannot be: the reason
-    /// stays in the bar.
+    /// Save what the bar holds, unless it cannot be: the reason stays in
+    /// the bar.
     pub(crate) fn save_key_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.keys.editor.as_ref() else {
             return;
         };
         let target = editor.target.clone();
-        if let Target::Restore(_, chip) = &target {
-            if self.save_keys(&Edit::Restore(chip), cx) {
-                self.close_key_editor(window, cx);
-            }
-            return;
-        }
         let keys = editor.keys(cx);
-        let verdict = self.editor_verdict(cx).map(|(verdict, _)| verdict);
-        if verdict
-            .as_ref()
-            .is_some_and(|verdict| verdict.notes.contains(&Note::Has))
+        let judged = self.judged(cx);
+        if target.takes_keys()
+            && judged
+                .as_ref()
+                .is_some_and(|judged| judged.verdict.notes.contains(&Note::Has))
         {
             // Keys it has there already: nothing to keep.
             self.close_key_editor(window, cx);
             return;
         }
-        let refused = if keys.is_empty() {
+        let refused = if !target.takes_keys() {
+            None
+        } else if keys.is_empty() {
             Some("Press the keys first".to_owned())
         } else if let Err(error) = skwir_core::keymap::valid_keys(&keys) {
             Some(format!("{error:#}"))
         } else {
-            verdict.and_then(|verdict| verdict.refused)
-        };
+            None
+        }
+        .or_else(|| {
+            judged
+                .as_ref()
+                .and_then(|judged| judged.refused().map(str::to_owned))
+        });
         if let Some(error) = refused {
             if let Some(editor) = self.keys.editor.as_mut() {
                 editor.error = Some(error);
@@ -1048,31 +1157,31 @@ impl SettingsView {
             cx.notify();
             return;
         }
-        let saved = match &target {
-            Target::Add(id) => match self.keys.keyboard.find(id).cloned() {
-                Some(action) => self.save_keys(
-                    &Edit::Add {
-                        context: action.context(),
-                        action: &action,
-                        keys,
-                    },
-                    cx,
-                ),
-                None => false,
-            },
-            Target::Change(id, chip) => match self.keys.keyboard.find(id).cloned() {
-                Some(action) => self.save_keys(
-                    &Edit::Change {
-                        action: &action,
-                        chip,
-                        keys,
-                    },
-                    cx,
-                ),
-                None => false,
-            },
-            Target::New => self.save_new_shortcut(&keys, cx),
-            Target::Restore(..) | Target::Find => false,
+        let action = target
+            .action()
+            .and_then(|id| self.keys.keyboard.find(id))
+            .cloned();
+        let saved = match (&target, action) {
+            (Target::Add(_), Some(action)) => self.save_keys(
+                &Edit::Add {
+                    context: action.context(),
+                    action: &action,
+                    keys,
+                },
+                cx,
+            ),
+            (Target::Change(_, chip), Some(action)) => self.save_keys(
+                &Edit::Change {
+                    action: &action,
+                    chip,
+                    keys,
+                },
+                cx,
+            ),
+            (Target::Restore(_, chip), Some(_)) => self.save_keys(&Edit::Restore(chip), cx),
+            (Target::Reset(_), Some(action)) => self.save_keys(&Edit::Reset(&action), cx),
+            (Target::New, _) => self.save_new_shortcut(&keys, cx),
+            _ => false,
         };
         if saved {
             if target == Target::New {
@@ -1089,6 +1198,21 @@ impl SettingsView {
         }
     }
 
+    /// Why freeing or removing `chip` of `action` cannot be done, if it
+    /// cannot: an action that keeps a key keeps its last, its own or
+    /// another's (`effects`).
+    fn removal_refusal(&self, action: &Action, chip: &Chip) -> Option<String> {
+        removal_refused(action, chip).or_else(|| {
+            effects(
+                &self.app,
+                &self.key_records(),
+                &Edit::Remove(chip),
+                Some(&action.id()),
+            )
+            .refused
+        })
+    }
+
     /// Remove the key the bar edits, unless it is the last of an action
     /// that keeps one.
     fn remove_edited_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1099,7 +1223,7 @@ impl SettingsView {
         let Some(action) = self.keys.keyboard.find(&id).cloned() else {
             return;
         };
-        if let Some(why) = removal_refused(&action, &chip) {
+        if let Some(why) = self.removal_refusal(&action, &chip) {
             if let Some(editor) = self.keys.editor.as_mut() {
                 editor.error = Some(why);
             }
@@ -1108,6 +1232,26 @@ impl SettingsView {
         }
         if self.save_keys(&Edit::Remove(&chip), cx) {
             self.close_key_editor(window, cx);
+        }
+    }
+
+    /// Back to skwir's keys for `id`: at once, unless that takes keys from
+    /// other actions (a shortcut of the user's over one of its defaults),
+    /// which the bar says first; refused when an action that keeps a key
+    /// would have none.
+    fn reset_keys(&mut self, id: &ActionId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(action) = self.keys.keyboard.find(id).cloned() else {
+            return;
+        };
+        let edit = Edit::Reset(&action);
+        let judged = effects(&self.app, &self.key_records(), &edit, Some(id));
+        if let Some(why) = judged.refused {
+            self.errors.insert(BINDINGS_KEY.to_owned(), why);
+            cx.notify();
+        } else if judged.lost.is_empty() {
+            self.save_keys(&edit, cx);
+        } else {
+            self.open_key_editor(Target::Reset(id.clone()), window, cx);
         }
     }
 
@@ -1260,8 +1404,10 @@ impl SettingsView {
                 .child(controls::glyph(icon, color, 13.))
                 .child(div().flex_1().min_w_0().child(text))
         };
-        if let Some((verdict, keys)) = self.editor_verdict(cx) {
-            let keys = keymap::display_keys(&keys);
+        let judged = self.judged(cx);
+        if let Some(judged) = &judged {
+            let verdict = &judged.verdict;
+            let keys = keymap::display_keys(&judged.keys);
             let deeper: Vec<&str> = verdict
                 .notes
                 .iter()
@@ -1324,7 +1470,14 @@ impl SettingsView {
                         theme.text_muted,
                         format!("{keys} still runs “{title}” in {place}."),
                     ),
-                    Note::Waits { title } => (
+                    Note::Waits { title, goes: true } => (
+                        "plugin",
+                        theme.warning,
+                        format!(
+                            "Your “{title}”, waiting on {keys} for its plugin, goes: yours takes these keys there."
+                        ),
+                    ),
+                    Note::Waits { title, goes: false } => (
                         "plugin",
                         theme.text_muted,
                         format!(
@@ -1336,6 +1489,11 @@ impl SettingsView {
                         theme.text_muted,
                         "A letter bound in the file list stops typing a name there to jump to it; / then finds a name.".to_owned(),
                     ),
+                    Note::Fields => (
+                        "info",
+                        theme.text_muted,
+                        format!("In a text field, {keys} still types: a field keeps its characters."),
+                    ),
                     Note::Has => (
                         "check",
                         theme.text_muted,
@@ -1344,11 +1502,60 @@ impl SettingsView {
                 };
                 notes = notes.child(line(icon, color, text));
             }
+            // What the change leaves of other actions' keys, beside what
+            // was said: what freeing keys in a place frees with them.
+            let replaced: Vec<&str> = verdict
+                .notes
+                .iter()
+                .filter_map(|note| match note {
+                    Note::Replaces { title, .. } => Some(title.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let pressed = keymap::normal_keys(&judged.keys);
+            let hider = self.hider_title();
+            for lost in &judged.effects.lost {
+                let said = keymap::normal_keys(&lost.keys) == pressed
+                    && replaced.contains(&lost.title.as_str());
+                if said || hider.as_deref() == Some(lost.title.as_str()) {
+                    continue;
+                }
+                notes = notes.child(line(
+                    "warning",
+                    theme.warning,
+                    format!(
+                        "{} also stops running “{}” ({}).",
+                        keymap::display_keys(&lost.keys),
+                        lost.title,
+                        lost.place
+                    ),
+                ));
+            }
         }
-        if let Some(error) = self.keys.editor.as_ref().and_then(|e| e.error.clone()) {
-            notes = notes.child(line("warning", theme.error, error));
+        let error = self.keys.editor.as_ref().and_then(|e| e.error.clone());
+        let refused = judged
+            .as_ref()
+            .and_then(|judged| judged.refused().map(str::to_owned))
+            .filter(|why| error.as_ref() != Some(why));
+        for why in refused.into_iter().chain(error) {
+            notes = notes.child(line("warning", theme.error, why));
         }
         notes
+    }
+
+    /// The title of the action whose shortcut took the keys the Restore
+    /// bar gives back, if one did (none: the user freed them).
+    fn hider_title(&self) -> Option<String> {
+        let Some(Target::Restore(_, chip)) = self.keys.editor.as_ref().map(|e| &e.target) else {
+            return None;
+        };
+        let id = chip.hidden_by.as_ref()?;
+        self.keys
+            .keyboard
+            .actions
+            .iter()
+            .find(|a| a.chips.iter().any(|c| c.record.as_ref() == Some(id)))
+            .map(|a| a.title.clone())
     }
 
     /// The bar under the list, while keys are edited.
@@ -1384,6 +1591,12 @@ impl SettingsView {
                 action.title,
                 action.place
             ),
+            (Target::Reset(_), Some(action)) => {
+                format!(
+                    "Back to skwir's keys for “{}” · {}",
+                    action.title, action.place
+                )
+            }
             _ => String::new(),
         };
         let mut bar = div()
@@ -1400,32 +1613,30 @@ impl SettingsView {
             .bg(theme.surface)
             .shadow_md()
             .child(div().child(heading));
-        if let Target::Restore(_, chip) = &target {
-            let by = chip
-                .hidden_by
-                .as_ref()
-                .and_then(|id| {
-                    self.keys
-                        .keyboard
-                        .actions
-                        .iter()
-                        .find(|a| a.chips.iter().any(|c| c.record.as_ref() == Some(id)))
-                })
-                .map(|a| a.title.clone());
-            bar = bar.child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(match by {
-                        Some(title) => format!(
-                            "Your shortcut for “{title}” took these keys. Restoring removes it."
-                        ),
-                        None => "You freed these keys. Restoring gives them back.".to_owned(),
-                    }),
-            );
-        } else {
-            bar = bar.child(self.key_recorder(theme, window, cx));
-            bar = bar.child(self.key_notes(theme, cx));
+        match &target {
+            Target::Restore(..) => {
+                bar = bar
+                    .child(div().text_xs().text_color(theme.text_muted).child(
+                        match self.hider_title() {
+                            Some(title) => format!(
+                                "Your shortcut for “{title}” took these keys. Restoring removes it."
+                            ),
+                            None => "You freed these keys. Restoring gives them back.".to_owned(),
+                        },
+                    ))
+                    .child(self.key_notes(theme, cx));
+            }
+            Target::Reset(_) => {
+                bar = bar
+                    .child(div().text_xs().text_color(theme.text_muted).child(
+                        "Its keys go back to skwir's, and your shortcuts that took them go.",
+                    ))
+                    .child(self.key_notes(theme, cx));
+            }
+            _ => {
+                bar = bar.child(self.key_recorder(theme, window, cx));
+                bar = bar.child(self.key_notes(theme, cx));
+            }
         }
         let cancel = self.handle("keys-cancel", cx);
         self.stop(&cancel, None, None);
@@ -1467,10 +1678,10 @@ impl SettingsView {
             buttons = buttons.child(
                 controls::button(
                     "keys-save",
-                    if matches!(target, Target::Restore(..)) {
-                        "Restore"
-                    } else {
-                        "Save"
+                    match target {
+                        Target::Restore(..) => "Restore",
+                        Target::Reset(_) => "Back to skwir's keys",
+                        _ => "Save",
                     },
                     None,
                     ButtonStyle::Plain,
@@ -1486,9 +1697,11 @@ impl SettingsView {
     // ------------------------------------------------------------ keys
 
     /// `ui.settings_key { key }`: walk the actions and their keys, change
-    /// the key the cursor is on or add one, remove it.
+    /// the key the cursor is on or add one, remove it. In a search, the
+    /// actions it found.
     pub(crate) fn keys_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let rows = self.key_rows("");
+        let query = self.query(cx);
+        let rows = self.key_rows(&query);
         let actions: Vec<(usize, usize)> = rows
             .iter()
             .enumerate()
@@ -1521,7 +1734,10 @@ impl SettingsView {
             let (n, index) = actions[to];
             let chips = keyboard.actions[index].chips.len();
             self.keys.cursor = Some((keyboard.actions[index].id(), chip.min(chips)));
-            self.keys.list.scroll_to_item(n, ScrollStrategy::Center);
+            // A search's few rows are the page's own, not the list's.
+            if query.is_empty() {
+                self.keys.list.scroll_to_item(n, ScrollStrategy::Center);
+            }
             cx.notify();
             return;
         }
@@ -1541,10 +1757,20 @@ impl SettingsView {
             }
             "remove" => {
                 if let Some(chip) = action.chips.get(chip).filter(|c| c.runs()) {
-                    if let Some(why) = removal_refused(action, chip) {
+                    let freed = effects(
+                        &self.app,
+                        &self.key_records(),
+                        &Edit::Remove(chip),
+                        Some(&id),
+                    );
+                    if let Some(why) = removal_refused(action, chip).or(freed.refused) {
                         self.errors.insert(BINDINGS_KEY.to_owned(), why);
-                    } else {
+                    } else if freed.lost.is_empty() {
                         self.save_keys(&Edit::Remove(chip), cx);
+                    } else {
+                        // Freeing it frees other actions' keys beside it:
+                        // the bar says which before anything is saved.
+                        self.open_key_editor(Target::Change(id, chip.clone()), window, cx);
                     }
                 }
             }

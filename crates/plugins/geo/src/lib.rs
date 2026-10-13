@@ -194,7 +194,7 @@ impl Plugin for GeoPlugin {
                 Ok(Outcome::Value(serde_json::to_value(found)?))
             },
         )
-        .reads();
+        .data();
         let release = Arc::clone(&scanner);
         app.commands
             .register::<PaneArgs, _>(
@@ -232,7 +232,7 @@ impl Plugin for GeoPlugin {
                 })))
             },
         )
-        .reads();
+        .data();
         app.commands.register::<AreaArgs, _>(
             ID,
             "geo.search_area",

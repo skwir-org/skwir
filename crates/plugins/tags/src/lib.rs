@@ -962,7 +962,7 @@ impl Plugin for TagsPlugin {
             "`{ items, tags: [{ name, count, color? }], known }`: the selection's tags, read from its files, with how many carry each and the color a file gives one (a Finder tag's), and the tags known, those pinned first, then the most recently used",
             move |a, app| Ok(Outcome::Value(selected(app, &v, a)?)),
         )
-        .reads();
+        .data();
         // A tag's pin and color follow it renamed on every file.
         let follows = follow::Ctx::new(app, sidebar.clone());
         follow::register(app, &follows);
@@ -1104,7 +1104,7 @@ impl Plugin for TagsPlugin {
                     Ok(Outcome::Value(places.counted(&root)))
                 },
             )
-        .reads();
+        .data();
         }
         app.commands.register::<browse::TagMenuArgs, _>(
             ID,
@@ -1113,7 +1113,7 @@ impl Plugin for TagsPlugin {
             "The items of a tag's menu where it is shown: its chip in Properties (tags), its pill in the sidebar (location). Answers from memory",
             |a, app| Ok(browse::tag_menu(app, a)),
         )
-        .reads();
+        .data();
         app.commands.register::<browse::PaneOnly, _>(
             ID,
             "tags.place_menu",
@@ -1121,7 +1121,7 @@ impl Plugin for TagsPlugin {
             "The context menu's items for the tags selected in a tag location. Answers from memory",
             |a, app| Ok(browse::place_menu(app, a)),
         )
-        .reads();
+        .data();
         let (colors, color_sidebar) = (lifetime.clone(), sidebar.clone());
         app.commands.register::<ColorArgs, _>(
             ID,
@@ -1160,7 +1160,7 @@ impl Plugin for TagsPlugin {
                     ))
                 },
             )
-            .reads();
+            .data();
         app.commands.register::<ListArgs, _>(
             ID,
             "tags.list",
@@ -1204,7 +1204,7 @@ impl Plugin for TagsPlugin {
                 Ok(Outcome::Value(serde_json::to_value(counts)?))
             },
         )
-        .reads();
+        .data();
         app.registry.keymap.add(
             ID,
             KeyBinding {

@@ -185,7 +185,7 @@ pub(crate) fn register(app: &crate::App) {
                 )))
             },
         )
-        .reads();
+        .data();
 }
 
 #[derive(Default)]

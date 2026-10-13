@@ -144,14 +144,26 @@ pub struct RecordAction {
 /// The owner's own check of a value, after the kind's: what only it knows
 /// (a tile address needs `{z}`, `{x}` and `{y}`). Runs wherever a value is
 /// validated, in the dialog and in `settings.apply`, given the value
-/// stored then (`None` when there is none): a check may spare what was
-/// already kept (a shortcut for a plugin turned off, ADR-024).
+/// stored then, and in `settings.check`, given a file's value as it
+/// stands ([`Beside`]): a check may spare what was already kept (a
+/// shortcut for a plugin turned off, ADR-024).
 #[derive(Clone)]
 pub struct Validator(pub std::sync::Arc<ValidatorFn>);
 
-/// What a [`Validator`] runs: the value, beside the one stored.
-pub type ValidatorFn =
-    dyn Fn(&toml::Value, Option<&toml::Value>) -> anyhow::Result<()> + Send + Sync;
+/// What a [`Validator`] runs: the value, and what it is checked beside.
+pub type ValidatorFn = dyn Fn(&toml::Value, Beside<'_>) -> anyhow::Result<()> + Send + Sync;
+
+/// What a value is checked beside (see [`Validator`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Beside<'a> {
+    /// A value to save over the one stored then (`None`: nothing is): the
+    /// dialog's, `settings.apply`'s.
+    Stored(Option<&'a toml::Value>),
+    /// A file's value as it stands, nothing kept from before
+    /// (`settings.check`): what may wait for a plugin that is off waits,
+    /// what nothing could ever take is wrong.
+    File,
+}
 
 impl std::fmt::Debug for Validator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -374,11 +386,11 @@ impl SettingSpec {
     }
 
     /// The owner's own check, after the kind's (see [`Validator`]): of
-    /// the value, beside the one stored.
+    /// the value, beside the one stored or as a file holds it.
     #[must_use]
     pub fn validate_with<F>(mut self, check: F) -> Self
     where
-        F: Fn(&toml::Value, Option<&toml::Value>) -> anyhow::Result<()> + Send + Sync + 'static,
+        F: Fn(&toml::Value, Beside<'_>) -> anyhow::Result<()> + Send + Sync + 'static,
     {
         self.validator = Some(Validator(std::sync::Arc::new(check)));
         self
@@ -578,7 +590,7 @@ impl SettingSpec {
         if !self.editable() {
             return Ok(());
         }
-        self.parse_over(&Self::format_value(value), Some(value))
+        self.parse_beside(&Self::format_value(value), Beside::File)
             .map(|_| ())
     }
 
@@ -600,6 +612,10 @@ impl SettingSpec {
         text: &str,
         stored: Option<&toml::Value>,
     ) -> anyhow::Result<toml::Value> {
+        self.parse_beside(text, Beside::Stored(stored))
+    }
+
+    fn parse_beside(&self, text: &str, beside: Beside<'_>) -> anyhow::Result<toml::Value> {
         anyhow::ensure!(
             self.editable(),
             "{} is managed by its owning commands",
@@ -645,7 +661,7 @@ impl SettingSpec {
             );
         }
         if let Some(Validator(check)) = &self.validator {
-            check(&value, stored)?;
+            check(&value, beside)?;
         }
         Ok(value)
     }
@@ -793,7 +809,7 @@ pub(crate) fn register(app: &crate::App) {
                 Ok(crate::command::Outcome::Value(serde_json::to_value(&checked)?))
             },
         )
-        .reads();
+        .data();
     app.commands.register::<ApplyArgs, _>(
         "core",
         "settings.apply",
@@ -1006,6 +1022,11 @@ pub struct Settings {
     /// is `None` (a data file that could neither be read nor set aside). A
     /// store not here keeps its keys in the settings file, with the rest.
     apart: BTreeMap<Store, Option<PathBuf>>,
+    /// What each file kept apart held when last read or written: a key
+    /// declared kept apart takes its value from there whole (`declare`),
+    /// over a copy the settings file may still hold (an earlier skwir's, a
+    /// hand's), which is read only until skwir keeps its own.
+    apart_read: Mutex<BTreeMap<Store, toml::Table>>,
     /// The keys ever declared kept apart in this process, and where: a
     /// plugin turned off keeps them where they were.
     kept: RwLock<BTreeMap<String, Store>>,
@@ -1079,6 +1100,7 @@ impl Settings {
         Settings {
             path: None,
             apart: BTreeMap::new(),
+            apart_read: Mutex::new(BTreeMap::new()),
             kept: RwLock::new(BTreeMap::new()),
             values: RwLock::new(toml::Table::new()),
             schema: RwLock::new(BTreeMap::new()),
@@ -1103,6 +1125,7 @@ impl Settings {
         Settings {
             path: saves.then_some(path),
             apart: BTreeMap::new(),
+            apart_read: Mutex::new(BTreeMap::new()),
             kept: RwLock::new(BTreeMap::new()),
             values: RwLock::new(values),
             schema: RwLock::new(BTreeMap::new()),
@@ -1173,14 +1196,20 @@ impl Settings {
     }
 
     /// The same settings, their state kept in the file at `path` (made at
-    /// the first save): what it holds is read over the settings'. One that
-    /// cannot be read is started over: it is skwir's own, and holds nothing
-    /// the user chose.
+    /// the first save): a key it holds is read from it, whole, over a copy
+    /// the settings file may still have (`declare`). One that cannot be
+    /// read is started over: it is skwir's own, and holds nothing the user
+    /// chose.
     #[must_use]
     pub fn with_state(mut self, path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         match Self::on_disk(&path) {
-            Ok(state) => Self::merge_into(&mut self.values.write(), state),
+            Ok(state) => {
+                self.apart_read
+                    .get_mut()
+                    .insert(Store::State, state.clone());
+                Self::merge_into(&mut self.values.write(), state);
+            }
             Err(error) => tracing::warn!("the window's state is started over: {error:#}"),
         }
         self.apart.insert(Store::State, Some(path));
@@ -1189,11 +1218,12 @@ impl Settings {
 
     /// The same settings, what the user made in skwir (`SettingSpec::data`:
     /// saved searches, pinned tags, tags' colours) kept in the file at
-    /// `path` (ADR-057), made at the first save: what it holds is read over
-    /// the settings'. It is the user's: one
-    /// that is no TOML is set aside, as the settings file is, and said;
-    /// one that can be neither read nor set aside is never written, what
-    /// changes kept in memory until skwir starts again.
+    /// `path` (ADR-057), made at the first save: a key it holds is read
+    /// from it, whole, over a copy the settings file may still have
+    /// (`declare`). It is the user's: one that is no TOML is set aside, as
+    /// the settings file is, and said; one that can be neither read nor set
+    /// aside is never written, what changes kept in memory until skwir
+    /// starts again.
     #[must_use]
     pub fn with_data(mut self, path: impl Into<PathBuf>) -> Self {
         let path = path.into();
@@ -1202,6 +1232,7 @@ impl Settings {
             "Your saved searches, pinned tags and tags’ colours",
             "without them",
         );
+        self.apart_read.get_mut().insert(Store::Data, data.clone());
         Self::merge_into(&mut self.values.write(), data);
         if let Some(problem) = problem {
             let mut said = self.problem.lock();
@@ -1288,6 +1319,7 @@ impl Settings {
     pub fn declare(&self, mut spec: SettingSpec) {
         if spec.store != Store::Settings {
             self.kept.write().insert(spec.key.clone(), spec.store);
+            self.read_apart(&spec.key, spec.store);
         }
         {
             let mut declared = self.declared.lock();
@@ -1320,6 +1352,54 @@ impl Settings {
         pending.extend([old.to_owned(), new.to_owned()]);
         drop(values);
         self.bump();
+    }
+
+    /// A key kept apart, as the file it is kept in holds it: whole, in
+    /// place of a copy the settings file still has (an earlier skwir's, a
+    /// hand's, Home Manager's), which is read only while that file has none.
+    /// What this process changed and has not saved yet stays.
+    fn read_apart(&self, key: &str, store: Store) {
+        let pending = self.writer.lock();
+        if pending.contains(key) {
+            return;
+        }
+        let Some(value) = self
+            .apart_read
+            .lock()
+            .get(&store)
+            .and_then(|table| Self::lookup(table, key))
+            .cloned()
+        else {
+            return;
+        };
+        let mut values = self.values.write();
+        if Self::lookup(&values, key) == Some(&value) {
+            return;
+        }
+        Self::remove(&mut values, key);
+        if let Err(error) = Self::insert(&mut values, key, value) {
+            tracing::warn!(%error, "cannot read a setting kept apart");
+        }
+        drop(values);
+        drop(pending);
+        self.bump();
+    }
+
+    /// Each key kept apart that `apart` holds, set in `table` whole: a copy
+    /// `table` has (the settings file's) is never merged with it.
+    fn replace_apart(
+        table: &mut toml::Table,
+        apart: &toml::Table,
+        kept: impl IntoIterator<Item = String>,
+    ) {
+        for key in kept {
+            if let Some(value) = Self::lookup(apart, &key) {
+                Self::remove(table, &key);
+                if let Err(error) = Self::insert(table, &key, value.clone()) {
+                    tracing::warn!(%error, "cannot read a setting kept apart");
+                }
+            }
+        }
     }
 
     /// Take a dotted key out, and the tables it leaves empty.
@@ -1418,7 +1498,8 @@ impl Settings {
     /// declares settings (a typo, most likely), is a problem; one under an
     /// owner nothing here declares (a plugin turned off, or from outside)
     /// is only noted. A key kept apart from the settings (the window's
-    /// state, the user's data) is a problem too.
+    /// state, the user's data) is noted: read only until skwir keeps its
+    /// own.
     pub fn check(&self, table: &toml::Table, plugins: &[String]) -> Checked {
         let schema = self.schema.read();
         let owners: BTreeSet<&str> = schema.values().map(SettingSpec::owner).collect();
@@ -1432,20 +1513,35 @@ impl Settings {
                     format!("{prefix}.{name}")
                 };
                 if let Some(spec) = schema.get(&key) {
-                    // Kept apart, it is not read from the settings once
-                    // skwir keeps its own: declaring it would mislead.
+                    // Kept apart, it is read from the settings only until
+                    // skwir keeps its own, which then replaces it whole: a
+                    // note, never a problem the file would carry forever.
                     let apart = match spec.store {
                         Store::Settings => None,
-                        Store::State => Some(
-                            "the window's state, which skwir keeps in its state file: not a setting",
-                        ),
-                        Store::Data => Some(
-                            "what you make in skwir (saved searches, pinned tags, tags' colours), \
-                             kept in its data file: not a setting",
-                        ),
+                        Store::State => Some(("the window's state", "state file")),
+                        Store::Data => Some((
+                            "what you make in skwir (saved searches, pinned tags, tags' colours)",
+                            "data file",
+                        )),
                     };
-                    if let Some(why) = apart {
-                        checked.problems.push((key, why.to_owned()));
+                    if let Some((what, file)) = apart {
+                        let own = self
+                            .apart_read
+                            .lock()
+                            .get(&spec.store)
+                            .is_some_and(|kept| Self::lookup(kept, &key).is_some());
+                        let note = if own {
+                            format!(
+                                "{what}, not a setting: skwir reads its own, in its {file}, \
+                                 never this one"
+                            )
+                        } else {
+                            format!(
+                                "{what}, not a setting: read from here only until skwir keeps \
+                                 its own, in its {file}"
+                            )
+                        };
+                        checked.notes.push((key, note));
                         continue;
                     }
                     let other = !spec.constraints.more_choices.is_empty()
@@ -1716,6 +1812,7 @@ impl Settings {
             if merged != disk {
                 Self::write_whole(path, store, &merged)?;
             }
+            self.apart_read.lock().insert(store, merged.clone());
             Self::merge_into(&mut apart, merged);
         }
         if let (Some(path), Some(disk)) = (&self.path, disk)
@@ -1723,7 +1820,14 @@ impl Settings {
         {
             Self::write_whole(path, Store::Settings, &saved)?;
         }
-        Self::merge_into(&mut saved, apart);
+        Self::merge_into(&mut saved, apart.clone());
+        // A key kept apart is its file's, whole: never merged with a copy
+        // the settings file still holds.
+        let declared = kept
+            .into_iter()
+            .filter(|(_, store)| self.apart.contains_key(store))
+            .map(|(key, _)| key);
+        Self::replace_apart(&mut saved, &apart, declared);
         Ok(saved)
     }
 
@@ -1781,19 +1885,24 @@ impl Settings {
         // stands (another skwir, `skwir cmd`), with what this process
         // changed over it.
         let data = self.data_path().and_then(|path| match Self::on_disk(path) {
-            Ok(disk) => Self::overlay(disk, &values, &pending).ok(),
+            Ok(disk) => {
+                self.apart_read.lock().insert(Store::Data, disk.clone());
+                Self::overlay(disk, &values, &pending).ok()
+            }
             Err(error) => {
                 tracing::warn!("{error:#}");
                 None
             }
         });
         for (key, store) in self.kept_apart() {
-            Self::remove(&mut merged, &key);
             let from = match (store, &data) {
                 (Store::Data, Some(data)) => data,
                 _ => &values,
             };
+            // Whole, over the settings file's copy; with none of its own,
+            // the settings file's is read until skwir keeps one.
             if let Some(value) = Self::lookup(from, &key) {
+                Self::remove(&mut merged, &key);
                 // A parent that is not a table is refused, and the value
                 // stays out: what the settings file says wins.
                 let _ = Self::insert(&mut merged, &key, value.clone());

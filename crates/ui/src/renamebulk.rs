@@ -58,6 +58,16 @@ impl BulkState {
     fn applies(&self) -> bool {
         self.current && self.error.is_none()
     }
+
+    /// What Tab walks: its fields, then Cancel and Rename.
+    pub(crate) fn walk(&self, cx: &gpui::App) -> Vec<gpui::FocusHandle> {
+        use gpui::Focusable as _;
+        self.inputs
+            .iter()
+            .map(|input| input.read(cx).focus_handle(cx))
+            .chain([self.cancel_focus.clone(), self.apply_focus.clone()])
+            .collect()
+    }
 }
 
 impl Shell {
@@ -151,22 +161,21 @@ impl Shell {
         cx.notify();
     }
 
+    /// Tab and Shift+Tab: the next or the previous of its fields, Cancel
+    /// and Rename, round their ends, from what has the keyboard (a click
+    /// may have moved it); a field reached has its text selected.
     pub fn bulk_focus_next(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(b) = &mut self.bulk {
-            let n = b.inputs.len() as isize;
-            // From the field that has the keyboard, which a click may have moved.
-            let current = b
-                .inputs
-                .iter()
-                .position(|i| i.read(cx).is_focused(window))
-                .unwrap_or(b.focused);
-            b.focused = ((current as isize + delta).rem_euclid(n)) as usize;
-            b.inputs[b.focused].update(cx, |i, cx| {
-                i.select_all_now(cx);
-                i.focus(window);
-            });
-            cx.notify();
+        let Some(b) = &mut self.bulk else { return };
+        let walk = b.walk(cx);
+        if !walk.iter().any(|h| h.is_focused(window)) {
+            b.inputs[b.focused].update(cx, |i, _| i.focus(window));
         }
+        modal::tab_among(&walk.iter().collect::<Vec<_>>(), delta, window);
+        if let Some(at) = b.inputs.iter().position(|i| i.read(cx).is_focused(window)) {
+            b.focused = at;
+            b.inputs[at].update(cx, TextInput::select_all_now);
+        }
+        cx.notify();
     }
 
     pub fn bulk_cycle_case(&mut self, window: &mut Window, cx: &mut Context<Self>) {

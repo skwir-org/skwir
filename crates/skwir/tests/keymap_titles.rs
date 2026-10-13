@@ -5,7 +5,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use skwir_core::SortKey;
 use skwir_core::app::{App, AppConfig};
+use skwir_core::command::Effect;
 
 #[test]
 fn no_place_lists_two_actions_under_one_title() {
@@ -89,8 +91,16 @@ fn the_palette_names_each_thing_to_do_once() {
         }
     }
     let views = app.registry.views.all();
+    // Every sort, as where every column applies.
+    let sorts = [
+        SortKey::Name,
+        SortKey::Size,
+        SortKey::Modified,
+        SortKey::Rating,
+        SortKey::Deleted,
+    ];
     let mut offered: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for offer in skwir_ui::palette::offered(&app, &views) {
+    for offer in skwir_ui::palette::offered(&app, &views, &sorts) {
         offered
             .entry(offer.title)
             .or_default()
@@ -102,4 +112,48 @@ fn the_palette_names_each_thing_to_do_once() {
         .map(|(title, actions)| format!("“{title}” is {actions:?}"))
         .collect();
     assert!(twice.is_empty(), "offered twice:\n{}", twice.join("\n"));
+}
+
+/// What changes nothing is data (`Declared::data`: an agent's question, a
+/// panel's rows), left out of the palette and the keyboard's lists, unless
+/// the window shows what it answers when a person runs it. Those are
+/// named here, so a new command that only reads says which it is.
+#[test]
+fn what_only_reads_is_data_unless_the_window_shows_its_answer() {
+    // Copies the selected paths to the clipboard, and says so.
+    const SHOWN: [&str; 1] = ["shell.copy_paths"];
+    let tmp = tempfile::tempdir().unwrap();
+    let app = Arc::new(App::new(AppConfig::ephemeral(tmp.path())).unwrap());
+    skwir_ui::commands::declare_all(&app);
+    for plugin in skwir::plugins() {
+        let id = plugin.id();
+        let on = plugin.enabled_by_default();
+        app.plugins.add(plugin, &app);
+        if !on {
+            assert!(app.plugins.set_enabled(id, true, &app), "{id}: toggle on");
+        }
+    }
+    let undecided: Vec<String> = app
+        .commands
+        .list()
+        .into_iter()
+        .filter(|spec| spec.effect == Effect::Reads && !spec.data)
+        .map(|spec| spec.name.to_string())
+        .filter(|name| !SHOWN.contains(&name.as_str()))
+        .collect();
+    assert!(
+        undecided.is_empty(),
+        "reads, neither data nor shown from the window: {undecided:?}"
+    );
+    let views = app.registry.views.all();
+    let offered = skwir_ui::palette::offered(&app, &views, &[SortKey::Name]);
+    for name in SHOWN {
+        assert!(offered.iter().any(|o| o.name == name), "{name} offered");
+    }
+    let data: Vec<String> = offered
+        .iter()
+        .filter(|o| app.commands.get(&o.name).is_some_and(|spec| spec.data))
+        .map(|o| o.name.clone())
+        .collect();
+    assert!(data.is_empty(), "data offered: {data:?}");
 }

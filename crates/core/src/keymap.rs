@@ -7,7 +7,7 @@
 //! settings file holds them as the user wrote them.
 
 use crate::command::Invocation;
-use crate::settings::{RecordField, SettingSpec, Settings};
+use crate::settings::{Beside, RecordField, SettingSpec, Settings};
 
 /// The settings namespace, shown as the Keyboard page.
 pub const OWNER: &str = "keyboard";
@@ -34,7 +34,10 @@ pub struct UserBinding {
 /// Declare the setting. `app` checks the command of each binding a save
 /// adds or changes: a name no command has, or arguments it does not take,
 /// are refused then, never at the press. A binding stored as it is passes:
-/// its plugin may be off, and it waits for it (ADR-024).
+/// its plugin may be off, and it waits for it (ADR-024). A file checked as
+/// it stands (`settings.check`) has every binding judged: a command
+/// nothing has is refused unless it is named under a namespace no command
+/// here has (a plugin that is off, the window's own with no window).
 pub fn declare(settings: &Settings, app: std::sync::Weak<crate::App>) {
     settings.declare(
         SettingSpec::records(
@@ -70,7 +73,7 @@ pub fn declare(settings: &Settings, app: std::sync::Weak<crate::App>) {
                 ),
             ],
         )
-        .validate_with(move |value, stored| check(value, stored, app.upgrade().as_deref())),
+        .validate_with(move |value, beside| check(value, beside, app.upgrade().as_deref())),
     );
 }
 
@@ -78,7 +81,16 @@ pub fn declare(settings: &Settings, app: std::sync::Weak<crate::App>) {
 /// not hold together are left out (the save refuses them, a hand-edited
 /// file may still have them).
 pub fn user_bindings(settings: &Settings) -> Vec<UserBinding> {
-    let Some(toml::Value::Array(records)) = settings.get::<toml::Value>(BINDINGS_KEY) else {
+    settings
+        .get::<toml::Value>(BINDINGS_KEY)
+        .map(|value| bindings_in(&value))
+        .unwrap_or_default()
+}
+
+/// The bindings a value of the setting holds, as `user_bindings` reads
+/// them: what the Keyboard page reads of the records a change would leave.
+pub fn bindings_in(value: &toml::Value) -> Vec<UserBinding> {
+    let Some(records) = value.as_array() else {
         return Vec::new();
     };
     records.iter().filter_map(|r| binding(r).ok()).collect()
@@ -114,17 +126,19 @@ fn binding(record: &toml::Value) -> anyhow::Result<UserBinding> {
     })
 }
 
-fn check(
-    value: &toml::Value,
-    stored: Option<&toml::Value>,
-    app: Option<&crate::App>,
-) -> anyhow::Result<()> {
+fn check(value: &toml::Value, beside: Beside<'_>, app: Option<&crate::App>) -> anyhow::Result<()> {
     let Some(records) = value.as_array() else {
         return Ok(());
     };
-    let kept: &[toml::Value] = stored
-        .and_then(toml::Value::as_array)
-        .map_or(&[], Vec::as_slice);
+    let kept: &[toml::Value] = match beside {
+        Beside::Stored(stored) => stored
+            .and_then(toml::Value::as_array)
+            .map_or(&[], Vec::as_slice),
+        Beside::File => &[],
+    };
+    // The namespaces of the commands registered now (`tags` of
+    // `tags.toggle`), asked once and only for a file's unknown command.
+    let mut namespaces: Option<std::collections::BTreeSet<String>> = None;
     records.iter().try_for_each(|r| {
         let binding = binding(r)?;
         // Kept as it was: a command nothing registers is a plugin's that
@@ -138,16 +152,38 @@ fn check(
         let Some(app) = app else {
             return Ok(());
         };
-        app.commands.check(&command).map_err(|error| match error {
-            crate::command::CommandError::Unknown(name) => anyhow::anyhow!(
-                "{} runs {name}, which no command is called (is its plugin on?)",
-                binding.keys
-            ),
-            error @ (crate::command::CommandError::InvalidArgs { .. }
-            | crate::command::CommandError::Panicked(_)) => {
-                anyhow::anyhow!("{}: {error}", binding.keys)
+        match app.commands.check(&command) {
+            Ok(()) => Ok(()),
+            Err(crate::command::CommandError::Unknown(name)) => {
+                // A file as it stands: a name under a namespace nothing
+                // here registers is a plugin's that is off (or the
+                // window's, checked with no window), and waits for it; one
+                // under a namespace that is here, or with none, is a typo.
+                if beside == Beside::File
+                    && let Some((namespace, _)) = name.split_once('.')
+                {
+                    let known = namespaces.get_or_insert_with(|| {
+                        app.commands
+                            .list()
+                            .iter()
+                            .filter_map(|spec| spec.name.split_once('.'))
+                            .map(|(namespace, _)| namespace.to_owned())
+                            .collect()
+                    });
+                    if !known.contains(namespace) {
+                        return Ok(());
+                    }
+                }
+                Err(anyhow::anyhow!(
+                    "{} runs {name}, which no command is called (is its plugin on?)",
+                    binding.keys
+                ))
             }
-        })
+            Err(
+                error @ (crate::command::CommandError::InvalidArgs { .. }
+                | crate::command::CommandError::Panicked(_)),
+            ) => Err(anyhow::anyhow!("{}: {error}", binding.keys)),
+        }
     })
 }
 
@@ -287,7 +323,35 @@ mod tests {
         );
         assert!(
             spec.check(&kept_value).is_ok(),
-            "the file as it stands is fine"
+            "a file's binding under a namespace nothing here has waits for its plugin"
+        );
+    }
+
+    /// A file checked as it stands (`settings.check`, Home Manager's
+    /// build): a command nothing could take is reported, a typo under a
+    /// namespace that is here or with none; one under a namespace nothing
+    /// here registers is a plugin's that is off, and waits.
+    #[test]
+    fn a_file_s_shortcut_to_no_command_is_reported_unless_its_plugin_may_be_off() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let spec = app.settings.spec(BINDINGS_KEY).unwrap();
+        // As a file holds it: read, never typed in.
+        let file = |command: &str| {
+            let mut record = toml::Table::new();
+            record.insert("id".into(), "1".into());
+            record.insert("keys".into(), "ctrl-m".into());
+            record.insert("command".into(), command.into());
+            toml::Value::Array(vec![toml::Value::Table(record)])
+        };
+        for typo in ["toggle_hiden", "settings.aply"] {
+            let said = spec.check(&file(typo)).unwrap_err().to_string();
+            assert!(said.contains(typo), "{typo}: {said}");
+        }
+        assert!(spec.check(&file("toggle_hidden")).is_ok());
+        assert!(
+            spec.check(&file("gone.open")).is_ok(),
+            "a plugin that is off"
         );
     }
 

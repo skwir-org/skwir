@@ -4,6 +4,7 @@
 use std::sync::OnceLock;
 
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
+use skwir_core::SortKey;
 
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
@@ -316,21 +317,26 @@ impl Offer {
 }
 
 /// Everything the palette offers to do, with `views` (those the window
-/// shows): each core and plugin command as it is and each thing its forms
-/// make of it (Sort by size, Next tab), the shell's own as `UI_COMMANDS`
-/// says, a view, a setting by name. Each is called by a title of its own
+/// shows) and `sorts` (what the pane sorts by there, `Shell::sort_keys`):
+/// each core and plugin command as it is and each thing its forms make of
+/// it (Sort by size, Next tab), the shell's own as `UI_COMMANDS` says, a
+/// view, a setting by name. Each is called by a title of its own
 /// (`crates/skwir/tests/keymap_titles.rs`).
-pub fn offered(app: &skwir_core::App, views: &[skwir_core::registry::ViewSpec]) -> Vec<Offer> {
+pub fn offered(
+    app: &skwir_core::App,
+    views: &[skwir_core::registry::ViewSpec],
+    sorts: &[SortKey],
+) -> Vec<Offer> {
     let mut offers: Vec<Offer> = Vec::new();
     for spec in app.commands.list() {
         // Structured preference batches are edited by the Settings dialog;
         // the shell's own are offered as `UI_COMMANDS` says, most being
         // keys of a place (a menu's arrows), nothing to run from here; and
-        // what only answers (an agent's question, a panel's data) shows
-        // nothing run from here.
+        // what is data (an agent's question, a panel's rows) shows nothing
+        // run from here.
         if matches!(&*spec.name, "settings.apply" | "plugins.set_enabled")
             || &*spec.owner == crate::commands::OWNER
-            || spec.effect == skwir_core::command::Effect::Reads
+            || spec.data
         {
             continue;
         }
@@ -339,6 +345,16 @@ pub fn offered(app: &skwir_core::App, views: &[skwir_core::registry::ViewSpec]) 
             ..Offer::of(&spec.name, serde_json::json!({}), spec.title.clone())
         });
         for form in &spec.forms {
+            // A sort by what no column shows here is not offered, as the
+            // View menu does not offer it (by date deleted, outside the
+            // trash).
+            let key = form
+                .args
+                .get("key")
+                .and_then(|key| serde_json::from_value::<SortKey>(key.clone()).ok());
+            if &*spec.name == "sort" && key.is_some_and(|key| !sorts.contains(&key)) {
+                continue;
+            }
             offers.push(Offer::of(&spec.name, form.args.clone(), form.title.clone()));
         }
     }
@@ -397,7 +413,8 @@ pub fn offered(app: &skwir_core::App, views: &[skwir_core::registry::ViewSpec]) 
 
 impl Shell {
     fn palette_items(&self) -> Vec<PaletteItem> {
-        offered(&self.app, &self.available_views())
+        let sorts: Vec<SortKey> = self.sort_keys().into_iter().map(|(_, key)| key).collect();
+        offered(&self.app, &self.available_views(), &sorts)
             .into_iter()
             .map(|offer| PaletteItem {
                 keys: self.keys_for(&offer.name, &offer.args),
@@ -589,4 +606,76 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         &theme,
         cx,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use skwir_core::SortKey;
+    use skwir_core::app::{App, AppConfig};
+    use skwir_core::command::{NoArgs, Outcome};
+
+    fn titles(app: &App, sorts: &[SortKey]) -> Vec<String> {
+        super::offered(app, &[], sorts)
+            .into_iter()
+            .map(|offer| offer.title)
+            .collect()
+    }
+
+    /// What only answers is left out; what changes nothing yet shows
+    /// something run from here (a text copied) is offered.
+    #[test]
+    fn data_is_not_offered_and_what_shows_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let copied = || {
+            Ok(Outcome::Clipboard {
+                text: "/a".into(),
+                said: "Copied".into(),
+            })
+        };
+        app.commands
+            .register::<NoArgs, _>("test", "test.copy", "Copy a test text", "", move |_, _| {
+                copied()
+            })
+            .reads();
+        app.commands
+            .register::<NoArgs, _>("test", "test.rows", "Rows of a test panel", "", |_, _| {
+                Ok(Outcome::Value(serde_json::json!([])))
+            })
+            .data();
+        let offered = titles(&app, &[SortKey::Name]);
+        assert!(offered.iter().any(|t| t == "Copy a test text"));
+        assert!(!offered.iter().any(|t| t == "Rows of a test panel"));
+        // The core's own data: the tabs, the entries, the commands.
+        for data in ["List tabs", "List entries"] {
+            assert!(!offered.iter().any(|t| t == data), "{data}");
+        }
+    }
+
+    /// The sorts offered are the View menu's: by what a column shows here,
+    /// in both directions, and either direction of the sort in force.
+    #[test]
+    fn a_sort_by_what_no_column_shows_is_not_offered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let folder = titles(&app, &[SortKey::Name, SortKey::Size, SortKey::Modified]);
+        for offered in [
+            "Sort ascending",
+            "Sort descending",
+            "Sort by name",
+            "Sort by size, largest first",
+            "Sort by date modified",
+        ] {
+            assert!(folder.iter().any(|t| t == offered), "{offered}");
+        }
+        assert!(!folder.iter().any(|t| t.starts_with("Sort by date deleted")));
+        assert!(!folder.iter().any(|t| t.starts_with("Sort by rating")));
+        let trash = titles(&app, &[SortKey::Name, SortKey::Deleted]);
+        assert!(
+            trash
+                .iter()
+                .any(|t| t == "Sort by date deleted, newest first")
+        );
+        assert!(!trash.iter().any(|t| t.starts_with("Sort by size")));
+    }
 }

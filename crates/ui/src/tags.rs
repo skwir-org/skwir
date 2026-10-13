@@ -480,6 +480,18 @@ pub struct TagEditor {
     _sub: Subscription,
 }
 
+impl TagEditor {
+    /// What Tab walks: the field, Cancel, Apply (`Shell::walk_dialog`).
+    pub(crate) fn walk(&self, cx: &gpui::App) -> Vec<FocusHandle> {
+        use gpui::Focusable as _;
+        vec![
+            self.input.read(cx).focus_handle(cx),
+            self.cancel_focus.clone(),
+            self.apply_focus.clone(),
+        ]
+    }
+}
+
 impl Shell {
     /// `ui.tags_prompt { entries?, text? }`: edit the tags of `entries`
     /// (Properties names the entry it shows), or of what is selected, `text`

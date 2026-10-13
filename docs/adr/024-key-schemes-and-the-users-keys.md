@@ -123,17 +123,32 @@ blocked every later save.
   binds them itself, since GPUI takes the deepest place first, said once
   for many places; the rest of the window when they are bound in a
   place; the same place under other conditions); a shortcut of the
-  user's on them waiting for its plugin; a letter that ends typing a
-  name in the file list. Keys of an unrelated place are not mentioned.
-  The list walks with the keyboard (`ui.settings_key` in
-  `setting_keys`: arrows, Enter to change or add, Delete to remove).
+  user's on them waiting for its plugin, and whether it goes; a letter
+  that ends typing a name in the file list; a key that types, which a
+  text field keeps. Keys of an unrelated place are not mentioned. The
+  keys an action has, pressed again, change nothing. The bar also says
+  what the change leaves of every other action's keys
+  (`settings_keys::effects`: the keymap built before and after,
+  compared): freeing Escape in the file list frees it where narrower
+  bindings of other actions had it (clearing the filter, the clipboard),
+  and Delete on such a key, or a way back that takes keys from other
+  actions, opens the bar to say so first. The list walks with the
+  keyboard (`ui.settings_key` in `setting_keys`: arrows, Enter to change
+  or add, Delete to remove), in a search too; the bar's answer has the
+  keyboard when there are no keys to take (Restore, a way back).
 - **What a change writes** (`settings_keys::apply`). New keys for an
   action are a record; new keys in place of a default are that record
   and one freeing the default's keys where they worked; removing a
-  default frees its keys; removing or changing one of the user's edits
-  that record. A row's way back removes every record that touches it. A
-  default hidden by a record of the user's stays listed, struck through;
-  Restore removes that record, saying whose it is.
+  default frees its keys; removing one of the user's takes its record
+  out, changing one edits it. A record written goes last, where it runs
+  (GPUI takes a place's latest binding), and takes out the user's own
+  records of the same keys whose conditions it covers: it hides them, and
+  kept they would come back once it goes (a shortcut replaced, a
+  default's keys freed before). A row's way back removes its records and
+  those of the user's that hide its defaults. A binding hidden by a
+  record of the user's stays listed, struck through (a default, or one
+  of the user's written by hand); Restore removes that record, saying
+  whose it is.
 - **Actions without keys** are listed on request and always in a
   search, under "Without keys": the core's and the plugins' commands
   that need no argument and their forms, the shell's as the palette
@@ -147,8 +162,10 @@ blocked every later save.
 - **Keys that must stay.** A command may be declared to keep a key
   (`Declared::keeps_a_key`): the palette, closing Settings and moving
   through it, confirming or dismissing a dialog or a plan, closing a
-  menu. Its keys change, but never all go: removing its last key in a
-  place is refused, and so is a binding that would hide it.
+  menu. Its keys change, but never all go: any change that would leave
+  it no key in a place is refused, saying why (`effects`): removing its
+  last, a binding that would hide it, a Restore or a way back that
+  removes the shortcut that gave it its keys.
 - **A plugin turned off.** A record whose command nothing registers is
   dormant (`keymap::dormant`): kept in the file, bound to nothing (the
   keys under it work meanwhile), not listed; the page says how many
@@ -156,8 +173,16 @@ blocked every later save.
   plugins change). The check refuses an unknown command only in a
   record a save adds or changes (a typo), never in one stored unchanged:
   a setting's validator sees the value stored
-  (`SettingSpec::validate_with`, `parse_over`). This replaces "reported
-  when run": the code had refused every unknown command at each save, so
-  a plugin turned off blocked all later changes to the keys.
+  (`SettingSpec::validate_with`, `parse_over`, `Beside`). This replaces
+  "reported when run": the code had refused every unknown command at
+  each save, so a plugin turned off blocked all later changes to the
+  keys. A file checked as it stands (`settings.check`) has every record
+  judged: a command nothing has is a problem, unless it is named under a
+  namespace nothing there registers (a plugin that is off, the window's
+  own with no window), which waits.
 - A text field's own keys (Backspace, the arrows in a field) stay the
-  field's: not listed, not editable.
+  field's: not listed, not editable. A field keeps the characters it
+  types: a key that types one (a letter, `.`, Space, Shift at most)
+  bound anywhere or in a place is bound to nothing in the field's own
+  context (`keymap::typed_in_fields`), as the terminal keeps its keys,
+  so `.` bound anywhere still types a dot in the address bar.

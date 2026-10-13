@@ -1584,6 +1584,39 @@ pub fn bindings(app: &App, user: &[UserBinding]) -> Vec<Bound> {
         .collect()
 }
 
+/// Whether `keys` type a character where a text field has the keyboard:
+/// their first stroke is one character or Space, with Shift at most (`j`,
+/// `G`, `.`, `space`, `g g`).
+pub(crate) fn types_a_character(keys: &str) -> bool {
+    let Some(first) = keys.split_whitespace().next() else {
+        return false;
+    };
+    let Ok(stroke) = Keystroke::parse(first) else {
+        return false;
+    };
+    let m = stroke.modifiers;
+    (stroke.key.chars().count() == 1 || stroke.key == "space")
+        && !(m.control || m.alt || m.platform || m.function)
+}
+
+/// The keys of bindings that a text field keeps for typing, wherever they
+/// are bound: `install` binds each to nothing in the field's own context
+/// (`input::KEY_CONTEXT`, the deepest place), so `.` or `j` bound anywhere
+/// still types in the address bar, a search or a rename, as the terminal
+/// keeps its keys (`TERMINAL_PASSTHROUGH`).
+pub(crate) fn typed_in_fields(bound: &[Bound]) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    for binding in bound {
+        if binding.command.is_some()
+            && types_a_character(&binding.keys)
+            && !keys.contains(&binding.keys)
+        {
+            keys.push(binding.keys.clone());
+        }
+    }
+    keys
+}
+
 /// Whether a binding takes a character typed in the file list: its first
 /// stroke is one character, with Shift at most (`j`, `G`, `/`, `g g`), and
 /// it `binds` a command (freeing a key takes nothing).
@@ -1652,6 +1685,15 @@ pub fn install(app: &App, user: Vec<UserBinding>, cx: &mut gpui::App) -> Keymap 
             Some(&binding.context),
         ));
     }
+    // After the bindings they shadow, so a sequence they start is no
+    // longer awaited in a field either.
+    for keys in typed_in_fields(&bound) {
+        gpui_bindings.push(KeyBinding::new(
+            &keys,
+            gpui::NoAction,
+            Some(crate::input::KEY_CONTEXT),
+        ));
+    }
     cx.clear_key_bindings();
     cx.bind_keys(crate::input::key_bindings());
     cx.bind_keys(gpui_bindings);
@@ -1667,7 +1709,8 @@ pub fn install(app: &App, user: Vec<UserBinding>, cx: &mut gpui::App) -> Keymap 
 mod tests {
     use super::{
         BUILTIN, BUILTIN_ARGS, KeyHint, Layer, Spec, context_label, context_of, display_keys,
-        key_caps, keys_for_where, shadowed, specs, takes_a_character, valid_keys, zoom_specs,
+        key_caps, keys_for_where, shadowed, specs, takes_a_character, typed_in_fields,
+        types_a_character, valid_keys, zoom_specs,
     };
     use skwir_core::command::Invocation;
     use skwir_core::keymap::UserBinding;
@@ -1804,6 +1847,54 @@ mod tests {
             !takes_a_character(&freed.keys, &freed.context, freed.command.is_some()),
             "freeing a key binds nothing"
         );
+    }
+
+    /// A key that types a character, bound anywhere or in a place, is
+    /// kept by a text field for typing: `install` binds it to nothing in
+    /// the field's context. One with Ctrl or Alt is the binding's.
+    #[test]
+    fn text_fields_keep_the_characters_bound_elsewhere() {
+        for typed in ["j", "G", "shift-g", ".", "space", "g g", "?"] {
+            assert!(types_a_character(typed), "{typed}");
+        }
+        for not in [
+            "ctrl-j",
+            "alt-.",
+            "f2",
+            "escape",
+            "enter",
+            "ctrl-k j",
+            "super-space",
+        ] {
+            assert!(!types_a_character(not), "{not}");
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::commands::declare_all(&app);
+        let user = [
+            UserBinding {
+                id: "1".into(),
+                keys: ".".into(),
+                command: Some(Invocation::new("toggle_hidden")),
+                when: None,
+            },
+            UserBinding {
+                id: "2".into(),
+                keys: "ctrl-.".into(),
+                command: Some(Invocation::new("toggle_hidden")),
+                when: None,
+            },
+            UserBinding {
+                id: "3".into(),
+                keys: "q".into(),
+                command: None,
+                when: Some("pane".into()),
+            },
+        ];
+        let kept = typed_in_fields(&super::bindings(&app, &user));
+        assert!(kept.contains(&".".to_owned()), "{kept:?}");
+        assert!(!kept.contains(&"ctrl-.".to_owned()), "{kept:?}");
+        assert!(!kept.contains(&"q".to_owned()), "freed, it runs nothing");
     }
 
     /// The layers stand in their order whatever order the plugins came in:

@@ -4,12 +4,15 @@
 //! keys work and the keys; what it saves is a record of the user's, as a
 //! row's + saves one.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use gpui::{
     AnyElement, App, Context, Entity, Focusable, SharedString, Subscription, Window, div,
     prelude::*, px,
 };
 use serde_json::Value;
-use skwir_core::command::{CommandSpec, Effect, Invocation};
+use skwir_core::command::{CommandSpec, Invocation};
 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
@@ -63,18 +66,38 @@ struct Picked {
     /// The arguments of a form, fixed; `None` when the fields say them.
     args: Option<Value>,
     fields: Vec<Field>,
+    /// What its fields say, as they change.
+    _subscriptions: Vec<Subscription>,
 }
+
+/// A command a shortcut may run, as the form lists it: with a form's
+/// arguments, or `None` for the fields to ask them, and its title.
+type Candidate = (CommandSpec, Option<Value>, String);
 
 /// The form of a new shortcut.
 pub(crate) struct NewShortcut {
     search: Entity<TextInput>,
+    /// Every command a shortcut may run, read once when the form opens.
+    candidates: Rc<Vec<Candidate>>,
+    /// Those the search finds, for the search they were found for.
+    found: RefCell<Option<(String, Rc<Vec<usize>>)>>,
     picked: Option<Picked>,
+    /// The arguments the fields say, or why they cannot be run: worked out
+    /// again when a field changes, not at each frame.
+    args: RefCell<Option<Result<(String, Value), String>>>,
     /// Where the keys work: an index in `places()`.
     place: usize,
     /// The file list's conditions asked for.
     flags: Vec<&'static str>,
     places_open: bool,
     _subscriptions: Vec<Subscription>,
+}
+
+impl NewShortcut {
+    /// The arguments are to be read again from the fields.
+    fn changed(&self) {
+        self.args.borrow_mut().take();
+    }
 }
 
 /// The `i`th field of the command picked.
@@ -140,12 +163,10 @@ fn places() -> Vec<(Option<&'static str>, &'static str)> {
 /// Every command a shortcut may run: each form, and each command as it
 /// is, asking for its arguments when it takes some; the shell's own as the
 /// palette offers them, their other forms being keys of a place.
-fn candidates(app: &skwir_core::App) -> Vec<(CommandSpec, Option<Value>, String)> {
+fn candidates(app: &skwir_core::App) -> Vec<Candidate> {
     let mut all = Vec::new();
     for spec in app.commands.list() {
-        if matches!(&*spec.name, "settings.apply" | "plugins.set_enabled")
-            || spec.effect == Effect::Reads
-        {
+        if matches!(&*spec.name, "settings.apply" | "plugins.set_enabled") || spec.data {
             continue;
         }
         let shell = &*spec.owner == crate::commands::OWNER;
@@ -293,7 +314,10 @@ impl SettingsView {
         search.update(cx, |input, _| input.focus(window));
         self.keys.new = Some(NewShortcut {
             search,
+            candidates: Rc::new(candidates(&self.app)),
+            found: RefCell::default(),
             picked: None,
+            args: RefCell::default(),
             place: 0,
             flags: Vec::new(),
             places_open: false,
@@ -316,19 +340,39 @@ impl SettingsView {
         }
     }
 
-    fn matching_commands(&self, cx: &App) -> Vec<(CommandSpec, Option<Value>, String)> {
+    /// The commands the search finds, the first `SHOWN`: looked for again
+    /// only when the search changes.
+    fn matching_commands(&self, cx: &App) -> Vec<Candidate> {
         let Some(new) = &self.keys.new else {
             return Vec::new();
         };
         let query = new.search.read(cx).text().trim().to_lowercase();
-        candidates(&self.app)
-            .into_iter()
-            .filter(|(spec, _, title)| {
-                query.is_empty()
-                    || title.to_lowercase().contains(&query)
-                    || spec.name.to_lowercase().contains(&query)
-            })
-            .take(SHOWN)
+        let kept = new
+            .found
+            .borrow()
+            .as_ref()
+            .filter(|(asked, _)| *asked == query)
+            .map(|(_, found)| Rc::clone(found));
+        let found = kept.unwrap_or_else(|| {
+            let found: Rc<Vec<usize>> = Rc::new(
+                new.candidates
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (spec, _, title))| {
+                        query.is_empty()
+                            || title.to_lowercase().contains(&query)
+                            || spec.name.to_lowercase().contains(&query)
+                    })
+                    .map(|(n, _)| n)
+                    .take(SHOWN)
+                    .collect(),
+            );
+            *new.found.borrow_mut() = Some((query, Rc::clone(&found)));
+            found
+        });
+        found
+            .iter()
+            .filter_map(|&n| new.candidates.get(n).cloned())
             .collect()
     }
 
@@ -343,6 +387,7 @@ impl SettingsView {
         let root = serde_json::to_value(spec.args_schema.get()).unwrap_or_default();
         let required: Vec<String> = spec.required_args();
         let mut fields = Vec::new();
+        let mut subscriptions = Vec::new();
         if args.is_none() {
             for (name, schema) in properties(spec).unwrap_or_default() {
                 // A key acts where the keyboard is: the pane an agent may
@@ -353,6 +398,16 @@ impl SettingsView {
                 let kind = kind_of(&root, &schema);
                 let input = matches!(kind, Kind::Text | Kind::Number | Kind::Json)
                     .then(|| cx.new(|cx| TextInput::new("", cx)));
+                if let Some(input) = &input {
+                    subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
+                        if matches!(event, InputEvent::Changed)
+                            && let Some(new) = &this.keys.new
+                        {
+                            new.changed();
+                            cx.notify();
+                        }
+                    }));
+                }
                 fields.push(Field {
                     required: required.contains(&name),
                     description: schema
@@ -376,7 +431,9 @@ impl SettingsView {
                 title,
                 args,
                 fields,
+                _subscriptions: subscriptions,
             });
+            new.changed();
         }
         match first {
             Some(input) => input.update(cx, |input, _| input.focus(window)),
@@ -385,27 +442,38 @@ impl SettingsView {
         cx.notify();
     }
 
-    /// The arguments the form says, or why they cannot be run.
+    /// The arguments the form says, or why they cannot be run: read from
+    /// the fields and checked again only once one of them changed.
     fn new_shortcut_args(&self, cx: &App) -> Result<(String, Value), String> {
-        let picked = self
+        let new = self
             .keys
             .new
             .as_ref()
-            .and_then(|new| new.picked.as_ref())
             .ok_or("Choose what the keys run first")?;
-        let args = if let Some(args) = &picked.args {
-            args.clone()
-        } else {
-            args_of(&picked.fields, cx)?
-        };
-        self.app
-            .commands
-            .check(&Invocation {
-                name: picked.command.as_str().into(),
-                args: args.clone(),
-            })
-            .map_err(|error| format!("{error}"))?;
-        Ok((picked.command.clone(), args))
+        if let Some(said) = new.args.borrow().as_ref() {
+            return said.clone();
+        }
+        let said = (|| {
+            let picked = new
+                .picked
+                .as_ref()
+                .ok_or("Choose what the keys run first")?;
+            let args = if let Some(args) = &picked.args {
+                args.clone()
+            } else {
+                args_of(&picked.fields, cx)?
+            };
+            self.app
+                .commands
+                .check(&Invocation {
+                    name: picked.command.as_str().into(),
+                    args: args.clone(),
+                })
+                .map_err(|error| format!("{error}"))?;
+            Ok((picked.command.clone(), args))
+        })();
+        *new.args.borrow_mut() = Some(said.clone());
+        said
     }
 
     /// Where the form's keys would work, as a context.
@@ -555,6 +623,7 @@ impl SettingsView {
                                     this.keys.editor = None;
                                     if let Some(new) = this.keys.new.as_mut() {
                                         new.picked = None;
+                                        new.changed();
                                     }
                                     this.focus_new_shortcut(window, cx);
                                     cx.notify();
@@ -813,6 +882,9 @@ impl SettingsView {
                             if let Some(field) = field_at(this, i) {
                                 field.chosen = (field.chosen != Some(n)).then_some(n);
                             }
+                            if let Some(new) = &this.keys.new {
+                                new.changed();
+                            }
                             cx.notify();
                         })),
                     );
@@ -826,6 +898,9 @@ impl SettingsView {
                         cx.listener(move |this, _, _, cx| {
                             if let Some(field) = field_at(this, i) {
                                 field.on = !field.on;
+                            }
+                            if let Some(new) = &this.keys.new {
+                                new.changed();
                             }
                             cx.notify();
                         }),

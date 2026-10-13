@@ -363,7 +363,7 @@ impl Plugin for ChecksumsPlugin {
                 "Properties' rows for one file: each checksum computed, being computed, or the way to compute it",
                 move |a, _| t.properties(a),
             )
-            .reads();
+            .data();
         let t = Arc::clone(&this);
         app.commands
             .register::<ComputeArgs, _>(
@@ -373,7 +373,7 @@ impl Plugin for ChecksumsPlugin {
                 "The `sha256`, `md5` or `blake3` checksum of a file, read whole: answered where it is called, or from the window shown in Properties when done",
                 move |a, app| t.start(a, app),
             )
-            .reads();
+            .data();
         let t = Arc::clone(&this);
         app.commands
             .register::<ComputeArgs, _>(
@@ -383,7 +383,7 @@ impl Plugin for ChecksumsPlugin {
                 "Stop computing a file's checksum",
                 move |a, app| t.stop(a, app),
             )
-            .reads();
+            .data();
         app.registry.property_sources.add(
             ID,
             PropertySource {

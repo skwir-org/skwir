@@ -13,9 +13,10 @@ the reasoning.
   through commands rather than the dialog (saved searches, pinned tags),
   kept in the data file (ADR-057); `state` for what skwir keeps of the
   window (ADR-056).
-- What only the owner can check goes in `validate_with`, which sees the
-  value stored beside the new one (`SettingSpec::parse_over`; the
-  dialog, `settings.apply` and the file's check all pass it): a check may
+- What only the owner can check goes in `validate_with`, which sees what
+  the value is checked beside (`Beside`): the value stored beside the new
+  one (`SettingSpec::parse_over`; the dialog and `settings.apply` pass
+  it), or a file's value as it stands (`settings.check`). A check may
   spare what was kept as it is (a shortcut waiting for its plugin).
 - The owner states the title, description, unit, step, choice labels and
   section, so the dialog, the palette and agents need no key-specific
@@ -77,17 +78,24 @@ The namespace is the page, and a preference goes where its subject is:
   and exclusive categories) is declared `SettingSpec::data` and kept in
   `data.toml` in the data folder (`folders::data`): theirs, so one that is
   no TOML is set aside, never written over. A key kept apart found in the
-  settings file (a hand's edit) is read until skwir keeps its own, which
-  wins; `settings.check` says it is no setting. Only what the dialog
+  settings file (a hand's edit, an earlier skwir's) is read until skwir
+  keeps its own, which then replaces it whole: never merged with it, so a
+  colour taken away stays away (`Settings::declare` reads the key from its
+  file, a save sets it so). The settings file is never written for it;
+  `settings.check` notes that it is no setting. Only what the dialog
   changes is a setting.
 - The settings file may be read-only (Home Manager's link): a save writes
   through a link to where it leads, says when it cannot, and undoes the
   change; the dialog says so above every page. A change of state or of
   the user's data never touches the settings file.
 - `settings.check` judges a file or a table as the dialog judges what is
-  typed (`SettingSpec::check`); a new kind of setting is checked there
-  too. A key kept apart (state, data) is a problem there: not a
-  setting. Home Manager's module runs it while the configuration builds.
+  typed (`SettingSpec::check`, its owner's check given `Beside::File`); a
+  new kind of setting is checked there too. A key kept apart (state,
+  data) is noted there: not a setting, read only until skwir keeps its
+  own. A shortcut to a command nothing has is a problem, unless it is
+  named under a namespace nothing there registers (a plugin that is off,
+  the window's own with no window): it waits for it. Home Manager's
+  module runs it while the configuration builds.
 
 ## The dialog
 

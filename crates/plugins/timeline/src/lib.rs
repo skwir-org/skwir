@@ -564,7 +564,7 @@ impl Plugin for TimelinePlugin {
                     Ok(Outcome::Value(value))
                 },
             )
-            .reads();
+            .data();
         let t = Arc::clone(&this);
         app.commands
             .register::<StatusArgs, _>(
@@ -584,7 +584,7 @@ impl Plugin for TimelinePlugin {
                     Ok(Outcome::Value(serde_json::to_value(status)?))
                 },
             )
-            .reads();
+            .data();
         let t = Arc::clone(&this);
         app.commands
             .register::<SelectArgs, _>(

@@ -38,7 +38,8 @@ terminal panel, the player. Binding, like `AGENTS.md`. Views are in
   returns it on close, and has its own key context (`menu.rs`).
 - **Focus never dangles:** when the focused element leaves the window,
   the shell's focus-lost listener gives the keyboard to the pane drawn as
-  active (`Shell::drawn_focus`). Never refocus by hand after closing
+  active (`Shell::drawn_focus`), or to the Settings dialog while it is
+  open, never to the pane behind it. Never refocus by hand after closing
   something.
 - **One popup at a time,** all through `Shell::toggle_popup`. A press
   outside closes it and says so (`pointer` in its close command,
@@ -313,6 +314,18 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   takes it as `accept`, OK when absent). A picker's rows are its buttons.
   A press outside cancels too, but is never the only way: what is only
   read (About, F1's overview) closes from its ✕, as Settings does.
+- **A dialog keeps the keyboard.** Tab walks its field, Cancel and its
+  answer, round their ends (`Shell::walk_dialog`, `modal::tab_among`),
+  never the window behind it; a list one picks from keeps it in its
+  field. A focused footer button is pressed by Enter and Space, before
+  the dialog's own Enter (a focused Cancel cancels); a press on one
+  leaves the keyboard in the field; Escape that nothing in the dialog
+  answered cancels it (`modal::modal`).
+- **A question names what it is about when asked.** `ui.ask` fills the
+  asked command's `pane`, `entries` (the selection) and `in` (the folder
+  shown) that the asker left out, as they are when it opens: Rename
+  renames the file it was opened for, whatever is selected by the
+  answer.
 
 ## Keys
 
@@ -328,6 +341,12 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   later layer is left out of hints and tooltips. A user's record without a
   command frees its keys (`gpui::NoAction`); one whose command nothing
   registers waits for its plugin, bound to nothing (`keymap::dormant`).
+- **Text fields keep their characters.** A binding whose first stroke
+  types a character (a letter, `.`, Space, with Shift at most), wherever
+  it is bound, is bound to nothing in the text field's context
+  (`keymap::typed_in_fields`, after the bindings it shadows), as the
+  terminal keeps its keys: `.` bound anywhere still types in the address
+  bar, a search, a rename.
 - **Titles.** An action is called by `keymap::title`: its command's form
   for its arguments (`Declared::forms`), never by its command's title
   alone. A key bound with arguments gets a form where its command is
@@ -337,13 +356,20 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   (`keymap::bindings`), as one row per action and place
   (`settings_keys.rs`), draws them in one list (`settings_keys_view.rs`)
   and asks for a new shortcut's command (`settings_keys_new.rs`). It
-  writes `keyboard.bindings` only through `settings_keys::apply`, and
-  says what new keys would do through `settings_keys::verdict`, which
-  reads precedence as GPUI does (the deepest place, then the latest).
-  Keys are taken with `App::intercept_keystrokes`, so no binding runs
-  while one is recorded. A place is grouped by its label in
-  `keymap::PLACES`, which also says whether it is inside a dialog or a
-  menu; a command that must keep a key says so (`Declared::keeps_a_key`).
+  writes `keyboard.bindings` only through `settings_keys::apply`, where a
+  record written goes last and takes out the user's own it covers, so it
+  is the one that runs and nothing it replaced comes back. It says what
+  new keys would do through `settings_keys::verdict`, which reads
+  precedence as GPUI does (the deepest place, then the latest), and what
+  any change leaves of the other actions' keys, and whether it may be
+  made, through `settings_keys::effects` (the keymap built before and
+  after; worked out when the keys or the change change, never per
+  frame). Keys are taken with `App::intercept_keystrokes`, so no binding
+  runs while one is recorded; a bar with no keys to take gives its answer
+  the keyboard. A place is grouped by its label in `keymap::PLACES`,
+  which also says whether it is inside a dialog or a menu; a command that
+  must keep a key says so (`Declared::keeps_a_key`), and no change leaves
+  it without one in a place.
 - Type-ahead is on only while no binding takes an unmodified character in
   the file list (`Keymap::typeahead`).
 - Multi-stroke bindings wait without a timeout (vendored patch 0010);
