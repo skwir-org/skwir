@@ -62,6 +62,12 @@ pub struct Session {
     /// was renamed, ADR-058).
     #[serde(alias = "details")]
     pub properties: bool,
+    /// Its share of the room above a preview, and at its left, as their
+    /// edge was dragged each way.
+    pub properties_height_share: f32,
+    pub properties_width_share: f32,
+    /// Its groups folded or unfolded, by title.
+    pub properties_folds: crate::properties::Folds,
     pub timeline: bool,
     /// How tall the pinned player's dock was dragged.
     pub player_height: f32,
@@ -120,6 +126,9 @@ impl Shell {
             members_width_share: self.preview.members_share.beside,
             preview_height: self.preview.height.unwrap_or(0.),
             properties: self.preview.properties_open,
+            properties_height_share: self.preview.properties_share.above,
+            properties_width_share: self.preview.properties_share.beside,
+            properties_folds: self.preview.properties_folds.clone(),
             timeline: self.timeline.open,
             player_height: self.player.height,
             terminal: self.terminal.open,

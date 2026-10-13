@@ -368,7 +368,7 @@ pub struct PreviewState {
     /// The view the member of `descend` is asked from, until it arrives.
     pub(crate) container_asked: Option<crate::members::Parked>,
     /// Its share of the room beside the member, as their edge was dragged.
-    pub members_share: crate::members::Share,
+    pub members_share: crate::elements::edge::Share,
     /// What a press on the member's side under a container's view gives
     /// the keyboard to, when nothing inside takes it.
     pub member_focus: Option<FocusHandle>,
@@ -439,10 +439,16 @@ pub struct PreviewState {
     /// changes (`properties_at`), never while painting.
     pub properties: Vec<crate::properties::Group>,
     properties_at: Option<u64>,
-    /// Several entries selected: how many, and what they weigh together.
-    pub selection_summary: Option<crate::properties::Group>,
+    /// Several entries selected: how many, what they weigh together, and
+    /// who may use them; empty with one.
+    pub selection_summary: Vec<crate::properties::Group>,
     /// Whether Properties is open under a preview; part of the window's shape.
     pub properties_open: bool,
+    /// Its share of the room over a preview, above it and beside it, as
+    /// their edge was dragged; part of the window's shape.
+    pub properties_share: crate::elements::edge::Share,
+    /// The groups the user folded or unfolded; part of the window's shape.
+    pub properties_folds: crate::properties::Folds,
     pub properties_scroll: gpui::ScrollHandle,
     /// Focus of a picture, so the zoom keys reach it once it is clicked.
     pub image_focus: Option<FocusHandle>,
@@ -544,9 +550,18 @@ impl VolumeFacts {
                 mount.path.to_string_lossy().into_owned(),
             ));
         }
+        // Folded as Properties ships, it says which drive and how full.
+        let name = self
+            .mount
+            .as_ref()
+            .map(|mount| app.location_title(&skwir_core::Location::from_path(&mount.path)));
+        let free = self
+            .space
+            .map(|(free, _)| format!("{} free", format::size(free)));
+        let gist = [name, free].into_iter().flatten().collect::<Vec<_>>();
         (!rows.is_empty()).then(|| crate::properties::Group {
-            title: "Volume".into(),
-            rows,
+            gist: (!gist.is_empty()).then(|| gist.join(" · ").into()),
+            ..crate::properties::Group::new("Volume", rows)
         })
     }
 }
@@ -596,7 +611,7 @@ impl Default for PreviewState {
             nested: Vec::new(),
             containers: Vec::new(),
             container_asked: None,
-            members_share: crate::members::Share::default(),
+            members_share: crate::elements::edge::Share::even(crate::members::SHARE),
             member_focus: None,
             menu_parked: false,
             descend: None,
@@ -628,8 +643,10 @@ impl Default for PreviewState {
             properties_entry: None,
             properties: Vec::new(),
             properties_at: None,
-            selection_summary: None,
+            selection_summary: Vec::new(),
             properties_open: false,
+            properties_share: crate::elements::edge::Share::even(crate::properties::SHARE),
+            properties_folds: crate::properties::Folds::default(),
             properties_scroll: gpui::ScrollHandle::new(),
             image_focus: None,
             map: crate::map_preview::MapState::default(),
@@ -1284,21 +1301,23 @@ impl Shell {
                 .media_kind()
                 .map_or((None, None), |kind| self.media_neighbours(id, kind));
             let selection = self.selection_ctx();
-            self.preview.selection_summary = (selection.count > 1).then(|| {
+            self.preview.selection_summary = if selection.count < 2 {
+                Vec::new()
+            } else {
                 let ws = self.app.workspace.read();
                 let entries: Vec<&skwir_core::entry::Entry> = ws
                     .pane(self.pane)
                     .map(|p| p.selection.iter().filter_map(|id| p.entry(id)).collect())
                     .unwrap_or_default();
                 // The whole size once every file's is known, never a part.
-                crate::properties::selection_group(
+                crate::properties::selection_groups(
                     &entries,
                     selection.count,
                     selection.bytes,
                     self.pane,
                     &user,
                 )
-            });
+            };
         }
         self.ask_sources(&entry, &key.path);
         while let Ok((generation, rows)) = self.preview.sources_rx.try_recv() {
@@ -3236,19 +3255,33 @@ fn under_card(
     // follow right under it. While peek shows the preview, the panel
     // behind it is only a picture and keeps Properties only when it is all
     // there is.
-    let alone = crate::properties::alone(shell);
+    let room = crate::properties::room(shell, wide);
     let details = Some(())
-        .filter(|()| interactive || alone)
-        .and_then(|()| crate::properties::render(shell, theme, cx));
+        .filter(|()| interactive || room == crate::properties::Room::Whole)
+        .and_then(|()| crate::properties::render(shell, theme, room, cx));
     let body = body(shell, theme, interactive, cx);
+    let body = if kept {
+        crate::members::split(body, wide, shell, cx)
+    } else {
+        body
+    };
+    // Over a preview, Properties takes its share of the room, at the
+    // preview's left in a room wider than tall, and the edge between them
+    // is dragged.
+    let over = details.is_some() && room != crate::properties::Room::Whole;
+    let beside = over && room == crate::properties::Room::Beside;
     div()
         .flex_1()
         .min_h_0()
+        .min_w_0()
         .flex()
-        .flex_col()
+        .when(!beside, gpui::Styled::flex_col)
+        .when(over, |d| {
+            d.on_drag_move(cx.listener(Shell::on_properties_drag))
+        })
         .children(details)
-        .child(if kept {
-            crate::members::split(body, wide, shell, cx)
+        .child(if over {
+            crate::properties::edged(body, room, cx)
         } else {
             body
         })

@@ -20,8 +20,11 @@
   only answers agents (the timeline's data). It offers what a command's
   forms make of it (Sort by size, Next tab).
 - **Properties** is what Details was, and the context menu's last item
-  opens it (Alt+Enter, Ctrl+I as before); over a preview it takes the
-  room it needs. It counts what a folder holds (at once when opened, else
+  opens it (Alt+Enter, Ctrl+I as before); over a preview it takes at
+  most half the panel (beside it when the panel is at the bottom), the
+  line between them dragged. Its groups fold (Checksums and the drive
+  start folded), and a row's links show under the pointer. It counts
+  what a folder holds (at once when opened, else
   on Count), says the room a file takes on its drive, the drive, flags
   such as Immutable, and for several items their kinds, total and shared
   access. It names the application a file opens with, and changes it,

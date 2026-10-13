@@ -465,11 +465,30 @@ is still to come are in `docs/preview-frame.md`.
     message (why the preview failed) right under it. Not while a
     container's view is kept above the member (`properties::alone`): that
     view is content, so Properties stays as the card left it.
-  - Under a preview it opens on demand in the same place: under the
-    card, above the toolbar, as tall as what it says, up to the whole
-    panel; the preview takes what is left. With the panel closed,
-    `ui.properties` opens both. No dialog repeats it.
-  - Whether it is open belongs to the window's shape (`session.rs`).
+  - Over a preview it opens on demand, under the card, with at most its
+    share of the room (`properties::Room`): above the toolbar, half the
+    room until dragged, less when it says less; in a room wider than
+    tall (the panel at the bottom, peek), a column of that share at the
+    preview's left. It scrolls past it. The edge between them is
+    `elements::edge`, at the start of the preview (`properties::edged`),
+    dragged each way apart and back to half on a double click. With the
+    panel closed, `ui.properties` opens both. No dialog repeats it.
+  - Whether it is open, its share each way and the groups folded belong
+    to the window's shape (`session.rs`).
+  - Each group's heading folds it (`ui.properties_fold`), remembered by
+    title for every file (`properties::Folds`); Checksums and Volume ship
+    folded. A folded group says its gist on its heading (`Group::gist`:
+    the drive and its free room). The mode is said on Permissions'
+    heading (`Show::Heading`), its Change… beside it.
+  - A row's links (Change…, Edit…, Copy) show while the pointer is on
+    it, over the end of its last line: hidden, they take no room, and
+    nothing moves when they show. Those that are all a row says (Count,
+    Compute, Add… to no tags or no comment) or that stop or start what
+    runs (Stop, Count again; `Row::actions_shown`, a source's
+    `Property::actions_shown`) always show, after the value on its line
+    or under it when the value takes the line, which wraps: nothing is
+    measured. The value grows into its line, so its text is laid out at
+    the width it is given.
   - Only `preview::under_card` places it. The toolbar and the content
     (`preview::body`, what a container's split holds under its view)
     never draw it, so neither a kind nor the split can come between the
@@ -501,7 +520,9 @@ is still to come are in `docs/preview-frame.md`.
   entry and for a selection): owner, group, each class's level in words
   (a file's read and write, a folder's List items only, Open items,
   Create and delete items), who can run a file, the mode as chmod writes
-  it (`users::mode`, `ls`'s letters) and what its special bits do. Each
+  it (`users::mode`, `ls`'s letters, on Permissions' heading) and what
+  its special bits do; for a selection, in a Permissions group of their
+  own after Selection's. Each
   change is a `set_access` through `ui.choose` (a folder's switch adds
   `inside`; its levels use `X`) or `ui.ask` (the mode), on the entry by
   `EntryRef` or on the pane's selection by `pane`. Nothing is offered to

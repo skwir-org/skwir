@@ -686,6 +686,13 @@ impl Shell {
         if let Some(share) = dragged(session.members_width_share) {
             self.preview.members_share.beside = share;
         }
+        if let Some(share) = dragged(session.properties_height_share) {
+            self.preview.properties_share.above = share;
+        }
+        if let Some(share) = dragged(session.properties_width_share) {
+            self.preview.properties_share.beside = share;
+        }
+        self.preview.properties_folds = session.properties_folds;
         self.layout.split = session.split_panes;
         if session.player_height > 0. {
             self.player.height = session.player_height;
@@ -2038,6 +2045,7 @@ impl Shell {
             "preview_copy_path" => self.preview_copy_path(cx),
             "properties" => self.properties(cx),
             "properties_count" => self.properties_count(args, cx),
+            "properties_fold" => self.properties_fold(args, cx),
             "preview_copy" => self.preview_copy(window, cx),
             "preview_select_all" => self.preview_select_all(window, cx),
             "preview_contents" => self.preview_contents(window, cx),

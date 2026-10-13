@@ -69,6 +69,39 @@ pub fn edge<T: 'static>(
     })
 }
 
+/// An area's share of the room it splits with another, one for each way
+/// their edge runs: dragged one way, it says nothing of the other.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Share {
+    /// Above the other.
+    pub above: f32,
+    /// At its left.
+    pub beside: f32,
+}
+
+impl Share {
+    /// The same share both ways: as the area ships, and where a double
+    /// click on its edge puts it back.
+    pub const fn even(share: f32) -> Self {
+        Self {
+            above: share,
+            beside: share,
+        }
+    }
+
+    pub fn get(self, beside: bool) -> f32 {
+        if beside { self.beside } else { self.above }
+    }
+
+    pub fn set(&mut self, beside: bool, share: f32) {
+        *if beside {
+            &mut self.beside
+        } else {
+            &mut self.above
+        } = share;
+    }
+}
+
 /// The first side's share when the edge between two sides is `along` px
 /// into `size` px of room, each side keeping `keep` px; `None` in a room
 /// too small to share, where the edge stays where it was.

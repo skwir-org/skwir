@@ -130,6 +130,16 @@ mod args {
         stop: bool,
     }
 
+    /// Properties' group folded or unfolded.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct Fold {
+        /// The group's title, as its heading says it (`Permissions`).
+        group: String,
+        /// Fold it (`true`) or unfold it (`false`); else the other way.
+        #[serde(default)]
+        fold: Option<bool>,
+    }
+
     /// A popup's toggle: `kind` names which, `close` closes it (`pointer`: by
     /// a press outside it).
     #[derive(Deserialize, JsonSchema)]
@@ -372,7 +382,7 @@ mod args {
 }
 
 use args::{
-    Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Folders,
+    Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold, Folders,
     History, Key, Layout, ListMoveArgs, Object, On, Page, PageLink, Pages, Pan, Pick, Player,
     Pointer, Popup, Scrub, Settings, Split, Submit, TagsPrompt, Text, Unlock, Url, UsageMode, View,
 };
@@ -452,6 +462,7 @@ const SHOWS: &[&str] = &[
     "ui.preview_close",
     "ui.properties",
     "ui.properties_count",
+    "ui.properties_fold",
     "ui.preview_menu",
     "ui.preview_page",
     "ui.preview_seek",
@@ -1347,6 +1358,12 @@ pub fn declare_all(app: &App) {
         "ui.properties_count",
         "Properties: count what folders hold",
         "Count the size, room taken, files and folders of what Properties shows (the selection, with several selected), or stop counting with `stop`",
+    );
+    declare::<Fold>(
+        app,
+        "ui.properties_fold",
+        "Properties: fold a group",
+        "Fold one of Properties' groups (`Checksums`, `Volume`…) or unfold it, for every item from now on",
     );
     declare::<Popup>(
         app,

@@ -711,7 +711,7 @@ top. Not done: a key scheme chosen from the page, and "Set shortcut…"
 from F1 or the palette.
 
 Properties (ADR-058): Details renamed, the context menu's last item
-(after the submenus, Alt+Enter), up to the whole panel over a preview. A
+(after the submenus, Alt+Enter). A
 folder's total counted on request by the core (`fs::count`), not by
 Usage as first planned (its requests are a pane's view's); room on the
 drive, the drive, the system's flags; several entries' kinds, total and
@@ -730,6 +730,20 @@ to the test's own lists); a SHA-256 equal to `sha256sum`'s and compared
 with its copied line. Not checked in a window: a read-only drive's
 links taken away, a drive keeping no permissions (FAT), Windows' and
 macOS' code (compiled and linted only).
+Then made compact (ADR-058 decision 7): over a preview at most half the
+room, above it or beside it in a room wider than tall, the edge between
+them dragged; groups folded from their headings and remembered
+(Checksums and Volume ship folded, the drive's gist on its heading); the
+mode on Permissions' heading; a row's links under the pointer only,
+over its last line, but for Count, Compute, Add… on nothing, Stop and
+Count again. Checked on Xvfb: half the room over a picture, dragged to
+three quarters and kept across a restart; beside the preview with the
+panel at the bottom, dragged, and back to half on a double click; a
+folder still filling the panel; Checksums unfolded and remembered,
+Compute shown, Copy and Compare over a digest's last line; Change… on
+Permissions' heading under the pointer. A first try wrapped the value
+and its links in one line that wraps: short values were laid out a
+letter per line until the value grew into its line.
 
 ---
 

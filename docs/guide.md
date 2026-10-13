@@ -292,12 +292,19 @@ it is on. On the folder's background it describes the folder shown.
 - **Opens with** names the application a file's type opens with; Change…
   makes another the default for every file of that type (Undo in the
   message takes it back).
-- **Checksums**: SHA-256, MD5 and BLAKE3, each computed when you click
-  Compute. Copy puts one on the clipboard; Compare with copied says
-  whether a checksum you copied (from a download page, or `sha256sum`'s
-  line) is the same.
-- Over a preview, Properties takes the room it needs; `Alt+Enter` again
-  gives it back to the preview.
+- **Checksums** (folded until you open them): SHA-256, MD5 and BLAKE3,
+  each computed when you click Compute. Copy puts one on the clipboard;
+  Compare with copied says whether a checksum you copied (from a
+  download page, or `sha256sum`'s line) is the same.
+- A click on a group's title folds it, for every file from then on;
+  Checksums and the drive start folded, the drive's title still saying
+  which and how much room is free.
+- What a row can change (Change…, Edit…, Copy) shows when the pointer is
+  on it; Count, Compute and Add… are always there.
+- Over a preview, Properties takes at most half the panel (beside the
+  preview when the panel is at the bottom) and scrolls; drag the line
+  between them to give either more room, double-click it to share
+  evenly again. `Alt+Enter` again gives the room back to the preview.
 
 ## The terminal
 

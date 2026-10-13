@@ -202,6 +202,7 @@ impl ChecksumsPlugin {
             .into_iter()
             .map(|algorithm| {
                 let asked = serde_json::json!({ "entries": [path], "algorithm": algorithm });
+                let running = state.running.contains_key(&(version, algorithm));
                 let (value, actions) = if let Some(digest) = state.done.get(&(version, algorithm)) {
                     let said = serde_json::json!({ "text": digest, "what": algorithm.label() });
                     (
@@ -211,7 +212,7 @@ impl ChecksumsPlugin {
                             { "words": "Compare with copied", "command": { "name": "ui.compare_copied", "args": said } },
                         ]),
                     )
-                } else if state.running.contains_key(&(version, algorithm)) {
+                } else if running {
                     (
                         "Computing…".to_owned(),
                         serde_json::json!([
@@ -231,6 +232,8 @@ impl ChecksumsPlugin {
                     "label": algorithm.label(),
                     "value": value,
                     "actions": actions,
+                    // Stop shows without the pointer on the row.
+                    "actions_shown": running,
                 })
             })
             .collect();

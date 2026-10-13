@@ -20,11 +20,12 @@ Status: accepted, 2026-10-13. Built.
 
 1. **Details is Properties.** The section is renamed, not doubled: a
    dialog would list the same rows a second time. `ui.properties`
-   (Alt+Enter, Ctrl+I, the context menu's last item, order 490) opens it
+   (Alt+Enter, Ctrl+I, the context menu's last item, order 900, after the
+   submenus) opens it
    for the selection, or the folder shown on the background, opening the
    panel when it is closed; over a preview it hides it again, and the
-   menu's item then says Hide Properties. Opened over a preview it is as
-   tall as what it says, up to the whole panel. It follows the cursor, as
+   menu's item then says Hide Properties. Opened over a preview it takes
+   at most its share of the room (decision 7). It follows the cursor, as
    the panel does; an edit carries the entry it was made on.
 2. **What it adds to say** (the stages below say what is built):
    - the room a file takes on its drive (`fs::stat::allocated`), beside
@@ -70,12 +71,28 @@ Status: accepted, 2026-10-13. Built.
    computed only when asked, with Copy and a comparison with the
    clipboard.
 
+7. **Compact, and the preview keeps its room.** Over a preview,
+   Properties takes at most half the room above it (less when it says
+   less), or half of a room wider than tall beside it, and scrolls past
+   that; the edge between them is dragged, each way apart, and a double
+   click puts it back to half. Each group folds from its heading, and
+   stays folded for every file; Checksums and Volume ship folded, the
+   drive's heading still naming it and its free room. The mode goes on
+   Permissions' heading, which the rows under it say in words. A row's
+   links show while the pointer is on it, over the end of its last line,
+   taking no room otherwise, except those that are all the row says
+   (Count, Compute, Add… to no tags or no comment) or that stop or start
+   what runs.
+
 ## Consequences
 
 - One surface: the keys, the menu, the palette, agents and scripts reach
   the same rows and the same commands.
 - A shortcut saved for `ui.preview_details` runs `ui.properties`.
-- Properties over a preview may leave the preview no room; hiding it
-  gives the room back.
+- Properties over a preview leaves the preview at least half the room
+  unless its edge is dragged, and the preview keeps its toolbar however
+  far it is; hiding Properties gives the room back.
+- What a row can change is not seen until the pointer is on it; the
+  rows that offer nothing else keep their links in sight.
 - A plugin from outside skwir adds fields to Properties, not property
   sources: its protocol has no rows with links yet.

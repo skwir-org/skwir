@@ -521,6 +521,8 @@ impl PropertySource {
 
 /// A row a property source answers: the group it joins (`General`, or one
 /// of its own named so), its label and value, and links after the value.
+/// The links show while the pointer is on the row, unless `actions_shown`
+/// (they stop what runs) or the value is empty (they are all it says).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Property {
     pub group: String,
@@ -529,6 +531,8 @@ pub struct Property {
     pub value: String,
     #[serde(default)]
     pub actions: Vec<PropertyAction>,
+    #[serde(default)]
+    pub actions_shown: bool,
 }
 
 /// A link after a property's value: its words and what it runs.

@@ -4,10 +4,12 @@
 //! of its own: what other file managers open as a Properties window
 //! (Alt+Enter, Ctrl+I, the context menu's last item) is this, following
 //! the selection. With nothing to preview (a folder, an unknown file,
-//! several entries) it is always open; under a preview it opens on demand
-//! in the same place, under the header's card and above the toolbar
-//! (`preview::under_card`, the one place that draws it), as tall as what
-//! it says, up to the whole panel.
+//! several entries) it is always open; over a preview it opens on demand
+//! under the header's card (`preview::under_card`, the one place that
+//! draws it), with at most its share of the room, above the preview or
+//! beside it (`Room`), the edge between them dragged. Its groups fold
+//! (`Folds`), and a row's links show under the pointer, so it says much
+//! in little room.
 //!
 //! Facts come from three places, none of them read while painting: the entry's
 //! metadata, with its provenance, collected when the entry or its listing
@@ -49,6 +51,9 @@ pub enum Show {
     Count {
         selection: bool,
     },
+    /// On its group's heading, at its right, folded or not: the mode beside
+    /// Permissions, which the rows under it say in words.
+    Heading,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -60,7 +65,12 @@ pub struct Row {
     /// Who says so, when it is not the filesystem: the user, a plugin, a model.
     pub source: Option<SharedString>,
     /// Links after the value: their words and the commands they run.
+    /// They show while the pointer is on the row, unless `actions_shown`
+    /// or the row says nothing else.
     pub actions: Vec<(SharedString, Invocation)>,
+    /// Its links show without the pointer on it: they stop what runs, or
+    /// start it again.
+    pub actions_shown: bool,
     /// Its links change who may use the file: a read-only drive takes
     /// them away (`render`).
     pub edits_access: bool,
@@ -74,8 +84,22 @@ impl Row {
             show: Show::Text,
             source: None,
             actions: Vec::new(),
+            actions_shown: false,
             edits_access: false,
         }
+    }
+
+    /// Its links show whether the pointer is on it or not.
+    fn shown(mut self) -> Self {
+        self.actions_shown = true;
+        self
+    }
+
+    /// Whether its links show without the pointer on it: they stop or
+    /// start what runs, or they are all it says (Count, Compute, the Add…
+    /// of tags and of a comment not given yet).
+    pub fn links_shown(&self) -> bool {
+        self.actions_shown || self.value.is_empty()
     }
 
     /// A link that changes who may use the file.
@@ -107,14 +131,62 @@ impl Row {
 pub struct Group {
     pub title: SharedString,
     pub rows: Vec<Row>,
+    /// What its heading says at its right while it is folded: the gist of
+    /// its rows (the drive's name and its free room).
+    pub gist: Option<SharedString>,
+}
+
+impl Group {
+    pub fn new(title: impl Into<SharedString>, rows: Vec<Row>) -> Self {
+        Group {
+            title: title.into(),
+            rows,
+            gist: None,
+        }
+    }
 }
 
 fn group(title: &'static str, rows: Vec<Row>) -> Option<Group> {
-    (!rows.is_empty()).then(|| Group {
-        title: title.into(),
-        rows,
-    })
+    (!rows.is_empty()).then(|| Group::new(title, rows))
 }
+
+/// The groups folded as Properties ships: what is seldom looked at.
+const FOLDED: [&str; 2] = ["Checksums", "Volume"];
+
+/// The groups the user folded or unfolded, by title; one it does not name
+/// is as Properties ships it (`FOLDED`). Part of the window's shape
+/// (`session.rs`), so a group folded for one file stays folded for every
+/// other.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct Folds(std::collections::BTreeMap<String, bool>);
+
+impl Folds {
+    pub fn folded(&self, title: &str) -> bool {
+        self.0
+            .get(title)
+            .copied()
+            .unwrap_or_else(|| FOLDED.contains(&title))
+    }
+
+    pub fn set(&mut self, title: &str, folded: bool) {
+        if folded == FOLDED.contains(&title) {
+            self.0.remove(title);
+        } else {
+            self.0.insert(title.to_owned(), folded);
+        }
+    }
+}
+
+/// Properties' share of the room over a preview, until its edge is
+/// dragged, and again after a double click on it: at most half above the
+/// preview (less when it says less), half beside it.
+pub const SHARE: f32 = 0.5;
+/// What each side keeps, whatever the drag: a heading and a few rows of
+/// Properties, the preview's toolbar and some of it; a column wide enough
+/// for a label and its value.
+const KEEP_HEIGHT: f32 = crate::preview_bar::HEIGHT + crate::views::list::ROW_HEIGHT * 3.;
+const KEEP_WIDTH: f32 = 200.;
 
 fn text_of(value: &Value) -> String {
     match value {
@@ -384,7 +456,10 @@ pub fn entry_groups(
             rows.push(Row::new("Group", group_named(gid)));
         }
         if let Some(mode) = uint(keys::MODE) {
-            rows.push(Row::new("Access", skwir_platform::users::mode(mode)));
+            rows.push(Row {
+                show: Show::Heading,
+                ..Row::new("Access", skwir_platform::users::mode(mode))
+            });
         }
         rows
     };
@@ -450,16 +525,17 @@ fn named(id: u64, name: Option<String>) -> String {
 
 /// The Selection group, for several entries selected: how many and of
 /// which kinds, what they weigh (the files' sizes once all are known, or
-/// a count where folders are among them), and the owner, group and access
-/// they share, "Mixed" where they differ. A fact some entry does not say
-/// yet is left out. Pure, so it is tested without a window.
-pub fn selection_group(
+/// a count where folders are among them); then their Permissions group,
+/// the owner, group and access they share, "Mixed" where they differ. A
+/// fact some entry does not say yet is left out. Pure, so it is tested
+/// without a window.
+pub fn selection_groups(
     entries: &[&Entry],
     selected: usize,
     bytes: Option<u64>,
     pane: skwir_core::workspace::PaneId,
     user: &User,
-) -> Group {
+) -> Vec<Group> {
     let folders = entries.iter().filter(|e| e.is_dir()).count();
     let mut rows = vec![Row::new("Selected", format::count(selected, "item"))];
     if folders > 0 && folders < entries.len() {
@@ -480,23 +556,19 @@ pub fn selection_group(
     } else if let Some(bytes) = bytes {
         rows.push(Row::new("Total size", format::size(bytes)));
     }
+    let mut groups = vec![Group::new("Selection", rows)];
     // Who may use them, once every entry says it.
     let subjects: Option<Vec<Subject>> = entries.iter().map(|e| Subject::of(e)).collect();
     if let Some(subjects) = subjects.filter(|s| !s.is_empty()) {
         let trashed = entries
             .iter()
             .any(|e| e.metadata.value(keys::TRASHED).is_some());
-        rows.extend(access_rows(
-            &subjects,
-            &Targets::Selection(pane),
-            trashed,
-            user,
+        groups.push(Group::new(
+            "Permissions",
+            access_rows(&subjects, &Targets::Selection(pane), trashed, user),
         ));
     }
-    Group {
-        title: "Selection".into(),
-        rows,
-    }
+    groups
 }
 
 /// What `sources` say of the entry `target`, each row with the group it
@@ -537,6 +609,7 @@ pub fn plugin_rows(
                             .into_iter()
                             .map(|a| (a.words.into(), a.command))
                             .collect(),
+                        actions_shown: property.actions_shown,
                         ..Row::new(property.label, property.value)
                     },
                 )
@@ -878,10 +951,13 @@ pub fn access_rows(
     }
 
     let mode = shared(&|s| s.mode);
-    let mut access = Row::new(
-        "Access",
-        mode.map_or_else(mixed, skwir_platform::users::mode),
-    );
+    let mut access = Row {
+        show: Show::Heading,
+        ..Row::new(
+            "Access",
+            mode.map_or_else(mixed, skwir_platform::users::mode),
+        )
+    };
     if editable {
         let mut ask = serde_json::json!({
             "title": format!("Access of {}", targets.named(count)),
@@ -927,13 +1003,16 @@ pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool
     };
     let size = format::size(now.size);
     let first = if running {
-        Row::new(label.to_owned(), format!("{size} so far…")).action(
-            "Stop",
-            Invocation::with_args("ui.properties_count", &serde_json::json!({ "stop": true })),
-        )
+        Row::new(label.to_owned(), format!("{size} so far…"))
+            .action(
+                "Stop",
+                Invocation::with_args("ui.properties_count", &serde_json::json!({ "stop": true })),
+            )
+            .shown()
     } else if !now.done {
         Row::new(label.to_owned(), format!("At least {size}, stopped"))
             .action("Count again", again())
+            .shown()
     } else if now.lower_bound() {
         Row::new(label.to_owned(), format!("At least {size}"))
     } else {
@@ -1164,37 +1243,86 @@ pub fn alone(shell: &Shell) -> bool {
         }
 }
 
-/// The section: right under the header's card, above the toolbar
-/// (`preview::under_card` puts it there, and nothing else draws it). Opened
-/// on demand under a preview or above a container's kept rows; always
-/// open when `alone`. As tall as what it says, up to the whole panel (what
-/// is under it takes the rest), scrolling only when the panel is too
-/// short. The header's card (or its Properties button) is what opens it,
-/// and holds the name, type, size and date, so the groups here repeat none
-/// of those.
-pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+/// Where the section is in the room under the header's card.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Room {
+    /// Nothing to preview (`alone`): the section is open, as tall as what
+    /// it says, up to the whole panel, the toolbar under it.
+    Whole,
+    /// Over a preview, above it: at most its share of the room, less when
+    /// it says less.
+    Above,
+    /// Over a preview in a room wider than tall (the panel at the bottom,
+    /// peek): a column of its share of the room at the preview's left.
+    Beside,
+}
+
+/// Where the section goes: `wide` is whether the room is wider than tall.
+pub fn room(shell: &Shell, wide: bool) -> Room {
+    if alone(shell) {
+        Room::Whole
+    } else if wide {
+        Room::Beside
+    } else {
+        Room::Above
+    }
+}
+
+/// What a row's or a heading's links are a group of: the pointer on it
+/// shows them.
+const ROW: &str = "properties-row";
+const HEADING: &str = "properties-heading";
+
+/// The section: right under the header's card (`preview::under_card` puts
+/// it there, and nothing else draws it), in the `room` it is given. Opened
+/// on demand over a preview or above a container's kept rows; always open
+/// with nothing to preview. It scrolls past its room. The header's card
+/// (or its Properties button) is what opens it, and holds the name, type,
+/// size and date, so the groups here repeat none of those.
+///
+/// Each group's heading folds it (`ui.properties_fold`), and says at its
+/// right what its rows say in short: Permissions' mode, the gist of a
+/// group folded. A row's links show while the pointer is on it, unless
+/// they are all it says or stop what runs (`Row::links_shown`); where they
+/// go is `row_element`'s.
+pub fn render(
+    shell: &Shell,
+    theme: &Theme,
+    room: Room,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
     let preview = &shell.preview;
     // Nothing to say (a search named with nothing selected): no section,
     // not an empty one with its scrollbar.
     let nothing = preview.properties.is_empty()
-        && preview.selection_summary.is_none()
+        && preview.selection_summary.is_empty()
         && preview.fields.is_empty();
     if preview.info.name.is_empty() || nothing {
         return None;
     }
-    let alone = alone(shell);
-    if !alone && !preview.properties_open {
+    if room != Room::Whole && !preview.properties_open {
         return None;
     }
+    let share = preview.properties_share.get(room == Room::Beside);
     let section = div()
         .flex()
         .flex_col()
         .min_h_0()
         .bg(theme.bg)
-        .border_b_1()
-        .border_color(theme.border)
-        .flex_initial();
-    let several = preview.selection_summary.is_some();
+        .border_color(theme.border);
+    let section = match room {
+        Room::Whole => section.flex_initial().border_b_1(),
+        Room::Above => section
+            .flex_initial()
+            .max_h(gpui::relative(share))
+            .border_b_1(),
+        Room::Beside => section
+            .flex_none()
+            .h_full()
+            .w(gpui::relative(share))
+            .border_r_1(),
+    };
+    let several = !preview.selection_summary.is_empty();
     let count = preview.count.as_ref().map(|c| (c.now, c.running));
     let groups = preview
         .selection_summary
@@ -1252,13 +1380,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
                 .iter()
                 .position(|g| g.title.as_ref() == "Volume")
                 .unwrap_or(groups.len());
-            groups.insert(
-                at,
-                Group {
-                    title: title.clone(),
-                    rows: vec![row.clone()],
-                },
-            );
+            groups.insert(at, Group::new(title.clone(), vec![row.clone()]));
         }
     }
     let mut list = div()
@@ -1270,87 +1392,27 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         .px_3()
         .pb_3()
         .text_xs();
-    // A group's title is a heading, not one more label: in the text's own
-    // color and weight where the labels are muted, and ruled off from the
-    // group above it.
-    for (g, group) in groups.into_iter().enumerate() {
-        list = list.child(
-            div()
-                .when(g > 0, |d| d.mt_2().border_t_1().border_color(theme.border))
-                .pt_3()
-                .pb_1()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(theme.text)
-                .child(group.title),
-        );
+    for (g, mut group) in groups.into_iter().enumerate() {
+        let folded = preview.properties_folds.folded(&group.title);
+        let said = group
+            .rows
+            .iter()
+            .position(|row| row.show == Show::Heading)
+            .map(|at| group.rows.remove(at));
+        list = list.child(heading(
+            g,
+            &group.title,
+            folded,
+            said,
+            group.gist.filter(|_| folded),
+            theme,
+            cx,
+        ));
+        if folded {
+            continue;
+        }
         for (r, row) in group.rows.into_iter().enumerate() {
-            let (label, value) = (row.label.clone(), row.value.clone());
-            let id = g * 1000 + r;
-            let shown = match &row.show {
-                Show::Text => (!row.value.is_empty())
-                    .then(|| div().child(row.value.clone()).into_any_element()),
-                Show::Tags { tags, given } => (!tags.is_empty())
-                    .then(|| tag_chips(shell, tags, given, id, theme, cx).into_any_element()),
-                Show::Rating { rating, target } => {
-                    Some(star_picker(*rating, target, id, theme, cx).into_any_element())
-                }
-                Show::Count { .. } => None,
-            };
-            list = list.child(
-                div()
-                    .id(("detail", g * 1000 + r))
-                    .flex()
-                    .items_start()
-                    .gap_2()
-                    .py(px(3.))
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .hover(|d| d.bg(theme.hover))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(value.to_string()));
-                        this.set_status(format!("Copied {}", label.to_lowercase()), false, cx);
-                    }))
-                    .child(
-                        div()
-                            .w(px(84.))
-                            .flex_none()
-                            .text_color(theme.text_muted)
-                            .child(row.label),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .children(shown)
-                            .when_some(row.source, |d, source| {
-                                d.child(div().text_color(theme.text_muted).child(source))
-                            })
-                            .when(!row.actions.is_empty(), |d| {
-                                d.child(div().flex().flex_wrap().gap_x_3().children(
-                                    row.actions.into_iter().enumerate().map(
-                                        |(a, (words, action))| {
-                                            div()
-                                                .id(("detail-action", id * 8 + a))
-                                                .text_color(theme.accent)
-                                                .hover(gpui::Styled::underline)
-                                                .child(words)
-                                                .on_click(cx.listener(
-                                                    move |this, _, window, cx| {
-                                                        cx.stop_propagation();
-                                                        this.run(
-                                                            &action.name,
-                                                            action.args.clone(),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    },
-                                                ))
-                                        },
-                                    ),
-                                ))
-                            }),
-                    ),
-            );
+            list = list.child(row_element(shell, row, g * 1000 + r, theme, cx));
         }
     }
     Some(
@@ -1372,6 +1434,292 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
             )
             .into_any_element(),
     )
+}
+
+/// A group's heading: a heading, not one more label (in the text's own
+/// color and weight where the labels are muted), ruled off from the group
+/// above it; a click folds the group or unfolds it. At its right, the row
+/// it says (`Show::Heading`) with its links, or while folded its gist.
+fn heading(
+    g: usize,
+    title: &SharedString,
+    folded: bool,
+    said: Option<Row>,
+    gist: Option<SharedString>,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> gpui::Div {
+    let aside = if let Some(row) = said {
+        let shown = row.links_shown();
+        Some(
+            div()
+                .ml_auto()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap_x_3()
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.text_muted)
+                        .child(row.value),
+                )
+                // Laid out while hidden: the heading has room for them,
+                // and the mode stays where it is when they show.
+                .children(links(row.actions, g * 1000 + 999, theme, cx).map(|links| {
+                    links.when(!shown, |d| {
+                        d.invisible().group_hover(HEADING, gpui::Styled::visible)
+                    })
+                })),
+        )
+    } else {
+        gist.map(|gist| {
+            div()
+                .ml_auto()
+                .min_w_0()
+                .truncate()
+                .text_color(theme.text_muted)
+                .child(gist)
+        })
+    };
+    let fold = title.clone();
+    div()
+        .when(g == 0, gpui::Styled::pt_2)
+        .when(g > 0, |d| {
+            d.mt_1().pt_1().border_t_1().border_color(theme.border)
+        })
+        .child(
+            div()
+                .id(("properties-heading", g))
+                .group(HEADING)
+                .flex()
+                .items_center()
+                .gap_1()
+                .py(px(3.))
+                .rounded_sm()
+                .cursor_pointer()
+                .hover(|d| d.bg(theme.hover))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.run(
+                        "ui.properties_fold",
+                        serde_json::json!({ "group": fold }),
+                        window,
+                        cx,
+                    );
+                }))
+                .child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(crate::controls::glyph(
+                            if folded { "chevron-right" } else { "chevron" },
+                            theme.text_muted,
+                            12.,
+                        ))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(theme.text)
+                                .child(title.clone()),
+                        ),
+                )
+                .children(aside),
+        )
+}
+
+/// A row's links, each running its command.
+fn links(
+    actions: Vec<(SharedString, Invocation)>,
+    id: usize,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Option<gpui::Div> {
+    (!actions.is_empty()).then(|| {
+        div()
+            .flex_none()
+            .flex()
+            .gap_x_3()
+            .children(actions.into_iter().enumerate().map(|(a, (words, action))| {
+                div()
+                    .id(("detail-action", id * 8 + a))
+                    .text_color(theme.accent)
+                    .hover(gpui::Styled::underline)
+                    .child(words)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.run(&action.name, action.args.clone(), window, cx);
+                    }))
+            }))
+    })
+}
+
+/// A row: its label, then its value. Links shown without the pointer
+/// follow the value on its line, or go under it when the value takes the
+/// line (the line wraps, so nothing is measured); a row that says nothing
+/// but its links has them where its value would be. Links that show with
+/// the pointer come over the end of the row's last line, taking no room
+/// while hidden and moving nothing when they show. A click copies the
+/// value.
+fn row_element(
+    shell: &Shell,
+    row: Row,
+    id: usize,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    let (label, value) = (row.label.clone(), row.value.clone());
+    let shown = row.links_shown();
+    let said = match &row.show {
+        Show::Text | Show::Heading => {
+            (!row.value.is_empty()).then(|| div().child(row.value.clone()).into_any_element())
+        }
+        Show::Tags { tags, given } => (!tags.is_empty())
+            .then(|| tag_chips(shell, tags, given, id, theme, cx).into_any_element()),
+        Show::Rating { rating, target } => {
+            Some(star_picker(*rating, target, id, theme, cx).into_any_element())
+        }
+        Show::Count { .. } => None,
+    };
+    let bare = said.is_none() && row.source.is_none();
+    let links = links(row.actions, id, theme, cx);
+    let (inline, over) = if shown { (links, None) } else { (None, links) };
+    div()
+        .id(("detail", id))
+        .group(ROW)
+        .relative()
+        .flex()
+        .items_start()
+        .gap_2()
+        .py(px(3.))
+        .rounded_sm()
+        .cursor_pointer()
+        .hover(|d| d.bg(theme.hover))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(value.to_string()));
+            this.set_status(format!("Copied {}", label.to_lowercase()), false, cx);
+        }))
+        .child(
+            div()
+                .w(px(84.))
+                .flex_none()
+                .text_color(theme.text_muted)
+                .child(row.label),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_wrap()
+                .items_start()
+                .gap_x_3()
+                .when(!bare, |d| {
+                    // It grows into the line, so its text is laid out at
+                    // the width it is given, links or not.
+                    d.child(
+                        div()
+                            .flex_grow()
+                            .min_w_0()
+                            .children(said)
+                            .when_some(row.source, |d, source| {
+                                d.child(div().text_color(theme.text_muted).child(source))
+                            }),
+                    )
+                })
+                .children(inline.map(|links| links.when(!bare, gpui::Styled::ml_auto))),
+        )
+        .children(over.map(|links| {
+            links
+                .absolute()
+                .bottom_0()
+                .right_0()
+                .py(px(3.))
+                .pl_3()
+                .rounded_sm()
+                .bg(theme.hover)
+                .invisible()
+                .group_hover(ROW, gpui::Styled::visible)
+        }))
+}
+
+/// The edge between Properties and the preview, at the start of the
+/// preview (`body`, which it wraps): dragged, it sets Properties' share of
+/// the room, each way apart; a double click puts it back to half.
+pub fn edged(body: AnyElement, room: Room, cx: &mut Context<Shell>) -> AnyElement {
+    use crate::elements::edge::{Side, edge};
+    let beside = room == Room::Beside;
+    div()
+        .relative()
+        .flex_1()
+        .min_h_0()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .child(body)
+        .child(edge(
+            "properties-resize",
+            if beside { Side::Left } else { Side::Top },
+            PropertiesResize { beside },
+            move |this| this.preview.properties_share.set(beside, SHARE),
+            cx,
+        ))
+        .into_any_element()
+}
+
+/// Marker for dragging the edge between Properties and the preview; it
+/// knows which way the edge runs.
+#[derive(Clone)]
+pub struct PropertiesResize {
+    beside: bool,
+}
+
+impl Shell {
+    /// The edge between Properties and the preview follows the pointer
+    /// across the room under the card (the bounds are its). The root's
+    /// mouse-up remembers where it was left (`resize_hook`).
+    pub(crate) fn on_properties_drag(
+        &mut self,
+        ev: &gpui::DragMoveEvent<PropertiesResize>,
+        _: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let beside = ev.drag(cx).beside;
+        let (along, size, keep) = if beside {
+            (
+                ev.event.position.x - ev.bounds.left(),
+                ev.bounds.size.width,
+                KEEP_WIDTH,
+            )
+        } else {
+            (
+                ev.event.position.y - ev.bounds.top(),
+                ev.bounds.size.height,
+                KEEP_HEIGHT,
+            )
+        };
+        if let Some(share) = crate::elements::edge::share(f32::from(along), f32::from(size), keep) {
+            self.preview.properties_share.set(beside, share);
+            cx.notify();
+        }
+    }
+
+    /// Fold a group of Properties, or unfold it (`fold`; else the other
+    /// way), for every file from now on.
+    pub(crate) fn properties_fold(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
+        let Some(group) = args.get("group").and_then(serde_json::Value::as_str) else {
+            return;
+        };
+        let fold = args
+            .get("fold")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or_else(|| !self.preview.properties_folds.folded(group));
+        self.preview.properties_folds.set(group, fold);
+        self.remember_session();
+        cx.notify();
+    }
 }
 
 #[cfg(test)]
@@ -1632,6 +1980,89 @@ mod tests {
     }
 
     #[test]
+    fn links_show_with_the_pointer_unless_they_are_all_a_row_says_or_stop_what_runs() {
+        use skwir_core::fs::count::Count;
+        let shown = |rows: &[Row], label: &str| {
+            rows.iter()
+                .find(|r| r.label == label)
+                .map(Row::links_shown)
+                .unwrap()
+        };
+        assert!(
+            shown(&count_rows("Size", None), "Size"),
+            "Count is all it says"
+        );
+        let counting = Count {
+            size: 1 << 20,
+            ..Count::default()
+        };
+        assert!(
+            shown(&count_rows("Size", Some((counting, true))), "Size"),
+            "Stop stops what runs"
+        );
+        assert!(
+            shown(&count_rows("Size", Some((counting, false))), "Size"),
+            "Count again starts it again"
+        );
+        let me = User {
+            id: Some(1000),
+            groups: vec![100],
+        };
+        let mut file = entry(
+            10,
+            "it's a café.txt",
+            EntryKind::File,
+            1000,
+            Some(0o100_644),
+        );
+        let path = std::path::Path::new("/data/it's a café.txt");
+        let rows = |entry: &Entry| -> Vec<Row> {
+            entry_groups(entry, path, Some(&[]), &me)
+                .into_iter()
+                .flat_map(|g| g.rows)
+                .collect()
+        };
+        let none = rows(&file);
+        assert!(shown(&none, "Tags"), "Add… to no tags");
+        assert!(shown(&none, "Comment"), "Add… to no comment");
+        assert!(!shown(&none, "Owner can"), "Change… shows with the pointer");
+        assert!(!shown(&none, "Can run"), "Allow running too");
+        let access = none.iter().find(|r| r.label == "Access").unwrap();
+        assert_eq!(access.show, Show::Heading, "on Permissions' heading");
+        file.metadata.set(
+            keys::COMMENT,
+            Value::Text("a draft".into()),
+            Provenance::User,
+        );
+        file.metadata.set(
+            keys::TAGS,
+            Value::List(vec![Value::Text("work".into())]),
+            Provenance::User,
+        );
+        let noted = rows(&file);
+        assert!(!shown(&noted, "Tags"), "Edit… shows with the pointer");
+        assert!(!shown(&noted, "Comment"));
+    }
+
+    #[test]
+    fn groups_fold_as_shipped_until_the_user_folds_them() {
+        let mut folds = Folds::default();
+        assert!(folds.folded("Checksums") && folds.folded("Volume"));
+        assert!(!folds.folded("Permissions"));
+        folds.set("Checksums", false);
+        folds.set("Times", true);
+        assert!(!folds.folded("Checksums") && folds.folded("Times"));
+        folds.set("Checksums", true);
+        assert_eq!(
+            serde_json::to_value(&folds).unwrap(),
+            serde_json::json!({ "Times": true }),
+            "only what differs from how it ships is kept"
+        );
+        let back: Folds = serde_json::from_value(serde_json::json!({ "Volume": false })).unwrap();
+        assert!(!back.folded("Volume") && back.folded("Checksums"));
+    }
+
+    #[test]
     fn several_entries_say_what_they_share() {
         let pane = skwir_core::workspace::PaneId(3);
         let me = User {
@@ -1640,20 +2071,24 @@ mod tests {
         };
         let a = entry(10, "a's file.txt", EntryKind::File, 1000, Some(0o100_644));
         let b = entry(11, "b café", EntryKind::File, 1000, Some(0o100_755));
-        let group = selection_group(&[&a, &b], 2, Some(2048), pane, &me);
-        let find = |group: &Group, label: &str| {
-            group
-                .rows
+        let groups = selection_groups(&[&a, &b], 2, Some(2048), pane, &me);
+        let titles: Vec<&str> = groups.iter().map(|g| g.title.as_ref()).collect();
+        assert_eq!(titles, ["Selection", "Permissions"]);
+        let find = |groups: &[Group], label: &str| {
+            groups
                 .iter()
+                .flat_map(|g| &g.rows)
                 .find(|r| r.label == label)
                 .cloned()
                 .unwrap()
         };
-        assert_eq!(find(&group, "Selected").value, "2 items");
-        assert_eq!(find(&group, "Total size").value, "2.0 KB");
-        assert_eq!(find(&group, "Owner can").value, "Read and write");
-        assert_eq!(find(&group, "Access").value, "Mixed");
-        let run = find(&group, "Can run");
+        assert_eq!(find(&groups, "Selected").value, "2 items");
+        assert_eq!(find(&groups, "Total size").value, "2.0 KB");
+        assert_eq!(find(&groups, "Owner can").value, "Read and write");
+        let access = find(&groups, "Access");
+        assert_eq!(access.value, "Mixed");
+        assert_eq!(access.show, Show::Heading, "on Permissions' heading");
+        let run = find(&groups, "Can run");
         assert_eq!(run.value, "Mixed");
         assert_eq!(run.actions[0].0.as_ref(), "Allow running");
         assert_eq!(
@@ -1662,31 +2097,29 @@ mod tests {
             "the selection, by its pane"
         );
         let dir = entry(12, "a folder", EntryKind::Directory, 0, Some(0o040_755));
-        let group = selection_group(&[&a, &b, &dir], 3, Some(2048), pane, &me);
-        assert_eq!(find(&group, "Of which").value, "1 folder, 2 files");
+        let groups = selection_groups(&[&a, &b, &dir], 3, Some(2048), pane, &me);
+        assert_eq!(find(&groups, "Of which").value, "1 folder, 2 files");
         assert_eq!(
-            find(&group, "Total size").show,
+            find(&groups, "Total size").show,
             Show::Count { selection: true },
             "a folder's files are counted, not left out"
         );
-        assert_eq!(find(&group, "Owner").value, "Mixed");
+        assert_eq!(find(&groups, "Owner").value, "Mixed");
         assert_eq!(
-            find(&group, "Changes").value,
+            find(&groups, "Changes").value,
             "Only their owner can change who may use them"
         );
         assert!(
-            group
-                .rows
+            groups
                 .iter()
+                .flat_map(|g| &g.rows)
                 .all(|r| r.actions.is_empty() || !r.edits_access)
         );
         let unknown = entry(13, "not stat-ed yet", EntryKind::File, 1000, None);
-        let group = selection_group(&[&a, &unknown], 2, None, pane, &me);
+        let groups = selection_groups(&[&a, &unknown], 2, None, pane, &me);
+        assert_eq!(groups.len(), 1, "no Permissions before every entry says it");
         assert!(
-            group
-                .rows
-                .iter()
-                .all(|r| r.label != "Access" && r.label != "Total size"),
+            groups[0].rows.iter().all(|r| r.label != "Total size"),
             "nothing said before every entry says it"
         );
     }

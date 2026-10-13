@@ -32,39 +32,6 @@ pub const SHARE: f32 = 0.4;
 const KEEP_HEIGHT: f32 = crate::preview_bar::HEIGHT + crate::views::list::ROW_HEIGHT * 5.;
 const KEEP_WIDTH: f32 = 160.;
 
-/// The container's share of the room, one for each way the edge runs:
-/// dragged one way, it says nothing of the other.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Share {
-    /// Above the member.
-    pub above: f32,
-    /// At its left.
-    pub beside: f32,
-}
-
-impl Default for Share {
-    fn default() -> Self {
-        Self {
-            above: SHARE,
-            beside: SHARE,
-        }
-    }
-}
-
-impl Share {
-    fn get(self, beside: bool) -> f32 {
-        if beside { self.beside } else { self.above }
-    }
-
-    fn set(&mut self, beside: bool, share: f32) {
-        *if beside {
-            &mut self.beside
-        } else {
-            &mut self.above
-        } = share;
-    }
-}
-
 /// Marker for dragging the edge between the container and the member; it
 /// knows which way the edge runs.
 #[derive(Clone)]
