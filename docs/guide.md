@@ -274,8 +274,13 @@ to it; `Ctrl+Shift+O` labels the paths for the keyboard;
 
 ## Keys
 
-Settings › Keyboard lists every binding; record your own over any
-default. Settings › Plugins › **Vim keys** (off by default) gives the
+Settings › Keyboard lists every action with its keys, by where they
+work. Click a key to change or free it, or **+** to add one, then press
+the keys (or type them, for those your desktop keeps); before you save,
+it says what those keys do now there. **New shortcut…** binds a command
+that needs a value, such as a folder to go to; **Changed by you** lists
+what you changed, each with a way back to Skwir's keys. A shortcut of
+a plugin you turn off waits for it. Settings › Plugins › **Vim keys** (off by default) gives the
 file list yazi's keys: `hjkl` to move, `Space` to pick, `v` for a range,
 `y`, `x`, `p` to copy, cut and paste, `/` to find, and `g` and `,`
 sequences. While it is on, typed letters no longer jump to names. `F1`
@@ -294,7 +299,7 @@ a hint shows what can follow.
 | Notes | Where tags, ratings and comments are read and written |
 | Privacy | Folders that never leave the machine |
 | Plugins | Every plugin, on or off, what it may do and what it needs |
-| Keyboard | The keys |
+| Keyboard | Every action and its keys, changed where they are listed |
 
 A plugin with options of its own (an engine, the terminal's shell) has a
 page of its own, listed under the others.

@@ -1,5 +1,14 @@
 # Changes
 
+## Unreleased
+
+- **Keys** are changed where they are listed: Settings › Keyboard shows
+  each action once with all its keys, says what new keys would replace
+  before saving them, and binds commands that need a value (a folder to
+  go to) through New shortcut. Every action is called by what it does
+  (no more four "Preview action" rows). A shortcut of a plugin turned
+  off waits for it, where it blocked every later change to the keys.
+
 ## 0.1.0 (2026-10-13)
 
 The first release, for Linux.

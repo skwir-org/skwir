@@ -19,7 +19,7 @@ use crate::input::{InputEvent, TextInput};
 use crate::settings::SettingsView;
 use crate::theme::Theme;
 
-type Record = serde_json::Map<String, serde_json::Value>;
+pub(crate) type Record = serde_json::Map<String, serde_json::Value>;
 
 /// The records a setting's editor text holds.
 pub(crate) fn records(text: &str) -> Vec<Record> {
@@ -88,7 +88,7 @@ pub(crate) fn moved<T: Clone>(list: &[T], from: usize, gap: usize) -> Option<Vec
 }
 
 /// A fresh record id: unique among a list's, and saying nothing.
-fn new_id() -> String {
+pub(crate) fn new_id() -> String {
     use std::hash::{BuildHasher, Hasher};
     let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
     hasher.write_u128(

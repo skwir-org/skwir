@@ -119,4 +119,7 @@ held that, and the dialog must not learn a key's meaning to draw it.
 The Keyboard page is editable: `keyboard.bindings`, ADR-024's persisted
 layer, a list of records the core declares, edited with the records editor
 above the shortcut list, which marks the user's own. The `keyboard`
-namespace is this page, as `core` is General.
+namespace is this page, as `core` is General. Since 2026-10-13 the list
+itself is edited, and the records editor is behind Edit as records
+(ADR-024's amendment of that date); a setting's own check sees the value
+stored beside the new one.

@@ -25,7 +25,7 @@ use std::sync::Mutex;
 
 use crate::elements::popover::PopoverAnchor;
 use crate::input::{InputEvent, TextInput};
-use crate::keymap::KeyHint;
+use crate::keymap::Bound;
 
 /// Settings namespaces that are not plugins, each a page of the dialog:
 /// what skwir does with files, how it looks, and how the preview reads.
@@ -538,7 +538,7 @@ static BUILTIN: [Builtin; 7] = [
         owner: Some(skwir_core::keymap::OWNER),
         title: "Keyboard",
         icon: "keyboard",
-        intro: "Your shortcuts, then every shortcut in use, grouped by where it applies. Yours replace the others on the same keys.",
+        intro: "Every action and its keys, grouped by where they work. Click a key to change it, or + to add one: yours replace skwir's on the same keys there.",
         when_used: false,
     },
 ];
@@ -609,17 +609,8 @@ pub(crate) struct Stop {
 pub struct SettingsView {
     pub(crate) app: Arc<App>,
     pub(crate) font: SharedString,
-    pub(crate) key_hints: Vec<KeyHint>,
-    /// Each of `key_hints`' place and command as the Keyboard page says
-    /// them, worked out when they are set: asked for every row of every
-    /// frame, a command's title was a search of the shell's commands.
-    pub(crate) key_words: Vec<(String, String)>,
-    /// The Keyboard page's rows for a query, worked out again when the
-    /// query or the bindings change, not at each frame.
-    pub(crate) key_rows:
-        std::cell::RefCell<Option<(String, std::rc::Rc<Vec<crate::settings_view::KeyRow>>)>>,
-    /// The Keyboard page's list of bindings, which draws those in view.
-    pub(crate) key_list: gpui::UniformListScrollHandle,
+    /// The Keyboard page: the keymap as it lists it, and what it edits.
+    pub(crate) keys: crate::settings_keys_view::KeysPage,
     pub(crate) page: Page,
     pub(crate) search: Entity<TextInput>,
     pub(crate) rows: Vec<Row>,
@@ -663,24 +654,11 @@ pub struct SettingsView {
 
 impl EventEmitter<SettingsEvent> for SettingsView {}
 
-/// What the Keyboard page says of each binding: its place and its command.
-fn key_words(app: &App, hints: &[KeyHint]) -> Vec<(String, String)> {
-    hints
-        .iter()
-        .map(|hint| {
-            (
-                crate::keymap::context_label(&hint.context),
-                crate::keymap::title_of(app, hint),
-            )
-        })
-        .collect()
-}
-
 impl SettingsView {
     pub fn new(
         app: Arc<App>,
         font: SharedString,
-        key_hints: Vec<KeyHint>,
+        bound: Arc<Vec<Bound>>,
         target: &serde_json::Value,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -710,12 +688,9 @@ impl SettingsView {
             settings_revision: app.settings.revision(),
             plugins_revision: app.plugins.revision(),
             read_only: app.settings.read_only(),
-            key_words: key_words(&app, &key_hints),
-            key_rows: std::cell::RefCell::default(),
-            key_list: gpui::UniformListScrollHandle::new(),
+            keys: crate::settings_keys_view::KeysPage::new(bound, cx),
             app,
             font,
-            key_hints,
             page: Page::General,
             search,
             rows: Vec::new(),
@@ -743,6 +718,7 @@ impl SettingsView {
             _subscriptions: subscriptions,
         };
         view.rebuild(window, cx);
+        view.read_keys();
         view.probe_requirements();
         list_icon_themes(&view.app);
         list_code_themes(&view.app);
@@ -770,15 +746,6 @@ impl SettingsView {
             .iter()
             .find(|plugin| plugin.id == id)
             .map_or_else(|| id.to_owned(), |plugin| plugin.title.clone())
-    }
-
-    /// The keymap changed while the dialog is open (a shortcut saved here,
-    /// a plugin turned on or off).
-    pub fn set_key_hints(&mut self, hints: Vec<KeyHint>, cx: &mut Context<Self>) {
-        self.key_words = key_words(&self.app, &hints);
-        self.key_hints = hints;
-        self.key_rows.take();
-        cx.notify();
     }
 
     pub(crate) fn page_title(&self, page: &Page) -> String {
@@ -1269,6 +1236,8 @@ impl SettingsView {
         self.page = page;
         self.dropdown = None;
         self.reset_armed = false;
+        self.keys.editor = None;
+        self.keys.new = None;
         self.scroll.set_offset(gpui::Point::default());
         cx.notify();
     }
@@ -1349,6 +1318,11 @@ impl SettingsView {
             "settings_close" => {
                 if self.dropdown.take().is_some() {
                     cx.notify();
+                } else if self.keys.editor.is_some() {
+                    self.close_key_editor(window, cx);
+                } else if self.keys.new.take().is_some() {
+                    window.focus(&self.keys.focus);
+                    cx.notify();
                 } else {
                     cx.emit(SettingsEvent::Close);
                 }
@@ -1369,6 +1343,13 @@ impl SettingsView {
             }
             "settings_adjust" => self.adjust(delta, window, cx),
             "settings_move" => self.move_focused_record(delta, window, cx),
+            "settings_key" => {
+                let key = args
+                    .get("key")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                self.keys_key(key, window, cx);
+            }
             _ => {}
         }
     }
@@ -1399,15 +1380,11 @@ impl crate::shell::Shell {
         if let Some(popup) = self.toolbar_menu.take() {
             popup.restore(window);
         }
-        let (app, font, hints) = (
-            Arc::clone(&self.app),
-            self.font.clone(),
-            self.key_hints.to_vec(),
-        );
+        let (app, font, bound) = (Arc::clone(&self.app), self.font.clone(), self.keys.bound());
         // What had the keyboard gets it back when the dialog closes, as a
         // popup's does: the reader, the address, the pane.
         let mut back = Some(crate::modal::FocusReturn::capture(window, cx));
-        let settings = cx.new(|cx| SettingsView::new(app, font, hints, target, window, cx));
+        let settings = cx.new(|cx| SettingsView::new(app, font, bound, target, window, cx));
         self.settings_subscription = Some(cx.subscribe_in(
             &settings,
             window,

@@ -14,7 +14,6 @@ use skwir_core::settings::{SettingKind, SettingSpec};
 use crate::controls::{self, ButtonStyle};
 use crate::elements::popover::PopoverAnchor;
 use crate::input::TextInput;
-use crate::keymap::KeyHint;
 use crate::settings::{
     CORE_OWNER, NOTES_OWNER, PRIVACY_OWNER, Page, READING_OWNER, Row, SettingsEvent, SettingsView,
     Stop, UI_OWNER,
@@ -56,21 +55,6 @@ pub(crate) fn card_row(theme: &Theme, edge: Edge) -> gpui::Div {
         .when(edge.first, |d| d.border_t_1().rounded_t_lg())
         .when(edge.last, gpui::Styled::rounded_b_lg)
 }
-
-/// A row of the Keyboard page: a place's caption, or a binding of
-/// `key_hints` with its command's title.
-pub(crate) enum KeyRow {
-    Place(String),
-    Binding {
-        hint: usize,
-        title: String,
-        edge: Edge,
-    },
-}
-
-/// The height of every row of the Keyboard page's list, a caption's too:
-/// the same for all, so only the rows in view are drawn.
-const KEY_ROW: f32 = 40.;
 
 /// What a setting row needs, detached from `self` so controls can borrow it.
 struct Snapshot {
@@ -819,41 +803,6 @@ impl SettingsView {
         items.push(row.into_any_element());
     }
 
-    fn binding_row(&self, hint: &KeyHint, title: &str, edge: Edge, theme: &Theme) -> gpui::Div {
-        let mut keys = div().flex().flex_none().items_center().gap(px(10.));
-        for stroke in crate::keymap::key_caps(&hint.keys) {
-            let mut caps = div().flex().items_center().gap(px(3.));
-            for cap in stroke {
-                caps = caps.child(controls::keycap(cap, theme));
-            }
-            keys = keys.child(caps);
-        }
-        card_row(theme, edge)
-            .py_2()
-            .child(crate::elements::clip::clipped(
-                div()
-                    .id(SharedString::from(format!(
-                        "binding-{}-{}-{}",
-                        hint.context, hint.keys, hint.command
-                    )))
-                    .flex_1()
-                    .min_w_0()
-                    .truncate(),
-                title.to_owned(),
-                self.font.clone(),
-            ))
-            .when(hint.layer == crate::keymap::Layer::User, |row| {
-                row.child(
-                    div()
-                        .flex_none()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child("Yours"),
-                )
-            })
-            .child(keys)
-    }
-
     // ------------------------------------------------------------ pages
 
     fn page_general(
@@ -976,109 +925,6 @@ impl SettingsView {
         self.owner_rows(id, items, theme, window, cx);
     }
 
-    /// The Keyboard page's rows for `query`, its bindings grouped by
-    /// place ("Anywhere" first, then the places alphabetically, stable
-    /// within one): kept until the query or the bindings change.
-    fn key_rows(&self, query: &str) -> std::rc::Rc<Vec<KeyRow>> {
-        if let Some((kept, rows)) = self.key_rows.borrow().as_ref()
-            && kept == query
-        {
-            return std::rc::Rc::clone(rows);
-        }
-        let mut hints: Vec<(usize, &str, &str)> = self
-            .key_hints
-            .iter()
-            .zip(&self.key_words)
-            .enumerate()
-            .filter(|(_, (hint, (context, title)))| {
-                query.is_empty() || matches(query, &[context, &hint.keys, title])
-            })
-            .map(|(n, (_, (context, title)))| (n, context.as_str(), title.as_str()))
-            .collect();
-        hints.sort_by_key(|(_, context, _)| (*context != "Anywhere", *context));
-        let mut rows = Vec::new();
-        let mut start = 0;
-        while start < hints.len() {
-            let end = hints[start..]
-                .iter()
-                .position(|(_, context, _)| *context != hints[start].1)
-                .map_or(hints.len(), |offset| start + offset);
-            rows.push(KeyRow::Place(hints[start].1.to_owned()));
-            for (index, (hint, _, title)) in hints[start..end].iter().enumerate() {
-                rows.push(KeyRow::Binding {
-                    hint: *hint,
-                    title: (*title).to_owned(),
-                    edge: Edge {
-                        first: index == 0,
-                        last: start + index + 1 == end,
-                    },
-                });
-            }
-            start = end;
-        }
-        let rows = std::rc::Rc::new(rows);
-        *self.key_rows.borrow_mut() = Some((query.to_owned(), std::rc::Rc::clone(&rows)));
-        rows
-    }
-
-    /// The bindings matching `query` as rows of the page, for a search;
-    /// how many.
-    fn page_keyboard(&self, query: &str, items: &mut Vec<AnyElement>, theme: &Theme) -> usize {
-        let rows = self.key_rows(query);
-        let mut found = 0;
-        for row in rows.iter() {
-            match row {
-                KeyRow::Place(place) => Self::caption(items, place.clone(), theme),
-                KeyRow::Binding { hint, title, edge } => {
-                    found += 1;
-                    items.push(
-                        self.binding_row(&self.key_hints[*hint], title, *edge, theme)
-                            .into_any_element(),
-                    );
-                }
-            }
-        }
-        found
-    }
-
-    /// Every binding, in a list that draws the rows in view: the Keyboard
-    /// page built all of them, hundreds, at every frame the dialog drew.
-    fn keyboard_list(&self, cx: &mut Context<Self>) -> AnyElement {
-        let rows = self.key_rows("");
-        let count = rows.len();
-        gpui::uniform_list(
-            "keyboard-bindings",
-            count,
-            cx.processor(
-                move |this: &mut Self, range: std::ops::Range<usize>, _, cx| {
-                    let theme = cx.global::<Theme>().clone();
-                    range
-                        .filter_map(|n| {
-                            let row = match rows.get(n)? {
-                                KeyRow::Place(place) => div()
-                                    .h(px(KEY_ROW))
-                                    .flex()
-                                    .items_end()
-                                    .pb_2()
-                                    .text_xs()
-                                    .text_color(theme.text_muted)
-                                    .child(place.clone()),
-                                KeyRow::Binding { hint, title, edge } => this
-                                    .binding_row(this.key_hints.get(*hint)?, title, *edge, &theme)
-                                    .h(px(KEY_ROW)),
-                            };
-                            Some(row.w_full().into_any_element())
-                        })
-                        .collect::<Vec<_>>()
-                },
-            ),
-        )
-        .track_scroll(self.key_list.clone())
-        .flex_1()
-        .min_h(px(8. * KEY_ROW))
-        .into_any_element()
-    }
-
     fn search_results(
         &mut self,
         query: &str,
@@ -1132,7 +978,7 @@ impl SettingsView {
                 self.plugin_row(plugin, true, edge, items, theme, cx);
             }
         }
-        found += self.page_keyboard(query, items, theme);
+        found += self.keys_found(query, items, theme, window, cx);
         if found == 0 {
             Self::note(items, format!("Nothing matches “{query}”."), theme);
         }
@@ -1153,6 +999,10 @@ impl Render for SettingsView {
 
         let query = self.query(cx);
         let mut items: Vec<AnyElement> = Vec::new();
+        // What the Keyboard page shows above its list, and the list, or the
+        // form of a new shortcut, in place of the page's scrolling items.
+        let mut toolbar: Option<AnyElement> = None;
+        let mut content: Option<AnyElement> = None;
         if self.read_only {
             items.push(
                 div()
@@ -1217,8 +1067,14 @@ impl Render for SettingsView {
                     }
                 }
                 Page::Keyboard => {
-                    self.owner_rows(skwir_core::keymap::OWNER, &mut items, &theme, window, cx);
-                    items.push(self.keyboard_list(cx));
+                    toolbar = Some(self.keys_toolbar(&theme, cx));
+                    if self.keys.new.is_some() {
+                        content = Some(self.new_shortcut_page(&theme, window, cx));
+                    } else if self.keys.as_records {
+                        self.owner_rows(skwir_core::keymap::OWNER, &mut items, &theme, window, cx);
+                    } else {
+                        content = Some(self.keys_list(window, cx));
+                    }
                 }
                 Page::Plugin(id) => self.page_plugin(id, &mut items, &theme, window, cx),
             }
@@ -1234,6 +1090,7 @@ impl Render for SettingsView {
             self.scroll.scroll_to_item(*item);
         }
 
+        let bar = self.key_editor_bar(&theme, window, cx);
         let close = self.handle("close", cx);
         self.stop(&close, None, None);
         let status = if self.saving() {
@@ -1279,17 +1136,42 @@ impl Render for SettingsView {
                 controls::icon_button("settings-close", "close", &close, &theme)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Close))),
             );
-        let body = div()
-            .id("settings-page")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
-            .flex()
-            .flex_col()
-            .px_6()
-            .pb_6()
-            .children(items);
+        // The read-only warning stays above a page that is not its items.
+        let warning = (content.is_some() && !items.is_empty()).then(|| {
+            div()
+                .flex_none()
+                .px_6()
+                .pb_2()
+                .children(items.drain(..))
+                .into_any_element()
+        });
+        let content = content.unwrap_or_else(|| {
+            let body = div()
+                .id("settings-page")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&self.scroll)
+                .flex()
+                .flex_col()
+                .px_6()
+                .pb_6()
+                .children(items);
+            // A column, like the one the body used to sit in directly: the
+            // page keeps the height it scrolls within.
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .child(body)
+                .child(crate::elements::scrollbar::vertical(
+                    "settings-scrollbar",
+                    crate::elements::scrollbar::Scrolls::Offset(self.scroll.clone()),
+                ))
+                .into_any_element()
+        });
         let panel = div()
             .w(relative(0.94))
             .max_w(px(920.))
@@ -1317,21 +1199,10 @@ impl Render for SettingsView {
                     .flex()
                     .flex_col()
                     .child(header)
-                    // A column, like the one the body used to sit in directly:
-                    // the page keeps the height it scrolls within.
-                    .child(
-                        div()
-                            .relative()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_h_0()
-                            .child(body)
-                            .child(crate::elements::scrollbar::vertical(
-                                "settings-scrollbar",
-                                crate::elements::scrollbar::Scrolls::Offset(self.scroll.clone()),
-                            )),
-                    ),
+                    .children(warning)
+                    .children(toolbar)
+                    .child(content)
+                    .children(bar),
             );
         // The backdrop closes the dialog: nothing is lost, every change is
         // already applied.

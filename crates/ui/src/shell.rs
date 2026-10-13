@@ -177,11 +177,19 @@ impl Default for Preferences {
 /// the user's bindings change.
 pub(crate) struct Installed {
     stamp: keymap::Stamp,
+    /// Every binding, those hidden too: what the Keyboard page lists.
+    bound: Arc<Vec<keymap::Bound>>,
     /// The settings revision the user's bindings were last read at.
     settings: u64,
     /// Whether letters typed in the file list jump to a name
     /// (`keymap::Keymap::typeahead`).
     pub typeahead: bool,
+}
+
+impl Installed {
+    pub(crate) fn bound(&self) -> Arc<Vec<keymap::Bound>> {
+        Arc::clone(&self.bound)
+    }
 }
 
 pub struct Shell {
@@ -523,6 +531,7 @@ impl Shell {
             key_hints: keymap::Hints::new(keymap.hints),
             keys: Installed {
                 stamp: keymap.stamp,
+                bound: Arc::new(keymap.bound),
                 settings: 0,
                 typeahead: keymap.typeahead,
             },
@@ -1203,10 +1212,11 @@ impl Shell {
         let keymap = keymap::install(&self.app, user, cx);
         self.key_hints = keymap::Hints::new(keymap.hints);
         self.keys.stamp = keymap.stamp;
+        self.keys.bound = Arc::new(keymap.bound);
         self.keys.typeahead = keymap.typeahead;
         if let Some(settings) = &self.settings {
-            let hints = self.key_hints.to_vec();
-            settings.update(cx, |settings, cx| settings.set_key_hints(hints, cx));
+            let bound = Arc::clone(&self.keys.bound);
+            settings.update(cx, |settings, cx| settings.set_bound(bound, cx));
         }
         cx.notify();
     }

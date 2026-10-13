@@ -452,7 +452,7 @@ dates, measurements and what is left.
 - **Settings** (2026-09-18 to 09-20, ADR-010): the dialog; pages follow
   their subject (2026-09-25: `reading.*`, `Settings::rename`, the
   Plugins page by `Plugin::category`); the Keyboard page edits
-  `keyboard.bindings` (2026-09-28, ADR-024).
+  `keyboard.bindings` (2026-09-28, ADR-024), in place since 2026-10-13.
 - **Usage** (2026-09-19, ADR-007): a plugin pane view with cached,
   watched, progressive sizes (`docs/STATUS-LOG.md`).
 - **Huge folders** (2026-09-25): the UI applied a listing in one drain,
@@ -692,6 +692,23 @@ with a read-only linked settings file: a search saved and a tag pinned by
 after a restart, the settings file untouched; Link Here onto a taken
 name asked ("Nothing is linked until you choose"), kept both as
 `plan (link).txt`, and Undo took it back.
+
+### 2026-10-13
+
+The Keyboard page edits in place (ADR-024, amended): one row per action
+and place with all its keys, a bar under the list that takes the next
+keys pressed (Ctrl+Q is recorded, not run) and says what they would
+replace or leave running before they are saved, a struck default with
+Restore, Changed by you with a way back, Find by keys, and New shortcut
+for a command with arguments (picked by name, its arguments asked as
+its schema says them). Actions are called by their commands' forms
+(`keymap_titles.rs` holds it for every built-in key); a shortcut for a
+plugin turned off waits for it instead of blocking every save. Checked
+in a window on Xvfb: a key changed, saved, struck and restored; the
+palette's last key refused; a Go to location shortcut made and saved;
+the list walked with the arrows; the place's caption kept at the list's
+top. Not done: a key scheme chosen from the page, and "Set shortcut…"
+from F1 or the palette.
 
 ---
 

@@ -730,7 +730,53 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
         r#"{"pages":-1}"#,
         "Terminal: a page down",
     ),
-    // The settings.
+    // The settings, and the Keyboard page's list of actions.
+    (
+        "ui.settings_key",
+        r#"{"key":"up"}"#,
+        "Go to the action above",
+    ),
+    (
+        "ui.settings_key",
+        r#"{"key":"down"}"#,
+        "Go to the action below",
+    ),
+    (
+        "ui.settings_key",
+        r#"{"key":"first"}"#,
+        "Go to the first action",
+    ),
+    (
+        "ui.settings_key",
+        r#"{"key":"last"}"#,
+        "Go to the last action",
+    ),
+    (
+        "ui.settings_key",
+        r#"{"key":"page_up"}"#,
+        "Go a page up the actions",
+    ),
+    (
+        "ui.settings_key",
+        r#"{"key":"page_down"}"#,
+        "Go a page down the actions",
+    ),
+    (
+        "ui.settings_key",
+        r#"{"key":"left"}"#,
+        "Go to the key on the left",
+    ),
+    (
+        "ui.settings_key",
+        r#"{"key":"right"}"#,
+        "Go to the key on the right",
+    ),
+    (
+        "ui.settings_key",
+        r#"{"key":"open"}"#,
+        "Change the key, or add one",
+    ),
+    ("ui.settings_key", r#"{"key":"remove"}"#, "Remove the key"),
     ("ui.settings_page", r#"{"delta":-1}"#, "Previous page"),
     ("ui.settings_page", r#"{"delta":1}"#, "Next page"),
     ("ui.settings_move", r#"{"delta":-1}"#, "Move the record up"),
@@ -1156,6 +1202,12 @@ pub fn declare_all(app: &App) {
         "ui.sidebar_key",
         "Sidebar key",
         "A key in the sidebar: walk, open, move, rename or remove its places",
+    );
+    declare::<Key>(
+        app,
+        "ui.settings_key",
+        "Keyboard page key",
+        "A key in the Keyboard page's list of actions: walk the actions and their keys, change, add or remove one",
     );
     declare::<Object>(
         app,

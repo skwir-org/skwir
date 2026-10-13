@@ -685,6 +685,80 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"delta":1}"#,
         Some("settings_nav"),
     ),
+    // The Keyboard page's actions, walked as the sidebar's places; Enter
+    // changes the key the cursor is on, or adds one.
+    (
+        "up",
+        "ui.settings_key",
+        r#"{"key":"up"}"#,
+        Some("setting_keys"),
+    ),
+    (
+        "down",
+        "ui.settings_key",
+        r#"{"key":"down"}"#,
+        Some("setting_keys"),
+    ),
+    (
+        "home",
+        "ui.settings_key",
+        r#"{"key":"first"}"#,
+        Some("setting_keys"),
+    ),
+    (
+        "end",
+        "ui.settings_key",
+        r#"{"key":"last"}"#,
+        Some("setting_keys"),
+    ),
+    (
+        "pageup",
+        "ui.settings_key",
+        r#"{"key":"page_up"}"#,
+        Some("setting_keys"),
+    ),
+    (
+        "pagedown",
+        "ui.settings_key",
+        r#"{"key":"page_down"}"#,
+        Some("setting_keys"),
+    ),
+    (
+        "left",
+        "ui.settings_key",
+        r#"{"key":"left"}"#,
+        Some("setting_keys"),
+    ),
+    (
+        "right",
+        "ui.settings_key",
+        r#"{"key":"right"}"#,
+        Some("setting_keys"),
+    ),
+    (
+        "enter",
+        "ui.settings_key",
+        r#"{"key":"open"}"#,
+        Some("setting_keys"),
+    ),
+    (
+        "space",
+        "ui.settings_key",
+        r#"{"key":"open"}"#,
+        Some("setting_keys"),
+    ),
+    (
+        "delete",
+        "ui.settings_key",
+        r#"{"key":"remove"}"#,
+        Some("setting_keys"),
+    ),
+    (
+        "backspace",
+        "ui.settings_key",
+        r#"{"key":"remove"}"#,
+        Some("setting_keys"),
+    ),
     // A record of a list moves with its buttons' focus, as lines move in
     // an editor.
     (
@@ -880,6 +954,7 @@ pub(crate) const PLACES: &[Place] = &[
     inside("setting_control", "SettingControl", "Settings"),
     inside("setting_number", "SettingNumber", "Settings"),
     inside("setting_record", "SettingRecord", "Settings"),
+    inside("setting_keys", "SettingKeys", "Settings"),
 ];
 
 /// Map a registry `when` string to a GPUI context predicate. A token of
@@ -932,7 +1007,7 @@ pub fn predicate_holds(context: &str, holds: &dyn Fn(&str) -> Option<bool>) -> b
 }
 
 /// A flag of the pane's key context in plain words.
-fn condition(flag: &str) -> String {
+pub(crate) fn condition(flag: &str) -> String {
     if let Some(not) = flag.strip_prefix('!') {
         return format!("not {}", condition(not));
     }
@@ -1178,7 +1253,7 @@ pub fn key_caps(keys: &str) -> Vec<Vec<String>> {
 /// `keys` as GPUI reads them, written one way: `secondary-c` is
 /// `ctrl-c` off a Mac, `cmd-c` on one. Two bindings are of the same keys
 /// when these agree, whatever spelling each used.
-fn normal_keys(keys: &str) -> String {
+pub(crate) fn normal_keys(keys: &str) -> String {
     keys.split_whitespace()
         .map(|stroke| Keystroke::parse(stroke).map_or_else(|_| stroke.to_owned(), |k| k.unparse()))
         .collect::<Vec<_>>()
@@ -1435,7 +1510,7 @@ fn like(spec: Spec, standard: &[Spec]) -> Vec<Spec> {
 
 /// The conditions of a context predicate (`Pane && single`), each an
 /// atom: a place, a flag, or a group of alternatives.
-fn conditions(context: &str) -> Vec<&str> {
+pub(crate) fn conditions(context: &str) -> Vec<&str> {
     context
         .split("&&")
         .map(str::trim)
@@ -1908,6 +1983,48 @@ mod tests {
             keys_for_where(&hints, "trash", &args, in_a_folder).as_deref(),
             Some("Delete")
         );
+    }
+
+    /// A record's `when` reads back from the context it made, so a key
+    /// added beside another works where that one does.
+    #[test]
+    fn a_context_reads_back_as_its_when() {
+        for when in [
+            "pane single !restores",
+            "pane selection|folder",
+            "palette|jump|choose",
+            "sidebar",
+            "split",
+        ] {
+            assert_eq!(
+                super::when_of(&context_of(Some(when))).as_deref(),
+                Some(when)
+            );
+        }
+        assert_eq!(super::when_of(&context_of(None)), None);
+    }
+
+    /// A binding's place, as the Keyboard page groups it: the settings'
+    /// contexts are one place, the lists one picks from are their places
+    /// named once, a plugin's own context a place after skwir's.
+    #[test]
+    fn a_context_is_a_place_with_conditions() {
+        let anywhere = super::place_of(&context_of(None));
+        assert_eq!((anywhere.place.as_str(), anywhere.rank), ("Anywhere", 0));
+        let rename = super::place_of(&context_of(Some("pane single !restores")));
+        assert_eq!(rename.place, "File list");
+        assert_eq!(rename.conditions, "one item selected, not in the trash");
+        assert!(!rename.inside);
+        let settings = super::place_of(&context_of(Some("setting_control")));
+        assert_eq!(settings.place, "Settings");
+        assert!(settings.inside);
+        let lists = super::place_of(&context_of(Some("palette|jump")));
+        assert_eq!(lists.place, "Command palette, Jump");
+        assert!(lists.inside);
+        let own = super::place_of("UsageMap && selection");
+        assert_eq!(own.place, "UsageMap");
+        assert!(own.rank > rename.rank);
+        assert_eq!(own.conditions, "with a selection");
     }
 
     #[test]

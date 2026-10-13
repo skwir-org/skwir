@@ -316,7 +316,24 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   (`Registry::schemes`, e.g. `vim`), the user's (`keyboard.bindings`).
   `keymap::install` installs them in that order. A binding hidden by a
   later layer is left out of hints and tooltips. A user's record without a
-  command frees its keys (`gpui::NoAction`).
+  command frees its keys (`gpui::NoAction`); one whose command nothing
+  registers waits for its plugin, bound to nothing (`keymap::dormant`).
+- **Titles.** An action is called by `keymap::title`: its command's form
+  for its arguments (`Declared::forms`), never by its command's title
+  alone. A key bound with arguments gets a form where its command is
+  declared (the shell's in `commands::KEY_FORMS`); `keymap_titles.rs`
+  holds it.
+- **The Keyboard page** reads the keymap's bindings, hidden ones too
+  (`keymap::bindings`), as one row per action and place
+  (`settings_keys.rs`), draws them in one list (`settings_keys_view.rs`)
+  and asks for a new shortcut's command (`settings_keys_new.rs`). It
+  writes `keyboard.bindings` only through `settings_keys::apply`, and
+  says what new keys would do through `settings_keys::verdict`, which
+  reads precedence as GPUI does (the deepest place, then the latest).
+  Keys are taken with `App::intercept_keystrokes`, so no binding runs
+  while one is recorded. A place is grouped by its label in
+  `keymap::PLACES`, which also says whether it is inside a dialog or a
+  menu; a command that must keep a key says so (`Declared::keeps_a_key`).
 - Type-ahead is on only while no binding takes an unmodified character in
   the file list (`Keymap::typeahead`).
 - Multi-stroke bindings wait without a timeout (vendored patch 0010);

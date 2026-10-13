@@ -13,7 +13,10 @@ the reasoning.
   through commands rather than the dialog (saved searches, pinned tags),
   kept in the data file (ADR-057); `state` for what skwir keeps of the
   window (ADR-056).
-- What only the owner can check goes in `validate_with`.
+- What only the owner can check goes in `validate_with`, which sees the
+  value stored beside the new one (`SettingSpec::parse_over`; the
+  dialog, `settings.apply` and the file's check all pass it): a check may
+  spare what was kept as it is (a shortcut waiting for its plugin).
 - The owner states the title, description, unit, step, choice labels and
   section, so the dialog, the palette and agents need no key-specific
   branches.

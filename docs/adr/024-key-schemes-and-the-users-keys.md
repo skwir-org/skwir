@@ -1,7 +1,8 @@
 # ADR-024: Key schemes and the user's keys
 
 Status: accepted, 2026-09-28. Built. Amended 2026-10-05 (scheme keys that
-mean a standard gesture).
+mean a standard gesture) and 2026-10-13 (the Keyboard page edits in
+place).
 
 ## Context
 
@@ -81,3 +82,81 @@ standard keys (vim's `d` is Delete, `r` is F2) and takes that key's
 bindings and conditions, so it follows the place (in a tag `d` takes the
 tag off, in the trash it deletes for good) and copies no condition that
 could drift.
+
+### 2026-10-13: the Keyboard page edits in place
+
+The page listed every binding read-only, one row per key, under a form
+asking for a command's name, JSON arguments and a `when` expression.
+Nothing on it named the commands, three causes gave several rows one
+title, its list had no scrollbar, and a record for a plugin turned off
+blocked every later save.
+
+- **One row per action, keys as chips.** An action is a command with its
+  arguments. Each is listed once in each place its keys work, all its
+  keys as chips; a chip says the conditions it adds ("in the trash"),
+  or its row says them once when every key shares them. Anywhere, the
+  file list, the panels and previews; the keys inside dialogs and menus
+  last, folded. One list draws the rows in view, with its scrollbar and
+  the caption of the place it is in kept at its top. *Show* lists the
+  actions with keys, all actions, or those the user changed; *Find by
+  keys* lists what a key does.
+- **Titles come from the declaration.** A command declares its forms:
+  arguments that make it one thing to do, each with a title
+  (`Declared::forms`, `CommandSpec::title_for`). Every title given to an
+  action (the Keyboard page, F1, the key strip, menus) is its form's,
+  else the command's with the arguments said after it. The shell's own
+  forms are the palette's entries and the keys of its places
+  (`commands::KEY_FORMS`, the cursor's moves made from their words);
+  only a title naming what an argument names elsewhere (a folder to go
+  to, a view, a choice's own title) is worked out
+  (`keymap::title`). `crates/skwir/tests/keymap_titles.rs` holds that
+  every built-in key with arguments has a form and that no place lists
+  two actions under one title.
+- **Editing.** A chip, or a row's +, opens a bar under the list that
+  takes the next key pressed before any binding sees it
+  (`App::intercept_keystrokes`: Ctrl+Q is recorded, not run); *Then
+  another key* makes a sequence. Keys the desktop keeps never arrive, so
+  they can be typed instead. Before saving, the bar says what the keys
+  do now where they would work (`settings_keys::verdict`): what they
+  replace there; what they leave running beside them (a place that
+  binds them itself, since GPUI takes the deepest place first, said once
+  for many places; the rest of the window when they are bound in a
+  place; the same place under other conditions); a shortcut of the
+  user's on them waiting for its plugin; a letter that ends typing a
+  name in the file list. Keys of an unrelated place are not mentioned.
+  The list walks with the keyboard (`ui.settings_key` in
+  `setting_keys`: arrows, Enter to change or add, Delete to remove).
+- **What a change writes** (`settings_keys::apply`). New keys for an
+  action are a record; new keys in place of a default are that record
+  and one freeing the default's keys where they worked; removing a
+  default frees its keys; removing or changing one of the user's edits
+  that record. A row's way back removes every record that touches it. A
+  default hidden by a record of the user's stays listed, struck through;
+  Restore removes that record, saying whose it is.
+- **Actions without keys** are listed on request and always in a
+  search, under "Without keys": the core's and the plugins' commands
+  that need no argument and their forms, the shell's as the palette
+  offers them (the rest are keys of a place, listed there). What only
+  answers an agent's question, and a command called as a keyed action
+  already is (the core's twin of a shell command), are left out. *New
+  shortcut* binds a command with arguments of its choosing: picked by
+  name, its arguments asked as its schema says them (text, a number, a
+  switch, a choice), the place and the file list's conditions chosen,
+  then the keys. *Edit as records* shows the records as stored.
+- **Keys that must stay.** A command may be declared to keep a key
+  (`Declared::keeps_a_key`): the palette, closing Settings and moving
+  through it, confirming or dismissing a dialog or a plan, closing a
+  menu. Its keys change, but never all go: removing its last key in a
+  place is refused, and so is a binding that would hide it.
+- **A plugin turned off.** A record whose command nothing registers is
+  dormant (`keymap::dormant`): kept in the file, bound to nothing (the
+  keys under it work meanwhile), not listed; the page says how many
+  wait. It comes back with its plugin (the keymap is built again when
+  plugins change). The check refuses an unknown command only in a
+  record a save adds or changes (a typo), never in one stored unchanged:
+  a setting's validator sees the value stored
+  (`SettingSpec::validate_with`, `parse_over`). This replaces "reported
+  when run": the code had refused every unknown command at each save, so
+  a plugin turned off blocked all later changes to the keys.
+- A text field's own keys (Backspace, the arrows in a field) stay the
+  field's: not listed, not editable.
