@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use gpui::{AnyElement, Context, FocusHandle, MouseButton, Window, div, prelude::*, px};
 
 use crate::controls::{self, ButtonStyle};
-use crate::keymap::{self, KeyHint};
-use crate::modal::FocusReturn;
+use crate::keymap::{self, KeyHint, RunCommand};
+use crate::modal::{self, FocusReturn};
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::toast::{Toast, Tone};
@@ -23,8 +23,10 @@ const USES_BEFORE_HINT: u32 = 3;
 
 pub struct Overview {
     focus: FocusHandle,
-    /// The "All shortcuts" button's, kept so Tab can reach it.
+    /// The "All shortcuts" and close buttons', kept so Tab can reach
+    /// them.
     all: FocusHandle,
+    close: FocusHandle,
     previous: FocusReturn,
     /// Place name and its bindings with what each does, the focused place
     /// first. Titled once, when the overview opens.
@@ -91,6 +93,7 @@ impl Shell {
         self.shortcuts = Some(Overview {
             focus,
             all: cx.focus_handle(),
+            close: cx.focus_handle(),
             previous,
             groups,
         });
@@ -203,11 +206,10 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         columns = columns.child(column);
     }
     let all = overview.all.clone();
+    // The lists scroll under the title, which keeps its buttons in sight.
     let panel = div()
-        .id("shortcuts")
         .max_w(px(1000.))
         .max_h(gpui::relative(0.86))
-        .overflow_y_scroll()
         .p_6()
         .flex()
         .flex_col()
@@ -220,6 +222,16 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .line_height(px(20.))
         .track_focus(&overview.focus)
         .key_context("Shortcuts")
+        .on_action(cx.listener(|this, action: &RunCommand, window, cx| {
+            let delta = match action.name.as_str() {
+                "ui.toolbar_next" => 1,
+                "ui.toolbar_prev" => -1,
+                _ => return cx.propagate(),
+            };
+            if let Some(overview) = &this.shortcuts {
+                modal::tab_among(&[&overview.all, &overview.close], delta, window);
+            }
+        }))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
             div()
@@ -229,26 +241,53 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 .gap_4()
                 .child(div().text_lg().child("Shortcuts here"))
                 .child(
-                    controls::button(
-                        "shortcuts-all",
-                        "All shortcuts…",
-                        None,
-                        ButtonStyle::Plain,
-                        &all,
-                        &theme,
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.shortcuts = None;
-                        this.run(
-                            "ui.settings",
-                            serde_json::json!({ "page": "keyboard" }),
-                            window,
-                            cx,
-                        );
-                    })),
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            controls::button(
+                                "shortcuts-all",
+                                "All shortcuts…",
+                                None,
+                                ButtonStyle::Plain,
+                                &all,
+                                &theme,
+                            )
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.shortcuts = None;
+                                    this.run(
+                                        "ui.settings",
+                                        serde_json::json!({ "page": "keyboard" }),
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )),
+                        )
+                        .child(
+                            controls::icon_button(
+                                "shortcuts-close",
+                                "close",
+                                &overview.close,
+                                &theme,
+                            )
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.toggle_shortcuts(window, cx);
+                                },
+                            )),
+                        ),
                 ),
         )
-        .child(columns);
+        .child(
+            div()
+                .id("shortcuts")
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(columns),
+        );
     Some(
         div()
             .absolute()

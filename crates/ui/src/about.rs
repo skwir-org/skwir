@@ -49,12 +49,13 @@ fn version() -> String {
 
 pub struct About {
     focus: FocusHandle,
-    /// Copy details, Website, Source code, Licences: what Tab walks, of
-    /// those shown.
+    /// Copy details, Website, Source code, Licences and the close button:
+    /// what Tab walks, of those shown.
     copy: FocusHandle,
     website: FocusHandle,
     source: FocusHandle,
     licences_button: FocusHandle,
+    close: FocusHandle,
     previous: FocusReturn,
     /// What a report says of where skwir runs: a label and its value.
     facts: Vec<(&'static str, String)>,
@@ -74,6 +75,7 @@ impl About {
         if self.licences.is_some() {
             buttons.push(&self.licences_button);
         }
+        buttons.push(&self.close);
         buttons
     }
 }
@@ -146,6 +148,7 @@ impl Shell {
                     website: cx.focus_handle(),
                     source: cx.focus_handle(),
                     licences_button: cx.focus_handle(),
+                    close: cx.focus_handle(),
                     previous,
                     facts,
                     licences,
@@ -160,15 +163,9 @@ impl Shell {
     /// Tab and Shift+Tab: the next or the previous of its buttons, round
     /// their ends.
     fn about_tab(&mut self, delta: isize, window: &mut Window) {
-        let Some(about) = &self.about else { return };
-        let buttons = about.buttons();
-        let len = buttons.len().cast_signed();
-        let next = match buttons.iter().position(|b| b.is_focused(window)) {
-            Some(at) => (at.cast_signed() + delta).rem_euclid(len),
-            None if delta > 0 => 0,
-            None => len - 1,
-        };
-        window.focus(buttons[next.cast_unsigned()]);
+        if let Some(about) = &self.about {
+            modal::tab_among(&about.buttons(), delta, window);
+        }
     }
 
     fn copy_about(&mut self, cx: &mut Context<Self>) {
@@ -296,17 +293,30 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .child(
             div()
                 .flex()
-                .items_center()
-                .gap_3()
-                .child(crate::icons::app_icon(48.))
+                .items_start()
                 .child(
                     div()
+                        .flex_1()
                         .flex()
-                        .flex_col()
-                        .child(div().text_xl().child("skwir"))
-                        .child(div().text_color(theme.text_muted).child(SharedString::from(
-                            format!("Version {} · {LICENCE}", version()),
-                        ))),
+                        .items_center()
+                        .gap_3()
+                        .child(crate::icons::app_icon(48.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(div().text_xl().child("skwir"))
+                                .child(div().text_color(theme.text_muted).child(
+                                    SharedString::from(format!(
+                                        "Version {} · {LICENCE}",
+                                        version()
+                                    )),
+                                )),
+                        ),
+                )
+                .child(
+                    controls::icon_button("about-close", "close", &about.close, &theme)
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle_about(window, cx))),
                 ),
         )
         .child(SharedString::from(format!("{SUMMARY}.")))

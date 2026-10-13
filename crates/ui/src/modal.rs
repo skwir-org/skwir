@@ -32,6 +32,23 @@ impl FocusReturn {
     }
 }
 
+/// Tab and Shift+Tab in a dialog one reads (About, F1's overview): the next
+/// or the previous of its `buttons`, round their ends. Its panel takes them
+/// before the shell, which would close it for a key meant for the window
+/// behind.
+pub fn tab_among(buttons: &[&FocusHandle], delta: isize, window: &mut Window) {
+    let len = buttons.len().cast_signed();
+    if len == 0 {
+        return;
+    }
+    let next = match buttons.iter().position(|b| b.is_focused(window)) {
+        Some(at) => (at.cast_signed() + delta).rem_euclid(len),
+        None if delta > 0 => 0,
+        None => len - 1,
+    };
+    window.focus(buttons[next.cast_unsigned()]);
+}
+
 impl Shell {
     /// Whether a dialog that owns the keyboard is open. A proposal waits
     /// for these to close before it takes the keyboard for its review.
