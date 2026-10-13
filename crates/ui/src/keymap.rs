@@ -810,48 +810,76 @@ fn zoom_specs() -> impl Iterator<Item = (String, String, serde_json::Value, Stri
     })
 }
 
-/// Every place a binding can name, once: its `when` token, the key
-/// context it is, and what F1 calls it. `context_of` and `context_label`
-/// read it, so a new place is one row. A context named as it is
-/// (`ContextMenu`) is taken too, as plugins wrote them before.
-const PLACES: &[(&str, &str, &str)] = &[
-    ("pane", PANE, "File list"),
-    ("address", ADDRESS, "Address bar"),
-    ("palette", PALETTE, "Command palette"),
-    ("confirm", CONFIRM, "Confirmation dialogs"),
-    ("peek", PEEK, "Peek"),
-    ("reader", READER, "Document reader"),
-    ("preview", PREVIEW, "Documents and structured previews"),
-    ("preview_find", PREVIEW_FIND, "Preview search"),
-    ("inspector", INSPECTOR, "Structured previews"),
-    ("text", TEXT, "Text in the preview"),
-    ("members", MEMBERS, "Files of an archive or a message"),
-    (
+/// A place a binding can name: its `when` token, the key context it is,
+/// what F1 and the Keyboard page call it, and whether it is inside a
+/// dialog or a menu (the Keyboard page lists those keys last, folded).
+pub(crate) struct Place {
+    pub token: &'static str,
+    pub context: &'static str,
+    pub label: &'static str,
+    pub inside: bool,
+}
+
+const fn place(token: &'static str, context: &'static str, label: &'static str) -> Place {
+    Place {
+        token,
+        context,
+        label,
+        inside: false,
+    }
+}
+
+const fn inside(token: &'static str, context: &'static str, label: &'static str) -> Place {
+    Place {
+        token,
+        context,
+        label,
+        inside: true,
+    }
+}
+
+/// Every place a binding can name, once, in the order the Keyboard page
+/// lists them. `context_of`, `context_label` and `place_of` read it, so a
+/// new place is one row. A context named as it is (`ContextMenu`) is taken
+/// too, as plugins wrote them before.
+pub(crate) const PLACES: &[Place] = &[
+    place("pane", PANE, "File list"),
+    place("sidebar", SIDEBAR, "Sidebar"),
+    place("address", ADDRESS, "Address bar"),
+    place("peek", PEEK, "Peek"),
+    place("preview", PREVIEW, "Documents and structured previews"),
+    place("reader", READER, "Document reader"),
+    place("inspector", INSPECTOR, "Structured previews"),
+    place("text", TEXT, "Text in the preview"),
+    place("preview_find", PREVIEW_FIND, "Preview search"),
+    place("members", MEMBERS, "Files of an archive or a message"),
+    place(
         "member",
         MEMBER,
         "A file shown from an archive or a message",
     ),
-    ("image", IMAGE, "Picture preview"),
-    ("map", MAP, "Map preview"),
-    ("media", MEDIA, "Media player"),
-    ("player", PLAYER, "Pinned player"),
-    ("review", REVIEW, "Plan review"),
-    ("jump", JUMP, "Jump"),
-    ("choose", CHOOSE, "Choosing from a list"),
-    ("tag_editor", TAG_EDITOR, "Tag editor"),
-    ("bulk", BULK, "Bulk rename"),
-    ("terminal", TERMINAL, "Terminal"),
-    ("sidebar", SIDEBAR, "Sidebar"),
-    ("menu", MENU, "Context menu"),
-    ("toolbar_button", "ToolbarButton", "Toolbars"),
-    ("toolbar_popup", "ToolbarPopup", "Toolbars"),
-    ("shortcuts", "Shortcuts", "Shortcut overview"),
-    ("about", "About", "About skwir"),
-    ("settings", "Settings", "Settings"),
-    ("settings_nav", "SettingsNav", "Settings"),
-    ("setting_control", "SettingControl", "Settings"),
-    ("setting_number", "SettingNumber", "Settings"),
-    ("setting_record", "SettingRecord", "Settings"),
+    place("image", IMAGE, "Picture preview"),
+    place("map", MAP, "Map preview"),
+    place("media", MEDIA, "Media player"),
+    place("player", PLAYER, "Pinned player"),
+    place("terminal", TERMINAL, "Terminal"),
+    inside("palette", PALETTE, "Command palette"),
+    inside("jump", JUMP, "Jump"),
+    inside("choose", CHOOSE, "Choosing from a list"),
+    inside("tag_editor", TAG_EDITOR, "Tag editor"),
+    inside("bulk", BULK, "Bulk rename"),
+    inside("review", REVIEW, "Plan review"),
+    inside("confirm", CONFIRM, "Confirmation dialogs"),
+    inside("menu", MENU, "Context menu"),
+    inside("toolbar_button", "ToolbarButton", "Toolbars"),
+    inside("toolbar_popup", "ToolbarPopup", "Toolbars"),
+    inside("shortcuts", "Shortcuts", "Shortcut overview"),
+    inside("about", "About", "About skwir"),
+    inside("settings", "Settings", "Settings"),
+    inside("settings_nav", "SettingsNav", "Settings"),
+    inside("setting_control", "SettingControl", "Settings"),
+    inside("setting_number", "SettingNumber", "Settings"),
+    inside("setting_record", "SettingRecord", "Settings"),
 ];
 
 /// Map a registry `when` string to a GPUI context predicate. A token of
@@ -863,9 +891,9 @@ pub fn context_of(when: Option<&str>) -> String {
         return ROOT.to_owned();
     };
     let one = |t: &str| {
-        PLACES.iter().find(|(token, _, _)| *token == t).map_or_else(
+        PLACES.iter().find(|place| place.token == t).map_or_else(
             || crate::menu::canonical_token(t).to_owned(),
-            |(_, context, _)| (*context).to_owned(),
+            |place| place.context.to_owned(),
         )
     };
     let parts: Vec<String> = when
@@ -929,88 +957,147 @@ fn condition(flag: &str) -> String {
     .to_owned()
 }
 
-/// A GPUI context predicate (`Pane && single`) in plain words.
-pub fn context_label(context: &str) -> String {
-    let mut place = "Anywhere";
-    let mut conditions: Vec<String> = Vec::new();
-    for token in context.split("&&").map(str::trim) {
-        // Alternatives, `(selection || folder)`: each in words, joined.
-        if let Some(alts) = token.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
-            let words: Vec<String> = alts.split("||").map(|a| condition(a.trim())).collect();
-            conditions.push(words.join(" or "));
+/// Where a binding's keys work, as the Keyboard page groups them: the
+/// place its context names (by its label: the settings' several contexts
+/// are one place), where that stands among the places, whether it is
+/// inside a dialog or a menu, and what conditions it adds, in words.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Where {
+    pub place: String,
+    /// Anywhere is 0, then `PLACES`' order; a context no place names
+    /// (a plugin's own) after them.
+    pub rank: usize,
+    pub inside: bool,
+    /// Empty for none.
+    pub conditions: String,
+}
+
+/// Where the keys of a binding of `context` work.
+pub fn place_of(context: &str) -> Where {
+    let known = |atom: &str| PLACES.iter().position(|place| place.context == atom);
+    let mut found = Where {
+        place: "Anywhere".to_owned(),
+        rank: 0,
+        inside: false,
+        conditions: String::new(),
+    };
+    let mut placed = false;
+    let mut words: Vec<String> = Vec::new();
+    for atom in conditions(context) {
+        let alts: Vec<&str> = match atom.strip_prefix('(').and_then(|a| a.strip_suffix(')')) {
+            Some(alts) => alts.split("||").map(str::trim).collect(),
+            None => vec![atom],
+        };
+        let at: Vec<usize> = alts.iter().filter_map(|alt| known(alt)).collect();
+        if atom == ROOT {
             continue;
         }
-        match token {
-            "Shell" | "" => {}
-            context => match PLACES.iter().find(|(_, c, _)| *c == context) {
-                Some((_, _, label)) => place = label,
-                None => conditions.push(condition(context)),
-            },
+        if !placed && at.len() == alts.len() {
+            // A place, or places that share their keys (the lists one
+            // picks from), each named once.
+            let mut labels: Vec<&str> = Vec::new();
+            for &i in &at {
+                if !labels.contains(&PLACES[i].label) {
+                    labels.push(PLACES[i].label);
+                }
+            }
+            found.place = labels.join(", ");
+            found.rank = at.iter().min().map_or(0, |i| i + 1);
+            found.inside = at.iter().all(|&i| PLACES[i].inside);
+            placed = true;
+            continue;
         }
+        if !placed && known(atom).is_none() && atom.chars().next().is_some_and(char::is_uppercase) {
+            // A plugin's own context: a place of its own, after skwir's.
+            atom.clone_into(&mut found.place);
+            found.rank = PLACES.len() + 1;
+            placed = true;
+            continue;
+        }
+        let said: Vec<String> = alts.iter().map(|alt| condition(alt)).collect();
+        words.push(said.join(" or "));
     }
-    if conditions.is_empty() {
-        place.to_owned()
+    found.conditions = words.join(", ");
+    found
+}
+
+/// A GPUI context predicate (`Pane && single`) in plain words.
+pub fn context_label(context: &str) -> String {
+    let at = place_of(context);
+    if at.conditions.is_empty() {
+        at.place
     } else {
-        format!("{place} ({})", conditions.join(", "))
+        format!("{} ({})", at.place, at.conditions)
     }
 }
 
-/// What a binding does, in words: the palette's title for shell commands,
-/// the registered title for core and plugin commands, a readable form of
-/// the name otherwise.
+/// A binding's context as the `when` a record of the user's says it:
+/// `Pane && single && !restores` is `pane single !restores`, anywhere is
+/// `None`. The inverse of `context_of`.
+pub fn when_of(context: &str) -> Option<String> {
+    let token = |atom: &str| -> String {
+        let (not, name) = match atom.strip_prefix('!') {
+            Some(name) => ("!", name.trim()),
+            None => ("", atom),
+        };
+        let name = PLACES
+            .iter()
+            .find(|place| place.context == name)
+            .map_or(name, |place| place.token);
+        format!("{not}{name}")
+    };
+    let tokens: Vec<String> = conditions(context)
+        .into_iter()
+        .filter(|atom| *atom != ROOT)
+        .map(
+            |atom| match atom.strip_prefix('(').and_then(|a| a.strip_suffix(')')) {
+                Some(alts) => alts
+                    .split("||")
+                    .map(|alt| token(alt.trim()))
+                    .collect::<Vec<_>>()
+                    .join("|"),
+                None => token(atom),
+            },
+        )
+        .collect();
+    (!tokens.is_empty()).then(|| tokens.join(" "))
+}
+
+/// What a binding does, in words (see `title`).
 pub fn title_of(app: &App, hint: &KeyHint) -> String {
-    if let Some(title) = move_title(&hint.command, &hint.args) {
+    title(app, &hint.command, &hint.args)
+}
+
+/// What a command run with `args` does, in words: the title of the form
+/// its declaration gives these arguments, else its own with the arguments
+/// said after it (`CommandSpec::title_for`, ADR-024); a readable form of
+/// the name for a command nothing registers now. Only a title naming what
+/// an argument names elsewhere is worked out here: a folder to go to, a
+/// view.
+pub fn title(app: &App, command: &str, args: &serde_json::Value) -> String {
+    if let Some(title) = named_title(app, command, args) {
         return title;
     }
-    if let Some((_, _, title)) = crate::palette::ui_commands()
-        .iter()
-        .find(|(name, args, _)| *name == hint.command && *args == hint.args)
-    {
-        return (*title).to_owned();
+    if let Some(title) = app.commands.title(command, args) {
+        return title;
     }
-    if hint.command == "ui.view"
-        && let Some(id) = hint.args.get("id").and_then(serde_json::Value::as_str)
-    {
-        let title = app
-            .registry
-            .views
-            .all()
-            .into_iter()
-            .find(|view| &*view.id == id)
-            .map_or_else(|| id.to_owned(), |view| view.title.clone());
-        return format!("{title} view");
-    }
-    if let Some(spec) = app.commands.get(&hint.command) {
-        return spec.title.clone();
-    }
-    let name = hint
-        .command
+    let name = command
         .strip_prefix("ui.")
-        .unwrap_or(&hint.command)
+        .unwrap_or(command)
         .replace(['_', '.'], " ");
     let mut chars = name.chars();
-    let mut title: String = chars.next().map_or_else(String::new, |first| {
+    let title: String = chars.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(chars).collect()
     });
-    if let Some(args) = hint.args.as_object().filter(|args| !args.is_empty()) {
-        let detail: Vec<String> = args
-            .iter()
-            .map(|(name, value)| match value.as_str() {
-                Some(text) => format!("{name} {text}"),
-                None => format!("{name} {value}"),
-            })
-            .collect();
-        title = format!("{title} ({})", detail.join(", "));
-    }
-    title
+    skwir_core::command::with_args(&title, args)
 }
 
-/// What a binding with arguments does, in words, where the command's title
-/// alone would not say: a cursor move (`ui.cursor`, `ui.cursor_pick`, not in
-/// the palette but listed with their keys), a place to go (`navigate`).
-fn move_title(command: &str, args: &serde_json::Value) -> Option<String> {
+/// A title naming what an argument names elsewhere: the folder a binding
+/// goes to, the view it shows, the choice it asks for (Open with…).
+fn named_title(app: &App, command: &str, args: &serde_json::Value) -> Option<String> {
     let text = |key| args.get(key).and_then(serde_json::Value::as_str);
     match command {
+        "ui.choose" => text("title").map(|title| format!("{title}…")),
         "navigate" => {
             let location = text("location")?;
             let place = match location.trim_end_matches('/') {
@@ -1019,53 +1106,16 @@ fn move_title(command: &str, args: &serde_json::Value) -> Option<String> {
             };
             Some(format!("Go to {place}"))
         }
-        "ui.cursor_pick" => Some(
-            if args.get("advance").and_then(serde_json::Value::as_bool) == Some(false) {
-                "Pick or unpick".to_owned()
-            } else {
-                "Pick or unpick, then go to the next".to_owned()
-            },
-        ),
-        "ui.sidebar_key" => Some(
-            match text("key")? {
-                "up" => "Go to the place above",
-                "down" => "Go to the place below",
-                "first" => "Go to the first place",
-                "last" => "Go to the last place",
-                "left" => "Go to its group, or fold the group",
-                "right" => "Unfold the group, or go into it",
-                "open" => "Open the place, or fold the group",
-                "tab" => "Open the place in a new tab",
-                "menu" => "Open its menu",
-                "move_up" => "Move it up",
-                "move_down" => "Move it down",
-                "rename" => "Rename it",
-                "remove" => "Remove or hide it",
-                _ => return None,
-            }
-            .to_owned(),
-        ),
-        "ui.cursor" => {
-            let verb = match text("step") {
-                Some("extend") => "Extend the selection",
-                Some("move") => "Move the cursor",
-                Some("follow") => "Go",
-                _ => "Select",
-            };
-            let to = match text("to").unwrap_or("down") {
-                "page_up" => "a page up",
-                "page_down" => "a page down",
-                "half_page_up" => "half a page up",
-                "half_page_down" => "half a page down",
-                "home" => "to the first item",
-                "end" => "to the last item",
-                "here" if verb == "Select" => {
-                    return Some("Select only the item under the cursor".into());
-                }
-                "here" => "to the item under the cursor",
-                other => other,
-            };
-            Some(format!("{verb} {to}"))
+        "ui.view" => {
+            let id = text("id")?;
+            let title = app
+                .registry
+                .views
+                .all()
+                .into_iter()
+                .find(|view| &*view.id == id)
+                .map_or_else(|| id.to_owned(), |view| view.title.clone());
+            Some(format!("{title} view"))
         }
         _ => None,
     }
@@ -1170,12 +1220,33 @@ struct Spec {
     command: Option<(String, serde_json::Value)>,
     context: String,
     layer: Layer,
+    /// The id of the user's record it comes from.
+    record: Option<String>,
+}
+
+/// A binding of the keymap, one a later binding hides too: what the
+/// Keyboard page lists and edits (ADR-024).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Bound {
+    pub keys: String,
+    /// What the keys run, and with what; `None` for a record of the user's
+    /// that frees them.
+    pub command: Option<(String, serde_json::Value)>,
+    /// The GPUI context predicate it is active in.
+    pub context: String,
+    pub layer: Layer,
+    /// The id of the user's record it comes from.
+    pub record: Option<String>,
+    /// The later binding that hides it, by its index: GPUI never runs it.
+    pub hidden_by: Option<usize>,
 }
 
 /// The keymap as the shell knows it: what GPUI binds, what the palette,
 /// menus and F1 show, and what it was built from.
 pub struct Keymap {
     pub hints: Vec<KeyHint>,
+    /// Every binding, those hidden too, in the order of their layers.
+    pub bound: Vec<Bound>,
     pub stamp: Stamp,
     /// Whether letters typed in the file list jump to a name: not while the
     /// keymap takes an unmodified character there.
@@ -1258,6 +1329,7 @@ fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
             command: Some((b.command.name.to_string(), b.command.args)),
             context: context_of(b.when.as_deref()),
             layer,
+            record: None,
         })
     };
     let shell = BUILTIN
@@ -1276,12 +1348,14 @@ fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
             command: Some((command.into(), args)),
             context: context_of(when),
             layer: Layer::Shell,
+            record: None,
         })
         .chain(zoom_specs().map(|(keys, command, args, context)| Spec {
             keys,
             command: Some((command, args)),
             context,
             layer: Layer::Shell,
+            record: None,
         }));
     // A binding to a command nothing registers waits for its plugin: it
     // binds nothing meanwhile, and the keys under it work (ADR-024).
@@ -1293,6 +1367,7 @@ fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
             .map(|c| (c.name.to_string(), c.args.clone())),
         context: context_of(b.when.as_deref()),
         layer: Layer::User,
+        record: Some(b.id.clone()),
     });
     let standard: Vec<Spec> = registered(app.registry.keymap.all(), Layer::Plugin)
         .chain(shell)
@@ -1324,7 +1399,7 @@ fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
 /// its plugin's, turned off. It is kept, and waits for it.
 pub fn dormant(app: &App, binding: &UserBinding) -> bool {
     binding.command.as_ref().is_some_and(|command| {
-        &*command.name != skwir_core::keymap::LIKE && app.commands.get(&command.name).is_none()
+        &*command.name != skwir_core::keymap::LIKE && !app.commands.contains(&command.name)
     })
 }
 
@@ -1353,6 +1428,7 @@ fn like(spec: Spec, standard: &[Spec]) -> Vec<Spec> {
             command: s.command.clone(),
             context: s.context.clone(),
             layer: spec.layer,
+            record: spec.record.clone(),
         })
         .collect()
 }
@@ -1367,23 +1443,24 @@ fn conditions(context: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Which specs a later one hides: GPUI takes the deepest place first, then
-/// the latest binding, so a later binding of the same keys that asks for no
-/// more than an earlier one (`Pane` over `Pane && empty`) always wins where
-/// the earlier would apply.
+/// Which spec hides each, if one does: GPUI takes the deepest place
+/// first, then the latest binding, so a later binding of the same keys
+/// that asks for no more than an earlier one (`Pane` over `Pane && empty`)
+/// always wins where the earlier would apply. The last such binding is
+/// named, the one that runs.
 /// Each spec's keys are read once, and compared only with the specs of
 /// the same keys: every spec against every later one, parsing both each
 /// time, cost the first frame milliseconds.
-fn shadowed(specs: &[Spec]) -> Vec<bool> {
+fn shadowed(specs: &[Spec]) -> Vec<Option<usize>> {
     let mut by_keys: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, spec) in specs.iter().enumerate() {
         by_keys.entry(normal_keys(&spec.keys)).or_default().push(i);
     }
-    let mut hidden = vec![false; specs.len()];
+    let mut hidden = vec![None; specs.len()];
     for same in by_keys.values() {
         for (n, &i) in same.iter().enumerate() {
             let mine = conditions(&specs[i].context);
-            hidden[i] = same[n + 1..].iter().any(|&later| {
+            hidden[i] = same[n + 1..].iter().rev().copied().find(|&later| {
                 conditions(&specs[later].context)
                     .iter()
                     .all(|atom| mine.contains(atom))
@@ -1393,11 +1470,46 @@ fn shadowed(specs: &[Spec]) -> Vec<bool> {
     hidden
 }
 
+/// Every binding of the keymap the registries and the user's records make,
+/// in the order of their layers, each saying which hides it: what
+/// `install` binds, and what the Keyboard page lists. Keys GPUI cannot
+/// read are left out, with a warning.
+pub fn bindings(app: &App, user: &[UserBinding]) -> Vec<Bound> {
+    let specs: Vec<Spec> = specs(app, user)
+        .into_iter()
+        .filter(|spec| {
+            let valid = valid_keys(&spec.keys);
+            if !valid {
+                tracing::warn!(
+                    keys = spec.keys,
+                    layer = ?spec.layer,
+                    "skipping key binding with unparsable keys"
+                );
+            }
+            valid
+        })
+        .collect();
+    let hidden = shadowed(&specs);
+    specs
+        .into_iter()
+        .zip(hidden)
+        .map(|(spec, hidden_by)| Bound {
+            keys: spec.keys,
+            command: spec.command,
+            context: spec.context,
+            layer: spec.layer,
+            record: spec.record,
+            hidden_by,
+        })
+        .collect()
+}
+
 /// Whether a binding takes a character typed in the file list: its first
-/// stroke is one character, with Shift at most (`j`, `G`, `/`, `g g`).
-fn takes_a_character(spec: &Spec) -> bool {
-    let place = conditions(&spec.context).first().copied();
-    let Some(first) = spec.keys.split_whitespace().next() else {
+/// stroke is one character, with Shift at most (`j`, `G`, `/`, `g g`), and
+/// it `binds` a command (freeing a key takes nothing).
+pub(crate) fn takes_a_character(keys: &str, context: &str, binds: bool) -> bool {
+    let place = conditions(context).first().copied();
+    let Some(first) = keys.split_whitespace().next() else {
         return false;
     };
     let Ok(stroke) = Keystroke::parse(first) else {
@@ -1405,7 +1517,7 @@ fn takes_a_character(spec: &Spec) -> bool {
     };
     let m = stroke.modifiers;
     place == Some(PANE)
-        && spec.command.is_some()
+        && binds
         && stroke.key.chars().count() == 1
         && !(m.control || m.alt || m.platform || m.function)
 }
@@ -1417,57 +1529,55 @@ fn takes_a_character(spec: &Spec) -> bool {
 pub fn install(app: &App, user: Vec<UserBinding>, cx: &mut gpui::App) -> Keymap {
     // Read before the bindings: a change in between is picked up next time.
     let revisions = Stamp::revisions(app);
-    let specs = specs(app, &user);
-    let hidden = shadowed(&specs);
+    let bound = bindings(app, &user);
     let mut hints = Vec::new();
-    let mut bindings = Vec::new();
+    let mut gpui_bindings = Vec::new();
     let mut typeahead = true;
-    for (spec, hidden) in specs.into_iter().zip(hidden) {
-        if !valid_keys(&spec.keys) {
-            tracing::warn!(
-                keys = spec.keys,
-                layer = ?spec.layer,
-                "skipping key binding with unparsable keys"
-            );
-            continue;
-        }
-        if !hidden && takes_a_character(&spec) {
+    for binding in &bound {
+        let hidden = binding.hidden_by.is_some();
+        if !hidden && takes_a_character(&binding.keys, &binding.context, binding.command.is_some())
+        {
             typeahead = false;
         }
-        let Some((name, args)) = spec.command else {
+        let Some((name, args)) = binding.command.clone() else {
             // Freed keys: nothing below this binding runs where it applies.
-            bindings.push(KeyBinding::new(
-                &spec.keys,
+            gpui_bindings.push(KeyBinding::new(
+                &binding.keys,
                 gpui::NoAction,
-                Some(&spec.context),
+                Some(&binding.context),
             ));
             continue;
         };
-        if spec.context == ROOT && !TERMINAL_PASSTHROUGH.contains(&name.as_str()) {
+        if binding.context == ROOT && !TERMINAL_PASSTHROUGH.contains(&name.as_str()) {
             // The deeper context's binding to nothing wins, and the key
             // goes on to the terminal's own listener.
-            bindings.push(KeyBinding::new(&spec.keys, gpui::NoAction, Some(TERMINAL)));
+            gpui_bindings.push(KeyBinding::new(
+                &binding.keys,
+                gpui::NoAction,
+                Some(TERMINAL),
+            ));
         }
         if !hidden {
             hints.push(KeyHint {
-                keys: spec.keys.clone(),
+                keys: binding.keys.clone(),
                 command: name.clone(),
                 args: args.clone(),
-                context: spec.context.clone(),
-                layer: spec.layer,
+                context: binding.context.clone(),
+                layer: binding.layer,
             });
         }
-        bindings.push(KeyBinding::new(
-            &spec.keys,
+        gpui_bindings.push(KeyBinding::new(
+            &binding.keys,
             RunCommand { name, args },
-            Some(&spec.context),
+            Some(&binding.context),
         ));
     }
     cx.clear_key_bindings();
     cx.bind_keys(crate::input::key_bindings());
-    cx.bind_keys(bindings);
+    cx.bind_keys(gpui_bindings);
     Keymap {
         hints,
+        bound,
         stamp: Stamp { revisions, user },
         typeahead,
     }
@@ -1489,6 +1599,7 @@ mod tests {
             command: Some((command.into(), serde_json::json!({}))),
             context: context_of(when),
             layer,
+            record: None,
         }
     }
 
@@ -1521,6 +1632,7 @@ mod tests {
             )),
             context: context_of(Some("pane")),
             layer: Layer::Scheme,
+            record: None,
         };
         let got: Vec<(String, String, String, Layer)> = super::like(d, &standard)
             .into_iter()
@@ -1580,7 +1692,7 @@ mod tests {
         let hidden: Vec<&str> = specs
             .iter()
             .zip(shadowed(&specs))
-            .filter(|(_, hidden)| *hidden)
+            .filter(|(_, hidden)| hidden.is_some())
             .map(|(spec, _)| spec.command.as_ref().unwrap().0.as_str())
             .collect();
         // F2 for one item and for several both apply somewhere; Ctrl+F in
@@ -1592,7 +1704,8 @@ mod tests {
     #[test]
     fn letters_bound_in_the_file_list_stop_type_ahead() {
         let takes = |keys: &str, when: Option<&str>| {
-            takes_a_character(&spec(keys, "x", when, Layer::Scheme))
+            let spec = spec(keys, "x", when, Layer::Scheme);
+            takes_a_character(&spec.keys, &spec.context, spec.command.is_some())
         };
         assert!(takes("j", Some("pane")));
         assert!(takes("G", Some("pane")));
@@ -1607,7 +1720,10 @@ mod tests {
             command: None,
             ..spec("j", "x", Some("pane"), Layer::User)
         };
-        assert!(!takes_a_character(&freed), "freeing a key binds nothing");
+        assert!(
+            !takes_a_character(&freed.keys, &freed.context, freed.command.is_some()),
+            "freeing a key binds nothing"
+        );
     }
 
     /// The layers stand in their order whatever order the plugins came in:
@@ -1722,7 +1838,9 @@ mod tests {
 
     #[test]
     fn a_place_to_go_is_named() {
-        let title = |args| super::move_title("navigate", &args);
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let title = |args| super::named_title(&app, "navigate", &args);
         assert_eq!(
             title(serde_json::json!({ "location": "~" })).as_deref(),
             Some("Go to your home folder")

@@ -35,7 +35,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Form, Invocation, Outcome};
 use skwir_core::entry::keys;
 use skwir_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag};
 use skwir_core::op::{EntryRef, Plan};
@@ -1059,14 +1059,18 @@ impl Plugin for TagsPlugin {
             |a, app| browse::pill(app, &a),
         )
         .shows();
-        app.commands.register::<browse::BrowseArgs, _>(
+        let browsing = app.commands.register::<browse::BrowseArgs, _>(
             ID,
             "tags.browse",
             "Tags of a folder",
             "Show every tag of the files under a folder (`in`, an absolute path) as places to browse, each a folder of its files: the folder the pane shows when omitted, or the one a tag location or a search there is of; with `toggle` and no folder, a tag location goes back to its folder instead",
             |a, app| browse::browse(app, &a),
-        )
-        .shows();
+        );
+        browsing.forms([Form::new(
+            serde_json::json!({ "toggle": true }),
+            "Tags of this folder, or back to it",
+        )]);
+        browsing.shows();
         app.commands.register::<browse::PaneOnly, _>(
             ID,
             "tags.keep",

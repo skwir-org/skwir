@@ -206,6 +206,41 @@ impl Serialize for ArgsSchema {
     }
 }
 
+/// Arguments that make a command one thing to do, with that thing's
+/// title: `ui.sort {"key": "size"}` is Sort by size (ADR-024).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Form {
+    pub args: serde_json::Value,
+    pub title: String,
+}
+
+impl Form {
+    pub fn new(args: serde_json::Value, title: impl Into<String>) -> Self {
+        Form {
+            args,
+            title: title.into(),
+        }
+    }
+}
+
+/// `title` with the arguments said after it, as a command is called when
+/// no form names them: `Sort (key name)`.
+pub fn with_args(title: &str, args: &serde_json::Value) -> String {
+    match args.as_object().filter(|args| !args.is_empty()) {
+        None => title.to_owned(),
+        Some(args) => {
+            let said: Vec<String> = args
+                .iter()
+                .map(|(name, value)| match value.as_str() {
+                    Some(text) => format!("{name} {text}"),
+                    None => format!("{name} {value}"),
+                })
+                .collect();
+            format!("{title} ({})", said.join(", "))
+        }
+    }
+}
+
 /// Declared metadata of a command, including the JSON schema of its arguments.
 #[derive(Clone, Debug, Serialize)]
 pub struct CommandSpec {
@@ -217,9 +252,34 @@ pub struct CommandSpec {
     pub owner: Arc<str>,
     /// What it does: what an agent may run without asking.
     pub effect: Effect,
+    /// The arguments that make it one thing to do, each with its title:
+    /// what every list of actions calls it (`CommandSpec::title_for`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub forms: Vec<Form>,
+    /// Its keys may change, never all go: what gets the keyboard out of a
+    /// dialog, or to every command (ADR-024).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub keeps_a_key: bool,
 }
 
 impl CommandSpec {
+    /// The form of these arguments: `None` for none declared.
+    pub fn form(&self, args: &serde_json::Value) -> Option<&Form> {
+        let none = serde_json::Value::Object(serde_json::Map::new());
+        let args = if args.is_null() { &none } else { args };
+        self.forms.iter().find(|form| form.args == *args)
+    }
+
+    /// What it is called run with `args`: their form's title, else its
+    /// own, with the arguments no form names said after it, so two ways
+    /// to run it never read alike.
+    pub fn title_for(&self, args: &serde_json::Value) -> String {
+        match self.form(args) {
+            Some(form) => form.title.clone(),
+            None => with_args(&self.title, args),
+        }
+    }
+
     /// Names of the required arguments, from the schema.
     pub fn required_args(&self) -> Vec<String> {
         self.args_schema
@@ -248,15 +308,30 @@ pub struct Declared<'a> {
 }
 
 impl Declared<'_> {
-    /// Say what it does.
-    pub fn effect(self, effect: Effect) {
+    fn update(&self, change: impl FnOnce(&mut CommandSpec)) {
         let mut commands = self.registry.commands.write();
         if let Some((spec, _, _)) = commands
             .get_mut(&self.name)
             .and_then(|stack| stack.iter_mut().find(|(s, _, _)| s.owner == self.owner))
         {
-            spec.effect = effect;
+            change(spec);
         }
+    }
+
+    /// The arguments that make it one thing to do, each with its title
+    /// (see [`Form`]).
+    pub fn forms(&self, forms: impl IntoIterator<Item = Form>) {
+        self.update(|spec| spec.forms.extend(forms));
+    }
+
+    /// Its keys may change, never all go (see `CommandSpec::keeps_a_key`).
+    pub fn keeps_a_key(&self) {
+        self.update(|spec| spec.keeps_a_key = true);
+    }
+
+    /// Say what it does.
+    pub fn effect(self, effect: Effect) {
+        self.update(|spec| spec.effect = effect);
     }
 
     /// It answers, and changes nothing.
@@ -469,6 +544,8 @@ impl CommandRegistry {
             args_schema,
             owner: owner.into(),
             effect: Effect::default(),
+            forms: Vec::new(),
+            keeps_a_key: false,
         };
         let mut commands = self.commands.write();
         let stack = commands.entry(name).or_default();
@@ -503,6 +580,21 @@ impl CommandRegistry {
             .get(name)
             .and_then(|stack| stack.last())
             .map(|(s, _, _)| s.clone())
+    }
+
+    /// Whether a command of that name is registered now.
+    pub fn contains(&self, name: &str) -> bool {
+        self.commands.read().contains_key(name)
+    }
+
+    /// What `name` run with `args` is called (`CommandSpec::title_for`),
+    /// read in place: `None` for no such command.
+    pub fn title(&self, name: &str, args: &serde_json::Value) -> Option<String> {
+        self.commands
+            .read()
+            .get(name)
+            .and_then(|stack| stack.last())
+            .map(|(spec, _, _)| spec.title_for(args))
     }
 
     pub fn list(&self) -> Vec<CommandSpec> {

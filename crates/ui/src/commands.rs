@@ -10,7 +10,7 @@
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use skwir_core::app::App;
-use skwir_core::command::{Effect, Invocation, NoArgs, Outcome};
+use skwir_core::command::{Effect, Form, Invocation, NoArgs, Outcome};
 
 /// Who declares them.
 pub const OWNER: &str = "ui";
@@ -529,6 +529,306 @@ fn effect_of(name: &str) -> Effect {
     }
 }
 
+/// What the keys of the shell's places run with arguments, beside what
+/// the palette offers (`palette::UI_COMMANDS`): the command, its arguments
+/// and the title they make, which every list of keys says (ADR-024). The
+/// cursor's moves are made from their words (`cursor_forms`).
+const KEY_FORMS: &[(&str, &str, &str)] = &[
+    // The lists one picks from while typing, and the names a copy found
+    // taken.
+    ("ui.list_move", r#"{"delta":-1}"#, "Previous in the list"),
+    ("ui.list_move", r#"{"delta":1}"#, "Next in the list"),
+    ("ui.list_move", r#"{"to":"page_up"}"#, "A page up the list"),
+    (
+        "ui.list_move",
+        r#"{"to":"page_down"}"#,
+        "A page down the list",
+    ),
+    ("ui.review_choose", r#"{"delta":-1}"#, "Previous choice"),
+    ("ui.review_choose", r#"{"delta":1}"#, "Next choice"),
+    // The file list.
+    (
+        "ui.cursor_pick",
+        "{}",
+        "Pick or unpick, then go to the next",
+    ),
+    ("ui.cursor_pick", r#"{"advance":false}"#, "Pick or unpick"),
+    (
+        "ui.search",
+        r#"{"text":"content:"}"#,
+        "Search the contents…",
+    ),
+    (
+        "ui.omnibox_submit",
+        r#"{"everywhere":true}"#,
+        "Search everywhere",
+    ),
+    ("ui.about", r#"{"close":true}"#, "Close About"),
+    // The sidebar, walked as the file list's rows.
+    ("ui.sidebar_key", r#"{"key":"up"}"#, "Go to the place above"),
+    (
+        "ui.sidebar_key",
+        r#"{"key":"down"}"#,
+        "Go to the place below",
+    ),
+    (
+        "ui.sidebar_key",
+        r#"{"key":"first"}"#,
+        "Go to the first place",
+    ),
+    (
+        "ui.sidebar_key",
+        r#"{"key":"last"}"#,
+        "Go to the last place",
+    ),
+    (
+        "ui.sidebar_key",
+        r#"{"key":"left"}"#,
+        "Go to its group, or fold the group",
+    ),
+    (
+        "ui.sidebar_key",
+        r#"{"key":"right"}"#,
+        "Unfold the group, or go into it",
+    ),
+    (
+        "ui.sidebar_key",
+        r#"{"key":"open"}"#,
+        "Open the place, or fold the group",
+    ),
+    (
+        "ui.sidebar_key",
+        r#"{"key":"tab"}"#,
+        "Open the place in a new tab",
+    ),
+    ("ui.sidebar_key", r#"{"key":"menu"}"#, "Open its menu"),
+    ("ui.sidebar_key", r#"{"key":"move_up"}"#, "Move it up"),
+    ("ui.sidebar_key", r#"{"key":"move_down"}"#, "Move it down"),
+    ("ui.sidebar_key", r#"{"key":"rename"}"#, "Rename it"),
+    ("ui.sidebar_key", r#"{"key":"remove"}"#, "Remove or hide it"),
+    // What the preview plays, and the pinned player.
+    ("ui.media_control", r#"{"action":"play"}"#, "Play or pause"),
+    ("ui.media_control", r#"{"action":"mute"}"#, "Mute or unmute"),
+    (
+        "ui.media_control",
+        r#"{"action":"volume_by","value":0.05}"#,
+        "Volume up",
+    ),
+    (
+        "ui.media_control",
+        r#"{"action":"volume_by","value":-0.05}"#,
+        "Volume down",
+    ),
+    (
+        "ui.player",
+        r#"{"request":{"seek_by":-5.0}}"#,
+        "Player: back five seconds",
+    ),
+    (
+        "ui.player",
+        r#"{"request":{"seek_by":5.0}}"#,
+        "Player: forward five seconds",
+    ),
+    (
+        "ui.player",
+        r#"{"request":"previous"}"#,
+        "Player: previous track",
+    ),
+    ("ui.player", r#"{"request":"next"}"#, "Player: next track"),
+    (
+        "ui.player",
+        r#"{"request":"mute"}"#,
+        "Player: mute or unmute",
+    ),
+    (
+        "ui.player",
+        r#"{"request":"fullscreen"}"#,
+        "Player: full screen",
+    ),
+    ("ui.player_volume", r#"{"delta":0.05}"#, "Player: volume up"),
+    (
+        "ui.player_volume",
+        r#"{"delta":-0.05}"#,
+        "Player: volume down",
+    ),
+    // A structured preview: the files of an archive, a text read where it
+    // is shown, its links, its size.
+    (
+        "ui.inspect",
+        r#"{"action":"step","delta":-1}"#,
+        "Previous file",
+    ),
+    ("ui.inspect", r#"{"action":"step","delta":1}"#, "Next file"),
+    (
+        "ui.inspect",
+        r#"{"action":"fold","delta":-1}"#,
+        "Fold the folder, or go to it",
+    ),
+    (
+        "ui.inspect",
+        r#"{"action":"fold","delta":1}"#,
+        "Unfold the folder",
+    ),
+    ("ui.inspect", r#"{"action":"back"}"#, "Close the file shown"),
+    (
+        "ui.inspect",
+        r#"{"action":"scroll","to":"up"}"#,
+        "Scroll up",
+    ),
+    (
+        "ui.inspect",
+        r#"{"action":"scroll","to":"down"}"#,
+        "Scroll down",
+    ),
+    (
+        "ui.inspect",
+        r#"{"action":"scroll","to":"page_up"}"#,
+        "Scroll a page up",
+    ),
+    (
+        "ui.inspect",
+        r#"{"action":"scroll","to":"page_down"}"#,
+        "Scroll a page down",
+    ),
+    (
+        "ui.inspect",
+        r#"{"action":"scroll","to":"start"}"#,
+        "Scroll to the start",
+    ),
+    (
+        "ui.inspect",
+        r#"{"action":"scroll","to":"end"}"#,
+        "Scroll to the end",
+    ),
+    (
+        "ui.inspect",
+        r#"{"action":"links_close"}"#,
+        "Stop labelling the links",
+    ),
+    (
+        "ui.inspect",
+        r#"{"action":"larger"}"#,
+        "Preview: larger text",
+    ),
+    (
+        "ui.inspect",
+        r#"{"action":"smaller"}"#,
+        "Preview: smaller text",
+    ),
+    (
+        "ui.inspect",
+        r#"{"action":"reset"}"#,
+        "Preview: text at its size",
+    ),
+    ("ui.map_pan", r#"{"dx":-1,"dy":0}"#, "Map: move left"),
+    ("ui.map_pan", r#"{"dx":1,"dy":0}"#, "Map: move right"),
+    ("ui.map_pan", r#"{"dx":0,"dy":-1}"#, "Map: move up"),
+    ("ui.map_pan", r#"{"dx":0,"dy":1}"#, "Map: move down"),
+    ("ui.terminal_page", r#"{"pages":1}"#, "Terminal: a page up"),
+    (
+        "ui.terminal_page",
+        r#"{"pages":-1}"#,
+        "Terminal: a page down",
+    ),
+    // The settings.
+    ("ui.settings_page", r#"{"delta":-1}"#, "Previous page"),
+    ("ui.settings_page", r#"{"delta":1}"#, "Next page"),
+    ("ui.settings_move", r#"{"delta":-1}"#, "Move the record up"),
+    ("ui.settings_move", r#"{"delta":1}"#, "Move the record down"),
+    (
+        "ui.settings_adjust",
+        r#"{"delta":-1}"#,
+        "Less, or the previous choice",
+    ),
+    (
+        "ui.settings_adjust",
+        r#"{"delta":1}"#,
+        "More, or the next choice",
+    ),
+];
+
+/// The shell's commands whose keys may change but never all go (ADR-024):
+/// the palette, which reaches every command, and what gets the keyboard
+/// out of a dialog or a menu, or through the settings.
+const KEEP_A_KEY: &[&str] = &[
+    "ui.palette",
+    "ui.settings_close",
+    "ui.settings_next",
+    "ui.settings_prev",
+    "ui.accept",
+    "ui.dismiss",
+    "ui.review_apply",
+    "ui.review_cancel",
+    "ui.menu_close",
+];
+
+/// The cursor's moves (`ui.cursor`), each where it goes and what the
+/// selection does, in words: Select up, Extend the selection a page down.
+fn cursor_forms() -> impl Iterator<Item = Form> {
+    const TO: [(&str, &str); 13] = [
+        ("up", "up"),
+        ("down", "down"),
+        ("left", "left"),
+        ("right", "right"),
+        ("page_up", "a page up"),
+        ("page_down", "a page down"),
+        ("half_page_up", "half a page up"),
+        ("half_page_down", "half a page down"),
+        ("home", "to the first item"),
+        ("end", "to the last item"),
+        ("here", "to the item under the cursor"),
+        ("previous", "to the previous item"),
+        ("next", "to the next item"),
+    ];
+    const STEP: [(Option<&str>, &str); 5] = [
+        (None, "Select"),
+        (Some("select"), "Select"),
+        (Some("extend"), "Extend the selection"),
+        (Some("move"), "Move the cursor"),
+        (Some("follow"), "Go"),
+    ];
+    STEP.into_iter().flat_map(|(step, verb)| {
+        TO.into_iter().map(move |(to, words)| {
+            let args = match step {
+                Some(step) => serde_json::json!({ "to": to, "step": step }),
+                None => serde_json::json!({ "to": to }),
+            };
+            let title = if verb == "Select" && to == "here" {
+                "Select only the item under the cursor".to_owned()
+            } else {
+                format!("{verb} {words}")
+            };
+            Form::new(args, title)
+        })
+    })
+}
+
+/// Every form of the shell's command `name`: what the palette offers, then
+/// what its places' keys run.
+fn forms_of(name: &str) -> Vec<Form> {
+    let offered = crate::palette::ui_commands()
+        .iter()
+        .filter(|(n, _, _)| *n == name)
+        .map(|(_, args, title)| Form::new(args.clone(), *title));
+    let keys = KEY_FORMS
+        .iter()
+        .filter(|(n, _, _)| *n == name)
+        .map(|(_, args, title)| {
+            Form::new(serde_json::from_str(args).expect("valid form args"), *title)
+        });
+    let moves = (name == "ui.cursor")
+        .then(cursor_forms)
+        .into_iter()
+        .flatten();
+    let mut forms: Vec<Form> = Vec::new();
+    for form in offered.chain(keys).chain(moves) {
+        if !forms.iter().any(|known| known.args == form.args) {
+            forms.push(form);
+        }
+    }
+    forms
+}
+
 /// Declare `name`, carried out by the window.
 fn declare<A: DeserializeOwned + JsonSchema + 'static>(
     app: &App,
@@ -536,15 +836,20 @@ fn declare<A: DeserializeOwned + JsonSchema + 'static>(
     title: &str,
     description: &str,
 ) {
-    app.commands
-        .register_raw::<A, _>(OWNER, name, title, description, move |args, app| {
-            app.request_front(Invocation {
-                name: name.into(),
-                args,
+    let declared =
+        app.commands
+            .register_raw::<A, _>(OWNER, name, title, description, move |args, app| {
+                app.request_front(Invocation {
+                    name: name.into(),
+                    args,
+                });
+                Ok(Outcome::Done)
             });
-            Ok(Outcome::Done)
-        })
-        .effect(effect_of(name));
+    declared.forms(forms_of(name));
+    if KEEP_A_KEY.contains(&name) {
+        declared.keeps_a_key();
+    }
+    declared.effect(effect_of(name));
 }
 
 /// Declare every `ui.*` command in the core's registry.
@@ -1284,6 +1589,29 @@ mod tests {
                 args: args.clone(),
             };
             assert!(app.commands.check(&inv).is_ok(), "{name} {args}");
+        }
+        // Every form names arguments its command takes, and the commands
+        // that keep a key are declared so.
+        for spec in app.commands.list() {
+            for form in &spec.forms {
+                let inv = Invocation {
+                    name: spec.name.clone(),
+                    args: form.args.clone(),
+                };
+                assert!(
+                    app.commands.check(&inv).is_ok(),
+                    "{} {}: {}",
+                    spec.name,
+                    form.args,
+                    form.title
+                );
+            }
+        }
+        for name in super::KEEP_A_KEY {
+            assert!(
+                app.commands.get(name).is_some_and(|spec| spec.keeps_a_key),
+                "{name}"
+            );
         }
         let wrong = Invocation::with_args("ui.sort", &serde_json::json!({ "key": "type" }));
         assert!(matches!(

@@ -91,3 +91,38 @@ fn a_new_folder_name_cannot_leave_the_folder() {
         assert!(app.dispatch(&inv).is_err(), "{name:?} accepted");
     }
 }
+
+/// A command run with arguments is called by their form, else by its own
+/// title with the arguments said after it: two ways to run one command
+/// never read alike (ADR-024).
+#[test]
+fn a_command_is_called_by_the_form_of_its_arguments() {
+    use skwir_core::command::Form;
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let declared = app.commands.register::<serde_json::Value, _>(
+        "sorter",
+        "sorter.sort",
+        "Sort",
+        "",
+        |_, _| Ok(Outcome::Done),
+    );
+    declared.forms([Form::new(
+        serde_json::json!({"key": "size"}),
+        "Sort by size",
+    )]);
+    declared.keeps_a_key();
+    declared.reads();
+    let spec = app.commands.get("sorter.sort").unwrap();
+    assert!(spec.keeps_a_key);
+    assert_eq!(
+        spec.title_for(&serde_json::json!({"key": "size"})),
+        "Sort by size"
+    );
+    assert_eq!(spec.title_for(&serde_json::json!({})), "Sort");
+    assert_eq!(spec.title_for(&serde_json::Value::Null), "Sort");
+    assert_eq!(
+        spec.title_for(&serde_json::json!({"key": "name"})),
+        "Sort (key name)"
+    );
+}

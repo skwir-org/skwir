@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{App, NotifyLevel};
-use crate::command::{Invocation, Outcome};
+use crate::command::{Form, Invocation, Outcome};
 use crate::entry::EntryId;
 use crate::location::{Location, SortSpec};
 use crate::os_path::PathArg;
@@ -745,7 +745,7 @@ pub(crate) fn register(app: &App) {
     )
     .shows();
 
-    c.register::<SelectTabArgs, _>(
+    let select = c.register::<SelectTabArgs, _>(
         "core",
         "tab.select",
         "Show tab",
@@ -762,10 +762,28 @@ pub(crate) fn register(app: &App) {
             app.select_tab(tab)?;
             Ok(Outcome::Done)
         },
-    )
-    .shows();
+    );
+    select.forms(
+        [
+            (serde_json::json!({ "delta": 1 }), "Next tab".to_owned()),
+            (
+                serde_json::json!({ "delta": -1 }),
+                "Previous tab".to_owned(),
+            ),
+            (serde_json::json!({ "index": -1 }), "Last tab".to_owned()),
+        ]
+        .into_iter()
+        .chain((0..9).map(|index| {
+            (
+                serde_json::json!({ "index": index }),
+                format!("Tab {}", index + 1),
+            )
+        }))
+        .map(|(args, title)| Form::new(args, title)),
+    );
+    select.shows();
 
-    c.register::<MoveTabArgs, _>(
+    let moving = c.register::<MoveTabArgs, _>(
         "core",
         "tab.move",
         "Move tab",
@@ -791,8 +809,12 @@ pub(crate) fn register(app: &App) {
             app.wake();
             Ok(Outcome::Done)
         },
-    )
-    .shows();
+    );
+    moving.forms([
+        Form::new(serde_json::json!({ "delta": -1 }), "Move the tab left"),
+        Form::new(serde_json::json!({ "delta": 1 }), "Move the tab right"),
+    ]);
+    moving.shows();
 
     c.register::<crate::command::NoArgs, _>(
         "core",

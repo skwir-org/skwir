@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cache::Cache;
 use crate::cancel::CancelToken;
-use crate::command::{CommandRegistry, Invocation, NoArgs, Outcome};
+use crate::command::{CommandRegistry, Form, Invocation, NoArgs, Outcome};
 use crate::entry::{Entry, EntryId};
 use crate::fs::PathProvider;
 use crate::location::{Location, LocationProvider, OpenContext, OpenLocation, Waker};
@@ -1967,7 +1967,7 @@ mod builtin {
         )
         .shows();
 
-        c.register::<SortArgs, _>(
+        let sort = c.register::<SortArgs, _>(
             "core",
             "sort",
             "Sort",
@@ -1999,8 +1999,9 @@ mod builtin {
                 }
                 Ok(Outcome::Done)
             },
-        )
-        .shows();
+        );
+        sort.forms(sort_forms());
+        sort.shows();
 
         c.register::<FilterArgs, _>(
             "core",
@@ -2095,7 +2096,7 @@ mod builtin {
         )
         .shows();
 
-        c.register::<SweepArgs, _>(
+        let sweep = c.register::<SweepArgs, _>(
             "core",
             "select_sweep",
             "Select as the cursor moves",
@@ -2110,8 +2111,12 @@ mod builtin {
                 p.selection.sweep_start(a.unset, &order);
                 Ok(Outcome::Done)
             },
-        )
-        .shows();
+        );
+        sweep.forms([Form::new(
+            serde_json::json!({ "unset": true }),
+            "Deselect as the cursor moves",
+        )]);
+        sweep.shows();
 
         c.register::<PaneArg, _>(
             "core",
@@ -2513,6 +2518,36 @@ mod builtin {
         )
         .reads();
     }
+}
+
+/// `sort`'s forms: each key, each way, in words (ADR-024).
+fn sort_forms() -> Vec<Form> {
+    const KEYS: [(&str, &str, &str, &str); 5] = [
+        ("name", "name", "A to Z", "Z to A"),
+        ("size", "size", "smallest first", "largest first"),
+        ("modified", "date modified", "oldest first", "newest first"),
+        ("rating", "rating", "lowest first", "highest first"),
+        ("deleted", "date deleted", "oldest first", "newest first"),
+    ];
+    let mut forms = vec![
+        Form::new(serde_json::json!({ "ascending": true }), "Sort ascending"),
+        Form::new(serde_json::json!({ "ascending": false }), "Sort descending"),
+    ];
+    for (key, words, up, down) in KEYS {
+        forms.push(Form::new(
+            serde_json::json!({ "key": key }),
+            format!("Sort by {words}"),
+        ));
+        forms.push(Form::new(
+            serde_json::json!({ "key": key, "ascending": true }),
+            format!("Sort by {words}, {up}"),
+        ));
+        forms.push(Form::new(
+            serde_json::json!({ "key": key, "ascending": false }),
+            format!("Sort by {words}, {down}"),
+        ));
+    }
+    forms
 }
 
 #[cfg(test)]

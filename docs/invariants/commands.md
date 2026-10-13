@@ -15,12 +15,23 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   to them.
 - Every command is checked before it runs (`CommandRegistry::check`): an
   unknown name or an argument the command does not take is refused, never
-  guessed. A user's shortcut is checked against the declarations when
-  saved.
+  guessed. A user's shortcut is checked against the declarations when a
+  save adds or changes it; one stored unchanged whose command nothing
+  registers waits for its plugin, bound to nothing (ADR-024).
+- **Forms (ADR-024).** Arguments that make a command one thing to do are
+  declared with its title (`Declared::forms`: `sort {"key": "size"}` is
+  Sort by size), and every list of actions calls it so
+  (`keymap::title`). A key that runs a command with arguments has a form
+  for them, where the command is declared;
+  `crates/skwir/tests/keymap_titles.rs` holds it for every built-in key
+  and that no place lists two actions under one title. Only a title
+  naming what an argument names elsewhere (a folder, a view, a choice's
+  own title) is worked out instead.
 - A new `ui.*` command is declared in `commands.rs`; the test of the
-  declarations covers its keys and palette entries. The palette offers
-  the shell's commands as `UI_COMMANDS` lists them, each with the
-  arguments that make it one thing to do.
+  declarations covers its keys, forms and palette entries. The palette
+  offers the shell's commands as `UI_COMMANDS` lists them, each with the
+  arguments that make it one thing to do; those and the keys' own
+  (`KEY_FORMS`) are the commands' forms.
 - A `ui.*` command dispatched from elsewhere (an agent, a script) waits
   for the window (`App::request_front`).
 - Mutating commands return a `Plan` ([operations.md](operations.md)). No
