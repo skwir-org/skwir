@@ -478,8 +478,7 @@ is still to come are in `docs/preview-frame.md`.
   - Each group's heading folds it (`ui.properties_fold`), remembered by
     title for every file (`properties::Folds`); Checksums and Volume ship
     folded. A folded group says its gist on its heading (`Group::gist`:
-    the drive and its free room). The mode is said on Permissions'
-    heading (`Show::Heading`), its Change… beside it.
+    the drive and its free room).
   - A row's links (Change…, Edit…, Copy) show while the pointer is on
     it, over the end of its last line: hidden, they take no room, and
     nothing moves when they show. Those that are all a row says (Count,
@@ -520,9 +519,8 @@ is still to come are in `docs/preview-frame.md`.
   entry and for a selection): owner, group, each class's level in words
   (a file's read and write, a folder's List items only, Open items,
   Create and delete items), who can run a file, the mode as chmod writes
-  it (`users::mode`, `ls`'s letters, on Permissions' heading) and what
-  its special bits do; for a selection, in a Permissions group of their
-  own after Selection's. Each
+  it (`users::mode`, `ls`'s letters) and what its special bits do; for a
+  selection, in a Permissions group of their own after Selection's. Each
   change is a `set_access` through `ui.choose` (a folder's switch adds
   `inside`; its levels use `X`) or `ui.ask` (the mode), on the entry by
   `EntryRef` or on the pane's selection by `pane`. Nothing is offered to

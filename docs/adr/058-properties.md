@@ -77,8 +77,7 @@ Status: accepted, 2026-10-13. Built.
    that; the edge between them is dragged, each way apart, and a double
    click puts it back to half. Each group folds from its heading, and
    stays folded for every file; Checksums and Volume ship folded, the
-   drive's heading still naming it and its free room. The mode goes on
-   Permissions' heading, which the rows under it say in words. A row's
+   drive's heading still naming it and its free room. A row's
    links show while the pointer is on it, over the end of its last line,
    taking no room otherwise, except those that are all the row says
    (Count, Compute, Add… to no tags or no comment) or that stop or start

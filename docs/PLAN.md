@@ -733,15 +733,16 @@ macOS' code (compiled and linted only).
 Then made compact (ADR-058 decision 7): over a preview at most half the
 room, above it or beside it in a room wider than tall, the edge between
 them dragged; groups folded from their headings and remembered
-(Checksums and Volume ship folded, the drive's gist on its heading); the
-mode on Permissions' heading; a row's links under the pointer only,
+(Checksums and Volume ship folded, the drive's gist on its heading); a
+row's links under the pointer only,
 over its last line, but for Count, Compute, Add… on nothing, Stop and
 Count again. Checked on Xvfb: half the room over a picture, dragged to
 three quarters and kept across a restart; beside the preview with the
 panel at the bottom, dragged, and back to half on a double click; a
 folder still filling the panel; Checksums unfolded and remembered,
-Compute shown, Copy and Compare over a digest's last line; Change… on
-Permissions' heading under the pointer. A first try wrapped the value
+Compute shown, Copy and Compare over a digest's last line. The mode, put
+on Permissions' heading at first, went back among its rows: it looked out
+of place there. A first try wrapped the value
 and its links in one line that wraps: short values were laid out a
 letter per line until the value grew into its line.
 

@@ -51,9 +51,6 @@ pub enum Show {
     Count {
         selection: bool,
     },
-    /// On its group's heading, at its right, folded or not: the mode beside
-    /// Permissions, which the rows under it say in words.
-    Heading,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -456,10 +453,7 @@ pub fn entry_groups(
             rows.push(Row::new("Group", group_named(gid)));
         }
         if let Some(mode) = uint(keys::MODE) {
-            rows.push(Row {
-                show: Show::Heading,
-                ..Row::new("Access", skwir_platform::users::mode(mode))
-            });
+            rows.push(Row::new("Access", skwir_platform::users::mode(mode)));
         }
         rows
     };
@@ -951,13 +945,10 @@ pub fn access_rows(
     }
 
     let mode = shared(&|s| s.mode);
-    let mut access = Row {
-        show: Show::Heading,
-        ..Row::new(
-            "Access",
-            mode.map_or_else(mixed, skwir_platform::users::mode),
-        )
-    };
+    let mut access = Row::new(
+        "Access",
+        mode.map_or_else(mixed, skwir_platform::users::mode),
+    );
     if editable {
         let mut ask = serde_json::json!({
             "title": format!("Access of {}", targets.named(count)),
@@ -1268,10 +1259,8 @@ pub fn room(shell: &Shell, wide: bool) -> Room {
     }
 }
 
-/// What a row's or a heading's links are a group of: the pointer on it
-/// shows them.
+/// What a row's links are a group of: the pointer on the row shows them.
 const ROW: &str = "properties-row";
-const HEADING: &str = "properties-heading";
 
 /// The section: right under the header's card (`preview::under_card` puts
 /// it there, and nothing else draws it), in the `room` it is given. Opened
@@ -1392,18 +1381,12 @@ pub fn render(
         .px_3()
         .pb_3()
         .text_xs();
-    for (g, mut group) in groups.into_iter().enumerate() {
+    for (g, group) in groups.into_iter().enumerate() {
         let folded = preview.properties_folds.folded(&group.title);
-        let said = group
-            .rows
-            .iter()
-            .position(|row| row.show == Show::Heading)
-            .map(|at| group.rows.remove(at));
         list = list.child(heading(
             g,
             &group.title,
             folded,
-            said,
             group.gist.filter(|_| folded),
             theme,
             cx,
@@ -1438,51 +1421,24 @@ pub fn render(
 
 /// A group's heading: a heading, not one more label (in the text's own
 /// color and weight where the labels are muted), ruled off from the group
-/// above it; a click folds the group or unfolds it. At its right, the row
-/// it says (`Show::Heading`) with its links, or while folded its gist.
+/// above it; a click folds the group or unfolds it. While folded, its
+/// gist at its right.
 fn heading(
     g: usize,
     title: &SharedString,
     folded: bool,
-    said: Option<Row>,
     gist: Option<SharedString>,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> gpui::Div {
-    let aside = if let Some(row) = said {
-        let shown = row.links_shown();
-        Some(
-            div()
-                .ml_auto()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .gap_x_3()
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(theme.text_muted)
-                        .child(row.value),
-                )
-                // Laid out while hidden: the heading has room for them,
-                // and the mode stays where it is when they show.
-                .children(links(row.actions, g * 1000 + 999, theme, cx).map(|links| {
-                    links.when(!shown, |d| {
-                        d.invisible().group_hover(HEADING, gpui::Styled::visible)
-                    })
-                })),
-        )
-    } else {
-        gist.map(|gist| {
-            div()
-                .ml_auto()
-                .min_w_0()
-                .truncate()
-                .text_color(theme.text_muted)
-                .child(gist)
-        })
-    };
+    let gist = gist.map(|gist| {
+        div()
+            .ml_auto()
+            .min_w_0()
+            .truncate()
+            .text_color(theme.text_muted)
+            .child(gist)
+    });
     let fold = title.clone();
     div()
         .when(g == 0, gpui::Styled::pt_2)
@@ -1492,7 +1448,6 @@ fn heading(
         .child(
             div()
                 .id(("properties-heading", g))
-                .group(HEADING)
                 .flex()
                 .items_center()
                 .gap_1()
@@ -1526,7 +1481,7 @@ fn heading(
                                 .child(title.clone()),
                         ),
                 )
-                .children(aside),
+                .children(gist),
         )
 }
 
@@ -1573,7 +1528,7 @@ fn row_element(
     let (label, value) = (row.label.clone(), row.value.clone());
     let shown = row.links_shown();
     let said = match &row.show {
-        Show::Text | Show::Heading => {
+        Show::Text => {
             (!row.value.is_empty()).then(|| div().child(row.value.clone()).into_any_element())
         }
         Show::Tags { tags, given } => (!tags.is_empty())
@@ -2027,8 +1982,7 @@ mod tests {
         assert!(shown(&none, "Comment"), "Add… to no comment");
         assert!(!shown(&none, "Owner can"), "Change… shows with the pointer");
         assert!(!shown(&none, "Can run"), "Allow running too");
-        let access = none.iter().find(|r| r.label == "Access").unwrap();
-        assert_eq!(access.show, Show::Heading, "on Permissions' heading");
+        assert!(!shown(&none, "Access"), "nor the mode's");
         file.metadata.set(
             keys::COMMENT,
             Value::Text("a draft".into()),
@@ -2085,9 +2039,7 @@ mod tests {
         assert_eq!(find(&groups, "Selected").value, "2 items");
         assert_eq!(find(&groups, "Total size").value, "2.0 KB");
         assert_eq!(find(&groups, "Owner can").value, "Read and write");
-        let access = find(&groups, "Access");
-        assert_eq!(access.value, "Mixed");
-        assert_eq!(access.show, Show::Heading, "on Permissions' heading");
+        assert_eq!(find(&groups, "Access").value, "Mixed");
         let run = find(&groups, "Can run");
         assert_eq!(run.value, "Mixed");
         assert_eq!(run.actions[0].0.as_ref(), "Allow running");
