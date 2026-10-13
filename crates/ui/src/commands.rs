@@ -354,6 +354,10 @@ mod args {
         /// The part of `text` selected at first, `[start, end]` in bytes.
         #[serde(default)]
         select: Option<[usize; 2]>,
+        /// The verb on the button that answers (Rename, Create); OK when
+        /// absent.
+        #[serde(default)]
+        accept: Option<String>,
         /// What runs with the answer.
         command: String,
         #[serde(default)]

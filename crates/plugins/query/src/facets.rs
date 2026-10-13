@@ -385,6 +385,7 @@ fn ask(facet: &str, title: &str, placeholder: &str, text: &str) -> Invocation {
         "ui.ask",
         &serde_json::json!({
             "title": title,
+            "accept": "Search",
             "placeholder": placeholder,
             "text": text,
             "command": "query.refine",

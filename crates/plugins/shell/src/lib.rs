@@ -266,6 +266,7 @@ impl Plugin for ShellPlugin {
                     "ui.ask",
                     &serde_json::json!({
                         "title": "Run command on selection",
+                        "accept": "Run",
                         "placeholder": "Command; the selected paths are its arguments",
                         "command": "shell.run",
                         "field": "command",

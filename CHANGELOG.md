@@ -30,6 +30,9 @@
   access. It names the application a file opens with, and changes it,
   and gives its SHA-256, MD5 and BLAKE3 when asked (the checksums
   plugin), compared with one copied.
+- **Dialogs that ask for text** (Rename, New folder, Rename several, a
+  comment, a passphrase) end with Cancel and their verb, as the others
+  did: a click answers them as Enter and Escape do.
 - **Who may use a file** changes from Properties: each class's access in
   words, Allow running, the group, or the mode as chmod takes it, a
   folder's contents too, undoable. Scripts and agents use `set_access`.

@@ -396,6 +396,7 @@ fn place(search: SavedQuery) -> Place {
         "ui.ask",
         &serde_json::json!({
             "title": "Rename saved search",
+            "accept": "Rename",
             "placeholder": "Name (empty: made from the search)",
             "text": search.name,
             "command": "query.rename",
@@ -411,6 +412,7 @@ fn place(search: SavedQuery) -> Place {
             "ui.ask",
             &serde_json::json!({
                 "title": "Edit saved search",
+                "accept": "Save",
                 "placeholder": "kind:document modified:this-week *.pdf  (in: picks the root)",
                 "text": search.expr,
                 "command": "query.edit",

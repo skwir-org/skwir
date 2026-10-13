@@ -38,11 +38,26 @@ pub enum PromptKind {
     Ask,
 }
 
+impl PromptKind {
+    /// What its answer does, on the button Enter presses (`ui.ask` names
+    /// its own).
+    fn accept(self) -> &'static str {
+        match self {
+            PromptKind::Passphrase => "Unlock",
+            PromptKind::Find { .. } => "Find",
+            PromptKind::InspectJump { .. } => "Go",
+            PromptKind::Ask => "OK",
+        }
+    }
+}
+
 /// What `ui.ask` runs with the answer: `command`, its `field` set to the
 /// text. A plugin asks for a name without the shell knowing its command.
 pub struct Ask {
     pub command: Invocation,
     pub field: String,
+    /// The button's verb (Rename, Create), OK when the asker named none.
+    pub accept: Option<String>,
 }
 
 pub struct PromptState {
@@ -50,6 +65,10 @@ pub struct PromptState {
     pub kind: PromptKind,
     pub input: Entity<TextInput>,
     ask: Option<Ask>,
+    /// The answer's button: its verb and its focus, beside Cancel's.
+    accept: String,
+    accept_focus: FocusHandle,
+    cancel_focus: FocusHandle,
     back: FocusReturn,
     _sub: Subscription,
 }
@@ -93,12 +112,13 @@ impl Shell {
         self.open_prompt_with(kind, title, placeholder, initial, select, None, window, cx);
     }
 
-    /// `ui.ask { title, text?, placeholder?, select?, command, args?,
-    /// field }`: ask for a line of text and run `command` with it as
+    /// `ui.ask { title, text?, placeholder?, select?, accept?, command,
+    /// args?, field }`: ask for a line of text and run `command` with it as
     /// `args[field]`. `select` is the part of `text` selected at first
-    /// (`[start, end]` in bytes: a name's stem), all of it when absent. The
-    /// one question of a line of text, the shell's own (Rename, New
-    /// folder) as a plugin's.
+    /// (`[start, end]` in bytes: a name's stem), all of it when absent;
+    /// `accept` is the verb on the button that answers (Rename), OK when
+    /// absent. The one question of a line of text, the shell's own (Rename,
+    /// New folder) as a plugin's.
     pub fn open_ask(
         &mut self,
         args: &serde_json::Value,
@@ -125,6 +145,7 @@ impl Shell {
         let ask = Ask {
             command,
             field: field.to_owned(),
+            accept: text("accept").map(str::to_owned),
         };
         self.open_prompt_with(
             PromptKind::Ask,
@@ -151,6 +172,10 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let placeholder = placeholder.to_owned();
+        let accept = ask
+            .as_ref()
+            .and_then(|a| a.accept.clone())
+            .unwrap_or_else(|| kind.accept().to_owned());
         let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
         input.update(cx, |i, cx| {
@@ -165,29 +190,8 @@ impl Shell {
             &input,
             window,
             |this, input, ev: &InputEvent, window, cx| match ev {
-                InputEvent::Submit => {
-                    let kind = this.prompt.as_ref().map(|p| p.kind);
-                    let ask = this.prompt.as_mut().and_then(|p| p.ask.take());
-                    // Spaces can be part of a passphrase.
-                    let text = if kind == Some(PromptKind::Passphrase) {
-                        input.read(cx).text().to_owned()
-                    } else {
-                        input.read(cx).text().trim().to_owned()
-                    };
-                    this.close_prompt(window, cx);
-                    if let Some(Ask { command, field }) = ask {
-                        let mut args = command.args;
-                        args[field.as_str()] = serde_json::json!(text);
-                        this.run(&command.name, args, window, cx);
-                    } else if let Some(kind) = kind {
-                        this.prompt_submitted(kind, text, window, cx);
-                    }
-                    cx.notify();
-                }
-                InputEvent::Cancel => {
-                    this.unlock = None;
-                    this.close_prompt(window, cx);
-                }
+                InputEvent::Submit => this.prompt_answer(window, cx),
+                InputEvent::Cancel => this.prompt_cancel(window, cx),
                 InputEvent::Changed => {
                     if let Some(PromptKind::Find { origin, backward }) =
                         this.prompt.as_ref().map(|p| p.kind)
@@ -206,10 +210,43 @@ impl Shell {
             kind,
             input,
             ask,
+            accept,
+            accept_focus: cx.focus_handle(),
+            cancel_focus: cx.focus_handle(),
             back,
             _sub: sub,
         });
         cx.notify();
+    }
+
+    /// Answer the prompt with its text: Enter, or its button.
+    fn prompt_answer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(prompt) = self.prompt.as_mut() else {
+            return;
+        };
+        let (kind, ask) = (prompt.kind, prompt.ask.take());
+        let text = prompt.input.read(cx).text();
+        // Spaces can be part of a passphrase.
+        let text = if kind == PromptKind::Passphrase {
+            text.to_owned()
+        } else {
+            text.trim().to_owned()
+        };
+        self.close_prompt(window, cx);
+        if let Some(Ask { command, field, .. }) = ask {
+            let mut args = command.args;
+            args[field.as_str()] = serde_json::json!(text);
+            self.run(&command.name, args, window, cx);
+        } else {
+            self.prompt_submitted(kind, text, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Close the prompt unanswered: Escape, Cancel, or a press outside.
+    fn prompt_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.unlock = None;
+        self.close_prompt(window, cx);
     }
 
     /// Close the prompt and give the keyboard back to what had it.
@@ -332,20 +369,35 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
                 .bg(theme.bg)
                 .child(p.input.clone()),
         )
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child("Enter to confirm, Escape to cancel"),
-        );
+        .child(modal::footer(
+            "Enter to confirm, Escape to cancel",
+            [
+                controls::button(
+                    "prompt-cancel",
+                    "Cancel",
+                    None,
+                    ButtonStyle::Plain,
+                    &p.cancel_focus,
+                    &theme,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.prompt_cancel(window, cx))),
+                controls::button(
+                    "prompt-accept",
+                    p.accept.clone(),
+                    Some("check"),
+                    ButtonStyle::Plain,
+                    &p.accept_focus,
+                    &theme,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.prompt_answer(window, cx))),
+            ],
+            &theme,
+        ));
     Some(modal::modal(
         panel,
         120.,
         3,
-        |this, window, cx| {
-            this.unlock = None;
-            this.close_prompt(window, cx);
-        },
+        Shell::prompt_cancel,
         &theme,
         cx,
     ))
@@ -355,8 +407,8 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
     let c = shell.confirm.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let (yes, icon) = match c.then {
-        Confirmed::Apply(_) => ("Delete (Enter)", Some("trash")),
-        Confirmed::Quit => ("Quit (Enter)", None),
+        Confirmed::Apply(_) => ("Delete", Some("trash")),
+        Confirmed::Quit => ("Quit", None),
     };
     let panel = modal::panel(560., &theme)
         .p_3()
@@ -364,38 +416,30 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
         .track_focus(&c.focus)
         .key_context(keymap::CONFIRM)
         .child(div().child(c.message.clone()))
-        .child(
-            div()
-                .flex()
-                .gap_2()
-                .justify_end()
-                .child(
-                    controls::button(
-                        "confirm-no",
-                        "Cancel (Esc)",
-                        None,
-                        ButtonStyle::Plain,
-                        &c.cancel,
-                        &theme,
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.confirm_dismiss(window, cx);
-                    })),
+        .child(modal::footer(
+            "Enter to confirm, Escape to cancel",
+            [
+                controls::button(
+                    "confirm-no",
+                    "Cancel",
+                    None,
+                    ButtonStyle::Plain,
+                    &c.cancel,
+                    &theme,
                 )
-                .child(
-                    controls::button(
-                        "confirm-yes",
-                        yes,
-                        icon,
-                        ButtonStyle::Danger,
-                        &c.accept,
-                        &theme,
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.confirm_accept(window, cx);
-                    })),
-                ),
-        );
+                .on_click(cx.listener(|this, _, window, cx| this.confirm_dismiss(window, cx))),
+                controls::button(
+                    "confirm-yes",
+                    yes,
+                    icon,
+                    ButtonStyle::Danger,
+                    &c.accept,
+                    &theme,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.confirm_accept(window, cx))),
+            ],
+            &theme,
+        ));
     Some(modal::modal(
         panel,
         120.,

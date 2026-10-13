@@ -490,42 +490,30 @@ pub fn render(
         .child(heads)
         .child(div().h(px(1.)).bg(theme.border))
         .child(list)
-        .child(
-            div()
-                .flex()
-                .gap_2()
-                .justify_end()
-                .items_center()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .flex_1()
-                        .child("↑↓ a row, ←→ its choice · Enter goes on, Escape cancels"),
+        .child(modal::footer(
+            "↑↓ a row, ←→ its choice · Enter goes on, Escape cancels",
+            [
+                controls::button(
+                    "review-cancel",
+                    "Cancel",
+                    None,
+                    ButtonStyle::Plain,
+                    &handles.cancel,
+                    &theme,
                 )
-                .child(
-                    controls::button(
-                        "review-cancel",
-                        "Cancel",
-                        None,
-                        ButtonStyle::Plain,
-                        &handles.cancel,
-                        &theme,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.review_cancel(cx))),
+                .on_click(cx.listener(|this, _, _, cx| this.review_cancel(cx))),
+                controls::button(
+                    "review-apply",
+                    verb,
+                    Some("check"),
+                    ButtonStyle::Plain,
+                    &handles.apply,
+                    &theme,
                 )
-                .child(
-                    controls::button(
-                        "review-apply",
-                        verb,
-                        Some("check"),
-                        ButtonStyle::Plain,
-                        &handles.apply,
-                        &theme,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.review_apply(cx))),
-                ),
-        );
+                .on_click(cx.listener(|this, _, _, cx| this.review_apply(cx))),
+            ],
+            &theme,
+        ));
     modal::modal(panel, 80., 6, |_, _, _| {}, &theme, cx)
 }
 

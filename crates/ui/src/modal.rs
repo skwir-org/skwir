@@ -1,6 +1,6 @@
 //! What every dialog and popup shares: where the keyboard goes back to when
-//! it closes, the dimmed backdrop and panel of a modal dialog, and the
-//! window of rows a long picker list shows.
+//! it closes, the dimmed backdrop, panel and buttons of a modal dialog, and
+//! the window of rows a long picker list shows.
 
 use gpui::{AnyElement, App, Context, Div, FocusHandle, MouseButton, Window, deferred, div};
 use gpui::{prelude::*, px};
@@ -92,6 +92,29 @@ pub fn panel(width: f32, theme: &Theme) -> Div {
         .border_color(theme.border)
         .bg(theme.surface)
         .shadow_lg()
+}
+
+/// The end of a dialog that waits for an answer: what its keys do, muted,
+/// then its buttons, Cancel first and the answer last, named by its verb
+/// (Rename, Unlock, Delete). Every answer the keys give, a click gives.
+pub fn footer(
+    hint: impl Into<gpui::SharedString>,
+    buttons: impl IntoIterator<Item = gpui::Stateful<Div>>,
+    theme: &Theme,
+) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .child(hint.into()),
+        )
+        .children(buttons)
 }
 
 /// Rows a picker (the palette, Jump) shows at once.

@@ -56,6 +56,7 @@ fn rename(tag: &str) -> Invocation {
         "ui.ask",
         &serde_json::json!({
             "title": format!("Rename the tag “{tag}” on every file"),
+            "accept": "Rename",
             "placeholder": "New name (an existing tag's merges them)",
             "text": tag,
             "command": "tags.rename",

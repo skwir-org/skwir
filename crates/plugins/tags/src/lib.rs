@@ -403,6 +403,7 @@ fn remembered_comment(app: &App, pane: PaneId) -> Option<String> {
 fn ask_comment(text: Option<&str>) -> Invocation {
     let mut args = serde_json::json!({
         "title": "Comment",
+        "accept": "Save",
         "placeholder": "A comment on the selection (empty removes it)",
         "command": "notes.comment",
         "field": "text",

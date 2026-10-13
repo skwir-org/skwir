@@ -277,11 +277,18 @@ impl Address {
     pub fn verbs(&self) -> Verbs {
         let location = self.location().to_string();
         let here = self.tag.as_deref();
-        let ask = |title: String, placeholder: &str, text: &str, command: &str, args, field| {
+        let ask = |title: String,
+                   accept: &str,
+                   placeholder: &str,
+                   text: &str,
+                   command: &str,
+                   args,
+                   field| {
             Invocation::with_args(
                 "ui.ask",
                 &serde_json::json!({
                     "title": title,
+                    "accept": accept,
                     "placeholder": placeholder,
                     "text": text,
                     "command": command,
@@ -317,6 +324,7 @@ impl Address {
                         Some(tag) => format!("New tag in “{}”", tag_leaf(tag)),
                         None => "New tag".into(),
                     },
+                    "Create",
                     "Name",
                     "",
                     "tags.new",
@@ -329,6 +337,7 @@ impl Address {
                     "Rename Tag…",
                     ask(
                         format!("Rename the tag “{tag}” on every file"),
+                        "Rename",
                         "New name (an existing tag's merges them)",
                         tag,
                         "tags.rename",

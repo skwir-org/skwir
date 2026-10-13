@@ -346,43 +346,31 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             d.child(div().text_xs().text_color(theme.text_muted).child(note))
         })
         .child(list)
-        .child(
-            div()
-                .flex()
-                .gap_2()
-                .justify_end()
-                .items_center()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .flex_1()
-                        .child(hint),
+        .child(modal::footer(
+            hint,
+            [
+                controls::button(
+                    "review-cancel",
+                    refuse,
+                    None,
+                    ButtonStyle::Plain,
+                    &cancel_focus,
+                    &theme,
                 )
-                .child(
-                    controls::button(
-                        "review-cancel",
-                        refuse,
-                        None,
-                        ButtonStyle::Plain,
-                        &cancel_focus,
-                        &theme,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.review_cancel(cx))),
+                .on_click(cx.listener(|this, _, _, cx| this.review_cancel(cx))),
+                controls::button(
+                    "review-apply",
+                    allow,
+                    Some("check"),
+                    ButtonStyle::Plain,
+                    &apply_focus,
+                    &theme,
                 )
-                .child(
-                    controls::button(
-                        "review-apply",
-                        allow,
-                        Some("check"),
-                        ButtonStyle::Plain,
-                        &apply_focus,
-                        &theme,
-                    )
-                    .when(applicable != Some(true), |d| d.opacity(0.5))
-                    .on_click(cx.listener(|this, _, _, cx| this.review_apply(cx))),
-                ),
-        );
+                .when(applicable != Some(true), |d| d.opacity(0.5))
+                .on_click(cx.listener(|this, _, _, cx| this.review_apply(cx))),
+            ],
+            &theme,
+        ));
     // Neither a press outside nor Escape on another dialog discards a
     // proposal: only its own buttons and keys answer it.
     Some(modal::modal(panel, 80., 6, |_, _, _| {}, &theme, cx))

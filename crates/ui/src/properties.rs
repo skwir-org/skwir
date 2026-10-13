@@ -309,6 +309,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
     let comment = text(keys::COMMENT);
     let mut ask = serde_json::json!({
         "title": "Comment",
+        "accept": "Save",
         "placeholder": "A comment on this item (empty removes it)",
         "command": "notes.comment",
         "field": "text",
@@ -952,6 +953,7 @@ pub fn access_rows(
     if editable {
         let mut ask = serde_json::json!({
             "title": format!("Access of {}", targets.named(count)),
+            "accept": "Change",
             "placeholder": "As chmod takes it: 644, u+x, go-w, a=rX",
             "command": "set_access",
             "field": "mode",

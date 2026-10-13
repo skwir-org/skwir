@@ -878,23 +878,9 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .child("No tags yet: type one and press Enter"),
         );
     }
-    let footer = div()
-        .px_3()
-        .py_2()
-        .flex()
-        .items_center()
-        .gap_2()
-        .border_t_1()
-        .border_color(theme.border)
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child("Enter on an empty field applies"),
-        )
-        .child(
+    let footer = modal::footer(
+        "Enter on an empty field applies",
+        [
             controls::button(
                 "tags-cancel",
                 "Cancel",
@@ -904,8 +890,6 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 &theme,
             )
             .on_click(cx.listener(|this, _, window, cx| this.close_tag_editor(window, cx))),
-        )
-        .child(
             controls::button(
                 "tags-apply",
                 "Apply",
@@ -921,7 +905,13 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 })
             })
             .on_click(cx.listener(|this, _, window, cx| this.tag_editor_apply(window, cx))),
-        );
+        ],
+        &theme,
+    )
+    .px_3()
+    .py_2()
+    .border_t_1()
+    .border_color(theme.border);
     let panel = modal::panel(440., &theme)
         .key_context(keymap::TAG_EDITOR)
         .child(

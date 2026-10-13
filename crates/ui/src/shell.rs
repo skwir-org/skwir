@@ -1717,6 +1717,7 @@ impl Shell {
                         let pane = self.pane;
                         let ask = serde_json::json!({
                             "title": "Rename",
+                            "accept": "Rename",
                             "placeholder": "New name",
                             "text": name,
                             "select": [0, stem],
@@ -1733,6 +1734,7 @@ impl Shell {
                 let pane = self.pane;
                 let ask = serde_json::json!({
                     "title": "New file",
+                    "accept": "Create",
                     "placeholder": "File name, or a folder name ending in /",
                     "command": "new_file",
                     "args": { "pane": pane },
@@ -1781,6 +1783,7 @@ impl Shell {
                 let pane = self.pane;
                 let ask = serde_json::json!({
                     "title": "New folder",
+                    "accept": "Create",
                     "placeholder": "Folder name",
                     "command": "mkdir",
                     "args": { "pane": pane },

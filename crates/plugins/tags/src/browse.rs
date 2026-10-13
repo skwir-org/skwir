@@ -678,6 +678,7 @@ pub fn tag_items(
             "ui.ask",
             &serde_json::json!({
                 "title": "Move into a category, keeping the names",
+                "accept": "Move",
                 "placeholder": "Category (Places/France)",
                 "command": "tags.move",
                 "args": { "tags": tags, "root": root },
@@ -749,6 +750,7 @@ pub fn tag_items(
                 "ui.ask",
                 &serde_json::json!({
                     "title": "Merge these tags into one, on every file",
+                    "accept": "Merge",
                     "placeholder": "The tag they become",
                     "command": "tags.rename",
                     "args": { "tags": tags, "root": root },

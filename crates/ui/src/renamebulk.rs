@@ -1,9 +1,11 @@
 //! Bulk rename dialog: template, regex, replacement, case, start; live
-//! preview from `rename_bulk.preview`; Enter applies `rename_bulk`.
+//! preview from `rename_bulk.preview`; Enter or Rename applies
+//! `rename_bulk`.
 
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
 use skwir_core::command::{Invocation, Outcome};
 
+use crate::controls::{self, ButtonStyle};
 use crate::elements::clip::clipped;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
@@ -43,9 +45,19 @@ pub struct BulkState {
     current: bool,
     count: usize,
     back: FocusReturn,
+    cancel_focus: gpui::FocusHandle,
+    apply_focus: gpui::FocusHandle,
     /// Where the renames listed are scrolled to.
     scroll: gpui::ScrollHandle,
     _subs: Vec<Subscription>,
+}
+
+impl BulkState {
+    /// Only what the preview showed applies, and only if it showed no
+    /// error.
+    fn applies(&self) -> bool {
+        self.current && self.error.is_none()
+    }
 }
 
 impl Shell {
@@ -120,6 +132,8 @@ impl Shell {
             current: false,
             count,
             back,
+            cancel_focus: cx.focus_handle(),
+            apply_focus: cx.focus_handle(),
             scroll: gpui::ScrollHandle::new(),
             _subs: subs,
         });
@@ -223,12 +237,7 @@ impl Shell {
 
     fn bulk_apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let spec = self.bulk_spec(cx);
-        // Only what the preview showed, and only if it showed no error.
-        if self
-            .bulk
-            .as_ref()
-            .is_some_and(|b| !b.current || b.error.is_some())
-        {
+        if self.bulk.as_ref().is_some_and(|b| !b.applies()) {
             return;
         }
         self.close_bulk(window, cx);
@@ -364,11 +373,30 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         )
         .child(list)
         .children(more)
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child("Tab switches fields · Enter renames (undoable) · Escape cancels"),
-        );
+        .child(modal::footer(
+            "Tab switches fields · Enter renames (undoable) · Escape cancels",
+            [
+                controls::button(
+                    "bulk-cancel",
+                    "Cancel",
+                    None,
+                    ButtonStyle::Plain,
+                    &b.cancel_focus,
+                    &theme,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.close_bulk(window, cx))),
+                controls::button(
+                    "bulk-apply",
+                    "Rename",
+                    Some("check"),
+                    ButtonStyle::Plain,
+                    &b.apply_focus,
+                    &theme,
+                )
+                .when(!b.applies(), |d| d.opacity(0.5))
+                .on_click(cx.listener(|this, _, window, cx| this.bulk_apply(window, cx))),
+            ],
+            &theme,
+        ));
     Some(modal::modal(panel, 60., 4, Shell::close_bulk, &theme, cx))
 }

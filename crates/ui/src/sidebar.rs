@@ -1460,6 +1460,7 @@ impl Shell {
                     "ui.ask",
                     &serde_json::json!({
                         "title": format!("Rename “{}” in the sidebar", place.title),
+                        "accept": "Rename",
                         "placeholder": format!("Name (empty: “{own}”)"),
                         "text": place.title,
                         "command": PLACE_COMMAND,

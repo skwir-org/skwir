@@ -254,6 +254,7 @@ fn bookmark_rename(bookmark: &skwir_platform::places::Bookmark) -> Invocation {
         "ui.ask",
         &serde_json::json!({
             "title": "Rename bookmark",
+            "accept": "Rename",
             "placeholder": "Name (empty: the folder's own)",
             "text": bookmark.title,
             "command": "places.rename_bookmark",
