@@ -486,8 +486,17 @@ is still to come are in `docs/preview-frame.md`.
   it; a model's suggestion says so.
 - Owner and group names come from `skwir_platform::users`, loaded once
   on a worker, never read on the UI thread.
-- Properties never starts a scan: a folder says what its listing already
-  counted. A click copies a value.
+- Properties never starts a scan by itself: a folder says what its
+  listing already counted. What it holds in all is counted when asked
+  (Count, or `ui.properties`, which is the asking): `fs::count` on a
+  worker, reporting as it goes into `PreviewState::count`, cancelled when
+  Properties shows something else (its pane, its selection, its entry
+  unless several are selected) or the panel closes. A count row is drawn
+  from that state (`Show::Count`), never collected with the entry. A
+  click copies a value.
+- What the file takes on its drive, its flags (`stat::flags`) and the
+  drive it is on (the Volume group, kept a few seconds per device) are
+  read on the fields worker with the rest, for the one entry shown.
 
 ### The toolbar
 

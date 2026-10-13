@@ -92,6 +92,85 @@ pub fn allocated(meta: &std::fs::Metadata) -> u64 {
 /// A volume's usual block: what a file of a few bytes takes on it.
 pub const BLOCK: u64 = 4096;
 
+/// What the system keeps of a file beside its mode (`chattr`'s flags on
+/// Linux, `chflags`' on a Mac, Windows' attributes): what says why a
+/// delete fails, or why a file takes less room than its size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)] // independent flags of one file
+pub struct Flags {
+    /// Nothing may change, rename or delete it, its owner included.
+    pub immutable: bool,
+    /// It may only grow.
+    pub append_only: bool,
+    /// The filesystem compresses it.
+    pub compressed: bool,
+    /// The filesystem encrypts it.
+    pub encrypted: bool,
+    /// Windows' read-only attribute: what it keeps for a mode.
+    pub read_only: bool,
+}
+
+/// The [`Flags`] of what `path` leads to; none where the system says
+/// none or cannot be asked. Reads the file's metadata: on a worker.
+pub fn flags(path: &Path) -> Flags {
+    #[cfg(target_os = "linux")]
+    {
+        use rustix::fs::{AtFlags, CWD, StatxAttributes as A, StatxFlags};
+        let Ok(st) = rustix::fs::statx(CWD, path, AtFlags::empty(), StatxFlags::BASIC_STATS) else {
+            return Flags::default();
+        };
+        // A flag the filesystem does not keep is not said to be off.
+        let has = |a: A| st.stx_attributes_mask.contains(a) && st.stx_attributes.contains(a);
+        Flags {
+            immutable: has(A::IMMUTABLE),
+            append_only: has(A::APPEND),
+            compressed: has(A::COMPRESSED),
+            encrypted: has(A::ENCRYPTED),
+            read_only: false,
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::macos::fs::MetadataExt;
+        // <sys/stat.h>: the user's and the system's own of each.
+        const IMMUTABLE: u32 = 0x2 | 0x2_0000;
+        const APPEND: u32 = 0x4 | 0x4_0000;
+        const COMPRESSED: u32 = 0x20;
+        let Ok(meta) = std::fs::metadata(path) else {
+            return Flags::default();
+        };
+        let f = meta.st_flags();
+        Flags {
+            immutable: f & IMMUTABLE != 0,
+            append_only: f & APPEND != 0,
+            compressed: f & COMPRESSED != 0,
+            ..Flags::default()
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const READ_ONLY: u32 = 0x1;
+        const COMPRESSED: u32 = 0x800;
+        const ENCRYPTED: u32 = 0x4000;
+        let Ok(meta) = std::fs::metadata(path) else {
+            return Flags::default();
+        };
+        let a = meta.file_attributes();
+        Flags {
+            compressed: a & COMPRESSED != 0,
+            encrypted: a & ENCRYPTED != 0,
+            read_only: a & READ_ONLY != 0,
+            ..Flags::default()
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = path;
+        Flags::default()
+    }
+}
+
 /// The identity of the file at `path`, as [`id_of`] says it, its
 /// metadata `meta` read already: through a link when `meta` says it is
 /// no link (the file a link leads to), the link's own otherwise. Unix

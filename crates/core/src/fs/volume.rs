@@ -70,6 +70,22 @@ pub fn free(path: &Path) -> Option<u64> {
     }
 }
 
+/// Whether the volume `path` is on is mounted read-only (`statvfs`'s
+/// `ST_RDONLY`): nothing on it can change, its access included. `None`
+/// where the system is not asked yet (Windows). I/O: a worker's.
+pub fn read_only(path: &Path) -> Option<bool> {
+    #[cfg(unix)]
+    {
+        let st = rustix::fs::statvfs(path).ok()?;
+        Some(st.f_flag.contains(rustix::fs::StatVfsMountFlags::RDONLY))
+    }
+    #[cfg(windows)]
+    {
+        let _ = path;
+        None
+    }
+}
+
 /// [`is_removable`] where only Linux is read yet: never known.
 #[cfg(not(target_os = "linux"))]
 pub fn is_removable(_: &Path) -> bool {

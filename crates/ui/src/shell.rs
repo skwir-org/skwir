@@ -2026,6 +2026,7 @@ impl Shell {
             "preview_open_external" => self.preview_open_external(cx),
             "preview_copy_path" => self.preview_copy_path(cx),
             "properties" => self.properties(cx),
+            "properties_count" => self.properties_count(args, cx),
             "preview_copy" => self.preview_copy(window, cx),
             "preview_select_all" => self.preview_select_all(window, cx),
             "preview_contents" => self.preview_contents(window, cx),

@@ -13,7 +13,9 @@
 //! metadata, with its provenance, collected when the entry or its listing
 //! changes (`entry_groups`); what the preview already holds in memory (a
 //! picture's size, a document's pages, a film's length); and what the format
-//! itself told us (`Inspection::details`). Properties never starts a scan.
+//! itself told us (`Inspection::details`). Properties never starts a scan
+//! by itself: what a folder holds in all is counted when asked
+//! (`ui.properties_count`, `Show::Count`).
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 use skwir_core::command::Invocation;
@@ -40,6 +42,12 @@ pub enum Show {
     Rating {
         rating: Option<u64>,
         target: EntryRef,
+    },
+    /// What folders hold, as counted so far (`PreviewState::count`), or
+    /// the link that counts it: drawn as the rows of `count_rows`. Of the
+    /// selection, or of the entry shown, which only says it alone selected.
+    Count {
+        selection: bool,
     },
 }
 
@@ -305,21 +313,28 @@ pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: Option<&[Strin
     let time = |key| meta.value(key).and_then(Value::as_time);
 
     // The header already shows the name and the type; the exact byte count
-    // is the one general fact it rounds.
-    let general = uint(keys::SIZE)
-        .filter(|_| !entry.is_dir())
-        .map(|size| {
-            Row::new(
-                "Size",
-                format!(
-                    "{} ({} bytes)",
-                    format::size(size),
-                    format::thousands(size as usize)
-                ),
-            )
-        })
-        .into_iter()
-        .collect();
+    // is the one general fact it rounds. A folder's is what it holds,
+    // counted when asked.
+    let general = if entry.is_dir() {
+        vec![Row {
+            show: Show::Count { selection: false },
+            ..Row::new("Size", "")
+        }]
+    } else {
+        uint(keys::SIZE)
+            .map(|size| {
+                Row::new(
+                    "Size",
+                    format!(
+                        "{} ({} bytes)",
+                        format::size(size),
+                        format::thousands(size as usize)
+                    ),
+                )
+            })
+            .into_iter()
+            .collect()
+    };
 
     let mut location = Vec::new();
     // A file of the trash: where restoring it puts it back.
@@ -336,22 +351,12 @@ pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: Option<&[Strin
         location.push(Row::new("Links to", target.to_owned()));
     }
 
-    let named = |id: u64, name: Option<String>| match name {
-        Some(name) => format!("{name} ({id})"),
-        None => id.to_string(),
-    };
     let mut permissions = Vec::new();
     if let Some(uid) = uint(keys::UID) {
-        permissions.push(Row::new(
-            "Owner",
-            named(uid, skwir_platform::users::user(uid)),
-        ));
+        permissions.push(Row::new("Owner", owner_named(uid)));
     }
     if let Some(gid) = uint(keys::GID) {
-        permissions.push(Row::new(
-            "Group",
-            named(gid, skwir_platform::users::group(gid)),
-        ));
+        permissions.push(Row::new("Group", group_named(gid)));
     }
     if let Some(mode) = uint(keys::MODE) {
         permissions.push(Row::new("Access", skwir_platform::users::mode(mode)));
@@ -396,6 +401,162 @@ pub fn entry_groups(entry: &Entry, path: &std::path::Path, notes: Option<&[Strin
     ]
     .into_iter()
     .flatten()
+    .collect()
+}
+
+/// An owner by name and number, or its number alone where no name is known.
+fn owner_named(uid: u64) -> String {
+    named(uid, skwir_platform::users::user(uid))
+}
+
+/// A group by name and number, or its number alone.
+fn group_named(gid: u64) -> String {
+    named(gid, skwir_platform::users::group(gid))
+}
+
+fn named(id: u64, name: Option<String>) -> String {
+    match name {
+        Some(name) => format!("{name} ({id})"),
+        None => id.to_string(),
+    }
+}
+
+/// The Selection group, for several entries selected: how many and of
+/// which kinds, what they weigh (the files' sizes once all are known, or
+/// a count where folders are among them), and the owner, group and access
+/// they share, "Mixed" where they differ. A fact some entry does not say
+/// yet is left out. Pure, so it is tested without a window.
+pub fn selection_group(entries: &[&Entry], selected: usize, bytes: Option<u64>) -> Group {
+    let folders = entries.iter().filter(|e| e.is_dir()).count();
+    let mut rows = vec![Row::new("Selected", format::count(selected, "item"))];
+    if folders > 0 && folders < entries.len() {
+        rows.push(Row::new(
+            "Of which",
+            format!(
+                "{}, {}",
+                format::count(folders, "folder"),
+                format::count(entries.len() - folders, "file")
+            ),
+        ));
+    }
+    if folders > 0 {
+        rows.push(Row {
+            show: Show::Count { selection: true },
+            ..Row::new("Total size", "")
+        });
+    } else if let Some(bytes) = bytes {
+        rows.push(Row::new("Total size", format::size(bytes)));
+    }
+    // Shared, mixed, or unknown (None) while some entry does not say it.
+    let shared = |key: &str, bits: u64| -> Option<Option<u64>> {
+        let mut values = entries.iter().map(|e| {
+            e.metadata
+                .value(key)
+                .and_then(Value::as_u64)
+                .map(|v| v & bits)
+        });
+        let first = values.next()??;
+        let mut mixed = false;
+        for value in values {
+            mixed |= value? != first;
+        }
+        Some((!mixed).then_some(first))
+    };
+    let mixed = || "Mixed".to_owned();
+    if let Some(uid) = shared(keys::UID, u64::MAX) {
+        rows.push(Row::new("Owner", uid.map_or_else(mixed, owner_named)));
+    }
+    if let Some(gid) = shared(keys::GID, u64::MAX) {
+        rows.push(Row::new("Group", gid.map_or_else(mixed, group_named)));
+    }
+    if let Some(mode) = shared(keys::MODE, 0o7777) {
+        rows.push(Row::new(
+            "Access",
+            mode.map_or_else(mixed, skwir_platform::users::mode),
+        ));
+    }
+    Group {
+        title: "Selection".into(),
+        rows,
+    }
+}
+
+/// The rows of a count of what folders hold (`Show::Count`), labelled
+/// `label`: the link that counts, what is counted so far with the link
+/// that stops, or the total, the room it takes and how many files and
+/// folders, and what it could not count.
+pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool)>) -> Vec<Row> {
+    let again = || Invocation::new("ui.properties_count");
+    let Some((now, running)) = count else {
+        return vec![Row::new(label.to_owned(), "").action("Count", again())];
+    };
+    let size = format::size(now.size);
+    let first = if running {
+        Row::new(label.to_owned(), format!("{size} so far…")).action(
+            "Stop",
+            Invocation::with_args("ui.properties_count", &serde_json::json!({ "stop": true })),
+        )
+    } else if !now.done {
+        Row::new(label.to_owned(), format!("At least {size}, stopped"))
+            .action("Count again", again())
+    } else if now.lower_bound() {
+        Row::new(label.to_owned(), format!("At least {size}"))
+    } else {
+        Row::new(
+            label.to_owned(),
+            format!("{size} ({} bytes)", format::thousands(now.size as usize)),
+        )
+    };
+    let mut rows = vec![
+        first,
+        Row::new("On disk", format::size(now.allocated)),
+        Row::new(
+            "In all",
+            format!(
+                "{}, {}",
+                format::count(now.files as usize, "file"),
+                format::count(now.folders as usize, "folder")
+            ),
+        ),
+    ];
+    if now.unreadable > 0 {
+        rows.push(Row::new(
+            "Unreadable",
+            format!(
+                "{} could not be read",
+                format::count(now.unreadable as usize, "folder")
+            ),
+        ));
+    }
+    if now.other_drives > 0 {
+        rows.push(Row::new(
+            "Not counted",
+            format!(
+                "{} mounted inside",
+                format::count(now.other_drives as usize, "drive")
+            ),
+        ));
+    }
+    rows
+}
+
+/// What the system keeps of a file beside its mode, in words, for the
+/// Permissions group: why it cannot be deleted, why it takes less room.
+pub fn flag_rows(flags: skwir_core::fs::stat::Flags) -> Vec<Row> {
+    [
+        (
+            flags.immutable,
+            "Immutable",
+            "No one can change, rename or delete it",
+        ),
+        (flags.append_only, "Append only", "It can only grow"),
+        (flags.compressed, "Compressed", "By the drive"),
+        (flags.encrypted, "Encrypted", "By the drive"),
+        (flags.read_only, "Read-only", "It cannot be changed"),
+    ]
+    .into_iter()
+    .filter(|(set, ..)| *set)
+    .map(|(_, label, value)| Row::new(label, value))
     .collect()
 }
 
@@ -598,11 +759,14 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         .border_b_1()
         .border_color(theme.border)
         .flex_initial();
+    let several = preview.selection_summary.is_some();
+    let count = preview.count.as_ref().map(|c| (c.now, c.running));
     let groups = preview
         .selection_summary
         .iter()
         .chain(preview_group(shell).iter())
         .chain(preview.properties.iter())
+        .chain(preview.volume.iter())
         .cloned()
         .map(|mut group| {
             // What the system adds to the mode, read after the rest.
@@ -613,8 +777,25 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
             if group.title.as_ref() == "Location" {
                 group.rows.extend(preview.beside.iter().cloned());
             }
+            // What the file takes on its drive, after its size.
+            if group.title.as_ref() == "General" {
+                group.rows.extend(preview.general.iter().cloned());
+            }
+            // A count as it stands. Of the entry shown only when it is
+            // all that is selected: with several, the selection's.
+            group.rows = std::mem::take(&mut group.rows)
+                .into_iter()
+                .flat_map(|row| match row.show {
+                    Show::Count { selection } if selection || !several => {
+                        count_rows(&row.label, count)
+                    }
+                    Show::Count { .. } => Vec::new(),
+                    _ => vec![row],
+                })
+                .collect();
             group
         })
+        .filter(|group| !group.rows.is_empty())
         .collect::<Vec<_>>();
     let mut list = div()
         .id("details-list")
@@ -649,6 +830,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
                 Show::Rating { rating, target } => {
                     Some(star_picker(*rating, target, id, theme, cx).into_any_element())
                 }
+                Show::Count { .. } => None,
             };
             list = list.child(
                 div()
@@ -874,6 +1056,170 @@ mod tests {
         assert!(
             groups.iter().all(|group| group.title != "Times"),
             "nothing to say"
+        );
+        // A folder's size is what it holds, counted when asked.
+        let folder = Entry::new(
+            EntryId {
+                file: skwir_core::FileId { dev: 1, ino: 3 },
+                at: 0,
+            },
+            "Ünïcode folder",
+            EntryKind::Directory,
+        );
+        let general = entry_groups(&folder, path, None);
+        let size = &general.iter().find(|g| g.title == "General").unwrap().rows[0];
+        assert_eq!(size.show, Show::Count { selection: false });
+    }
+
+    fn entry(ino: u64, name: &str, kind: EntryKind, uid: u64, mode: Option<u64>) -> Entry {
+        let mut entry = Entry::new(
+            EntryId {
+                file: skwir_core::FileId { dev: 1, ino },
+                at: 0,
+            },
+            name,
+            kind,
+        );
+        let meta = &mut entry.metadata;
+        meta.set(keys::UID, Value::UInt(uid), Provenance::Filesystem);
+        if let Some(mode) = mode {
+            meta.set(keys::MODE, Value::UInt(mode), Provenance::Filesystem);
+        }
+        entry
+    }
+
+    fn said(rows: &[Row]) -> Vec<(String, String, Vec<String>)> {
+        rows.iter()
+            .map(|r| {
+                (
+                    r.label.to_string(),
+                    r.value.to_string(),
+                    r.actions.iter().map(|(w, _)| w.to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_count_says_how_far_it_went() {
+        use skwir_core::fs::count::Count;
+        let row = |label: &str, value: &str, actions: &[&str]| {
+            (
+                label.to_owned(),
+                value.to_owned(),
+                actions.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            said(&count_rows("Size", None)),
+            [row("Size", "", &["Count"])]
+        );
+        let so_far = Count {
+            size: 3 << 20,
+            allocated: 4 << 20,
+            files: 1500,
+            folders: 1,
+            ..Count::default()
+        };
+        let running = count_rows("Size", Some((so_far, true)));
+        assert_eq!(
+            said(&running),
+            [
+                row("Size", "3.0 MB so far…", &["Stop"]),
+                row("On disk", "4.0 MB", &[]),
+                row("In all", "1,500 files, 1 folder", &[]),
+            ]
+        );
+        assert_eq!(running[0].actions[0].1.args["stop"], true);
+        let stopped = count_rows("Total size", Some((so_far, false)));
+        assert_eq!(
+            said(&stopped[..1]),
+            [row(
+                "Total size",
+                "At least 3.0 MB, stopped",
+                &["Count again"]
+            )]
+        );
+        let done = Count {
+            done: true,
+            size: 1234,
+            ..so_far
+        };
+        assert_eq!(
+            said(&count_rows("Size", Some((done, false)))[..1]),
+            [row("Size", "1.2 KB (1,234 bytes)", &[])]
+        );
+        let partial = Count {
+            unreadable: 2,
+            other_drives: 1,
+            ..done
+        };
+        assert_eq!(
+            said(&count_rows("Size", Some((partial, false)))),
+            [
+                row("Size", "At least 1.2 KB", &[]),
+                row("On disk", "4.0 MB", &[]),
+                row("In all", "1,500 files, 1 folder", &[]),
+                row("Unreadable", "2 folders could not be read", &[]),
+                row("Not counted", "1 drive mounted inside", &[]),
+            ]
+        );
+    }
+
+    #[test]
+    fn several_entries_say_what_they_share() {
+        let a = entry(10, "a's file.txt", EntryKind::File, 1000, Some(0o100_644));
+        let b = entry(11, "b café", EntryKind::File, 1000, Some(0o100_644));
+        let group = selection_group(&[&a, &b], 2, Some(2048));
+        assert_eq!(
+            said(&group.rows)
+                .into_iter()
+                .map(|(l, v, _)| (l, v))
+                .filter(|(l, _)| l != "Owner")
+                .collect::<Vec<_>>(),
+            [
+                ("Selected".to_owned(), "2 items".to_owned()),
+                ("Total size".to_owned(), "2.0 KB".to_owned()),
+                ("Access".to_owned(), "rw-r--r-- (644)".to_owned()),
+            ]
+        );
+        let dir = entry(12, "a folder", EntryKind::Directory, 0, Some(0o040_755));
+        let group = selection_group(&[&a, &b, &dir], 3, Some(2048));
+        let find = |label: &str| group.rows.iter().find(|r| r.label == label).cloned();
+        assert_eq!(find("Of which").unwrap().value, "1 folder, 2 files");
+        assert_eq!(
+            find("Total size").unwrap().show,
+            Show::Count { selection: true },
+            "a folder's files are counted, not left out"
+        );
+        assert_eq!(find("Owner").unwrap().value, "Mixed");
+        assert_eq!(find("Access").unwrap().value, "Mixed");
+        let unknown = entry(13, "not stat-ed yet", EntryKind::File, 1000, None);
+        let group = selection_group(&[&a, &unknown], 2, None);
+        assert!(
+            group
+                .rows
+                .iter()
+                .all(|r| r.label != "Access" && r.label != "Total size"),
+            "nothing said before every entry says it"
+        );
+    }
+
+    #[test]
+    fn flags_say_why_in_words() {
+        use skwir_core::fs::stat::Flags;
+        assert!(flag_rows(Flags::default()).is_empty());
+        let rows = flag_rows(Flags {
+            immutable: true,
+            compressed: true,
+            ..Flags::default()
+        });
+        assert_eq!(
+            said(&rows)
+                .into_iter()
+                .map(|(l, _, _)| l)
+                .collect::<Vec<_>>(),
+            ["Immutable", "Compressed"]
         );
     }
 }

@@ -194,8 +194,10 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // F3 splits and F11 shows the side panel, as in Dolphin; inside a
     // document F3 stays "next match", the deeper context wins.
     ("f11", "ui.toggle_preview", None),
-    ("secondary-i", "ui.properties", None),
+    // Windows' and KDE's Properties first, the one menus name; then
+    // GNOME's and a Mac's Get Info.
     ("alt-enter", "ui.properties", None),
+    ("secondary-i", "ui.properties", None),
     ("f3", "ui.split", None),
     ("space", "ui.peek_close", Some("peek")),
     ("escape", "ui.peek_close", Some("peek")),

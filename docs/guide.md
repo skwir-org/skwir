@@ -264,6 +264,25 @@ archives, and the bytes of any file.
 [Previews](previews.md) lists every kind of file with its tools, keys
 and requirements.
 
+## Properties
+
+`Alt+Enter` (or `Ctrl+I`, or Properties at the end of the context menu)
+shows everything known about the selection in the panel, under the
+file's name: its exact size and the room it takes on the drive, where it
+is, who owns it and who may use it, its times, your notes, and the drive
+it is on. On the folder's background it describes the folder shown.
+
+- **What a folder holds** is counted when you ask: Properties counts it
+  at once, or click Count. The total grows as it goes; Stop keeps what
+  it has. A file with several names counts once; a drive mounted inside
+  is said, not counted.
+- **Several selected**: how many of each kind, their total (Count when
+  folders are among them), and the owner, group and access they share.
+- Flags the system keeps say why a file resists: Immutable (no one can
+  delete it), Append only, Compressed, Encrypted.
+- Over a preview, Properties takes the room it needs; `Alt+Enter` again
+  gives it back to the preview.
+
 ## The terminal
 
 `F4` opens a terminal at the bottom, in the folder shown. It follows you

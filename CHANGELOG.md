@@ -21,7 +21,10 @@
   forms make of it (Sort by size, Next tab).
 - **Properties** is what Details was, and the context menu's last item
   opens it (Alt+Enter, Ctrl+I as before). Over a preview it takes the
-  room it needs, up to the whole panel.
+  room it needs, up to the whole panel. It counts what a folder holds
+  (at once when asked for, else on Count), says the room a file takes on
+  its drive, the drive itself, flags such as Immutable, and for several
+  items their kinds, total and the access they share.
 
 ## 0.1.0 (2026-10-13)
 

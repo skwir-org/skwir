@@ -322,19 +322,22 @@ impl MenuState {
 }
 
 /// Top-level items in order, then each submenu's parent row, followed by its
-/// items while it is expanded. Expanding in place keeps one panel and one
-/// linear keyboard order; a second popup would have to be a deferred draw
-/// inside this one, which GPUI cannot nest.
+/// items while it is expanded, then the menu's end (order 9xx: Properties).
+/// Expanding in place keeps one panel and one linear keyboard order; a
+/// second popup would have to be a deferred draw inside this one, which
+/// GPUI cannot nest.
 pub fn rows_of(items: &[MenuItem], expanded: Option<&str>) -> Vec<Row> {
-    let mut rows: Vec<Row> = items
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| item.submenu.is_none())
-        .map(|(index, _)| Row::Item {
-            index,
-            nested: false,
-        })
-        .collect();
+    let top = |last: bool| {
+        items
+            .iter()
+            .enumerate()
+            .filter(move |(_, item)| item.submenu.is_none() && (item.order >= LAST) == last)
+            .map(|(index, _)| Row::Item {
+                index,
+                nested: false,
+            })
+    };
+    let mut rows: Vec<Row> = top(false).collect();
     let mut parents: Vec<&str> = Vec::new();
     for name in items.iter().filter_map(|item| item.submenu.as_deref()) {
         if !parents.contains(&name) {
@@ -356,8 +359,13 @@ pub fn rows_of(items: &[MenuItem], expanded: Option<&str>) -> Vec<Row> {
             );
         }
     }
+    rows.extend(top(true));
     rows
 }
+
+/// The order from which an item ends the menu, after the submenus
+/// (`skwir_core::registry::MenuItem`'s convention).
+const LAST: i32 = 900;
 
 /// The items, with each source's answer in place of what it replaces
 /// (an empty answer replaces nothing), in order.
@@ -478,7 +486,7 @@ impl Shell {
             "context",
             title,
             "info",
-            490,
+            LAST,
             skwir_core::command::Invocation::new("ui.properties"),
         )
     }
@@ -1136,6 +1144,10 @@ mod tests {
             item("Copy Paths", Some("More")),
             item("Rename", None),
             item("Run Command…", Some("More")),
+            MenuItem {
+                order: super::LAST,
+                ..item("Properties", None)
+            },
         ];
         let top = |index| Row::Item {
             index,
@@ -1147,7 +1159,8 @@ mod tests {
         };
         assert_eq!(
             rows_of(&items, None),
-            [top(0), top(2), Row::Parent("More".into())]
+            [top(0), top(2), Row::Parent("More".into()), top(4)],
+            "the menu's end comes after the submenus"
         );
         assert_eq!(
             rows_of(&items, Some("More")),
@@ -1156,7 +1169,8 @@ mod tests {
                 top(2),
                 Row::Parent("More".into()),
                 nested(1),
-                nested(3)
+                nested(3),
+                top(4)
             ]
         );
     }

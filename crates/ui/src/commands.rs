@@ -122,6 +122,14 @@ mod args {
         advance: Option<bool>,
     }
 
+    /// Properties' count of what folders hold: started, or stopped.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct Count {
+        /// Stop counting, keeping what was counted.
+        #[serde(default)]
+        stop: bool,
+    }
+
     /// A popup's toggle: `kind` names which, `close` closes it (`pointer`: by
     /// a press outside it).
     #[derive(Deserialize, JsonSchema)]
@@ -364,9 +372,9 @@ mod args {
 }
 
 use args::{
-    Amount, Ask, Bucket, Close, Continue, CopyText, Cursor, Delta, Dir, Find, Folders, History,
-    Key, Layout, ListMoveArgs, Object, On, Page, PageLink, Pages, Pan, Pick, Player, Pointer,
-    Popup, Scrub, Settings, Split, Submit, TagsPrompt, Text, Unlock, Url, UsageMode, View,
+    Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Folders,
+    History, Key, Layout, ListMoveArgs, Object, On, Page, PageLink, Pages, Pan, Pick, Player,
+    Pointer, Popup, Scrub, Settings, Split, Submit, TagsPrompt, Text, Unlock, Url, UsageMode, View,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -443,6 +451,7 @@ const SHOWS: &[&str] = &[
     "ui.toggle_preview",
     "ui.preview_close",
     "ui.properties",
+    "ui.properties_count",
     "ui.preview_menu",
     "ui.preview_page",
     "ui.preview_seek",
@@ -1325,6 +1334,12 @@ pub fn declare_all(app: &App) {
         "ui.properties",
         "Properties",
         "Show the properties of the selection (or of the folder shown), opening the panel; hide them where they cover a preview",
+    );
+    declare::<Count>(
+        app,
+        "ui.properties_count",
+        "Properties: count what folders hold",
+        "Count the size, room taken, files and folders of what Properties shows (the selection, with several selected), or stop counting with `stop`",
     );
     declare::<Popup>(
         app,

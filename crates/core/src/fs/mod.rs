@@ -1,5 +1,6 @@
 //! The built-in filesystem provider: streamed listing, lazy stat, watching.
 
+pub mod count;
 pub mod dir;
 pub mod file;
 mod hydrate;

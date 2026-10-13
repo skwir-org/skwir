@@ -213,13 +213,44 @@ pub(crate) enum PreviewPhase {
     Loading,
 }
 
-/// What the fields worker answers: rows about the content, rows about
-/// access, and rows about the files beside it.
-type FieldRows = (
-    Vec<crate::properties::Row>,
-    Vec<crate::properties::Row>,
-    Vec<crate::properties::Row>,
-);
+/// What the fields worker reads of the entry Properties shows.
+#[derive(Default)]
+struct FieldRows {
+    /// Fields read on demand (a picture's place).
+    fields: Vec<crate::properties::Row>,
+    /// What the system adds to the mode, and the flags it keeps.
+    access: Vec<crate::properties::Row>,
+    /// The files beside it, or the file an orphan belonged to.
+    beside: Vec<crate::properties::Row>,
+    /// What it takes on its drive, beside its size.
+    general: Vec<crate::properties::Row>,
+    /// The drive it is on (the folder shown has its own, `Here`).
+    volume: Option<crate::properties::Group>,
+}
+
+impl FieldRows {
+    fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+            && self.access.is_empty()
+            && self.beside.is_empty()
+            && self.general.is_empty()
+            && self.volume.is_none()
+    }
+}
+
+/// A count of what folders hold (`fs::count`), asked by Properties' Count
+/// or by `ui.properties`, for what Properties showed then (`asked`): let
+/// go of when it shows something else.
+pub struct Counting {
+    /// The pane, its selection's revision and the entry shown, when asked.
+    asked: (PaneId, u64, Option<skwir_core::EntryId>),
+    /// What it has counted so far, or in all once `now.done`.
+    pub now: skwir_core::fs::count::Count,
+    /// Still counting: neither done nor stopped.
+    pub running: bool,
+    cancel: CancelToken,
+    generation: u64,
+}
 
 /// What Properties says of files beside a file (ADR-028): those beside the
 /// file at `path`, or, for a companion whose file is gone, what it was.
@@ -348,9 +379,23 @@ pub struct PreviewState {
     /// worker, arriving with the generation they were asked at.
     pub fields: Vec<crate::properties::Row>,
     fields_generation: u64,
-    /// What the system adds to the file's mode (ACLs, capabilities),
-    /// read with `fields`, shown under Permissions.
+    /// What the system adds to the file's mode (ACLs, capabilities) and
+    /// the flags it keeps, read with `fields`, shown under Permissions.
     pub access: Vec<crate::properties::Row>,
+    /// What the file takes on its drive, read with `fields`, under General.
+    pub general: Vec<crate::properties::Row>,
+    /// The drive the entry is on, read with `fields`; the folder shown has
+    /// its own (`Here::volume`).
+    pub volume: Option<crate::properties::Group>,
+    /// The volume last read for an entry (`VolumeFacts::kept`).
+    volume_cache: VolumeCache,
+    /// A count of what folders hold, asked for.
+    pub count: Option<Counting>,
+    count_generation: u64,
+    /// `ui.properties` opened them: count once they show folders.
+    count_wanted: bool,
+    count_tx: flume::Sender<(u64, skwir_core::fs::count::Count)>,
+    count_rx: flume::Receiver<(u64, skwir_core::fs::count::Count)>,
     /// The files beside the entry (ADR-028), or the file an orphan belonged
     /// to, read on the same worker.
     pub beside: Vec<crate::properties::Row>,
@@ -407,11 +452,21 @@ struct Here {
 }
 
 /// What the worker learns of the volume holding a folder: the mount it is
-/// under, and its free and total bytes.
+/// under, its free and total bytes, and whether it is mounted read-only.
+#[derive(Clone)]
 struct VolumeFacts {
     mount: Option<skwir_platform::places::Mount>,
     space: Option<(u64, u64)>,
+    read_only: bool,
 }
+
+/// The volume last read for an entry, by its device, and when: walking a
+/// folder's files asks the same one over and over, and the mount table
+/// costs a look at each drive's sysfs.
+type VolumeCache = Arc<parking_lot::Mutex<Option<(u64, std::time::Instant, VolumeFacts)>>>;
+
+/// How long a volume read for an entry is said again for its neighbours.
+const VOLUME_KEPT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl VolumeFacts {
     /// Read on a worker: the mount table and the filesystem's counts.
@@ -423,7 +478,22 @@ impl VolumeFacts {
         VolumeFacts {
             mount,
             space: skwir_platform::places::space(path),
+            read_only: skwir_core::fs::volume::read_only(path).unwrap_or(false),
         }
+    }
+
+    /// [`VolumeFacts::of`] the entry at `path` on device `device`, from
+    /// `cache` while it is fresh. On a worker.
+    fn kept(cache: &VolumeCache, device: u64, path: &Path) -> Self {
+        if let Some((kept, at, facts)) = cache.lock().as_ref()
+            && *kept == device
+            && at.elapsed() < VOLUME_KEPT
+        {
+            return facts.clone();
+        }
+        let facts = Self::of(path);
+        *cache.lock() = Some((device, std::time::Instant::now(), facts.clone()));
+        facts
     }
 
     /// Properties' Volume group, the volume named as the sidebar names it.
@@ -444,6 +514,9 @@ impl VolumeFacts {
                 format!("{} of {}", format::size(free), format::size(total)),
             ));
         }
+        if self.read_only {
+            rows.push(Row::new("Read-only", "Nothing on it can change"));
+        }
         if let Some(mount) = &self.mount {
             rows.push(Row::new(
                 "Mounted at",
@@ -462,6 +535,7 @@ impl Default for PreviewState {
         let (tx, rx) = flume::unbounded();
         let (nested_tx, nested_rx) = flume::unbounded();
         let (fields_tx, fields_rx) = flume::unbounded();
+        let (count_tx, count_rx) = flume::unbounded();
         PreviewState {
             reader: crate::reader::ReaderState::default(),
             inspection: crate::inspector::State::default(),
@@ -509,6 +583,14 @@ impl Default for PreviewState {
             fields: Vec::new(),
             fields_generation: 0,
             access: Vec::new(),
+            general: Vec::new(),
+            volume: None,
+            volume_cache: VolumeCache::default(),
+            count: None,
+            count_generation: 0,
+            count_wanted: false,
+            count_tx,
+            count_rx,
             beside: Vec::new(),
             fields_tx,
             fields_rx,
@@ -999,6 +1081,9 @@ impl Shell {
             if self.preview.key.is_some() {
                 self.cancel_preview(window, cx);
             }
+            if let Some(count) = self.preview.count.take() {
+                count.cancel.cancel();
+            }
             while self.preview.rx.try_recv().is_ok() {}
             return;
         }
@@ -1162,34 +1247,33 @@ impl Shell {
             let file = (key.path.clone(), version.modified, version.size);
             if self.preview.fields_for.as_ref() != Some(&file) {
                 self.preview.fields_for = Some(file);
-                self.read_fields(&entry, &key.path);
+                self.read_fields(&entry, &key.path, here);
             }
             self.preview.neighbours = self
                 .media_kind()
                 .map_or((None, None), |kind| self.media_neighbours(id, kind));
             let selection = self.selection_ctx();
-            self.preview.selection_summary =
-                (selection.count > 1).then(|| crate::properties::Group {
-                    title: "Selection".into(),
-                    rows: std::iter::once(crate::properties::Row::new(
-                        "Selected",
-                        format::count(selection.count, "item"),
-                    ))
-                    // The whole size once every file's is known, never a part.
-                    .chain(selection.bytes.map(|bytes| {
-                        crate::properties::Row::new("Total size", format::size(bytes))
-                    }))
-                    .collect(),
-                });
+            self.preview.selection_summary = (selection.count > 1).then(|| {
+                let ws = self.app.workspace.read();
+                let entries: Vec<&skwir_core::entry::Entry> = ws
+                    .pane(self.pane)
+                    .map(|p| p.selection.iter().filter_map(|id| p.entry(id)).collect())
+                    .unwrap_or_default();
+                // The whole size once every file's is known, never a part.
+                crate::properties::selection_group(&entries, selection.count, selection.bytes)
+            });
         }
-        while let Ok((generation, (rows, access, beside))) = self.preview.fields_rx.try_recv() {
+        while let Ok((generation, read)) = self.preview.fields_rx.try_recv() {
             if generation == self.preview.fields_generation {
-                self.preview.fields = rows;
-                self.preview.access = access;
-                self.preview.beside = beside;
+                self.preview.fields = read.fields;
+                self.preview.access = read.access;
+                self.preview.beside = read.beside;
+                self.preview.general = read.general;
+                self.preview.volume = read.volume;
                 cx.notify();
             }
         }
+        self.sync_count(cx);
         while let Ok((generation, member)) = self.preview.nested_rx.try_recv() {
             if generation == self.preview.generation && self.preview.nested.len() < NESTING {
                 self.preview.nested.push(member);
@@ -2068,14 +2152,23 @@ impl Shell {
     }
 
     /// The fields Properties shows for `entry` at `path` (a picture's place,
-    /// `skwir_core::fields`) and what the system adds to its mode
-    /// (`skwir_platform::access`), read on a worker; what was shown for
-    /// another entry goes at once, and a late answer for it is dropped.
-    fn read_fields(&mut self, entry: &skwir_core::entry::Entry, path: &std::path::Path) {
+    /// `skwir_core::fields`), what the system adds to its mode
+    /// (`skwir_platform::access`) and the flags it keeps, what it takes on
+    /// its drive, and the drive (not for the folder shown, `here`, which
+    /// has its own), read on a worker; what was shown for another entry
+    /// goes at once, and a late answer for it is dropped.
+    fn read_fields(
+        &mut self,
+        entry: &skwir_core::entry::Entry,
+        path: &std::path::Path,
+        here: bool,
+    ) {
         self.preview.fields_generation += 1;
         self.preview.fields.clear();
         self.preview.access.clear();
         self.preview.beside.clear();
+        self.preview.general.clear();
+        self.preview.volume = None;
         // A folder, a pipe, a device: no file to read a field of. Their
         // access is read all the same: without opening anything.
         let shown = if entry.inode_type().is_some() {
@@ -2096,15 +2189,37 @@ impl Shell {
         let cancel = self.app.lifetime().child();
         self.preview.fields_cancel = Some(cancel.clone());
         let companions = Arc::clone(&self.app.companions);
+        let is_dir = entry.is_dir();
+        let device = entry.file().dev;
+        let volumes = Arc::clone(&self.preview.volume_cache);
+        let app = Arc::clone(&self.app);
         self.app.scheduler.spawn(
             skwir_core::scheduler::Priority::Visible,
             "detail-fields",
             cancel.clone(),
             move || {
-                let access: Vec<crate::properties::Row> = skwir_platform::access::facts(&path)
+                let mut access: Vec<crate::properties::Row> = skwir_platform::access::facts(&path)
                     .into_iter()
                     .map(|(label, value)| crate::properties::Row::new(label, value))
                     .collect();
+                access.extend(crate::properties::flag_rows(skwir_core::fs::stat::flags(
+                    &path,
+                )));
+                // A folder's own blocks are not what it holds: its count says that.
+                let general = std::fs::metadata(&path)
+                    .ok()
+                    .filter(|_| !is_dir)
+                    .map(|meta| {
+                        crate::properties::Row::new(
+                            "On disk",
+                            format::size(skwir_core::fs::stat::allocated(&meta)),
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+                let volume = (!here)
+                    .then(|| VolumeFacts::kept(&volumes, device, &path).group(&app))
+                    .flatten();
                 let rows: Vec<crate::properties::Row> = shown
                     .into_iter()
                     .filter_map(|(key, label)| {
@@ -2118,10 +2233,14 @@ impl Shell {
                         })
                     })
                     .collect();
-                let beside = beside_rows(&companions, &path);
-                if (!rows.is_empty() || !access.is_empty() || !beside.is_empty())
-                    && tx.send((generation, (rows, access, beside))).is_ok()
-                {
+                let read = FieldRows {
+                    fields: rows,
+                    access,
+                    beside: beside_rows(&companions, &path),
+                    general,
+                    volume,
+                };
+                if !read.is_empty() && tx.send((generation, read)).is_ok() {
                     wake();
                 }
             },
@@ -2535,9 +2654,151 @@ impl Shell {
                 self.preview.open = true;
             }
             self.preview.properties_open = true;
+            // Asked for, a folder's properties say what it holds.
+            self.preview.count_wanted = true;
         }
         self.remember_session();
         cx.notify();
+    }
+
+    /// `ui.properties_count`: count what the folders Properties shows hold
+    /// (the selection's, with several selected), or with `stop`, stop
+    /// counting, keeping what was counted.
+    pub fn properties_count(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
+        if let Some(count) = self.preview.count.as_mut() {
+            count.cancel.cancel();
+            count.running = false;
+        }
+        if !args
+            .get("stop")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            self.start_count();
+        }
+        cx.notify();
+    }
+
+    /// What a count asked now is of, as `sync_count` compares it: the
+    /// pane, its selection, and the entry shown unless several are
+    /// selected (the cursor moves within a selection without changing
+    /// what is counted).
+    fn count_key(&self) -> (PaneId, u64, Option<skwir_core::EntryId>) {
+        let revision = self
+            .app
+            .workspace
+            .read()
+            .pane(self.pane)
+            .map_or(0, |p| p.selection.revision());
+        let shown = (self.selection_ctx().count <= 1)
+            .then(|| self.preview.key.as_ref().map(|k| k.id))
+            .flatten();
+        (self.pane, revision, shown)
+    }
+
+    /// The paths a count asked now counts: the selection's with several
+    /// selected, else the entry Properties shows (the folder shown, with
+    /// nothing selected).
+    fn count_subject(&self) -> Vec<std::path::PathBuf> {
+        if self.selection_ctx().count > 1 {
+            self.app
+                .selected_refs(self.pane)
+                .into_iter()
+                .map(|r| r.path)
+                .collect()
+        } else {
+            self.preview.key.iter().map(|k| k.path.clone()).collect()
+        }
+    }
+
+    /// Whether what Properties shows holds a folder to count.
+    fn count_has_folders(&self) -> bool {
+        let ctx = self.selection_ctx();
+        if ctx.count > 1 {
+            !ctx.all_files
+        } else {
+            self.preview.key.is_some() && self.preview.info.is_dir
+        }
+    }
+
+    /// Count what Properties shows, on a worker, reporting as it goes
+    /// (`fs::count::REPORT_EVERY`); the count before is stopped.
+    fn start_count(&mut self) {
+        let paths = self.count_subject();
+        if paths.is_empty() {
+            return;
+        }
+        if let Some(before) = self.preview.count.take() {
+            before.cancel.cancel();
+        }
+        self.preview.count_generation += 1;
+        let generation = self.preview.count_generation;
+        let cancel = self.app.lifetime().child();
+        self.preview.count = Some(Counting {
+            asked: self.count_key(),
+            now: skwir_core::fs::count::Count::default(),
+            running: true,
+            cancel: cancel.clone(),
+            generation,
+        });
+        let tx = self.preview.count_tx.clone();
+        let wake = self.app.waker_handle();
+        self.app.scheduler.spawn(
+            skwir_core::scheduler::Priority::Normal,
+            "properties-count",
+            cancel.clone(),
+            move || {
+                let said = |now: &skwir_core::fs::count::Count| {
+                    if tx.send((generation, *now)).is_ok() {
+                        wake();
+                    }
+                };
+                let last = skwir_core::fs::count::count(
+                    &paths,
+                    &cancel,
+                    skwir_core::fs::count::REPORT_EVERY,
+                    said,
+                );
+                // Stopped: what it had when it stopped.
+                if !last.done {
+                    said(&last);
+                }
+            },
+        );
+    }
+
+    /// Let go of a count of what Properties no longer shows, take what a
+    /// count sent, and count what `ui.properties` opened on once it shows.
+    fn sync_count(&mut self, cx: &mut Context<Self>) {
+        if self
+            .preview
+            .count
+            .as_ref()
+            .is_some_and(|count| count.asked != self.count_key())
+            && let Some(count) = self.preview.count.take()
+        {
+            count.cancel.cancel();
+            cx.notify();
+        }
+        while let Ok((generation, now)) = self.preview.count_rx.try_recv() {
+            if let Some(count) = self
+                .preview
+                .count
+                .as_mut()
+                .filter(|count| count.generation == generation)
+            {
+                count.now = now;
+                count.running &= !now.done;
+                cx.notify();
+            }
+        }
+        if self.preview.count_wanted && self.preview.key.is_some() {
+            self.preview.count_wanted = false;
+            if self.preview.count.is_none() && self.count_has_folders() {
+                self.start_count();
+                cx.notify();
+            }
+        }
     }
 
     /// Whether `ui.properties` would hide Properties: they are on screen

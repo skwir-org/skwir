@@ -348,7 +348,8 @@ working in an area, also read that area's rules (see
   each listed once in `keymap::PLACES` with its key context and what F1
   calls it). `a|b` holds when either does, `!a` when it does not.
 - Menu `order` groups by its hundreds: 0xx open, 1xx edit, 2xx create,
-  3xx destructive, 4xx misc. The UI draws separators between groups.
+  3xx destructive, 4xx misc, 9xx the end, after the submenus
+  (Properties). The UI draws separators between groups.
 - `ui.*` commands are carried out by the shell; a plugin may bind to
   them.
 - Zoom keys come from one table (`keymap::ZOOM_KEYS`). F5 refreshes in
