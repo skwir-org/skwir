@@ -1670,8 +1670,11 @@ Phase 7.
     `release-upload` made the draft (GitHub's SHA-256 of each of the 25
     assets equal to the bundle's), and the user published it at 23:55.
     The AUR's `skwir` base (`skwir`, `skwir-mermaid`, `skwir-mupdf`) is at
-    0.1.0-1. The notes' link to `docs/HELP-WANTED.md` is relative in the
-    changelog; it was made absolute in the draft, by hand.
+    0.1.0-1. The notes' links are relative in the changelog; they were
+    made absolute in the draft by hand. Since then `release-upload` gives
+    the page each relative link as its file at the tag, the changelog and
+    the bundle's `notes.md` keeping them relative, and `release-metadata`
+    refuses a link to no file of the source.
 
 **Done when:** every step above is done or says why not, the packages
 built by the local gate (or manual CI) install and run on Debian, Ubuntu,

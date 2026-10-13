@@ -9,12 +9,14 @@ import json
 import os
 from pathlib import Path
 import platform
+import posixpath
 import re
 import shlex
 import shutil
 import subprocess
 import tempfile
 import tomllib
+from urllib.parse import quote, unquote
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,6 +24,12 @@ CHECKS = ["lint-all", "deny", "test-all", "smoke", "poppler-check",
           "mupdf-check", "bench-check", "release-tools-check"]
 PACKAGES = [("appimage", ["package-appimage"]),
             *[(d, ["package-try", d]) for d in ("debian", "ubuntu", "fedora", "arch")]]
+# Markdown link targets, inline (after its text's `]`) or defined by reference (not
+# a footnote), and code, where neither is one.
+LINK = re.compile(r"\]\((?P<inline><[^>\n]*>|[^\s()]+)"
+                  r"|^ {0,3}\[(?!\^)[^\]\n]+\]:[ \t]*(?P<defined><[^>\n]*>|\S+)", re.M)
+CODE = re.compile(r"^ {0,3}(`{3,}|~{3,})[^\n]*\n.*?(?:^ {0,3}\1[`~]*[ \t]*$|\Z)"
+                  r"|(`+).*?(?<!`)\2(?!`)", re.M | re.S)
 
 
 def require(condition, message):
@@ -65,11 +73,62 @@ def metadata(tag):
     datetime.date.fromisoformat(date)
     notes = section[2].strip() + "\n"
     require(notes.strip(), "Release notes are empty")
+    for _, path, _, target in relative_links(notes):
+        require(path is not None and (ROOT / path).exists(),
+                f"CHANGELOG.md's {version} notes link to a file not in the source: {target}")
     metainfo = ET.parse(ROOT / "tools/package/linux/org.skwir.skwir.metainfo.xml")
     require(any(r.get("version") == version and r.get("date") == date
                 for r in metainfo.findall("./releases/release")),
             "AppStream needs the same release version and date as the changelog")
     return version, date, notes
+
+
+def relative_links(notes):
+    """Each link and image in the notes that names a file of the source, outside code.
+
+    Yields its target's span, its path from the root (None when it leaves the
+    source), whether it is an image, and the target as written. The changelog is
+    at the root, so paths start there.
+    """
+    code = [m.span() for m in CODE.finditer(notes)]
+    for link in LINK.finditer(notes):
+        group = "inline" if link["inline"] is not None else "defined"
+        start, end = link.span(group)
+        target = link[group].removeprefix("<").removesuffix(">")
+        if any(a <= start < b for a, b in code) or re.match(r"[A-Za-z][\w+.-]*:|#|//", target):
+            continue
+        image = False
+        if group == "inline":
+            # The text's `[`, past any brackets nested in it (an image in a link).
+            depth, opening = 0, link.start()
+            while opening >= 0:
+                depth += {"]": 1, "[": -1}.get(notes[opening], 0)
+                if depth == 0:
+                    break
+                opening -= 1
+            if opening < 0:
+                continue
+            image = notes[opening - 1:opening] == "!"
+        path = posixpath.normpath(unquote(target.partition("#")[0]).lstrip("/"))
+        outside = path in (".", "..") or path.startswith("../")
+        yield (start, end), None if outside else path, image, target
+
+
+def published(notes, repo, tag):
+    """The notes for GitHub's release page, away from the files they link to.
+
+    The changelog keeps its links relative, read in the repository; on the page
+    each leads to its file at the tag (an image to the file itself). Paths that
+    leave the source never get here: metadata refuses them.
+    """
+    parts, last = [], 0
+    for (start, end), path, image, target in relative_links(notes):
+        kind = "raw" if image else "tree" if (ROOT / path).is_dir() else "blob"
+        fragment = target.partition("#")[2]
+        url = f"https://github.com/{repo}/{kind}/{tag}/{quote(path)}" + (f"#{fragment}" if fragment else "")
+        parts += [notes[last:start], url]
+        last = end
+    return "".join(parts) + notes[last:]
 
 
 def source(tag):
@@ -237,13 +296,15 @@ def upload(tag, directory, commit, version, notes):
     repo = match[1]
     gh("auth", "status", "--hostname", "github.com", capture=True)
     require(remote_commit(repo, tag) == commit, "Push the exact release tag first; remote commit disagrees")
+    # The bundle's notes.md stays the changelog's; only the page gets absolute links.
+    post = "--notes=" + published(notes, repo, tag)
     release = remote_release(repo, tag)
     if release:
         require({a["name"] for a in remote_assets(repo, release)} <= {p.name for p in files},
                 "Draft contains unexpected assets; review those on GitHub first")
     else:
         gh("release", "create", tag, "--repo", repo, "--draft", "--verify-tag",
-            "--title", f"skwir {version}", "--notes-file", str(directory / "notes.md"))
+            "--title", f"skwir {version}", post)
     gh("release", "upload", tag, "--repo", repo, "--clobber", *map(str, sorted(files)))
     release = remote_release(repo, tag)
     require(release, "The draft disappeared during upload")
@@ -254,7 +315,7 @@ def upload(tag, directory, commit, version, notes):
             "GitHub asset names, sizes or SHA256 digests disagree; leave the draft unpublished and retry")
     require(remote_commit(repo, tag) == commit, "Remote tag changed during upload")
     gh("release", "edit", tag, "--repo", repo, "--draft=true",
-        "--title", f"skwir {version}", "--notes-file", str(directory / "notes.md"))
+        "--title", f"skwir {version}", post)
     print(f"Draft updated: https://github.com/{repo}/releases (review and publish manually)")
 
 

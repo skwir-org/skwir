@@ -103,6 +103,17 @@ else:
 '''
 
 
+# Relative links stay so in the repository and the bundle; the release page gets the tag's files.
+NOTES = ("Synthetic release: [help](docs/HELP.md#on-a-mac), ![icon](docs/icon.svg),\n"
+         "[the docs](docs/), [site](https://skwir.org/), [above](#changes) and `[code](docs/none.md)`.\n"
+         "\n[ref]: <docs/HELP.md>\n")
+POSTED = ("Synthetic release: [help](https://github.com/example/skwir/blob/v1.2.3/docs/HELP.md#on-a-mac), "
+          "![icon](https://github.com/example/skwir/raw/v1.2.3/docs/icon.svg),\n"
+          "[the docs](https://github.com/example/skwir/tree/v1.2.3/docs), [site](https://skwir.org/), "
+          "[above](#changes) and `[code](docs/none.md)`.\n"
+          "\n[ref]: https://github.com/example/skwir/blob/v1.2.3/docs/HELP.md\n")
+
+
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="skwir-release-test-")
@@ -112,7 +123,9 @@ class ReleaseTests(unittest.TestCase):
         files = {
             ".gitignore": "/target/\n",
             "Cargo.toml": '[workspace.package]\nversion = "1.2.3"\n',
-            "CHANGELOG.md": "# Changes\n\n## 1.2.3 (2026-10-11)\n\nSynthetic release.\n\n## 1.2.2 (2026-10-10)\nOld notes.\n",
+            "CHANGELOG.md": "# Changes\n\n## 1.2.3 (2026-10-11)\n\n" + NOTES + "\n## 1.2.2 (2026-10-10)\nOld notes.\n",
+            "docs/HELP.md": "# Help\n",
+            "docs/icon.svg": "<svg/>\n",
             "crates/skwir/Cargo.toml": '''[package]
 name = "skwir"
 version.workspace = true
@@ -357,6 +370,9 @@ sys.exit(subprocess.call([service, os.environ['AUR_TEST_REMOTE']]))
         self.assertIn("AppStream", self.cli("metadata", ok=False))
         changelog.write_text(original.replace("# Changes\n\n", "# Changes\n\n## Unreleased\n\n- More.\n\n"))
         self.assertIn("“## Unreleased” above 1.2.3", self.cli("metadata", ok=False))
+        for target in ("docs/gone.md", "../outside.md"):
+            changelog.write_text(original.replace("docs/HELP.md#on-a-mac", target))
+            self.assertIn(f"not in the source: {target}", self.cli("metadata", ok=False))
         self.cli("metadata", ok=False, tag="v1.2.4")
         self.cli("metadata", ok=False, tag="v1.2.3;echo unsafe")
 
@@ -424,6 +440,9 @@ sys.exit(subprocess.call([service, os.environ['AUR_TEST_REMOTE']]))
         self.assertIn("--draft=true", mutations[-1])
         self.assertEqual({Path(p).name for p in mutations[1][6:]},
                          {p.name for p in self.bundle.iterdir()})
+        self.assertEqual((self.bundle / "notes.md").read_text(), NOTES)
+        self.assertEqual(mutations[0][-1], "--notes=" + POSTED)
+        self.assertEqual(mutations[-1][-1], "--notes=" + POSTED)
 
     def test_update_draft_and_retry_failed_upload(self):
         self.cli("build")

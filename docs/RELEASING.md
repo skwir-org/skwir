@@ -16,7 +16,10 @@ workers, check performance or build packages.
    `## 0.1.0 (2026-10-11)`. AppStream must have the same date. The section
    supplies the GitHub release notes, so it must be the first: an
    `## Unreleased` section above it, which the tag would hold but its
-   notes leave out, stops the release. Only stable
+   notes leave out, stops the release. Its links stay relative, as
+   anywhere in the repository (`docs/HELP-WANTED.md`): on the release's
+   page each leads to its file at the tag, and a link to no file of the
+   source stops the release. Only stable
    `v<major>.<minor>.<patch>` tags are currently supported.
 3. Run `just release-metadata v0.1.0`, review and commit the release source,
    then create its tag (`git tag -a v0.1.0 -m 'Release 0.1.0'`). Check out
@@ -90,7 +93,12 @@ The destination is the GitHub repository named by `origin` (SSH or HTTPS).
 The uploader rechecks source identity, the complete asset set and checksums,
 and resolves the remote tag, including annotated tags, to the recorded
 commit. It creates a draft if none exists, or replaces matching assets in
-an existing draft and updates its title and notes. Unexpected assets already
+an existing draft and updates its title and notes. The draft's notes are
+the bundle's `notes.md` with each relative link made absolute
+(`https://github.com/<repo>/blob/<tag>/<path>`, `tree/` for a folder,
+`raw/` for an image), so they lead to the files from the release's page.
+`notes.md` itself keeps them as the changelog has them.
+Unexpected assets already
 in the draft require manual review. Published or immutable releases are
 refused. The command never publishes a release or changes a tag.
 After uploading it compares GitHub's stored asset names, sizes and SHA256
