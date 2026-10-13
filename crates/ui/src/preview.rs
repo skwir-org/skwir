@@ -242,17 +242,81 @@ impl FieldRows {
 }
 
 /// A count of what folders hold (`fs::count`), asked by Properties' Count
-/// or by `ui.properties`, for what Properties showed then (`asked`): let
-/// go of when it shows something else.
+/// or by `ui.properties`, for what Properties showed then (`counted`): let
+/// go of when it shows something else, kept while it shows the same
+/// (a click on the row already selected changes nothing).
 pub struct Counting {
-    /// The pane, its selection's revision and the entry shown, when asked.
-    asked: (PaneId, u64, Option<skwir_core::EntryId>),
+    /// The pane it counts in.
+    pane: PaneId,
+    /// What it counts there.
+    counted: Counted,
+    /// The selection's revision when `counted` was last found unchanged:
+    /// while it stays, several selected are not compared again.
+    revision: u64,
     /// What it has counted so far, or in all once `now.done`.
     pub now: skwir_core::fs::count::Count,
     /// Still counting: neither done nor stopped.
     pub running: bool,
     cancel: CancelToken,
     generation: u64,
+}
+
+/// What a count counts: the entry Properties shows (the folder shown, with
+/// nothing selected), or the entries selected, several of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Counted {
+    Shown(skwir_core::EntryId),
+    Selection {
+        len: usize,
+        /// The selected entries, in any order (`selection_stamp`).
+        stamp: u64,
+    },
+}
+
+/// The entries `ids` as a set: the same whatever their order, so a
+/// selection made again of the same entries is the same.
+fn selection_stamp(ids: impl Iterator<Item = skwir_core::EntryId>) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    ids.map(|id| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        id.hash(&mut hasher);
+        hasher.finish()
+    })
+    .fold(0, u64::wrapping_add)
+}
+
+/// What a count's worker sends: its generation, what it has counted, and
+/// whether it ended (done, or stopped by its token).
+type CountSent = (u64, skwir_core::fs::count::Count, bool);
+
+/// Whether a count `ui.properties` asked still waits while nothing is
+/// shown: only for the folder shown with nothing under the cursor, which
+/// is on its way. In a place that shows no folder (a search, Recent, the
+/// shelf), or with the cursor's entry gone, it is dropped, so selecting
+/// something there later is not asking.
+fn count_waits(
+    cursor: Option<skwir_core::EntryId>,
+    location: Option<&skwir_core::Location>,
+) -> bool {
+    cursor.is_none() && location.is_some_and(skwir_core::Location::is_path)
+}
+
+/// Whether a count of `counted` in its pane, found unchanged last at the
+/// selection's revision it holds, still counts what is shown in `pane`
+/// at `revision`; `now` says what would be counted now, asked unless the
+/// revision held proves several selected unchanged.
+fn still_counts(
+    (counted_in, counted, at): (PaneId, Counted, u64),
+    (pane, revision): (PaneId, u64),
+    now: impl FnOnce() -> Option<Counted>,
+) -> bool {
+    if counted_in != pane {
+        return false;
+    }
+    if revision == at && matches!(counted, Counted::Selection { .. }) {
+        return true;
+    }
+    now() == Some(counted)
 }
 
 /// What Properties says of files beside a file (ADR-028): those beside the
@@ -397,7 +461,7 @@ pub struct PreviewState {
     volume_cache: VolumeCache,
     /// What plugins say of the entry shown (`Registry::property_sources`),
     /// each row with the group it joins.
-    pub plugin_rows: Vec<(gpui::SharedString, crate::properties::Row)>,
+    pub plugin_rows: Vec<crate::properties::SourceRow>,
     /// What the sources were last asked of: the file as `fields_for` says
     /// it, and their revisions.
     sources_asked: Option<(
@@ -408,15 +472,15 @@ pub struct PreviewState {
     )>,
     sources_generation: u64,
     sources_cancel: Option<CancelToken>,
-    sources_tx: flume::Sender<(u64, Vec<(gpui::SharedString, crate::properties::Row)>)>,
-    sources_rx: flume::Receiver<(u64, Vec<(gpui::SharedString, crate::properties::Row)>)>,
+    sources_tx: flume::Sender<(u64, Vec<crate::properties::SourceRow>)>,
+    sources_rx: flume::Receiver<(u64, Vec<crate::properties::SourceRow>)>,
     /// A count of what folders hold, asked for.
     pub count: Option<Counting>,
     count_generation: u64,
     /// `ui.properties` opened them: count once they show folders.
     count_wanted: bool,
-    count_tx: flume::Sender<(u64, skwir_core::fs::count::Count)>,
-    count_rx: flume::Receiver<(u64, skwir_core::fs::count::Count)>,
+    count_tx: flume::Sender<CountSent>,
+    count_rx: flume::Receiver<CountSent>,
     /// The files beside the entry (ADR-028), or the file an orphan belonged
     /// to, read on the same worker.
     pub beside: Vec<crate::properties::Row>,
@@ -442,6 +506,13 @@ pub struct PreviewState {
     /// Several entries selected: how many, what they weigh together, and
     /// who may use them; empty with one.
     pub selection_summary: Vec<crate::properties::Group>,
+    /// A drive the entries selected are on is mounted read-only: their
+    /// shared permissions offer no change. Read on a worker, one look per
+    /// drive, when several are selected.
+    pub selection_read_only: bool,
+    selection_drives: crate::latest::Latest<bool>,
+    /// The devices `selection_drives` was asked of.
+    selection_drives_of: Vec<u64>,
     /// Whether Properties is open under a preview; part of the window's shape.
     pub properties_open: bool,
     /// Its share of the room over a preview, above it and beside it, as
@@ -559,8 +630,10 @@ impl VolumeFacts {
             .space
             .map(|(free, _)| format!("{} free", format::size(free)));
         let gist = [name, free].into_iter().flatten().collect::<Vec<_>>();
+        // Seldom looked at: it ships folded, its heading saying the gist.
         (!rows.is_empty()).then(|| crate::properties::Group {
             gist: (!gist.is_empty()).then(|| gist.join(" · ").into()),
+            folded: true,
             ..crate::properties::Group::new("Volume", rows)
         })
     }
@@ -644,6 +717,9 @@ impl Default for PreviewState {
             properties: Vec::new(),
             properties_at: None,
             selection_summary: Vec::new(),
+            selection_read_only: false,
+            selection_drives: crate::latest::Latest::default(),
+            selection_drives_of: Vec::new(),
             properties_open: false,
             properties_share: crate::elements::edge::Share::even(crate::properties::SHARE),
             properties_folds: crate::properties::Folds::default(),
@@ -1130,6 +1206,7 @@ impl Shell {
             if let Some(count) = self.preview.count.take() {
                 count.cancel.cancel();
             }
+            self.preview.count_wanted = false;
             while self.preview.rx.try_recv().is_ok() {}
             return;
         }
@@ -1186,6 +1263,24 @@ impl Shell {
         };
         let Some((seen, key, version, entry)) = current else {
             self.cancel_preview(window, cx);
+            // Nothing shown, nothing counted: a search, Recent or the shelf
+            // shows no Properties, and a count of the folder left goes.
+            if let Some(count) = self.preview.count.take() {
+                count.cancel.cancel();
+            }
+            // A count asked waits for the folder shown to be read; where no
+            // folder is shown, selecting something later is not asking.
+            let waits = count_waits(
+                cursor,
+                self.app
+                    .workspace
+                    .read()
+                    .pane(self.pane)
+                    .and_then(skwir_core::workspace::Pane::location),
+            );
+            if !waits {
+                self.preview.count_wanted = false;
+            }
             if cursor.is_none() {
                 self.name_location();
             }
@@ -1301,23 +1396,37 @@ impl Shell {
                 .media_kind()
                 .map_or((None, None), |kind| self.media_neighbours(id, kind));
             let selection = self.selection_ctx();
-            self.preview.selection_summary = if selection.count < 2 {
-                Vec::new()
+            let (summary, drives) = if selection.count < 2 {
+                (Vec::new(), std::collections::BTreeMap::new())
             } else {
                 let ws = self.app.workspace.read();
-                let entries: Vec<&skwir_core::entry::Entry> = ws
-                    .pane(self.pane)
+                let pane = ws.pane(self.pane);
+                let entries: Vec<&skwir_core::entry::Entry> = pane
                     .map(|p| p.selection.iter().filter_map(|id| p.entry(id)).collect())
                     .unwrap_or_default();
+                // The drives they are on, one path each: what a change of
+                // access acts on is what a link leads to.
+                let mut drives = std::collections::BTreeMap::new();
+                for entry in &entries {
+                    let file = entry.target.as_ref().map_or(entry.file(), |t| t.id);
+                    if !drives.contains_key(&file.dev)
+                        && let Some(path) = pane.and_then(|p| p.path_of(entry.id))
+                    {
+                        drives.insert(file.dev, path);
+                    }
+                }
                 // The whole size once every file's is known, never a part.
-                crate::properties::selection_groups(
+                let summary = crate::properties::selection_groups(
                     &entries,
                     selection.count,
                     selection.bytes,
                     self.pane,
                     &user,
-                )
+                );
+                (summary, drives)
             };
+            self.preview.selection_summary = summary;
+            self.ask_selection_drives(drives);
         }
         self.ask_sources(&entry, &key.path);
         while let Ok((generation, rows)) = self.preview.sources_rx.try_recv() {
@@ -1336,6 +1445,10 @@ impl Shell {
                 self.preview.read_only = read.read_only;
                 cx.notify();
             }
+        }
+        if let Some(read_only) = self.preview.selection_drives.take() {
+            self.preview.selection_read_only = read_only;
+            cx.notify();
         }
         self.sync_count(cx);
         while let Ok((generation, member)) = self.preview.nested_rx.try_recv() {
@@ -2215,6 +2328,37 @@ impl Shell {
         self.show_waiting_line();
     }
 
+    /// Whether a drive the selected entries are on is read-only (`drives`:
+    /// one path on each, by device), read on a worker; asked again only
+    /// when the drives change, and what was said stays until the answer.
+    fn ask_selection_drives(
+        &mut self,
+        drives: std::collections::BTreeMap<u64, std::path::PathBuf>,
+    ) {
+        let devices: Vec<u64> = drives.keys().copied().collect();
+        if devices == self.preview.selection_drives_of {
+            return;
+        }
+        self.preview.selection_drives_of = devices;
+        if drives.is_empty() {
+            self.preview.selection_drives.forget();
+            self.preview.selection_read_only = false;
+            return;
+        }
+        self.preview.selection_drives.ask(
+            &self.app,
+            self.app.lifetime(),
+            Priority::Visible,
+            "properties-drives",
+            move |cancel| {
+                drives.values().any(|path| {
+                    !cancel.is_cancelled()
+                        && skwir_core::fs::volume::read_only(path).unwrap_or(false)
+                })
+            },
+        );
+    }
+
     /// The fields Properties shows for `entry` at `path` (a picture's place,
     /// `skwir_core::fields`), what the system adds to its mode
     /// (`skwir_platform::access`) and the flags it keeps, what it takes on
@@ -2803,21 +2947,53 @@ impl Shell {
         cx.notify();
     }
 
-    /// What a count asked now is of, as `sync_count` compares it: the
-    /// pane, its selection, and the entry shown unless several are
-    /// selected (the cursor moves within a selection without changing
-    /// what is counted).
-    fn count_key(&self) -> (PaneId, u64, Option<skwir_core::EntryId>) {
-        let revision = self
-            .app
+    /// What a count asked now counts, as `sync_count` compares it: the
+    /// entry shown unless several are selected, else the selection (the
+    /// cursor moves within a selection without changing what is counted).
+    /// `None` with nothing shown. Walks a selection of several: when the
+    /// selection's revision moved, not each wake.
+    fn counted_now(&self) -> Option<Counted> {
+        let ctx = self.selection_ctx();
+        if ctx.count > 1 {
+            let ws = self.app.workspace.read();
+            let pane = ws.pane(self.pane)?;
+            Some(Counted::Selection {
+                len: pane.selection.len(),
+                stamp: selection_stamp(pane.selection.iter()),
+            })
+        } else {
+            self.preview.key.as_ref().map(|key| Counted::Shown(key.id))
+        }
+    }
+
+    /// The selection's revision in the pane shown: 0 without one.
+    fn selection_revision(&self) -> u64 {
+        self.app
             .workspace
             .read()
             .pane(self.pane)
-            .map_or(0, |p| p.selection.revision());
-        let shown = (self.selection_ctx().count <= 1)
-            .then(|| self.preview.key.as_ref().map(|k| k.id))
-            .flatten();
-        (self.pane, revision, shown)
+            .map_or(0, |p| p.selection.revision())
+    }
+
+    /// Whether the count under way, or done, is still of what Properties
+    /// shows. A selection made again of the same entries is (a click on
+    /// the row already selected, on the background with nothing
+    /// selected): only another entry, another selection or another pane
+    /// lets it go.
+    fn count_still_shown(&mut self) -> bool {
+        let Some(count) = self.preview.count.as_ref() else {
+            return true;
+        };
+        let revision = self.selection_revision();
+        let same = still_counts(
+            (count.pane, count.counted, count.revision),
+            (self.pane, revision),
+            || self.counted_now(),
+        );
+        if same && let Some(count) = self.preview.count.as_mut() {
+            count.revision = revision;
+        }
+        same
     }
 
     /// The paths a count asked now counts: the selection's with several
@@ -2846,9 +3022,14 @@ impl Shell {
     }
 
     /// Count what Properties shows, on a worker, reporting as it goes
-    /// (`fs::count::REPORT_EVERY`); the count before is stopped.
+    /// (`fs::count::REPORT_EVERY`); the count before is stopped. The count
+    /// is the pane's location's work: going elsewhere stops it at once,
+    /// before any frame (`Pane::location_lifetime`).
     fn start_count(&mut self) {
         let paths = self.count_subject();
+        let Some(counted) = self.counted_now() else {
+            return;
+        };
         if paths.is_empty() {
             return;
         }
@@ -2857,9 +3038,19 @@ impl Shell {
         }
         self.preview.count_generation += 1;
         let generation = self.preview.count_generation;
-        let cancel = self.app.lifetime().child();
+        let Some(cancel) = self
+            .app
+            .workspace
+            .read()
+            .pane(self.pane)
+            .map(skwir_core::workspace::Pane::location_lifetime)
+        else {
+            return;
+        };
         self.preview.count = Some(Counting {
-            asked: self.count_key(),
+            pane: self.pane,
+            counted,
+            revision: self.selection_revision(),
             now: skwir_core::fs::count::Count::default(),
             running: true,
             cancel: cancel.clone(),
@@ -2872,8 +3063,8 @@ impl Shell {
             "properties-count",
             cancel.clone(),
             move || {
-                let said = |now: &skwir_core::fs::count::Count| {
-                    if tx.send((generation, *now)).is_ok() {
+                let said = |now: &skwir_core::fs::count::Count, ended: bool| {
+                    if tx.send((generation, *now, ended)).is_ok() {
                         wake();
                     }
                 };
@@ -2881,11 +3072,11 @@ impl Shell {
                     &paths,
                     &cancel,
                     skwir_core::fs::count::REPORT_EVERY,
-                    said,
+                    |now| said(now, now.done),
                 );
-                // Stopped: what it had when it stopped.
+                // Stopped: what it had when it stopped, and that it ended.
                 if !last.done {
-                    said(&last);
+                    said(&last, true);
                 }
             },
         );
@@ -2894,17 +3085,13 @@ impl Shell {
     /// Let go of a count of what Properties no longer shows, take what a
     /// count sent, and count what `ui.properties` opened on once it shows.
     fn sync_count(&mut self, cx: &mut Context<Self>) {
-        if self
-            .preview
-            .count
-            .as_ref()
-            .is_some_and(|count| count.asked != self.count_key())
+        if !self.count_still_shown()
             && let Some(count) = self.preview.count.take()
         {
             count.cancel.cancel();
             cx.notify();
         }
-        while let Ok((generation, now)) = self.preview.count_rx.try_recv() {
+        while let Ok((generation, now, ended)) = self.preview.count_rx.try_recv() {
             if let Some(count) = self
                 .preview
                 .count
@@ -2912,7 +3099,7 @@ impl Shell {
                 .filter(|count| count.generation == generation)
             {
                 count.now = now;
-                count.running &= !now.done;
+                count.running &= !ended;
                 cx.notify();
             }
         }
@@ -2927,11 +3114,17 @@ impl Shell {
 
     /// Whether `ui.properties` would hide Properties: they are on screen
     /// over a preview. With nothing to preview they are all the panel
-    /// holds, and stay.
+    /// holds, and stay; a folder on its way is that too (its preview is
+    /// what it holds, which Properties says), so the menu's item, read as
+    /// soon as it opens, says what a click does once the folder is read.
     pub fn properties_hide(&self) -> bool {
+        let folder_coming = self.preview.content.is_none()
+            && self.preview.key.is_some()
+            && self.preview.info.is_dir;
         (self.preview.open || self.preview.peek)
             && self.preview.properties_open
             && !crate::properties::alone(self)
+            && !folder_coming
     }
 
     /// `ui.preview_copy_path`: the path of what is shown, as text.
@@ -4242,7 +4435,77 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
 
 #[cfg(test)]
 mod tests {
-    use super::{SHARPEN_STEP, Version, max_width, sharper};
+    use super::{
+        Counted, SHARPEN_STEP, Version, count_waits, max_width, selection_stamp, sharper,
+        still_counts,
+    };
+    use skwir_core::workspace::{PaneId, Selection};
+
+    fn id(ino: u64) -> skwir_core::EntryId {
+        skwir_core::EntryId {
+            file: skwir_core::FileId { dev: 1, ino },
+            at: ino * 7,
+        }
+    }
+
+    #[test]
+    fn a_count_is_kept_by_what_it_counts_not_by_the_selection_s_revision() {
+        let pane = PaneId(1);
+        // The same entries selected again: another revision, the same set.
+        let mut selection = Selection::default();
+        selection.set([id(1), id(2)]);
+        let first = selection.revision();
+        let stamp = selection_stamp(selection.iter());
+        selection.set([id(2), id(1)]);
+        assert_ne!(selection.revision(), first, "selecting again moves it");
+        assert_eq!(selection_stamp(selection.iter()), stamp, "in any order");
+        assert_ne!(selection_stamp([id(1)].into_iter()), stamp);
+        let several = Counted::Selection { len: 2, stamp };
+        assert!(
+            still_counts((pane, several, first), (pane, selection.revision()), || {
+                Some(Counted::Selection { len: 2, stamp })
+            }),
+            "a selection made again of the same entries keeps its count"
+        );
+        assert!(still_counts(
+            (pane, several, first),
+            (pane, first),
+            || panic!("an unmoved revision is not walked")
+        ),);
+        assert!(!still_counts(
+            (pane, several, first),
+            (pane, first + 1),
+            || Some(Counted::Selection {
+                len: 2,
+                stamp: stamp ^ 1
+            })
+        ));
+        // One entry shown (a folder clicked again, the folder shown with a
+        // click on the background): kept while it is the one shown.
+        let shown = Counted::Shown(id(5));
+        assert!(still_counts((pane, shown, 0), (pane, 9), || Some(shown)));
+        assert!(!still_counts((pane, shown, 0), (pane, 0), || Some(
+            Counted::Shown(id(6))
+        )));
+        assert!(!still_counts((pane, shown, 0), (pane, 0), || None));
+        assert!(
+            !still_counts((pane, shown, 0), (PaneId(2), 0), || Some(shown)),
+            "another pane"
+        );
+    }
+
+    #[test]
+    fn a_count_asked_waits_only_for_the_folder_shown() {
+        let folder = skwir_core::Location::from_path("/data/it's a café");
+        let search = skwir_core::Location::new("search", "kind:image");
+        assert!(count_waits(None, Some(&folder)), "the folder on its way");
+        assert!(
+            !count_waits(None, Some(&search)),
+            "a search shows no folder: selecting there later is not asking"
+        );
+        assert!(!count_waits(Some(id(3)), Some(&folder)), "its entry gone");
+        assert!(!count_waits(None, None));
+    }
 
     #[test]
     fn a_picture_is_drawn_sharper_in_steps_up_to_what_it_can_have() {

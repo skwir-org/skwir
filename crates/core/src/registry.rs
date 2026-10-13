@@ -523,6 +523,9 @@ impl PropertySource {
 /// of its own named so), its label and value, and links after the value.
 /// The links show while the pointer is on the row, unless `actions_shown`
 /// (they stop what runs) or the value is empty (they are all it says).
+/// With `folded`, a group of its own ships folded (what is seldom looked
+/// at: checksums), until the user unfolds it; Properties names no plugin's
+/// group itself.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Property {
     pub group: String,
@@ -533,6 +536,8 @@ pub struct Property {
     pub actions: Vec<PropertyAction>,
     #[serde(default)]
     pub actions_shown: bool,
+    #[serde(default)]
+    pub folded: bool,
 }
 
 /// A link after a property's value: its words and what it runs.

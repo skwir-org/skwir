@@ -44,7 +44,11 @@ Status: accepted, 2026-10-13. Built.
    seldom finds. The count follows no link, stays on the folder's drive
    (a drive mounted inside is not counted, and says so), counts a file of
    several names once, streams what it has so far, and is cancelled when
-   Properties shows something else.
+   Properties shows something else or the pane goes elsewhere (it is the
+   pane's location's work). It is kept by what it counts, so selecting
+   the same entries again keeps it. With several selected, the folders
+   among them count as folders; what it could not list or read is said
+   apart, and a count done or stopped counts again when asked.
 4. **Access is changed by plans.** `set_access` (the core's, `plans`)
    takes chmod's grammar (`644`, `u+x`, `go-w`, `a=rX`; a clause naming
    no class leaves out the umask's bits, as chmod, and is refused where
@@ -78,15 +82,20 @@ Status: accepted, 2026-10-13. Built.
    owner says its answers changed. Open with answers "Opens with" and
    changing it; a checksums plugin answers SHA-256, MD5 and BLAKE3, each
    computed only when asked, with Copy and a comparison with the
-   clipboard.
+   clipboard. What the window asks of it waits in one lane: one job at a
+   time reads the file asked last for all that is asked of it, so a large
+   file holds one worker, not every one while folders wait to be listed.
+   A source says its group ships folded (`Property::folded`); the shell
+   names no plugin's group.
 
 7. **Compact, and the preview keeps its room.** Over a preview,
    Properties takes at most half the room above it (less when it says
    less), or half of a room wider than tall beside it, and scrolls past
    that; the edge between them is dragged, each way apart, and a double
    click puts it back to half. Each group folds from its heading, and
-   stays folded for every file; Checksums and Volume ship folded, the
-   drive's heading still naming it and its free room. A row's
+   stays folded for every file; the drive's group (Volume) and the
+   checksums' ship folded, the drive's heading still naming it and its
+   free room. A row's
    links show while the pointer is on it, over the end of its last line,
    taking no room otherwise, except those that are all the row says
    (Count, Compute, Add… to no tags or no comment) or that stop or start

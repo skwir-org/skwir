@@ -475,7 +475,11 @@ is still to come are in `docs/preview-frame.md`.
   while Properties is open, as Preview's is while its panel is. So do
   Alt+Enter, Ctrl+I and the context menu's last item: one command
   (`ui.properties`), which hides them again where they cover a preview,
-  the menu's item then saying Hide Properties (ADR-058).
+  the menu's item then saying Hide Properties (ADR-058). The item's
+  words are read at each frame (`menu::properties_title`), never kept
+  from when the menu opened: a right-click selects the entry as the menu
+  opens, before the panel shows it, and a folder on its way counts as
+  shown (`Shell::properties_hide`).
 - The card has no close button: the Preview button closes the panel.
   Only the peek overlay keeps one.
 - **Properties** (`properties.rs`) is a section of the frame, not a kind of
@@ -497,9 +501,11 @@ is still to come are in `docs/preview-frame.md`.
   - Whether it is open, its share each way and the groups folded belong
     to the window's shape (`session.rs`).
   - Each group's heading folds it (`ui.properties_fold`), remembered by
-    title for every file (`properties::Folds`); Checksums and Volume ship
-    folded. A folded group says its gist on its heading (`Group::gist`:
-    the drive and its free room).
+    title for every file (`properties::Folds`). How a group ships is the
+    group's to say (`Group::folded`): the shell's Volume ships folded, and
+    a source's group when its rows say so (`Property::folded`: the
+    checksums'); the shell names no plugin's group. A folded group says
+    its gist on its heading (`Group::gist`: the drive and its free room).
   - A row's links (Change…, Edit…, Copy) show while the pointer is on
     it, over the end of its last line: hidden, they take no room, and
     nothing moves when they show. Those that are all a row says (Count,
@@ -528,11 +534,22 @@ is still to come are in `docs/preview-frame.md`.
 - Properties never starts a scan by itself: a folder says what its
   listing already counted. What it holds in all is counted when asked
   (Count, or `ui.properties`, which is the asking): `fs::count` on a
-  worker, reporting as it goes into `PreviewState::count`, cancelled when
-  Properties shows something else (its pane, its selection, its entry
-  unless several are selected) or the panel closes. A count row is drawn
-  from that state (`Show::Count`), never collected with the entry. A
-  click copies a value.
+  worker, reporting as it goes into `PreviewState::count`. It is kept by
+  what it counts (`Counted`: the entry shown, or the entries selected as
+  a set), never by the selection's revision, so a selection made again of
+  the same entries (a click on the row selected, on the background with
+  nothing selected) keeps it; another entry, selection or pane lets it go,
+  as does a place that shows no Properties (a search, Recent) and the
+  panel closing. It is the pane's location's work
+  (`Pane::location_lifetime`): going elsewhere stops it at once. An
+  `ui.properties` waiting for the folder shown is dropped where no folder
+  is shown, so selecting something there later is not asking. A count
+  row is drawn from that state (`Show::Count`), never collected with the
+  entry; a count stopped or done counts again from its link. What could
+  not be read is said apart: folders that could not be listed, entries
+  whose metadata could not be read (`Count::unknown`). With several
+  selected, the folders among them count as folders. A click copies a
+  value.
 - What the file takes on its drive, its flags (`stat::flags`) and the
   drive it is on (the Volume group, kept a few seconds per device) are
   read on the fields worker with the rest, for the one entry shown.
@@ -541,13 +558,18 @@ is still to come are in `docs/preview-frame.md`.
   (a file's read and write, a folder's List items only, Open items,
   Create and delete items), who can run a file, the mode as chmod writes
   it (`users::mode`, `ls`'s letters) and what its special bits do; for a
-  selection, in a Permissions group of their own after Selection's. Each
+  selection, in a group of their own after Selection's
+  (`properties::SHARED_PERMISSIONS`, titled and folded apart from the
+  Permissions of the entry under the cursor). Each
   change is a `set_access` through `ui.choose` (a folder's switch adds
   `inside`; its levels use `X`) or `ui.ask` (the mode), on the entry by
   `EntryRef` or on the pane's selection by `pane`. Nothing is offered to
   a user who does not own them all (root aside, `users::me`) or for the
   trash's files, and a row says why; a read-only drive, read on the
-  worker, takes the links away (`Row::edits_access`). The group is one
+  worker, takes the links away (`Row::edits_access`): the entry's own
+  drive for its Permissions, any of the selected entries' drives for
+  theirs (`PreviewState::selection_read_only`, one look per drive,
+  asked again when the drives change). The group is one
   of the user's (`users::my_groups`).
 - **Plugins' rows** come from property sources
   (`Registry::property_sources`): each source's command is dispatched on
@@ -555,7 +577,15 @@ is still to come are in `docs/preview-frame.md`.
   the file changes or a source's revision moves, never while painting; a
   row joins the group it names, or a group of its own before the drive's.
   The shell names no plugin: Opens with is Open with's answer, the
-  checksums the checksums plugin's.
+  checksums the checksums plugin's, which says its group ships folded.
+- **A source that reads a whole file** (the checksums) reads what the
+  window asks in a lane of its own: one job at a time holds a worker,
+  reading the file asked last for everything asked of it at once, so
+  folders are still listed while a large file is read. The window names
+  the file by its `EntryRef` and nothing is stat-ed on its thread; the
+  job stats it, and stats it again once read: a file that changed
+  meanwhile gives no checksum. Turning the plugin off cancels what runs
+  and what waits for a worker alike (one token of the plugin's).
 
 ### The toolbar
 

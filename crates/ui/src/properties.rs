@@ -3,8 +3,8 @@
 //! A section of the preview frame, not a kind of preview and not a dialog
 //! of its own: what other file managers open as a Properties window
 //! (Alt+Enter, Ctrl+I, the context menu's last item) is this, following
-//! the selection. With nothing to preview (a folder, an unknown file,
-//! several entries) it is always open; over a preview it opens on demand
+//! the selection. With nothing to preview (a folder, an unknown file) it
+//! is always open; over a preview it opens on demand
 //! under the header's card (`preview::under_card`, the one place that
 //! draws it), with at most its share of the room, above the preview or
 //! beside it (`Room`), the edge between them dragged. Its groups fold
@@ -131,6 +131,10 @@ pub struct Group {
     /// What its heading says at its right while it is folded: the gist of
     /// its rows (the drive's name and its free room).
     pub gist: Option<SharedString>,
+    /// It ships folded, until the user unfolds it: what is seldom looked
+    /// at (the drive's, the shell's own; a source's whose rows say so,
+    /// `Property::folded`).
+    pub folded: bool,
 }
 
 impl Group {
@@ -139,6 +143,7 @@ impl Group {
             title: title.into(),
             rows,
             gist: None,
+            folded: false,
         }
     }
 }
@@ -147,11 +152,12 @@ fn group(title: &'static str, rows: Vec<Row>) -> Option<Group> {
     (!rows.is_empty()).then(|| Group::new(title, rows))
 }
 
-/// The groups folded as Properties ships: what is seldom looked at.
-const FOLDED: [&str; 2] = ["Checksums", "Volume"];
+/// The title of the Permissions group of several entries: what they
+/// share, apart from the Permissions of the entry the cursor is on.
+pub const SHARED_PERMISSIONS: &str = "Shared permissions";
 
 /// The groups the user folded or unfolded, by title; one it does not name
-/// is as Properties ships it (`FOLDED`). Part of the window's shape
+/// is as Properties ships it (`Group::folded`). Part of the window's shape
 /// (`session.rs`), so a group folded for one file stays folded for every
 /// other.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -159,20 +165,30 @@ const FOLDED: [&str; 2] = ["Checksums", "Volume"];
 pub struct Folds(std::collections::BTreeMap<String, bool>);
 
 impl Folds {
-    pub fn folded(&self, title: &str) -> bool {
-        self.0
-            .get(title)
-            .copied()
-            .unwrap_or_else(|| FOLDED.contains(&title))
+    /// Whether the group `title` is folded: as the user left it, else as
+    /// it ships (`shipped`).
+    pub fn folded(&self, title: &str, shipped: bool) -> bool {
+        self.0.get(title).copied().unwrap_or(shipped)
     }
 
-    pub fn set(&mut self, title: &str, folded: bool) {
-        if folded == FOLDED.contains(&title) {
+    /// Fold the group `title` or unfold it; as it ships (`shipped`), it is
+    /// forgotten, so a later change of how it ships reaches it.
+    pub fn set(&mut self, title: &str, folded: bool, shipped: bool) {
+        if folded == shipped {
             self.0.remove(title);
         } else {
             self.0.insert(title.to_owned(), folded);
         }
     }
+}
+
+/// A row a property source answered (`plugin_rows`): the group it joins,
+/// whether that group ships folded, and the row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SourceRow {
+    pub group: SharedString,
+    pub folded: bool,
+    pub row: Row,
 }
 
 /// Properties' share of the room over a preview, until its edge is
@@ -520,10 +536,11 @@ fn named(id: u64, name: Option<String>) -> String {
 
 /// The Selection group, for several entries selected: how many and of
 /// which kinds, what they weigh (the files' sizes once all are known, or
-/// a count where folders are among them); then their Permissions group,
-/// the owner, group and access they share, "Mixed" where they differ. A
-/// fact some entry does not say yet is left out. Pure, so it is tested
-/// without a window.
+/// a count where folders are among them); then the owner, group and
+/// access they share, "Mixed" where they differ, in a group of its own
+/// (`SHARED_PERMISSIONS`: the entry under the cursor keeps its
+/// Permissions, folded apart). A fact some entry does not say yet is left
+/// out. Pure, so it is tested without a window.
 pub fn selection_groups(
     entries: &[&Entry],
     selected: usize,
@@ -559,7 +576,7 @@ pub fn selection_groups(
             .iter()
             .any(|e| e.metadata.value(keys::TRASHED).is_some());
         groups.push(Group::new(
-            "Permissions",
+            SHARED_PERMISSIONS,
             access_rows(&subjects, &Targets::Selection(pane), trashed, user),
         ));
     }
@@ -567,13 +584,14 @@ pub fn selection_groups(
 }
 
 /// What `sources` say of the entry `target`, each row with the group it
-/// joins: their commands dispatched in turn, a source that fails or
-/// answers what is no rows saying nothing. On a worker.
+/// joins and whether that group ships folded: their commands dispatched
+/// in turn, a source that fails or answers what is no rows saying
+/// nothing. On a worker.
 pub fn plugin_rows(
     app: &skwir_core::App,
     sources: &[skwir_core::registry::PropertySource],
     target: &EntryRef,
-) -> Vec<(SharedString, Row)> {
+) -> Vec<SourceRow> {
     #[derive(serde::Deserialize)]
     struct Answer {
         rows: Vec<skwir_core::registry::Property>,
@@ -596,9 +614,10 @@ pub fn plugin_rows(
         };
         match answer {
             Ok(answer) => rows.extend(answer.rows.into_iter().map(|property| {
-                (
-                    SharedString::from(property.group),
-                    Row {
+                SourceRow {
+                    group: SharedString::from(property.group),
+                    folded: property.folded,
+                    row: Row {
                         actions: property
                             .actions
                             .into_iter()
@@ -607,7 +626,7 @@ pub fn plugin_rows(
                         actions_shown: property.actions_shown,
                         ..Row::new(property.label, property.value)
                     },
-                )
+                }
             })),
             Err(e) => tracing::debug!(command = %command.name, "property source answer: {e}"),
         }
@@ -987,8 +1006,9 @@ pub fn access_rows(
 
 /// The rows of a count of what folders hold (`Show::Count`), labelled
 /// `label`: the link that counts, what is counted so far with the link
-/// that stops, or the total, the room it takes and how many files and
-/// folders, and what it could not count.
+/// that stops, or the total with the link that counts again (what a folder
+/// holds changes), the room it takes and how many files and folders, and
+/// what it could not count.
 pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool)>) -> Vec<Row> {
     let again = || Invocation::new("ui.properties_count");
     let Some((now, running)) = count else {
@@ -996,24 +1016,23 @@ pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool
     };
     let size = format::size(now.size);
     let first = if running {
-        Row::new(label.to_owned(), format!("{size} so far…"))
-            .action(
-                "Stop",
-                Invocation::with_args("ui.properties_count", &serde_json::json!({ "stop": true })),
-            )
-            .shown()
+        Row::new(label.to_owned(), format!("{size} so far…")).action(
+            "Stop",
+            Invocation::with_args("ui.properties_count", &serde_json::json!({ "stop": true })),
+        )
     } else if !now.done {
         Row::new(label.to_owned(), format!("At least {size}, stopped"))
             .action("Count again", again())
-            .shown()
     } else if now.lower_bound() {
-        Row::new(label.to_owned(), format!("At least {size}"))
+        Row::new(label.to_owned(), format!("At least {size}")).action("Count again", again())
     } else {
         Row::new(
             label.to_owned(),
             format!("{size} ({} bytes)", format::thousands(now.size as usize)),
         )
-    };
+        .action("Count again", again())
+    }
+    .shown();
     let mut rows = vec![
         first,
         Row::new("On disk", format::size(now.allocated)),
@@ -1030,8 +1049,18 @@ pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool
         rows.push(Row::new(
             "Unreadable",
             format!(
-                "{} could not be read",
+                "{} could not be listed",
                 format::count(now.unreadable as usize, "folder")
+            ),
+        ));
+    }
+    // Neither files nor folders: what they are could not be read.
+    if now.unknown > 0 {
+        rows.push(Row::new(
+            "Unknown",
+            format!(
+                "{} could not be read",
+                format::count(now.unknown as usize, "item")
             ),
         ));
     }
@@ -1271,10 +1300,11 @@ const ROW: &str = "properties-row";
 /// (or its Properties button) is what opens it, and holds the name, type,
 /// size and date, so the groups here repeat none of those.
 ///
-/// Each group's heading folds it (`ui.properties_fold`), and says at its
-/// right what its rows say in short: Permissions' mode, the gist of a
-/// group folded. A row's links show while the pointer is on it, unless
-/// they are all it says or stop what runs (`Row::links_shown`); where they
+/// Each group's heading folds it (`ui.properties_fold`), as the user left
+/// it or as it ships (`Group::folded`), and while folded says at its right
+/// what its rows say in short (`Group::gist`: the drive and its free
+/// room). A row's links show while the pointer is on it, unless they are
+/// all it says or stop or start what runs (`Row::links_shown`); where they
 /// go is `row_element`'s.
 pub fn render(
     shell: &Shell,
@@ -1315,14 +1345,21 @@ pub fn render(
     };
     let several = !preview.selection_summary.is_empty();
     let count = preview.count.as_ref().map(|c| (c.now, c.running));
+    // The selection's groups, then the entry's under the cursor: each says
+    // what its own drives allow.
     let groups = preview
         .selection_summary
         .iter()
-        .chain(preview_group(shell).iter())
-        .chain(preview.properties.iter())
-        .chain(preview.volume.iter())
-        .cloned()
-        .map(|mut group| {
+        .map(|group| (true, group))
+        .chain(
+            preview_group(shell)
+                .iter()
+                .chain(preview.properties.iter())
+                .chain(preview.volume.iter())
+                .map(|group| (false, group)),
+        )
+        .map(|(of_selection, group)| {
+            let mut group = group.clone();
             // What the system adds to the mode, read after the rest.
             if group.title.as_ref() == "Permissions" {
                 group.rows.extend(preview.access.iter().cloned());
@@ -1335,14 +1372,21 @@ pub fn render(
             if group.title.as_ref() == "General" {
                 group.rows.extend(preview.general.iter().cloned());
             }
-            // Nothing on a read-only drive changes who may use it.
-            if preview.read_only && group.rows.iter().any(|row| row.edits_access) {
+            // Nothing on a read-only drive changes who may use it: the
+            // entry's drive, or for the selection's, any of theirs.
+            let (read_only, why) = if of_selection {
+                (
+                    preview.selection_read_only,
+                    "A drive they are on is read-only",
+                )
+            } else {
+                (preview.read_only, "The drive is read-only")
+            };
+            if read_only && group.rows.iter().any(|row| row.edits_access) {
                 for row in group.rows.iter_mut().filter(|row| row.edits_access) {
                     row.actions.clear();
                 }
-                group
-                    .rows
-                    .push(Row::new("Changes", "The drive is read-only"));
+                group.rows.push(Row::new("Changes", why));
             }
             // A count as it stands. Of the entry shown only when it is
             // all that is selected: with several, the selection's.
@@ -1361,17 +1405,23 @@ pub fn render(
         .filter(|group| !group.rows.is_empty())
         .collect::<Vec<_>>();
     // What plugins say: in the group each names, or one of its own before
-    // the drive's.
+    // the drive's, folded as the source ships it.
     let mut groups = groups;
-    for (title, row) in &preview.plugin_rows {
-        if let Some(group) = groups.iter_mut().find(|g| &g.title == title) {
-            group.rows.push(row.clone());
+    for source in &preview.plugin_rows {
+        if let Some(group) = groups.iter_mut().find(|g| g.title == source.group) {
+            group.rows.push(source.row.clone());
         } else {
             let at = groups
                 .iter()
                 .position(|g| g.title.as_ref() == "Volume")
                 .unwrap_or(groups.len());
-            groups.insert(at, Group::new(title.clone(), vec![row.clone()]));
+            groups.insert(
+                at,
+                Group {
+                    folded: source.folded,
+                    ..Group::new(source.group.clone(), vec![source.row.clone()])
+                },
+            );
         }
     }
     let mut list = div()
@@ -1384,7 +1434,7 @@ pub fn render(
         .pb_3()
         .text_xs();
     for (g, group) in groups.into_iter().enumerate() {
-        let folded = preview.properties_folds.folded(&group.title);
+        let folded = preview.properties_folds.folded(&group.title, group.folded);
         list = list.child(heading(
             g,
             &group.title,
@@ -1423,8 +1473,8 @@ pub fn render(
 
 /// A group's heading: a heading, not one more label (in the text's own
 /// color and weight where the labels are muted), ruled off from the group
-/// above it; a click folds the group or unfolds it. While folded, its
-/// gist at its right.
+/// above it; a click folds the group or unfolds it (saying which, as the
+/// heading shows it). While folded, its gist at its right.
 fn heading(
     g: usize,
     title: &SharedString,
@@ -1460,7 +1510,7 @@ fn heading(
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.run(
                         "ui.properties_fold",
-                        serde_json::json!({ "group": fold }),
+                        serde_json::json!({ "group": fold, "fold": !folded }),
                         window,
                         cx,
                     );
@@ -1669,13 +1719,33 @@ impl Shell {
         let Some(group) = args.get("group").and_then(serde_json::Value::as_str) else {
             return;
         };
+        let shipped = ships_folded(&self.preview, group);
         let fold = args
             .get("fold")
             .and_then(serde_json::Value::as_bool)
-            .unwrap_or_else(|| !self.preview.properties_folds.folded(group));
-        self.preview.properties_folds.set(group, fold);
+            .unwrap_or_else(|| !self.preview.properties_folds.folded(group, shipped));
+        self.preview.properties_folds.set(group, fold, shipped);
         self.remember_session();
         cx.notify();
+    }
+}
+
+/// Whether the group `title` ships folded: as the shell's own group of
+/// that title says (`Group::folded`), else as the sources whose rows make
+/// it say (`Property::folded`). A group not shown ships unfolded.
+pub fn ships_folded(preview: &crate::preview::PreviewState, title: &str) -> bool {
+    let own = preview
+        .selection_summary
+        .iter()
+        .chain(preview.properties.iter())
+        .chain(preview.volume.iter())
+        .find(|group| group.title.as_ref() == title);
+    match own {
+        Some(group) => group.folded,
+        None => preview
+            .plugin_rows
+            .iter()
+            .any(|source| source.group.as_ref() == title && source.folded),
     }
 }
 
@@ -1915,24 +1985,36 @@ mod tests {
             size: 1234,
             ..so_far
         };
+        // Done, it counts again when asked: what a folder holds changes.
+        let exact = count_rows("Size", Some((done, false)));
         assert_eq!(
-            said(&count_rows("Size", Some((done, false)))[..1]),
-            [row("Size", "1.2 KB (1,234 bytes)", &[])]
+            said(&exact[..1]),
+            [row("Size", "1.2 KB (1,234 bytes)", &["Count again"])]
         );
+        assert!(exact[0].links_shown(), "it starts what runs");
+        assert_eq!(exact[0].actions[0].1.args, serde_json::json!({}));
         let partial = Count {
             unreadable: 2,
+            unknown: 3,
             other_drives: 1,
             ..done
         };
         assert_eq!(
             said(&count_rows("Size", Some((partial, false)))),
             [
-                row("Size", "At least 1.2 KB", &[]),
+                row("Size", "At least 1.2 KB", &["Count again"]),
                 row("On disk", "4.0 MB", &[]),
                 row("In all", "1,500 files, 1 folder", &[]),
-                row("Unreadable", "2 folders could not be read", &[]),
+                row("Unreadable", "2 folders could not be listed", &[]),
+                row("Unknown", "3 items could not be read", &[]),
                 row("Not counted", "1 drive mounted inside", &[]),
             ]
+        );
+        // An entry it could not look at alone makes the total a bound.
+        let unknown = Count { unknown: 1, ..done };
+        assert_eq!(
+            count_rows("Size", Some((unknown, false)))[0].value.as_ref(),
+            "At least 1.2 KB"
         );
     }
 
@@ -2002,20 +2084,51 @@ mod tests {
 
     #[test]
     fn groups_fold_as_shipped_until_the_user_folds_them() {
+        // How each ships is the group's to say: the shell names no
+        // plugin's (a source's rows say theirs, `Property::folded`).
         let mut folds = Folds::default();
-        assert!(folds.folded("Checksums") && folds.folded("Volume"));
-        assert!(!folds.folded("Permissions"));
-        folds.set("Checksums", false);
-        folds.set("Times", true);
-        assert!(!folds.folded("Checksums") && folds.folded("Times"));
-        folds.set("Checksums", true);
+        assert!(folds.folded("Volume", true) && folds.folded("A source's", true));
+        assert!(!folds.folded("Permissions", false));
+        folds.set("A source's", false, true);
+        folds.set("Times", true, false);
+        assert!(!folds.folded("A source's", true) && folds.folded("Times", false));
+        folds.set("A source's", true, true);
         assert_eq!(
             serde_json::to_value(&folds).unwrap(),
             serde_json::json!({ "Times": true }),
             "only what differs from how it ships is kept"
         );
         let back: Folds = serde_json::from_value(serde_json::json!({ "Volume": false })).unwrap();
-        assert!(!back.folded("Volume") && back.folded("Checksums"));
+        assert!(!back.folded("Volume", true) && back.folded("A source's", true));
+    }
+
+    #[test]
+    fn a_source_says_its_group_ships_folded() {
+        let mut preview = crate::preview::PreviewState::default();
+        assert!(
+            !ships_folded(&preview, "Checksums"),
+            "not shown, not folded"
+        );
+        let row = |group: &str, folded: bool| SourceRow {
+            group: group.to_owned().into(),
+            folded,
+            row: Row::new("SHA-256", ""),
+        };
+        preview.plugin_rows = vec![row("Checksums", true), row("General", true)];
+        preview.properties = vec![Group::new("General", vec![Row::new("Size", "1 B")])];
+        assert!(ships_folded(&preview, "Checksums"), "as its rows say");
+        assert!(
+            !ships_folded(&preview, "General"),
+            "a source joining the shell's group does not fold it"
+        );
+        preview.volume = Some(Group {
+            folded: true,
+            ..Group::new("Volume", vec![Row::new("Free", "1 GB")])
+        });
+        assert!(
+            ships_folded(&preview, "Volume"),
+            "the shell's own, said by its group"
+        );
     }
 
     #[test]
@@ -2029,7 +2142,11 @@ mod tests {
         let b = entry(11, "b café", EntryKind::File, 1000, Some(0o100_755));
         let groups = selection_groups(&[&a, &b], 2, Some(2048), pane, &me);
         let titles: Vec<&str> = groups.iter().map(|g| g.title.as_ref()).collect();
-        assert_eq!(titles, ["Selection", "Permissions"]);
+        assert_eq!(
+            titles,
+            ["Selection", SHARED_PERMISSIONS],
+            "not the Permissions of the entry under the cursor, folded apart"
+        );
         let find = |groups: &[Group], label: &str| {
             groups
                 .iter()

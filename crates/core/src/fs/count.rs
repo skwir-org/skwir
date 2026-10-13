@@ -7,7 +7,8 @@
 //! counted (`/` would otherwise count `/proc`). A file of several names is
 //! counted once, by its identity, wherever its names are. What it has
 //! counted so far is reported as it goes, so a big folder shows a growing
-//! lower bound; a folder it cannot read makes the count a lower bound too.
+//! lower bound; a folder it cannot list, or an entry it cannot look at,
+//! makes the count a lower bound too, each said apart.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -26,10 +27,15 @@ pub struct Count {
     pub allocated: u64,
     /// Files, links and other entries that are not folders.
     pub files: u64,
-    /// Folders inside the ones asked about (those not counted themselves).
+    /// Folders inside the ones asked about; with several asked about (a
+    /// selection), those asked about too, as the selection's files are.
     pub folders: u64,
-    /// Folders it could not read: the count is at least this much.
+    /// Folders it could not list: the count is at least this much.
     pub unreadable: u64,
+    /// Entries it could not look at (their metadata could not be read, as
+    /// in a folder its user may list but not open): neither files nor
+    /// folders, and the count is at least this much.
+    pub unknown: u64,
     /// Drives mounted inside, left out.
     pub other_drives: u64,
     /// The walk is over (not stopped: a stopped count is not done).
@@ -37,10 +43,10 @@ pub struct Count {
 }
 
 impl Count {
-    /// Whether it says less than there is: still counting, or folders it
-    /// could not read.
+    /// Whether it says less than there is: still counting, folders it
+    /// could not list or entries it could not look at.
     pub fn lower_bound(&self) -> bool {
-        !self.done || self.unreadable > 0
+        !self.done || self.unreadable > 0 || self.unknown > 0
     }
 }
 
@@ -48,10 +54,12 @@ impl Count {
 pub const REPORT_EVERY: Duration = Duration::from_millis(150);
 
 /// Count what `roots` hold: a folder what is inside it, a file itself. A
-/// root that is a link counts what it leads to, as Properties shows it;
-/// nothing inside is followed. Reports what it has to `report` every
-/// `every`, and returns it when the walk ends or `cancel` stops it (then
-/// not `done`). Reads the disk: on a worker.
+/// root that is a link counts what it leads to, as Properties shows it,
+/// and itself where it leads nowhere; nothing inside is followed. With
+/// several roots (a selection), the folders among them count as folders,
+/// as the files among them count as files. Reports what it has to
+/// `report` every `every`, and returns it when the walk ends or `cancel`
+/// stops it (then not `done`). Reads the disk: on a worker.
 pub fn count(
     roots: &[PathBuf],
     cancel: &CancelToken,
@@ -68,6 +76,7 @@ pub fn count(
     let mut roots: Vec<&PathBuf> = roots.iter().collect();
     roots.sort();
     roots.dedup();
+    let several = roots.len() > 1;
     let inside = |root: &Path, all: &[&PathBuf]| {
         all.iter()
             .any(|other| other.as_path() != root && root.starts_with(other))
@@ -78,11 +87,13 @@ pub fn count(
         .filter(|root| !inside(root, &roots))
         .collect();
     for root in kept {
-        let Ok(meta) = std::fs::metadata(root) else {
-            count.unreadable += 1;
+        // What it leads to, or a link that leads nowhere as itself.
+        let Ok(meta) = std::fs::metadata(root).or_else(|_| std::fs::symlink_metadata(root)) else {
+            count.unknown += 1;
             continue;
         };
         if meta.is_dir() {
+            count.folders += u64::from(several);
             count.allocated += super::stat::allocated(&meta);
             folders.push((root.clone(), device(&meta)));
         } else if seen.first(&meta) {
@@ -103,11 +114,16 @@ pub fn count(
             if cancel.is_cancelled() {
                 return count;
             }
-            let Ok(meta) = entry.and_then(|e| Ok((e.path(), e.metadata()?))) else {
+            // The listing itself failed partway: the folder is not read whole.
+            let Ok(entry) = entry else {
                 count.unreadable += 1;
+                break;
+            };
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else {
+                count.unknown += 1;
                 continue;
             };
-            let (path, meta) = meta;
             if meta.is_dir() {
                 if drive.is_some() && device(&meta) != drive {
                     count.other_drives += 1;
@@ -214,7 +230,8 @@ mod tests {
             let through = count_one(&root.join("to sub"), &CancelToken::new());
             assert_eq!((through.files, through.folders), (2, 1));
         }
-        // A folder and a file in it asked about together: the file once.
+        // A folder and a file in it asked about together: the file once,
+        // and the folder, being one of several asked about, as a folder.
         let alone = count_one(&root, &CancelToken::new());
         let file = root.join("a.txt");
         let both = count(
@@ -223,7 +240,84 @@ mod tests {
             Duration::MAX,
             |_| {},
         );
-        assert_eq!(both, alone);
+        assert_eq!(
+            both,
+            Count {
+                folders: alone.folders + 1,
+                ..alone
+            }
+        );
+    }
+
+    /// A folder under the tests' own cache folder, on the home drive.
+    #[cfg(unix)]
+    fn fixture() -> tempfile::TempDir {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        tempfile::tempdir_in(base).unwrap()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn several_count_their_folders_and_a_link_to_nowhere_as_itself() {
+        let tmp = fixture();
+        let full = tmp.path().join("it's full");
+        let empty = tmp.path().join("empty  café");
+        std::fs::create_dir(&full).unwrap();
+        std::fs::create_dir(&empty).unwrap();
+        std::fs::write(full.join("inside"), b"12345").unwrap();
+        let file = tmp.path().join("a file");
+        std::fs::write(&file, b"123").unwrap();
+        let nowhere = tmp.path().join("leads nowhere");
+        std::os::unix::fs::symlink(tmp.path().join("gone"), &nowhere).unwrap();
+        let several = count(
+            &[full.clone(), empty, file, nowhere.clone()],
+            &CancelToken::new(),
+            Duration::MAX,
+            |_| {},
+        );
+        let link = std::fs::symlink_metadata(&nowhere).unwrap().len();
+        assert_eq!(
+            (several.files, several.folders, several.size),
+            (3, 2, 5 + 3 + link),
+            "the selected folders are folders, the link is itself"
+        );
+        assert_eq!((several.unknown, several.unreadable), (0, 0));
+        assert!(several.done && !several.lower_bound());
+        // One folder asked about counts what it holds, not itself.
+        let one = count_one(&full, &CancelToken::new());
+        assert_eq!((one.files, one.folders), (1, 0));
+        // A link to nowhere asked about alone is itself.
+        let alone = count_one(&nowhere, &CancelToken::new());
+        assert_eq!((alone.files, alone.size, alone.unknown), (1, link, 0));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_entry_it_cannot_look_at_is_not_a_folder_it_cannot_read() {
+        use std::os::unix::fs::PermissionsExt;
+        if rustix::process::geteuid().is_root() {
+            return; // root looks at it all the same
+        }
+        let tmp = fixture();
+        // Listed but not opened: its names are read, their metadata is not.
+        let listed = tmp.path().join("listed only");
+        std::fs::create_dir(&listed).unwrap();
+        std::fs::write(listed.join("x"), b"x").unwrap();
+        std::fs::write(listed.join("y"), b"y").unwrap();
+        std::fs::set_permissions(&listed, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let partial = count_one(tmp.path(), &CancelToken::new());
+        std::fs::set_permissions(&listed, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            (
+                partial.folders,
+                partial.files,
+                partial.unknown,
+                partial.unreadable
+            ),
+            (1, 0, 2, 0)
+        );
+        assert!(partial.done && partial.lower_bound());
     }
 
     #[test]

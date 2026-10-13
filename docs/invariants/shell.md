@@ -222,9 +222,12 @@ of bars, split or not.
 
 ## Properties and links
 
-- A provider's fact can carry a command (`Detail::with_action`), drawn as
-  a link after the value and run through `Shell::run`. Clicking the row
-  copies the value; only the link acts.
+- A provider's fact can carry a command (`Detail::with_action`), a link
+  run through `Shell::run`. Links show over the end of the row's last
+  line while the pointer is on it, taking no room otherwise; those that
+  are all a row says or that stop or start what runs always show, after
+  the value ([previews.md](previews.md), "Header and Properties").
+  Clicking the row copies the value; only the link acts.
 - **Links (ADR-029).** A link written in a document answers a click. One
   found in raw text (`skwir_platform::links`: addresses by scheme, never a
   bare domain; paths in the terminal) answers Ctrl+click, drawn as a link

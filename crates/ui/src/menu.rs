@@ -362,6 +362,21 @@ pub fn rows_of(items: &[MenuItem], expanded: Option<&str>) -> Vec<Row> {
 /// (`skwir_core::registry::MenuItem`'s convention).
 const LAST: i32 = 900;
 
+/// The command of the menu's Properties item.
+const PROPERTIES: &str = "ui.properties";
+
+/// The words of the menu's Properties item as things stand: what a click
+/// does now. Read at each frame, not when the menu opens: a right-click on
+/// a row not selected selects it as the menu opens, before the panel
+/// shows it, and the item speaks of the entry clicked.
+fn properties_title(shell: &Shell) -> &'static str {
+    if shell.properties_hide() {
+        "Hide Properties"
+    } else {
+        "Properties"
+    }
+}
+
 /// The items, with each source's answer in place of what it replaces
 /// (an empty answer replaces nothing), in order.
 fn merge(mut items: Vec<MenuItem>, answers: Vec<(MenuSource, Vec<MenuItem>)>) -> Vec<MenuItem> {
@@ -470,19 +485,15 @@ impl Shell {
     /// The menu's last item, as other file managers have it: Properties of
     /// what it is about (the folder, on its background), or hiding them
     /// where they cover a preview. One command either way, so the item
-    /// names its keys.
+    /// names its keys; its words are read again at each frame
+    /// (`properties_title`).
     fn properties_item(&self) -> MenuItem {
-        let title = if self.properties_hide() {
-            "Hide Properties"
-        } else {
-            "Properties"
-        };
         MenuItem::new(
             "context",
-            title,
+            properties_title(self),
             "info",
             LAST,
-            skwir_core::command::Invocation::new("ui.properties"),
+            skwir_core::command::Invocation::new(PROPERTIES),
         )
     }
 
@@ -923,13 +934,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     .cloned()
                     .flatten()
                     .or_else(|| shell.keys_here(&item.command.name, &item.command.args));
-                (
-                    item.title.clone(),
-                    item.icon.clone(),
-                    keys,
-                    *nested,
-                    separated,
-                )
+                let title = if &*item.command.name == PROPERTIES {
+                    properties_title(shell).to_owned()
+                } else {
+                    item.title.clone()
+                };
+                (title, item.icon.clone(), keys, *nested, separated)
             }
             Row::Parent(name) => (name.clone(), None, None, false, true),
         };

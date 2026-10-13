@@ -778,6 +778,60 @@ by old command names, `path` for `location`, the `when` token `none`.
 `Settings::rename` and the cache's layout number stay, for the first
 change after people use skwir.
 
+A review before tagging, of the day's 22 commits by area, found what the
+full checks had passed; all of it was fixed before the tag:
+
+- **Access:** a recursive change walks folders held open and changes each
+  item through a hold on it (`O_PATH` and `/proc/self/fd` on Linux,
+  `AT_SYMLINK_NOFOLLOW` on macOS), so a link swapped in mid-walk is not
+  followed; a folder its owner can still open is changed before what it
+  holds, any other after, and Undo and Redo order by the modes they put
+  back (`u=`, `u=r` and a Redo under a folder without search reach every
+  item); Undo says what it could not put back; a group change leaves the
+  set-ID bits the system cleared; a clause naming no class leaves out the
+  umask, read from `/proc/self/status`, refused where it cannot be read;
+  the dry run walks what it would change (a change applied again is done,
+  another user's item inside is named, a trash inside is left alone) and
+  stops with its plan.
+- **Archives:** libarchive 3.6 (the AppImage's) only warns of a member
+  whose CRC or authentication fails: such a member now stops extraction;
+  done means unchanged as a copy's does (times, links, nothing more);
+  Replace never trashes a step's own input; Compress… is the user's
+  alone, never an agent's with a destination the prompt did not show; a
+  one-file archive kept beside keeps its extension; a file that changes
+  as it is compressed fails the step; the room is checked; empty
+  passwords are asked again, attempts counted per member.
+- **Keys and settings:** the Keyboard page's records are written last and
+  take out the user's own they cover (a key changed back runs again), a
+  key pressed again changes nothing, Restore and the way back never
+  leave an action that keeps a key without one, what a change frees
+  beside it is said before saving, a character bound anywhere still types
+  in text fields, the keyboard never falls behind the Settings dialog; a
+  key kept apart (the window's state, what you make) replaces the
+  settings file's copy whole, so a colour taken away stays away;
+  `settings.check` reports shortcuts to no command again.
+- **Dialogs and the palette:** Tab walks a dialog's field and buttons,
+  never the toolbars behind it; a focused Cancel cancels on Enter; a
+  question names what it is about when asked (Rename renames the file it
+  was opened for); the palette leaves out only data commands
+  (`Declared::data`), so Copy paths and plugins from outside's commands
+  are offered again, and offers the sorts the View menu offers.
+- **Properties:** a count is kept by what it counts and stops where no
+  folder is shown; a property source says its group ships folded, so the
+  shell names no plugin's; several selected say their shared access
+  apart, with their own drives' read-only state. Checksums asked from the
+  window wait in one lane, every one asked of a file in one read, so a
+  large file holds one worker; a non-UTF-8 name no longer fails.
+- **Release notes:** what came after the date sat under "Unreleased",
+  which the release's notes would have left out: folded into 0.1.0, and
+  `release-metadata` refuses any section above the release's.
+
+Not done: Windows changes access by path (a link swapped in between its
+check and its change is followed, PORTING.md); a broad default moved on
+the Keyboard page frees narrower keys of other actions, which the page
+says rather than binds again; macOS' quarantine passed to what is
+extracted is compiled, never run.
+
 ---
 
 ## Maps
