@@ -1,5 +1,6 @@
-//! Archive directory tree backed by the optional libarchive process, and
-//! archives extracted (`extract`, ADR-048).
+//! Archive directory tree backed by the optional libarchive process,
+//! archives extracted (`extract`, ADR-048), and archives made (`compress`,
+//! ADR-059).
 use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Row},
@@ -13,7 +14,9 @@ use skwir_platform::{
 };
 use std::{collections::BTreeMap, sync::Arc};
 
+mod compress;
 mod extract;
+pub use compress::Compress;
 pub use extract::Extract;
 
 pub struct PreviewPlugin;
@@ -22,10 +25,10 @@ impl Plugin for PreviewPlugin {
         "preview-archives"
     }
     fn title(&self) -> &'static str {
-        "Preview: archives"
+        "Archives"
     }
     fn description(&self) -> &'static str {
-        "List the contents of ZIP, tar, 7z and other archives, preview their members without extracting, and extract them (Extract Here, in an archive's menu and a drop's)"
+        "List the contents of ZIP, tar, 7z and other archives, preview their members without extracting, extract them (Extract Here, in an archive's menu and a drop's), and make them (Compress, in the menu of what you select)"
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
@@ -33,13 +36,13 @@ impl Plugin for PreviewPlugin {
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![
             archive::WORKER
-                .requirement("Listing, reading and extracting archives")
+                .requirement("Listing, reading, extracting and making archives")
                 .required(),
         ]
     }
     fn capabilities(&self) -> skwir_core::permissions::Capabilities {
         use skwir_core::permissions::Capability;
-        // It writes what it extracts.
+        // It writes what it extracts, and the archives it makes.
         skwir_core::permissions::Capabilities::of(&[
             Capability::Read,
             Capability::Write,
@@ -49,6 +52,7 @@ impl Plugin for PreviewPlugin {
     fn register(&self, app: &App) {
         app.previews.register(self.id(), Arc::new(Provider));
         extract::register(app, self.id());
+        compress::register(app, self.id());
     }
 }
 /// Disc images, which the database does not call archives.

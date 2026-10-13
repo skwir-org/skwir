@@ -83,7 +83,7 @@ fn isolates() -> bool {
         .and_then(|work| {
             let mut run = isolated(
                 Path::new("/usr/bin/true"),
-                Path::new("/etc/hosts"),
+                Some(Path::new("/etc/hosts")),
                 &[],
                 work.path(),
                 &[],
@@ -204,12 +204,27 @@ pub fn untrusted_beside(
     readable: &[&Path],
 ) -> anyhow::Result<Untrusted> {
     if available() {
-        return isolated(program, input, beside, work, readable);
+        return isolated(program, Some(input), beside, work, readable);
     }
     if otherwise == Otherwise::Refuse {
         return Err(needed());
     }
     Ok(plain(program, input, work))
+}
+
+/// `program` set to read nothing of the user's but what skwir hands it on
+/// its standard input, and to write in `work` (its current folder):
+/// isolated where the system can (no input, the rest as `command`), else
+/// as `otherwise` says. An archive made of the user's files (ADR-059):
+/// skwir reads them, the program opens none.
+pub fn fed(program: &Path, work: &Path, otherwise: Otherwise) -> anyhow::Result<Untrusted> {
+    if available() {
+        return isolated(program, None, &[], work, &[]);
+    }
+    if otherwise == Otherwise::Refuse {
+        return Err(needed());
+    }
+    Ok(plain(program, Path::new(""), work))
 }
 
 /// `program` set to read `input` and write in `work`, its current folder,
@@ -236,7 +251,7 @@ pub fn command(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untr
     if !available() {
         return Err(needed());
     }
-    isolated(program, input, &[], work, &[])
+    isolated(program, Some(input), &[], work, &[])
 }
 
 /// A relocatable package's private runtime is readable by its helpers
@@ -276,7 +291,7 @@ fn bind_package_runtime(command: &mut Command, program: &Path) {
 #[cfg(target_os = "linux")]
 fn isolated(
     program: &Path,
-    input: &Path,
+    input: Option<&Path>,
     beside: &[(PathBuf, PathBuf)],
     work: &Path,
     readable: &[&Path],
@@ -289,7 +304,7 @@ fn isolated(
             command.args(["--ro-bind", system, system]);
         }
     }
-    let inside = inside_name(input);
+    let inside = input.map(inside_name).unwrap_or_default();
     command.args([
         "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/input",
     ]);
@@ -305,7 +320,9 @@ fn isolated(
             command.arg("--ro-bind").arg(path).arg(path);
         }
     }
-    command.arg("--ro-bind").arg(input).arg(&inside);
+    if let Some(input) = input {
+        command.arg("--ro-bind").arg(input).arg(&inside);
+    }
     for (path, relative) in beside {
         if path.exists() {
             command
@@ -407,26 +424,37 @@ const PROFILE: &str = r#"(version 1)
 #[cfg(target_os = "macos")]
 fn isolated(
     program: &Path,
-    input: &Path,
+    input: Option<&Path>,
     beside: &[(PathBuf, PathBuf)],
     work: &Path,
     readable: &[&Path],
 ) -> anyhow::Result<Untrusted> {
     use std::ffi::OsString;
     let work = std::fs::canonicalize(work)?;
-    let input = std::fs::canonicalize(input)?;
     let program = std::fs::canonicalize(program)?;
+    // With none, the profile's input is the program, readable already.
+    let input = match input {
+        Some(input) => Some(std::fs::canonicalize(input)?),
+        None => None,
+    };
     // An application's bundle, read with it: its libraries and resources.
     let bundle = program
         .ancestors()
         .find(|dir| dir.extension().is_some_and(|e| e == "app"))
         .unwrap_or(&program)
         .to_owned();
-    let inside = work.join(inside_name(&input).trim_start_matches('/'));
-    std::fs::create_dir_all(work.join("input"))?;
-    // A folder run in before keeps the link of that run.
-    let _ = std::fs::remove_file(&inside);
-    std::os::unix::fs::symlink(&input, &inside)?;
+    let inside = match &input {
+        Some(input) => {
+            let inside = work.join(inside_name(input).trim_start_matches('/'));
+            std::fs::create_dir_all(work.join("input"))?;
+            // A folder run in before keeps the link of that run.
+            let _ = std::fs::remove_file(&inside);
+            std::os::unix::fs::symlink(input, &inside)?;
+            inside
+        }
+        None => PathBuf::new(),
+    };
+    let input = input.unwrap_or_else(|| program.clone());
     // What the input names beside it, linked where it looks, and read.
     let mut also: Vec<PathBuf> = Vec::new();
     for (path, relative) in beside {
@@ -490,7 +518,7 @@ fn isolated(
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn isolated(
     _program: &Path,
-    _input: &Path,
+    _input: Option<&Path>,
     _beside: &[(PathBuf, PathBuf)],
     _work: &Path,
     _readable: &[&Path],

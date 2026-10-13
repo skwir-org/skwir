@@ -72,3 +72,4 @@ them by topic.
 | [056](056-the-window-s-state-is-not-a-setting.md) | The window's state is not a setting: a file of its own, read-only settings, settings checked by skwir | built |
 | [057](057-what-you-make-is-not-a-setting.md) | What you make in skwir is not a setting: saved searches and tags kept in a data file | built |
 | [058](058-properties.md) | Properties: the panel, not a dialog; access changed by plans; no administrator rights | built |
+| [059](059-archives-are-made-of-what-skwir-hands-the-helper.md) | Archives made by libarchive of what skwir hands it; passwords asked, names taken settled | built; macOS and Windows compiled only |

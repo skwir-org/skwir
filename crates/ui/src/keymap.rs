@@ -208,6 +208,8 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // selection across a split, as F6 moves it.
     ("shift-f5", "ui.copy_other", Some("pane split selection")),
     ("shift-f6", "ui.move_other", Some("pane split selection")),
+    // Asked, as a drop asks: what a plugin offers too (Extract Here).
+    ("shift-f7", "ui.give_other", Some("pane split selection")),
     ("ctrl-shift-o", "ui.terminal_links", Some("terminal")),
     ("enter", "ui.review_apply", Some("review")),
     ("escape", "ui.review_cancel", Some("review")),

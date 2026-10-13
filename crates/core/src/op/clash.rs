@@ -1,10 +1,12 @@
-//! A name already taken where a copy, a move or a link goes (ADR-054):
-//! found by the dry run before anything is done, answered once, and the
-//! answers made the plan ([`settle`]): a copy, a move or a link under a new
-//! name, a Trash step before what replaces, the steps of a merge, an
-//! `Rmdir` for each folder a move-merge emptied. What is never asked is
-//! settled the same way: a copy or a link into its own folder, two items
-//! of one name, an item already there whole, a link already made.
+//! A name already taken where a copy, a move or a link goes (ADR-054), or
+//! where a step makes something new (an archive extracted or made,
+//! ADR-059): found by the dry run before anything is done, answered once,
+//! and the answers made the plan ([`settle`]): a copy, a move, a link or
+//! what is made under a new name, a Trash step before what replaces, the
+//! steps of a merge, an `Rmdir` for each folder a move-merge emptied. What
+//! is never asked is settled the same way: a copy or a link into its own
+//! folder, two items of one name, an item already there whole, a link
+//! already made, what is made there already.
 
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
@@ -13,7 +15,10 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Change, Copy, EntryRef, Link, Move, Operation, Rmdir, StepContext, Trash, builtin};
+use super::{
+    Change, Copy, EntryRef, Link, Made, Move, Operation, Rmdir, StepContext, StepStatus, Trash,
+    builtin,
+};
 
 /// What becomes of an item whose name a file takes, or of a file whose
 /// name a folder takes.
@@ -157,6 +162,13 @@ pub enum Act {
     Copy,
     Move,
     Link,
+    /// Makes something new there ([`Made`]): the verb on the question's
+    /// button and what nothing is until it is answered ("Extract",
+    /// "extracted").
+    Make {
+        verb: &'static str,
+        done: &'static str,
+    },
 }
 
 /// A name taken where an item goes.
@@ -180,10 +192,11 @@ impl Clash {
     }
 
     /// A folder onto a folder: merged, both kept, or skipped. Any other
-    /// takes a file's choices, and so does a link to a folder: a link is
-    /// what it is, never merged.
+    /// takes a file's choices, and so do a link to a folder (a link is
+    /// what it is, never merged) and what a step makes (new, never merged
+    /// into what is there).
     pub fn folders(&self) -> bool {
-        self.act != Act::Link && self.source.folder && self.there.folder
+        matches!(self.act, Act::Copy | Act::Move) && self.source.folder && self.there.folder
     }
 
     /// What it says where no one is asked: the dry run's words.
@@ -229,9 +242,10 @@ pub fn settle(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext) 
     for (i, step) in steps.iter().enumerate() {
         let asked = step.describe();
         let before = walk.out.len();
-        match Transfer::of(step.as_ref()) {
-            Some(transfer) => walk.place(i, transfer, None),
-            None => walk.push(step.clone_box()),
+        match (Transfer::of(step.as_ref()), step.makes()) {
+            (Some(transfer), _) => walk.place(i, transfer, None),
+            (None, Some(made)) => walk.make(i, step.as_ref(), &made),
+            (None, None) => walk.push(step.clone_box()),
         }
         let done = &walk.out[before..];
         if done.is_empty() {
@@ -245,9 +259,11 @@ pub fn settle(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext) 
                 | Change::Link { from, .. } => Some(from.clone()),
                 _ => None,
             };
+            let made = matches!(asked, Change::Create { .. });
             let own = done.iter().map(|s| s.describe()).find(|c| {
                 matches!(c, Change::Copy { from: f, .. } | Change::Move { from: f, .. }
                     | Change::Link { from: f, .. } if Some(f) == from.as_ref())
+                    || made && matches!(c, Change::Create { .. })
             });
             first = Some(own.unwrap_or(asked));
         }
@@ -260,12 +276,12 @@ pub fn settle(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext) 
     }
 }
 
-/// Whether a step of `steps` copies, moves or links: a plan with none has
-/// no name to settle.
-pub fn transfers(steps: &[Box<dyn Operation>]) -> bool {
+/// Whether a step of `steps` copies, moves, links or makes something
+/// under a name: a plan with none has no name to settle.
+pub fn takes_names(steps: &[Box<dyn Operation>]) -> bool {
     steps
         .iter()
-        .any(|step| Transfer::of(step.as_ref()).is_some())
+        .any(|step| Transfer::of(step.as_ref()).is_some() || step.makes().is_some())
 }
 
 /// A copy, a move or a link, as the walk takes it.
@@ -456,6 +472,58 @@ impl Walk<'_> {
         self.keep(transfer.named(name), true);
     }
 
+    /// What `op` makes ([`Made`]), its name settled: made beside what
+    /// an earlier step makes there (two archives of one name extracted
+    /// into one folder), or as the answer says where something is there,
+    /// with a file's choices. Made there already, it is done.
+    fn make(&mut self, step: usize, op: &dyn Operation, made: &Made) {
+        let target = &made.target;
+        if self.ctx.made(target) {
+            return self.make_beside(op, made);
+        }
+        if !self.ctx.exists(target) || op.check(self.ctx) == StepStatus::AlreadyDone {
+            return self.push(op.clone_box());
+        }
+        let (verb, done) = made.words;
+        let clash = Clash {
+            step,
+            inside: None,
+            act: Act::Make { verb, done },
+            source: Side::of(&made.from),
+            there: Side::of(target),
+        };
+        let choice = self.answer.choice(&clash);
+        let newer = matches!((clash.source.modified, clash.there.modified),
+            (Some(source), Some(there)) if source > there);
+        self.clashes.push(clash);
+        self.changed = true;
+        match choice {
+            Choice::Skip => {}
+            Choice::ReplaceIfNewer if !newer => {}
+            Choice::Replace | Choice::ReplaceIfNewer => {
+                if let Some(there) = EntryRef::from_path(target) {
+                    self.push(Box::new(Trash { entry: there }));
+                }
+                self.push(op.clone_box());
+            }
+            Choice::Merge | Choice::KeepBoth => self.make_beside(op, made),
+        }
+    }
+
+    /// What `op` makes, under the first name free beside its own:
+    /// `photos (2).zip`.
+    fn make_beside(&mut self, op: &dyn Operation, made: &Made) {
+        let dir = made.target.parent().unwrap_or(Path::new("/"));
+        let name = kept_name(
+            made.target.file_name().unwrap_or_default(),
+            "",
+            made.folder,
+            |n| self.ctx.exists(&dir.join(n)),
+        );
+        self.changed = true;
+        self.push(op.made_as(name).unwrap_or_else(|| op.clone_box()));
+    }
+
     /// What is there to the Trash, then the item in its place. Not a
     /// folder holding what comes: the dry run says its name is taken.
     fn replace(&mut self, transfer: Transfer, src: &Path, target: &Path) {
@@ -517,7 +585,8 @@ pub fn copy_name(name: &OsStr, folder: bool, taken: impl Fn(&OsStr) -> bool) -> 
 }
 
 /// [`copy_name`] with another word: `name (link).ext` for a link kept
-/// beside `name`.
+/// beside `name`. With none, a number from 2: `name (2).ext` for what a
+/// step makes beside `name` (an archive, what one holds).
 pub fn kept_name(
     name: &OsStr,
     word: &str,
@@ -531,10 +600,17 @@ pub fn kept_name(
         extension_at(bytes)
     };
     let (stem, extension) = bytes.split_at(split);
-    let (base, mut n) = counted(stem, word);
+    let (base, mut n) = if word.is_empty() {
+        let (base, n) = numbered(stem);
+        (base, n.max(1))
+    } else {
+        counted(stem, word)
+    };
     loop {
         n += 1;
-        let suffix = if n == 1 {
+        let suffix = if word.is_empty() {
+            format!(" ({n})")
+        } else if n == 1 {
             format!(" ({word})")
         } else {
             format!(" ({word} {n})")
@@ -590,6 +666,20 @@ fn counted<'a>(stem: &'a [u8], word: &str) -> (&'a [u8], u32) {
         (n >= 2 && !rest[at + 1..].starts_with(b"0")).then_some((base, n))
     });
     numbered.unwrap_or((stem, 0))
+}
+
+/// `stem` without a number kept beside a name (` (2)`), and that number:
+/// 0 for none.
+fn numbered(stem: &[u8]) -> (&[u8], u32) {
+    let counted = stem.strip_suffix(b")").and_then(|rest| {
+        let at = rest.iter().rposition(|&b| b == b'(')?;
+        let base = rest[..at].strip_suffix(b" ")?;
+        let digits = &rest[at + 1..];
+        let n: u32 = std::str::from_utf8(digits).ok()?.parse().ok()?;
+        (n >= 2 && !digits.starts_with(b"0") && digits.iter().all(u8::is_ascii_digit))
+            .then_some((base, n))
+    });
+    counted.unwrap_or((stem, 0))
 }
 
 /// The first `room` bytes of `base`, not cutting a character in two.
@@ -676,6 +766,28 @@ mod tests {
             "notes (copy) (link).txt"
         );
         assert_eq!(link("Photos 2024.d", true, &[]), "Photos 2024.d (link)");
+    }
+
+    #[test]
+    fn what_is_made_beside_a_name_is_numbered() {
+        let made = |name: &str, folder: bool, taken: &[&str]| {
+            kept_name(OsStr::new(name), "", folder, |n| {
+                taken.iter().any(|t| OsStr::new(t) == n)
+            })
+            .to_string_lossy()
+            .into_owned()
+        };
+        assert_eq!(made("photos.zip", false, &[]), "photos (2).zip");
+        assert_eq!(
+            made("photos.zip", false, &["photos (2).zip"]),
+            "photos (3).zip"
+        );
+        assert_eq!(made("photos (2).zip", false, &[]), "photos (3).zip");
+        assert_eq!(made("backup.tar.gz", false, &[]), "backup (2).tar.gz");
+        assert_eq!(made("project-1.0", true, &[]), "project-1.0 (2)");
+        assert_eq!(made("notes (copy).txt", false, &[]), "notes (copy) (2).txt");
+        assert_eq!(made("v (02).txt", false, &[]), "v (02) (2).txt");
+        assert_eq!(made("a(3).txt", false, &[]), "a(3) (2).txt");
     }
 
     #[test]

@@ -243,8 +243,17 @@ The player, in the panel or pinned at its foot:
   aligned sizes, expand and collapse. A file selected in it opens as what
   it is (see [Using the preview](#using-the-preview)).
 - **Extract Here**, in an archive's menu or a drop's, extracts it into a
-  folder beside it.
-- Encrypted archives need another application.
+  folder beside it. With two panes, `Shift+F7` offers it into the other
+  pane's folder.
+- An encrypted ZIP asks its password. libarchive cannot decrypt an
+  encrypted 7z or RAR: those need another application.
+- A name already there asks, as a copy does: keep both (`photos (2)`),
+  replace, or skip.
+- **Compress to ZIP**, in the menu of what you select, makes `photos.zip`
+  beside it; **Compress…** asks the name, whose ending picks the format
+  (`.zip`, `.7z`, `.tar.gz`, `.tar.xz`, `.tar.zst`, `.tar.bz2`, `.tar`);
+  **Compress with a Password…** (under More) makes an encrypted ZIP.
+  Tags kept on files travel in a tar, not in a ZIP or a 7z.
 
 ### Fonts (`preview-fonts`)
 

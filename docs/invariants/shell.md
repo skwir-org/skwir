@@ -189,6 +189,9 @@ of bars, split or not.
 - Plugins add rows through the registry's `drop` menu (order 100–899;
   their command gets `entries` and `dest`): Extract Here needs no branch
   in the shell.
+- **Send to the other pane… (Shift+F7)** asks with the same menu, for the
+  selection and the other pane's folder (`Shell::ask_other_pane`), hung
+  from the cursor's row: extracting across a split is a drop's row.
 - A drop on a place uses its location's verb (`Verbs::drop`). A drag
   carrying places is not asked about.
 

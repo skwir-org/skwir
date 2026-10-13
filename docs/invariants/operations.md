@@ -94,9 +94,21 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   link already saying the same path is done; a folder into itself is
   refused. A link, even to a folder, is never merged: it takes a file's
   choices. A move out of the trash keeps a restore's rules.
+- A step that makes something new under a name (an archive extracted
+  or made, ADR-059) says so (`Operation::makes`, `made_as`) and is
+  settled as a copy is, with a file's choices: kept beside under a number
+  (`photos (2).zip`, `clash::kept_name` with no word), what is there
+  replaced through the trash, or skipped. It is never merged. A plan
+  with such a step is settled even with no copy in it
+  (`clash::takes_names`).
 - A dry run foresees what each earlier step takes and makes
   (`StepContext::foresee`): a check asks the context whether a name is
   free (`exists`, `made`, `empty_after`), never the disk alone.
+- What only the user knows (an archive's password) is asked by the step
+  that needs it, as it runs (`StepContext::ask_secret`, the window's
+  `PromptKind::Secret`), and never kept in the plan. With no window, no
+  one is asked (`Unanswered::NoOne`) and the step says so; Cancel cancels
+  the plan.
 - Undoing a trash restores its own item, by its record (`Restore::item`,
   named on Linux and macOS): a replace undone puts the copy in the trash
   and brings back what it replaced. Windows' trash does not say where an

@@ -1,15 +1,26 @@
 //! Optional libarchive boundary. A member's name reaches the filesystem
 //! only when a whole archive is extracted (`--extract`, ADR-048), through
 //! libarchive's own extraction and its guards, in the folder it runs in.
+//! An archive is made (`--create`, ADR-059) of what skwir sends on
+//! standard input: this helper opens none of the user's files.
 // SAFETY: all native handles stay on this thread; strings are copied while the
 // current entry is alive, buffers carry their exact lengths, and Reader owns
 // the single archive_read_free call. Native code is isolated from the UI.
 #[allow(unsafe_code)]
 mod native {
     use std::{
-        ffi::{CStr, CString, c_char, c_int, c_void},
-        io::Write,
+        cell::{Cell, RefCell},
+        ffi::{CStr, CString, c_char, c_int, c_long, c_uint, c_void},
+        io::{BufRead, Read, Write},
     };
+    /// libarchive's `mode_t` for a permission: `unsigned short` on
+    /// Windows, the system's `mode_t` elsewhere (16 bits on a Mac).
+    #[cfg(any(windows, target_vendor = "apple"))]
+    type Mode = u16;
+    #[cfg(not(any(windows, target_vendor = "apple")))]
+    type Mode = u32;
+    /// What libarchive calls to learn a passphrase.
+    type PassphraseCallback = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *const c_char;
     #[link(name = "archive")]
     unsafe extern "C" {
         fn archive_read_new() -> *mut c_void;
@@ -50,6 +61,48 @@ mod native {
         fn archive_write_finish_entry(a: *mut c_void) -> c_int;
         fn archive_write_close(a: *mut c_void) -> c_int;
         fn archive_write_free(a: *mut c_void) -> c_int;
+        fn archive_read_set_passphrase_callback(
+            a: *mut c_void,
+            client: *mut c_void,
+            callback: Option<PassphraseCallback>,
+        ) -> c_int;
+        fn archive_entry_xattr_reset(e: *mut c_void) -> c_int;
+        fn archive_entry_xattr_next(
+            e: *mut c_void,
+            name: *mut *const c_char,
+            value: *mut *const c_void,
+            size: *mut usize,
+        ) -> c_int;
+        fn archive_entry_xattr_clear(e: *mut c_void);
+        fn archive_entry_xattr_add_entry(
+            e: *mut c_void,
+            name: *const c_char,
+            value: *const c_void,
+            size: usize,
+        );
+        fn archive_write_new() -> *mut c_void;
+        fn archive_write_set_format_zip(a: *mut c_void) -> c_int;
+        fn archive_write_set_format_7zip(a: *mut c_void) -> c_int;
+        fn archive_write_set_format_pax_restricted(a: *mut c_void) -> c_int;
+        fn archive_write_add_filter_gzip(a: *mut c_void) -> c_int;
+        fn archive_write_add_filter_bzip2(a: *mut c_void) -> c_int;
+        fn archive_write_add_filter_xz(a: *mut c_void) -> c_int;
+        fn archive_write_add_filter_zstd(a: *mut c_void) -> c_int;
+        fn archive_write_set_options(a: *mut c_void, options: *const c_char) -> c_int;
+        fn archive_write_set_passphrase(a: *mut c_void, passphrase: *const c_char) -> c_int;
+        fn archive_write_open_filename(a: *mut c_void, path: *const c_char) -> c_int;
+        fn archive_write_data(a: *mut c_void, buf: *const c_void, size: usize) -> isize;
+        fn archive_entry_new() -> *mut c_void;
+        fn archive_entry_free(e: *mut c_void);
+        fn archive_entry_set_pathname(e: *mut c_void, name: *const c_char);
+        fn archive_entry_set_filetype(e: *mut c_void, kind: c_uint);
+        fn archive_entry_set_perm(e: *mut c_void, mode: Mode);
+        fn archive_entry_set_size(e: *mut c_void, size: i64);
+        fn archive_entry_set_mtime(e: *mut c_void, seconds: i64, nanoseconds: c_long);
+        fn archive_entry_set_symlink(e: *mut c_void, target: *const c_char);
+        fn archive_entry_set_symlink_utf8(e: *mut c_void, target: *const c_char);
+        fn archive_entry_set_hardlink(e: *mut c_void, target: *const c_char);
+        fn archive_entry_set_hardlink_utf8(e: *mut c_void, target: *const c_char);
     }
     // From the C library std already links.
     unsafe extern "C" {
@@ -72,6 +125,7 @@ mod native {
     )))]
     const LC_CTYPE: c_int = 0;
 
+    const ARCHIVE_OK: c_int = 0;
     const ARCHIVE_EOF: c_int = 1;
     /// `ARCHIVE_FORMAT_RAW`: no archive at all, one stream of data.
     const ARCHIVE_FORMAT_RAW: c_int = 0x90000;
@@ -85,6 +139,9 @@ mod native {
     /// absolute path, or through a link the archive made before it. No
     /// owner, and no set-id or sticky bits: not asked for.
     const EXTRACT_TIME: c_int = 0x0004;
+    /// Extended attributes put back, those a copy keeps (`kept`): a
+    /// file's tags come back with it.
+    const EXTRACT_XATTR: c_int = 0x0080;
     const EXTRACT_SECURE_SYMLINKS: c_int = 0x0100;
     const EXTRACT_SECURE_NODOTDOT: c_int = 0x0200;
     const EXTRACT_SECURE_NOABSOLUTEPATHS: c_int = 0x1_0000;
@@ -96,6 +153,8 @@ mod native {
     const UNIT_BYTES: usize = 1 << 20;
     /// Units between two reports: the caller hands out more as they come.
     const REPORT_EVERY: u64 = 8;
+    /// The byte a ticket is.
+    const TICKET: u8 = 1;
 
     /// libarchive converts member names through the C library's charset. A
     /// process starts in the "C" locale, where any non-ASCII name fails to
@@ -121,7 +180,8 @@ mod native {
             check(self.0, status)
         }
     }
-    /// libarchive's disk writer: what `--extract` writes with.
+    /// A libarchive writer: the disk's, what `--extract` writes with, or
+    /// an archive's, what `--create` writes.
     struct Writer(*mut c_void);
     impl Drop for Writer {
         fn drop(&mut self) {
@@ -152,7 +212,13 @@ mod native {
     /// folder it runs in, taking a byte of standard input before each unit
     /// of work (an entry, or `UNIT_BYTES` of one: none, and it waits) and
     /// reporting `{"read": bytes of the archive read, "units": taken}`
-    /// lines on standard output.
+    /// lines on standard output. With `--passwords`, a passphrase an
+    /// encrypted member needs is asked of the caller in a
+    /// `{"passphrase": attempt}` line and read from standard input: its
+    /// bytes in hexadecimal on a line of their own, none to give up.
+    /// `skwir-archive-worker <output> --create FORMAT [--encrypt]` writes
+    /// an archive at `output` (`zip`, `7z`, `tar`, `tar.gz`, `tar.bz2`,
+    /// `tar.xz`, `tar.zst`) of what standard input says ([`create`]).
     /// Every bound arrives from the caller so the UI process and this helper
     /// can never disagree on a limit. `--stem STEM` is the file's own name
     /// less its last extension, which a file only compressed names its one
@@ -170,10 +236,19 @@ mod native {
         /// as past the other bounds.
         pub seconds: Option<usize>,
         pub extract: bool,
+        /// With `--extract`: ask the caller for a passphrase.
+        pub passwords: bool,
+        /// The format of an archive to make.
+        pub create: Option<String>,
+        /// With `--create zip`: encrypted, by a passphrase read first.
+        pub encrypt: bool,
     }
     pub fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<Args> {
         let mut positional = Vec::new();
         let mut extract = false;
+        let mut passwords = false;
+        let mut create = None;
+        let mut encrypt = false;
         let mut name = None;
         let mut stem = None;
         let mut bytes = None;
@@ -205,6 +280,23 @@ mod native {
                     extract = true;
                     continue;
                 }
+                Some("--passwords") => {
+                    passwords = true;
+                    continue;
+                }
+                Some("--encrypt") => {
+                    encrypt = true;
+                    continue;
+                }
+                Some("--create") => {
+                    create = Some(
+                        args.next()
+                            .ok_or_else(|| anyhow::anyhow!("missing value for --create"))?
+                            .to_string_lossy()
+                            .into_owned(),
+                    );
+                    continue;
+                }
                 // One it does not know is refused, never taken for the
                 // archive or a member: a skwir newer than this helper
                 // asking what it cannot do says so.
@@ -230,7 +322,17 @@ mod native {
             .map(|s| s.to_string_lossy().parse::<u64>())
             .transpose()?;
         let output = positional.next();
-        if extract {
+        anyhow::ensure!(!passwords || extract, "--passwords goes with --extract");
+        anyhow::ensure!(
+            !encrypt || create.as_deref() == Some("zip"),
+            "--encrypt goes with --create zip"
+        );
+        if create.is_some() {
+            anyhow::ensure!(
+                !extract && member.is_none(),
+                "--create takes the archive to write, nothing else"
+            );
+        } else if extract {
             anyhow::ensure!(
                 member.is_none(),
                 "--extract takes the whole archive, no member"
@@ -257,6 +359,9 @@ mod native {
             names,
             seconds,
             extract,
+            passwords,
+            create,
+            encrypt,
         })
     }
     /// The member's name as the listing reports it: UTF-8 where libarchive
@@ -286,62 +391,182 @@ mod native {
         );
         Ok(stem.to_owned())
     }
-    /// The caller's units of work, a byte of standard input each, and the
-    /// reports of those taken.
+    /// One line of JSON to the caller.
+    fn tell(line: &serde_json::Value) -> anyhow::Result<()> {
+        let mut out = std::io::stdout().lock();
+        writeln!(out, "{line}")?;
+        out.flush()?;
+        Ok(())
+    }
+
+    /// The caller's units of work, a byte of standard input each, the
+    /// reports of those taken, and the passphrases it gives when asked
+    /// (`--passwords`): a ticket that arrives while one is read is kept
+    /// for the next unit. Standard input is locked a read at a time:
+    /// libarchive asks for a passphrase in the middle of reading.
     struct Tickets {
-        input: std::io::StdinLock<'static>,
-        output: std::io::StdoutLock<'static>,
-        taken: u64,
+        taken: Cell<u64>,
+        banked: Cell<u64>,
+        asked: Cell<u32>,
+        /// What was given, while libarchive may still read it.
+        given: RefCell<Vec<CString>>,
     }
     impl Tickets {
+        fn new() -> Self {
+            Tickets {
+                taken: Cell::new(0),
+                banked: Cell::new(0),
+                asked: Cell::new(0),
+                given: RefCell::new(Vec::new()),
+            }
+        }
         /// Wait for the next unit's ticket; take it and report every
         /// `REPORT_EVERY`, with the archive's bytes read so far.
-        fn take(&mut self, reader: &Reader) -> anyhow::Result<()> {
-            let mut ticket = [0u8; 1];
-            anyhow::ensure!(
-                std::io::Read::read(&mut self.input, &mut ticket)? == 1,
-                "stopped"
-            );
-            self.taken += 1;
-            if self.taken.is_multiple_of(REPORT_EVERY) {
+        fn take(&self, reader: &Reader) -> anyhow::Result<()> {
+            if self.banked.get() > 0 {
+                self.banked.set(self.banked.get() - 1);
+            } else {
+                let mut ticket = [0u8; 1];
+                anyhow::ensure!(std::io::stdin().read(&mut ticket)? == 1, "stopped");
+                anyhow::ensure!(ticket[0] == TICKET, "unexpected input");
+            }
+            self.taken.set(self.taken.get() + 1);
+            if self.taken.get().is_multiple_of(REPORT_EVERY) {
                 self.report(reader)?;
             }
             Ok(())
         }
-        fn report(&mut self, reader: &Reader) -> anyhow::Result<()> {
+        fn report(&self, reader: &Reader) -> anyhow::Result<()> {
             let read = unsafe { archive_filter_bytes(reader.0, -1) };
-            writeln!(
-                self.output,
-                "{}",
-                serde_json::json!({ "read": read.max(0), "units": self.taken })
-            )?;
-            self.output.flush()?;
-            Ok(())
+            tell(&serde_json::json!({ "read": read.max(0), "units": self.taken.get() }))
+        }
+        /// Ask the caller for a passphrase and wait for it: `None` when
+        /// it gives none, which libarchive takes as no more to try.
+        fn passphrase(&self) -> Option<*const c_char> {
+            self.asked.set(self.asked.get() + 1);
+            tell(&serde_json::json!({ "passphrase": self.asked.get() })).ok()?;
+            let mut line = Vec::new();
+            let mut stdin = std::io::stdin();
+            loop {
+                let mut byte = [0u8; 1];
+                if stdin.read(&mut byte).ok()? != 1 {
+                    return None;
+                }
+                match byte[0] {
+                    TICKET => self.banked.set(self.banked.get() + 1),
+                    b'\n' => break,
+                    other => line.push(other),
+                }
+            }
+            let bytes = unhex(std::str::from_utf8(&line).ok()?).ok()?;
+            if bytes.is_empty() {
+                return None;
+            }
+            let given = CString::new(bytes).ok()?;
+            let pointer = given.as_ptr();
+            self.given.borrow_mut().push(given);
+            Some(pointer)
+        }
+    }
+
+    /// libarchive asking for a passphrase: the caller's, through `Tickets`.
+    unsafe extern "C" fn asked_passphrase(
+        _archive: *mut c_void,
+        client: *mut c_void,
+    ) -> *const c_char {
+        // SAFETY: `client` is the `Tickets` that `extract` registered,
+        // which `run` keeps alive until after the reader is freed.
+        let tickets = unsafe { &*client.cast::<Tickets>() };
+        tickets.passphrase().unwrap_or(std::ptr::null())
+    }
+
+    /// Bytes from their hexadecimal digits, two each.
+    pub fn unhex(text: &str) -> anyhow::Result<Vec<u8>> {
+        anyhow::ensure!(text.len().is_multiple_of(2), "odd hexadecimal");
+        (0..text.len())
+            .step_by(2)
+            .map(|at| {
+                text.get(at..at + 2)
+                    .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                    .ok_or_else(|| anyhow::anyhow!("not hexadecimal"))
+            })
+            .collect()
+    }
+
+    /// Whether an attribute an archive carries is put back on what is
+    /// extracted: those a copy keeps (`skwir_core::fs::xattr::kept`), the
+    /// user's on Linux, all but what the system sets itself on a Mac.
+    fn kept(name: &[u8]) -> bool {
+        if cfg!(target_vendor = "apple") {
+            name != b"com.apple.rootless" && name != b"com.apple.provenance"
+        } else {
+            name.starts_with(b"user.")
+        }
+    }
+
+    /// Leave on `entry` only the attributes that are put back (`kept`).
+    fn keep_attributes(entry: *mut c_void) {
+        let mut kept_ones: Vec<(CString, Vec<u8>)> = Vec::new();
+        unsafe { archive_entry_xattr_reset(entry) };
+        loop {
+            let mut name: *const c_char = std::ptr::null();
+            let mut value: *const c_void = std::ptr::null();
+            let mut size = 0usize;
+            let status = unsafe {
+                archive_entry_xattr_next(entry, &raw mut name, &raw mut value, &raw mut size)
+            };
+            if status != ARCHIVE_OK || name.is_null() {
+                break;
+            }
+            let name = unsafe { CStr::from_ptr(name) }.to_owned();
+            if !kept(name.to_bytes()) {
+                continue;
+            }
+            let value = if value.is_null() || size == 0 {
+                Vec::new()
+            } else {
+                unsafe { std::slice::from_raw_parts(value.cast::<u8>(), size) }.to_vec()
+            };
+            kept_ones.push((name, value));
+        }
+        unsafe { archive_entry_xattr_clear(entry) };
+        for (name, value) in kept_ones {
+            unsafe {
+                archive_entry_xattr_add_entry(
+                    entry,
+                    name.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                );
+            }
         }
     }
 
     /// Every entry of `reader` written into the current folder by
     /// libarchive's disk writer, with its guards (`EXTRACT_*`): a folder,
     /// a file, a link (one the archive makes is never written through),
-    /// and nothing else; an encrypted member, or one the guards refuse,
-    /// stops it all. A file only compressed is written under `stem`.
-    fn extract(reader: &Reader, stem: &str) -> anyhow::Result<()> {
+    /// and nothing else, with the attributes a copy keeps (`kept`); one
+    /// the guards refuse stops it all, and so does an encrypted member
+    /// unless the caller gives its passphrase (`passwords`). A file only
+    /// compressed is written under `stem`.
+    fn extract(
+        reader: &Reader,
+        tickets: &Tickets,
+        stem: &str,
+        passwords: bool,
+    ) -> anyhow::Result<()> {
         let writer = Writer(unsafe { archive_write_disk_new() });
         anyhow::ensure!(!writer.0.is_null(), "libarchive allocation failed");
         check(writer.0, unsafe {
             archive_write_disk_set_options(
                 writer.0,
                 EXTRACT_TIME
+                    | EXTRACT_XATTR
                     | EXTRACT_SECURE_SYMLINKS
                     | EXTRACT_SECURE_NODOTDOT
                     | EXTRACT_SECURE_NOABSOLUTEPATHS,
             )
         })?;
-        let mut tickets = Tickets {
-            input: std::io::stdin().lock(),
-            output: std::io::stdout().lock(),
-            taken: 0,
-        };
         let stem = CString::new(stem)?;
         loop {
             tickets.take(reader)?;
@@ -368,9 +593,10 @@ mod native {
             }
             let name = entry_name(entry)?;
             anyhow::ensure!(
-                unsafe { archive_entry_is_encrypted(entry) } == 0,
+                passwords || unsafe { archive_entry_is_encrypted(entry) } == 0,
                 "“{name}” is encrypted: open the archive in an archive application"
             );
+            keep_attributes(entry);
             check(writer.0, unsafe { archive_write_header(writer.0, entry) })
                 .map_err(|e| anyhow::anyhow!("“{name}”: {e}"))?;
             let mut unit = 0usize;
@@ -414,6 +640,202 @@ mod native {
         tickets.report(reader)
     }
 
+    /// A libarchive entry, freed once written.
+    struct Entry(*mut c_void);
+    impl Drop for Entry {
+        fn drop(&mut self) {
+            unsafe { archive_entry_free(self.0) };
+        }
+    }
+
+    /// The bytes a header field names in hexadecimal.
+    fn hex_field(header: &serde_json::Value, key: &str) -> anyhow::Result<Vec<u8>> {
+        unhex(
+            header
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("an entry without {key}"))?,
+        )
+    }
+
+    /// A line of standard input, without its end: `None` at its end.
+    fn line(input: &mut impl BufRead) -> anyhow::Result<Option<String>> {
+        let mut line = Vec::new();
+        if input.read_until(b'\n', &mut line)? == 0 {
+            return Ok(None);
+        }
+        anyhow::ensure!(line.pop() == Some(b'\n'), "stopped");
+        Ok(Some(String::from_utf8(line)?))
+    }
+
+    /// The archive of `format` written at `output`, of what standard input
+    /// says, as skwir walked it (it opens none of the user's files): with
+    /// `encrypt`, first a line of the passphrase in hexadecimal (ZIP's
+    /// AES-256); then each entry, a line of JSON (`name` in hexadecimal, as
+    /// its path in the archive; `kind`, `file`, `dir`, `link` or `hard`, a
+    /// second name of a file already written, whose name is `target`;
+    /// `size`; `mode`; `mtime`, seconds and nanoseconds; a link's `target`;
+    /// `xattrs`, pairs in hexadecimal), and a file's `size` bytes after it;
+    /// then `{"end": true}`. Input that ends before says the caller
+    /// stopped: nothing written is whole.
+    fn create(output: &CStr, format: &str, encrypt: bool) -> anyhow::Result<()> {
+        let writer = Writer(unsafe { archive_write_new() });
+        let w = writer.0;
+        anyhow::ensure!(!w.is_null(), "libarchive allocation failed");
+        unsafe {
+            match format {
+                "zip" => check(w, archive_write_set_format_zip(w))?,
+                "7z" => {
+                    check(w, archive_write_set_format_7zip(w))?;
+                    check(
+                        w,
+                        archive_write_set_options(w, c"7zip:compression=lzma2".as_ptr()),
+                    )?;
+                }
+                "tar" | "tar.gz" | "tar.bz2" | "tar.xz" | "tar.zst" => {
+                    check(w, archive_write_set_format_pax_restricted(w))?;
+                    match format {
+                        "tar.gz" => check(w, archive_write_add_filter_gzip(w))?,
+                        "tar.bz2" => check(w, archive_write_add_filter_bzip2(w))?,
+                        "tar.xz" => check(w, archive_write_add_filter_xz(w))?,
+                        "tar.zst" => check(w, archive_write_add_filter_zstd(w))?,
+                        _ => {}
+                    }
+                }
+                other => anyhow::bail!("unknown format {other}"),
+            }
+        }
+        let mut input = std::io::stdin().lock();
+        // Kept until the archive is written: libarchive reads it as it
+        // encrypts.
+        let mut passphrase = None;
+        if encrypt {
+            let given = unhex(&line(&mut input)?.ok_or_else(|| anyhow::anyhow!("stopped"))?)?;
+            anyhow::ensure!(!given.is_empty(), "an empty password");
+            let given = CString::new(given)?;
+            unsafe {
+                check(
+                    w,
+                    archive_write_set_options(w, c"zip:encryption=aes256".as_ptr()),
+                )?;
+                check(w, archive_write_set_passphrase(w, given.as_ptr()))?;
+            }
+            passphrase = Some(given);
+        }
+        check(w, unsafe {
+            archive_write_open_filename(w, output.as_ptr())
+        })?;
+        let mut buffer = vec![0u8; 256 * 1024];
+        loop {
+            let header = line(&mut input)?.ok_or_else(|| anyhow::anyhow!("stopped"))?;
+            let header: serde_json::Value = serde_json::from_str(&header)?;
+            if header.get("end").and_then(serde_json::Value::as_bool) == Some(true) {
+                break;
+            }
+            let name = hex_field(&header, "name")?;
+            let shown = String::from_utf8_lossy(&name).into_owned();
+            let number = |key: &str| header.get(key).and_then(serde_json::Value::as_u64);
+            let kind = header
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let size = if kind == "file" {
+                number("size").unwrap_or(0)
+            } else {
+                0
+            };
+            let entry = Entry(unsafe { archive_entry_new() });
+            anyhow::ensure!(!entry.0.is_null(), "libarchive allocation failed");
+            let e = entry.0;
+            let utf8 = |bytes: &[u8]| std::str::from_utf8(bytes).is_ok();
+            let name_c = CString::new(name.clone())?;
+            unsafe {
+                if utf8(&name) {
+                    archive_entry_set_pathname_utf8(e, name_c.as_ptr());
+                } else {
+                    archive_entry_set_pathname(e, name_c.as_ptr());
+                }
+                let mode = number("mode").unwrap_or(0o644) & 0o7777;
+                archive_entry_set_perm(e, Mode::try_from(mode).unwrap_or(0o644));
+                archive_entry_set_size(e, i64::try_from(size)?);
+                if let Some([seconds, nanoseconds]) = header
+                    .get("mtime")
+                    .and_then(|t| serde_json::from_value::<[i64; 2]>(t.clone()).ok())
+                {
+                    archive_entry_set_mtime(e, seconds, c_long::try_from(nanoseconds)?);
+                }
+            }
+            match kind {
+                "dir" => unsafe { archive_entry_set_filetype(e, AE_IFDIR) },
+                "file" => unsafe { archive_entry_set_filetype(e, AE_IFREG) },
+                "link" | "hard" => {
+                    let target = hex_field(&header, "target")?;
+                    let target_c = CString::new(target.clone())?;
+                    unsafe {
+                        if kind == "link" {
+                            archive_entry_set_filetype(e, AE_IFLNK);
+                            if utf8(&target) {
+                                archive_entry_set_symlink_utf8(e, target_c.as_ptr());
+                            } else {
+                                archive_entry_set_symlink(e, target_c.as_ptr());
+                            }
+                        } else {
+                            archive_entry_set_filetype(e, AE_IFREG);
+                            if utf8(&target) {
+                                archive_entry_set_hardlink_utf8(e, target_c.as_ptr());
+                            } else {
+                                archive_entry_set_hardlink(e, target_c.as_ptr());
+                            }
+                        }
+                    }
+                }
+                other => anyhow::bail!("“{shown}”: unknown kind {other}"),
+            }
+            if let Some(pairs) = header.get("xattrs").and_then(serde_json::Value::as_array) {
+                for pair in pairs {
+                    let (Some(n), Some(v)) = (
+                        pair.get(0).and_then(serde_json::Value::as_str),
+                        pair.get(1).and_then(serde_json::Value::as_str),
+                    ) else {
+                        continue;
+                    };
+                    let (n, v) = (CString::new(unhex(n)?)?, unhex(v)?);
+                    unsafe {
+                        archive_entry_xattr_add_entry(e, n.as_ptr(), v.as_ptr().cast(), v.len());
+                    }
+                }
+            }
+            check(w, unsafe { archive_write_header(w, e) })
+                .map_err(|error| anyhow::anyhow!("“{shown}”: {error}"))?;
+            let mut left = size;
+            while left > 0 {
+                let want = usize::try_from(left.min(buffer.len() as u64))?;
+                input
+                    .read_exact(&mut buffer[..want])
+                    .map_err(|_| anyhow::anyhow!("stopped"))?;
+                let mut at = 0;
+                while at < want {
+                    let wrote = unsafe {
+                        archive_write_data(w, buffer[at..want].as_ptr().cast(), want - at)
+                    };
+                    if wrote <= 0 {
+                        check(w, c_int::try_from(wrote).unwrap_or(-30))
+                            .map_err(|error| anyhow::anyhow!("“{shown}”: {error}"))?;
+                        anyhow::bail!("“{shown}” could not be written");
+                    }
+                    at += usize::try_from(wrote)?;
+                }
+                left -= want as u64;
+            }
+            check(w, unsafe { archive_write_finish_entry(w) })
+                .map_err(|error| anyhow::anyhow!("“{shown}”: {error}"))?;
+        }
+        check(w, unsafe { archive_write_close(w) })?;
+        drop(writer);
+        drop(passphrase);
+        Ok(())
+    }
+
     pub fn run() -> anyhow::Result<()> {
         let Args {
             path,
@@ -426,6 +848,9 @@ mod native {
             names: name_limit,
             seconds,
             extract: extracting,
+            passwords,
+            create: creating,
+            encrypt,
         } = parse_args(std::env::args_os().skip(1))?;
         let started = std::time::Instant::now();
         let budget = seconds.map(|s| std::time::Duration::from_secs(s as u64));
@@ -443,6 +868,12 @@ mod native {
         };
         #[cfg(not(unix))]
         let path = CString::new(path.to_string_lossy().as_bytes())?;
+        if let Some(format) = creating {
+            return create(&path, &format, encrypt);
+        }
+        // Before the reader, so it outlives it: the reader asks it for
+        // passphrases (`extract`).
+        let tickets = Tickets::new();
         let reader = Reader(unsafe { archive_read_new() });
         anyhow::ensure!(!reader.0.is_null(), "libarchive allocation failed");
         unsafe {
@@ -450,6 +881,14 @@ mod native {
             reader.check(archive_read_support_format_all(reader.0))?;
             // Raw bids last: it is what is left when no archive format is.
             reader.check(archive_read_support_format_raw(reader.0))?;
+            // Before it is opened, as libarchive wants it.
+            if extracting && passwords {
+                reader.check(archive_read_set_passphrase_callback(
+                    reader.0,
+                    std::ptr::from_ref::<Tickets>(&tickets).cast_mut().cast(),
+                    Some(asked_passphrase),
+                ))?;
+            }
             reader.check(archive_read_open_filename(
                 reader.0,
                 path.as_ptr(),
@@ -457,7 +896,7 @@ mod native {
             ))?;
         }
         if extracting {
-            return extract(&reader, &stem);
+            return extract(&reader, &tickets, &stem, passwords);
         }
         let mut entries = Vec::new();
         let mut index = 0u64;
@@ -581,7 +1020,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::native::parse_args;
+    use super::native::{parse_args, unhex};
     fn args(list: &[&str]) -> Vec<std::ffi::OsString> {
         list.iter().map(std::ffi::OsString::from).collect()
     }
@@ -618,6 +1057,41 @@ mod tests {
         assert!(whole.extract && whole.member.is_none());
         assert!(parse_args(args(&["a.zip", "3", "--extract"])).is_err());
     }
+    #[test]
+    fn an_archive_is_made_of_its_format_alone() {
+        let made = parse_args(args(&["/work/archive", "--create", "tar.zst"])).unwrap();
+        assert_eq!(made.create.as_deref(), Some("tar.zst"));
+        assert!(!made.encrypt && !made.extract);
+        let locked = parse_args(args(&["out", "--create", "zip", "--encrypt"])).unwrap();
+        assert!(locked.encrypt);
+        assert!(parse_args(args(&["out", "--create", "7z", "--encrypt"])).is_err());
+        assert!(parse_args(args(&["out", "--create", "zip", "--extract"])).is_err());
+        assert!(parse_args(args(&["out", "3", "--create", "zip"])).is_err());
+        assert!(parse_args(args(&["out", "--create"])).is_err());
+        let asked = parse_args(args(&["a.zip", "--extract", "--passwords"])).unwrap();
+        assert!(asked.passwords);
+        assert!(
+            parse_args(args(&[
+                "a.zip",
+                "--members",
+                "1",
+                "--names",
+                "9",
+                "--passwords"
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn hexadecimal_is_read_two_digits_a_byte() {
+        assert_eq!(unhex("").unwrap(), b"");
+        assert_eq!(unhex("c3a9 ".trim()).unwrap(), "é".as_bytes());
+        assert_eq!(unhex("00ff7F").unwrap(), [0, 255, 127]);
+        assert!(unhex("abc").is_err());
+        assert!(unhex("zz").is_err());
+    }
+
     #[test]
     fn an_option_it_does_not_know_is_refused_by_its_name() {
         let Err(error) = parse_args(args(&[

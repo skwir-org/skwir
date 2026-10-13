@@ -1,6 +1,7 @@
 //! Single-line prompts (`ui.ask`: rename, new folder, a plugin's
-//! question; finding a name; a passphrase) and the confirmation of what
-//! Undo cannot take back, or of quitting while a plan runs.
+//! question; finding a name; a passphrase; what a plan's step asks that
+//! only the user knows) and the confirmation of what Undo cannot take
+//! back, or of quitting while a plan runs.
 
 use gpui::{AnyElement, Context, Entity, FocusHandle, Subscription, Window, div, prelude::*, px};
 use skwir_core::Plan;
@@ -36,9 +37,18 @@ pub enum PromptKind {
     },
     /// `ui.ask`: the text completes a command (`PromptState::ask`).
     Ask,
+    /// What a plan's step asks that only the user knows (an archive's
+    /// password, `App::ask_secret`): masked, never trimmed, answered to
+    /// the step waiting for it, `None` however the prompt closes else.
+    Secret { id: u64 },
 }
 
 impl PromptKind {
+    /// Whether what is typed is hidden and kept as typed, spaces and all.
+    fn secret(self) -> bool {
+        matches!(self, PromptKind::Passphrase | PromptKind::Secret { .. })
+    }
+
     /// What its answer does, on the button Enter presses (`ui.ask` names
     /// its own).
     fn accept(self) -> &'static str {
@@ -46,7 +56,7 @@ impl PromptKind {
             PromptKind::Passphrase => "Unlock",
             PromptKind::Find { .. } => "Find",
             PromptKind::InspectJump { .. } => "Go",
-            PromptKind::Ask => "OK",
+            PromptKind::Ask | PromptKind::Secret { .. } => "OK",
         }
     }
 }
@@ -60,11 +70,23 @@ pub struct Ask {
     pub accept: Option<String>,
 }
 
+/// What a prompt is opened with beside its kind and text: `ui.ask`'s
+/// command, the verb on its button (its kind's when none), a line under
+/// its field.
+#[derive(Default)]
+struct Prompted {
+    ask: Option<Ask>,
+    accept: Option<String>,
+    note: Option<String>,
+}
+
 pub struct PromptState {
     pub title: String,
     pub kind: PromptKind,
     pub input: Entity<TextInput>,
     ask: Option<Ask>,
+    /// A line under the field, muted: what the answer may be.
+    note: Option<String>,
     /// The answer's button: its verb and its focus, beside Cancel's.
     accept: String,
     accept_focus: FocusHandle,
@@ -108,17 +130,63 @@ impl Shell {
             PromptKind::Passphrase => "Passphrase",
             PromptKind::Find { .. } => "Part of a name (capitals: exact case)",
             PromptKind::Ask => "",
+            PromptKind::Secret { .. } => "Password",
         };
-        self.open_prompt_with(kind, title, placeholder, initial, select, None, window, cx);
+        self.open_prompt_with(
+            kind,
+            title,
+            placeholder,
+            initial,
+            select,
+            Prompted::default(),
+            window,
+            cx,
+        );
     }
 
-    /// `ui.ask { title, text?, placeholder?, select?, accept?, command,
-    /// args?, field }`: ask for a line of text and run `command` with it as
-    /// `args[field]`. `select` is the part of `text` selected at first
-    /// (`[start, end]` in bytes: a name's stem), all of it when absent;
-    /// `accept` is the verb on the button that answers (Rename), OK when
-    /// absent. The one question of a line of text, the shell's own (Rename,
-    /// New folder) as a plugin's.
+    /// Ask what plans' steps wait for (`secrets`) once the prompt is free,
+    /// and no dialog or review holds the keyboard (a review is drawn
+    /// above a prompt): one at a time, the first first. A question its
+    /// step stopped waiting for (its plan cancelled) is not asked, or no
+    /// longer.
+    pub fn ask_secrets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let app = std::sync::Arc::clone(&self.app);
+        self.secrets.retain(|q| app.secret_waits(q.id));
+        if let Some(PromptKind::Secret { id }) = self.prompt.as_ref().map(|p| p.kind)
+            && !app.secret_waits(id)
+        {
+            self.close_prompt(window, cx);
+        }
+        if self.modal_open() || self.review_focus.is_some() {
+            return;
+        }
+        let Some(question) = self.secrets.pop_front() else {
+            return;
+        };
+        self.open_prompt_with(
+            PromptKind::Secret { id: question.id },
+            &question.title,
+            "Password",
+            "",
+            None,
+            Prompted {
+                ask: None,
+                accept: Some(question.accept),
+                note: None,
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// `ui.ask { title, text?, placeholder?, select?, accept?, note?,
+    /// command, args?, field }`: ask for a line of text and run `command`
+    /// with it as `args[field]`. `select` is the part of `text` selected at
+    /// first (`[start, end]` in bytes: a name's stem), all of it when
+    /// absent; `accept` is the verb on the button that answers (Rename), OK
+    /// when absent; `note` a line under the field (what the answer may be).
+    /// The one question of a line of text, the shell's own (Rename, New
+    /// folder) as a plugin's.
     pub fn open_ask(
         &mut self,
         args: &serde_json::Value,
@@ -153,7 +221,11 @@ impl Shell {
             text("placeholder").unwrap_or_default(),
             text("text").unwrap_or_default(),
             select,
-            Some(ask),
+            Prompted {
+                accept: ask.accept.clone(),
+                ask: Some(ask),
+                note: text("note").map(str::to_owned),
+            },
             window,
             cx,
         );
@@ -167,19 +239,21 @@ impl Shell {
         placeholder: &str,
         initial: &str,
         select: Option<std::ops::Range<usize>>,
-        ask: Option<Ask>,
+        prompted: Prompted,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // One replaced still waited for its answer: none.
+        if let Some(old) = &self.prompt {
+            self.give_up_secret(old.kind);
+        }
         let placeholder = placeholder.to_owned();
-        let accept = ask
-            .as_ref()
-            .and_then(|a| a.accept.clone())
-            .unwrap_or_else(|| kind.accept().to_owned());
+        let Prompted { ask, accept, note } = prompted;
+        let accept = accept.unwrap_or_else(|| kind.accept().to_owned());
         let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
         input.update(cx, |i, cx| {
-            i.set_masked(kind == PromptKind::Passphrase);
+            i.set_masked(kind.secret());
             i.set_text(initial.to_owned(), cx);
             match select {
                 Some(r) => i.select_range(r, cx),
@@ -210,6 +284,7 @@ impl Shell {
             kind,
             input,
             ask,
+            note,
             accept,
             accept_focus: cx.focus_handle(),
             cancel_focus: cx.focus_handle(),
@@ -227,11 +302,15 @@ impl Shell {
         let (kind, ask) = (prompt.kind, prompt.ask.take());
         let text = prompt.input.read(cx).text();
         // Spaces can be part of a passphrase.
-        let text = if kind == PromptKind::Passphrase {
+        let text = if kind.secret() {
             text.to_owned()
         } else {
             text.trim().to_owned()
         };
+        // Told before the prompt closes, which would tell it none.
+        if let PromptKind::Secret { id } = kind {
+            self.app.answer_secret(id, Some(text.clone()));
+        }
         self.close_prompt(window, cx);
         if let Some(Ask { command, field, .. }) = ask {
             let mut args = command.args;
@@ -249,12 +328,22 @@ impl Shell {
         self.close_prompt(window, cx);
     }
 
-    /// Close the prompt and give the keyboard back to what had it.
+    /// Close the prompt and give the keyboard back to what had it. What a
+    /// step asked and was not answered is answered none.
     pub fn close_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(prompt) = self.prompt.take() {
+            self.give_up_secret(prompt.kind);
             prompt.back.restore(window, &self.ui().focus);
         }
         cx.notify();
+    }
+
+    /// A step's question closed unanswered: it hears none (nothing, when
+    /// it was answered already).
+    fn give_up_secret(&self, kind: PromptKind) {
+        if let PromptKind::Secret { id } = kind {
+            self.app.answer_secret(id, None);
+        }
     }
 
     fn prompt_submitted(
@@ -304,7 +393,7 @@ impl Shell {
             PromptKind::Find { backward, .. } => {
                 self.last_find = (!text.is_empty()).then_some((text, backward));
             }
-            PromptKind::Ask => {}
+            PromptKind::Ask | PromptKind::Secret { .. } => {}
         }
     }
 
@@ -368,6 +457,11 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
                 .border_color(theme.accent)
                 .bg(theme.bg)
                 .child(p.input.clone()),
+        )
+        .children(
+            p.note
+                .clone()
+                .map(|note| div().text_xs().text_color(theme.text_muted).child(note)),
         )
         .child(modal::footer(
             "Enter to confirm, Escape to cancel",

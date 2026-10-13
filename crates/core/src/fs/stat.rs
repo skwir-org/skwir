@@ -425,6 +425,42 @@ mod sys {
     }
 }
 
+/// What a step that writes an entry elsewhere in another form (an archive
+/// made of it) reads of it ([`own`]): the entry itself, a link not
+/// followed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Own {
+    pub id: FileId,
+    pub kind: EntryKind,
+    /// Its permission bits (`0o7777`); `None` where the system keeps none
+    /// (Windows).
+    pub mode: Option<u32>,
+    pub size: u64,
+    /// How many names the file has: more than one, each is a hard link.
+    pub names: u64,
+    pub modified: Option<SystemTime>,
+    /// What a link says, as written.
+    pub link: Option<std::ffi::OsString>,
+}
+
+/// What the entry `name` in `dir` is, itself ([`Own`]): `None` when it is
+/// not there. Blocking.
+pub fn own(dir: &Dir, name: &OsStr) -> Option<Own> {
+    let st = sys::stat_at(dir, name, false, true).ok()?;
+    let link = (st.kind == EntryKind::Symlink)
+        .then(|| sys::read_link_at(dir, name))
+        .flatten();
+    Some(Own {
+        id: st.id,
+        kind: st.kind,
+        mode: st.mode.map(|mode| mode & 0o7777),
+        size: st.size,
+        names: st.nlink,
+        modified: st.modified,
+        link,
+    })
+}
+
 /// What the link `name` in `dir` leads to, followed to the end: `None`
 /// when it leads nowhere. Only the type and the identity are asked of
 /// what is there.

@@ -115,7 +115,8 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
 - **Copy, cut, paste:** `Ctrl+C`, `Ctrl+X`, `Ctrl+V`. What waits for a
   paste is dimmed and counted in the footer; `Escape` with nothing
   selected forgets it. With two panes, `Shift+F5` copies the selection to
-  the other pane and `Shift+F6` moves it there.
+  the other pane and `Shift+F6` moves it there; `Shift+F7` asks, as a
+  drop does (and offers to extract an archive there).
 - **Drag and drop.** Files dropped on a folder ask whether to move, copy
   or link them; hold `Shift` to move, `Ctrl` to copy or `Ctrl+Shift` to
   link without asking (General can turn the question off). An archive
@@ -150,7 +151,9 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
 - **Copy paths:** `Ctrl+Shift+C`. **Run Command…** in the context menu
   runs a shell command on the selection in a terminal.
 - **Extract Here**, in an archive's menu, extracts it into a folder
-  beside it.
+  beside it, asking a ZIP's password when it has one. **Compress to
+  ZIP** and **Compress…** (the name's ending picks the format: `.7z`,
+  `.tar.zst`…) make an archive of the selection beside it.
 - **Find Similar**, in the context menu, searches for files of the same
   kind, day, size or tags.
 - **Delete** moves to the Trash. `Shift+Delete` deletes for good after

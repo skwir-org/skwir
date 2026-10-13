@@ -270,6 +270,8 @@ pub struct Executor {
     /// (`set_room_asker`): its answer comes on the channel. None asks:
     /// such a plan is refused.
     room_asker: Mutex<Option<RoomAsker>>,
+    /// Asks the user for a step's secret (`StepContext::ask_secret`).
+    secret_asker: Mutex<Option<SecretAsker>>,
     /// Asks the user what becomes of the names a plan finds taken
     /// (`set_clash_asker`). None asks: such a plan is refused.
     clash_asker: Mutex<Option<ClashAsker>>,
@@ -282,6 +284,15 @@ pub type Free = Arc<dyn Fn(&Path) -> Option<u64> + Send + Sync>;
 /// on anyway; answers on the channel, true to go on.
 pub type RoomAsker =
     Arc<dyn Fn(&str, &super::room::Short) -> crossbeam_channel::Receiver<bool> + Send + Sync>;
+
+/// Asks the user for what a step needs that only they know (an archive's
+/// password), titled with the question and its button's verb, and waits
+/// for the answer until the token given is cancelled.
+pub type SecretAsker = Arc<
+    dyn Fn(&str, &str, &crate::cancel::CancelToken) -> Result<String, super::Unanswered>
+        + Send
+        + Sync,
+>;
 
 /// Asks what becomes of the names the plan titled so finds taken
 /// (ADR-054), all at once: the answer comes on the channel, `None` to
@@ -356,6 +367,7 @@ impl Executor {
             watched: Mutex::new(std::collections::HashMap::new()),
             free: Mutex::new(Arc::new(crate::fs::volume::free)),
             room_asker: Mutex::new(None),
+            secret_asker: Mutex::new(None),
             clash_asker: Mutex::new(None),
         })
     }
@@ -364,6 +376,12 @@ impl Executor {
     /// writes goes on anyway (ADR-049): the window's question.
     pub fn set_room_asker(&self, asker: Option<RoomAsker>) {
         *self.room_asker.lock() = asker;
+    }
+
+    /// Ask the user, through `asker`, for what a step needs that only they
+    /// know (an archive's password): the window's prompt.
+    pub fn set_secret_asker(&self, asker: Option<SecretAsker>) {
+        *self.secret_asker.lock() = asker;
     }
 
     /// Ask the user, through `asker`, what becomes of the names a plan
@@ -814,7 +832,7 @@ impl Executor {
                     let companions = Arc::clone(&self.companions.lock());
                     // Names taken are settled first: what the dry run
                     // checks is what will be done.
-                    let settled = if whole && super::clash::transfers(&plan.steps) {
+                    let settled = if whole && super::clash::takes_names(&plan.steps) {
                         self.settle(&plan, &companions, &job.cancel)
                     } else {
                         Settling::Steps(None)
@@ -1024,7 +1042,8 @@ impl Executor {
         let _running = Running(self, plan.id);
         let ctx = StepContext::new(cancel.clone(), pause, Arc::clone(&meter))
             .with_companions(Arc::clone(&self.companions.lock()))
-            .with_under_way(self.under_way.lock().clone());
+            .with_under_way(self.under_way.lock().clone())
+            .with_secret_asker(self.secret_asker.lock().clone());
         self.emit(ExecEvent::Started {
             plan: plan.id,
             title: plan.title.clone(),

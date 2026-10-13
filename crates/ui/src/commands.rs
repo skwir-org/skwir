@@ -358,6 +358,9 @@ mod args {
         /// absent.
         #[serde(default)]
         accept: Option<String>,
+        /// A line under the field: what the answer may be.
+        #[serde(default)]
+        note: Option<String>,
         /// What runs with the answer.
         command: String,
         #[serde(default)]
@@ -1282,6 +1285,11 @@ pub fn declare_all(app: &App) {
         "Move to the other pane",
         "Move the selection to what the other pane shows",
     );
+    none(
+        "ui.give_other",
+        "Send to the other pane…",
+        "Ask what the selection does in what the other pane shows, as a drop asks: move, copy or link it there, or what a plugin offers (extract an archive)",
+    );
     none("ui.timeline", "Timeline", "Show or hide the timeline");
     declare::<Bucket>(
         app,
@@ -1625,6 +1633,7 @@ mod tests {
             "ui.toolbar_activate",
             "ui.copy_other",
             "ui.move_other",
+            "ui.give_other",
             "ui.settings_adjust",
         ] {
             assert_eq!(effect(answer), Effect::UserOnly, "{answer}");

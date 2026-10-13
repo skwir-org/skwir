@@ -1188,7 +1188,7 @@ fn user_attributes(path: &Path) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
         }
     };
     let mut out = Vec::new();
-    for name in names.into_iter().filter(|n| kept_attribute(n)) {
+    for name in names.into_iter().filter(|n| crate::fs::xattr::kept(n)) {
         // One removed since it was listed is not there to keep.
         let Some(value) = crate::fs::xattr::get(path, &name).with_context(|| {
             format!(
@@ -1202,18 +1202,6 @@ fn user_attributes(path: &Path) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
         out.push((name.to_string_lossy().into_owned(), value));
     }
     Ok(out)
-}
-
-/// Whether a copy keeps the attribute `name` (`user_attributes`).
-fn kept_attribute(name: &OsStr) -> bool {
-    if cfg!(target_os = "macos") {
-        !matches!(
-            name.to_str(),
-            Some("com.apple.rootless" | "com.apple.provenance")
-        )
-    } else {
-        name.as_encoded_bytes().starts_with(b"user.")
-    }
 }
 
 /// Remove `p`, a folder with all it holds. A folder removed in part says

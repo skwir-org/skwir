@@ -34,6 +34,13 @@
   comment, a passphrase) end with Cancel and their verb, as the others
   did: a click answers them as Enter and Escape do. About and F1's
   shortcuts close from a ✕, as Settings does.
+- **Archives are made** from the menu of what you select: Compress to
+  ZIP, at once; Compress…, whose name's ending picks the format (7z,
+  tar.gz, tar.xz, tar.zst…); Compress with a Password… for an encrypted
+  ZIP. Extracting asks a ZIP's password, and a name already there asks
+  (keep both, replace, skip) rather than failing. With two panes,
+  `Shift+F7` asks what the selection does in the other pane, as a drop
+  does: extracting there among the choices.
 - **Who may use a file** changes from Properties: each class's access in
   words, Allow running, the group, or the mode as chmod takes it, a
   folder's contents too, undoable. Scripts and agents use `set_access`.

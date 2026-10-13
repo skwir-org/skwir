@@ -2,7 +2,9 @@
 //! folder it is dropped in, by the libarchive helper in its sandbox
 //! (`archive::extract_all`). A step of a plan like a copy: made in a
 //! staging folder and put in place whole (`StepContext::stage`), Cancel
-//! and Pause answered while the helper works, undone to the trash.
+//! and Pause answered while the helper works, undone to the trash. A name
+//! taken is asked about as a copy's is, with a file's choices (ADR-059);
+//! an encrypted member asks the user its password.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
@@ -11,7 +13,8 @@ use anyhow::Context;
 use skwir_core::App;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::op::{
-    self, Cancelled, Change, EntryRef, Operation, Plan, StepContext, StepStatus, Words,
+    self, Cancelled, Change, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Unanswered,
+    Words,
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::MenuItem;
@@ -26,9 +29,10 @@ const KIND: &str = "extract";
 const ARCHIVES: &str = "kind:archive|kind:application/x-cd-image";
 
 /// Extract the archive into `dest_dir` as `name`: a folder of what it
-/// holds, or, when all it holds is one member of that name (a folder
-/// `project-1.0` in `project-1.0.tar.gz`, the one file of `notes.txt.gz`),
-/// that member.
+/// holds, or, when all it holds is one member named as the archive says
+/// (a folder `project-1.0` in `project-1.0.tar.gz`, the one file of
+/// `notes.txt.gz`), that member. `name` is the archive's (`extracted_name`)
+/// unless one beside a name taken was kept (`photos (2)`).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct Extract {
     /// The archive.
@@ -76,6 +80,22 @@ fn extracted_name(path: &Path) -> OsString {
     stem.to_owned()
 }
 
+/// Whether the archive at `path` is a file only compressed (`notes.txt.gz`),
+/// as its name says: extracted, it is a file, not a folder.
+fn only_compressed(path: &Path) -> bool {
+    let squeezed = ["gz", "bz2", "xz", "zst", "lz", "lzma", "lz4", "z"];
+    let is = |ext: Option<&OsStr>, of: &str| ext.is_some_and(|e| e.eq_ignore_ascii_case(of));
+    squeezed.iter().any(|&end| is(path.extension(), end))
+        && path
+            .file_stem()
+            .is_some_and(|stem| !is(Path::new(stem).extension(), "tar"))
+}
+
+/// What is said when a password is needed and no one can be asked.
+pub(crate) fn unasked(archive: &str) -> anyhow::Error {
+    anyhow::anyhow!("“{archive}” is encrypted: its password is asked in Skwir's window")
+}
+
 fn display_name(path: &Path) -> String {
     path.file_name()
         .unwrap_or(path.as_os_str())
@@ -121,15 +141,33 @@ impl op::Effect for Extract {
             Err(e) => return conflict(e.to_string()),
         };
         let target = self.target();
-        if std::fs::symlink_metadata(&target).is_err() {
+        // As the plan's earlier steps leave it: one may put what is there
+        // in the trash (Replace).
+        if !ctx.exists(&target) {
             return StepStatus::Pending { reversible: true };
         }
         // Applied already, or another file under the name.
-        if holds_extracted(&src, &target, &self.name, ctx) {
+        if holds_extracted(&src, &target, &extracted_name(&self.entry.path), ctx) {
             StepStatus::AlreadyDone
         } else {
             conflict(format!("“{}” is already there", display_name(&target)))
         }
+    }
+
+    fn makes(&self) -> Option<Made> {
+        Some(Made {
+            target: self.target(),
+            from: self.entry.path.clone(),
+            folder: !only_compressed(&self.entry.path),
+            words: ("Extract", "extracted"),
+        })
+    }
+
+    fn made_as(&self, name: OsString) -> Option<Box<dyn Operation>> {
+        Some(Box::new(Extract {
+            name,
+            ..self.clone()
+        }))
     }
 
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
@@ -141,6 +179,8 @@ impl op::Effect for Extract {
         // A folder of its own: the staging folder holds its lock.
         let made = staging.path().join("archive");
         let mut done = 0;
+        let archive_name = display_name(&self.entry.path);
+        let unanswered = std::cell::Cell::new(None);
         let result = std::fs::create_dir(&made)
             .map_err(anyhow::Error::from)
             .and_then(|()| {
@@ -156,12 +196,25 @@ impl op::Effect for Extract {
                         }
                     },
                     || ctx.is_paused(),
+                    |attempt| {
+                        let title = if attempt == 1 {
+                            format!("Password for “{archive_name}”")
+                        } else {
+                            format!("Wrong password for “{archive_name}”: try again")
+                        };
+                        ctx.ask_secret(&title, "Extract")
+                            .map_err(|why| unanswered.set(Some(why)))
+                            .ok()
+                    },
                 )
             })
             // Paused once it is all there, it waits before it is placed.
             .and_then(|()| Ok(ctx.check_cancelled()?))
             .and_then(|()| {
-                let placed = only_member(&made, &self.name).unwrap_or_else(|| made.clone());
+                // What the archive holds is unwrapped by its own name, and
+                // placed under the step's, which may be one kept beside.
+                let own = extracted_name(&self.entry.path);
+                let placed = only_member(&made, &own).unwrap_or_else(|| made.clone());
                 staging.place(&placed, &target).with_context(|| {
                     format!(
                         "“{}” could not be placed in “{}”",
@@ -176,8 +229,13 @@ impl op::Effect for Extract {
         if let Err(e) = staging.remove() {
             tracing::warn!("a staging folder stays: {e}");
         }
-        if ctx.cancel_token().is_cancelled() && result.is_err() {
-            return Err(Cancelled.into());
+        if result.is_err() {
+            match unanswered.get() {
+                _ if ctx.cancel_token().is_cancelled() => return Err(Cancelled.into()),
+                Some(Unanswered::Declined) => return Err(Cancelled.into()),
+                Some(Unanswered::NoOne) => return Err(unasked(&archive_name)),
+                None => {}
+            }
         }
         result?;
         ctx.advance(size.saturating_sub(done));
@@ -196,9 +254,11 @@ fn only_member(made: &Path, name: &OsStr) -> Option<PathBuf> {
     (members.next().is_none() && first.file_name() == name).then(|| first.path())
 }
 
-/// Whether `target` holds what extracting `src` as `name` made: every
-/// member its listing names, at its place, a file of its size. A listing
-/// cut short (`archive::list`'s bounds) says no: then nobody can tell.
+/// Whether `target` holds what extracting `src` made: every member its
+/// listing names, at its place, a file of its size; all of them under one
+/// member called `name`, the archive's own (`extracted_name`), that
+/// member's. A listing cut short (`archive::list`'s bounds) says no: then
+/// nobody can tell.
 fn holds_extracted(src: &Path, target: &Path, name: &OsStr, ctx: &StepContext) -> bool {
     let Ok(listing) = archive::list(src, ctx.cancel_token()) else {
         return false;

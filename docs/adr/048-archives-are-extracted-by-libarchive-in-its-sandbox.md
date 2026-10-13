@@ -2,7 +2,9 @@
 
 Status: accepted, 2026-10-09. Revises the archive rule of
 `docs/invariants/previews.md` ("member names are never extraction
-paths"), which held while Skwir only previewed archives. Built.
+paths"), which held while Skwir only previewed archives. Built. Revised
+by ADR-059: the attributes a copy keeps are put back, an encrypted
+member asks its password, and a name taken is asked about.
 
 ## Context
 

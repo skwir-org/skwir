@@ -1,5 +1,5 @@
-//! Small native helper for archive metadata, bounded member reads, and
-//! whole archives extracted (ADR-048).
+//! Small native helper for archive metadata, bounded member reads, whole
+//! archives extracted (ADR-048), and archives made (ADR-059).
 use crate::inspection::{self, limits};
 use crate::sandbox::{self, Otherwise};
 use anyhow::Context;
@@ -196,11 +196,28 @@ pub fn read(path: &Path, member: &Member, cancel: &CancelToken) -> anyhow::Resul
 const AHEAD: u64 = 32;
 
 /// What the helper reports as it extracts: the archive's bytes read so
-/// far, and the units of work it took.
+/// far and the units of work it took, or that it needs a passphrase (the
+/// attempt, from 1).
 #[derive(Deserialize)]
 struct Report {
-    read: u64,
-    units: u64,
+    #[serde(default)]
+    read: Option<u64>,
+    #[serde(default)]
+    units: Option<u64>,
+    #[serde(default)]
+    passphrase: Option<u32>,
+}
+
+/// Bytes as hexadecimal digits, two each: how a name or a passphrase
+/// reaches the helper whatever bytes it holds.
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, b| {
+            let _ = write!(out, "{b:02x}");
+            out
+        })
 }
 
 /// Extract every member of the archive at `path` into `into`, an empty
@@ -211,21 +228,27 @@ struct Report {
 /// The helper runs in the sandbox where the system has one, writing only
 /// in `into`. `read` is told the archive's bytes read as they grow, for a
 /// bar against the file's size; while `held` says so the helper is given
-/// no more work and stops within `AHEAD` units of it (a paused plan).
-/// Cancel stops it at once; what it wrote is the caller's to remove.
+/// no more work and stops within `AHEAD` units of it (a paused plan). An
+/// encrypted member asks `passphrase` (the attempt, from 1: a second
+/// says the first was wrong), whose answer reaches the helper through its
+/// standard input, never its arguments; `None` gives up, and the
+/// extraction fails. Cancel stops it at once; what it wrote is the
+/// caller's to remove.
 ///
 /// # Errors
-/// Why the helper could not extract it all (an encrypted member, a name
-/// that would leave `into`, a damaged archive), or that it was cancelled.
+/// Why the helper could not extract it all (an encrypted member without
+/// its passphrase, a name that would leave `into`, a damaged archive), or
+/// that it was cancelled.
 pub fn extract_all(
     path: &Path,
     into: &Path,
     cancel: &CancelToken,
     read: impl FnMut(u64),
     held: impl Fn() -> bool,
+    passphrase: impl FnMut(u32) -> Option<String>,
 ) -> anyhow::Result<()> {
     let worker = worker()?;
-    extract_all_with(&worker, path, into, cancel, read, held)
+    extract_all_with(&worker, path, into, cancel, read, held, passphrase)
         .map_err(|error| crate::process::explain(&worker, cancel, error))
 }
 fn extract_all_with(
@@ -235,12 +258,14 @@ fn extract_all_with(
     cancel: &CancelToken,
     mut read: impl FnMut(u64),
     held: impl Fn() -> bool,
+    mut passphrase: impl FnMut(u32) -> Option<String>,
 ) -> anyhow::Result<()> {
     let mut run = sandbox::untrusted(worker, path, into, Otherwise::Run)?;
     run.command
         .arg(&run.input)
         .args(stem(path))
-        .arg("--extract");
+        .arg("--extract")
+        .arg("--passwords");
     // Its work, one ticket a unit, through a pipe never filled: at most
     // `AHEAD` tickets wait in it, far under a pipe's buffer.
     let (tickets_in, mut tickets) = std::io::pipe()?;
@@ -272,14 +297,29 @@ fn extract_all_with(
     drop(run);
     let (mut sent, mut used) = (0u64, 0u64);
     let mut lines = String::new();
-    let mut take_reports = |lines: &mut String, used: &mut u64| -> anyhow::Result<()> {
+    // A passphrase asked: answered at once, on the line the helper waits
+    // for (none to give up), whatever tickets came before it.
+    let mut take_reports = |lines: &mut String,
+                            used: &mut u64,
+                            tickets: &mut std::io::PipeWriter|
+     -> anyhow::Result<()> {
         let mut bytes = Vec::new();
         reading.read_to_end(&mut bytes)?;
         lines.push_str(&String::from_utf8_lossy(&bytes));
         while let Some(end) = lines.find('\n') {
             if let Ok(report) = serde_json::from_str::<Report>(&lines[..end]) {
-                read(report.read);
-                *used = report.units;
+                if let Some(attempt) = report.passphrase {
+                    let given = passphrase(attempt).unwrap_or_default();
+                    // A helper that ended has no use for it: its status
+                    // says why.
+                    let _ = tickets.write_all(format!("{}\n", hex(given.as_bytes())).as_bytes());
+                }
+                if let Some(bytes) = report.read {
+                    read(bytes);
+                }
+                if let Some(units) = report.units {
+                    *used = units;
+                }
             }
             lines.drain(..=end);
         }
@@ -287,7 +327,7 @@ fn extract_all_with(
     };
     loop {
         anyhow::ensure!(!cancel.is_cancelled(), "the extraction was cancelled");
-        take_reports(&mut lines, &mut used)?;
+        take_reports(&mut lines, &mut used, &mut tickets)?;
         if !held() && sent < used + AHEAD {
             let more = usize::try_from(used + AHEAD - sent)?;
             // A helper that ended has no use for them: its status says why.
@@ -301,7 +341,7 @@ fn extract_all_with(
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let status = child.finish()?;
-    take_reports(&mut lines, &mut used)?;
+    take_reports(&mut lines, &mut used, &mut tickets)?;
     if !status.success() {
         let mut said = String::new();
         let mut errors = errors;
@@ -314,6 +354,389 @@ fn extract_all_with(
             said.to_owned()
         });
     }
+    Ok(())
+}
+
+/// What an archive is made as (ADR-059), told by the end of its name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Format {
+    Zip,
+    SevenZip,
+    Tar,
+    TarGz,
+    TarBz2,
+    TarXz,
+    TarZst,
+}
+
+impl Format {
+    /// Every format, ZIP first: what is made unasked.
+    pub const ALL: [Format; 7] = [
+        Format::Zip,
+        Format::SevenZip,
+        Format::TarGz,
+        Format::TarXz,
+        Format::TarZst,
+        Format::TarBz2,
+        Format::Tar,
+    ];
+
+    /// Its name, the helper's and a script's (`format`): `zip`, `7z`,
+    /// `tar`, `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Format::Zip => "zip",
+            Format::SevenZip => "7z",
+            Format::Tar => "tar",
+            Format::TarGz => "tar.gz",
+            Format::TarBz2 => "tar.bz2",
+            Format::TarXz => "tar.xz",
+            Format::TarZst => "tar.zst",
+        }
+    }
+
+    /// The format named `name` ([`Self::name`]), case ignored.
+    pub fn named(name: &str) -> Option<Format> {
+        let name = name.trim_start_matches('.');
+        Format::ALL
+            .into_iter()
+            .find(|format| format.name().eq_ignore_ascii_case(name))
+    }
+
+    /// The extension of a name made for it: `.tar.gz`.
+    pub fn extension(self) -> &'static str {
+        self.endings()[0]
+    }
+
+    /// What a name ends with for it, its own extension first.
+    fn endings(self) -> &'static [&'static str] {
+        match self {
+            Format::Zip => &[".zip"],
+            Format::SevenZip => &[".7z"],
+            Format::Tar => &[".tar"],
+            Format::TarGz => &[".tar.gz", ".tgz"],
+            Format::TarBz2 => &[".tar.bz2", ".tbz2", ".tbz"],
+            Format::TarXz => &[".tar.xz", ".txz"],
+            Format::TarZst => &[".tar.zst", ".tzst"],
+        }
+    }
+
+    /// The format the file name `name` says, and the length of the name
+    /// before its ending: `photos.tar.gz` gives `(TarGz, 6)`; case
+    /// ignored. `None` when it ends with no format's, or with nothing
+    /// before it.
+    pub fn of_name(name: &std::ffi::OsStr) -> Option<(Format, usize)> {
+        let bytes = name.as_encoded_bytes();
+        Format::ALL.into_iter().find_map(|format| {
+            format.endings().iter().find_map(|ending| {
+                let at = bytes.len().checked_sub(ending.len()).filter(|&at| at > 0)?;
+                bytes[at..]
+                    .eq_ignore_ascii_case(ending.as_bytes())
+                    .then_some((format, at))
+            })
+        })
+    }
+
+    /// Whether it keeps a file's other names as links to the first (a
+    /// tar): elsewhere each name is stored whole.
+    pub fn keeps_hard_links(self) -> bool {
+        !matches!(self, Format::Zip | Format::SevenZip)
+    }
+
+    /// Whether it keeps extended attributes (a tar's pax headers): tags
+    /// kept on the file travel in it.
+    pub fn keeps_attributes(self) -> bool {
+        self.keeps_hard_links()
+    }
+
+    /// Whether it can be encrypted here (ZIP's AES-256): libarchive
+    /// encrypts no other.
+    pub fn encrypts(self) -> bool {
+        self == Format::Zip
+    }
+}
+
+/// A part of an archive being made ([`create`]): its path in the archive
+/// (`/` between its names, bytes as the system gave them), what it is, and
+/// what is said of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Part {
+    pub name: Vec<u8>,
+    pub item: Item,
+    /// Its permission bits.
+    pub mode: u32,
+    pub modified: Option<std::time::SystemTime>,
+    /// Its extended attributes, kept where the format keeps them
+    /// ([`Format::keeps_attributes`]).
+    pub attributes: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+/// What a [`Part`] is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Item {
+    Folder,
+    /// A file, read at `path` as the archive is written: `size` bytes, as
+    /// it was walked.
+    File {
+        path: std::path::PathBuf,
+        size: u64,
+    },
+    /// A link that says `target`.
+    Link {
+        target: Vec<u8>,
+    },
+    /// Another name of the file written as `first` (a tar keeps hard
+    /// links).
+    SecondName {
+        first: Vec<u8>,
+    },
+}
+
+impl Part {
+    /// The line that tells the helper of it.
+    fn header(&self) -> serde_json::Value {
+        let (kind, size, target) = match &self.item {
+            Item::Folder => ("dir", 0, None),
+            Item::File { size, .. } => ("file", *size, None),
+            Item::Link { target } => ("link", 0, Some(hex(target))),
+            Item::SecondName { first } => ("hard", 0, Some(hex(first))),
+        };
+        let mtime = self.modified.map(|time| {
+            match time.duration_since(std::time::UNIX_EPOCH) {
+                Ok(after) => [
+                    after.as_secs().cast_signed(),
+                    i64::from(after.subsec_nanos()),
+                ],
+                // Before 1970: a second earlier and what is after it.
+                Err(before) => {
+                    let before = before.duration();
+                    let (mut seconds, mut nanos) = (
+                        -before.as_secs().cast_signed(),
+                        -i64::from(before.subsec_nanos()),
+                    );
+                    if nanos < 0 {
+                        seconds -= 1;
+                        nanos += 1_000_000_000;
+                    }
+                    [seconds, nanos]
+                }
+            }
+        });
+        let attributes: Vec<[String; 2]> = self
+            .attributes
+            .iter()
+            .map(|(name, value)| [hex(name), hex(value)])
+            .collect();
+        serde_json::json!({
+            "name": hex(&self.name),
+            "kind": kind,
+            "size": size,
+            "mode": self.mode & 0o7777,
+            "mtime": mtime,
+            "target": target,
+            "xattrs": attributes,
+        })
+    }
+}
+
+/// Make the archive of `format` written at `output`, a name in a folder
+/// nobody else writes in, of `parts` in order (a folder before what it
+/// holds). The helper writes there and nowhere else, isolated where the
+/// system can (`sandbox::fed`), and opens no file of the user's: they are
+/// read here (`file::open_regular`) and handed to it. `sent` hears the
+/// files' bytes handed so far, as they grow; while `held` says so no more
+/// is handed (a paused plan). With `passphrase`, a ZIP encrypted by it
+/// (AES-256), handed through standard input, never its arguments. Cancel
+/// stops it at once; what it wrote is the caller's to remove.
+///
+/// # Errors
+/// Why it could not be made: a file that could not be read or became
+/// shorter as it was, a name the format cannot hold, a full disk; or that
+/// it was cancelled.
+pub fn create(
+    parts: &[Part],
+    format: Format,
+    passphrase: Option<&str>,
+    output: &Path,
+    cancel: &CancelToken,
+    sent: impl FnMut(u64),
+    held: impl Fn() -> bool,
+) -> anyhow::Result<()> {
+    let worker = worker()?;
+    create_with(
+        &worker, parts, format, passphrase, output, cancel, sent, held,
+    )
+    .map_err(|error| crate::process::explain(&worker, cancel, error))
+}
+
+#[allow(clippy::too_many_arguments)] // `create`'s, and the helper.
+fn create_with(
+    worker: &Path,
+    parts: &[Part],
+    format: Format,
+    passphrase: Option<&str>,
+    output: &Path,
+    cancel: &CancelToken,
+    mut sent: impl FnMut(u64),
+    held: impl Fn() -> bool,
+) -> anyhow::Result<()> {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    let (Some(into), Some(name)) = (output.parent(), output.file_name()) else {
+        anyhow::bail!("Nowhere to write the archive");
+    };
+    anyhow::ensure!(
+        passphrase.is_none() || format.encrypts(),
+        "Only a ZIP archive can have a password"
+    );
+    let mut run = sandbox::fed(worker, into, Otherwise::Run)?;
+    // A 7z is written whole to a temporary file first: on the disk it is
+    // made on, in the folder it is made in, not in a sandbox's `/tmp`,
+    // which is memory.
+    let scratch = tempfile::Builder::new().prefix(".tmp-").tempdir_in(into)?;
+    run.command
+        .env(
+            "TMPDIR",
+            run.work
+                .join(scratch.path().file_name().unwrap_or_default()),
+        )
+        .arg(run.work.join(name))
+        .arg("--create")
+        .arg(format.name());
+    if passphrase.is_some() {
+        run.command.arg("--encrypt");
+    }
+    let (helper_end, our_end) = std::io::pipe()?;
+    let errors = tempfile::tempfile()?;
+    run.command
+        .stdin(std::process::Stdio::from(helper_end))
+        .stdout(std::process::Stdio::null())
+        .stderr(errors.try_clone()?);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        run.command.process_group(0);
+    }
+    anyhow::ensure!(!cancel.is_cancelled(), "making the archive was cancelled");
+    let mut child = crate::process::ChildGuard::new(
+        run.command
+            .spawn()
+            .context("the archive helper could not start")?,
+    );
+    // The command holds the pipe's other end; the helper has its own.
+    drop(run);
+    let handed = AtomicU64::new(0);
+    let (paused, stop) = (AtomicBool::new(false), AtomicBool::new(false));
+    let mut told = 0u64;
+    let (ended, handing) = std::thread::scope(|scope| {
+        let feeder = scope.spawn(|| hand(our_end, parts, passphrase, &handed, &paused, &stop));
+        let ended = loop {
+            let now = handed.load(Ordering::Relaxed);
+            if now > told {
+                sent(now - told);
+                told = now;
+            }
+            paused.store(held(), Ordering::Relaxed);
+            if cancel.is_cancelled() {
+                break Err(anyhow::anyhow!("making the archive was cancelled"));
+            }
+            match child.exited() {
+                Ok(true) => break Ok(()),
+                Ok(false) => {}
+                Err(error) => break Err(error.into()),
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        if ended.is_err() {
+            // What hands it bytes, or waits to, hears it gone.
+            stop.store(true, Ordering::Relaxed);
+            child.kill();
+        }
+        let handing = feeder
+            .join()
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("handing the files over failed")));
+        (ended, handing)
+    });
+    let now = handed.load(Ordering::Relaxed);
+    if now > told {
+        sent(now - told);
+    }
+    ended?;
+    let status = child.finish()?;
+    // A file that could not be read says so, rather than the helper that
+    // saw its input end.
+    let piped = |error: &anyhow::Error| {
+        error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe)
+    };
+    if let Err(error) = &handing
+        && !piped(error)
+    {
+        return handing;
+    }
+    if !status.success() {
+        let mut said = String::new();
+        let mut errors = errors;
+        std::io::Seek::rewind(&mut errors)?;
+        errors.take(4096).read_to_string(&mut said)?;
+        let said = said.trim();
+        anyhow::bail!(if said.is_empty() {
+            format!("the archive helper failed ({status})")
+        } else {
+            said.to_owned()
+        });
+    }
+    handing
+}
+
+/// Hand the helper what it writes (`create`): the passphrase, each part's
+/// line and a file's bytes after it, then the end; none while `paused`,
+/// and nothing more once `stop`.
+fn hand(
+    feed: std::io::PipeWriter,
+    parts: &[Part],
+    passphrase: Option<&str>,
+    handed: &std::sync::atomic::AtomicU64,
+    paused: &std::sync::atomic::AtomicBool,
+    stop: &std::sync::atomic::AtomicBool,
+) -> anyhow::Result<()> {
+    use std::sync::atomic::Ordering;
+    let mut out = std::io::BufWriter::with_capacity(256 * 1024, feed);
+    let held = || -> anyhow::Result<()> {
+        while paused.load(Ordering::Relaxed) && !stop.load(Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        anyhow::ensure!(!stop.load(Ordering::Relaxed), "stopped");
+        Ok(())
+    };
+    if let Some(passphrase) = passphrase {
+        writeln!(out, "{}", hex(passphrase.as_bytes()))?;
+    }
+    let mut buffer = vec![0u8; 256 * 1024];
+    for part in parts {
+        held()?;
+        writeln!(out, "{}", part.header())?;
+        let Item::File { path, size } = &part.item else {
+            continue;
+        };
+        let shown = String::from_utf8_lossy(&part.name).into_owned();
+        let mut file = crate::file::open_regular(path)
+            .with_context(|| format!("“{shown}” could not be read"))?;
+        let mut left = *size;
+        while left > 0 {
+            held()?;
+            let chunk = usize::try_from(left.min(buffer.len() as u64))?;
+            let got = file
+                .read(&mut buffer[..chunk])
+                .with_context(|| format!("“{shown}” could not be read"))?;
+            anyhow::ensure!(got > 0, "“{shown}” became shorter as it was read");
+            out.write_all(&buffer[..got])?;
+            left -= got as u64;
+            handed.fetch_add(got as u64, Ordering::Relaxed);
+        }
+    }
+    writeln!(out, "{{\"end\":true}}")?;
+    out.flush()?;
     Ok(())
 }
 

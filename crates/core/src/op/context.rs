@@ -22,6 +22,15 @@ use crate::location::Waker;
 #[error("cancelled")]
 pub struct Cancelled;
 
+/// Why a step was given no secret ([`StepContext::ask_secret`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unanswered {
+    /// No one can be asked: no window (a script's plan, an agent's).
+    NoOne,
+    /// The user cancelled, or the plan was.
+    Declined,
+}
+
 /// Whether a running plan is held. A step waits where it would answer
 /// Cancel ([`StepContext::check_cancelled`]), holding what it has open,
 /// until the plan is resumed or cancelled.
@@ -182,6 +191,8 @@ pub struct StepContext {
     /// The files of several names whose bytes this plan counted already:
     /// copied once, they are counted once.
     sized: RefCell<HashSet<crate::FileId>>,
+    /// Who asks the user for a step's secret ([`Self::ask_secret`]).
+    secret_asker: Option<super::SecretAsker>,
 }
 
 /// What a dry run's earlier steps make and take away, by path. A path
@@ -309,6 +320,7 @@ impl StepContext {
             checked: RefCell::default(),
             copies: RefCell::default(),
             sized: RefCell::default(),
+            secret_asker: None,
         }
     }
 
@@ -560,6 +572,26 @@ impl StepContext {
     pub fn stage(&self, dest_dir: &Path) -> std::io::Result<super::staging::Staging> {
         self.staging_in(dest_dir);
         super::staging::Staging::new(dest_dir)
+    }
+
+    /// The same context, asking the user for a step's secret through
+    /// `asker`.
+    #[must_use]
+    pub(super) fn with_secret_asker(mut self, asker: Option<super::SecretAsker>) -> Self {
+        self.secret_asker = asker;
+        self
+    }
+
+    /// Ask the user for what the step needs that only they know (an
+    /// archive's password): `title` the question, `accept` its button's
+    /// verb. Waits for the answer, or for the plan to be cancelled.
+    ///
+    /// # Errors
+    /// [`Unanswered`]: no one can be asked (no window: a script's plan, an
+    /// agent's), or the user cancelled, or the plan was.
+    pub fn ask_secret(&self, title: &str, accept: &str) -> Result<String, Unanswered> {
+        let asker = self.secret_asker.as_ref().ok_or(Unanswered::NoOne)?;
+        asker(title, accept, &self.cancel)
     }
 
     /// Whether the plan is paused: a step whose work goes on elsewhere (a

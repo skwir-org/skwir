@@ -65,6 +65,17 @@ pub struct ClashQuestion {
     pub clashes: Vec<op::clash::Clash>,
 }
 
+/// What a step asks the user that only they know (an archive's password,
+/// ADR-059), until the window takes it (`App::take_secret_questions`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SecretQuestion {
+    pub id: u64,
+    /// The question: "Password for “photos.zip”".
+    pub title: String,
+    /// The verb on its button: "Extract".
+    pub accept: String,
+}
+
 /// A message from background work for the UI.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Notification {
@@ -178,6 +189,10 @@ pub struct App {
     /// and who waits for each answer.
     clashes: parking_lot::Mutex<Vec<ClashQuestion>>,
     settled: parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<Option<op::clash::Answer>>>>,
+    /// What steps ask that only the user knows, until the window takes
+    /// them, and who waits for each answer.
+    secrets: parking_lot::Mutex<Vec<SecretQuestion>>,
+    secret_replies: parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<Option<String>>>>,
     /// Messages from background work for the UI to show.
     notifications: parking_lot::Mutex<Vec<Notification>>,
     /// Commands the window carries out (`ui.*`), dispatched from elsewhere
@@ -245,6 +260,8 @@ impl App {
             answers: parking_lot::Mutex::new(HashMap::new()),
             clashes: parking_lot::Mutex::new(Vec::new()),
             settled: parking_lot::Mutex::new(HashMap::new()),
+            secrets: parking_lot::Mutex::new(Vec::new()),
+            secret_replies: parking_lot::Mutex::new(HashMap::new()),
             front: parking_lot::Mutex::new(Vec::new()),
             shown: (parking_lot::Mutex::new(false), parking_lot::Condvar::new()),
             scheduler,
@@ -304,6 +321,37 @@ impl App {
                     let app = asking.upgrade()?;
                     app.window_shown()
                         .then(|| app.ask_clashes(title, clashes.to_vec()))
+                },
+            )));
+            // A step that needs what only the user knows (an archive's
+            // password) asks the window and waits; with no window up, no
+            // one is asked, and the step says so.
+            let asking = Arc::downgrade(&app);
+            app.executor.set_secret_asker(Some(Arc::new(
+                move |title: &str, accept: &str, cancel: &crate::CancelToken| {
+                    use crossbeam_channel::RecvTimeoutError;
+                    let (id, answer) = {
+                        let app = asking.upgrade().ok_or(op::Unanswered::NoOne)?;
+                        if !app.window_shown() {
+                            return Err(op::Unanswered::NoOne);
+                        }
+                        app.ask_secret(title, accept)
+                    };
+                    loop {
+                        match answer.recv_timeout(std::time::Duration::from_millis(100)) {
+                            Ok(said) => return said.ok_or(op::Unanswered::Declined),
+                            Err(RecvTimeoutError::Disconnected) => {
+                                return Err(op::Unanswered::Declined);
+                            }
+                            Err(RecvTimeoutError::Timeout) if cancel.is_cancelled() => {
+                                if let Some(app) = asking.upgrade() {
+                                    app.withdraw_secret(id);
+                                }
+                                return Err(op::Unanswered::Declined);
+                            }
+                            Err(RecvTimeoutError::Timeout) => {}
+                        }
+                    }
                 },
             )));
             // What a run that ended mid-copy left is swept as this one
@@ -1008,6 +1056,53 @@ impl App {
     pub fn answer_clashes(&self, id: u64, answer: Option<op::clash::Answer>) -> bool {
         let reply = self.settled.lock().remove(&id);
         reply.is_some_and(|reply| reply.send(answer).is_ok())
+    }
+
+    /// Ask the window for what only the user knows (an archive's
+    /// password): `title` the question, `accept` its button's verb. The
+    /// receiver hears the answer, `None` for Cancel; it ends unanswered if
+    /// the window closes, and whoever stops waiting `withdraw_secret`s it.
+    pub fn ask_secret(
+        &self,
+        title: impl Into<String>,
+        accept: impl Into<String>,
+    ) -> (u64, crossbeam_channel::Receiver<Option<String>>) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (reply, answer) = crossbeam_channel::bounded(1);
+        self.secret_replies.lock().insert(id, reply);
+        self.secrets.lock().push(SecretQuestion {
+            id,
+            title: title.into(),
+            accept: accept.into(),
+        });
+        self.wake();
+        (id, answer)
+    }
+
+    /// What steps asked of the user since the last call, oldest first.
+    pub fn take_secret_questions(&self) -> Vec<SecretQuestion> {
+        std::mem::take(&mut *self.secrets.lock())
+    }
+
+    /// The user answered the question `id`, `None` for Cancel: whether
+    /// the step still waited.
+    pub fn answer_secret(&self, id: u64, answer: Option<String>) -> bool {
+        let reply = self.secret_replies.lock().remove(&id);
+        reply.is_some_and(|reply| reply.send(answer).is_ok())
+    }
+
+    /// Whether the step that asked `id` still waits for its answer: one
+    /// cancelled meanwhile withdrew it.
+    pub fn secret_waits(&self, id: u64) -> bool {
+        self.secret_replies.lock().contains_key(&id)
+    }
+
+    /// The step that asked `id` stopped waiting (its plan cancelled): an
+    /// answer goes nowhere, and a question not taken yet is not shown.
+    pub fn withdraw_secret(&self, id: u64) {
+        self.secret_replies.lock().remove(&id);
+        self.secrets.lock().retain(|q| q.id != id);
     }
 
     /// Questions asked since the last call, oldest first.

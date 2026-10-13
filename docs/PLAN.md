@@ -746,6 +746,27 @@ of place there. A first try wrapped the value
 and its links in one line that wraps: short values were laid out a
 letter per line until the value grew into its line.
 
+Archives made (ADR-059): Compress to ZIP, Compress… (the name's ending
+picks the format: ZIP, 7z, tar and gzip, bzip2, xz or Zstandard tars) and
+Compress with a Password… (an AES-256 ZIP), by the libarchive helper fed
+on its standard input: skwir walks and reads the files, the helper opens
+none. Extraction asks a ZIP's password, puts back the attributes a copy
+keeps, and a name taken there is asked about with a file's choices,
+through a core hook for steps that make something (`Operation::makes`);
+Shift+F7 asks, as a drop does, what the selection does in the other
+pane. Checked in a window on Xvfb: the three items; a ZIP made, made
+again unchanged (nothing to do), changed and kept beside as `(2)`; a
+`.tar.zst` from a typed name; an encrypted ZIP asked twice, which 7-Zip
+reads as AES-256 Deflate with the password and refuses without; Shift+F7
+offering Extract Here into the other pane, a wrong password asked again,
+then extracted; the name taken asked with Extract and kept beside;
+Escape on a password cancelling with nothing left; Compress… onto a name
+taken, replaced, and undone. Tags through a tar, a pipe left out,
+companions and pausing are checked by tests, not in the window. Not
+done: Merge for an extraction onto a folder (its undo would need each
+file it placed), passwords for agents, 7z and RAR decryption (libarchive
+has none).
+
 ---
 
 ## Maps

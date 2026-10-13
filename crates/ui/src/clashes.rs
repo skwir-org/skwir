@@ -1,5 +1,6 @@
-//! What becomes of the names a plan found taken where it copies, moves
-//! or links (ADR-054): one dialog lists them all, each choice made for one
+//! What becomes of the names a plan found taken where it copies, moves,
+//! links or makes something (ADR-054, ADR-059): one dialog lists them all,
+//! each choice made for one
 //! item or for all of a kind, answered before anything is done. It waits
 //! in the review queue (`review.rs`) and is answered as a review is: Enter
 //! goes on, Escape cancels; the arrows walk its rows and change their
@@ -197,12 +198,14 @@ impl Clashes {
     }
 
     /// What the plan does, as its button says it and as what is not done
-    /// until it is answered: ("Copy", "copied"), ("Move", "moved") or
-    /// ("Link", "linked").
+    /// until it is answered: ("Copy", "copied"), ("Move", "moved"),
+    /// ("Link", "linked"), or what a step makes says ("Extract",
+    /// "extracted").
     pub fn words(&self) -> (&'static str, &'static str) {
         match self.question.clashes.first().map(|c| c.act) {
             Some(Act::Move) => ("Move", "moved"),
             Some(Act::Link) => ("Link", "linked"),
+            Some(Act::Make { verb, done }) => (verb, done),
             Some(Act::Copy) | None => ("Copy", "copied"),
         }
     }

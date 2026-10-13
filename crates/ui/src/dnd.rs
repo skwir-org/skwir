@@ -548,6 +548,36 @@ impl Shell {
         cx.notify();
     }
 
+    /// The selection offered to the folder the other pane shows, from the
+    /// keyboard (Shift+F7): the menu a drop asks with (`ask_drop`), hung
+    /// from the cursor's row, Copy lit. What plugins offer for what is
+    /// sent is there too: Extract Here for an archive. Elsewhere than a
+    /// folder (a tag's place), as a drop there does.
+    pub fn ask_other_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(other) = self.other_pane() else {
+            self.set_status("There is no other pane: split the window first", false, cx);
+            return;
+        };
+        let Some(dest) = self.pane_folder(other) else {
+            self.give_to_pane(self.pane, other, None, window, cx);
+            return;
+        };
+        let dropped = self.dropped_from(self.pane);
+        if dropped.entries.is_empty() {
+            return;
+        }
+        if let Some(ix) = self.cursor_index() {
+            self.with_view(|v, _| v.scroll_to(ix));
+        }
+        self.ask_drop(Point::default(), &dropped, &dest, DropOp::Copy, window, cx);
+        let pane = self.pane;
+        if let Some(menu) = &mut self.menu {
+            menu.keyboard = Some(crate::menu::KeyboardAnchor::new(
+                crate::menu::MenuHost::Pane(pane),
+            ));
+        }
+    }
+
     /// `from`'s selection given to what pane `to` shows, as a drag onto
     /// it does and Shift+F5 and Shift+F6 do: into its folder, or to its
     /// location as its provider says a drop means there (`Verbs::drop`: a

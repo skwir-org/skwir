@@ -372,8 +372,17 @@ A text document is read as its structure, or laid out as pages.
 - Names reach the filesystem in one place, an archive extracted
   (`--extract`, ADR-048): by libarchive's disk writer and its guards (no
   `..`, no absolute path, never through a link it made, no owner or
-  set-id bits), in the sandbox writing only where it extracts, into a
-  staging folder put in place whole.
+  set-id bits; of attributes, only those a copy keeps), in the sandbox
+  writing only where it extracts, into a staging folder put in place
+  whole.
+- An archive is made (`--create`, ADR-059) of what skwir hands the
+  helper on its standard input: skwir walks and reads the files
+  (`compress::walk`, `archive::create`), the helper opens none, and
+  writes only the archive in its staging folder. A pipe, a socket or a
+  device is left out.
+- A password reaches the helper through its standard input, never its
+  arguments, a plan or a log: asked by the step (`StepContext::ask_secret`)
+  each time it is needed, Redo included.
 
 ## The preview frame
 

@@ -336,6 +336,7 @@ fn a_paused_extraction_stops_and_goes_on_and_a_cancelled_one_ends() {
             }
         },
         || held.load(Ordering::SeqCst),
+        |_| None,
     )
     .unwrap();
     let while_held = counter.join().unwrap();
@@ -349,9 +350,15 @@ fn a_paused_extraction_stops_and_goes_on_and_a_cancelled_one_ends() {
     cancelled.cancel();
     let again = tmp.path().join("again");
     std::fs::create_dir(&again).unwrap();
-    let error =
-        skwir_platform::archive::extract_all(&archive, &again, &cancelled, |_| {}, || false)
-            .unwrap_err();
+    let error = skwir_platform::archive::extract_all(
+        &archive,
+        &again,
+        &cancelled,
+        |_| {},
+        || false,
+        |_| None,
+    )
+    .unwrap_err();
     assert!(error.to_string().contains("cancelled"), "{error}");
 }
 

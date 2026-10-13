@@ -336,6 +336,13 @@ impl ChildGuard {
         }
     }
 
+    /// Stop the child and what it left running, at once: what writes to
+    /// it, or waits for it, hears so. It is reaped by `finish` or `Drop`.
+    pub(crate) fn kill(&mut self) {
+        self.stop_group();
+        let _ = self.child.kill();
+    }
+
     /// Stop the group and reap the child, which has exited.
     pub(crate) fn finish(mut self) -> io::Result<ExitStatus> {
         self.stop_group();

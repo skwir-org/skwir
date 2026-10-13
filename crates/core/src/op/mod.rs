@@ -35,11 +35,11 @@ pub use builtin::{
     RestorePart, ReturnPart, Rmdir, Swap, Trash, Unlink, Unmerge, Untrashed, in_trash,
     parse_trash_info, register_builtin, trash_info_of,
 };
-pub use context::{Cancelled, StepContext};
+pub use context::{Cancelled, StepContext, Unanswered};
 pub use entry_ref::{EntryArg, EntryRef, ResolveError};
 pub use executor::{
-    ChangeObserver, ExecEvent, ExecResult, Executor, JournalEntry, Progress, RunKind, Transfer,
-    Verdict,
+    ChangeObserver, ExecEvent, ExecResult, Executor, JournalEntry, Progress, RunKind, SecretAsker,
+    Transfer, Verdict,
 };
 pub use order::{RenameOrderError, RenameRequest, order_renames};
 pub use staging::Staging;
@@ -520,6 +520,36 @@ pub trait Operation: Send + Sync + fmt::Debug {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         None
     }
+    /// What it makes, new, under a name of its own ([`Made`]): an archive
+    /// extracted, one made. A name taken there is settled as a copy's is
+    /// (`clash`), with a file's choices: what is made is never merged.
+    /// `None` for any other step.
+    fn makes(&self) -> Option<Made> {
+        None
+    }
+    /// The same step making what it makes under `name` instead: the name
+    /// kept beside one taken.
+    fn made_as(&self, name: std::ffi::OsString) -> Option<Box<dyn Operation>> {
+        let _ = name;
+        None
+    }
+}
+
+/// What a step makes, new, under a name of its own in a folder
+/// ([`Operation::makes`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Made {
+    /// Where it lands.
+    pub target: PathBuf,
+    /// What it is made from (the archive extracted), or, for what is made
+    /// of several, the first: shown beside what is there.
+    pub from: PathBuf,
+    /// Whether it is a folder: a name kept beside a file's keeps its
+    /// extension last.
+    pub folder: bool,
+    /// What the question says of it: the verb on its button and what
+    /// nothing is until it is answered ("Extract", "extracted").
+    pub words: (&'static str, &'static str),
 }
 
 impl Clone for Box<dyn Operation> {
@@ -550,6 +580,15 @@ pub trait Effect: Send + Sync + fmt::Debug {
     /// `Operation::held`.
     fn held(&self) -> usize {
         0
+    }
+    /// `Operation::makes`.
+    fn makes(&self) -> Option<Made> {
+        None
+    }
+    /// `Operation::made_as`.
+    fn made_as(&self, name: std::ffi::OsString) -> Option<Box<dyn Operation>> {
+        let _ = name;
+        None
     }
 }
 
@@ -590,6 +629,12 @@ impl<T: Kind> Operation for T {
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
+    }
+    fn makes(&self) -> Option<Made> {
+        Effect::makes(self)
+    }
+    fn made_as(&self, name: std::ffi::OsString) -> Option<Box<dyn Operation>> {
+        Effect::made_as(self, name)
     }
 }
 

@@ -176,3 +176,20 @@ pub fn list(path: impl AsRef<Path>) -> io::Result<Vec<OsString>> {
 pub fn list_deref(path: impl AsRef<Path>) -> io::Result<Vec<OsString>> {
     imp::list_deref(path.as_ref())
 }
+
+/// Whether what carries a file elsewhere (a copy, an archive made of it,
+/// one extracted) keeps its attribute `name`: on Linux the user's
+/// (`user.*`); on macOS, whose names have no namespace, every one but
+/// those the system sets itself and refuses to anyone else
+/// (`com.apple.rootless`, `com.apple.provenance`), Finder's tags and info
+/// among those kept.
+pub fn kept(name: &OsStr) -> bool {
+    if cfg!(target_os = "macos") {
+        !matches!(
+            name.to_str(),
+            Some("com.apple.rootless" | "com.apple.provenance")
+        )
+    } else {
+        name.as_encoded_bytes().starts_with(b"user.")
+    }
+}

@@ -346,6 +346,9 @@ pub struct Shell {
     pub marquee: Option<crate::elements::marquee::Drag>,
     /// The encrypted volume the passphrase prompt is for.
     pub unlock: Option<crate::prompts::Unlock>,
+    /// What plans' steps ask that only the user knows (an archive's
+    /// password), waiting for the prompt to be free (`ask_secrets`).
+    pub secrets: std::collections::VecDeque<skwir_core::app::SecretQuestion>,
     pub nudges: crate::shortcuts::Nudges,
     /// What `/` looked for last, and whether backward: `n` and `N` look
     /// for it again.
@@ -602,6 +605,7 @@ impl Shell {
             about: None,
             marquee: None,
             unlock: None,
+            secrets: std::collections::VecDeque::new(),
             nudges: crate::shortcuts::Nudges::default(),
             last_find: None,
             sequence: None,
@@ -1880,6 +1884,7 @@ impl Shell {
             "focus_other_pane" => self.focus_other_pane(window, cx),
             "copy_other" => self.send_to_other_pane("copy", window, cx),
             "move_other" => self.send_to_other_pane("move", window, cx),
+            "give_other" => self.ask_other_pane(window, cx),
             "accept" => self.confirm_accept(window, cx),
             "dismiss" => self.confirm_dismiss(window, cx),
             "toggle_sidebar" => self.toggle_sidebar(window, cx),
@@ -2257,6 +2262,8 @@ impl Shell {
         if !clashes.is_empty() {
             self.add_clash_questions(clashes, cx);
         }
+        self.secrets.extend(self.app.take_secret_questions());
+        self.ask_secrets(window, cx);
         self.sync_review_focus(window, cx);
         self.sync_map_tiles(window, cx);
         // Follow the workspace's tabs and active pane (commands change them).
