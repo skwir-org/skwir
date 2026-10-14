@@ -952,7 +952,7 @@ impl Shell {
     }
 
     /// `reveal_path`, in a tab of its own when `at` says so (the pane it
-    /// opens from gives it its sort), and with the line its preview shows.
+    /// opens from gives it its sort), and where its preview shows it.
     pub fn reveal_path_at(
         &mut self,
         pane: PaneId,
@@ -1004,16 +1004,27 @@ impl Shell {
                     }
                 } else {
                     this.activate_pane(pane, cx);
-                    this.run(
-                        "navigate",
-                        serde_json::json!({ "location": PathArg::from(folder), "pane": pane }),
-                        window,
-                        cx,
-                    );
+                    // A file beside the one shown: selected where it is, the
+                    // folder not listed again, a step for Back all the same.
+                    let here = this.app.pane_location(pane)
+                        == Some(skwir_core::Location::from_path(&folder));
+                    if here {
+                        if let Err(error) = this.app.step_here(pane) {
+                            this.set_status(format!("{error:#}"), true, cx);
+                            return;
+                        }
+                    } else {
+                        this.run(
+                            "navigate",
+                            serde_json::json!({ "location": PathArg::from(folder), "pane": pane }),
+                            window,
+                            cx,
+                        );
+                    }
                     pane
                 };
-                if let (Some(line), true) = (at.line, name.is_some()) {
-                    this.wait_for_line(pane, path.clone(), line, cx);
+                if let (Some(mark), true) = (at.mark.clone(), name.is_some()) {
+                    this.wait_for_mark(pane, path.clone(), mark, cx);
                 }
                 this.reveal = name.map(|name| Reveal {
                     pane,

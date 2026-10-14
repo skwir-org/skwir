@@ -182,6 +182,13 @@ A text document is read as its structure, or laid out as pages.
   this machine, resolved next to the document and never canonicalized,
   so the folder shown is the one named. The pane goes there and
   `Shell::reveal_path` selects the file once listed, which previews it.
+- A link's fragment is a place in the file it leads to (`links::Mark`):
+  once that preview arrives it shows the block holding the mark (an
+  `id`, a heading's slug), else the line a code host's fragment names
+  (`#L12`, `#L12-L20`); a mark the file does not hold leaves it at its
+  start, and says so. A link to the document itself, named, scrolls in
+  it as `#name` does. A line asked of a text read where it is shown
+  waits for the rows counted, not the first rows shown.
 - A link is a place to show, never a file to run.
 - Every kind follows links through `Shell::follow_document_link`, a
   PDF's too (beyond links to its own pages).

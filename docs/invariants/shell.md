@@ -99,6 +99,11 @@ of bars, split or not.
   browser (`ui.history_menu`; `back`/`forward` take `steps`). A long
   press is any button's `toolbar::Button::on_hold`: held `HOLD`, it runs
   its command, and the release clicks nothing.
+- Each step of a pane's history keeps the entry the cursor was on when
+  the pane left it (`Pane::go_on`, `go_to`); Back and Forward select it
+  again once listed, so a link followed is gone back from to the document
+  it was in. A link to a file in the folder shown adds a step without
+  listing the folder again (`App::step_here`).
 - Chevrons list on a worker (`nav_menu.rs`): each one the folders in the
   segment before it; one after the last the shown folder's places
   (`LocationProvider::places_of`), a separator, then its subfolders

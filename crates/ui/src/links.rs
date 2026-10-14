@@ -34,7 +34,7 @@ pub struct LinkState {
     pub(crate) hover: Option<(ElementId, Range<usize>)>,
     /// Ctrl (Cmd) is held, as the last event said.
     pub(crate) held: bool,
-    /// A line to show once the preview of its file arrives.
+    /// A place to show once the preview of its file arrives.
     goto: Option<Goto>,
 }
 
@@ -43,8 +43,18 @@ struct Goto {
     /// for, not another pane's of the same file.
     pane: skwir_core::workspace::PaneId,
     path: PathBuf,
-    line: u32,
+    mark: Mark,
     until: Instant,
+}
+
+/// Where in a file its preview shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Mark {
+    /// A line, from 1.
+    Line(u32),
+    /// What a link's fragment names (`#setup`): a mark the text holds (an
+    /// `id`, a heading's), or a line as code hosts write one (`#L12`).
+    Anchor(String),
 }
 
 /// A link of a preview labelled: the block it is in, where it starts
@@ -84,11 +94,11 @@ impl Labels {
 }
 
 /// Where `ui.reveal` shows a file: in a tab of its own or in the pane, and
-/// the line its preview shows.
-#[derive(Clone, Copy, Debug, Default)]
+/// where its preview shows it.
+#[derive(Clone, Debug, Default)]
 pub struct RevealAt {
     pub tab: bool,
-    pub line: Option<u32>,
+    pub mark: Option<Mark>,
 }
 
 /// `ui.reveal`'s arguments: a file shown in its folder, from a link.
@@ -251,12 +261,22 @@ impl Shell {
             );
             return;
         }
-        let Some(target) = from.and_then(|from| document_link(from, href)) else {
+        let Some((target, fragment)) = from.and_then(|from| document_link(from, href)) else {
             self.set_status("This link goes nowhere we can open", false, cx);
             return;
         };
+        // The document itself, named: the place it says, here, as `#name`.
+        if from == Some(target.as_path()) {
+            if let Some(name) = fragment {
+                self.show_mark(Mark::Anchor(name), cx);
+            }
+            return;
+        }
         let pane = self.pane;
-        let at = RevealAt { tab, line: None };
+        let at = RevealAt {
+            tab,
+            mark: fragment.map(Mark::Anchor),
+        };
         if !self.reveal_path_at(pane, &target, at, window, cx) {
             let name = target.file_name().map_or_else(
                 || target.display().to_string(),
@@ -284,7 +304,7 @@ impl Shell {
         let pane = args.pane.unwrap_or(self.pane);
         let at = RevealAt {
             tab: args.tab,
-            line: args.line.filter(|line| *line > 0),
+            mark: args.line.filter(|line| *line > 0).map(Mark::Line),
         };
         let path = args.path.into_inner();
         if !self.reveal_path_at(pane, &path, at, window, cx) {
@@ -316,14 +336,14 @@ impl Shell {
         }
     }
 
-    /// Show `line` of `path` once its preview arrives, opening the panel if
-    /// it is closed: the line was asked for to be read. A file the panel
+    /// Show `mark` of `path` once its preview arrives, opening the panel if
+    /// it is closed: the place was asked for to be read. A file the panel
     /// shows already goes there at once.
-    pub(crate) fn wait_for_line(
+    pub(crate) fn wait_for_mark(
         &mut self,
         pane: skwir_core::workspace::PaneId,
         path: PathBuf,
-        line: u32,
+        mark: Mark,
         cx: &mut Context<Self>,
     ) {
         if !self.preview.open {
@@ -333,18 +353,19 @@ impl Shell {
         self.links.goto = Some(Goto {
             pane,
             path,
-            line,
+            mark,
             until: Instant::now() + GOTO_WAIT,
         });
-        self.show_waiting_line();
+        self.show_waiting_mark(cx);
         cx.notify();
     }
 
-    /// The preview's content arrived or is there: show the line waiting
+    /// The preview's content arrived or is there: show the place waiting
     /// for it, if it is of this file in the pane it was revealed in. One
     /// that waited too long is dropped, so selecting the file later does
-    /// not jump.
-    pub(crate) fn show_waiting_line(&mut self) {
+    /// not jump. A mark the text does not hold leaves it at its start, and
+    /// says so.
+    pub(crate) fn show_waiting_mark(&mut self, cx: &mut Context<Self>) {
         let Some(goto) = self.links.goto.as_ref() else {
             return;
         };
@@ -357,17 +378,68 @@ impl Shell {
         {
             return;
         }
+        if !matches!(
+            self.preview.content,
+            Some(crate::preview::PreviewContent::Inspection(_))
+        ) {
+            return;
+        }
+        if let Some(goto) = self.links.goto.take() {
+            self.show_mark(goto.mark, cx);
+        }
+    }
+
+    /// Show `mark` in the text the preview shows: a line, or the block
+    /// holding a mark (`Block::anchors`), else the line it names as code
+    /// hosts write one. A mark the text does not hold leaves it where it
+    /// is, and says so.
+    pub(crate) fn show_mark(&mut self, mark: Mark, cx: &mut Context<Self>) {
         let Some(crate::preview::PreviewContent::Inspection(display)) = &self.preview.content
         else {
             return;
         };
-        let line = goto.line;
         let data = Arc::clone(&display.data);
-        self.links.goto = None;
+        let line = match mark {
+            Mark::Line(line) => line,
+            Mark::Anchor(name) => {
+                if self.preview.inspection.show_anchor(&data, &name) {
+                    cx.notify();
+                    return;
+                }
+                let Some(line) = line_of(&name) else {
+                    let file = match self.preview.nested.last() {
+                        Some(member) => member.name.clone(),
+                        None => self
+                            .preview
+                            .path()
+                            .and_then(std::path::Path::file_name)
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    };
+                    self.set_status(format!("“{file}” has no “#{name}”"), false, cx);
+                    return;
+                };
+                line
+            }
+        };
         self.preview.inspection.show_line(&data, line);
         // A text read where it is shown finds the line on a worker.
         self.ask_text();
+        cx.notify();
     }
+}
+
+/// The line a fragment names as code hosts write it (`L12`, `L12-L20`,
+/// `L12C5`), from 1.
+fn line_of(fragment: &str) -> Option<u32> {
+    let rest = fragment.strip_prefix('L')?;
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    if !(rest[end..].is_empty() || rest[end..].starts_with(['-', 'C'])) {
+        return None;
+    }
+    rest[..end].parse().ok().filter(|line| *line > 0)
 }
 
 /// Whether the link names a URI scheme (`mailto:`, `irc:`, `https:`) rather
@@ -417,13 +489,22 @@ fn has_scheme(href: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
-/// Where a document's link points on this machine, or `None` when it names
-/// something we cannot resolve (another scheme, or a path that escapes into
-/// nothing). `from` is the document holding the link, so a relative link is
-/// read the way the author wrote it: next to their file.
-pub(crate) fn document_link(from: &std::path::Path, href: &str) -> Option<std::path::PathBuf> {
-    let href = href.split(['#', '?']).next().filter(|h| !h.is_empty())?;
-    let href = String::from_utf8_lossy(&skwir_platform::uri::percent_decode(href)).into_owned();
+/// Where a document's link points on this machine, and the mark it names
+/// there (its fragment), or `None` when it names something we cannot
+/// resolve (another scheme, or a path that escapes into nothing). `from` is
+/// the document holding the link, so a relative link is read the way the
+/// author wrote it: next to their file.
+pub(crate) fn document_link(
+    from: &std::path::Path,
+    href: &str,
+) -> Option<(std::path::PathBuf, Option<String>)> {
+    let decode = |text: &str| {
+        String::from_utf8_lossy(&skwir_platform::uri::percent_decode(text)).into_owned()
+    };
+    let (href, fragment) = href.split_once('#').unwrap_or((href, ""));
+    let fragment = (!fragment.is_empty()).then(|| decode(fragment));
+    let href = href.split('?').next().filter(|h| !h.is_empty())?;
+    let href = decode(href);
     let path = if let Some(rest) = href.strip_prefix("file://") {
         // file://host/path is not ours to resolve; file:///path is.
         std::path::PathBuf::from(rest.strip_prefix('/').map(|p| format!("/{p}"))?)
@@ -448,7 +529,7 @@ pub(crate) fn document_link(from: &std::path::Path, href: &str) -> Option<std::p
             other => out.push(other),
         }
     }
-    Some(out)
+    Some((out, fragment))
 }
 
 #[cfg(test)]
@@ -477,7 +558,7 @@ mod tests {
     fn a_documents_links_resolve_next_to_it() {
         let dir = std::path::Path::new("/notes/trip");
         let from = dir.join("Day one.md");
-        let at = |href| document_link(&from, href);
+        let at = |href| document_link(&from, href).map(|(path, _)| path);
         assert_eq!(at("Day two.md"), Some(dir.join("Day two.md")));
         assert_eq!(at("Day%20two.md"), Some(dir.join("Day two.md")));
         assert_eq!(at("photos/"), Some(dir.join("photos")));
@@ -498,6 +579,31 @@ mod tests {
         assert_eq!(at("file://host/share/x"), None);
         assert_eq!(at(""), None);
         assert_eq!(at("#section"), None);
+    }
+
+    #[test]
+    fn a_link_names_a_mark_in_the_file_it_leads_to() {
+        let from = std::path::Path::new("/notes/trip/Day one.md");
+        let mark = |href| document_link(from, href).and_then(|(_, mark)| mark);
+        assert_eq!(mark("notes.md#later"), Some("later".to_owned()));
+        assert_eq!(mark("notes.md?plain=1#L12"), Some("L12".to_owned()));
+        assert_eq!(
+            mark("notes.md#caf%C3%A9-l'apr%C3%A8s"),
+            Some("café-l'après".to_owned())
+        );
+        assert_eq!(mark("notes.md#"), None);
+        assert_eq!(mark("notes.md"), None);
+        assert_eq!(
+            document_link(from, "Day%20two.md#a#b"),
+            Some(("/notes/trip/Day two.md".into(), Some("a#b".to_owned())))
+        );
+        // Lines as code hosts write them.
+        assert_eq!(line_of("L12"), Some(12));
+        assert_eq!(line_of("L12-L20"), Some(12));
+        assert_eq!(line_of("L12C5-L12C9"), Some(12));
+        for not in ["L", "L0", "12", "Lunch", "L12x", "l12"] {
+            assert_eq!(line_of(not), None, "{not}");
+        }
     }
 
     #[test]

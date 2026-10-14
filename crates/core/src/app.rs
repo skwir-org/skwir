@@ -684,11 +684,30 @@ impl App {
     /// Open a location in a pane, replacing what it showed. Returns immediately;
     /// entries arrive through `pump`.
     pub fn navigate(&self, pane: PaneId, location: &Location) -> anyhow::Result<()> {
-        self.show(pane, location, |p| {
-            p.history.truncate(p.history_pos + 1);
-            p.history.push(location.clone());
-            p.history_pos = p.history.len() - 1;
-        })
+        let left = self.cursor_of(pane);
+        self.show(pane, location, |p| p.go_on(location.clone(), left))
+    }
+
+    /// Add a step to `pane`'s history for the location it shows, its
+    /// listing kept as it is: a link followed to a file beside the one shown
+    /// selects it there, and Back comes back to the entry the cursor is on.
+    pub fn step_here(&self, pane: PaneId) -> anyhow::Result<()> {
+        let left = self.cursor_of(pane);
+        let mut ws = self.workspace.write();
+        let p = ws
+            .pane_mut(pane)
+            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+        let here = p
+            .location()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+        p.go_on(here, left);
+        Ok(())
+    }
+
+    /// The entry `pane`'s cursor is on, which its history keeps.
+    fn cursor_of(&self, pane: PaneId) -> Option<crate::EntryId> {
+        self.workspace.read().pane(pane)?.selection.cursor
     }
 
     /// Show `location` in `pane`, then let `then` update its history. A
@@ -1936,10 +1955,10 @@ mod builtin {
                     } else {
                         p.history_pos.checked_sub(steps)
                     };
-                    pos.and_then(|pos| Some((pos, p.history.get(pos)?.clone())))
+                    pos.and_then(|pos| Some((pos, p.history.get(pos)?.clone(), p.selection.cursor)))
                 };
-                if let Some((pos, loc)) = target {
-                    app.show(pane, &loc, |p| p.history_pos = pos)?;
+                if let Some((pos, loc, left)) = target {
+                    app.show(pane, &loc, |p| p.go_to(pos, left))?;
                 }
                 Ok(Outcome::Done)
             })

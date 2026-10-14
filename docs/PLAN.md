@@ -871,6 +871,15 @@ reach a host the file names. Paths are looked up only where that stays
 on this machine (`fs::volume::Here`, ADR-029 amendment of 2026-10-14).
 Not tried: macOS's mount table (compiled only).
 
+A link's fragment is a place in the file it leads to: `guide.md#setup`
+shows that heading once the guide's preview arrives, `main.rs#L40` that
+line; a link to the document itself scrolls in it. Back after a link
+selected nothing: each step of a pane's history now keeps the entry its
+cursor was on, which Back and Forward select again, and a link to a file
+beside the one shown no longer lists the folder again. A line asked of a
+small text as its preview arrived was said not to exist (the index had
+not counted it yet): that held for the terminal's `file:12` links too.
+
 ---
 
 ## Maps

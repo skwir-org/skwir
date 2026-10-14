@@ -689,6 +689,20 @@ impl State {
     /// Show line `line` (from 1) of the code view, highlighted, as a link
     /// to it asks (`src/main.rs:12`): in a text read where it is shown, once
     /// it is counted (`text_view`).
+    /// Scroll to the block holding the mark `name` (`Block::anchors`: an
+    /// `id`, a heading's): whether the text holds it.
+    pub(crate) fn show_anchor(&mut self, data: &Inspection, name: &str) -> bool {
+        let Some(item) = data
+            .blocks
+            .iter()
+            .position(|block| block.anchors.iter().any(|anchor| anchor == name))
+            .and_then(|index| self.item_of(data, index))
+        else {
+            return false;
+        };
+        scroll_into_view(&self.list, item);
+        true
+    }
     pub(crate) fn show_line(&mut self, data: &Inspection, line: u32) {
         if let Some(text) = self.text.as_mut() {
             return text.show_line(u64::from(line));
@@ -1444,17 +1458,9 @@ impl Shell {
                 return;
             }
             if let Some(anchor) = args["target"].as_str().and_then(|s| s.strip_prefix('#')) {
-                if let Some(PreviewContent::Inspection(display)) = &self.preview.content
-                    && let Some(item) = display
-                        .data
-                        .blocks
-                        .iter()
-                        .position(|b| b.anchors.iter().any(|name| name == anchor))
-                        .and_then(|i| self.preview.inspection.item_of(&display.data, i))
-                {
-                    scroll_into_view(&self.preview.inspection.list, item);
-                    cx.notify();
-                }
+                let anchor = skwir_platform::uri::percent_decode(anchor);
+                let anchor = String::from_utf8_lossy(&anchor).into_owned();
+                self.show_mark(crate::links::Mark::Anchor(anchor), cx);
                 return;
             }
             let href = args["target"].as_str().unwrap_or("");

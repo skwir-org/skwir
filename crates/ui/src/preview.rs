@@ -2324,8 +2324,8 @@ impl Shell {
         self.start_text(&mut content, refresh);
         self.start_bytes(content.as_ref(), refresh);
         self.preview.content = content;
-        // A link to a line of this file shows it now it is here.
-        self.show_waiting_line();
+        // A link to a place in this file shows it now it is here.
+        self.show_waiting_mark(cx);
     }
 
     /// Whether a drive the selected entries are on is read-only (`drives`:

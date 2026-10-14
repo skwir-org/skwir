@@ -183,7 +183,7 @@ impl Shell {
         self.toggle_about(window, cx);
         let at = crate::links::RevealAt {
             tab: true,
-            line: None,
+            mark: None,
         };
         self.reveal_path_at(self.pane, &path, at, window, cx);
     }

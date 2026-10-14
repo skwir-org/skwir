@@ -173,3 +173,60 @@ fn the_selection_says_what_a_link_leads_to_without_reading() {
         ]
     );
 }
+
+fn go(app: &App, command: &str) {
+    app.dispatch(&Invocation::with_args(command, &serde_json::json!({})))
+        .expect(command);
+    assert!(
+        app.pump_until_complete(active(app), std::time::Duration::from_secs(10)),
+        "{command}: the listing did not complete"
+    );
+}
+
+/// Back selects again the entry the cursor was on when the pane left the
+/// step it goes back to, and Forward the one it was on when Back left: a
+/// document's link followed to a file beside it, or a folder entered, is
+/// gone back from to where the user was.
+#[test]
+fn back_and_forward_select_again_what_the_cursor_was_on() {
+    let dir = home_tempdir();
+    let inner = dir.path().join("it's a folder");
+    std::fs::create_dir(&inner).unwrap();
+    for name in ["read me.md", "guide.md"] {
+        std::fs::write(dir.path().join(name), "").unwrap();
+    }
+    std::fs::write(inner.join("inside.txt"), "").unwrap();
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    select(&app, &["read me.md"]);
+    // A link to the file beside it: a step of its own, the folder not
+    // listed again, that file selected.
+    let pane = active(&app);
+    let listing = app.workspace.read().pane(pane).unwrap().listing.id();
+    app.step_here(pane).expect("a step here");
+    assert_eq!(
+        app.workspace.read().pane(pane).unwrap().listing.id(),
+        listing
+    );
+    select(&app, &["guide.md"]);
+    go(&app, "back");
+    assert_eq!(selected(&app), ["read me.md"]);
+    assert_eq!(cursor(&app).as_deref(), Some("read me.md"));
+    go(&app, "forward");
+    assert_eq!(selected(&app), ["guide.md"]);
+    // The same folder navigated to again is a step too.
+    navigate(&app, dir.path());
+    go(&app, "back");
+    assert_eq!(selected(&app), ["guide.md"]);
+    go(&app, "forward");
+    select(&app, &["it's a folder"]);
+    navigate(&app, &inner);
+    assert!(selected(&app).is_empty(), "a new place starts with nothing");
+    go(&app, "back");
+    assert_eq!(selected(&app), ["it's a folder"]);
+    // And back over each step to the document the link was followed from.
+    go(&app, "back");
+    assert_eq!(selected(&app), ["guide.md"]);
+    go(&app, "back");
+    assert_eq!(selected(&app), ["read me.md"]);
+}

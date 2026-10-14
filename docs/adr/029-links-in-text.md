@@ -100,3 +100,20 @@ ADR-020 rules out.
 - Mounts the user made (sshfs, a mapped drive, `/net/host` once
   mounted) are looked up as listing them is, and so is a link on the
   disk: only the path as written is read.
+
+### 2026-10-14: a link lands where its fragment points, and Back returns
+
+A link to `guide.md#setup` showed the guide from its start, and Back
+after it went to the same folder with nothing selected: the document the
+link was followed from was lost.
+
+- A fragment is a mark in the file it leads to (`links::Mark`): the
+  block holding that `id` or heading slug once its preview arrives, else
+  the line code hosts write (`#L12`). A mark the file does not hold is
+  said, and the file shown from its start. A link to the document itself
+  scrolls in it.
+- Each step of a pane's history keeps the entry the cursor was on when
+  the pane left it, and Back and Forward select it again: Back after a
+  link is the document again. A link to a file beside the one shown adds
+  a step without listing the folder again (`App::step_here`).
+- The document comes back from its start, not where it was scrolled.

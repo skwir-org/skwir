@@ -459,6 +459,9 @@ pub struct Pane {
     pub history: Vec<Location>,
     /// Index into `history` of the current location.
     pub history_pos: usize,
+    /// By step of `history`, the entry the cursor was on when the pane left
+    /// it: Back and Forward select it again (`go_to`).
+    left_at: Vec<Option<EntryId>>,
     /// A name to select once the listing has it, and whether it is still
     /// coming once the listing is complete; see [`Pane::reveal`].
     reveal: Option<(OsString, bool)>,
@@ -617,6 +620,7 @@ impl Pane {
             sort: SortSpec::default(),
             history: Vec::new(),
             history_pos: 0,
+            left_at: Vec::new(),
             reveal: None,
             reveal_looked: None,
             opened_index: parking_lot::Mutex::new(None),
@@ -639,6 +643,41 @@ impl Pane {
         pane.history.push(location);
         pane.sort = sort;
         pane
+    }
+
+    /// Go on from the current step of `history` to `location`: the steps
+    /// ahead go, and `left`, the entry the cursor was on, is kept for Back
+    /// to select again.
+    pub(crate) fn go_on(&mut self, location: Location, left: Option<EntryId>) {
+        if !self.history.is_empty() {
+            self.remember_left(self.history_pos, left);
+            self.history.truncate(self.history_pos + 1);
+        }
+        self.left_at.truncate(self.history.len());
+        self.history.push(location);
+        self.history_pos = self.history.len() - 1;
+    }
+
+    /// Go to step `pos` of `history` (Back, Forward): `left`, the entry the
+    /// cursor was on, is kept for the step left, and the entry the cursor
+    /// was on when `pos` was left is selected again once the listing has
+    /// it, as a link followed and gone back from expects.
+    pub(crate) fn go_to(&mut self, pos: usize, left: Option<EntryId>) {
+        self.remember_left(self.history_pos, left);
+        self.history_pos = pos;
+        let again = self.left_at.get(pos).copied().flatten().map(|id| {
+            let mut selection = Selection::default();
+            selection.set([id]);
+            selection
+        });
+        self.set_restore(again);
+    }
+
+    fn remember_left(&mut self, pos: usize, left: Option<EntryId>) {
+        if self.left_at.len() <= pos {
+            self.left_at.resize(pos + 1, None);
+        }
+        self.left_at[pos] = left;
     }
 
     /// Work tied to this location stops immediately on navigation or pane close.

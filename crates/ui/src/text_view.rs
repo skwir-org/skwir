@@ -476,7 +476,12 @@ impl TextView {
         let Some(line) = self.line else {
             return;
         };
-        let (lines, done) = self.lines();
+        // The index finds the line: what it counted, not the first rows a
+        // file small enough to be whole showed before counting began.
+        let (lines, done) = {
+            let index = self.index.read();
+            (index.lines(), index.done())
+        };
         if lines < line && !done {
             return;
         }
