@@ -320,7 +320,9 @@ to it; `Ctrl+Shift+O` labels the paths for the keyboard;
 `Ctrl+Shift+A` selects everything. Selected text is also the primary
 selection, pasted by the middle button and `Shift+Insert`. The right
 button or the `Menu` key opens the terminal's menu: copy, paste, a
-link's own items, clearing the history.
+link's own items, clearing the history. Drop files on the terminal, or
+press `Ctrl+Shift+Enter`, to type the selected files' paths at its
+prompt, quoted for your shell.
 
 ## Keys
 

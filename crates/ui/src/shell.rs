@@ -1886,6 +1886,7 @@ impl Shell {
             }
             "terminal_clear" => self.terminal_input(skwir_core::terminal::Input::ClearHistory),
             "terminal_menu" => self.open_terminal_menu(None, None, window, cx),
+            "terminal_paths" => self.terminal_type_selection(window, cx),
             "terminal_page" => self.terminal_page(args),
             "terminal_links" => self.label_terminal_links(cx),
             "timeline_bucket" => {

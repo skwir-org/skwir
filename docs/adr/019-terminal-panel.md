@@ -144,3 +144,21 @@ new tab for a path, and Copy link address or Copy path.
 - An agent may open the menu; selecting everything (the desktop's
   primary selection on Linux) and clearing the history ask first, as
   copying does.
+
+### 2026-10-14: paths typed at the prompt
+
+Files dropped on the terminal, or the selection with Ctrl+Shift+Enter
+(`ui.terminal_paths`, from the files or the terminal, as Midnight
+Commander puts a path on its command line), are typed at the prompt,
+each quoted for the shell and followed by a space; the keyboard goes to
+the terminal for the rest of the command.
+
+- The session quotes them (`TerminalSession::quote`, answered from
+  memory), with the rules the `cd` it types follows (`follow::word`):
+  absolute, no control character, UTF-8; for `cmd`, no `%` or `"`. A
+  shell whose quoting is not known gets nothing, and the window says so.
+- They go as a paste: bracketed when the shell asked, never with an
+  Enter, so nothing runs.
+- A drop asks nothing there: no file is copied or moved.
+- Only the user types paths into a shell: an agent may not run
+  `ui.terminal_paths`, as it may not paste.

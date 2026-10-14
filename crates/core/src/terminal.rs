@@ -295,6 +295,13 @@ pub trait TerminalSession: Send + Sync {
     fn screen(&self) -> Arc<Screen>;
     /// Advances with each screen published.
     fn revision(&self) -> u64;
+    /// `paths` as words the shell reads back as they are, quoted for it
+    /// and separated by spaces, to type at its prompt as a paste (files
+    /// dropped on the terminal, the pane's selection). Answered from
+    /// memory. An error says why they cannot be typed: a name a shell line
+    /// cannot carry (a line break in it), or a shell whose quoting is not
+    /// known.
+    fn quote(&self, paths: &[PathBuf]) -> anyhow::Result<String>;
 }
 
 /// What a new terminal starts with.

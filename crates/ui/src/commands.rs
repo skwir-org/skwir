@@ -1354,6 +1354,11 @@ pub fn declare_all(app: &App) {
         "Forget the lines scrolled away above the terminal's screen",
     );
     none(
+        "ui.terminal_paths",
+        "Terminal: type the selection's paths",
+        "Type the paths of the selected files at the terminal's prompt, quoted for its shell",
+    );
+    none(
         "ui.terminal_menu",
         "Terminal: menu",
         "Open the terminal's menu: copy, paste, its links",

@@ -216,6 +216,14 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("ctrl-shift-c", "ui.terminal_copy", Some("terminal")),
     ("ctrl-shift-v", "ui.terminal_paste", Some("terminal")),
     ("ctrl-shift-a", "ui.terminal_select_all", Some("terminal")),
+    // The selection's paths at the terminal's prompt, from the files or
+    // the terminal, as Midnight Commander puts a path on its command line.
+    // In the terminal it was Enter to the program.
+    (
+        "ctrl-shift-enter",
+        "ui.terminal_paths",
+        Some("pane|terminal"),
+    ),
     // The terminal's menu from the keyboard. Shift+F10 stays the
     // program's, as the other F-keys are.
     ("menu", "ui.terminal_menu", Some("terminal")),

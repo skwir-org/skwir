@@ -222,3 +222,39 @@ fn everything_is_selected_and_the_history_cleared() {
     let screen = shell.until("the history cleared", |s| s.history == 0);
     assert_eq!(text(&screen).trim_end(), prompt, "the screen stays");
 }
+
+/// Paths typed at the prompt, quoted by the session for its shell, come
+/// back from it as they are; one a shell line cannot carry is refused
+/// with its name.
+#[test]
+fn paths_typed_at_the_prompt_are_read_back_as_they_are() {
+    let tmp = home_tempdir();
+    let root = skwir_core::os_path::canonical(tmp.path()).unwrap();
+    let (app, _plugin) = app(&root);
+    let shell = Shell::open(&app, &root);
+    let paths = [root.join("it's a dir"), root.join(r"an\other one")];
+
+    let words = shell.session.quote(&paths).expect("quoted for sh");
+    shell
+        .session
+        .send(Input::Text("printf '[%s]\\n' ".to_owned()));
+    shell.session.send(Input::Paste(format!("{words} ")));
+    shell.session.send(Input::Text("\r".to_owned()));
+    let screen = shell.until("the paths printed back", |s| {
+        text(s).lines().filter(|line| line.starts_with('[')).count() == 2
+    });
+    let printed: Vec<String> = text(&screen)
+        .lines()
+        .filter_map(|line| line.strip_prefix('[')?.strip_suffix(']'))
+        .map(str::to_owned)
+        .collect();
+    let expected: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+    assert_eq!(printed, expected);
+
+    let error = shell
+        .session
+        .quote(&[root.join("two\nlines")])
+        .expect_err("a line break is refused")
+        .to_string();
+    assert!(error.contains(r"two\nlines"), "{error}");
+}

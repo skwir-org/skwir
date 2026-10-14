@@ -860,7 +860,9 @@ there come before every binding, so the terminal's win whatever layer
 binds the same keys to the window; Shift+Insert pastes the primary
 selection on Linux (ADR-019, amendment of 2026-10-14). The terminal
 has a menu (the right button, the Menu key): copy, paste, select all,
-clear the history, and a link's items.
+clear the history, and a link's items. Files dropped on it, or the
+selection with Ctrl+Shift+Enter, are typed at its prompt, quoted for
+its shell.
 
 ---
 

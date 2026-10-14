@@ -195,6 +195,8 @@ of bars, split or not.
   from the cursor's row: extracting across a split is a drop's row.
 - A drop on a place uses its location's verb (`Verbs::drop`). A drag
   carrying places is not asked about.
+- A drop on the terminal types the files' paths at its prompt and asks
+  nothing: no file is copied or moved (see the terminal panel).
 
 ## Feedback
 
@@ -450,6 +452,12 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   row marked by the grid in prepaint). Shift+F10 stays the program's,
   as the other F-keys are. On a link, the menu says where a link a
   program wrote leads before it is followed, as its tooltip does.
+- Paths reach the prompt quoted by the session for its shell
+  (`TerminalSession::quote`, the family `cd` uses), as a paste, never
+  with an Enter: files dropped on the panel, or the selection with
+  Ctrl+Shift+Enter (`ui.terminal_paths`, from the files or the
+  terminal). A shell whose quoting is not known (nu, xonsh) is typed
+  nothing, and says so; neither is a name a line cannot carry.
 - The plugin types a `cd` only while the shell's process group has the
   terminal. Test with a real `/bin/sh`
   (`crates/plugins/terminal/tests/session.rs`).

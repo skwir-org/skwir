@@ -110,6 +110,11 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.terminal_paste", "{}", "Terminal: paste"),
     ("ui.terminal_select_all", "{}", "Terminal: select all"),
     ("ui.terminal_clear", "{}", "Terminal: clear the history"),
+    (
+        "ui.terminal_paths",
+        "{}",
+        "Terminal: type the selection's paths",
+    ),
     ("ui.terminal_links", "{}", "Terminal: follow a link…"),
     (
         "ui.inspect",

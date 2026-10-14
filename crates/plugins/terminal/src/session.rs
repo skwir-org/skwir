@@ -11,7 +11,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -152,6 +152,9 @@ impl EventListener for Listener {
 /// The UI's handle. Dropping it ends the session.
 pub struct Session {
     shared: Arc<Shared>,
+    /// The shell's program, by its name, and how it quotes a word.
+    shell: String,
+    family: Option<follow::Family>,
 }
 
 impl TerminalSession for Session {
@@ -165,6 +168,28 @@ impl TerminalSession for Session {
 
     fn revision(&self) -> u64 {
         self.shared.revision.load(Ordering::Acquire)
+    }
+
+    fn quote(&self, paths: &[PathBuf]) -> anyhow::Result<String> {
+        let Some(family) = self.family else {
+            anyhow::bail!(
+                "Skwir does not know how {} quotes a path: it types none there",
+                self.shell
+            );
+        };
+        let words = paths
+            .iter()
+            .map(|path| {
+                follow::word(family, path).ok_or_else(|| {
+                    let name = path
+                        .file_name()
+                        .unwrap_or(path.as_os_str())
+                        .to_string_lossy();
+                    anyhow::anyhow!("“{}” cannot be typed at a prompt", name.escape_debug())
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(words.join(" "))
     }
 }
 
@@ -246,11 +271,18 @@ pub(crate) fn open(
             .pid()
             .map_or(0, std::num::NonZeroU32::get),
     );
-    let family = options
+    let program = options
         .program
         .clone()
-        .or_else(|| std::env::var("SHELL").ok())
-        .and_then(|program| follow::family(&program));
+        .or_else(|| std::env::var("SHELL").ok());
+    let family = program.as_deref().and_then(follow::family);
+    let shell = program
+        .as_deref()
+        .and_then(|program| Path::new(program).file_name())
+        .map_or_else(
+            || "this shell".to_owned(),
+            |name| name.to_string_lossy().into_owned(),
+        );
     let event_loop = EventLoop::new(
         Arc::clone(&term),
         Listener(Arc::clone(&shared)),
@@ -285,6 +317,8 @@ pub(crate) fn open(
     Ok((
         Arc::new(Session {
             shared: Arc::clone(&shared),
+            shell,
+            family,
         }),
         shared,
     ))

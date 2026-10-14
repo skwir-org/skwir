@@ -23,13 +23,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, ClipboardItem, Context, CursorStyle, DragMoveEvent, FocusHandle, Hsla,
-    KeyDownEvent, Window, div, prelude::*, px,
+    AnyElement, ClipboardItem, Context, CursorStyle, DragMoveEvent, ExternalPaths, FocusHandle,
+    Hsla, KeyDownEvent, Window, div, prelude::*, px,
 };
 use skwir_core::terminal::{
     Input, Key, KeyCode, Mods, Palette, Screen, Size, Spawn, TerminalSession,
 };
 
+use crate::dnd::DragPayload;
 use crate::elements::terminal::{Colors, GridState, TerminalGrid};
 use crate::keymap;
 use crate::menu::MenuHost;
@@ -393,6 +394,58 @@ impl Shell {
         }
     }
 
+    /// Type `paths` at the terminal's prompt, quoted for its shell, then a
+    /// space: files dropped on it, or the pane's selection. They go as a
+    /// paste, so nothing runs, and the keyboard goes to the terminal for
+    /// the rest of the command. A hidden terminal is shown; one with no
+    /// shell is not started for it.
+    pub(crate) fn terminal_type_paths(
+        &mut self,
+        paths: &[PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.terminal_session() else {
+            let keys = self
+                .keys_for("ui.terminal", &serde_json::json!({}))
+                .map(|keys| format!(" ({keys})"))
+                .unwrap_or_default();
+            self.set_status(format!("Open the terminal first{keys}"), false, cx);
+            return;
+        };
+        if paths.is_empty() {
+            return;
+        }
+        match session.quote(paths) {
+            Ok(words) => {
+                session.send(Input::Paste(format!("{words} ")));
+                if !self.terminal.open {
+                    self.terminal.open = true;
+                    self.remember_session();
+                }
+                window.focus(&self.terminal.focus);
+            }
+            Err(error) => self.set_status(format!("{error:#}"), true, cx),
+        }
+        cx.notify();
+    }
+
+    /// `ui.terminal_paths` (Ctrl+Shift+Enter): the active pane's selection
+    /// typed at the terminal's prompt; from a search or the shelf too.
+    pub(crate) fn terminal_type_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths: Vec<PathBuf> = self
+            .app
+            .selected_refs(self.pane)
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+        if paths.is_empty() {
+            self.set_status("Nothing is selected", false, cx);
+            return;
+        }
+        self.terminal_type_paths(&paths, window, cx);
+    }
+
     /// Something is selected in the terminal, to copy.
     pub(crate) fn terminal_selected(&self) -> bool {
         self.terminal.screen.selected_text.is_some()
@@ -607,9 +660,28 @@ impl Shell {
             |this| this.terminal.height = None,
             cx,
         );
+        let (tint, ring) = (theme.drop_target, theme.accent);
         Some(
             div()
                 .id("terminal-panel")
+                // Files dropped here are typed at the prompt, quoted: a
+                // drop asks nothing here, as nothing is copied or moved.
+                .drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(ring))
+                .on_drop(cx.listener(|this, payload: &DragPayload, window, cx| {
+                    cx.stop_propagation();
+                    let paths: Vec<PathBuf> = this
+                        .app
+                        .selected_refs(payload.pane)
+                        .into_iter()
+                        .map(|entry| entry.path)
+                        .collect();
+                    this.terminal_type_paths(&paths, window, cx);
+                }))
+                .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint).border_color(ring))
+                .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                    cx.stop_propagation();
+                    this.terminal_type_paths(paths.paths(), window, cx);
+                }))
                 .track_focus(&self.terminal.focus)
                 .key_context(keymap::TERMINAL)
                 .optional_tooltip(tip)
