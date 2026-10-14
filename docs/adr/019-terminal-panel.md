@@ -122,3 +122,25 @@ Ctrl+Shift+V arrived as Ctrl+V.
   xterm, Konsole, foot, kitty and Alacritty do. On Windows Ctrl+Insert
   and Shift+Insert copy and paste the clipboard, as Windows Terminal
   does; on macOS Cmd+C and V. Both are compiled only.
+
+### 2026-10-14: the terminal's menu
+
+The right button (or the Menu key) opens a menu: Copy (when something
+is selected), Paste, Select all (Ctrl+Shift+A), and Clear the history
+when there is one. On a link, the items a Ctrl+click and its tooltip
+gave: Follow link (saying where it leads when a program wrote it), in a
+new tab for a path, and Copy link address or Copy path.
+
+- Select all and Clear the history are the session's
+  (`Input::SelectAll`, `Input::ClearHistory`). Everything selected ends
+  at the last line written or the cursor, not at the blank rows under
+  the prompt. The history is cleared as a program's `CSI 3 J` clears it:
+  the screen stays, a selection in the history goes.
+- From the keyboard the menu stands above the cursor's cell, which the
+  grid marks in its prepaint, or above the panel when no cursor is
+  drawn: the terminal is at the window's foot.
+- Shift+F10, the other key of a menu, stays the program's, as the other
+  F-keys are.
+- An agent may open the menu; selecting everything (the desktop's
+  primary selection on Linux) and clearing the history ask first, as
+  copying does.

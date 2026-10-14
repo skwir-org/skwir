@@ -272,6 +272,11 @@ pub enum Input {
     },
     Extend(At),
     Deselect,
+    /// Select everything written, the history included, down to the last
+    /// line with text or the cursor.
+    SelectAll,
+    /// Forget the history above the screen; the screen stays.
+    ClearHistory,
     /// The pane shows this folder: change to it, if the shell has the
     /// terminal and is not there already. Ignored when following is off.
     Follow(PathBuf),

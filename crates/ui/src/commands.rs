@@ -474,6 +474,7 @@ const SHOWS: &[&str] = &[
     "ui.terminal",
     "ui.terminal_page",
     "ui.terminal_links",
+    "ui.terminal_menu",
     "ui.menu_up",
     "ui.menu_down",
     "ui.menu_first",
@@ -526,8 +527,9 @@ const SHOWS: &[&str] = &[
 
 /// The window's commands an agent's call runs only once the user allows
 /// it: they reach beyond the window (a program, the clipboard, an
-/// address), change how the sidebar is arranged, or prompt the user for
-/// a command the agent named.
+/// address; the terminal's selection is the desktop's primary one), take
+/// away what the terminal kept, change how the sidebar is arranged, or
+/// prompt the user for a command the agent named.
 const ACTS: &[&str] = &[
     "ui.ask",
     "ui.choose",
@@ -540,6 +542,8 @@ const ACTS: &[&str] = &[
     "ui.preview_copy",
     "ui.preview_copy_path",
     "ui.terminal_copy",
+    "ui.terminal_select_all",
+    "ui.terminal_clear",
     "ui.reader_link",
     "ui.sidebar_place",
     "ui.sidebar_section",
@@ -1338,6 +1342,21 @@ pub fn declare_all(app: &App) {
         "ui.terminal_paste",
         "Terminal: paste",
         "Paste into the terminal",
+    );
+    none(
+        "ui.terminal_select_all",
+        "Terminal: select all",
+        "Select everything the terminal shows and kept",
+    );
+    none(
+        "ui.terminal_clear",
+        "Terminal: clear the history",
+        "Forget the lines scrolled away above the terminal's screen",
+    );
+    none(
+        "ui.terminal_menu",
+        "Terminal: menu",
+        "Open the terminal's menu: copy, paste, its links",
     );
     declare::<Pages>(
         app,

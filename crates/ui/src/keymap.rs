@@ -215,6 +215,10 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // program's. Unbound, Ctrl+Shift+C reached it as Ctrl+C.
     ("ctrl-shift-c", "ui.terminal_copy", Some("terminal")),
     ("ctrl-shift-v", "ui.terminal_paste", Some("terminal")),
+    ("ctrl-shift-a", "ui.terminal_select_all", Some("terminal")),
+    // The terminal's menu from the keyboard. Shift+F10 stays the
+    // program's, as the other F-keys are.
+    ("menu", "ui.terminal_menu", Some("terminal")),
     ("enter", "ui.review_apply", Some("review")),
     ("escape", "ui.review_cancel", Some("review")),
     ("alt-a", "ui.choose_option", Some("choose")),

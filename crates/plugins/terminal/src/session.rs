@@ -25,6 +25,7 @@ use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config, Osc52, Term, TermMode};
 use alacritty_terminal::tty;
+use alacritty_terminal::vte::ansi::{ClearMode, Handler};
 use parking_lot::{Condvar, Mutex, RwLock};
 use skwir_core::location::Waker;
 use skwir_core::terminal::{
@@ -289,6 +290,18 @@ pub(crate) fn open(
     ))
 }
 
+/// The last line with something written on it, or the cursor's if it is
+/// lower: everything selected ends there, not at the blank rows under the
+/// prompt.
+fn last_written<T>(term: &Term<T>) -> Line {
+    let cursor = term.grid().cursor.point.line;
+    let mut line = term.bottommost_line();
+    while line > cursor && term.grid()[line].is_clear() {
+        line -= 1;
+    }
+    line
+}
+
 /// The session's thread.
 struct Worker {
     shared: Arc<Shared>,
@@ -538,6 +551,25 @@ impl Worker {
                 }
             }
             Input::Deselect => self.term.lock().selection.take().is_some(),
+            Input::SelectAll => {
+                let mut term = self.term.lock();
+                let top = Point::new(term.topmost_line(), Column(0));
+                let end = Point::new(last_written(&term), term.last_column());
+                let mut all = Selection::new(SelectionType::Simple, top, Side::Left);
+                all.update(end, Side::Right);
+                term.selection = Some(all);
+                true
+            }
+            Input::ClearHistory => {
+                let mut term = self.term.lock();
+                if term.history_size() == 0 {
+                    return false;
+                }
+                // As a program clearing it would (`CSI 3 J`): the view back
+                // at the bottom, a selection in the history let go of.
+                term.clear_screen(ClearMode::Saved);
+                true
+            }
             Input::Follow(dir) => {
                 if self.follow_on.load(Ordering::Relaxed) && self.family.is_some() {
                     let foreground = self.shell_has_terminal();

@@ -260,6 +260,16 @@ pub struct KeyboardAnchor {
 pub enum MenuHost {
     Pane(skwir_core::workspace::PaneId),
     Sidebar,
+    /// Its row is the cursor's cell, its area the panel.
+    Terminal,
+}
+
+impl MenuHost {
+    /// The menu stands above its anchor: the terminal is at the window's
+    /// foot, with no room under it.
+    fn above(self) -> bool {
+        self == MenuHost::Terminal
+    }
 }
 
 impl KeyboardAnchor {
@@ -579,6 +589,14 @@ impl Shell {
         (anchor.host == host).then(|| anchor.area.marker())
     }
 
+    /// The anchor of the keyboard's menu's row in `host`, for an element
+    /// that draws its rows itself (the terminal's grid) to mark in its
+    /// prepaint.
+    pub fn host_row_anchor(&self, host: MenuHost) -> Option<PopoverAnchor> {
+        let anchor = self.menu.as_ref()?.keyboard.as_ref()?;
+        (anchor.host == host).then(|| anchor.row.clone())
+    }
+
     /// The menu of a tab of the strip.
     pub fn open_tab_menu(
         &mut self,
@@ -824,6 +842,110 @@ impl Shell {
         cx.notify();
     }
 
+    /// The terminal's menu: copy, paste and select all; on a link, its
+    /// own items; clearing the history. `at` is where the pointer opened
+    /// it, `None` from the keyboard (the Menu key: hung above the cursor,
+    /// its first item ready for Enter).
+    pub fn open_terminal_menu(
+        &mut self,
+        at: Option<Point<Pixels>>,
+        link: Option<&skwir_core::terminal::Link>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use skwir_core::terminal::Target;
+        if !self.terminal.open {
+            return;
+        }
+        let item = |order, title: &str, icon: &str, name: &str, args: serde_json::Value| {
+            MenuItem::new(
+                "terminal",
+                title,
+                icon,
+                order,
+                skwir_core::command::Invocation::with_args(name, &args),
+            )
+        };
+        let none = serde_json::json!({});
+        let mut items = Vec::new();
+        if let Some(link) = link {
+            // What a program wrote as a link may say something else than
+            // where it leads: the item says where (ADR-029).
+            let follow = if link.written {
+                format!("Follow link to {}", crate::links::shortened(&link.target))
+            } else {
+                "Follow link".to_owned()
+            };
+            match &link.target {
+                Target::Uri(uri) => {
+                    let url = serde_json::json!({ "url": uri });
+                    items.push(item(0, &follow, "external", "ui.open_url", url));
+                    let text = serde_json::json!({ "text": uri, "what": "the link's address" });
+                    items.push(item(110, "Copy link address", "link", "ui.copy_text", text));
+                }
+                Target::Path { path, line, .. } => {
+                    let reveal = |tab: bool| {
+                        let mut args = serde_json::json!({
+                            "path": skwir_core::os_path::PathArg::from(path.clone()),
+                            "tab": tab,
+                        });
+                        if let Some(line) = line {
+                            args["line"] = (*line).into();
+                        }
+                        args
+                    };
+                    items.push(item(0, &follow, "folder", "ui.reveal", reveal(false)));
+                    items.push(item(
+                        1,
+                        "Follow link in a new tab",
+                        "tab-new",
+                        "ui.reveal",
+                        reveal(true),
+                    ));
+                    // A name the clipboard cannot hold as text has no item.
+                    if let Some(text) = path.to_str() {
+                        let text = serde_json::json!({ "text": text, "what": "the path" });
+                        items.push(item(110, "Copy path", "link", "ui.copy_text", text));
+                    }
+                }
+            }
+        }
+        if self.terminal_selected() {
+            items.push(item(100, "Copy", "copy", "ui.terminal_copy", none.clone()));
+        }
+        items.push(item(
+            101,
+            "Paste",
+            "paste",
+            "ui.terminal_paste",
+            none.clone(),
+        ));
+        items.push(item(
+            102,
+            "Select all",
+            "check",
+            "ui.terminal_select_all",
+            none.clone(),
+        ));
+        if self.terminal_history() > 0 {
+            items.push(item(
+                300,
+                "Clear the history",
+                "close",
+                "ui.terminal_clear",
+                none,
+            ));
+        }
+        items.sort_by_key(|item| item.order);
+        let keyboard = at.is_none();
+        self.menu = Some(MenuState::open(at.unwrap_or_default(), items, window, cx));
+        if keyboard && let Some(menu) = &mut self.menu {
+            menu.highlighted = Some(0);
+            menu.keyboard = Some(KeyboardAnchor::new(MenuHost::Terminal));
+        }
+        cx.notify();
+    }
+
     pub fn close_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(menu) = self.menu.take() {
             menu.back.restore(window, &self.ui().focus);
@@ -1008,11 +1130,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     }
     if let Some(anchor) = &menu.keyboard {
         let anchors = [anchor.row.clone(), anchor.area.clone()];
-        return Some(PopoverAnchor::popup_first(
-            &anchors,
-            2,
-            panel.into_any_element(),
-        ));
+        let panel = panel.into_any_element();
+        return Some(if anchor.host.above() {
+            PopoverAnchor::popup_first_above(&anchors, 2, panel)
+        } else {
+            PopoverAnchor::popup_first(&anchors, 2, panel)
+        });
     }
     Some(
         deferred(

@@ -23,8 +23,10 @@ use gpui::{
     Window, point, px, relative, size,
 };
 use skwir_core::terminal::{
-    At, Attrs, Color, CursorShape, Input, Run, Screen, Size, Target, TerminalSession, Unit,
+    At, Attrs, Color, CursorShape, Input, Link, Run, Screen, Size, Target, TerminalSession, Unit,
 };
+
+use crate::elements::popover::PopoverAnchor;
 
 /// Between the panel's edges and the grid.
 const PAD: f32 = 6.;
@@ -101,23 +103,12 @@ impl GridState {
     }
 }
 
-/// What a link says it leads to, for its tooltip.
-fn describe(target: &Target) -> SharedString {
-    match target {
-        Target::Uri(uri) => uri.clone().into(),
-        Target::Path {
-            path, line: None, ..
-        } => path.display().to_string().into(),
-        Target::Path {
-            path,
-            line: Some(line),
-            ..
-        } => format!("{}:{line}", path.display()).into(),
-    }
-}
-
 /// Follow a link: where it leads, and whether in a tab of its own.
 pub type FollowLink = Rc<dyn Fn(&Target, bool, &mut Window, &mut App)>;
+
+/// Open the terminal's menu where the right button was pressed, on the
+/// link there if there is one.
+pub type OpenMenu = Rc<dyn Fn(Point<Pixels>, Option<&Link>, &mut Window, &mut App)>;
 
 pub struct TerminalGrid {
     pub session: Arc<dyn TerminalSession>,
@@ -128,9 +119,13 @@ pub struct TerminalGrid {
     pub colors: Colors,
     pub state: Rc<GridState>,
     pub follow: FollowLink,
+    pub menu: OpenMenu,
     /// While the links are labelled: each link's label, in the order of
     /// `Screen::links`, and what was typed of one so far.
     pub labels: Option<(Vec<String>, String)>,
+    /// Where the menu the keyboard opened stands: above the cursor's cell,
+    /// marked here in prepaint (`Shell::host_row_anchor`).
+    pub menu_anchor: Option<PopoverAnchor>,
 }
 
 /// A frame's grid: where it starts and how big a cell is.
@@ -423,6 +418,14 @@ impl Element for TerminalGrid {
                     ),
                 }
             });
+        if let Some(anchor) = &self.menu_anchor
+            && let Some(at) = self
+                .screen
+                .cursor
+                .filter(|cursor| cursor.row < rows && cursor.col < cols)
+        {
+            anchor.mark(geometry.cell_bounds(at.row, at.col, 1));
+        }
         // The link under the pointer, drawn as one while Ctrl is held.
         let under = bounds
             .contains(&window.mouse_position())
@@ -434,7 +437,7 @@ impl Element for TerminalGrid {
         let link = armed.and_then(|index| self.screen.links.get(index));
         *self.state.tip.borrow_mut() = link
             .filter(|link| link.written)
-            .map(|link| describe(&link.target));
+            .map(|link| crate::links::said(&link.target).into());
         let underlines = link.map_or_else(Vec::new, |link| {
             link.spans
                 .iter()
@@ -549,13 +552,15 @@ impl Element for TerminalGrid {
 impl TerminalGrid {
     /// The pointer: a press selects (a double press words, a triple whole
     /// lines; with Shift it extends), a drag extends, the middle button
-    /// pastes what is selected anywhere on the desktop, the wheel scrolls.
-    /// Registered every frame, with this frame's geometry.
+    /// pastes what is selected anywhere on the desktop, the right one
+    /// opens the menu, the wheel scrolls. Registered every frame, with
+    /// this frame's geometry.
     fn listen(&self, hitbox: &Hitbox, geometry: Geometry, window: &mut Window) {
-        let (session, state, focus) = (
+        let (session, state, focus, menu) = (
             Arc::clone(&self.session),
             Rc::clone(&self.state),
             self.focus.clone(),
+            Rc::clone(&self.menu),
         );
         let hit = hitbox.clone();
         let screen = Arc::clone(&self.screen);
@@ -602,6 +607,15 @@ impl TerminalGrid {
                     if let Some(text) = text.filter(|text| !text.is_empty()) {
                         session.send(Input::Paste(text));
                     }
+                    cx.stop_propagation();
+                }
+                // The selection stays: the menu copies it.
+                MouseButton::Right => {
+                    window.focus(&focus);
+                    let link = geometry
+                        .link_under(&screen, event.position)
+                        .and_then(|index| screen.links.get(index));
+                    menu(event.position, link, window, cx);
                     cx.stop_propagation();
                 }
                 _ => {}

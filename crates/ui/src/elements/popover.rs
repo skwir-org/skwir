@@ -84,6 +84,25 @@ impl PopoverAnchor {
         let mut panel = Some(panel);
         below(anchors, priority, move || panel.take())
     }
+
+    /// `popup_first`, standing above the anchor: for a menu at the
+    /// window's foot (the terminal's, above its cursor).
+    pub fn popup_first_above(
+        anchors: &[PopoverAnchor],
+        priority: usize,
+        panel: AnyElement,
+    ) -> AnyElement {
+        let mut panel = Some(panel);
+        hang(anchors, priority, gpui::Corner::BottomLeft, move || {
+            panel.take()
+        })
+    }
+
+    /// Mark where the anchor is, for an element that draws what it is
+    /// over itself, from its prepaint (the terminal's cursor cell).
+    pub fn mark(&self, bounds: Bounds<Pixels>) {
+        self.0.set(Some(bounds));
+    }
 }
 
 /// Defer until the anchors have prepainted in this same frame, then lay out

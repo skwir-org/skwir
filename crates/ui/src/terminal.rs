@@ -32,6 +32,7 @@ use skwir_core::terminal::{
 
 use crate::elements::terminal::{Colors, GridState, TerminalGrid};
 use crate::keymap;
+use crate::menu::MenuHost;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
@@ -392,6 +393,24 @@ impl Shell {
         }
     }
 
+    /// Something is selected in the terminal, to copy.
+    pub(crate) fn terminal_selected(&self) -> bool {
+        self.terminal.screen.selected_text.is_some()
+    }
+
+    /// Lines of history above the terminal's screen.
+    pub(crate) fn terminal_history(&self) -> usize {
+        self.terminal.screen.history
+    }
+
+    /// `ui.terminal_select_all`, `ui.terminal_clear`: what the session
+    /// does to its own lines.
+    pub(crate) fn terminal_input(&self, input: Input) {
+        if let Some(session) = self.terminal_session() {
+            session.send(input);
+        }
+    }
+
     pub(crate) fn terminal_page(&mut self, args: &serde_json::Value) {
         let pages = args
             .get("pages")
@@ -534,6 +553,12 @@ impl Shell {
                     shell.follow_terminal_link(target, tab, window, cx);
                 });
             });
+        let weak = cx.entity().downgrade();
+        let menu: crate::elements::terminal::OpenMenu = Rc::new(move |at, link, window, cx| {
+            let _ = weak.update(cx, |shell, cx| {
+                shell.open_terminal_menu(Some(at), link, window, cx);
+            });
+        });
         let labels = self.terminal.labelled.clone().map(|typed| {
             (
                 crate::links::labels(self.terminal.screen.links.len()),
@@ -561,7 +586,9 @@ impl Shell {
                 },
                 state: Rc::clone(&self.terminal.grid),
                 follow,
+                menu,
                 labels,
+                menu_anchor: self.host_row_anchor(MenuHost::Terminal),
             }
         });
         // Where a link a program wrote leads, said before it is followed:
@@ -597,6 +624,9 @@ impl Shell {
                 .cursor(CursorStyle::IBeam)
                 .children(grid)
                 .child(edge)
+                // Where the keyboard's menu stands when the cursor is not
+                // drawn: above the panel.
+                .children(self.host_area_marker(MenuHost::Terminal))
                 .into_any_element(),
         )
     }

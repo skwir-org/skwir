@@ -445,6 +445,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   the window in any layer. A key it takes never reaches the program: an
   unbound Ctrl+Shift+C was Ctrl+C to it. Test a new one as GPUI reads the
   keymap (`keymap::tests::the_terminals_keys_are_its_own_there`).
+- Its menu (`Shell::open_terminal_menu`) opens with the right button,
+  or the Menu key, standing above the cursor (`MenuHost::Terminal`, its
+  row marked by the grid in prepaint). Shift+F10 stays the program's,
+  as the other F-keys are. On a link, the menu says where a link a
+  program wrote leads before it is followed, as its tooltip does.
 - The plugin types a `cd` only while the shell's process group has the
   terminal. Test with a real `/bin/sh`
   (`crates/plugins/terminal/tests/session.rs`).

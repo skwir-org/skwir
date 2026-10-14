@@ -187,3 +187,38 @@ fn the_shell_ends_on_exit_and_disabling_hangs_up_on_it() {
     }
     drop(staying);
 }
+
+/// Select all takes the history and the screen down to the last line
+/// written, not the blank rows under the prompt; clearing the history
+/// forgets the lines above the screen and keeps the screen.
+#[test]
+fn everything_is_selected_and_the_history_cleared() {
+    let tmp = home_tempdir();
+    let root = skwir_core::os_path::canonical(tmp.path()).unwrap();
+    let (app, _plugin) = app(&root);
+    let shell = Shell::open(&app, &root);
+
+    // More lines than the 30 rows, then the screen cleared: what it showed
+    // goes to the history, and the prompt stands over blank rows.
+    shell.type_line("seq 1 100; echo the-end; printf '\\033[H\\033[2J'");
+    let screen = shell.until("the screen cleared over a history", |s| {
+        s.history > 100 && text(s).trim_end().lines().count() == 1
+    });
+    let prompt = text(&screen).trim_end().to_owned();
+
+    shell.session.send(Input::SelectAll);
+    let screen = shell.until("everything selected", |s| s.selected_text.is_some());
+    let all = screen.selected_text.clone().unwrap();
+    let lines: Vec<&str> = all.lines().map(str::trim_end).collect();
+    assert!(
+        lines[0].contains("seq 1 100"),
+        "from the first line: {all:?}"
+    );
+    assert!(lines.contains(&"100") && lines.contains(&"the-end"));
+    assert_eq!(lines.last().copied(), Some(prompt.as_str()));
+    assert!(!all.trim_end_matches(' ').ends_with('\n'), "{all:?}");
+
+    shell.session.send(Input::ClearHistory);
+    let screen = shell.until("the history cleared", |s| s.history == 0);
+    assert_eq!(text(&screen).trim_end(), prompt, "the screen stays");
+}

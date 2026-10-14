@@ -858,7 +858,9 @@ bound: Ctrl+Shift+C reached the program as Ctrl+C and interrupted it.
 They are bound in the terminal's place, and the window's keys shadowed
 there come before every binding, so the terminal's win whatever layer
 binds the same keys to the window; Shift+Insert pastes the primary
-selection on Linux (ADR-019, amendment of 2026-10-14).
+selection on Linux (ADR-019, amendment of 2026-10-14). The terminal
+has a menu (the right button, the Menu key): copy, paste, select all,
+clear the history, and a link's items.
 
 ---
 

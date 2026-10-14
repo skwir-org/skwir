@@ -372,6 +372,38 @@ impl Shell {
 
 /// Whether the link names a URI scheme (`mailto:`, `irc:`, `https:`) rather
 /// than a path. A colon after a slash belongs to a file name, not a scheme.
+/// Where a terminal's link leads, as it is said: its address, or its
+/// path and the line it points at.
+pub(crate) fn said(target: &Target) -> String {
+    match target {
+        Target::Uri(uri) => uri.clone(),
+        Target::Path {
+            path, line: None, ..
+        } => path.display().to_string(),
+        Target::Path {
+            path,
+            line: Some(line),
+            ..
+        } => format!("{}:{line}", path.display()),
+    }
+}
+
+/// `said`, short enough for a menu's item: a long one keeps its start
+/// and its end, where an address's host and a path's name are.
+pub(crate) fn shortened(target: &Target) -> String {
+    const MOST: usize = 60;
+    let said = said(target);
+    let chars: Vec<char> = said.chars().collect();
+    if chars.len() <= MOST {
+        return said;
+    }
+    let (head, tail) = (MOST * 2 / 3, MOST / 3 - 1);
+    let mut out: String = chars[..head].iter().collect();
+    out.push('…');
+    out.extend(&chars[chars.len() - tail..]);
+    out
+}
+
 fn has_scheme(href: &str) -> bool {
     let Some(colon) = href.find(':') else {
         return false;
@@ -422,6 +454,24 @@ pub(crate) fn document_link(from: &std::path::Path, href: &str) -> Option<std::p
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_link_is_said_by_its_start_and_its_end() {
+        let uri = |text: &str| Target::Uri(text.to_owned());
+        let short = "https://example.org/a";
+        assert_eq!(shortened(&uri(short)), short);
+        let long = format!("https://example.org/{}/the-end.html", "é".repeat(80));
+        let short = shortened(&uri(&long));
+        assert_eq!(short.chars().count(), 60);
+        assert!(short.starts_with("https://example.org/") && short.ends_with("/the-end.html"));
+        assert!(short.contains('…'));
+        let at = Target::Path {
+            path: "/tmp/src/main.rs".into(),
+            line: Some(12),
+            column: Some(5),
+        };
+        assert_eq!(said(&at), "/tmp/src/main.rs:12");
+    }
 
     #[test]
     fn a_documents_links_resolve_next_to_it() {
