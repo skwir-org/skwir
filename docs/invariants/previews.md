@@ -838,3 +838,11 @@ is still to come are in `docs/preview-frame.md`.
   (`bat::themes_dir`, as `bat cache --build` finds them) on a worker at
   start and when the settings open; it replaces bat's theme of the same
   name, as in bat.
+- **Grammars are matched by Ferroni and let go of** (ADR-060). syntect
+  and two-face are vendored for it; Oniguruma's grammar set, all of
+  bat's. Take the set from `code_preview::syntaxes` when coloring
+  starts and hold it only while coloring (`Highlighter`) or while a
+  state may be resumed (`Resume`, whose parser state indexes into it):
+  never in a static or a long-lived struct, which would keep every
+  grammar compiled for good. Unused for `GRAMMARS_KEPT`, it is let go
+  of and the workers that compiled it release.

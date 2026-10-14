@@ -322,7 +322,10 @@ working in an area, also read that area's rules (see
 - A worker idle a second after its jobs gives back what they freed
   (`scheduler::release_when_idle`, the allocator's `collect`, wired by the
   binary). A plugin thread that allocates and then waits keeps it: wait on
-  the scheduler instead where you can.
+  the scheduler instead where you can. What another thread frees of what
+  workers allocated stays with them until they run again: after letting
+  go of something large they built, call `scheduler::release_on_workers`
+  (the grammars, `code_preview`).
 - **Pane-owned work** links to `Pane::location_lifetime`, so navigation,
   Back and closing the pane cancel it independently of the next render.
   Show locations through `App::show` (navigate, Back, Forward) and

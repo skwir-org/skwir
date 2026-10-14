@@ -1,5 +1,13 @@
 # Changes
 
+## Unreleased
+
+- **Code previews use far less memory.** Coloring a TypeScript file took
+  over 100 MB, and every language previewed stayed in memory until Skwir
+  quit. Code is now colored by Ferroni, and the grammars are released a
+  minute after code was last shown. PowerShell, Sass, LiveScript, Salt,
+  ARM assembly and Babel's JavaScript are colored too.
+
 ## 0.1.0 (2026-10-13)
 
 Skwir 0.1.0 is the first release of an experimental file manager for Linux.

@@ -833,6 +833,25 @@ the Keyboard page frees narrower keys of other actions, which the page
 says rather than binds again; macOS' quarantine passed to what is
 extracted is compiled, never run.
 
+### 2026-10-14
+
+A window left open overnight held 688 MB, its heap live data: the
+largest part the grammars code had been colored with, each compiled once
+and kept for good, with regex-automata's caches per worker. Code is now
+colored by Ferroni, a pure-Rust port of Oniguruma, through vendored
+syntect and two-face (ADR-060), with Oniguruma's set of bat's grammars
+(PowerShell, Sass and four more arrive). The compiled grammars are let
+go of a minute after code was last colored, and the workers that
+compiled them are asked to release (`scheduler::release_on_workers`).
+Measured in a window on Xvfb, 22 code files: +34 MiB after five passes
+(+305 before), the heap back to 35 MiB a minute after leaving them (16
+in an empty folder at start, 27 after the same files as plain text);
+six rounds of browsing and leaving settle near 39 MiB.
+
+Not done: the two kinds of pattern Ferroni refuses reported to it; the patches offered to
+syntect and two-face; what the code view leaves beyond plain text (some
+7 MiB, not its grammars) not looked into.
+
 ---
 
 ## Maps
