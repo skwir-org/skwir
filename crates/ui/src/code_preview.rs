@@ -10,22 +10,96 @@
 //! skwir's is drawn with that look's tokens (`Theme::in_look`).
 use crate::{inspector_text::Selection, shell::Shell, theme::Theme};
 use gpui::{AnyElement, Hsla, WeakEntity, div, prelude::*, px};
+use parking_lot::Mutex;
 use skwir_core::{
     inspection::{Block, Inspection, Run},
     workspace::PaneId,
 };
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, RwLock, Weak};
+use std::time::{Duration, Instant};
 use syntect::highlighting::{Color, FontStyle, Theme as Colors, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName as Bat};
 
-/// bat's grammars, syntect's defaults among them: read once, each
-/// grammar compiled when a file first needs it.
-pub(crate) fn syntaxes() -> &'static SyntaxSet {
-    static SET: OnceLock<SyntaxSet> = OnceLock::new();
-    SET.get_or_init(two_face::syntax::extra_newlines)
+/// How long bat's grammars stay compiled after code was last colored, so
+/// the next file looked at finds its grammar ready. Then they are let go
+/// of: some 30 MiB once twenty languages were seen. Reading them again
+/// takes 2 ms, and a grammar compiles again in tens of milliseconds when
+/// a file next needs it (ADR-060).
+const GRAMMARS_KEPT: Duration = Duration::from_secs(60);
+
+/// bat's grammars as compiled so far, shared by whatever colors code.
+struct Grammars {
+    /// The set in use. Highlighters and resume points hold it, since their
+    /// parser states index into it: there is never more than one.
+    shared: Weak<SyntaxSet>,
+    /// The set kept after its last use, until `GRAMMARS_KEPT` has passed.
+    kept: Option<Arc<SyntaxSet>>,
+    last_use: Option<Instant>,
+    /// Whether a thread waits to let go of `kept`.
+    waiting: bool,
+}
+
+static GRAMMARS: Mutex<Grammars> = Mutex::new(Grammars {
+    shared: Weak::new(),
+    kept: None,
+    last_use: None,
+    waiting: false,
+});
+
+/// bat's grammars, syntect's defaults among them, matched by Ferroni:
+/// each grammar compiled when a file first needs it, all of them let go
+/// of once no code was colored for `GRAMMARS_KEPT`, and read again when
+/// code next is. Hold the set only while coloring, never in a static.
+pub(crate) fn syntaxes() -> Arc<SyntaxSet> {
+    let mut grammars = GRAMMARS.lock();
+    let set = grammars.shared.upgrade().unwrap_or_else(|| {
+        let set = Arc::new(two_face::syntax::extra_newlines());
+        grammars.shared = Arc::downgrade(&set);
+        set
+    });
+    grammars.kept = Some(Arc::clone(&set));
+    grammars.last_use = Some(Instant::now());
+    if !grammars.waiting {
+        // A thread lives only while grammars are kept. Without one, they
+        // stay until the next use starts it.
+        grammars.waiting = std::thread::Builder::new()
+            .name("skwir-grammars".into())
+            .spawn(let_go_of_grammars)
+            .is_ok();
+    }
+    set
+}
+
+/// Wait until the grammars have been unused for `GRAMMARS_KEPT`, let go
+/// of them, and give back what they took.
+fn let_go_of_grammars() {
+    while let Some(wait) = let_go_if_idle(Instant::now()) {
+        std::thread::sleep(wait);
+    }
+    // Workers compiled them: what is freed here stays with each worker
+    // until it releases.
+    skwir_core::scheduler::release_on_workers();
+    skwir_core::scheduler::release_now();
+}
+
+/// Let go of the grammars kept if unused for `GRAMMARS_KEPT` at `now`;
+/// else how long until they may be. A highlighter or a resume point that
+/// still holds them keeps them, and they are shared again when asked for.
+fn let_go_if_idle(now: Instant) -> Option<Duration> {
+    let mut grammars = GRAMMARS.lock();
+    let due = grammars.last_use.map_or(now, |at| at + GRAMMARS_KEPT);
+    if due > now {
+        return Some(due - now);
+    }
+    let kept = grammars.kept.take();
+    grammars.waiting = false;
+    drop(grammars);
+    // Thousands of compiled patterns are freed outside the lock.
+    drop(kept);
+    None
 }
 
 /// bat's themes: read once, each unpacked when it is first drawn.
@@ -301,17 +375,20 @@ pub fn color([r, g, b]: [u8; 3]) -> Hsla {
 /// blocks alike. It runs on the worker that builds the `Display` and keeps
 /// the grammar's state from line to line (a multiline string, a comment).
 pub(crate) struct Highlighter<'a> {
-    syntaxes: &'static SyntaxSet,
+    syntaxes: Arc<SyntaxSet>,
     lines: syntect::easy::HighlightLines<'a>,
     styled: bool,
 }
 
 /// Where a highlighter is in a text, to go on from there later: what a
 /// chunk of a text read where it is shown ends in, for the next (ADR-051).
+/// It holds the grammars its parser state indexes into, so they are the
+/// ones shared when it is resumed.
 #[derive(Clone)]
 pub(crate) struct Resume(
     syntect::highlighting::HighlightState,
     syntect::parsing::ParseState,
+    Arc<SyntaxSet>,
 );
 
 impl<'a> Highlighter<'a> {
@@ -323,7 +400,11 @@ impl<'a> Highlighter<'a> {
     /// start of the text without.
     pub fn resume(language: Option<&str>, palette: &'a Palette, from: Option<Resume>) -> Self {
         let syntaxes = syntaxes();
-        let lines = if let Some(Resume(highlight, parse)) = from {
+        let lines = if let Some(Resume(highlight, parse, held)) = from {
+            debug_assert!(
+                Arc::ptr_eq(&held, &syntaxes),
+                "one set of grammars at a time"
+            );
             syntect::easy::HighlightLines::from_state(palette.colors(), highlight, parse)
         } else {
             let syntax = language
@@ -341,7 +422,7 @@ impl<'a> Highlighter<'a> {
     /// Where it is, to resume from.
     pub fn stop(self) -> Resume {
         let (highlight, parse) = self.lines.state();
-        Resume(highlight, parse)
+        Resume(highlight, parse, self.syntaxes)
     }
 
     /// The coloured runs of the next line, `text` without its line ending,
@@ -358,7 +439,7 @@ impl<'a> Highlighter<'a> {
         let ending = if ends_line { "\n" } else { "" };
         if let Ok(ranges) = self
             .lines
-            .highlight_line(&format!("{text}{ending}"), self.syntaxes)
+            .highlight_line(&format!("{text}{ending}"), &self.syntaxes)
         {
             let mut offset = 0;
             for (style, part) in ranges {
@@ -631,6 +712,44 @@ mod tests {
     }
 
     #[test]
+    fn grammars_are_let_go_of_once_unused_and_read_again() {
+        let grammars = Arc::downgrade(&syntaxes());
+        // Used a moment ago: kept, nothing holding them but the keeper.
+        assert!(let_go_if_idle(Instant::now()).is_some());
+        assert!(grammars.upgrade().is_some());
+        // Unused for `GRAMMARS_KEPT`: let go of, read again when asked.
+        assert_eq!(let_go_if_idle(Instant::now() + GRAMMARS_KEPT), None);
+        assert!(grammars.upgrade().is_none());
+        let palette = Palette::of(&CodeTheme::own(false));
+        let runs = Highlighter::new(Some("rs"), &palette).line("let answer = 42;");
+        assert!(
+            runs.iter()
+                .filter_map(|run| run.color)
+                .collect::<BTreeSet<_>>()
+                .len()
+                > 1
+        );
+    }
+
+    #[test]
+    fn a_resume_point_keeps_its_grammars_past_their_release() {
+        let palette = Palette::of(&CodeTheme::own(false));
+        let mut first = Highlighter::new(Some("toml"), &palette);
+        first.line("text = \"\"\"");
+        let resume = first.stop();
+        let held = Arc::downgrade(&resume.2);
+        assert_eq!(let_go_if_idle(Instant::now() + GRAMMARS_KEPT), None);
+        assert!(held.upgrade().is_some(), "the resume point holds them");
+        // The state indexes into the grammars it held: they are the ones
+        // shared, and the string goes on.
+        let mut again = Highlighter::resume(Some("toml"), &palette, Some(resume));
+        let string = again.line("# still a string");
+        let comment = Highlighter::new(Some("toml"), &palette).line("# a comment");
+        assert_ne!(string[0].color, comment[0].color);
+        assert!(Arc::ptr_eq(&held.upgrade().unwrap(), &syntaxes()));
+    }
+
+    #[test]
     fn toml_highlight_keeps_multiline_state_in_both_themes() {
         for dark in [false, true] {
             let mut data = Inspection {
@@ -718,7 +837,8 @@ mod tests {
         // syntect's own base16 Ocean, which skwir drew with before it
         // offered bat's themes.
         let before = ThemeSet::load_defaults();
-        let markdown = syntaxes().find_syntax_by_token("md").unwrap();
+        let grammars = syntaxes();
+        let markdown = grammars.find_syntax_by_token("md").unwrap();
         for (dark, name) in [(false, "base16-ocean.light"), (true, "base16-ocean.dark")] {
             let palette = Palette::of(&CodeTheme::own(dark));
             assert_eq!(palette.background, None, "drawn on skwir's background");
@@ -729,7 +849,7 @@ mod tests {
                 .split('\n')
                 .flat_map(|line| {
                     theirs
-                        .highlight_line(&format!("{line}\n"), syntaxes())
+                        .highlight_line(&format!("{line}\n"), &grammars)
                         .unwrap()
                         .into_iter()
                         .filter(|(_, part)| *part != "\n")

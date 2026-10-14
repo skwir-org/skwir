@@ -136,6 +136,11 @@ impl Scheduler {
             stats: Mutex::new(std::collections::HashMap::new()),
             slow_threshold: Duration::from_millis(100),
         });
+        {
+            let mut pools = POOLS.lock();
+            pools.retain(|pool| pool.strong_count() > 0);
+            pools.push(Arc::downgrade(&inner));
+        }
         for i in 0..workers {
             let inner = Arc::clone(&inner);
             std::thread::Builder::new()
@@ -288,6 +293,12 @@ pub fn on_window_thread() -> bool {
 /// allocator's way to give back what the jobs freed, set by the binary.
 static RELEASE: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
 
+/// How many times every worker was asked to release (`release_on_workers`).
+static RELEASE_ASKED: AtomicU64 = AtomicU64::new(0);
+
+/// The pools running, whose idle workers `release_on_workers` wakes.
+static POOLS: Mutex<Vec<std::sync::Weak<Inner>>> = Mutex::new(Vec::new());
+
 /// How long a worker waits idle after its last job before it releases:
 /// long enough that a burst of jobs never pays for it.
 const RELEASE_AFTER: Duration = Duration::from_secs(1);
@@ -311,9 +322,33 @@ pub fn release_now() {
     }
 }
 
+/// Have every worker release once idle, as after a job. What another
+/// thread frees of what workers allocated stays with the workers until
+/// they release, and an idle worker may wait for its next job for hours:
+/// call this after letting go of something large that workers built (the
+/// grammars code was colored with, `code_preview`).
+pub fn release_on_workers() {
+    RELEASE_ASKED.fetch_add(1, AtomicOrdering::Relaxed);
+    let pools: Vec<_> = POOLS
+        .lock()
+        .iter()
+        .filter_map(std::sync::Weak::upgrade)
+        .collect();
+    for inner in pools {
+        // Under the queue's lock: a worker sees the request before it
+        // waits, or is waiting and is woken.
+        let _queue = inner.queue.lock();
+        inner.cv.notify_all();
+    }
+}
+
 fn worker(inner: &Inner) {
-    // Whether this worker ran a job since it last released.
+    // Whether this worker ran a job, or was asked to release, since it
+    // last released.
     let mut ran = false;
+    // The requests to release it has seen (`release_on_workers`): one made
+    // before it started is seen too, and costs one release.
+    let mut asked = 0;
     loop {
         let task = {
             let mut q = inner.queue.lock();
@@ -324,6 +359,11 @@ fn worker(inner: &Inner) {
                 if let Some(t) = q.heap.pop() {
                     q.running += 1;
                     break t;
+                }
+                let requests = RELEASE_ASKED.load(AtomicOrdering::Relaxed);
+                if requests != asked {
+                    asked = requests;
+                    ran = true;
                 }
                 match RELEASE.get() {
                     Some(release) if ran => {
@@ -520,6 +560,31 @@ mod tests {
         assert_eq!(released(), 1);
         run();
         until(2);
+    }
+
+    // Sets the process-wide hook, alone in its process like the test above.
+    #[test]
+    fn workers_asked_to_release_each_release_once_idle() {
+        static RELEASED: AtomicU64 = AtomicU64::new(0);
+        fn count() {
+            RELEASED.fetch_add(1, AtomicOrdering::SeqCst);
+        }
+        let released = || RELEASED.load(AtomicOrdering::SeqCst);
+        release_when_idle(count);
+        let scheduler = Scheduler::new(3);
+        // No job ran and nothing was asked: nothing to give back.
+        std::thread::sleep(RELEASE_AFTER * 2);
+        assert_eq!(released(), 0);
+        release_on_workers();
+        let deadline = Instant::now() + RELEASE_AFTER + Duration::from_secs(5);
+        while released() < 3 {
+            assert!(Instant::now() < deadline, "released {} times", released());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Each worker once, then idle again.
+        std::thread::sleep(RELEASE_AFTER * 2);
+        assert_eq!(released(), 3);
+        drop(scheduler);
     }
 
     #[test]
