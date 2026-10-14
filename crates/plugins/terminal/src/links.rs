@@ -36,6 +36,7 @@ use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::cell::{Cell, CellExtra, Flags, Hyperlink};
 use alacritty_terminal::term::{Term, TermMode};
 use parking_lot::{Mutex, MutexGuard};
+use skwir_core::fs::volume::Here;
 use skwir_core::terminal::Target;
 use skwir_platform::links::{self, PathWord};
 
@@ -298,23 +299,28 @@ impl Finder {
     }
 }
 
-/// The thread that asks the filesystem where each path leads.
+/// The thread that asks the filesystem where each path leads: the mount
+/// table read once for what a screen asked at once, and only what stays
+/// on this machine looked up (`Here`).
 fn answer(asked: &Receiver<Ask>, stamps: &Mutex<Stamps>, wake: &dyn Fn()) {
-    for Ask { id, word, base } in asked {
-        let path = links::resolve(&word.path, &base);
-        let leads = path.is_some();
-        if let Some(stamp) = stamps.lock().entries.get_mut(&id) {
-            stamp.leads = match path {
-                Some(path) => Leads::Path {
-                    path,
-                    line: word.line,
-                    column: word.column,
-                },
-                None => Leads::Nowhere,
-            };
-        }
-        if leads {
-            wake();
+    while let Ok(first) = asked.recv() {
+        let here = Here::now();
+        for Ask { id, word, base } in std::iter::once(first).chain(asked.try_iter()) {
+            let path = links::resolve(&word.path, &base, &here);
+            let leads = path.is_some();
+            if let Some(stamp) = stamps.lock().entries.get_mut(&id) {
+                stamp.leads = match path {
+                    Some(path) => Leads::Path {
+                        path,
+                        line: word.line,
+                        column: word.column,
+                    },
+                    None => Leads::Nowhere,
+                };
+            }
+            if leads {
+                wake();
+            }
         }
     }
 }

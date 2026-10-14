@@ -9,8 +9,11 @@
 //! for removable drives. Devices that take a file over USB (a keyboard's or
 //! a printer's firmware) are made for that, and one written to only when it
 //! is unmounted may reset before the writes end and lose them.
+//!
+//! Where a lookup leads ([`Here`]) is read from the mount table too: a path
+//! a file names is looked up only where that stays on this machine.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf, Prefix};
 #[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 
@@ -227,6 +230,133 @@ pub fn mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mounted> {
         .collect()
 }
 
+/// What looking a path up reaches: this machine, and the server the user
+/// is on already. A path written in a file or printed in the terminal is
+/// looked up only where [`Here::holds`] says so (ADR-029): on Windows a
+/// name like `\\host\share` connects to that host and offers it the user's
+/// credentials; below an automount point nothing is mounted on yet
+/// (autofs: macOS's `/net` and `/home`, Linux's `-hosts` maps and
+/// systemd's automount units) a lookup mounts what the name says, from
+/// another machine for `/net/host`. A link on the disk is followed as
+/// listing follows it: only the path as written is read here.
+#[derive(Clone, Debug)]
+pub struct Here {
+    /// Every mount point, and whether it is an automount point, in the
+    /// table's order; `None` when the table could not be read.
+    mounts: Option<Vec<(PathBuf, bool)>>,
+}
+
+impl Here {
+    /// The mounts as the system has them now. Reads the mount table, never
+    /// a path; on a worker all the same.
+    #[must_use]
+    pub fn now() -> Self {
+        #[cfg(target_os = "linux")]
+        let mounts = std::fs::read("/proc/self/mountinfo")
+            .ok()
+            .map(|text| automounts(&text));
+        #[cfg(target_os = "macos")]
+        let mounts = mac::mounts();
+        // Windows names a server by its path, which `holds` reads.
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let mounts = Some(Vec::new());
+        Self { mounts }
+    }
+
+    /// The automount points `points`, nothing mounted on them: a table read
+    /// elsewhere, or a test's.
+    #[must_use]
+    pub fn with_automounts(points: impl IntoIterator<Item = PathBuf>) -> Self {
+        Self {
+            mounts: Some(points.into_iter().map(|point| (point, true)).collect()),
+        }
+    }
+
+    /// Whether looking `path` up from `from`, the folder the user is in (the
+    /// document's, the shell's), stays on this machine or on the server
+    /// `from` is on. Both absolute, `.` and `..` worked out by their text.
+    /// A table that could not be read leaves only what is below `from`.
+    #[must_use]
+    pub fn holds(&self, path: &Path, from: &Path) -> bool {
+        if let Some(Component::Prefix(prefix)) = path.components().next()
+            && !matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
+            && from.components().next() != Some(Component::Prefix(prefix))
+        {
+            return false;
+        }
+        let Some(mounts) = &self.mounts else {
+            return path.starts_with(from);
+        };
+        // The deepest mount holding `path`, the last of those at one point:
+        // the kernel stacks them, and a mount on an automount point is what
+        // it mounted.
+        let mut deepest: Option<&(PathBuf, bool)> = None;
+        for mount in mounts.iter().filter(|(point, _)| path.starts_with(point)) {
+            if deepest.is_none_or(|(point, _)| mount.0.as_os_str().len() >= point.as_os_str().len())
+            {
+                deepest = Some(mount);
+            }
+        }
+        // The point itself is read without mounting anything (`stat` does
+        // not automount the name it ends with); what is below it is not.
+        !deepest.is_some_and(|(point, automount)| *automount && path != point)
+    }
+}
+
+/// Every mount point `mountinfo` lists, and whether it is an automount point.
+#[cfg(target_os = "linux")]
+fn automounts(mountinfo: &(impl AsRef<[u8]> + ?Sized)) -> Vec<(PathBuf, bool)> {
+    self::mountinfo(mountinfo)
+        .into_iter()
+        .map(|mount| (mount.point, mount.fstype == "autofs"))
+        .collect()
+}
+
+/// macOS's mount table, read by `getfsstat`, which looks no path up.
+#[cfg(target_os = "macos")]
+mod mac {
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::PathBuf;
+
+    /// A name the kernel wrote into a fixed array, up to its NUL.
+    fn name(chars: &[libc::c_char]) -> Vec<u8> {
+        chars
+            .iter()
+            .map(|c| c.cast_unsigned())
+            .take_while(|b| *b != 0)
+            .collect()
+    }
+
+    pub(super) fn mounts() -> Option<Vec<(PathBuf, bool)>> {
+        // SAFETY: no buffer: the call only counts the mounts.
+        #[allow(unsafe_code)]
+        let count = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+        // Room for a few mounted meanwhile; more are read next time.
+        let mut table: Vec<libc::statfs> = Vec::with_capacity(usize::try_from(count).ok()? + 8);
+        let bytes = libc::c_int::try_from(table.capacity() * size_of::<libc::statfs>()).ok()?;
+        // SAFETY: the buffer has room for `bytes` bytes; the call writes
+        // whole records within them and says how many.
+        #[allow(unsafe_code)]
+        let filled = unsafe { libc::getfsstat(table.as_mut_ptr(), bytes, libc::MNT_NOWAIT) };
+        let filled = usize::try_from(filled).ok()?.min(table.capacity());
+        // SAFETY: the call initialized the first `filled` records.
+        #[allow(unsafe_code)]
+        unsafe {
+            table.set_len(filled);
+        }
+        Some(
+            table
+                .iter()
+                .map(|fs| {
+                    let point = name(&fs.f_mntonname);
+                    let point = PathBuf::from(std::ffi::OsStr::from_bytes(&point));
+                    (point, name(&fs.f_fstypename) == b"autofs")
+                })
+                .collect(),
+        )
+    }
+}
+
 /// In `mountinfo`, the mount that holds `path`: the last of the deepest,
 /// as the kernel stacks them.
 #[cfg(target_os = "linux")]
@@ -388,6 +518,39 @@ mod tests {
     }
 
     #[test]
+    fn nothing_below_an_automount_point_is_looked_up() {
+        let mountinfo = "\
+22 1 0:30 /@ / rw - btrfs /dev/mapper/root rw
+30 22 0:40 / /net rw - autofs -hosts rw,fd=5
+31 22 0:41 / /boot rw - autofs systemd-1 rw,fd=6
+32 31 259:1 / /boot rw - vfat /dev/nvme0n1p1 rw
+33 30 0:42 / /net/nas/export rw - nfs4 nas:/export rw
+34 22 0:43 / /mnt/archive rw - autofs systemd-1 rw,fd=7
+";
+        let here = Here {
+            mounts: Some(automounts(mountinfo)),
+        };
+        let from = Path::new("/home/example");
+        let holds = |path: &str| here.holds(Path::new(path), from);
+        assert!(holds("/home/example/notes.md"));
+        assert!(holds("/etc/hosts"));
+        // The points themselves, not what a lookup there would mount.
+        assert!(holds("/net"));
+        assert!(holds("/mnt/archive"));
+        assert!(!holds("/net/elsewhere"));
+        assert!(!holds("/net/elsewhere/notes.md"));
+        assert!(!holds("/mnt/archive/2025"));
+        // Mounted already.
+        assert!(holds("/net/nas/export/notes.md"));
+        assert!(!holds("/net/nas/other"));
+        assert!(holds("/boot/efi/loader.conf"));
+
+        let unread = Here { mounts: None };
+        assert!(unread.holds(Path::new("/home/example/a/b.md"), from));
+        assert!(!unread.holds(Path::new("/etc/hosts"), from));
+    }
+
+    #[test]
     fn a_path_is_on_the_deepest_mount_that_holds_it() {
         let mountinfo = "\
 22 1 0:30 /@ / rw - btrfs /dev/mapper/root rw
@@ -507,5 +670,29 @@ mod tests {
             Some("0"),
         );
         assert!(!sys.removable("179:8"));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    /// A server named by a path is reached only from a folder on its share:
+    /// the user is there already.
+    #[test]
+    fn a_server_is_looked_up_only_from_its_own_share() {
+        let here = Here::now();
+        let from = Path::new(r"C:\Users\example");
+        let holds = |path: &str, from: &Path| here.holds(Path::new(path), from);
+        assert!(holds(r"C:\Users\example\notes.md", from));
+        assert!(holds(r"D:\notes.md", from));
+        assert!(holds(r"\\?\C:\notes.md", from));
+        assert!(!holds(r"\\host\share\notes.md", from));
+        assert!(!holds("//host/share/notes.md", from));
+        assert!(!holds(r"\\?\UNC\host\share\notes.md", from));
+        assert!(!holds(r"\\.\pipe\example", from));
+        let share = Path::new(r"\\host\share\docs");
+        assert!(holds(r"\\host\share\other\notes.md", share));
+        assert!(!holds(r"\\elsewhere\share\notes.md", share));
     }
 }

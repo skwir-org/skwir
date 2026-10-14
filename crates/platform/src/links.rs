@@ -12,6 +12,7 @@
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
+use skwir_core::fs::volume::Here;
 use skwir_core::inspection::{Block, Run};
 
 /// The schemes found in text, as they are written before what follows.
@@ -301,10 +302,15 @@ fn normal(path: &Path) -> PathBuf {
 /// home folder, anything else in `base`, or, when it has a folder in it
 /// (`crates/ui/src/x.rs`), in the nearest folder above `base` that has it,
 /// as cargo writes paths from its workspace's root wherever it ran. A bare
-/// name, `./x` and `../x` are looked for in `base` only. It asks the
-/// filesystem: call it on a worker.
-pub fn resolve(word: &str, base: &Path) -> Option<PathBuf> {
-    let there = |path: PathBuf| path.exists().then(|| normal(&path));
+/// name, `./x` and `../x` are looked for in `base` only. Only paths whose
+/// lookup stays on this machine are looked up (`here`): never a server's
+/// share named by the path, nor what an automount point would mount. It
+/// asks the filesystem: call it on a worker.
+pub fn resolve(word: &str, base: &Path, here: &Here) -> Option<PathBuf> {
+    let there = |path: PathBuf| {
+        let path = normal(&path);
+        (here.holds(&path, base) && path.exists()).then_some(path)
+    };
     let path = Path::new(word);
     if path.is_absolute() {
         return there(path.to_owned());
@@ -526,22 +532,52 @@ mod tests {
         std::fs::write(&file, "").unwrap();
         std::fs::write(root.path().join("top.txt"), "").unwrap();
         let deep = root.path().join("crates/ui");
+        let here = Here::now();
+        let at = |word: &str, base: &Path| resolve(word, base, &here);
         // cargo, run in a member, writes from the workspace's root.
-        assert_eq!(resolve("crates/ui/src/x.rs", &deep), Some(file.clone()));
-        assert_eq!(resolve("src/x.rs", &deep), Some(file.clone()));
+        assert_eq!(at("crates/ui/src/x.rs", &deep), Some(file.clone()));
+        assert_eq!(at("src/x.rs", &deep), Some(file.clone()));
         // A bare name and `./` are read where they were printed only.
-        assert_eq!(resolve("top.txt", &deep), None);
+        assert_eq!(at("top.txt", &deep), None);
         assert_eq!(
-            resolve("top.txt", root.path()),
+            at("top.txt", root.path()),
             Some(root.path().join("top.txt"))
         );
         assert_eq!(
-            resolve("../../top.txt", &deep),
+            at("../../top.txt", &deep),
             Some(root.path().join("top.txt"))
         );
-        assert_eq!(resolve("./x.rs", &deep), None);
-        assert_eq!(resolve(file.to_str().unwrap(), Path::new("/")), Some(file));
-        assert_eq!(resolve("x.rs", Path::new("relative")), None);
+        assert_eq!(at("./x.rs", &deep), None);
+        assert_eq!(at(file.to_str().unwrap(), Path::new("/")), Some(file));
+        assert_eq!(at("x.rs", Path::new("relative")), None);
+    }
+
+    /// A path is not looked up where the lookup would mount something,
+    /// from another machine for `/net/host`: not as written, nor through
+    /// `..`, nor above where it was printed.
+    #[test]
+    fn nothing_an_automount_point_would_mount_is_looked_up() {
+        let root = tempfile::tempdir().unwrap();
+        let net = root.path().join("net");
+        let file = net.join("host/notes.md");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "").unwrap();
+        let deep = root.path().join("a/b");
+        std::fs::create_dir_all(&deep).unwrap();
+        let open = Here::with_automounts([]);
+        let automount = Here::with_automounts([net.clone()]);
+        let words = [
+            (file.to_str().unwrap().to_owned(), root.path()),
+            ("net/host/notes.md".to_owned(), root.path()),
+            ("net/host/notes.md".to_owned(), deep.as_path()),
+            ("../../net/host/notes.md".to_owned(), deep.as_path()),
+        ];
+        for (word, base) in &words {
+            assert_eq!(resolve(word, base, &open), Some(file.clone()), "{word}");
+            assert_eq!(resolve(word, base, &automount), None, "{word}");
+        }
+        // The point itself is read without mounting anything.
+        assert_eq!(resolve("net", root.path(), &automount), Some(net));
     }
 
     fn run(range: Range<usize>, color: u8) -> Run {

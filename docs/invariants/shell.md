@@ -241,6 +241,10 @@ of bars, split or not.
 - A terminal path resolves against the folder its line was printed in,
   stamped into the grid by the plugin (`plugins/terminal/src/links.rs`).
   Stamp new kinds of found links there too, never resolve them at click.
+- A path found in text is looked up only through `links::resolve`, which
+  asks `fs::volume::Here` first: never a server named by the path
+  (`\\host\share`) nor below an automount point not mounted yet
+  (`/net/host`), since the lookup alone reaches that host (ADR-029).
 
 ## The sidebar
 

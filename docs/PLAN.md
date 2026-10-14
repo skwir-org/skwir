@@ -864,6 +864,13 @@ clear the history, and a link's items. Files dropped on it, or the
 selection with Ctrl+Shift+Enter, are typed at its prompt, quoted for
 its shell.
 
+A path the terminal found was looked up wherever it led: on Windows
+`\\host\share` connects to that host with the user's credentials, and on
+macOS `/net/host` mounts from it, so printing a file could make Skwir
+reach a host the file names. Paths are looked up only where that stays
+on this machine (`fs::volume::Here`, ADR-029 amendment of 2026-10-14).
+Not tried: macOS's mount table (compiled only).
+
 ---
 
 ## Maps

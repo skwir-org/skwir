@@ -76,3 +76,27 @@ scrolling, history and reflow.
 - Not covered: addresses in table cells and Details comments; lines
   beyond the first page of a long text file; paths in full-screen
   programs; programs that change directory themselves (`make -C`).
+
+## Amendments
+
+### 2026-10-14: a path is looked up only where that stays here
+
+Looking a path up can reach another machine: on Windows `\\host\share`
+connects to that host and offers it the user's credentials; below an
+automount point (macOS's `/net` and `/home` by default, Linux's autofs
+`-hosts` maps) a lookup mounts what the name says. A file printed in the
+terminal, or previewed, would make Skwir reach a host it names, which
+ADR-020 rules out.
+
+- `links::resolve` looks a path up only where `fs::volume::Here::holds`
+  allows: no server or device named by the path (a Windows prefix other
+  than a drive), but the share the base folder is on; nothing below an
+  automount point that nothing is mounted on yet. The point itself is
+  read: `stat` mounts nothing for the name it ends with.
+- The mount table is read, never a path: `/proc/self/mountinfo` on
+  Linux, `getfsstat` on macOS (compiled only). A table that cannot be
+  read leaves only what is below the base folder.
+- The terminal reads it once for what a screen asks at once.
+- Mounts the user made (sshfs, a mapped drive, `/net/host` once
+  mounted) are looked up as listing them is, and so is a link on the
+  disk: only the path as written is read.
