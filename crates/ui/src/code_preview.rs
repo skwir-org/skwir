@@ -688,10 +688,14 @@ mod tests {
 
     #[test]
     fn a_pattern_ferroni_refuses_never_matches_and_its_grammar_still_highlights() {
-        // Vue Component's, which Oniguruma takes and Ferroni 2.1 refuses
-        // (`\x7f-\x9f` in a class). It must not panic its grammar.
+        // Vue Component's, which Oniguruma 6.9.10 takes and its last
+        // source, ported by Ferroni, refuses (`\x7f-\x9f` in a class).
+        // It must not panic its grammar.
         let refused = r#"(?=(?:[^ "'>/=\x00-\x1f\x7f-\x9f]))"#;
         assert!(syntect::parsing::Regex::try_compile(refused).is_some());
+        // Oniguruma's own syntax, as syntect's onig backend: Ruby's would
+        // refuse VimHelp's look-behind, as Oniguruma does under it.
+        assert!(syntect::parsing::Regex::try_compile(r"(?<=^\s*)(vim?|ex):").is_none());
         let regex = syntect::parsing::Regex::new(refused.to_owned());
         assert!(!regex.is_match("class"));
         assert!(!regex.search("class", 0, 5, None));

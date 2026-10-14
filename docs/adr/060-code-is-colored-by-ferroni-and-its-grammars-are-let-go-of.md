@@ -32,13 +32,18 @@ Status: accepted and built, 2026-10-14.
   | First pass (compiles) | 4.9 s | 0.9 s | 1.7 s |
   | Warm pass | 2.3 s | 0.72 s | 0.56 s |
   | One 1.2 MB line of TypeScript | 23 s | 97 s | 9 s |
-  | Patterns refused | 0 of 21,739 | 0 of 22,257 | 3 of 22,257 |
+  | Patterns refused | 0 of 21,739 | 0 of 22,257 | 2 of 22,257 |
 
   The three engines gave the same scopes on all 27,293 lines, given the
-  same grammars. Deep nesting (20,000 brackets of JSON) and long lines
-  ended in each, in 8 MiB stacks like the workers'. Ferroni refuses two
-  patterns of Vue Component (a class with `\x7f-\x9f`) and one of
-  VimHelp (the look-behind `(?<=^\s*)`), which Oniguruma takes.
+  same grammars. Ferroni was measured with Ruby's syntax at first, which
+  refused VimHelp's look-behind `(?<=^\s*)` as Oniguruma does under it;
+  with Oniguruma's own, the onig backend's, its scopes equal Oniguruma's
+  byte for byte at the same cost. Deep nesting (20,000 brackets of JSON)
+  and long lines ended in each, in 8 MiB stacks like the workers'.
+  Ferroni refuses two patterns of Vue Component that Oniguruma 6.9.10
+  takes: a class with byte escapes past `\x7f` (`\x7f-\x9f`), which
+  Oniguruma's last source refuses in UTF-8 too (April 2025, after 6.9.10,
+  the source Ferroni ports: ferroni#227).
 - **Oniguruma ended on 2025-04-24**; its repository is archived and
   6.9.10 is the last release. It is C, with a history of memory-safety
   advisories, and Skwir colors the text of any file selected.
@@ -52,7 +57,8 @@ Status: accepted and built, 2026-10-14.
 1. **Grammars match with Ferroni.** syntect and two-face are vendored
    with a patch each (`vendor/syntect/README.skwir.md`,
    `vendor/two-face/README.skwir.md`): syntect gains a `regex-ferroni`
-   engine with the onig backend's syntax and options, and a pattern it
+   engine with the onig backend's syntax (Oniguruma's own) and options,
+   and a pattern it
    refuses never matches instead of panicking its grammar; two-face's
    `syntect-ferroni` selects Oniguruma's grammar set, all of bat's.
 2. **Compiled grammars are shared, then let go of.**
@@ -85,14 +91,16 @@ Status: accepted and built, 2026-10-14.
   stays at 58 MiB from the fourth.
 - Six grammars arrive with Oniguruma's set: ARM Assembly, JavaScript
   (Babel), LiveScript, PowerShell, Sass and Salt State SLS. Vue
-  Component and VimHelp lose the patterns Ferroni refuses.
+  Component loses the two patterns Ferroni refuses (an attribute's
+  name followed by something unexpected). The grammar means the code
+  points U+007F to U+009F, as fancy-regex reads it; said `\x{7f}-\x{9f}`
+  it compiles in every engine (vuejs/vue-syntax-highlight).
 - The code view's first file after a minute without code waits for its
   grammar to compile again.
 - The release binary's code grows by 0.77 MB (Ferroni in, fancy-regex
   out; regex-automata stays for the `regex` crate).
 - Two vendored crates and their patches are kept up to date, offered
-  upstream, and dropped when released. The two kinds of pattern Ferroni
-  refuses are to be reported to it.
+  upstream, and dropped when released.
 - Ferroni's limits (retry, time, stack) are left at their defaults, as
   syntect leaves Oniguruma's; a single line is still not cancellable
   mid-line.

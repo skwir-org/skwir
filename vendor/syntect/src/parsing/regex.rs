@@ -280,7 +280,7 @@ mod regex_impl {
 }
 
 // Ferroni, a pure-Rust port of Oniguruma, with the onig backend's syntax
-// (Ruby's, Oniguruma's default) and options. It wins over the other two.
+// (Oniguruma's own, its default) and options. It wins over the other two.
 #[cfg(feature = "regex-ferroni")]
 mod regex_impl {
     use ferroni::api::{RegexBuilder, Syntax};
@@ -306,7 +306,7 @@ mod regex_impl {
     impl Regex {
         pub fn new(regex_str: &str) -> Result<Regex, Box<dyn Error + Send + Sync + 'static>> {
             let result = RegexBuilder::new(regex_str)
-                .syntax_mode(Syntax::Ruby)
+                .syntax_mode(Syntax::Oniguruma)
                 .capture_group(true)
                 .build();
             match result {

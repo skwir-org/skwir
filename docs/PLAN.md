@@ -848,8 +848,9 @@ Measured in a window on Xvfb, 22 code files: +34 MiB after five passes
 in an empty folder at start, 27 after the same files as plain text);
 six rounds of browsing and leaving settle near 39 MiB.
 
-Not done: the two kinds of pattern Ferroni refuses reported to it; the patches offered to
-syntect and two-face; what the code view leaves beyond plain text (some
+Not done: Vue Component's two patterns Ferroni refuses (ferroni#227)
+said with code points in the grammar; the patches offered to syntect and
+two-face; what the code view leaves beyond plain text (some
 7 MiB, not its grammars) not looked into.
 
 ---
