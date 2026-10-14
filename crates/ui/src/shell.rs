@@ -967,16 +967,28 @@ impl Shell {
         self.reveal_asked += 1;
         let asked = self.reveal_asked;
         let target = path.to_path_buf();
+        let from = at.from.clone();
         self.off_thread(
             "reveal-stat",
             move || {
-                let is_dir = std::fs::metadata(&target).map(|m| m.is_dir());
+                let here = from
+                    .as_deref()
+                    .is_none_or(|from| skwir_core::fs::volume::Here::now().holds(&target, from));
+                let is_dir = here.then(|| std::fs::metadata(&target).map(|m| m.is_dir()));
                 (target, is_dir)
             },
             move |this, (path, is_dir), window, cx| {
                 if this.reveal_asked != asked {
                     return;
                 }
+                let Some(is_dir) = is_dir else {
+                    this.set_status(
+                        "Skwir follows no link to another machine or a drive not mounted yet",
+                        true,
+                        cx,
+                    );
+                    return;
+                };
                 let found = match is_dir {
                     Ok(true) => Some((path.clone(), None)),
                     Ok(false) => path

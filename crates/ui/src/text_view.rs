@@ -9,7 +9,9 @@
 //! or its lines, then colored: from where the one before it stopped, or
 //! fresh after a jump, and again once the one before it has been.
 //! Chunks far from the view go past `KEPT`. Find, copy and a line a link
-//! asks for (`file:12`) read the file on a worker too.
+//! asks for (`file:12`) read the file on a worker too. The paths the text
+//! writes are found as a chunk is colored, never before its text shows
+//! (`links::WrittenPaths`: each a lookup on the disk).
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -18,10 +20,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::Context;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use skwir_core::cancel::CancelToken;
 use skwir_core::inspection::{Block, TextFile};
 use skwir_core::scheduler::Priority;
+use skwir_platform::links::WrittenPaths;
 use skwir_platform::text_rows::{self, Form, Index, Point, STRIDE};
 
 use crate::code_preview::{Highlighter, Palette, Resume};
@@ -72,6 +75,7 @@ fn read_chunk(
     form: Form,
     (chunk, point): (u64, Point),
     reading: Reading<'_>,
+    paths: Option<&Mutex<WrittenPaths>>,
     cancel: &CancelToken,
 ) -> anyhow::Result<(Chunk, Option<Resume>)> {
     let at = chunk * STRIDE;
@@ -114,6 +118,12 @@ fn read_chunk(
         blocks.push(block);
         lines.push((row.line, row.first));
     }
+    // Colored rows are read after the plain ones showed: the paths they
+    // write are looked up now.
+    if let (Some(paths), true) = (paths, colors.is_some()) {
+        paths.lock().link(&mut blocks);
+        skwir_platform::inspection::check(cancel)?;
+    }
     Ok((
         Chunk {
             rows: blocks,
@@ -135,6 +145,7 @@ pub(crate) fn start(file: &TextFile, palette: Palette) -> anyhow::Result<Start> 
         form,
         (0, text_rows::origin(form)),
         Reading::Plain,
+        None,
         &cancel,
     )?;
     Ok(Start {
@@ -166,6 +177,9 @@ pub struct TextView {
     index: Arc<RwLock<Index>>,
     counting: CancelToken,
     palette: Arc<Palette>,
+    /// What finds the paths the text writes, kept for the file: each word
+    /// is looked up once. None for a member written out of its container.
+    paths: Option<Arc<Mutex<WrittenPaths>>>,
     chunks: HashMap<u64, Rc<Chunk>>,
     /// Where a chunk's colors start: where the one before stopped.
     starts: HashMap<u64, Resume>,
@@ -228,11 +242,14 @@ impl Drop for TextView {
 impl TextView {
     /// The view of `file`, from its first rows, its rows counted from now.
     /// `scroll` is the place to keep, when it is the same file read again.
+    /// `paths` finds the paths it writes, when they can be read from its
+    /// folder.
     fn new(
         app: &Arc<skwir_core::App>,
         file: TextFile,
         start: Start,
         scroll: Option<Scroll>,
+        paths: bool,
     ) -> Self {
         let Start {
             form,
@@ -269,11 +286,16 @@ impl TextView {
                 },
             );
         }
+        let paths = paths
+            .then(|| WrittenPaths::new(&file.path))
+            .flatten()
+            .map(|paths| Arc::new(Mutex::new(paths)));
         TextView {
             file,
             index,
             counting,
             palette,
+            paths,
             chunks: HashMap::from([(0, Rc::new(chunk))]),
             starts: HashMap::new(),
             wanted: Vec::new(),
@@ -412,6 +434,7 @@ impl TextView {
         };
         let from = self.starts.get(&chunk).cloned();
         let (file, palette) = (self.file.clone(), Arc::clone(&self.palette));
+        let paths = self.paths.clone();
         self.asking = Some(chunk);
         self.asked.ask(
             app,
@@ -426,7 +449,14 @@ impl TextView {
                 };
                 Reply {
                     chunk,
-                    read: read_chunk(&file, form, (chunk, point), reading, cancel),
+                    read: read_chunk(
+                        &file,
+                        form,
+                        (chunk, point),
+                        reading,
+                        paths.as_deref(),
+                        cancel,
+                    ),
                 }
             },
         );
@@ -618,7 +648,14 @@ impl Shell {
         let (Some(file), Some(start)) = (display.data.text.clone(), display.text.take()) else {
             return;
         };
-        let mut view = TextView::new(&self.app, file, *start, kept);
+        // A member written out of its container has nothing of it beside
+        // it on the disk.
+        let paths = self
+            .preview
+            .nested
+            .last()
+            .is_none_or(|member| !member.extracted());
+        let mut view = TextView::new(&self.app, file, *start, kept, paths);
         view.request(&self.app);
         self.preview.inspection.text = Some(view);
     }

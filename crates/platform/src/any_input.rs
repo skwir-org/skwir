@@ -59,6 +59,9 @@ proptest! {
     #[test]
     fn links_and_paths_in_text(text in prop_oneof![mutated_text(LINKS), any::<String>()]) {
         let _ = crate::links::urls(&text);
+        for word in crate::links::written(&text) {
+            prop_assert!(text.get(word.range.clone()).is_some());
+        }
         let here = skwir_core::fs::volume::Here::now();
         for word in crate::links::paths(&text) {
             let _ = crate::links::resolve(&word.path, Path::new("/home/a"), &here);

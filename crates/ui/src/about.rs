@@ -184,6 +184,7 @@ impl Shell {
         let at = crate::links::RevealAt {
             tab: true,
             mark: None,
+            from: None,
         };
         self.reveal_path_at(self.pane, &path, at, window, cx);
     }

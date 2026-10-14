@@ -880,6 +880,14 @@ beside the one shown no longer lists the folder again. A line asked of a
 small text as its preview arrived was said not to exist (the index had
 not counted it yet): that held for the terminal's `file:12` links too.
 
+The paths a file's text writes are links under Ctrl, as the terminal's
+are: in HTML, Markdown and code source and in plain text, what quotes
+hold, a link's target, `url(…)` and a word with a slash after a name,
+looked up from the file's folder as a chunk is colored (ADR-029
+amendment). A document's own links are followed only where that stays
+on this machine. Not covered: the structured-data views made whole and
+bare names.
+
 ---
 
 ## Maps

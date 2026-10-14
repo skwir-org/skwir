@@ -117,3 +117,35 @@ link was followed from was lost.
   link is the document again. A link to a file beside the one shown adds
   a step without listing the folder again (`App::step_here`).
 - The document comes back from its start, not where it was scrolled.
+
+### 2026-10-14: paths a file's text writes
+
+In a file's source (HTML, Markdown, code) and in plain text, the paths
+the text writes were dead text: only addresses by scheme were found.
+
+- What source and markup write as a path is looked for
+  (`links::written`): what quotes hold, a Markdown link's target, what
+  `url(…)` holds, and a word with a slash after a name (`docs/guide.md`,
+  `src/main.rs:12`). A bare word is not: in code most are names, and each
+  would be a lookup.
+- Only the filesystem confirms one, read from the file's folder as a
+  terminal path is from the shell's (`resolve`: the folders above for a
+  path with a folder in it), on this machine only. A word escaped as a
+  URL (`my%20file.md`) is looked for decoded too.
+- A found path is a link under Ctrl, to its file's `file://` address
+  with the line or the mark it names (`#L12`, `#setup`), followed as a
+  document's links are.
+- The text never waits for the lookups: they run as a chunk of a text
+  read where it is shown is colored, after its plain rows showed. Each
+  word is looked up once for the file, and at most 256 new words per
+  chunk of 256 rows: a list of thousands of names links what those found.
+  Measured here, a lookup took 1 to 2 µs on a warm local disk.
+- A member written out of its container finds none: what is beside it
+  on the disk is not what was beside it there.
+- Not covered: the code views made whole (structured data with folds,
+  a book's chapter source); bare names (`see guide.md`).
+
+A document's own links are followed only where that stays on this
+machine from its folder too (`RevealAt::from`): on Windows a link to
+`//host/share` connected on a click. `file:///` links are read as the
+system writes them (`file:///C:/a%20b` on Windows was `/C:/a b`).

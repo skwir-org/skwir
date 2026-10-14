@@ -138,7 +138,15 @@ pub struct Nested {
     path: std::path::PathBuf,
     /// The private directory an extracted member lives in; none for a file of
     /// its own that the container only names (a playlist's track).
-    _directory: Option<tempfile::TempDir>,
+    directory: Option<tempfile::TempDir>,
+}
+
+impl Nested {
+    /// Whether the member was written out of its container for the panel:
+    /// what is beside it on the disk is not what was beside it there.
+    pub fn extracted(&self) -> bool {
+        self.directory.is_some()
+    }
 }
 
 /// The tracks the player walks instead of the folder's: the rows of the
@@ -1018,7 +1026,7 @@ fn extract_member(
         path: member.path,
         // Nothing was written for a file of its own: the empty directory goes
         // now, here on the worker.
-        _directory: (!member.own_file).then_some(directory),
+        directory: (!member.own_file).then_some(directory),
     })))
 }
 

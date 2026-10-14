@@ -197,6 +197,16 @@ A text document is read as its structure, or laid out as pages.
   in raw text (the code view) only under Ctrl, since a click there
   selects (`skwir_platform::links::link_block`, on the conversion
   worker).
+- A path a text read where it is shown writes (a string, a Markdown or
+  HTML link's target, `url(…)`, a word with a slash after a name: never a
+  bare word) is a link under Ctrl too, to the file it names from the
+  file's folder (`links::WrittenPaths`). It is looked up only as a chunk
+  is colored, after its text showed; each word once for the file, a
+  bounded number of new ones per chunk, and only on this machine
+  (`Here`). A member written out of its container finds none.
+- A document's link is followed only where that stays on this machine
+  from its folder (`RevealAt::from`, checked with the stat on a worker):
+  `//host/share` on Windows connects as the user.
 - Every address, written or found, and the map's attribution reach the
   desktop through `ui.open_url`.
 

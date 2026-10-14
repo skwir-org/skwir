@@ -99,6 +99,10 @@ impl Labels {
 pub struct RevealAt {
     pub tab: bool,
     pub mark: Option<Mark>,
+    /// The folder of the document the link was read in: the file is looked
+    /// up only where that stays on this machine from there
+    /// (`fs::volume::Here`), never on a server a hostile file names.
+    pub from: Option<PathBuf>,
 }
 
 /// `ui.reveal`'s arguments: a file shown in its folder, from a link.
@@ -276,6 +280,9 @@ impl Shell {
         let at = RevealAt {
             tab,
             mark: fragment.map(Mark::Anchor),
+            from: from
+                .and_then(std::path::Path::parent)
+                .map(std::path::Path::to_path_buf),
         };
         if !self.reveal_path_at(pane, &target, at, window, cx) {
             let name = target.file_name().map_or_else(
@@ -305,6 +312,7 @@ impl Shell {
         let at = RevealAt {
             tab: args.tab,
             mark: args.line.filter(|line| *line > 0).map(Mark::Line),
+            from: None,
         };
         let path = args.path.into_inner();
         if !self.reveal_path_at(pane, &path, at, window, cx) {
@@ -504,16 +512,18 @@ pub(crate) fn document_link(
     let (href, fragment) = href.split_once('#').unwrap_or((href, ""));
     let fragment = (!fragment.is_empty()).then(|| decode(fragment));
     let href = href.split('?').next().filter(|h| !h.is_empty())?;
-    let href = decode(href);
-    let path = if let Some(rest) = href.strip_prefix("file://") {
-        // file://host/path is not ours to resolve; file:///path is.
-        std::path::PathBuf::from(rest.strip_prefix('/').map(|p| format!("/{p}"))?)
-    } else if has_scheme(&href) {
+    let path = if href.starts_with("file:///") {
+        // A file here, as the system writes it (`file:///C:/a%20b`).
+        skwir_platform::uri::path_of(href)?
+    } else if href.starts_with("file://") {
+        // Another machine's: not ours to resolve.
+        return None;
+    } else if has_scheme(href) {
         return None;
     } else if href.starts_with('/') {
-        std::path::PathBuf::from(href)
+        std::path::PathBuf::from(decode(href))
     } else {
-        from.parent()?.join(href)
+        from.parent()?.join(decode(href))
     };
     // Resolve `.` and `..` by text only. Canonicalizing would follow symlinks
     // and show the user a folder whose name their link never mentioned.
@@ -597,6 +607,15 @@ mod tests {
             document_link(from, "Day%20two.md#a#b"),
             Some(("/notes/trip/Day two.md".into(), Some("a#b".to_owned())))
         );
+        // A path found in a file's text links as its address: read back as
+        // it is, whatever its name holds, on every system.
+        let file = std::env::temp_dir().join("l'été #1").join("100% sûr.md");
+        let found = format!("{}#L12", skwir_platform::uri::file_uri(&file));
+        assert_eq!(
+            document_link(from, &found),
+            Some((file, Some("L12".to_owned())))
+        );
+        assert_eq!(document_link(from, "file://elsewhere/share/x.md"), None);
         // Lines as code hosts write them.
         assert_eq!(line_of("L12"), Some(12));
         assert_eq!(line_of("L12-L20"), Some(12));

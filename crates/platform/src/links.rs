@@ -6,8 +6,9 @@
 //! client, `file` into skwir. A name with a dot is never taken for a domain:
 //! in a file manager `main.rs`, `setup.py` and `README.md` are files, though
 //! `.rs`, `.py` and `.md` are countries' domains. In a terminal the words of
-//! a line may also be paths (`paths`), which only the filesystem confirms
-//! (`resolve`, on a worker).
+//! a line may also be paths (`paths`), and in a file's text what source and
+//! markup write as one (`written`); only the filesystem confirms them
+//! (`resolve`, `WrittenPaths`, on a worker).
 
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
@@ -328,6 +329,193 @@ pub fn resolve(word: &str, base: &Path, here: &Here) -> Option<PathBuf> {
     base.ancestors().find_map(|dir| there(dir.join(path)))
 }
 
+/// The words of a line of a file that may name a file, as source and
+/// markup write them: what quotes hold (a string, `href="page.html"`,
+/// `#include "util.h"`, Markdown's inline code), a Markdown link's target
+/// (`[a](notes/a.md)`), what `url(…)` holds, and a word with a slash after
+/// a name (`see docs/guide.md`, `src/main.rs:12`). A bare word is not: names in
+/// code are mostly not files, and each would be a lookup. An apostrophe
+/// inside a word (`don't`, `l'été`) opens no quote. Whether a word names
+/// a file is the filesystem's to say (`WrittenPaths`).
+pub fn written(text: &str) -> Vec<PathWord> {
+    let mut words = Vec::new();
+    let mut at = 0;
+    while let Some(open) = text[at..].find(['"', '\'', '`']).map(|i| at + i) {
+        let quote = text[open..].chars().next().unwrap_or('"');
+        at = open + 1;
+        let in_word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+        if quote == '\'' && in_word(text[..open].chars().next_back()) {
+            continue;
+        }
+        let Some(len) = text[at..].find(quote) else {
+            continue;
+        };
+        let close = at + len;
+        if quote == '\'' && in_word(text[close + 1..].chars().next()) {
+            continue;
+        }
+        words.extend(path_word(text, at..close, true));
+        at = close + 1;
+    }
+    for opening in ["](", "url("] {
+        for (open, _) in text.match_indices(opening) {
+            let from = open + opening.len();
+            if let Some(len) = text[from..].find([')', ' ']) {
+                words.extend(path_word(text, from..from + len, true));
+            }
+        }
+    }
+    let marks = |c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '"' | '\''
+                    | '`'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '<'
+                    | '>'
+                    | '='
+                    | ','
+                    | ';'
+                    | '|'
+            )
+    };
+    let mut start = None;
+    for (i, c) in text.char_indices().chain([(text.len(), ' ')]) {
+        match (marks(c), start) {
+            (true, Some(from)) => {
+                start = None;
+                // A slash after a name, not a comment's `//` or a closing
+                // tag's `/p`.
+                let word = &text[from..i];
+                if word.trim_start_matches('/').contains('/')
+                    && word.contains(char::is_alphanumeric)
+                {
+                    words.extend(path_word(text, from..i, false));
+                }
+            }
+            (false, None) => start = Some(i),
+            _ => {}
+        }
+    }
+    words.sort_by_key(|word| (word.range.start, std::cmp::Reverse(word.range.end)));
+    words.dedup_by(|later, kept| later.range == kept.range);
+    words
+}
+
+/// How many words a call of [`WrittenPaths::link`] looks up that it was
+/// not told of before: a list of thousands of names links what these
+/// found, and the rest of a long file is linked as it is read.
+const LOOKUPS: usize = 256;
+/// How many answers a file's words keep before they are asked again.
+const KNOWN: usize = 4096;
+
+/// The paths a text read from a file writes (`written`), looked up from
+/// that file's folder as [`resolve`] reads a path printed there, and only
+/// where that stays on this machine. Each word is looked up once for the
+/// file; a call looks up [`LOOKUPS`] new words at most.
+pub struct WrittenPaths {
+    base: PathBuf,
+    known: std::collections::HashMap<String, Option<PathBuf>>,
+}
+
+impl WrittenPaths {
+    /// For the text of the file at `file`; `None` when it is in no folder
+    /// it can be named from.
+    pub fn new(file: &Path) -> Option<Self> {
+        let base = file.parent().filter(|base| base.is_absolute())?;
+        Some(Self {
+            base: base.to_owned(),
+            known: std::collections::HashMap::new(),
+        })
+    }
+
+    /// Give `blocks` the paths their text writes as links followed with
+    /// Ctrl (`Run::found`), each to the file as a `file://` address with
+    /// the line or the mark the word names (`#L12`, `#setup`), where no run
+    /// links already or is code. It asks the filesystem: on a worker.
+    pub fn link(&mut self, blocks: &mut [Block]) {
+        let here = Here::now();
+        let mut lookups = LOOKUPS;
+        if self.known.len() > KNOWN {
+            self.known.clear();
+        }
+        for block in blocks {
+            if skwir_core::scheduler::job_cancelled() {
+                return;
+            }
+            let mut found: Vec<(Range<usize>, String)> = written(&block.text)
+                .into_iter()
+                .filter_map(|word| {
+                    Some((word.range.clone(), self.target(&word, &here, &mut lookups)?))
+                })
+                .collect();
+            // Words that overlap: the first, and the longest of those.
+            let mut end = 0;
+            found.retain(|(range, _)| {
+                let apart = range.start >= end;
+                if apart {
+                    end = range.end;
+                }
+                apart
+            });
+            if found.is_empty() {
+                continue;
+            }
+            let runs = std::mem::take(&mut block.runs);
+            block.runs = linked(runs, &found, true);
+        }
+    }
+
+    /// Where `word` leads, as a link's target: the file's address, and the
+    /// line or the mark it names.
+    fn target(&mut self, word: &PathWord, here: &Here, lookups: &mut usize) -> Option<String> {
+        // A link in markup names a place in the file after `#`, and what
+        // follows `?` is a page's, not the file's.
+        let (path, mark) = match word.path.split_once('#') {
+            Some((path, mark)) if !path.is_empty() => (path, Some(mark)),
+            _ => (word.path.as_str(), None),
+        };
+        let path = path.split('?').next().unwrap_or(path);
+        let file = match self.known.get(path) {
+            Some(known) => known.clone(),
+            None if *lookups == 0 => return None,
+            None => {
+                *lookups -= 1;
+                // Markup escapes what a URL may not hold (`my%20file.md`).
+                let found = resolve(path, &self.base, here).or_else(|| {
+                    let decoded = crate::uri::percent_decode(path);
+                    let decoded = std::str::from_utf8(&decoded).ok()?;
+                    (decoded != path)
+                        .then(|| resolve(decoded, &self.base, here))
+                        .flatten()
+                });
+                self.known.insert(path.to_owned(), found.clone());
+                found
+            }
+        }?;
+        let mut target = crate::uri::file_uri(&file);
+        match (word.line, mark) {
+            (Some(line), _) => {
+                target.push_str("#L");
+                target.push_str(&line.to_string());
+            }
+            // A fragment, escaped as markup writes it.
+            (None, Some(mark)) if !mark.is_empty() => {
+                target.push('#');
+                target.push_str(mark);
+            }
+            _ => {}
+        }
+        Some(target)
+    }
+}
+
 /// Give `block` the addresses in its text as links, where no run links
 /// already or is code: a link the text was written with stays as it was.
 /// `found` says how they are followed (`Run::found`): with Ctrl in raw
@@ -342,14 +530,19 @@ pub fn link_block(block: &mut Block, found: bool) {
     if addresses.is_empty() {
         return;
     }
+    let addresses: Vec<(Range<usize>, String)> = addresses
+        .into_iter()
+        .map(|range| (range.clone(), block.text[range].to_owned()))
+        .collect();
     let runs = std::mem::take(&mut block.runs);
-    block.runs = linked(&block.text, runs, &addresses, found);
+    block.runs = linked(runs, &addresses, found);
 }
 
-/// `runs` (in order, apart) with `addresses` linked, those that cross a
-/// link or code left out. A run is cut where an address starts or ends,
-/// and text no run covered inside an address gets a run of its own.
-fn linked(text: &str, runs: Vec<Run>, addresses: &[Range<usize>], found: bool) -> Vec<Run> {
+/// `runs` (in order, apart) with `addresses` (in order, apart: each a
+/// range and where it leads) linked, those that cross a link or code left
+/// out. A run is cut where an address starts or ends, and text no run
+/// covered inside an address gets a run of its own.
+fn linked(runs: Vec<Run>, addresses: &[(Range<usize>, String)], found: bool) -> Vec<Run> {
     let taken = |range: &Range<usize>| {
         runs.iter().any(|run| {
             run.range.start < range.end
@@ -357,14 +550,15 @@ fn linked(text: &str, runs: Vec<Run>, addresses: &[Range<usize>], found: bool) -
                 && (run.link.is_some() || run.code)
         })
     };
-    let addresses: Vec<&Range<usize>> = addresses.iter().filter(|a| !taken(a)).collect();
+    let addresses: Vec<&(Range<usize>, String)> =
+        addresses.iter().filter(|(a, _)| !taken(a)).collect();
     if addresses.is_empty() {
         return runs;
     }
     let mut edges: Vec<usize> = runs
         .iter()
         .flat_map(|run| [run.range.start, run.range.end])
-        .chain(addresses.iter().flat_map(|a| [a.start, a.end]))
+        .chain(addresses.iter().flat_map(|(a, _)| [a.start, a.end]))
         .collect();
     edges.sort_unstable();
     edges.dedup();
@@ -375,13 +569,16 @@ fn linked(text: &str, runs: Vec<Run>, addresses: &[Range<usize>], found: bool) -
         while runs.get(run).is_some_and(|r| r.range.end <= piece.start) {
             run += 1;
         }
-        while addresses.get(address).is_some_and(|a| a.end <= piece.start) {
+        while addresses
+            .get(address)
+            .is_some_and(|(a, _)| a.end <= piece.start)
+        {
             address += 1;
         }
         let covering = runs.get(run).filter(|r| r.range.start <= piece.start);
         let inside = addresses
             .get(address)
-            .filter(|a| a.start <= piece.start)
+            .filter(|(a, _)| a.start <= piece.start)
             .copied();
         let mut piece_run = match (covering, inside) {
             (None, None) => continue,
@@ -389,8 +586,8 @@ fn linked(text: &str, runs: Vec<Run>, addresses: &[Range<usize>], found: bool) -
             (None, Some(_)) => Run::default(),
         };
         piece_run.range = piece;
-        if let Some(a) = inside {
-            piece_run.link = Some(text[a.clone()].to_owned());
+        if let Some((_, target)) = inside {
+            piece_run.link = Some(target.clone());
             piece_run.found = found;
         }
         out.push(piece_run);
@@ -550,6 +747,93 @@ mod tests {
         assert_eq!(at("./x.rs", &deep), None);
         assert_eq!(at(file.to_str().unwrap(), Path::new("/")), Some(file));
         assert_eq!(at("x.rs", Path::new("relative")), None);
+    }
+
+    #[test]
+    fn source_writes_paths_in_strings_link_targets_and_slashed_words() {
+        let words = |text: &str| -> Vec<String> {
+            written(text).into_iter().map(|word| word.path).collect()
+        };
+        assert_eq!(words(r#"<a href="page.html">the page</a>"#), ["page.html"]);
+        assert_eq!(words(r#"#include "util.h""#), ["util.h"]);
+        assert_eq!(
+            words("body { background: url(img/bg.png) }"),
+            ["img/bg.png"]
+        );
+        let markdown =
+            words(r#"See [the guide](docs/guide.md#setup "Guide") and `notes/l'été.md`."#);
+        for path in ["docs/guide.md#setup", "notes/l'été.md"] {
+            assert!(markdown.iter().any(|p| p == path), "{path} in {markdown:?}");
+        }
+        let comment = written("// see crates/ui/src/x.rs:12 and </p> */");
+        assert_eq!(comment.len(), 1, "{comment:?}");
+        assert_eq!(
+            (comment[0].path.as_str(), comment[0].line),
+            ("crates/ui/src/x.rs", Some(12))
+        );
+        // Words, apostrophes in them and addresses are not paths.
+        assert!(words("don't stop, it's fine: main.rs").is_empty());
+        assert!(words("https://example.org/a/b").is_empty());
+    }
+
+    #[test]
+    fn the_paths_a_file_writes_link_to_what_is_there() {
+        let root = tempfile::tempdir().unwrap();
+        let docs = root.path().join("docs");
+        for file in [
+            "docs/guide.md",
+            "docs/l'été/notes.md",
+            "docs/my file.md",
+            "docs/page.html",
+            "src/main.rs",
+        ] {
+            let file = root.path().join(file);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, "").unwrap();
+        }
+        let mut blocks: Vec<Block> = [
+            "[guide](guide.md#set%20up) and [notes](l%27%C3%A9t%C3%A9/notes.md)",
+            r#"<a href="page.html">x</a> <img src="missing.png">"#,
+            "see ../src/main.rs:12 or `my file.md`",
+        ]
+        .into_iter()
+        .map(|text| Block {
+            text: text.to_owned(),
+            code: true,
+            ..Block::default()
+        })
+        .collect();
+        let mut paths = WrittenPaths::new(&docs.join("index.md")).unwrap();
+        paths.link(&mut blocks);
+        let links: Vec<(&str, &str)> = blocks
+            .iter()
+            .flat_map(|block| {
+                block.runs.iter().filter_map(|run| {
+                    assert!(run.found, "followed with Ctrl");
+                    Some((&block.text[run.range.clone()], run.link.as_deref()?))
+                })
+            })
+            .collect();
+        let uri = |path: &str| crate::uri::file_uri(&root.path().join(path));
+        assert_eq!(
+            links,
+            [
+                (
+                    "guide.md#set%20up",
+                    format!("{}#set%20up", uri("docs/guide.md")).as_str()
+                ),
+                (
+                    "l%27%C3%A9t%C3%A9/notes.md",
+                    uri("docs/l'été/notes.md").as_str()
+                ),
+                ("page.html", uri("docs/page.html").as_str()),
+                (
+                    "../src/main.rs:12",
+                    format!("{}#L12", uri("src/main.rs")).as_str()
+                ),
+                ("my file.md", uri("docs/my file.md").as_str()),
+            ]
+        );
     }
 
     /// A path is not looked up where the lookup would mount something,

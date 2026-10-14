@@ -237,7 +237,8 @@ of bars, split or not.
   Clicking the row copies the value; only the link acts.
 - **Links (ADR-029).** A link written in a document answers a click. One
   found in raw text (`skwir_platform::links`: addresses by scheme, never a
-  bare domain; paths in the terminal) answers Ctrl+click, drawn as a link
+  bare domain; paths in the terminal and those a file's text writes)
+  answers Ctrl+click, drawn as a link
   only while Ctrl is held over it (`Run::found`, `Shell::armed_link`);
   Shift adds a tab.
 - Addresses open only through `ui.open_url`; files and folders only
