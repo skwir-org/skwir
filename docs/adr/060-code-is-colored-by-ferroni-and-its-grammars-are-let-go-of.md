@@ -1,6 +1,7 @@
 # ADR-060: Code is colored by Ferroni, and its grammars are let go of
 
-Status: accepted and built, 2026-10-14.
+Status: accepted and built, 2026-10-14. Amended 2026-10-14 (fancy-regex's
+later versions measured; the decision stands).
 
 ## Context
 
@@ -22,9 +23,10 @@ Status: accepted and built, 2026-10-14.
   Leaving the folder gave nothing back.
 - **The engines, compared** on bat's grammars (two-face), 59 public
   files in about 35 grammars, single process per engine, machine load
-  5 to 14 (2026-10-14):
+  5 to 14 (2026-10-14). fancy-regex is 0.16.2, the version syntect 5.3.0
+  asks for (later versions: [Amendments](#amendments)):
 
-  | | fancy-regex | Oniguruma (C) | Ferroni |
+  | | fancy-regex 0.16.2 | Oniguruma 6.9.10 (C) | Ferroni 2.1.3 |
   | --- | --- | --- | --- |
   | Corpus, one thread | +589 MiB | +43 MiB | +67 MiB |
   | Corpus, 8 threads | +1,352 MiB | +53 MiB | +77 MiB |
@@ -104,3 +106,51 @@ Status: accepted and built, 2026-10-14.
 - Ferroni's limits (retry, time, stack) are left at their defaults, as
   syntect leaves Oniguruma's; a single line is still not cancellable
   mid-line.
+
+## Amendments
+
+### 2026-10-14: fancy-regex's later versions, measured
+
+The comparison above measured fancy-regex 0.16.2. fancy-regex has moved
+since, and syntect's maintainer, who maintains it too, means to drop
+Oniguruma for it (trishume/syntect#711). Its later versions and options
+were measured on the same corpus, each engine given bat's grammars for
+fancy-regex, one engine after another, machine load 1 to 5. Memory is
+anonymous resident memory, as above:
+
+| | Corpus, one thread | Corpus, 8 threads | Warm pass | One 1.2 MB line of TypeScript |
+| --- | --- | --- | --- | --- |
+| fancy-regex 0.16.2 (above) | +589 MiB | +1,352 MiB | 2.3 s | 23 s |
+| 0.19.2 | +216 MiB | +579 MiB | 2.4 s | 22 s |
+| 0.19.2, seek | +541 MiB | +1,555 MiB | 0.60 s | 53 s |
+| main (`4067f51`, not released) | +214 MiB | +574 MiB | 2.2 s | 21 s |
+| main, tuned | +187 MiB | +518 MiB | 1.2 s | 21 s |
+| fancy-regex#290 (open), tuned | +170 MiB | +458 MiB | 1.1 s | 22 s |
+| Ferroni 2.1.3 | +67 MiB | +77 MiB | 0.55 s | 8 s |
+
+- **Tuned** is two options giallo's fancy-regex branch uses
+  (getzola/giallo#69, open), released in no version yet: no delegate
+  prefilter (`build_delegate_prefilter(false)`), and a pattern compiled
+  and searched only on a line holding every byte it requires
+  (`required_bytes`). Everything else is syntect's fancy backend, built
+  for 0.19.
+- Every variant gave Ferroni's scopes on all 27,293 lines.
+- fancy-regex needs 2.7 times less memory than in 0.16.2. Skipping
+  patterns by their required bytes halves the warm pass but saves 13% of
+  the memory: over a whole file, most patterns syntect tries meet a line
+  holding their bytes.
+- What remains grows with threads: each pattern keeps a cache per thread
+  that runs it (the eight threads add 288 MiB to the best variant,
+  10 MiB to Ferroni), so fancy-regex would need coloring on one lane
+  again.
+- Seek is off by default and called not yet battle tested by its
+  authors: it returns wrong matches for some patterns
+  (fancy-regex#301) and grows quadratically with the matches in a text
+  (fancy-regex#302).
+
+The decision stands. The best variant, not released, takes 2.5 times
+Ferroni's memory on one thread and 6 times with eight, at half its
+speed, and still needs syntect patched: syntect 5.3.0 asks for
+fancy-regex 0.16 and skips no pattern. Measure again when syntect's own
+fancy backend skips patterns or a fancy-regex release carries these
+options; the grammars are let go of whatever the engine.
