@@ -10,7 +10,9 @@
 //! Hiding the panel (F4) keeps the shell and its history; it ends when the
 //! shell exits, when the plugin is disabled, or with the window. The keys
 //! the window binds are the shell's while it has the keyboard, but F4 and
-//! the palette (`keymap::TERMINAL_PASSTHROUGH`).
+//! the palette (`keymap::TERMINAL_PASSTHROUGH`); the terminal's own keys
+//! (Ctrl+Shift+C and V, Shift+Insert for the primary selection) are bound
+//! in its place.
 //!
 //! Its links (ADR-029) follow Ctrl+click, or the keyboard: Ctrl+Shift+O
 //! labels them, and typing a label follows its link (in a tab of its own
@@ -114,6 +116,19 @@ fn palette(theme: &Theme) -> Palette {
         fg: rgb(theme.text),
         bg: rgb(theme.bg),
     }
+}
+
+/// What the middle button pastes: the text selected last anywhere on the
+/// desktop, its primary selection (Linux's alone).
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn primary(cx: &gpui::App) -> Option<ClipboardItem> {
+    cx.read_from_primary()
+}
+
+/// No primary selection here: the clipboard.
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn primary(cx: &gpui::App) -> Option<ClipboardItem> {
+    cx.read_from_clipboard()
 }
 
 /// A key with no text of its own, or a Ctrl or Alt chord, as the terminal
@@ -358,14 +373,21 @@ impl Shell {
         }
     }
 
-    pub(crate) fn terminal_paste(&mut self, cx: &mut Context<Self>) {
-        let (Some(session), Some(text)) = (
-            self.terminal_session(),
-            cx.read_from_clipboard().and_then(|item| item.text()),
-        ) else {
+    /// `ui.terminal_paste`: the clipboard, or with `from: primary` what
+    /// the middle button pastes (Shift+Insert).
+    pub(crate) fn terminal_paste(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
+        let Some(session) = self.terminal_session() else {
             return;
         };
-        if !text.is_empty() {
+        let item = if args.get("from").and_then(serde_json::Value::as_str) == Some("primary") {
+            primary(cx)
+        } else {
+            cx.read_from_clipboard()
+        };
+        if let Some(text) = item
+            .and_then(|item| item.text())
+            .filter(|text| !text.is_empty())
+        {
             session.send(Input::Paste(text));
         }
     }

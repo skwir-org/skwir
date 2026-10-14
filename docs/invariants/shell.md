@@ -439,6 +439,12 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `Terminal` context, built by `keymap::install`) except
   `TERMINAL_PASSTHROUGH`; add a key there if it must work from the
   terminal.
+- The terminal's own keys (copy, paste, paging, links) are bound in its
+  place (`when: terminal`). The shadows are bound before every other
+  binding, so a key of the terminal's wins over the same keys bound to
+  the window in any layer. A key it takes never reaches the program: an
+  unbound Ctrl+Shift+C was Ctrl+C to it. Test a new one as GPUI reads the
+  keymap (`keymap::tests::the_terminals_keys_are_its_own_there`).
 - The plugin types a `cd` only while the shell's process group has the
   terminal. Test with a real `/bin/sh`
   (`crates/plugins/terminal/tests/session.rs`).

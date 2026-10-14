@@ -327,6 +327,24 @@ mod args {
         pages: Option<i64>,
     }
 
+    /// What is pasted into the terminal.
+    #[derive(Deserialize, JsonSchema)]
+    #[serde(rename_all = "snake_case")]
+    pub(super) enum PasteFrom {
+        Clipboard,
+        /// What the middle button pastes: the text selected last anywhere
+        /// on the desktop, where it keeps one (Linux); the clipboard
+        /// elsewhere.
+        Primary,
+    }
+
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct TerminalPaste {
+        /// The clipboard, unless said.
+        #[serde(default)]
+        from: Option<PasteFrom>,
+    }
+
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Unlock {
         /// The locked container's device.
@@ -388,7 +406,8 @@ mod args {
 use args::{
     Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold, Folders,
     History, Key, Layout, ListMoveArgs, Object, On, Page, PageLink, Pages, Pan, Pick, Player,
-    Pointer, Popup, Scrub, Settings, Split, Submit, TagsPrompt, Text, Unlock, Url, UsageMode, View,
+    Pointer, Popup, Scrub, Settings, Split, Submit, TagsPrompt, TerminalPaste, Text, Unlock, Url,
+    UsageMode, View,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -736,6 +755,11 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
     ("ui.map_pan", r#"{"dx":1,"dy":0}"#, "Map: move right"),
     ("ui.map_pan", r#"{"dx":0,"dy":-1}"#, "Map: move up"),
     ("ui.map_pan", r#"{"dx":0,"dy":1}"#, "Map: move down"),
+    (
+        "ui.terminal_paste",
+        r#"{"from":"primary"}"#,
+        "Terminal: paste the text selected last",
+    ),
     ("ui.terminal_page", r#"{"pages":1}"#, "Terminal: a page up"),
     (
         "ui.terminal_page",
@@ -1309,7 +1333,8 @@ pub fn declare_all(app: &App) {
         "Terminal: copy",
         "Copy the terminal's selection",
     );
-    none(
+    declare::<TerminalPaste>(
+        app,
         "ui.terminal_paste",
         "Terminal: paste",
         "Paste into the terminal",

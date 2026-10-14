@@ -211,6 +211,10 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // Asked, as a drop asks: what a plugin offers too (Extract Here).
     ("shift-f7", "ui.give_other", Some("pane split selection")),
     ("ctrl-shift-o", "ui.terminal_links", Some("terminal")),
+    // Every terminal's copy and paste: Ctrl+C and Ctrl+V are the
+    // program's. Unbound, Ctrl+Shift+C reached it as Ctrl+C.
+    ("ctrl-shift-c", "ui.terminal_copy", Some("terminal")),
+    ("ctrl-shift-v", "ui.terminal_paste", Some("terminal")),
     ("enter", "ui.review_apply", Some("review")),
     ("escape", "ui.review_cancel", Some("review")),
     ("alt-a", "ui.choose_option", Some("choose")),
@@ -833,6 +837,30 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     ("secondary-3", "ui.view", r#"{"id":"columns"}"#, None),
 ];
 
+/// The terminal's keys that differ by system, as `BUILTIN_ARGS`: what
+/// that system's terminals do. On Linux, Shift+Insert pastes what the
+/// middle button pastes, the primary selection (xterm, Konsole, foot,
+/// kitty, Alacritty).
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+const TERMINAL_KEYS: &[(&str, &str, &str, Option<&str>)] = &[(
+    "shift-insert",
+    "ui.terminal_paste",
+    r#"{"from":"primary"}"#,
+    Some("terminal"),
+)];
+/// A Mac's terminals copy and paste with Cmd, which a program never gets.
+#[cfg(target_os = "macos")]
+const TERMINAL_KEYS: &[(&str, &str, &str, Option<&str>)] = &[
+    ("cmd-c", "ui.terminal_copy", "{}", Some("terminal")),
+    ("cmd-v", "ui.terminal_paste", "{}", Some("terminal")),
+];
+/// Windows Terminal's and the console's other keys for the clipboard.
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
+const TERMINAL_KEYS: &[(&str, &str, &str, Option<&str>)] = &[
+    ("ctrl-insert", "ui.terminal_copy", "{}", Some("terminal")),
+    ("shift-insert", "ui.terminal_paste", "{}", Some("terminal")),
+];
+
 /// The keys of zooming, the same wherever something zooms: `=` and `+`
 /// (GPUI leaves out the Shift a symbol took, so Ctrl+Shift+= arrives as
 /// `ctrl-+` on layouts where `+` is shifted), and the keypad's.
@@ -1415,14 +1443,19 @@ fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
     let shell = BUILTIN
         .iter()
         .map(|(keys, command, when)| (*keys, *command, serde_json::json!({}), *when))
-        .chain(BUILTIN_ARGS.iter().map(|(keys, command, args, when)| {
-            (
-                *keys,
-                *command,
-                serde_json::from_str(args).expect("valid builtin args"),
-                *when,
-            )
-        }))
+        .chain(
+            BUILTIN_ARGS
+                .iter()
+                .chain(TERMINAL_KEYS)
+                .map(|(keys, command, args, when)| {
+                    (
+                        *keys,
+                        *command,
+                        serde_json::from_str(args).expect("valid builtin args"),
+                        *when,
+                    )
+                }),
+        )
         .map(|(keys, command, args, when)| Spec {
             keys: keys.into(),
             command: Some((command.into(), args)),
@@ -1644,7 +1677,6 @@ pub fn install(app: &App, user: Vec<UserBinding>, cx: &mut gpui::App) -> Keymap 
     let revisions = Stamp::revisions(app);
     let bound = bindings(app, &user);
     let mut hints = Vec::new();
-    let mut gpui_bindings = Vec::new();
     let mut typeahead = true;
     for binding in &bound {
         let hidden = binding.hidden_by.is_some();
@@ -1652,25 +1684,9 @@ pub fn install(app: &App, user: Vec<UserBinding>, cx: &mut gpui::App) -> Keymap 
         {
             typeahead = false;
         }
-        let Some((name, args)) = binding.command.clone() else {
-            // Freed keys: nothing below this binding runs where it applies.
-            gpui_bindings.push(KeyBinding::new(
-                &binding.keys,
-                gpui::NoAction,
-                Some(&binding.context),
-            ));
-            continue;
-        };
-        if binding.context == ROOT && !TERMINAL_PASSTHROUGH.contains(&name.as_str()) {
-            // The deeper context's binding to nothing wins, and the key
-            // goes on to the terminal's own listener.
-            gpui_bindings.push(KeyBinding::new(
-                &binding.keys,
-                gpui::NoAction,
-                Some(TERMINAL),
-            ));
-        }
-        if !hidden {
+        if let Some((name, args)) = &binding.command
+            && !hidden
+        {
             hints.push(KeyHint {
                 keys: binding.keys.clone(),
                 command: name.clone(),
@@ -1679,30 +1695,57 @@ pub fn install(app: &App, user: Vec<UserBinding>, cx: &mut gpui::App) -> Keymap 
                 layer: binding.layer,
             });
         }
-        gpui_bindings.push(KeyBinding::new(
-            &binding.keys,
-            RunCommand { name, args },
-            Some(&binding.context),
-        ));
-    }
-    // After the bindings they shadow, so a sequence they start is no
-    // longer awaited in a field either.
-    for keys in typed_in_fields(&bound) {
-        gpui_bindings.push(KeyBinding::new(
-            &keys,
-            gpui::NoAction,
-            Some(crate::input::KEY_CONTEXT),
-        ));
     }
     cx.clear_key_bindings();
     cx.bind_keys(crate::input::key_bindings());
-    cx.bind_keys(gpui_bindings);
+    cx.bind_keys(gpui_bindings(&bound));
     Keymap {
         hints,
         bound,
         stamp: Stamp { revisions, user },
         typeahead,
     }
+}
+
+/// What GPUI binds for `bound`, beside the text input's own keys.
+fn gpui_bindings(bound: &[Bound]) -> Vec<KeyBinding> {
+    // The window's keys, bound to nothing in the terminal: the deeper
+    // place wins, and the key goes on to the terminal's own listener.
+    // First, so a key bound in the terminal itself (Ctrl+Shift+C) is the
+    // later of its place and wins, whichever layer binds the same keys to
+    // the window.
+    let mut out: Vec<KeyBinding> = bound
+        .iter()
+        .filter(|binding| {
+            binding.context == ROOT
+                && binding
+                    .command
+                    .as_ref()
+                    .is_some_and(|(name, _)| !TERMINAL_PASSTHROUGH.contains(&name.as_str()))
+        })
+        .map(|binding| KeyBinding::new(&binding.keys, gpui::NoAction, Some(TERMINAL)))
+        .collect();
+    for binding in bound {
+        out.push(match binding.command.clone() {
+            Some((name, args)) => KeyBinding::new(
+                &binding.keys,
+                RunCommand { name, args },
+                Some(&binding.context),
+            ),
+            // Freed keys: nothing below this binding runs where it applies.
+            None => KeyBinding::new(&binding.keys, gpui::NoAction, Some(&binding.context)),
+        });
+    }
+    // After the bindings they shadow, so a sequence they start is no
+    // longer awaited in a field either.
+    for keys in typed_in_fields(bound) {
+        out.push(KeyBinding::new(
+            &keys,
+            gpui::NoAction,
+            Some(crate::input::KEY_CONTEXT),
+        ));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1897,6 +1940,75 @@ mod tests {
         assert!(!kept.contains(&"q".to_owned()), "freed, it runs nothing");
     }
 
+    /// In the terminal its own keys run, even where a later layer binds the
+    /// same keys to the window, and the window's other keys go on to the
+    /// program but F4 and the palette: unbound, Ctrl+Shift+C reached the
+    /// shell as Ctrl+C. Read as GPUI reads the bindings `install` makes.
+    #[test]
+    fn the_terminals_keys_are_its_own_there() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::commands::declare_all(&app);
+        app.registry.keymap.add(
+            "terminal",
+            KeyBinding {
+                keys: "f4".into(),
+                command: Invocation::new("ui.terminal"),
+                when: None,
+            },
+        );
+        let user = [UserBinding {
+            id: "1".into(),
+            keys: "ctrl-shift-c".into(),
+            command: Some(Invocation::new("toggle_hidden")),
+            when: None,
+        }];
+        let keymap = gpui::Keymap::new(super::gpui_bindings(&super::bindings(&app, &user)));
+        let run = |keys: &str, places: &[&str]| -> Option<String> {
+            let stack: Vec<gpui::KeyContext> = places
+                .iter()
+                .map(|place| gpui::KeyContext::parse(place).unwrap())
+                .collect();
+            let stroke = gpui::Keystroke::parse(keys).unwrap();
+            let (found, _) = keymap.bindings_for_input(&[stroke], &stack);
+            found.first().map(|binding| {
+                let run = binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<super::RunCommand>();
+                run.expect("a command").name.clone()
+            })
+        };
+        let terminal = [super::ROOT, super::TERMINAL];
+        assert_eq!(
+            run("ctrl-shift-c", &terminal).as_deref(),
+            Some("ui.terminal_copy")
+        );
+        assert_eq!(
+            run("ctrl-shift-v", &terminal).as_deref(),
+            Some("ui.terminal_paste")
+        );
+        assert_eq!(
+            run("ctrl-shift-c", &[super::ROOT]).as_deref(),
+            Some("toggle_hidden")
+        );
+        assert_eq!(
+            run("ctrl-h", &[super::ROOT]).as_deref(),
+            Some("toggle_hidden")
+        );
+        assert_eq!(run("ctrl-h", &terminal), None, "the program's");
+        assert_eq!(run("f4", &terminal).as_deref(), Some("ui.terminal"));
+        assert_eq!(
+            run("secondary-shift-p", &terminal).as_deref(),
+            Some("ui.palette")
+        );
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        assert_eq!(
+            run("shift-insert", &terminal).as_deref(),
+            Some("ui.terminal_paste")
+        );
+    }
+
     /// The layers stand in their order whatever order the plugins came in:
     /// a scheme over the shell over a plugin, the user over everything.
     #[test]
@@ -1985,7 +2097,12 @@ mod tests {
         let keys = BUILTIN
             .iter()
             .map(|(keys, ..)| (*keys).to_owned())
-            .chain(BUILTIN_ARGS.iter().map(|(keys, ..)| (*keys).to_owned()))
+            .chain(
+                BUILTIN_ARGS
+                    .iter()
+                    .chain(super::TERMINAL_KEYS)
+                    .map(|(keys, ..)| (*keys).to_owned()),
+            )
             .chain(zoom_specs().map(|(keys, ..)| keys));
         for keys in keys {
             assert!(valid_keys(&keys), "{keys}");

@@ -853,6 +853,13 @@ said with code points in the grammar; the patches offered to syntect and
 two-face; what the code view leaves beyond plain text (some
 7 MiB, not its grammars) not looked into.
 
+The terminal's copy and paste keys, which ADR-019 named, had never been
+bound: Ctrl+Shift+C reached the program as Ctrl+C and interrupted it.
+They are bound in the terminal's place, and the window's keys shadowed
+there come before every binding, so the terminal's win whatever layer
+binds the same keys to the window; Shift+Insert pastes the primary
+selection on Linux (ADR-019, amendment of 2026-10-14).
+
 ---
 
 ## Maps

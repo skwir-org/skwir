@@ -104,3 +104,21 @@ folder.
 | Opening it first in a fresh process    | +45 MB, mostly lavapipe's first mono text (18 MB libLLVM, 14 MB GPU buffers), as for a text preview |
 | 300 000 lines of `seq`                 | +29 MB PSS (history: 10 000 × 100 cells × 24 B); ~6.4 cores for 2 s under lavapipe, then 0 % |
 | Idle, panel open                       | 0 % CPU                                                      |
+
+### 2026-10-14: the copy and paste keys
+
+The decision named Ctrl+Shift+C / V, but nothing bound them: only the
+palette ran `ui.terminal_copy` and `ui.terminal_paste`. Ctrl+Shift+C
+reached the program as Ctrl+C (`0x03`): copying interrupted it.
+Ctrl+Shift+V arrived as Ctrl+V.
+
+- Both are bound in the `Terminal` context. `keymap::install` binds the
+  window's shadowed keys before every other binding, so a key bound in
+  the terminal wins over the same keys bound to the window in any layer
+  (a user's Ctrl+Shift+C for the whole window had silenced it again). A
+  test reads the bindings as GPUI does.
+- Shift+Insert pastes what the middle button pastes, the primary
+  selection, on Linux (`ui.terminal_paste` with `from: primary`), as
+  xterm, Konsole, foot, kitty and Alacritty do. On Windows Ctrl+Insert
+  and Shift+Insert copy and paste the clipboard, as Windows Terminal
+  does; on macOS Cmd+C and V. Both are compiled only.

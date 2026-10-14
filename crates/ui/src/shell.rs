@@ -1880,7 +1880,7 @@ impl Shell {
             "timeline" => self.toggle_timeline(cx),
             "terminal" => self.toggle_terminal(window, cx),
             "terminal_copy" => self.terminal_copy(cx),
-            "terminal_paste" => self.terminal_paste(cx),
+            "terminal_paste" => self.terminal_paste(args, cx),
             "terminal_page" => self.terminal_page(args),
             "terminal_links" => self.label_terminal_links(cx),
             "timeline_bucket" => {
