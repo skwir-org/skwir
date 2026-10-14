@@ -147,6 +147,16 @@ impl Nested {
     pub fn extracted(&self) -> bool {
         self.directory.is_some()
     }
+
+    /// What the container calls it (`Row::target`).
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    /// Where it is read: the file written out, or a track's own.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 /// The tracks the player walks instead of the folder's: the rows of the

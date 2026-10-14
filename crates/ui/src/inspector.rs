@@ -998,7 +998,7 @@ impl Shell {
     }
 
     /// `ui.inspect` on the inspection the panel shows.
-    fn inspect_here(
+    pub(crate) fn inspect_here(
         &mut self,
         args: &serde_json::Value,
         window: &mut Window,
@@ -1467,9 +1467,8 @@ impl Shell {
             // Only a book's links to its own pages mean something inside
             // a container: those fall through to the provider below.
             if kind != Some(InspectionKind::Book) || crate::links::is_address(href) {
-                let from = self.preview.path().map(std::path::Path::to_path_buf);
                 let tab = args["tab"].as_bool() == Some(true);
-                self.follow_document_link(href, from.as_deref(), tab, window, cx);
+                self.follow_document_link(href, tab, window, cx);
                 return;
             }
         }

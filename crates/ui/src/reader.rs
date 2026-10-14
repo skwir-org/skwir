@@ -341,10 +341,7 @@ impl Shell {
             .map(|l| l.destination.clone());
         match target {
             Some(Destination::Page(page)) => self.preview_go_page(page, cx),
-            Some(Destination::Uri(uri)) => {
-                let from = self.preview.path().map(std::path::Path::to_path_buf);
-                self.follow_document_link(&uri, from.as_deref(), tab, window, cx);
-            }
+            Some(Destination::Uri(uri)) => self.follow_document_link(&uri, tab, window, cx),
             None => {}
         }
     }

@@ -43,6 +43,9 @@ struct Goto {
     /// for, not another pane's of the same file.
     pane: skwir_core::workspace::PaneId,
     path: PathBuf,
+    /// The member of the container at `path` the place is in, if any
+    /// (`Nested::target`).
+    member: Option<String>,
     mark: Mark,
     until: Instant,
 }
@@ -236,16 +239,17 @@ impl Shell {
         );
     }
 
-    /// A link a document holds, followed where it says
+    /// A link the document the preview shows holds, followed where it says
     /// (`docs/invariants/previews.md`): an address to the desktop through
     /// `ui.open_url`, anything else to a place on this machine, read next
-    /// to `from` (the document holding it) and shown in its folder,
-    /// selected, which the preview then follows; with `tab`, in a tab of
-    /// its own. A link is a place to show, never a file to run.
+    /// to the document and shown in its folder, selected, which the
+    /// preview then follows; with `tab`, in a tab of its own. In a document
+    /// inside a container, what a link names beside it is the container's
+    /// (`follow_member_link`). A link is a place to show, never a file to
+    /// run.
     pub(crate) fn follow_document_link(
         &mut self,
         href: &str,
-        from: Option<&std::path::Path>,
         tab: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -265,12 +269,27 @@ impl Shell {
             );
             return;
         }
-        let Some((target, fragment)) = from.and_then(|from| document_link(from, href)) else {
+        let member = self.preview.nested.last().cloned();
+        if let Some(member) = member.as_ref().filter(|member| member.extracted())
+            && !href.starts_with('/')
+            && !href.starts_with("file:")
+        {
+            self.follow_member_link(member, href, window, cx);
+            return;
+        }
+        // A track is a file of its own; a member written out is read from
+        // its container's folder.
+        let from = match &member {
+            Some(member) if !member.extracted() => Some(member.path().to_path_buf()),
+            _ => self.preview.path().map(std::path::Path::to_path_buf),
+        };
+        let Some((target, fragment)) = from.as_deref().and_then(|from| document_link(from, href))
+        else {
             self.set_status("This link goes nowhere we can open", false, cx);
             return;
         };
         // The document itself, named: the place it says, here, as `#name`.
-        if from == Some(target.as_path()) {
+        if from.as_deref() == Some(target.as_path()) {
             if let Some(name) = fragment {
                 self.show_mark(Mark::Anchor(name), cx);
             }
@@ -281,6 +300,7 @@ impl Shell {
             tab,
             mark: fragment.map(Mark::Anchor),
             from: from
+                .as_deref()
                 .and_then(std::path::Path::parent)
                 .map(std::path::Path::to_path_buf),
         };
@@ -290,6 +310,63 @@ impl Shell {
                 |name| name.to_string_lossy().into_owned(),
             );
             self.set_status(format!("{name} is not there any more"), true, cx);
+        }
+    }
+
+    /// A link of `member`, a document written out of its container, that
+    /// names a file beside it: that file of the container, previewed in its
+    /// place (`sibling`), at the mark the link names. Never the disk around
+    /// the copy written out, which holds nothing of the container.
+    fn follow_member_link(
+        &mut self,
+        member: &crate::preview::Nested,
+        href: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let container = match self.preview.nested.iter().rev().nth(1) {
+            Some(outer) => outer.name.clone(),
+            None => self
+                .preview
+                .path()
+                .and_then(std::path::Path::file_name)
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        };
+        let found = match self.preview.parked() {
+            Some(parked) => container_link(&parked.display.data.rows, member.target(), href),
+            None => Err(Inside::Unlisted),
+        };
+        let (target, mark) = match found {
+            Ok(found) => found,
+            Err(why) => {
+                self.set_status(why.said(&container), false, cx);
+                return;
+            }
+        };
+        if target == member.target() {
+            if let Some(mark) = mark {
+                self.show_mark(Mark::Anchor(mark), cx);
+            }
+            return;
+        }
+        self.inspect_here(
+            &serde_json::json!({ "action": "sibling", "target": target }),
+            window,
+            cx,
+        );
+        if let (Some(mark), Some(pane), Some(path)) = (
+            mark,
+            self.preview.pane(),
+            self.preview.path().map(std::path::Path::to_path_buf),
+        ) {
+            self.links.goto = Some(Goto {
+                pane,
+                path,
+                member: Some(target),
+                mark: Mark::Anchor(mark),
+                until: Instant::now() + GOTO_WAIT,
+            });
         }
     }
 
@@ -361,6 +438,7 @@ impl Shell {
         self.links.goto = Some(Goto {
             pane,
             path,
+            member: None,
             mark,
             until: Instant::now() + GOTO_WAIT,
         });
@@ -383,6 +461,7 @@ impl Shell {
         }
         if self.preview.path() != Some(goto.path.as_path())
             || self.preview.pane() != Some(goto.pane)
+            || self.preview.nested.last().map(|member| member.target()) != goto.member.as_deref()
         {
             return;
         }
@@ -434,6 +513,85 @@ impl Shell {
         // A text read where it is shown finds the line on a worker.
         self.ask_text();
         cx.notify();
+    }
+}
+
+/// Why a link of a document inside a container leads to none of its
+/// files.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Inside {
+    /// The container's files are not listed above the document.
+    Unlisted,
+    /// Above the container's top.
+    Out,
+    /// No file of it has that path.
+    Missing(String),
+    /// A folder of it, which has no preview.
+    Folder(String),
+}
+
+impl Inside {
+    fn said(&self, container: &str) -> String {
+        match self {
+            Inside::Unlisted => format!("This link names a file inside “{container}”"),
+            Inside::Out => format!("This link leads out of “{container}”"),
+            Inside::Missing(path) => format!("“{container}” holds no “{path}”"),
+            Inside::Folder(path) => format!("“{path}” is a folder of “{container}”"),
+        }
+    }
+}
+
+/// In a container's rows (a tree: each row a name, its first cell, at a
+/// depth), the file a link `href` of member `own` (its `Row::target`)
+/// names from where `own` is, and the mark the link names there.
+pub(crate) fn container_link(
+    rows: &[skwir_core::inspection::Row],
+    own: &str,
+    href: &str,
+) -> Result<(String, Option<String>), Inside> {
+    let decode = |text: &str| {
+        String::from_utf8_lossy(&skwir_platform::uri::percent_decode(text)).into_owned()
+    };
+    let (href, mark) = href.split_once('#').unwrap_or((href, ""));
+    let mark = (!mark.is_empty()).then(|| decode(mark));
+    let href = decode(href.split('?').next().unwrap_or(href));
+    // Each row's path, its folders' names before its own.
+    let mut names: Vec<&str> = Vec::new();
+    let paths: Vec<Vec<&str>> = rows
+        .iter()
+        .map(|row| {
+            names.truncate(row.depth);
+            names.push(row.cells.first().map_or("", String::as_str));
+            names.clone()
+        })
+        .collect();
+    let mine = rows
+        .iter()
+        .position(|row| row.target.as_deref() == Some(own))
+        .ok_or(Inside::Unlisted)?;
+    let mut wanted: Vec<&str> = paths[mine][..paths[mine].len() - 1].to_vec();
+    if href.is_empty() {
+        return Ok((own.to_owned(), mark));
+    }
+    for part in href.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                wanted.pop().ok_or(Inside::Out)?;
+            }
+            part => wanted.push(part),
+        }
+    }
+    let said = wanted.join("/");
+    let row = paths
+        .iter()
+        .position(|path| *path == wanted)
+        .map(|index| &rows[index])
+        .ok_or_else(|| Inside::Missing(said.clone()))?;
+    match &row.target {
+        Some(target) => Ok((target.clone(), mark)),
+        None if row.branch => Err(Inside::Folder(said)),
+        None => Err(Inside::Missing(said)),
     }
 }
 
@@ -589,6 +747,44 @@ mod tests {
         assert_eq!(at("file://host/share/x"), None);
         assert_eq!(at(""), None);
         assert_eq!(at("#section"), None);
+    }
+
+    /// A link of a document inside an archive names a file of the archive,
+    /// from where the document is in it: its rows' tree, not the disk.
+    #[test]
+    fn a_link_inside_a_container_names_its_own_files() {
+        let row = |name: &str, depth: usize, target: Option<&str>| skwir_core::inspection::Row {
+            cells: vec![name.to_owned()],
+            bytes: None,
+            depth,
+            branch: target.is_none(),
+            target: target.map(str::to_owned),
+        };
+        let rows = [
+            row("docs", 0, None),
+            row("guide.md", 1, Some("1")),
+            row("l'été", 1, None),
+            row("notes.md", 2, Some("3")),
+            row("read me.md", 1, Some("2")),
+            row("top.md", 0, Some("4")),
+        ];
+        let at = |href| container_link(&rows, "2", href);
+        let found =
+            |target: &str, mark: Option<&str>| Ok((target.to_owned(), mark.map(str::to_owned)));
+        assert_eq!(at("guide.md#setup"), found("1", Some("setup")));
+        assert_eq!(at("./l%27%C3%A9t%C3%A9/notes.md"), found("3", None));
+        assert_eq!(at("../top.md?raw=1"), found("4", None));
+        assert_eq!(at("read%20me.md#the-end"), found("2", Some("the-end")));
+        assert_eq!(at("../../top.md"), Err(Inside::Out));
+        assert_eq!(
+            at("missing.md"),
+            Err(Inside::Missing("docs/missing.md".into()))
+        );
+        assert_eq!(at("l'été"), Err(Inside::Folder("docs/l'été".into())));
+        assert_eq!(
+            container_link(&rows, "9", "guide.md"),
+            Err(Inside::Unlisted)
+        );
     }
 
     #[test]

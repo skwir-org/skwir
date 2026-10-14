@@ -149,3 +149,19 @@ A document's own links are followed only where that stays on this
 machine from its folder too (`RevealAt::from`): on Windows a link to
 `//host/share` connected on a click. `file:///` links are read as the
 system writes them (`file:///C:/a%20b` on Windows was `/C:/a b`).
+
+### 2026-10-14: links inside a container stay inside it
+
+A document opened inside an archive or a message read its relative
+links next to the archive on the disk: `docs/x.md` in a README of
+`book.zip` showed whatever `docs/x.md` sat beside `book.zip`.
+
+- A relative link of a member written out of its container names a
+  file of the container from where the member is in it. The container's
+  rows say each one's path (a tree by depth, named by the first cell),
+  so the shell asks no plugin; the file is previewed in the member's
+  place, as a click on its row would, at the mark the link names.
+- A link above the container's top, to a folder of it or to a file it
+  does not hold says so; it never falls back to the disk.
+- An absolute or `file:` link is still a place on this machine, read
+  from the container's folder.

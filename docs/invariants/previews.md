@@ -207,6 +207,15 @@ A text document is read as its structure, or laid out as pages.
 - A document's link is followed only where that stays on this machine
   from its folder (`RevealAt::from`, checked with the stat on a worker):
   `//host/share` on Windows connects as the user.
+- In a document written out of its container (an archive's file, a
+  message's attachment), a relative link names a file of the container,
+  from where the document is in it: its rows' tree (depth, first cell)
+  gives each row's path (`links::container_link`), and that file is
+  previewed in the document's place (`sibling`), at the mark the link
+  names. Never the disk around the copy written out. A link that leaves
+  the container, or names a file or folder it does not preview, says so.
+  A track of a playlist is a file of its own: its links are read next to
+  it.
 - Every address, written or found, and the map's attribution reach the
   desktop through `ui.open_url`.
 

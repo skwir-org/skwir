@@ -888,6 +888,10 @@ amendment). A document's own links are followed only where that stays
 on this machine. Not covered: the structured-data views made whole and
 bare names.
 
+A document inside an archive or a message followed its relative links
+on the disk beside the archive. They now name the container's own files,
+found from its rows' tree and previewed in the document's place.
+
 ---
 
 ## Maps
