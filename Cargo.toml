@@ -153,10 +153,17 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-segmentation = "1"
 jiff = "0.2"
 plist = { version = "1", default-features = false }
-syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+# Grammars match with Ferroni, a pure-Rust port of Oniguruma (ADR-060).
+syntect = { version = "5", default-features = false, features = [
+    "parsing",
+    "dump-load",
+    "plist-load",
+    "default-themes",
+    "regex-ferroni",
+] }
 # bat's grammars over syntect's defaults (TypeScript, Nix, Dockerfile, TOML…),
-# built for the same pure-Rust regex engine.
-two-face = { version = "0.5", default-features = false, features = ["syntect-default-fancy"] }
+# all of Oniguruma's set, which Ferroni matches as Oniguruma does.
+two-face = { version = "0.5", default-features = false, features = ["syntect-ferroni"] }
 indexmap = "2"
 proptest = "1"
 tempfile = "3"
@@ -226,9 +233,11 @@ inherits = "release"
 debug = false
 strip = "debuginfo"
 
-# Vendored gpui 0.2.2 and xdg-mime 0.4.0 with skwir's patches (see each
-# one's README.skwir.md). Remove an entry and its directory once its
-# patches are upstream.
+# Vendored gpui 0.2.2, xdg-mime 0.4.0, syntect 5.3.0 and two-face 0.5.2
+# with skwir's patches (see each one's README.skwir.md). Remove an entry and
+# its directory once its patches are upstream.
 [patch.crates-io]
 gpui = { path = "vendor/gpui" }
 xdg-mime = { path = "vendor/xdg-mime" }
+syntect = { path = "vendor/syntect" }
+two-face = { path = "vendor/two-face" }

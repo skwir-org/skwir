@@ -595,12 +595,39 @@ mod tests {
             ("kt", "val answer: Int = 42"),
             ("ini", "name = value ; a note"),
             ("typescript", "const answer: number = 42;"),
+            // In Oniguruma's set of bat's grammars, not in fancy-regex's.
+            ("ps1", "$answer = Get-Answer -Name 'life' # a note"),
         ] {
             let palette = Palette::of(&CodeTheme::own(false));
             let runs = Highlighter::new(Some(language), &palette).line(line);
             let colors: BTreeSet<_> = runs.iter().filter_map(|run| run.color).collect();
             assert!(colors.len() > 1, "{language} is highlighted: {runs:?}");
         }
+    }
+
+    #[test]
+    fn a_pattern_ferroni_refuses_never_matches_and_its_grammar_still_highlights() {
+        // Vue Component's, which Oniguruma takes and Ferroni 2.1 refuses
+        // (`\x7f-\x9f` in a class). It must not panic its grammar.
+        let refused = r#"(?=(?:[^ "'>/=\x00-\x1f\x7f-\x9f]))"#;
+        assert!(syntect::parsing::Regex::try_compile(refused).is_some());
+        let regex = syntect::parsing::Regex::new(refused.to_owned());
+        assert!(!regex.is_match("class"));
+        assert!(!regex.search("class", 0, 5, None));
+        let palette = Palette::of(&CodeTheme::own(false));
+        let mut vue = Highlighter::new(Some("vue"), &palette);
+        let mut colors = BTreeSet::new();
+        for line in [
+            "<template>",
+            "  <div class=\"answer\" v-if=\"ok\" @click=\"go(42)\">{{ answer }}</div>",
+            "</template>",
+            "<script setup lang=\"ts\">",
+            "const answer: number = 42;",
+            "</script>",
+        ] {
+            colors.extend(vue.line(line).iter().filter_map(|run| run.color));
+        }
+        assert!(colors.len() > 2, "Vue is highlighted: {colors:?}");
     }
 
     #[test]

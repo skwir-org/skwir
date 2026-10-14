@@ -1,0 +1,53 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -48,6 +48,9 @@
+ syntect-onig = ["syntect/regex-onig"]
+ # A minimal set of `syntect` features with the fancy regex implementation
+ syntect-fancy = ["syntect/regex-fancy"]
++# A minimal set of `syntect` features with Ferroni, a pure-Rust port of onig:
++# onig's syntax definitions, all of them
++syntect-ferroni = ["syntect/regex-ferroni"]
+ 
+ # Toggles on `syntect`'s `default-onig` feature
+ syntect-default-onig = ["syntect-onig", "syntect/default-onig"]
+--- a/src/syntax.rs
++++ b/src/syntax.rs
+@@ -14,9 +14,9 @@
+ /// let dockerfile = syn_set.find_syntax_by_name("Dockerfile").unwrap();
+ /// ```
+ pub fn extra_no_newlines() -> SyntaxSet {
+-    #[cfg(feature = "syntect-onig")]
++    #[cfg(any(feature = "syntect-onig", feature = "syntect-ferroni"))]
+     let bytes = include_bytes!("../generated/syntaxes-onig-no-newlines.bin");
+-    #[cfg(not(feature = "syntect-onig"))]
++    #[cfg(not(any(feature = "syntect-onig", feature = "syntect-ferroni")))]
+     let bytes = include_bytes!("../generated/syntaxes-fancy-no-newlines.bin");
+ 
+     dumps::from_uncompressed_data(bytes).unwrap()
+@@ -34,9 +34,9 @@
+ /// let dockerfile = syn_set.find_syntax_by_name("Dockerfile").unwrap();
+ /// ```
+ pub fn extra_newlines() -> SyntaxSet {
+-    #[cfg(feature = "syntect-onig")]
++    #[cfg(any(feature = "syntect-onig", feature = "syntect-ferroni"))]
+     let bytes = include_bytes!("../generated/syntaxes-onig-newlines.bin");
+-    #[cfg(not(feature = "syntect-onig"))]
++    #[cfg(not(any(feature = "syntect-onig", feature = "syntect-ferroni")))]
+     let bytes = include_bytes!("../generated/syntaxes-fancy-newlines.bin");
+ 
+     dumps::from_uncompressed_data(bytes).unwrap()
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -191,7 +191,11 @@
+ }
+ 
+ // Compile error if we're using syntaxes without setting fancy vs onig
+-#[cfg(not(any(feature = "syntect-onig", feature = "syntect-fancy")))]
++#[cfg(not(any(
++    feature = "syntect-onig",
++    feature = "syntect-fancy",
++    feature = "syntect-ferroni"
++)))]
+ compile_error!(
+     r#"You must set either the `syntect-onig` or `syntect-fancy` feature matching the regex
+ implementation that you're using for `syntect`. `syntect` and `two-face` both default to onig along
