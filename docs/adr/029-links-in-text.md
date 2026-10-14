@@ -165,3 +165,22 @@ links next to the archive on the disk: `docs/x.md` in a README of
   does not hold says so; it never falls back to the disk.
 - An absolute or `file:` link is still a place on this machine, read
   from the container's folder.
+
+### 2026-10-14: Obsidian's links, found without a search
+
+`[[Note]]`, `[[Note#Heading]]` and `[[Note|label]]` were text. They are
+links now (pulldown-cmark's wikilinks), made ordinary relative links
+when the note is read, so they are followed, land and go back as any
+other.
+
+- The note named is looked for as `Note.md`, then as written, beside the
+  note, then from the vault's top (the nearest folder above holding
+  `.obsidian`): a few lookups per distinct name, on the conversion
+  worker. A name that climbs (`..`) or is absolute is looked up nowhere.
+- Obsidian finds a note anywhere in the vault by its name. Skwir does
+  not search for it: one found nowhere above leads to `Note.md` beside
+  the note, which says it is not there. The search waits for an index of
+  names that makes it free (skwird, ADR-050).
+- A heading becomes the slug Skwir's headings carry; a block's `^id`
+  stays as written and is said missing. Embeds (`![[…]]`) are pictures
+  beside the note only, as Markdown's are; a note embedded is not shown.

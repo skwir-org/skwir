@@ -348,6 +348,15 @@ A text document is read as its structure, or laid out as pages.
 - Headings carry a link target (`Block::anchor`): the explicit `{#id}`,
   else a slug, numbered when it repeats. `[jump](#the-plan)` resolves
   against it.
+- Obsidian's links (`[[Note]]`, `[[Note#Heading|label]]`) become
+  ordinary relative links when the note is read (`markdown::Wiki`, on
+  the conversion worker): `Note.md`, then the name as written, beside the
+  note, then from the vault's top (the folder holding `.obsidian`); each
+  name looked up once, a name that climbs or is absolute nowhere, and
+  only on this machine (`Here`). One found nowhere leads to `Note.md`
+  beside the note. The heading is the slug the headings get; a block's
+  `^id` stays as written. No search of the vault: that waits for an
+  index of names that makes it free.
 - Front matter is parsed as a metadata block and skipped, never read as
   a rule and a heading.
 - A list marker belongs to its item's first block: the block that takes

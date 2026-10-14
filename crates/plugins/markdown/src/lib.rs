@@ -140,7 +140,9 @@ impl PreviewProvider for Provider {
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         let image = |href: &str| rich_preview::local_picture(base, href, cancel);
         let (title, page, notice) = if format == Format::Markdown {
-            ("Markdown", markdown::parse(&source, cancel, image)?, "")
+            let mut wiki = markdown::Wiki::new(&path);
+            let page = markdown::parse(&source, cancel, image, wiki.as_mut())?;
+            ("Markdown", page, "")
         } else {
             let markup = if format == Format::Xhtml {
                 rich_preview::Markup::Xhtml
@@ -178,9 +180,15 @@ fn notebook(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Insp
     let value = notebook::read(path, cancel)?;
     let read = notebook::markdown(&value, cancel)?;
     let base = path.parent().unwrap_or(std::path::Path::new("."));
-    let page = markdown::parse(&read.markdown, cancel, |href| {
-        notebook::named(&value, href).or_else(|| rich_preview::local_picture(base, href, cancel))
-    })?;
+    let page = markdown::parse(
+        &read.markdown,
+        cancel,
+        |href| {
+            notebook::named(&value, href)
+                .or_else(|| rich_preview::local_picture(base, href, cancel))
+        },
+        None,
+    )?;
     let mut data = measured(
         Inspection {
             kind: InspectionKind::Markdown,

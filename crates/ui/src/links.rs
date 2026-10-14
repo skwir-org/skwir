@@ -309,7 +309,7 @@ impl Shell {
                 || target.display().to_string(),
                 |name| name.to_string_lossy().into_owned(),
             );
-            self.set_status(format!("{name} is not there any more"), true, cx);
+            self.set_status(format!("“{name}” is not there"), true, cx);
         }
     }
 

@@ -1002,7 +1002,7 @@ impl Shell {
                         || path.display().to_string(),
                         |name| name.to_string_lossy().into_owned(),
                     );
-                    this.set_status(format!("“{name}” is not there any more"), true, cx);
+                    this.set_status(format!("“{name}” is not there"), true, cx);
                     return;
                 };
                 let pane = if at.tab {

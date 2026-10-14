@@ -892,6 +892,11 @@ A document inside an archive or a message followed its relative links
 on the disk beside the archive. They now name the container's own files,
 found from its rows' tree and previewed in the document's place.
 
+Obsidian's `[[links]]` are links: the note named beside the note or from
+the vault's top, a heading by its slug (ADR-029 amendment). Not done:
+a search of the vault for a note elsewhere (waits for skwird's index),
+notes embedded with `![[…]]`.
+
 ---
 
 ## Maps

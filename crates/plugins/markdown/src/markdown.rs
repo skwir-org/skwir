@@ -8,7 +8,7 @@
 //! handed to the shared reading-mode HTML reader rather than dropped. Its
 //! images go through the same document-local loader, which names each
 //! picture for the view to decode when it shows it.
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
 use skwir_core::{
     CancelToken,
     inspection::{Block, BlockKind, Picture, Run},
@@ -17,6 +17,106 @@ use skwir_platform::{
     inspection::{check, limits},
     rich_preview,
 };
+
+/// Where a note's Obsidian links (`[[Note]]`, `[[Note#Heading|label]]`)
+/// lead, found without a search: the note named, as `Note.md` or as
+/// written, next to the note, else from the vault's top (the folder that
+/// holds `.obsidian`). Obsidian looks through the whole vault; that waits
+/// for an index of names that makes it free. Each becomes an ordinary
+/// relative link (`wiki_href`), so it is followed as any other.
+pub struct Wiki {
+    dir: std::path::PathBuf,
+    /// The vault's top, when the note is in one, and the way up to it from
+    /// the note's folder (`../..`).
+    top: Option<(std::path::PathBuf, String)>,
+    here: skwir_core::fs::volume::Here,
+    /// What each name was found as, from the note's folder.
+    known: std::collections::HashMap<String, Option<String>>,
+}
+
+impl Wiki {
+    /// For the note at `note`. Looks for the vault's top in the folders
+    /// above it: on a worker.
+    pub fn new(note: &std::path::Path) -> Option<Self> {
+        let dir = note.parent().filter(|dir| dir.is_absolute())?.to_path_buf();
+        let top = dir
+            .ancestors()
+            .enumerate()
+            .find(|(_, folder)| folder.join(".obsidian").is_dir())
+            .map(|(up, folder)| (folder.to_path_buf(), "../".repeat(up)));
+        Some(Self {
+            dir,
+            top,
+            here: skwir_core::fs::volume::Here::now(),
+            known: std::collections::HashMap::new(),
+        })
+    }
+
+    /// Where the note named `name` is, from the note's folder, if it is
+    /// next to it or under the vault's top. A name that climbs (`..`) or is
+    /// absolute is looked up nowhere.
+    fn find(&mut self, name: &str) -> Option<String> {
+        if let Some(known) = self.known.get(name) {
+            return known.clone();
+        }
+        let plain = !name.starts_with('/')
+            && !name.contains('\\')
+            && name.split('/').all(|part| part != ".." && part != ".");
+        let names = [
+            (!name.to_lowercase().ends_with(".md")).then(|| format!("{name}.md")),
+            Some(name.to_owned()),
+        ];
+        let places = std::iter::once((self.dir.clone(), String::new())).chain(self.top.clone());
+        let found = plain
+            .then(|| {
+                places.into_iter().find_map(|(folder, up)| {
+                    names.iter().flatten().find_map(|name| {
+                        let path = folder.join(name);
+                        (self.here.holds(&path, &self.dir) && path.is_file())
+                            .then(|| format!("{up}{name}"))
+                    })
+                })
+            })
+            .flatten();
+        self.known.insert(name.to_owned(), found.clone());
+        found
+    }
+}
+
+/// The relative link `[[target]]` writes: the note `find` finds, else
+/// `Note.md` beside the note (where Obsidian makes a note), its heading a
+/// slug as the headings here are named (a block's `^id` as it is). Escaped
+/// where a link's text would be cut: `%`, `#` and `?`.
+fn wiki_href(target: &str, find: impl FnOnce(&str) -> Option<String>) -> String {
+    let escape = |text: &str| {
+        text.replace('%', "%25")
+            .replace('#', "%23")
+            .replace('?', "%3F")
+    };
+    let (name, heading) = target.split_once('#').unwrap_or((target, ""));
+    let name = name.trim();
+    let mut href = if name.is_empty() {
+        String::new()
+    } else {
+        escape(&find(name).unwrap_or_else(|| {
+            if name.to_lowercase().ends_with(".md") {
+                name.to_owned()
+            } else {
+                format!("{name}.md")
+            }
+        }))
+    };
+    let heading = heading.trim();
+    if !heading.is_empty() {
+        href.push('#');
+        href.push_str(&escape(&if heading.starts_with('^') {
+            heading.to_owned()
+        } else {
+            slug(heading)
+        }));
+    }
+    href
+}
 
 /// Bullet glyphs by nesting depth, cycling when the list goes deeper.
 const BULLETS: [&str; 5] = ["•", "◦", "▪", "‣", "⁃"];
@@ -85,8 +185,9 @@ fn begin(current: &mut Block, quote_depth: u32, lists: &[Option<u64>], marker: O
 
 /// The inline state an emphasis, link or strikethrough tag changes. A table
 /// cell is text like any other, so both the block path and the table path
-/// read these through here and keep their runs.
-fn inline_event(inline: &mut Inline, event: &Event) -> bool {
+/// read these through here and keep their runs. An Obsidian link leads
+/// where `wiki` finds it (`wiki_href`).
+fn inline_event(inline: &mut Inline, event: &Event, wiki: Option<&mut Wiki>) -> bool {
     match event {
         Event::Start(Tag::Emphasis) => inline.italic += 1,
         Event::End(TagEnd::Emphasis) => inline.italic = inline.italic.saturating_sub(1),
@@ -95,6 +196,13 @@ fn inline_event(inline: &mut Inline, event: &Event) -> bool {
         Event::Start(Tag::Strikethrough) => inline.strikethrough += 1,
         Event::End(TagEnd::Strikethrough) => {
             inline.strikethrough = inline.strikethrough.saturating_sub(1);
+        }
+        Event::Start(Tag::Link {
+            link_type: LinkType::WikiLink { .. },
+            dest_url,
+            ..
+        }) => {
+            inline.link = Some(wiki_href(dest_url, |name| wiki?.find(name)));
         }
         Event::Start(Tag::Link { dest_url, .. }) => inline.link = Some(dest_url.to_string()),
         Event::End(TagEnd::Link) => inline.link = None,
@@ -113,19 +221,23 @@ struct Anchors {
     /// Every target handed out, with the next suffix to try for it.
     used: std::collections::HashMap<String, usize>,
 }
+/// A heading's link target as GitHub names it (`Anchors`), before it is
+/// made unique.
+fn slug(text: &str) -> String {
+    text.trim()
+        .chars()
+        .filter_map(|c| match c {
+            ' ' => Some('-'),
+            c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+            _ => None,
+        })
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 impl Anchors {
     fn slug(&mut self, text: &str) -> String {
-        let base: String = text
-            .trim()
-            .chars()
-            .filter_map(|c| match c {
-                ' ' => Some('-'),
-                c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
-                _ => None,
-            })
-            .flat_map(char::to_lowercase)
-            .collect();
-        self.unique(base)
+        self.unique(slug(text))
     }
     fn unique(&mut self, base: String) -> String {
         let Some(next) = self.used.get(&base).copied() else {
@@ -193,6 +305,7 @@ pub fn parse(
     source: &str,
     cancel: &CancelToken,
     mut load: impl FnMut(&str) -> Option<Picture>,
+    mut wiki: Option<&mut Wiki>,
 ) -> anyhow::Result<rich_preview::Page> {
     // Metadata blocks are enabled so that a note's front matter is recognized
     // and skipped, rather than read as a rule and a large heading.
@@ -201,7 +314,8 @@ pub fn parse(
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_HEADING_ATTRIBUTES
         | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
-        | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS;
+        | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS
+        | Options::ENABLE_WIKILINKS;
     let mut blocks = Vec::new();
     let mut current = Block::default();
     let mut inline = Inline::default();
@@ -239,7 +353,7 @@ pub fn parse(
         // cell keeps its emphasis, code and links; the cells are the ranges
         // of that text the view draws in columns.
         if in_table {
-            if inline_event(&mut inline, &event) {
+            if inline_event(&mut inline, &event, wiki.as_deref_mut()) {
                 continue;
             }
             let mut finish = |current: &mut Block, cells: &mut Vec<_>, header| {
@@ -306,7 +420,7 @@ pub fn parse(
                 continue;
             }
         }
-        if inline_event(&mut inline, &event) {
+        if inline_event(&mut inline, &event, wiki.as_deref_mut()) {
             continue;
         }
         // A run of raw HTML ends here: read it where it stood.
@@ -481,7 +595,7 @@ mod tests {
     use super::*;
 
     fn parse(source: &str) -> Vec<Block> {
-        super::parse(source, &CancelToken::new(), |_| None)
+        super::parse(source, &CancelToken::new(), |_| None, None)
             .unwrap()
             .blocks
     }
@@ -625,13 +739,18 @@ mod tests {
         let source = "![A grid of *pictures*](shown.png)\n\n\
             <img src=\"logo.png\" alt=\"The logo\">\n\n\
             ![Not there](missing.png)\n";
-        let blocks = super::parse(source, &CancelToken::new(), |href| {
-            (href != "missing.png").then(|| Picture::Later {
-                key: href.to_owned(),
-                width: 4,
-                height: 3,
-            })
-        })
+        let blocks = super::parse(
+            source,
+            &CancelToken::new(),
+            |href| {
+                (href != "missing.png").then(|| Picture::Later {
+                    key: href.to_owned(),
+                    width: 4,
+                    height: 3,
+                })
+            },
+            None,
+        )
         .unwrap()
         .blocks;
         let read: Vec<_> = blocks
@@ -660,6 +779,7 @@ mod tests {
                 asked.push(href.to_owned());
                 None
             },
+            None,
         )
         .unwrap()
         .blocks;
@@ -680,6 +800,7 @@ mod tests {
                 asked.push(href.to_owned());
                 None
             },
+            None,
         )
         .unwrap()
         .blocks;
@@ -700,10 +821,15 @@ mod tests {
             };
         }
         let mut asked = 0usize;
-        super::parse(&source, &CancelToken::new(), |_| {
-            asked += 1;
-            None
-        })
+        super::parse(
+            &source,
+            &CancelToken::new(),
+            |_| {
+                asked += 1;
+                None
+            },
+            None,
+        )
         .unwrap();
         // Naming a picture costs its header: none is left out.
         assert_eq!(asked, limits::EMBEDDED_IMAGES + 4);
@@ -814,10 +940,10 @@ mod tests {
     #[test]
     fn a_long_document_is_cut_at_the_bound_not_refused() {
         let source = "- item\n".repeat(limits::BLOCKS + 500);
-        let page = super::parse(&source, &CancelToken::new(), |_| None).unwrap();
+        let page = super::parse(&source, &CancelToken::new(), |_| None, None).unwrap();
         assert!(page.truncated);
         assert_eq!(page.blocks.len(), limits::BLOCKS);
-        let short = super::parse("- one\n- two\n", &CancelToken::new(), |_| None).unwrap();
+        let short = super::parse("- one\n- two\n", &CancelToken::new(), |_| None, None).unwrap();
         assert!(!short.truncated);
     }
 
@@ -847,5 +973,50 @@ mod tests {
         let blocks = parse("- [x] done\n- [ ] todo\n");
         assert_eq!(blocks[0].text, "☑ done");
         assert_eq!(blocks[1].text, "☐ todo");
+    }
+
+    /// Obsidian's links lead where the note they name is: beside the note,
+    /// else from the vault's top, else where Obsidian would make it. A
+    /// heading is a slug, a label is the link's text.
+    #[test]
+    fn obsidian_links_lead_to_the_notes_they_name() {
+        let vault = tempfile::tempdir().unwrap();
+        let projects = vault.path().join("Projects");
+        std::fs::create_dir_all(vault.path().join(".obsidian")).unwrap();
+        std::fs::create_dir_all(&projects).unwrap();
+        for note in [
+            "Projects/Next steps.md",
+            "Projects/l'été.md",
+            "Inbox.md",
+            "Projects/plan.txt",
+        ] {
+            std::fs::write(vault.path().join(note), "").unwrap();
+        }
+        let source = "[[Next steps]] [[Inbox#Read later|later]] [[l'été]] [[plan.txt]] \
+                      [[Nowhere]] [[#Plan of attack]] [[Next steps#^abc]] [[100% sure?]]";
+        let mut wiki = Wiki::new(&projects.join("plan.md")).unwrap();
+        let page = super::parse(source, &CancelToken::new(), |_| None, Some(&mut wiki)).unwrap();
+        let links: Vec<(&str, &str)> =
+            page.blocks
+                .iter()
+                .flat_map(|block| {
+                    block.runs.iter().filter_map(|run| {
+                        Some((&block.text[run.range.clone()], run.link.as_deref()?))
+                    })
+                })
+                .collect();
+        assert_eq!(
+            links,
+            [
+                ("Next steps", "Next steps.md"),
+                ("later", "../Inbox.md#read-later"),
+                ("l'été", "l'été.md"),
+                ("plan.txt", "plan.txt"),
+                ("Nowhere", "Nowhere.md"),
+                ("#Plan of attack", "#plan-of-attack"),
+                ("Next steps#^abc", "Next steps.md#^abc"),
+                ("100% sure?", "100%25 sure%3F.md"),
+            ]
+        );
     }
 }
