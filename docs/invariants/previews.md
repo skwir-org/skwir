@@ -655,6 +655,17 @@ is still to come are in `docs/preview-frame.md`.
   offers it (`Inspection::source_available`) only where the file's own
   text differs from what is shown: YAML, TOML and JSON shown as written
   have none.
+- **Source is kept by type** (`preview::SourceTypes`, part of the
+  window's shape): turned on or off for one file, it is so for every file
+  of that type, by its database name (`mime::unalias`), never for all
+  text at once (an email's source is its raw message, a book's its
+  chapter's markup). The worker decides it, where the type is settled
+  and before a plugin from outside converts the file, and the panel
+  takes what it decided (`State::arrived`); what another way of looking
+  chose (bytes) stands. The step is `preview::inspect_shown`, which the
+  tests call too: a provider that leaves the source to the shared code
+  view gets it only for a file that is text, so a file of the type that
+  is not is asked again as it shows.
 - **The menu rule** is every responsive toolbar's. More holds the
   buttons the chosen variant dropped (`PopoverAnchor::popup_for`), a
   kind's settings that never have a button (volume, speed, tracks), and

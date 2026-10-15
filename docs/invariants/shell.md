@@ -422,10 +422,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 ## What the window remembers
 
 - The last window's shape (view, split and share, sidebar width and
-  sections, preview place and size, archive-member placement, timeline,
-  zoom, Usage's levels and mode, column widths) is application data, not
-  preference: `session.rs` keeps it under one key, written only when it
-  changes. A new pane opens in the current pane's view.
+  sections, preview place and size, archive-member placement, Properties'
+  folds, the types shown as their source, timeline, zoom, Usage's levels
+  and mode, column widths) is application data, not preference:
+  `session.rs` keeps it under one key, written only when it changes. A
+  new pane opens in the current pane's view.
 - **Edges** dragged to size an area are one element (`elements/edge.rs`):
   double click restores the default; shared room via `edge::share`.
 - The preview panel's width is bounded by what the panes and sidebar

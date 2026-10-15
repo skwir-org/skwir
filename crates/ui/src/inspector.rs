@@ -47,6 +47,10 @@ pub struct Display {
     /// The length of the file a byte view shows, read on the worker: how
     /// many rows it has, read where they are shown (`bytes_view`).
     pub(crate) bytes: Option<u64>,
+    /// The type its Source is remembered by (`preview::SourceTypes`): the
+    /// file's own, as the worker settled it, before a plugin from outside
+    /// converted it; `None` for what has no type.
+    pub(crate) typed: Option<String>,
 }
 impl Display {
     pub fn new(mut data: Inspection, code: &crate::code_preview::CodeTheme) -> Self {
@@ -184,6 +188,7 @@ impl Display {
             code_dark: code.dark,
             text,
             bytes: None,
+            typed: None,
         }
     }
     /// The next block or row (blocks first, then rows offset by the block
@@ -482,6 +487,11 @@ impl State {
             self.reset(data);
         }
         self.request.offset = data.position;
+        // Whether it is the source is the worker's to say: its type's
+        // choice (`preview::SourceTypes`), where the file has one.
+        if let Some(origin) = &display.origin {
+            self.request.source = origin.1.source;
+        }
         self.section_input = None;
         self.page_starts = page_starts(data);
         (self.at_edge, self.turn) = (0, crate::reader_scroll::WheelTurn::default());
@@ -1608,6 +1618,8 @@ impl Shell {
         let hex = self.app.previews.bytes_view();
         let state = &mut self.preview.inspection;
         let previous_query = state.request.query.take();
+        // Whether Source changed for the file's type (`SourceTypes`).
+        let mut remembered = false;
         match action {
             _ if nested => {}
             "hex" => {
@@ -1623,6 +1635,13 @@ impl Shell {
             "source" => {
                 state.request.source = !state.request.source;
                 state.request.offset = 0;
+                // And so for every file of its type from now on.
+                if let Some(PreviewContent::Inspection(display)) = &self.preview.content
+                    && let Some(typed) = &display.typed
+                {
+                    self.preview.source_types.set(typed, state.request.source);
+                    remembered = true;
+                }
             }
             "page" => {
                 state.request.offset = args["offset"].as_u64().unwrap_or(0);
@@ -1670,6 +1689,9 @@ impl Shell {
                 }
             }
             _ => return,
+        }
+        if remembered {
+            self.remember_session();
         }
         self.cancel_pending_preview();
         self.preview.media = crate::media::MediaState::default();

@@ -43,6 +43,11 @@ contributors). The rules for working on preview code are in
 - **Select and copy.** Drag to select text; copy with `Ctrl+C` or the
   bar. With no text selected, Copy takes the selected row or the current
   section.
+- **Source.** A rendered file (Markdown, HTML, a table, a message, a
+  book's chapter, a track) shows its own text with the bar's Source
+  button, lit while on. It stays on for every file of that type, also
+  after a restart, until you turn it off; other types keep their
+  presentation. A file of the type that holds no text opens as usual.
 - **Find.** `Ctrl+F` searches the preview that has the keyboard; the
   search button is always there. Searching again continues after the
   last match: a text file is searched whole, either way and around its

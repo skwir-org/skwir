@@ -613,6 +613,9 @@ pub struct PreviewState {
     pub properties_share: crate::elements::edge::Share,
     /// The groups the user folded or unfolded; part of the window's shape.
     pub properties_folds: crate::properties::Folds,
+    /// The types whose files open on their source; part of the window's
+    /// shape.
+    pub source_types: SourceTypes,
     pub properties_scroll: gpui::ScrollHandle,
     /// Focus of a picture, so the zoom keys reach it once it is clicked.
     pub image_focus: Option<FocusHandle>,
@@ -818,6 +821,7 @@ impl Default for PreviewState {
             properties_open: false,
             properties_share: crate::elements::edge::Share::even(crate::properties::SHARE),
             properties_folds: crate::properties::Folds::default(),
+            source_types: SourceTypes::default(),
             properties_scroll: gpui::ScrollHandle::new(),
             image_focus: None,
             map: crate::map_preview::MapState::default(),
@@ -1044,6 +1048,63 @@ fn decode_drawing(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Resul
         pixels: Pixels::Any,
         ink,
     })
+}
+
+/// The types whose files open on their source: Source turned on for one
+/// file stays on for every other of its type, until it is turned off.
+/// Part of the window's shape (`session.rs`), as Properties' folds are.
+/// Types are kept by the database's name (`mime::unalias`), lowercase, so
+/// a type's other names share its choice.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct SourceTypes(std::collections::BTreeSet<String>);
+
+impl SourceTypes {
+    /// What `mime` is kept as. No I/O once the database is loaded.
+    pub fn key(mime: &str) -> String {
+        skwir_platform::mime::unalias(&skwir_platform::mime::Mime(mime.to_owned()))
+            .0
+            .to_ascii_lowercase()
+    }
+
+    /// Whether files of the type kept as `key` open on their source.
+    pub fn shown(&self, key: &str) -> bool {
+        self.0.contains(key)
+    }
+
+    pub fn set(&mut self, key: &str, source: bool) {
+        if source {
+            self.0.insert(key.to_owned());
+        } else {
+            self.0.remove(key);
+        }
+    }
+}
+
+/// The inspection the panel shows of the file `request` names, if one
+/// does: as `view` asks, and the file's own text (`inspection::source`)
+/// where a provider leaves its source to that shared code view. A source
+/// the file's type asked for (`remembered`, `SourceTypes`) is that text
+/// only where the file is text, as for any file shown as text: otherwise
+/// `view.source` is cleared and nothing is answered, for the file to be
+/// asked again as it shows without its source.
+pub fn inspect_shown(
+    previews: &skwir_core::preview::Previews,
+    request: &PreviewRequest,
+    view: &mut skwir_core::inspection::InspectRequest,
+    path: &Path,
+    remembered: bool,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<skwir_core::inspection::Inspection>> {
+    let found = previews.inspect(request, view, cancel)?;
+    if found.is_some() || !view.source {
+        return Ok(found);
+    }
+    if remembered && !read_head(path).is_ok_and(|head| skwir_platform::inspection::is_text(&head)) {
+        view.source = false;
+        return Ok(None);
+    }
+    skwir_platform::inspection::source(path, cancel).map(Some)
 }
 
 /// Where this process keeps the members it extracted: in the one deletable
@@ -1968,6 +2029,7 @@ impl Shell {
             text_size: self.preview.text_size,
         };
         let mut inspection = self.preview.inspection.request.clone();
+        let source_types = self.preview.source_types.clone();
         let tx = self.preview.tx.clone();
         let nested = self.preview.nested.last().cloned();
         let descend = self.preview.descend.clone();
@@ -2079,50 +2141,71 @@ impl Shell {
                     .map(|m| m.to_string());
                     sniffed.replace(request.mime.clone());
                 }
-                // A file a plugin from outside shows as another (ADR-047):
-                // that one, previewed from here on by whatever shows its
-                // type (the reader, the player, a picture, an inspection),
-                // once. Its bytes and its source stay the file's own.
-                if !is_dir && inspection.provider.is_none() && !inspection.source {
-                    match previews.converted(&request, &cancel) {
-                        Ok(Some(made)) => {
-                            let Some(entry) = EntryRef::from_path(&made.path) else {
-                                return fail(anyhow::anyhow!("The converted file is gone"));
-                            };
-                            request.entry = entry;
-                            request.mime = made.mime;
-                            path = made.path;
-                            closed_links.replace(made.closed_links);
-                        }
-                        Ok(None) => {}
-                        Err(error) => return fail(error),
-                    }
+                // A type shown as its source opens on it (`SourceTypes`):
+                // the file's own type, settled now, before a plugin from
+                // outside converts it. Another way of looking at it chosen
+                // (bytes) stands.
+                let typed = request
+                    .mime
+                    .as_deref()
+                    .filter(|_| !is_dir && inspection.provider.is_none())
+                    .map(SourceTypes::key);
+                let mut remembered = typed
+                    .as_deref()
+                    .is_some_and(|typed| source_types.shown(typed));
+                if typed.is_some() {
+                    inspection.source = remembered;
                 }
+                // Asked again, once, without the source its type asked for,
+                // when this file has none.
                 if !is_dir {
-                    let result =
-                        previews
-                            .inspect(&request, &inspection, &cancel)
-                            .and_then(|result| {
-                                if result.is_none() && inspection.source {
-                                    skwir_platform::inspection::source(&path, &cancel).map(Some)
-                                } else {
-                                    Ok(result)
+                    loop {
+                        // A file a plugin from outside shows as another
+                        // (ADR-047): that one, previewed from here on by
+                        // whatever shows its type (the reader, the player, a
+                        // picture, an inspection), once. Its bytes and its
+                        // source stay the file's own.
+                        if inspection.provider.is_none() && !inspection.source {
+                            match previews.converted(&request, &cancel) {
+                                Ok(Some(made)) => {
+                                    let Some(entry) = EntryRef::from_path(&made.path) else {
+                                        return fail(anyhow::anyhow!("The converted file is gone"));
+                                    };
+                                    request.entry = entry;
+                                    request.mime = made.mime;
+                                    path = made.path;
+                                    closed_links.replace(made.closed_links);
                                 }
-                            });
-                    match result {
-                        Ok(Some(data)) => {
-                            let mut display = crate::inspector::Display::new(data, &code);
-                            // Its pictures for later are asked for as it was.
-                            display.origin = Some(Box::new((request.clone(), inspection.clone())));
-                            // Bytes are shown whole: as many rows as the file
-                            // holds (`bytes_view`).
-                            if display.data.kind == skwir_core::inspection::InspectionKind::Hex {
-                                display.bytes = std::fs::metadata(&path).ok().map(|m| m.len());
+                                Ok(None) => {}
+                                Err(error) => return fail(error),
                             }
-                            return send(PreviewContent::Inspection(display), true, None, None);
                         }
-                        Err(error) => return fail(error),
-                        Ok(None) => {}
+                        match inspect_shown(
+                            &previews,
+                            &request,
+                            &mut inspection,
+                            &path,
+                            remembered,
+                            &cancel,
+                        ) {
+                            Ok(Some(data)) => {
+                                let mut display = crate::inspector::Display::new(data, &code);
+                                // Its pictures for later are asked for as it was.
+                                display.origin =
+                                    Some(Box::new((request.clone(), inspection.clone())));
+                                display.typed = typed;
+                                // Bytes are shown whole: as many rows as the file
+                                // holds (`bytes_view`).
+                                if display.data.kind == skwir_core::inspection::InspectionKind::Hex
+                                {
+                                    display.bytes = std::fs::metadata(&path).ok().map(|m| m.len());
+                                }
+                                return send(PreviewContent::Inspection(display), true, None, None);
+                            }
+                            Err(error) => return fail(error),
+                            Ok(None) if remembered && !inspection.source => remembered = false,
+                            Ok(None) => break,
+                        }
                     }
                 }
                 // Reuse only an already cached desktop thumbnail as initial feedback.
@@ -4790,10 +4873,39 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
 #[cfg(test)]
 mod tests {
     use super::{
-        Counted, SHARPEN_STEP, Version, count_waits, max_width, selection_stamp, sharper,
-        still_counts,
+        Counted, SHARPEN_STEP, SourceTypes, Version, count_waits, max_width, selection_stamp,
+        sharper, still_counts,
     };
     use skwir_core::workspace::{PaneId, Selection};
+
+    #[test]
+    fn a_type_shown_as_its_source_is_kept_by_its_one_name() {
+        let mut types = SourceTypes::default();
+        let markdown = SourceTypes::key("text/markdown");
+        assert_eq!(markdown, "text/markdown");
+        // Another name of the type, in another case, is the same choice.
+        assert_eq!(SourceTypes::key("Text/X-Markdown"), markdown);
+        types.set(&markdown, true);
+        assert!(types.shown(&SourceTypes::key("text/x-markdown")));
+        assert!(!types.shown(&SourceTypes::key("text/csv")));
+        // Kept as a list of names in the window's shape, and read back.
+        let session = crate::session::Session {
+            source_types: types.clone(),
+            ..crate::session::Session::default()
+        };
+        let value = toml::Value::try_from(&session).unwrap();
+        assert_eq!(
+            value.get("source_types"),
+            Some(&toml::Value::Array(vec!["text/markdown".into()]))
+        );
+        assert_eq!(
+            value.try_into::<crate::session::Session>().unwrap(),
+            session
+        );
+        // Turned off, it is forgotten.
+        types.set(&markdown, false);
+        assert_eq!(types, SourceTypes::default());
+    }
 
     fn id(ino: u64) -> skwir_core::EntryId {
         skwir_core::EntryId {

@@ -703,6 +703,7 @@ impl Shell {
             self.preview.properties_share.beside = share;
         }
         self.preview.properties_folds = session.properties_folds;
+        self.preview.source_types = session.source_types;
         self.layout.split = session.split_panes;
         if session.player_height > 0. {
             self.player.height = session.player_height;

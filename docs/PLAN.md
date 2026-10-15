@@ -964,6 +964,14 @@ the very frame of the step, adopted by the step when it is still
 decoding. Only pictures skwir decodes itself, which no plugin takes: no
 player, reader or other program is started for a file not yet asked for.
 
+Source is remembered by type: turned on for a Markdown file, every
+Markdown file opens on its source, after a restart too, until it is
+turned off; other types keep their presentation. Kept with the window's
+shape (`preview::SourceTypes`), decided on the worker where the type is
+settled, so the first answer is already the source; a file of the type
+that is no text opens as usual. The tests now go through the worker's
+own step (`preview::inspect_shown`).
+
 The columns view moves as yazi's and Finder's do. After the pane's
 column comes the folder under the cursor, listed once the cursor rests
 on it; a click on a folder shows it, with no double click. Right goes

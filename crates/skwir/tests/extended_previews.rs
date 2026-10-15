@@ -43,16 +43,18 @@ fn request(path: &Path) -> PreviewRequest {
     }
 }
 /// What the preview worker shows: the provider's inspection, else, for the
-/// source view, the shared code view (`ui/src/preview.rs` does the same).
+/// source view, the shared code view (`skwir_ui::preview::inspect_shown`,
+/// the worker's own step).
 fn try_inspect(app: &App, path: &Path, view: &InspectRequest) -> Option<Inspection> {
-    let cancel = CancelToken::new();
-    app.previews
-        .inspect(&request(path), view, &cancel)
-        .unwrap()
-        .or_else(|| {
-            view.source
-                .then(|| skwir_platform::inspection::source(path, &cancel).unwrap())
-        })
+    skwir_ui::preview::inspect_shown(
+        &app.previews,
+        &request(path),
+        &mut view.clone(),
+        path,
+        false,
+        &CancelToken::new(),
+    )
+    .unwrap()
 }
 fn inspect(app: &App, path: &Path, view: &InspectRequest) -> Inspection {
     try_inspect(app, path, view).expect("a provider answers")
@@ -310,13 +312,10 @@ fn email_decodes_headers_body_and_attachment_without_fetching() {
             .is_none()
     );
 }
-#[test]
-fn epub_chapters_source_navigation_and_disable() {
+/// A book of two chapters, the first linking to the second.
+fn synthetic_book(path: &Path) {
     use std::io::Write;
-    let tmp = tempfile::tempdir().unwrap();
-    let app = app(tmp.path());
-    let path = tmp.path().join("Synthetic book.epub");
-    let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
     for (name, body) in [
         ("mimetype", "application/epub+zip"),
         (
@@ -345,6 +344,13 @@ fn epub_chapters_source_navigation_and_disable() {
         zip.write_all(body.as_bytes()).unwrap();
     }
     zip.finish().unwrap();
+}
+#[test]
+fn epub_chapters_source_navigation_and_disable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let path = tmp.path().join("Synthetic book.epub");
+    synthetic_book(&path);
     let first = inspect(&app, &path, &InspectRequest::default());
     assert!(first.plain_text().contains("First chapter"));
     assert_eq!(first.next, Some(1));
@@ -390,6 +396,57 @@ fn epub_chapters_source_navigation_and_disable() {
         },
     );
     assert!(source.plain_text().contains("<h1>"));
+}
+
+/// A type shown as its source (`SourceTypes`) opens on it wherever the file
+/// has one: text in the shared code view, a book's chapter as its provider
+/// writes it, though a book is no text. A file of the type that is no text
+/// has none: the worker asks it again as it shows.
+#[test]
+fn a_type_shown_as_its_source_opens_on_it_where_the_file_has_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let remembered = |path: &Path| {
+        let mut view = InspectRequest {
+            source: true,
+            ..InspectRequest::default()
+        };
+        let shown = skwir_ui::preview::inspect_shown(
+            &app.previews,
+            &request(path),
+            &mut view,
+            path,
+            true,
+            &CancelToken::new(),
+        )
+        .unwrap();
+        (shown, view.source)
+    };
+    let notes = tmp.path().join("Synthetic note's draft.md");
+    std::fs::write(&notes, "# Title\n\nSome **bold** text.\n").unwrap();
+    let (shown, source) = remembered(&notes);
+    assert!(source, "text has its source");
+    assert!(shown.unwrap().plain_text().contains("**bold**"));
+    let book = tmp.path().join("Synthetic book.epub");
+    synthetic_book(&book);
+    let (shown, source) = remembered(&book);
+    assert!(source, "a book's provider writes its source");
+    assert!(shown.unwrap().plain_text().contains("<h1>"));
+    let bytes = tmp.path().join("Synthetic bytes.md");
+    std::fs::write(&bytes, b"\x00\x01\x02 no text \xff\xfe\x00\x7f").unwrap();
+    let (shown, source) = remembered(&bytes);
+    assert!(shown.is_none() && !source, "bytes have no source");
+    // Asked so, it is what it is without: never its bytes as text.
+    assert_eq!(
+        inspect(&app, &bytes, &InspectRequest::default()).title,
+        "Markdown"
+    );
+    // Asked for by hand, the source is the file's text, whatever it holds.
+    let asked = InspectRequest {
+        source: true,
+        ..InspectRequest::default()
+    };
+    assert!(try_inspect(&app, &bytes, &asked).unwrap().source_available);
 }
 
 /// Every preview plugin the binary wires, in the order it wires them.
