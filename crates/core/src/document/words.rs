@@ -23,12 +23,52 @@ fn unit(v: f32) -> f32 {
     if v.is_finite() { v.clamp(0., 1.) } else { 0. }
 }
 
+/// Whether two boxes lie over one another rather than side by side: each
+/// covers more than half of the smaller across and down.
+fn over(a: Rect, b: Rect) -> bool {
+    let across = (a.x + a.width).min(b.x + b.width) - a.x.max(b.x);
+    let down = (a.y + a.height).min(b.y + b.height) - a.y.max(b.y);
+    across > 0.5 * a.width.min(b.width) && down > 0.5 * a.height.min(b.height)
+}
+
+/// The runs as they are placed: one that lies over the run before it
+/// joins it, a space between their texts, over the box around both. A
+/// text layer that places its lines and not their words gives each word
+/// its line's box (a scan's text, in `DjVu`): side by side, their
+/// characters would cover one another, and a selection over them darken
+/// with each word it took.
+fn placed(runs: &[Run]) -> Vec<Run> {
+    let mut placed: Vec<Run> = Vec::with_capacity(runs.len());
+    for run in runs {
+        if let Some(last) = placed.last_mut()
+            && over(last.bounds, run.bounds)
+        {
+            let (a, b) = (last.bounds, run.bounds);
+            let (left, top) = (a.x.min(b.x), a.y.min(b.y));
+            last.bounds = Rect {
+                x: left,
+                y: top,
+                width: (a.x + a.width).max(b.x + b.width) - left,
+                height: (a.y + a.height).max(b.y + b.height) - top,
+            };
+            last.text.push(' ');
+            last.text.push_str(&run.text);
+            // Where each character starts is no longer what either said.
+            last.edges.clear();
+            continue;
+        }
+        placed.push(run.clone());
+    }
+    placed
+}
+
 /// A page's runs as the reader's characters: each where its run's edges
 /// say it starts, else an equal column of the run's box; between two
 /// runs, a space when they share a line, else a line break, drawn
-/// nowhere. Boxes are kept on the page, and a page's characters within
-/// `MAX_PAGE_CHARS`.
+/// nowhere. Runs lying over one another are one (`placed`). Boxes are
+/// kept on the page, and a page's characters within `MAX_PAGE_CHARS`.
 pub fn chars(runs: &[Run]) -> Vec<TextChar> {
+    let runs = placed(runs);
     let mut chars = Vec::new();
     for (i, run) in runs.iter().enumerate() {
         if chars.len() >= MAX_PAGE_CHARS {
@@ -199,6 +239,39 @@ mod tests {
             (off[0].bounds.y, off[0].bounds.x + off[0].bounds.width),
             (0., 1.)
         );
+    }
+
+    #[test]
+    fn words_given_their_lines_box_are_spread_over_it_side_by_side() {
+        // What a scan's text layer says when it places lines alone: every
+        // word in the line's box.
+        let chars = chars(&[
+            run("Release", 0.1, 0.1, 0.4),
+            run("Copy", 0.1, 0.1, 0.4),
+            run("Page", 0.6, 0.1, 0.2),
+            run("Next", 0.1, 0.3, 0.4),
+        ]);
+        let text: String = chars.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(text, "Release Copy Page\nNext");
+        // No two characters drawn cover each other.
+        let drawn: Vec<Rect> = chars
+            .iter()
+            .map(|c| c.bounds)
+            .filter(|b| b.height > 0.)
+            .collect();
+        for (i, a) in drawn.iter().enumerate() {
+            for b in &drawn[i + 1..] {
+                let across = (a.x + a.width).min(b.x + b.width) - a.x.max(b.x);
+                let down = (a.y + a.height).min(b.y + b.height) - a.y.max(b.y);
+                assert!(across < 1e-6 || down < 1e-6, "{a:?} covers {b:?}");
+            }
+        }
+        // "Release Copy" spread over the line's box: twelve columns.
+        assert!((chars[0].bounds.width - 0.4 / 12.).abs() < 1e-6);
+        assert!((chars[11].bounds.x + chars[11].bounds.width - 0.5).abs() < 1e-6);
+        // Words side by side, even touching, stay where they are.
+        let apart = super::chars(&[run("Hello", 0.1, 0.1, 0.5), run("you", 0.6, 0.1, 0.3)]);
+        assert!((apart[6].bounds.x - 0.6).abs() < 1e-6);
     }
 
     #[test]

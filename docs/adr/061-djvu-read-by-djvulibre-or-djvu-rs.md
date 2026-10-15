@@ -63,7 +63,9 @@ Options:
   them, give their edges). Words made into the reader's characters and
   searched there by `skwir_core::document::words`, the code the pages of
   a plugin from outside Skwir already used (ADR-047), moved there for the
-  three.
+  three. Words lying over one another join into one run over the box
+  around them: many scans' text layers place lines and give each word
+  its line's box.
 - Links: an area (a rectangle, an oval, a polygon's box) to a page
   (`#12`, `#+1`, `#-1`, a page's file name) or out. The outline (`NAVM`)
   to headings and their pages.

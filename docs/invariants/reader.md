@@ -120,6 +120,10 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
 - An engine that knows words, not glyphs (DjVu's, a plugin from outside
   Skwir's pages) makes them characters and searches them with
   `document::words`, so selection, copy and search agree across engines.
+  Words lying over one another are one run over the box around them: a
+  text layer that places its lines and not their words gives each word
+  its line's box, and characters covering each other darkened a
+  selection with every word it took.
 - djvu-rs draws a page larger than it is at a size whose step through it
   is no whole number of sixteenths of a pixel: its helper draws at the
   largest size below the side asked that it draws in place

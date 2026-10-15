@@ -1015,6 +1015,17 @@ the macOS and Windows packages. The whole screen's walk through a pane's
 pictures now passes a file whose name several types claim: a `.djvu` is
 a page or a book, and stepping onto a book left the arrows to its pages.
 
+
+### 2026-10-16
+
+A selection in a scanned DjVu book darkened as it grew: its text layer
+placed lines and gave each word its line's box, so the words'
+characters lay over one another, a translucent highlight for each.
+Words lying over one another are now one run over the box around them
+(`document::words`, for both DjVu engines and a plugin from outside
+Skwir's pages): on a 71-page specification, 603,592 pairs of characters
+covered each other, none now.
+
 ---
 
 ## Maps
