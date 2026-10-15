@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde_json::json;
 use skwir_core::app::{App, AppConfig};
 use skwir_core::command::{Invocation, Outcome};
-use skwir_core::op::{Plan, StepStatus};
+use skwir_core::op::{Change, Plan, StepStatus};
 
 /// The libarchive helper: `SKWIR_ARCHIVE_WORKER`, else the one built into
 /// the target folder this test runs from (its binary sits in `deps`).
@@ -188,8 +188,9 @@ fn an_archive_of_one_folder_or_one_file_is_that_folder_or_file() {
     }
     let tmp = scratch();
     let app = app(tmp.path());
-    // Beside it, with no folder named.
-    let folder = tmp.path().join("project-1.0.zip");
+    // Beside it, with no folder named; the folder named otherwise than
+    // the archive, as a release's `v1.0.zip` names it.
+    let folder = tmp.path().join("v1.0 l'été.zip");
     write_zip(
         &folder,
         &[
@@ -208,19 +209,56 @@ fn an_archive_of_one_folder_or_one_file_is_that_folder_or_file() {
         Outcome::Plan(plan) => plan,
         other => panic!("expected a plan, got {other:?}"),
     };
+    // Its review says what it makes, by the member's name.
+    let made = tmp.path().join("project-1.0");
+    let (review, asked) = plan.review(&Arc::default());
+    assert_eq!(asked, 0);
+    assert!(
+        matches!(
+            &review.steps[0].0,
+            Change::Create { path, directory: true, .. } if *path == made
+        ),
+        "{:?}",
+        review.steps[0]
+    );
     let result = app.executor.execute_blocking(&plan, app.lifetime());
     assert!(result.error.is_none(), "{:?}", result.error);
-    let made = tmp.path().join("project-1.0");
     assert_eq!(
         std::fs::read_to_string(made.join("README")).unwrap(),
         "read me"
     );
     assert!(made.join("src/main.rs").is_file());
     assert!(!made.join("project-1.0").exists(), "not twice");
+    assert!(
+        !tmp.path().join("v1.0 l'été").exists(),
+        "no folder around it"
+    );
     // Again: what it makes is there.
     assert_eq!(
         app.executor.execute_blocking(&plan, app.lifetime()).applied,
         0
+    );
+    // Undone to the trash, redone as it was.
+    let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(undone.error.is_none(), "{:?}", undone.error);
+    assert!(!made.exists());
+    let redone = app.executor.redo_blocking(app.lifetime()).unwrap();
+    assert!(redone.error.is_none(), "{:?}", redone.error);
+    assert!(made.join("README").is_file());
+    assert!(!tmp.path().join("v1.0 l'été").exists());
+
+    // One file, whatever the archive is called, is that file.
+    let dest = tmp.path().join("into");
+    std::fs::create_dir(&dest).unwrap();
+    let bundle = tmp.path().join("bundle.zip");
+    write_zip(&bundle, &[("report l'été.pdf", b"a report")]);
+    let result = app
+        .executor
+        .execute_blocking(&extract(&app, &bundle, &dest), app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(
+        tree(&dest),
+        [("report l'été.pdf".into(), Some("a report".into()))]
     );
 
     // A file only compressed is that file.
@@ -231,8 +269,6 @@ fn an_archive_of_one_folder_or_one_file_is_that_folder_or_file() {
     );
     gz.write_all(b"the notes\n").unwrap();
     gz.finish().unwrap();
-    let dest = tmp.path().join("into");
-    std::fs::create_dir(&dest).unwrap();
     let result = app
         .executor
         .execute_blocking(&extract(&app, &compressed, &dest), app.lifetime());
@@ -240,6 +276,28 @@ fn an_archive_of_one_folder_or_one_file_is_that_folder_or_file() {
     assert_eq!(
         std::fs::read_to_string(dest.join("notes l’été.txt")).unwrap(),
         "the notes\n"
+    );
+
+    // A hidden member alone stays in a folder named after the archive,
+    // in sight, never a dotfile dropped where it is extracted.
+    let dotfiles = tmp.path().join("dotfiles.zip");
+    write_zip(
+        &dotfiles,
+        &[(".config/", b""), (".config/app.conf", b"key = 1")],
+    );
+    let hidden = tmp.path().join("hidden");
+    std::fs::create_dir(&hidden).unwrap();
+    let result = app
+        .executor
+        .execute_blocking(&extract(&app, &dotfiles, &hidden), app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(
+        tree(&hidden),
+        [
+            ("dotfiles".into(), None),
+            ("dotfiles/.config".into(), None),
+            ("dotfiles/.config/app.conf".into(), Some("key = 1".into())),
+        ]
     );
 }
 
@@ -276,7 +334,7 @@ fn nothing_is_written_outside_and_a_name_taken_is_kept() {
 
     // Another folder under the name: a conflict, never merged.
     let taken = tmp.path().join("taken.zip");
-    write_zip(&taken, &[("new.txt", b"new")]);
+    write_zip(&taken, &[("new.txt", b"new"), ("also new.txt", b"also")]);
     std::fs::create_dir(dest.join("taken")).unwrap();
     std::fs::write(dest.join("taken/mine.txt"), "mine").unwrap();
     let plan = extract(&app, &taken, &dest);

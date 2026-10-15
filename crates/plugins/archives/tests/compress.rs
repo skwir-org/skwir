@@ -587,7 +587,8 @@ fn an_extraction_onto_a_name_taken_asks_and_keeps_both_or_replaces() {
     let dest = tmp.path().join("into");
     std::fs::create_dir_all(dest.join("project-1.0")).unwrap();
     std::fs::write(dest.join("project-1.0/mine.txt"), "mine").unwrap();
-    // An archive of one folder named as it is.
+    // An archive of one folder, named otherwise (a release's `v1.0.zip`):
+    // what it makes is that folder, whose name is taken.
     let folder = tmp.path().join("project-1.0");
     std::fs::create_dir(&folder).unwrap();
     std::fs::write(folder.join("README"), "read me").unwrap();
@@ -595,7 +596,38 @@ fn an_extraction_onto_a_name_taken_asks_and_keeps_both_or_replaces() {
         &app,
         &plan_of(&app, "archive.compress", &json!({ "entries": [folder] })),
     );
-    let archive = tmp.path().join("project-1.0.zip");
+    let archive = tmp.path().join("v1.0.zip");
+    std::fs::rename(tmp.path().join("project-1.0.zip"), &archive).unwrap();
+
+    // Nothing there: settled under the folder's name, undone, and redone
+    // as it was settled.
+    let fresh = tmp.path().join("fresh");
+    std::fs::create_dir(&fresh).unwrap();
+    let ended = whole(
+        &app,
+        plan_of(
+            &app,
+            "archive.extract",
+            &json!({ "entries": [archive], "dest": fresh }),
+        ),
+        |_| {},
+    );
+    assert!(
+        matches!(ended, ExecEvent::Finished { error: None, .. }),
+        "{ended:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fresh.join("project-1.0/README")).unwrap(),
+        "read me"
+    );
+    let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(undone.error.is_none(), "{:?}", undone.error);
+    assert_eq!(std::fs::read_dir(&fresh).unwrap().count(), 0);
+    let redone = app.executor.redo_blocking(app.lifetime()).unwrap();
+    assert!(redone.error.is_none(), "{:?}", redone.error);
+    assert!(fresh.join("project-1.0/README").is_file());
+    assert!(!fresh.join("v1.0").exists(), "no folder around it");
+
     let extract = || {
         plan_of(
             &app,
@@ -643,6 +675,7 @@ fn an_extraction_onto_a_name_taken_asks_and_keeps_both_or_replaces() {
     );
     assert!(dest.join("project-1.0/README").is_file());
     assert!(!dest.join("project-1.0/mine.txt").exists());
+    assert!(!dest.join("v1.0").exists(), "no folder around it");
 }
 
 #[test]
@@ -813,10 +846,11 @@ fn an_archive_is_done_only_while_what_it_holds_is_unchanged() {
         ),
     );
     assert_eq!(
-        // Not unwrapped: what it holds is named `notes`, not `notes (2)`.
-        std::fs::read_to_string(back.join("notes (2)/notes/config.txt")).unwrap(),
+        // Its one folder, whatever the archive is called.
+        std::fs::read_to_string(back.join("notes/config.txt")).unwrap(),
         "value 2"
     );
+    assert!(!back.join("notes (2)").exists(), "no folder around it");
 }
 
 #[test]

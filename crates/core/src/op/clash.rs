@@ -242,7 +242,7 @@ pub fn settle(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext) 
     for (i, step) in steps.iter().enumerate() {
         let asked = step.describe();
         let before = walk.out.len();
-        match (Transfer::of(step.as_ref()), step.makes()) {
+        match (Transfer::of(step.as_ref()), step.makes(ctx)) {
             (Some(transfer), _) => walk.place(i, transfer, None),
             (None, Some(made)) => walk.make(i, step.as_ref(), &made),
             (None, None) => walk.push(step.clone_box()),
@@ -277,11 +277,12 @@ pub fn settle(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext) 
 }
 
 /// Whether a step of `steps` copies, moves, links or makes something
-/// under a name: a plan with none has no name to settle.
-pub fn takes_names(steps: &[Box<dyn Operation>]) -> bool {
+/// under a name: a plan with none has no name to settle. May read what a
+/// step makes of (`Operation::makes`): on the plan's thread.
+pub fn takes_names(steps: &[Box<dyn Operation>], ctx: &StepContext) -> bool {
     steps
         .iter()
-        .any(|step| Transfer::of(step.as_ref()).is_some() || step.makes().is_some())
+        .any(|step| Transfer::of(step.as_ref()).is_some() || step.makes(ctx).is_some())
 }
 
 /// A copy, a move or a link, as the walk takes it.
@@ -472,20 +473,23 @@ impl Walk<'_> {
         self.keep(transfer.named(name), true);
     }
 
-    /// What `op` makes ([`Made`]), its name settled: made beside what
-    /// an earlier step makes there (two archives of one name extracted
-    /// into one folder), or as the answer says where something is there,
-    /// with a file's choices. Made there already, it is done. What is
-    /// there is never put in the trash when it is, or holds, what the step
-    /// reads (`Made::inputs`): the step's check says so instead.
+    /// What `op` makes ([`Made`]), its name settled: fixed in the step
+    /// where the step found it (an archive's one member), made beside
+    /// what an earlier step makes there (two archives of one name
+    /// extracted into one folder), or as the answer says where something
+    /// is there, with a file's choices. Made there already, it is done.
+    /// What is there is never put in the trash when it is, or holds, what
+    /// the step reads (`Made::inputs`): the step's check says so instead.
     fn make(&mut self, step: usize, op: &dyn Operation, made: &Made) {
         let target = &made.target;
+        let named = target
+            .file_name()
+            .and_then(|name| op.made_as(name.to_owned()))
+            .filter(|named| named.args() != op.args());
+        self.changed |= named.is_some();
+        let op = named.as_deref().unwrap_or(op);
         let earlier = self.ctx.made(target);
-        // Checked first where something is there: the step reads what it
-        // makes of (an archive's listing), then says better what it makes
-        // (a file, not a folder, whose name keeps its extension last).
         let status = (earlier || self.ctx.exists(target)).then(|| op.check(self.ctx));
-        let made = &op.makes().unwrap_or_else(|| made.clone());
         if earlier {
             return self.make_beside(op, made);
         }

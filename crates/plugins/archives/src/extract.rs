@@ -1,10 +1,11 @@
-//! Extract Here (ADR-048): an archive made a folder beside it, or in the
-//! folder it is dropped in, by the libarchive helper in its sandbox
-//! (`archive::extract_all`). A step of a plan like a copy: made in a
-//! staging folder and put in place whole (`StepContext::stage`), Cancel
-//! and Pause answered while the helper works, undone to the trash. A name
-//! taken is asked about as a copy's is, with a file's choices (ADR-059);
-//! an encrypted member asks the user its password.
+//! Extract Here (ADR-048): an archive's one folder or file put beside it,
+//! or in the folder it is dropped in, else a folder of what it holds, by
+//! the libarchive helper in its sandbox (`archive::extract_all`). A step
+//! of a plan like a copy: made in a staging folder and put in place whole
+//! (`StepContext::stage`), Cancel and Pause answered while the helper
+//! works, undone to the trash. A name taken is asked about as a copy's
+//! is, with a file's choices (ADR-059); an encrypted member asks the user
+//! its password.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
@@ -28,11 +29,12 @@ const KIND: &str = "extract";
 /// read names (`kind:archive`, a disc image's type).
 const ARCHIVES: &str = "kind:archive|kind:application/x-cd-image";
 
-/// Extract the archive into `dest_dir` as `name`: a folder of what it
-/// holds, or, when all it holds is one member named as the archive says
-/// (a folder `project-1.0` in `project-1.0.tar.gz`, the one file of
-/// `notes.txt.gz`), that member. `name` is the archive's (`extracted_name`)
-/// unless one beside a name taken was kept (`photos (2)`).
+/// Extract the archive into `dest_dir`: its one member where it holds one
+/// (a folder and what is in it, `project-1.0` of `v1.0.tar.gz`; the file
+/// of `notes.txt.gz` or `report.pdf.zip`), never a folder around it; else
+/// a folder of what it holds. A hidden member alone (`.config`) is put in
+/// a folder all the same, rather than out of sight in the folder it is
+/// extracted into.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct Extract {
     /// The archive.
@@ -40,31 +42,62 @@ pub struct Extract {
     #[serde(with = "skwir_core::os_path")]
     #[schemars(with = "PathArg")]
     pub dest_dir: PathBuf,
-    #[serde(with = "skwir_core::os_path")]
-    #[schemars(with = "PathArg")]
-    pub name: OsString,
+    /// What it is called there. Not said, as the archive says
+    /// (`Extract::named`): its one member's own name, else the archive's
+    /// less its extensions. Settling a plan says it (`made_as`), as a name
+    /// kept beside one taken does (`photos (2)`), under which the one
+    /// member is placed all the same.
+    #[serde(
+        default,
+        with = "skwir_core::os_path::opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Option<PathArg>")]
+    pub name: Option<OsString>,
 }
 
 impl Extract {
-    /// The archive at `entry` extracted into `dest_dir`, named after it.
+    /// The archive at `entry` extracted into `dest_dir`, named as it says.
     pub fn new(entry: EntryRef, dest_dir: PathBuf) -> Self {
-        let name = extracted_name(&entry.path);
         Self {
             entry,
             dest_dir,
-            name,
+            name: None,
         }
     }
 
-    fn target(&self) -> PathBuf {
-        self.dest_dir.join(&self.name)
+    /// What it is called in `dest_dir`, and whether it is a folder, by the
+    /// archive's listing: `None`, not read, as the archive's name says.
+    fn named(&self, listing: Option<&archive::Listing>) -> (OsString, bool) {
+        let one = listing.and_then(one_member);
+        let folder = match (&one, listing) {
+            (Some((_, folder)), _) => *folder,
+            (None, Some(_)) => true,
+            (None, None) => !only_compressed(&self.entry.path),
+        };
+        let name = self
+            .name
+            .clone()
+            .or(one.map(|(name, _)| name))
+            .unwrap_or_else(|| extracted_name(&self.entry.path));
+        (name, folder)
+    }
+
+    /// What it is called in `dest_dir`: as said, else as the archive at
+    /// `src` says, its listing read.
+    fn name_in(&self, src: &Path, ctx: &StepContext) -> OsString {
+        self.name.clone().unwrap_or_else(|| {
+            let listing = archive::list(src, ctx.cancel_token()).ok();
+            self.named(listing.as_deref()).0
+        })
     }
 }
 
-/// What an archive at `path` is extracted as: its name less its
-/// extensions (`photos.zip`, `photos.tar.gz` and `photos.tgz` give
-/// `photos`; `notes.txt.gz` gives `notes.txt`), or with "contents" after
-/// it where that is its own name.
+/// What an archive at `path` of several members is extracted as, or one
+/// whose listing cannot be read: its name less its extensions
+/// (`photos.zip`, `photos.tar.gz` and `photos.tgz` give `photos`;
+/// `notes.txt.gz` gives `notes.txt`), or with "contents" after it where
+/// that is its own name.
 fn extracted_name(path: &Path) -> OsString {
     let stem = path.file_stem().unwrap_or_default();
     let stem = Path::new(stem)
@@ -115,21 +148,21 @@ impl op::Kind for Extract {
 
 impl op::Effect for Extract {
     fn describe(&self) -> Change {
-        let (archive, folder) = (display_name(&self.entry.path), display_name(&self.dest_dir));
+        let (archive, into) = (display_name(&self.entry.path), display_name(&self.dest_dir));
+        // As the listing last read says, if one was (`makes` reads it):
+        // only the archive's metadata is read here.
+        let (name, folder) = self.named(archive::listed(&self.entry.path).as_deref());
         Change::Create {
-            path: self.target(),
-            directory: true,
+            path: self.dest_dir.join(name),
+            directory: folder,
             words: Some(Words {
-                will: format!("extract “{archive}” to {folder}"),
-                did: format!("extracted “{archive}” to {folder}"),
+                will: format!("extract “{archive}” to {into}"),
+                did: format!("extracted “{archive}” to {into}"),
             }),
         }
     }
 
     fn check(&self, ctx: &StepContext) -> StepStatus {
-        if let Err(invalid) = op::valid_file_name(&self.name) {
-            return conflict(invalid.to_string());
-        }
         if !ctx.is_folder(&self.dest_dir) {
             return conflict(format!(
                 "“{}” is not a folder",
@@ -140,14 +173,28 @@ impl op::Effect for Extract {
             Ok(src) => src,
             Err(e) => return conflict(e.to_string()),
         };
-        let target = self.target();
+        // Read where the archive says its name, or something is there.
+        let listed = std::cell::OnceCell::new();
+        let listing = || {
+            listed
+                .get_or_init(|| archive::list(&src, ctx.cancel_token()).ok())
+                .as_deref()
+        };
+        let name = match &self.name {
+            Some(name) => name.clone(),
+            None => self.named(listing()).0,
+        };
+        if let Err(invalid) = op::valid_file_name(&name) {
+            return conflict(invalid.to_string());
+        }
+        let target = self.dest_dir.join(name);
         // As the plan's earlier steps leave it: one may put what is there
         // in the trash (Replace).
         if !ctx.exists(&target) {
             return StepStatus::Pending { reversible: true };
         }
         // Applied already, or another file under the name.
-        if holds_extracted(&src, &target, &extracted_name(&self.entry.path), ctx) {
+        if listing().is_some_and(|listing| holds_extracted(listing, &target, ctx)) {
             StepStatus::AlreadyDone
         } else if src.starts_with(&target) {
             // Never replaced: it would take the archive with it.
@@ -161,17 +208,19 @@ impl op::Effect for Extract {
         }
     }
 
-    fn makes(&self) -> Option<Made> {
-        // A file, whose name kept beside another keeps its extension last,
-        // where the archive is listed already (`check` lists it) as one
-        // member of its own name, not a folder: `report.pdf.zip` gives
-        // `report (2).pdf`. Else as its name says.
-        let folder = archive::listed(&self.entry.path).map_or_else(
-            || !only_compressed(&self.entry.path),
-            |listing| !unwraps_to_one_file(&listing, &extracted_name(&self.entry.path)),
-        );
+    /// Its name and kind as the archive's listing says, read here and
+    /// kept for the check, the room and the extraction after: a file,
+    /// whose name kept beside another keeps its extension last
+    /// (`report.pdf.zip` gives `report (2).pdf`).
+    fn makes(&self, ctx: &StepContext) -> Option<Made> {
+        let listing = self
+            .entry
+            .resolve()
+            .ok()
+            .and_then(|src| archive::list(&src, ctx.cancel_token()).ok());
+        let (name, folder) = self.named(listing.as_deref());
         Some(Made {
-            target: self.target(),
+            target: self.dest_dir.join(name),
             from: self.entry.path.clone(),
             inputs: vec![self.entry.path.clone()],
             folder,
@@ -196,14 +245,14 @@ impl op::Effect for Extract {
 
     fn made_as(&self, name: OsString) -> Option<Box<dyn Operation>> {
         Some(Box::new(Extract {
-            name,
+            name: Some(name),
             ..self.clone()
         }))
     }
 
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
-        let target = self.target();
+        let target = self.dest_dir.join(self.name_in(&src, ctx));
         let size = std::fs::metadata(&src)?.len();
         ctx.add_total(size);
         let staging = ctx.stage(&self.dest_dir)?;
@@ -257,10 +306,9 @@ impl op::Effect for Extract {
             // Paused once it is all there, it waits before it is placed.
             .and_then(|()| Ok(ctx.check_cancelled()?))
             .and_then(|()| {
-                // What the archive holds is unwrapped by its own name, and
-                // placed under the step's, which may be one kept beside.
-                let own = extracted_name(&self.entry.path);
-                let placed = only_member(&made, &own).unwrap_or_else(|| made.clone());
+                // Its one member, under the step's name, which may be one
+                // kept beside; else a folder of all it holds.
+                let placed = only_member(&made).unwrap_or_else(|| made.clone());
                 staging.place(&placed, &target).with_context(|| {
                     format!(
                         "“{}” could not be placed in “{}”",
@@ -292,23 +340,34 @@ impl op::Effect for Extract {
     }
 }
 
-/// The one member `made` holds, when it is called `name`: what the
-/// archive is extracted as.
-fn only_member(made: &Path, name: &OsStr) -> Option<PathBuf> {
+/// The one member `made` holds, when it holds one that is not hidden:
+/// what the archive is extracted as, as `one_member` foresaw it.
+fn only_member(made: &Path) -> Option<PathBuf> {
     let mut members = std::fs::read_dir(made).ok()?;
     let first = members.next()?.ok()?;
-    (members.next().is_none() && first.file_name() == name).then(|| first.path())
+    (members.next().is_none() && !hidden(&first.file_name())).then(|| first.path())
 }
 
-/// Whether the archive's listing is one member named `name` that is no
-/// folder: extracted, it is that file (or link) itself.
-fn unwraps_to_one_file(listing: &archive::Listing, name: &OsStr) -> bool {
-    let [member] = listing.members.as_slice() else {
-        return false;
-    };
-    listing.complete
-        && !member.directory
-        && OsStr::new(member.name.trim_start_matches("./")) == name
+/// Whether a name is hidden, as a listing hides it: it starts with a dot.
+fn hidden(name: &OsStr) -> bool {
+    name.as_encoded_bytes().starts_with(b".")
+}
+
+/// The one member the listed archive is extracted as, by its own name, and
+/// whether it is a folder: what extracting it leaves at its top (`left_by`)
+/// is one entry, not hidden. `None` for several, none, a hidden one, or an
+/// archive refused whole. A listing cut short tells a folder by what it
+/// listed (a source tree's thousands of files under one folder), a file
+/// only when it lists every member.
+fn one_member(listing: &archive::Listing) -> Option<(OsString, bool)> {
+    let left = left_by(listing)?;
+    let mut top = left
+        .iter()
+        .filter(|(path, _)| path.components().count() == 1);
+    let (path, what) = top.next()?;
+    let folder = *what == Left::Folder;
+    (top.next().is_none() && !hidden(path.as_os_str()) && (folder || listing.complete))
+        .then(|| (path.as_os_str().to_owned(), folder))
 }
 
 /// What extracting an archive leaves at a path, by its listing.
@@ -379,28 +438,26 @@ fn left_by(listing: &archive::Listing) -> Option<std::collections::BTreeMap<Path
 /// drive keeps two-second times.
 const TIME_KEPT: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Whether `target` holds what extracting `src` made, and nothing else, as
-/// a copy is told done (`same_tree`): the folders and their names alike,
-/// each file of its size and time (what the extraction gave it), each
-/// link saying the same, each hard link to its first name; all of it under
-/// one member called `name`, the archive's own (`extracted_name`), that
-/// member's. A listing cut short (`archive::list`'s bounds), or a file of
-/// no size or time said, says no: then nobody can tell.
-fn holds_extracted(src: &Path, target: &Path, name: &OsStr, ctx: &StepContext) -> bool {
-    let Ok(listing) = archive::list(src, ctx.cancel_token()) else {
-        return false;
-    };
+/// Whether `target` holds what extracting the listed archive made, and
+/// nothing else, as a copy is told done (`same_tree`): the folders and
+/// their names alike, each file of its size and time (what the extraction
+/// gave it), each link saying the same, each hard link to its first name;
+/// of the archive's one member (`one_member`) where it holds one. A
+/// listing cut short (`archive::list`'s bounds), or a file of no size or
+/// time said, says no: then nobody can tell.
+fn holds_extracted(listing: &archive::Listing, target: &Path, ctx: &StepContext) -> bool {
     if !listing.complete || listing.members.is_empty() {
         return false;
     }
-    let Some(mut left) = left_by(&listing) else {
+    let Some(mut left) = left_by(listing) else {
         return false;
     };
-    // All under one member of its name: that member is the target. Else
-    // the target is the folder holding them all.
-    let own = Path::new(name);
-    let unwrapped = left.keys().all(|path| path.starts_with(own));
-    let mut expected: std::collections::BTreeMap<PathBuf, Left> = if unwrapped {
+    // Its one member is the target. Else the target is the folder holding
+    // them all.
+    let mut expected: std::collections::BTreeMap<PathBuf, Left> = if let Some((one, _)) =
+        one_member(listing)
+    {
+        let own = Path::new(&one);
         std::mem::take(&mut left)
             .into_iter()
             .filter_map(|(path, what)| {
@@ -510,7 +567,7 @@ pub fn register(app: &App, owner: &str) {
             owner,
             "archive.extract",
             "Extract here",
-            "Extract each archive of the selection, or the entries given, into a folder named after it, beside it or in `dest` (plan)",
+            "Extract each archive of the selection, or the entries given, beside it or in `dest`: an archive of one folder or file gives that folder or file, one of several a folder named after it (plan)",
             |a, app| {
                 let dest = a
                     .dest
@@ -575,4 +632,103 @@ pub fn register(app: &App, owner: &str) {
         )
         .when(ARCHIVES),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A listing of `names`: one ending in `/` a folder, one ending in `|`
+    /// a pipe, any other a file.
+    fn listing(names: &[&str], complete: bool) -> archive::Listing {
+        let members = names
+            .iter()
+            .map(|name| {
+                let (name, directory, regular) = if let Some(folder) = name.strip_suffix('/') {
+                    (folder, true, false)
+                } else if let Some(pipe) = name.strip_suffix('|') {
+                    (pipe, false, false)
+                } else {
+                    (*name, false, true)
+                };
+                archive::Member {
+                    name: name.to_owned(),
+                    directory,
+                    regular,
+                    ..Default::default()
+                }
+            })
+            .collect();
+        archive::Listing { members, complete }
+    }
+
+    fn one(names: &[&str], complete: bool) -> Option<(String, bool)> {
+        one_member(&listing(names, complete))
+            .map(|(name, folder)| (name.to_string_lossy().into_owned(), folder))
+    }
+
+    #[test]
+    fn an_archive_of_one_member_is_extracted_as_that_member() {
+        let folder = Some(("project-1.0".to_owned(), true));
+        assert_eq!(one(&["project-1.0/", "project-1.0/README"], true), folder);
+        // Its folder not listed of its own, or under `./`.
+        assert_eq!(one(&["project-1.0/src/main.rs"], true), folder);
+        assert_eq!(one(&["./", "./project-1.0/README"], true), folder);
+        // A pipe beside it is never extracted.
+        assert_eq!(one(&["project-1.0/README", "fifo|"], true), folder);
+        assert_eq!(
+            one(&["report l'été.pdf"], true),
+            Some(("report l'été.pdf".to_owned(), false))
+        );
+    }
+
+    #[test]
+    fn an_archive_of_several_or_a_hidden_one_is_a_folder() {
+        assert_eq!(one(&["a/README", "b.txt"], true), None);
+        assert_eq!(one(&[".config/", ".config/app.conf"], true), None);
+        assert_eq!(one(&[".profile"], true), None);
+        assert_eq!(one(&[], true), None);
+        // Refused whole, it makes nothing.
+        assert_eq!(one(&["project/README", "../outside.txt"], true), None);
+    }
+
+    #[test]
+    fn a_listing_cut_short_tells_a_folder_and_never_a_file() {
+        assert_eq!(
+            one(&["linux-6.0/", "linux-6.0/Makefile"], false),
+            Some(("linux-6.0".to_owned(), true))
+        );
+        assert_eq!(one(&["huge.img"], false), None);
+    }
+
+    #[test]
+    fn a_name_said_is_kept_and_none_said_is_the_members() {
+        let entry = EntryRef::new(
+            skwir_core::FileId { dev: 1, ino: 1 },
+            PathBuf::from("/example/v1.0.tar.gz"),
+        );
+        let step = Extract::new(entry, PathBuf::from("/example"));
+        let of = |names: &[&str]| listing(names, true);
+        let named = |step: &Extract, listing: Option<&archive::Listing>| {
+            let (name, folder) = step.named(listing);
+            (name.to_string_lossy().into_owned(), folder)
+        };
+        let release = of(&["project-1.0/", "project-1.0/README"]);
+        assert_eq!(named(&step, Some(&release)), ("project-1.0".into(), true));
+        assert_eq!(
+            named(&step, Some(&of(&["a.txt", "b.txt"]))),
+            ("v1.0".into(), true)
+        );
+        // Not listed: as its name says.
+        assert_eq!(named(&step, None), ("v1.0".into(), true));
+        // Kept beside one taken: the member under the name said.
+        let Some(kept) = step.made_as("project-1.0 (2)".into()) else {
+            panic!("an extraction can be named");
+        };
+        let kept = kept.as_any().and_then(|any| any.downcast_ref::<Extract>());
+        assert_eq!(
+            named(kept.unwrap(), Some(&release)),
+            ("project-1.0 (2)".into(), true)
+        );
+    }
 }

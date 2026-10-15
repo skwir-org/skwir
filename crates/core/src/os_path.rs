@@ -174,6 +174,34 @@ pub fn deserialize<'de, P: From<OsString>, D: Deserializer<'de>>(d: D) -> Result
     Ok(P::from(os))
 }
 
+/// [`serialize`] and [`deserialize`] for an `Option` of a path or a name.
+pub mod opt {
+    use super::{Deserialize, Deserializer, OsStr, OsString, Serializer};
+
+    /// # Errors
+    /// The serializer's.
+    #[allow(clippy::ref_option)]
+    pub fn serialize<P: AsRef<OsStr>, S: Serializer>(
+        path: &Option<P>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        match path {
+            Some(path) => super::serialize(path, s),
+            None => s.serialize_none(),
+        }
+    }
+
+    /// # Errors
+    /// The deserializer's.
+    pub fn deserialize<'de, P: From<OsString>, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<P>, D::Error> {
+        #[derive(Deserialize)]
+        struct Wrapped(#[serde(deserialize_with = "super::deserialize")] OsString);
+        Ok(Option::<Wrapped>::deserialize(d)?.map(|Wrapped(os)| P::from(os)))
+    }
+}
+
 /// `#[serde(with = "crate::os_path::bytes")]` on a `Vec<u8>` that is
 /// mostly text (what a trash says of an item): a string when it is UTF-8,
 /// `{"bytes": [..]}` otherwise, as a path is written.

@@ -897,6 +897,18 @@ the vault's top, a heading by its slug (ADR-029 amendment). Not done:
 a search of the vault for a note elsewhere (waits for skwird's index),
 notes embedded with `![[…]]`.
 
+### 2026-10-15
+
+Extract Here gives an archive's one folder or file as it is, whatever it
+is called: `v1.0.zip` holding `project-1.0/` makes `project-1.0`, not
+`v1.0/project-1.0` (ADR-048 amendment). Several members still go in a
+folder named after the archive, and so does a hidden member alone. The
+name comes from the archive's listing: a step's `makes` now takes the
+plan's context, and settling fixes the name it found in the step, so the
+dialog asks about a name taken under the name it will be placed under.
+Not done: a Mac's `__MACOSX` beside the one folder still makes two
+members, so a folder around them.
+
 ---
 
 ## Maps

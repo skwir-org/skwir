@@ -832,7 +832,11 @@ impl Executor {
                     let companions = Arc::clone(&self.companions.lock());
                     // Names taken are settled first: what the dry run
                     // checks is what will be done.
-                    let settled = if whole && super::clash::takes_names(&plan.steps) {
+                    let settled = if whole
+                        && super::clash::takes_names(
+                            &plan.steps,
+                            &StepContext::with_cancel(job.cancel.clone()),
+                        ) {
                         self.settle(&plan, &companions, &job.cancel)
                     } else {
                         Settling::Steps(None)

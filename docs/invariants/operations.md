@@ -129,9 +129,15 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   (`clash::takes_names`). What is there is never trashed when it is, or
   holds, what the step reads (`Made::inputs`): the step's check refuses
   instead. Replace if newer compares the latest change among the inputs,
-  deep in a folder. `makes` is asked again after `check`, which may read
-  what the step is made of (a one-file archive keeps its extension:
-  `report (2).pdf`).
+  deep in a folder.
+- What such a step makes may depend on what it reads: an archive of one
+  folder or file gives it under its own name, a one-file archive kept
+  beside keeps its extension (`report (2).pdf`). `makes` reads it, given
+  the plan's context, on the plan's thread; settling fixes the name found
+  in the step (`made_as`), so what the dry run checks and the dialog asks
+  about is the name it is placed under. `describe` lists nothing: it
+  says what a listing already read says, else what the archive's name
+  says.
 - A dry run foresees what each earlier step takes and makes
   (`StepContext::foresee`): a check asks the context whether a name is
   free (`exists`, `made`, `empty_after`), never the disk alone.

@@ -534,12 +534,15 @@ pub trait Operation: Send + Sync + fmt::Debug {
     /// What it makes, new, under a name of its own ([`Made`]): an archive
     /// extracted, one made. A name taken there is settled as a copy's is
     /// (`clash`), with a file's choices: what is made is never merged.
-    /// `None` for any other step.
-    fn makes(&self) -> Option<Made> {
+    /// `None` for any other step. May read what it is made of, where that
+    /// says its name (an archive's one member): on the plan's thread.
+    fn makes(&self, ctx: &StepContext) -> Option<Made> {
+        let _ = ctx;
         None
     }
-    /// The same step making what it makes under `name` instead: the name
-    /// kept beside one taken.
+    /// The same step making what it makes under `name`: the name kept
+    /// beside one taken, or the one `makes` found, which settling fixes
+    /// in the step so that what is checked is what is applied.
     fn made_as(&self, name: std::ffi::OsString) -> Option<Box<dyn Operation>> {
         let _ = name;
         None
@@ -560,8 +563,7 @@ pub struct Made {
     /// Replace if newer compares with what is there.
     pub inputs: Vec<PathBuf>,
     /// Whether it is a folder: a name kept beside a file's keeps its
-    /// extension last. A step may know better once checked (an archive
-    /// listed): `clash` asks `makes` again after `check`.
+    /// extension last.
     pub folder: bool,
     /// What the question says of it: the verb on its button and what
     /// nothing is until it is answered ("Extract", "extracted").
@@ -598,7 +600,8 @@ pub trait Effect: Send + Sync + fmt::Debug {
         0
     }
     /// `Operation::makes`.
-    fn makes(&self) -> Option<Made> {
+    fn makes(&self, ctx: &StepContext) -> Option<Made> {
+        let _ = ctx;
         None
     }
     /// `Operation::made_as`.
@@ -646,8 +649,8 @@ impl<T: Kind> Operation for T {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
-    fn makes(&self) -> Option<Made> {
-        Effect::makes(self)
+    fn makes(&self, ctx: &StepContext) -> Option<Made> {
+        Effect::makes(self, ctx)
     }
     fn made_as(&self, name: std::ffi::OsString) -> Option<Box<dyn Operation>> {
         Effect::made_as(self, name)

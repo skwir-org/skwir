@@ -242,9 +242,10 @@ The player, in the panel or pinned at its foot:
 - ZIP, tar, 7z and other archives as a tree: folders first, icons,
   aligned sizes, expand and collapse. A file selected in it opens as what
   it is (see [Using the preview](#using-the-preview)).
-- **Extract Here**, in an archive's menu or a drop's, extracts it into a
-  folder beside it. With two panes, `Shift+F7` offers it into the other
-  pane's folder.
+- **Extract Here**, in an archive's menu or a drop's, extracts it beside
+  it: an archive of one folder or one file gives that folder or file,
+  one of several a folder named after it. With two panes, `Shift+F7`
+  offers it into the other pane's folder.
 - An encrypted ZIP asks its password. libarchive cannot decrypt an
   encrypted 7z or RAR: those need another application.
 - A name already there asks, as a copy does: keep both (`photos (2)`),

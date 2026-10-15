@@ -4,7 +4,9 @@ Status: accepted, 2026-10-09. Revises the archive rule of
 `docs/invariants/previews.md` ("member names are never extraction
 paths"), which held while Skwir only previewed archives. Built. Revised
 by ADR-059: the attributes a copy keeps are put back, an encrypted
-member asks its password, and a name taken is asked about.
+member asks its password, and a name taken is asked about. Amended
+2026-10-15: an archive of one folder or one file gives it, whatever its
+name.
 
 ## Context
 
@@ -39,7 +41,8 @@ names the destination refuses, bombs that fill the disk.
    - Named after the archive (`photos.tar.gz` → `photos`). An archive
      whose single member has that name (`project-1.0` in
      `project-1.0.tar.gz`, the file in `notes.txt.gz`) gives that
-     member, not a folder around it.
+     member, not a folder around it. (Amended 2026-10-15: whatever the
+     member's name.)
    - Undo trashes it, as for a copy. Re-run, a folder holding what the
      listing names counts as done.
 4. **Cancel and Pause reach the helper.** It reads a stdin byte before
@@ -62,3 +65,36 @@ names the destination refuses, bombs that fill the disk.
   their files (ADR-028) is left for later.
 - Windows extracts unsandboxed (as it previews) and makes links only
   where the user may.
+
+## Amendments
+
+### 2026-10-15: one member, whatever its name
+
+An archive of one folder named otherwise than the archive (`v1.0.tar.gz`
+holding `project-1.0/`, as a release is downloaded) gave
+`v1.0/project-1.0/`: a level the user opens for nothing. GNOME Files,
+Ark's "autodetect subfolder" and macOS's Archive Utility give the
+folder.
+
+- What extracting the archive leaves at its top (`left_by`) is one
+  member, a folder and all in it or a file: it is placed as itself
+  (`one_member`), under its own name. Of several, the folder named after
+  the archive holds them, as before.
+- A hidden member alone (`.config/`, `.profile`) stays in that folder:
+  placed as itself it would be out of sight where hidden files are, and
+  an archive would drop a dotfile straight into the folder it is
+  extracted in.
+- Pipes, devices and sockets, which are never extracted, do not count;
+  an archive refused whole (a member that would leave the folder) has no
+  one member.
+- The name comes from the archive's listing, read on the plan's thread:
+  `Operation::makes` takes the plan's context, and settling the plan fixes
+  the name found in the step (`made_as`), so the dry run checks, and the
+  name-taken dialog asks about, the name it will be placed under. A plan
+  not settled (a script's) reads it as it runs.
+- A listing cut short (`archive::list`'s bounds, a source tree of
+  thousands of files) tells a folder by what it listed, a file only when
+  it lists every member. What was extracted decides what is placed: its
+  one member under the step's name, else a folder of all of it. A level
+  is never added; at worst, a folder of several members is called as
+  the folder that every listed member was in.

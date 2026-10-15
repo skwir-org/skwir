@@ -193,7 +193,7 @@ impl op::Effect for Compress {
         }
     }
 
-    fn makes(&self) -> Option<Made> {
+    fn makes(&self, _: &StepContext) -> Option<Made> {
         Some(Made {
             target: self.target(),
             from: self

@@ -99,11 +99,11 @@ to copy and move across (Shift+F5, Shift+F6), none to extract across.
    - It is never merged: an extraction merged into a folder would need
      each file it placed undone apart, and the dialog's Merge is a
      copy's. The dialog's button says the step's verb (Extract, Compress).
-   - An extraction kept beside unwraps the archive's single member by the
-     archive's own name, placing it under the new one. A file's name keeps
-     its extension last (`report (2).pdf` of `report.pdf.zip`): the step
-     says it makes a file once its check listed the archive (`makes`,
-     asked again after `check`).
+   - An extraction kept beside places the archive's single member under
+     the new name. A file's name keeps its extension last
+     (`report (2).pdf` of `report.pdf.zip`): the step reads the archive's
+     listing to say what it makes (`makes`, given the plan's context;
+     ADR-048's amendment of 2026-10-15).
    - Extracted, done is told as for a copy too: what was made holds
      what the archive lists and nothing else, each file at its size and
      at its time to two seconds (a FAT drive's), each link saying the same,

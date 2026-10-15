@@ -150,8 +150,9 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   switches Always use for… to make the choice the default.
 - **Copy paths:** `Ctrl+Shift+C`. **Run Command…** in the context menu
   runs a shell command on the selection in a terminal.
-- **Extract Here**, in an archive's menu, extracts it into a folder
-  beside it, asking a ZIP's password when it has one. **Compress to
+- **Extract Here**, in an archive's menu, extracts it beside it (its one
+  folder or file as it is, several in a folder named after it), asking
+  a ZIP's password when it has one. **Compress to
   ZIP** and **Compress…** (the name's ending picks the format: `.7z`,
   `.tar.zst`…) make an archive of the selection beside it.
 - **Find Similar**, in the context menu, searches for files of the same
