@@ -103,9 +103,9 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 
 ## Clicks and fullscreen controls
 
-- Fullscreen controls hide on one cancellable inactivity timer, never a loop.
-  Stationary pointer events from layout must not reset it; hover, scrubbing,
-  menus and keyboard focus keep the controls shown.
+- Fullscreen is the preview's, for every kind (previews.md, "The whole
+  screen"): a film is drawn there enlarged (`media::film`); its bar is
+  the panel's and hides as every kind's does, scrubbing keeping it.
 - Pointer movement must not take focus from an open playback popup.
 - A click on the picture (`media::clickable`: film, audio figure, fullscreen
   canvas) toggles playback. Overlays on the film, such as the controls bar,

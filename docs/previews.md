@@ -20,6 +20,15 @@ contributors). The rules for working on preview code are in
 - **The bar** holds the tools of the kind shown; in a narrow panel the
   less used ones move into More. Every tool is also a palette command
   (`Preview: …`, `Player: …`).
+- **Fullscreen.** A picture, a document's pages, text, a film or music
+  goes on the whole screen with the bar's Fullscreen button, `F`, or a
+  double click on a picture or a film; `F` or `Escape` brings it back.
+  The bar lies over the top and hides when the pointer rests; move it to
+  bring the bar back, or press `C`. The arrows go to the picture before
+  or after in the folder (other files are skipped), or turn the page.
+  **Slideshow** (`Space` on the whole screen, or More › Slideshow in the
+  panel) shows the pictures from the one shown to the last, each for the
+  time its bar's picker says (Reading › Pictures).
 - **Files inside an archive or a message** open as what they are: a
   picture zooms, a PDF opens in the reader, JSON folds, Markdown reads.
   The file opens below or beside the archive's list (More › Layout), and
@@ -55,11 +64,21 @@ contributors). The rules for working on preview code are in
 | Up, Down; `Page Up`, `Page Down`; `Ctrl+Home`, `Ctrl+End` | Text | A line; a screen; the start or the end |
 | `Alt+Z` | Text | Wrap long lines, or let them go on sideways |
 | `Alt+Page Up`, `Alt+Page Down` | Any preview | Previous or next section, chapter or comic page |
+| `F` | Picture, reader, text, peek | Fullscreen, or back |
 | `Ctrl++`, `Ctrl+-`, `Ctrl+0` | Reader, picture, map, text | Zoom in, out, reset; text larger, smaller, as it was |
 | `Ctrl` and the wheel | Over a page, a picture or text | Zoom in or out; text larger or smaller (a map zooms with the wheel alone) |
 | Arrows | Map | Pan |
 | Up, Down; Left, Right | Archive or message | Walk its files; fold or unfold |
 | `Ctrl+Shift+O` | Text and structured previews | Label the links in view for the keyboard |
+
+On the whole screen:
+
+| Keys | Action |
+| --- | --- |
+| `Left`, `Right` | Previous or next picture, page or section |
+| `Space` | Play or pause the slideshow (pictures) |
+| `C` | Show or hide the bar |
+| `F`, `Escape` | Back to the panel |
 
 The player, in the panel or pinned at its foot:
 
@@ -71,7 +90,6 @@ The player, in the panel or pinned at its foot:
 | `Up`, `Down` | Volume |
 | `M` | Mute |
 | `F` | Fullscreen |
-| `C` | Show or hide the controls (in the panel) |
 | `Escape` | Leave fullscreen, else close the preview (in the panel) |
 
 ## By kind of file

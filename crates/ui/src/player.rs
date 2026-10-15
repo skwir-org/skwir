@@ -877,8 +877,11 @@ impl Shell {
                 .and_then(|name| self.icons.for_name(name, 48));
             pinned.icon = Some((pinned.path.clone(), icon));
         }
-        if shown && std::mem::take(&mut self.player.fullscreen_wanted) {
-            self.media_fullscreen(window, cx);
+        if shown
+            && std::mem::take(&mut self.player.fullscreen_wanted)
+            && self.preview.fullscreen.is_none()
+        {
+            self.preview_fullscreen(window, cx);
         }
         // The panel showed the track that ended: it shows the next, as a
         // step would, and the list selects it.
@@ -1008,9 +1011,9 @@ impl Shell {
     /// the panel first (its folder, the file selected) and goes there once
     /// the panel shows it (`fullscreen_wanted`). Music has nothing to show.
     pub fn player_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.preview.media.fullscreen.is_some() || self.preview_is_pinned() {
+        if self.preview.fullscreen.is_some() || self.preview_is_pinned() {
             if !self.media_is_audio() {
-                self.media_fullscreen(window, cx);
+                self.preview_fullscreen(window, cx);
             }
             return;
         }

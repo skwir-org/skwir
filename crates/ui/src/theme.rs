@@ -17,6 +17,7 @@
 //! - color: the fields of [`Theme`]. State colors are tokens too: `hover` for
 //!   whatever is under the pointer, `selection_*` for what is chosen,
 //!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
+//!   `stage` behind a picture, a page or a film on the whole screen,
 //!   `drop_target` under a drag, `on_fill` for text on a saturated fill,
 //!   `handle` for an edge being dragged, `band` and `band_edge` for the
 //!   rubber band, `block_hover` and `block_selected` for a block of the
@@ -65,6 +66,9 @@ pub struct Theme {
     pub warning: Hsla,
     /// Dims the window behind a modal dialog.
     pub scrim: Hsla,
+    /// Behind a picture, a page or a film shown on the whole screen: black
+    /// in either look, as a cinema's or a slide projector's.
+    pub stage: Hsla,
     /// A line or row pointed at without being chosen: the line clicked in
     /// the code view, the setting a link named.
     pub highlight: Hsla,
@@ -151,6 +155,7 @@ impl Theme {
             success: rgb(0x2e7d32).into(),
             warning: rgb(0xb26a00).into(),
             scrim: gpui::hsla(0., 0., 0., 0.25),
+            stage: gpui::black(),
             highlight: Hsla::from(rgb(0xd6e4ff)).opacity(0.5),
             handle: Hsla::from(rgb(0x2f6feb)).opacity(0.35),
             band: Hsla::from(rgb(0x2f6feb)).opacity(0.14),
@@ -203,6 +208,7 @@ impl Theme {
             success: rgb(0x6fcf7f).into(),
             warning: rgb(0xf2b84b).into(),
             scrim: gpui::hsla(0., 0., 0., 0.5),
+            stage: gpui::black(),
             highlight: Hsla::from(rgb(0x2c4f8a)).opacity(0.5),
             handle: Hsla::from(rgb(0x6ea8fe)).opacity(0.35),
             band: Hsla::from(rgb(0x6ea8fe)).opacity(0.14),

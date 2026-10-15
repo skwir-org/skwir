@@ -941,6 +941,20 @@ overlay for it; the panel now shares it (`elements::zoom_wheel`). A
 zoomed picture no longer scrolls as it zooms, a trackpad has to mean it,
 and a film, which has no zoom keys, no longer zooms.
 
+Fullscreen is the preview's, no longer the player's: a picture, a
+document's pages, text and music go on the whole screen as a film did,
+with their own bar over the top, hidden when the pointer rests (F, the
+bar's Fullscreen, a double click on a picture). It stays while the file
+changes: the arrows walk the pane's pictures, skipping other files, or
+turn the page, and a slideshow plays the pictures from the one shown to
+the last, at a pace chosen in its bar (`reading.slideshow`). Each wait
+starts once the picture has arrived, so a slow one is shown its whole
+time. `ui.media_fullscreen` and `ui.media_controls` became
+`ui.preview_fullscreen` and `ui.fullscreen_controls`. Not done: the
+next picture is not read ahead, so a slideshow shows the stage for the
+time a picture takes to decode; the screen may still sleep during a
+slideshow or a film (gpui has no idle inhibitor).
+
 The columns view moves as yazi's and Finder's do. After the pane's
 column comes the folder under the cursor, listed once the cursor rests
 on it; a click on a folder shows it, with no double click. Right goes

@@ -212,6 +212,8 @@ of bars, split or not.
   [operations.md](operations.md).
 - `Shell::set_status` is a toast; `set_status_about` (core:
   `App::notify_about_setting`) links to the setting that fixes it.
+  Toasts are drawn under the overlays, but over the preview on the whole
+  screen, which covers the window (previews.md, "The whole screen").
 - **Footers hold state, never messages** (`status.rs`). A pane's footer:
   counts, the selection's size, or with nothing selected what its files
   weigh (`weight.rs`, on a worker; `PaneView::weighs` for a view that

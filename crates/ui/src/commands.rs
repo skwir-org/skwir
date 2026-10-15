@@ -30,6 +30,12 @@ mod args {
     #[serde(transparent)]
     pub(super) struct Object(serde_json::Map<String, serde_json::Value>);
 
+    /// How long a slideshow shows each picture, in seconds.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct Pace {
+        seconds: u64,
+    }
+
     /// A step along something: `1` forward, `-1` back.
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Delta {
@@ -405,7 +411,7 @@ mod args {
 
 use args::{
     Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold, Folders,
-    History, Key, Layout, ListMoveArgs, Object, On, Page, PageLink, Pages, Pan, Pick, Player,
+    History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player,
     Pointer, Popup, Scrub, Settings, Split, Submit, TagsPrompt, TerminalPaste, Text, Unlock, Url,
     UsageMode, View,
 };
@@ -514,9 +520,12 @@ const SHOWS: &[&str] = &[
     "ui.media_continue",
     "ui.media_step",
     "ui.media_scrub",
-    "ui.media_fullscreen",
-    "ui.media_controls",
     "ui.media_escape",
+    "ui.preview_fullscreen",
+    "ui.fullscreen_controls",
+    "ui.fullscreen_step",
+    "ui.slideshow",
+    "ui.slideshow_pace",
     "ui.player",
     "ui.player_volume",
     "ui.map_pan",
@@ -685,6 +694,17 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
         "ui.player_volume",
         r#"{"delta":-0.05}"#,
         "Player: volume down",
+    ),
+    // The arrows on the whole screen: a picture's neighbours, or a page.
+    (
+        "ui.fullscreen_step",
+        r#"{"delta":-1}"#,
+        "Full screen: previous picture or page",
+    ),
+    (
+        "ui.fullscreen_step",
+        r#"{"delta":1}"#,
+        "Full screen: next picture or page",
     ),
     // A structured preview: the files of an archive, a text read where it
     // is shown, its links, its size.
@@ -1605,19 +1625,36 @@ pub fn declare_all(app: &App) {
         "Drag the playing position",
     );
     none(
-        "ui.media_fullscreen",
-        "Player: full screen",
-        "Show the film on the whole screen, or leave it",
-    );
-    none(
-        "ui.media_controls",
-        "Player: controls",
-        "Show or hide the player's controls",
-    );
-    none(
         "ui.media_escape",
         "Player: leave",
         "Leave full screen, else close the preview",
+    );
+    none(
+        "ui.preview_fullscreen",
+        "Preview: full screen",
+        "Show the preview on the whole screen (a picture, pages, text, a film), or leave it",
+    );
+    none(
+        "ui.fullscreen_controls",
+        "Full screen: controls",
+        "Show or hide the bar over the preview on the whole screen",
+    );
+    declare::<Delta>(
+        app,
+        "ui.fullscreen_step",
+        "Full screen: next",
+        "On the whole screen, show the next or previous picture of the pane, or turn the page",
+    );
+    none(
+        "ui.slideshow",
+        "Preview: slideshow",
+        "Play the pane's pictures one after another on the whole screen, from the one shown, or pause",
+    );
+    declare::<Pace>(
+        app,
+        "ui.slideshow_pace",
+        "Slideshow: pace",
+        "How long a slideshow shows each picture, in seconds",
     );
     declare::<Player>(
         app,

@@ -2030,13 +2030,26 @@ impl Shell {
                 self.media_step(delta, window, cx);
             }
             "media_scrub" => self.media_scrub(args, cx),
-            "media_fullscreen" => self.media_fullscreen(window, cx),
-            "media_controls" => self.media_toggle_controls(window, cx),
             "media_escape" => {
-                if self.preview.media.fullscreen.is_some() {
-                    self.media_exit_fullscreen(window, cx);
+                if self.preview.fullscreen.is_some() {
+                    self.exit_fullscreen(window, cx);
                 } else {
                     self.preview_close(window, cx);
+                }
+            }
+            "preview_fullscreen" => self.preview_fullscreen(window, cx),
+            "fullscreen_controls" => self.fullscreen_controls(window, cx),
+            "fullscreen_step" => self.fullscreen_step(
+                args.get("delta")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(1),
+                window,
+                cx,
+            ),
+            "slideshow" => self.slideshow(window, cx),
+            "slideshow_pace" => {
+                if let Some(seconds) = args.get("seconds").and_then(serde_json::Value::as_u64) {
+                    self.slideshow_pace(seconds, window, cx);
                 }
             }
             "preview_page" => self.preview_page(
@@ -2693,7 +2706,14 @@ impl Render for Shell {
             .settings
             .clone()
             .map(gpui::IntoElement::into_any_element);
+        // The whole screen covers the window: what answers the user is
+        // said over it, else under the overlays, as ever.
         let toast = crate::toast::render(self, cx);
+        let (toast_under, toast_over) = if self.preview.fullscreen.is_some() {
+            (None, toast)
+        } else {
+            (toast, None)
+        };
         let sequence = crate::sequence::render(self, cx);
         let shortcuts = crate::shortcuts::render(self, cx);
         let about = crate::about::render(self, cx);
@@ -2789,9 +2809,10 @@ impl Render for Shell {
                     ),
             )
             .children(about)
-            .children(toast)
+            .children(toast_under)
             .children(sequence)
             .children(overlays.into_iter().flatten())
+            .children(toast_over)
             .children(settings)
             .children(shortcuts)
             .child(div().h(px(0.)));

@@ -888,6 +888,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         .opens("find"),
     );
     bar.popups.push(("find", std::rc::Rc::new(find_panel)));
+    crate::preview_bar::fullscreen_tool(&mut bar, shell, theme);
     crate::preview_bar::render(
         &bar,
         crate::preview::active_popup(shell, false),

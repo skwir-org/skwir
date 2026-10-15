@@ -118,6 +118,10 @@ pub struct Info {
     pub size: Option<String>,
     pub modified: Option<String>,
     pub is_dir: bool,
+    /// Whether `mime` is a picture's (`fullscreen::is_picture_type`), told
+    /// with the type, never per frame: the arrows on the whole screen and
+    /// the slideshow walk the pane's pictures.
+    pub picture: bool,
     pub icon: Option<icons::Pic>,
     pub link: icons::Link,
 }
@@ -425,10 +429,14 @@ pub struct PreviewState {
     pub(crate) text_size: Option<f32>,
     tx: flume::Sender<PreviewResult>,
     rx: flume::Receiver<PreviewResult>,
+    /// Peek's keyboard, and the whole screen's where what it shows has none.
     pub peek_focus: Option<FocusHandle>,
-    /// The files of the same kind (music, or films) before and after this
-    /// one in the pane's order; found when the listing, its order or the
-    /// entry changes (`properties_at`), never while painting.
+    /// The preview on the whole screen (`fullscreen.rs`): kept while the
+    /// file shown changes, so a step or a slideshow stays there.
+    pub fullscreen: Option<crate::fullscreen::Fullscreen>,
+    /// The files of the same kind (music, films, pictures) before and after
+    /// this one in the pane's order; found when the listing, its order or
+    /// the entry changes (`properties_at`), never while painting.
     pub neighbours: (Option<EntryId>, Option<EntryId>),
     /// The track to start once shown: the one before it ended, or the user
     /// stepped to it while listening.
@@ -695,6 +703,7 @@ impl Default for PreviewState {
             tx,
             rx,
             peek_focus: None,
+            fullscreen: None,
             neighbours: (None, None),
             queue: None,
             closed_links: None,
@@ -1204,6 +1213,7 @@ impl Shell {
             Some("unit") => "unit",
             Some(crate::map_preview::BACKGROUND_POPUP) => crate::map_preview::BACKGROUND_POPUP,
             Some(crate::media::CONTINUE_POPUP) => crate::media::CONTINUE_POPUP,
+            Some(crate::fullscreen::SLIDESHOW_POPUP) => crate::fullscreen::SLIDESHOW_POPUP,
             _ => "preview",
         };
         if self.toggle_popup(&format!("preview {kind}"), args, window) {
@@ -1280,6 +1290,7 @@ impl Shell {
             self.here(code, window, cx)
         };
         let Some((seen, key, version, entry)) = current else {
+            self.exit_fullscreen(window, cx);
             self.cancel_preview(window, cx);
             // Nothing shown, nothing counted: a search, Recent or the shelf
             // shows no Properties, and a count of the folder left goes.
@@ -1305,6 +1316,9 @@ impl Shell {
             return;
         };
         let here = cursor.is_none();
+        if here || entry.is_dir() {
+            self.exit_fullscreen(window, cx);
+        }
         let id = key.id;
         // Invalidate before draining results: an old result must never land on
         // a newly selected file, a changed file, or a different pane. Inside a
@@ -1339,6 +1353,9 @@ impl Shell {
             self.type_names.request(&app);
             let identified = entry.inode_type().is_some()
                 || (mime.is_some() && !skwir_platform::mime::ambiguous(entry.type_name()));
+            let picture = mime
+                .as_deref()
+                .is_some_and(crate::fullscreen::is_picture_type);
             self.preview.info = Info {
                 name: entry.name_str().into_owned(),
                 type_fallback: crate::typenames::fallback_of(&entry),
@@ -1347,6 +1364,7 @@ impl Shell {
                 size: None,
                 modified: None,
                 is_dir: entry.is_dir(),
+                picture,
                 icon: self.icons.for_entry(&entry, || Some(key.path.clone()), 48),
                 link: icons::Link::of(&entry),
             };
@@ -1410,9 +1428,11 @@ impl Shell {
                 self.preview.fields_for = Some(file);
                 self.read_fields(&entry, &key.path, here);
             }
-            self.preview.neighbours = self
-                .media_kind()
-                .map_or((None, None), |kind| self.media_neighbours(id, kind));
+            self.preview.neighbours = match self.media_kind() {
+                Some(kind) => self.neighbours(id, |entry| crate::media::is_track(entry, kind)),
+                None if self.walks_pictures() => self.neighbours(id, crate::fullscreen::is_picture),
+                None => (None, None),
+            };
             let selection = self.selection_ctx();
             let (summary, drives) = if selection.count < 2 {
                 (Vec::new(), std::collections::BTreeMap::new())
@@ -1668,6 +1688,7 @@ impl Shell {
             let mime = skwir_platform::mime::Mime(sniffed);
             self.type_names.get(&mime);
             self.type_names.request(&Arc::clone(&self.app));
+            self.preview.info.picture = crate::fullscreen::is_picture_type(&mime.0);
             self.preview.info.mime = Some(mime.0);
             self.preview.info.identified = true;
         }
@@ -1777,6 +1798,7 @@ impl Shell {
         } else {
             PreviewPhase::Loading
         };
+        self.fullscreen_arrived(window, cx);
     }
 
     /// A player opened for the shown file.
@@ -2569,7 +2591,6 @@ impl Shell {
         self.preview.info = Info::default();
         while self.preview.rx.try_recv().is_ok() {}
         self.replace_preview_content(None, window, cx);
-        self.media_exit_fullscreen(window, cx);
         self.preview.media = crate::media::MediaState::default();
         self.clear_document_pages(window, cx);
         self.preview.reader = crate::reader::ReaderState::default();
@@ -2863,7 +2884,6 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.cancel_pending_preview();
-        self.media_exit_fullscreen(window, cx);
         self.preview.media = crate::media::MediaState::default();
         self.clear_document_pages(window, cx);
         self.preview.reader = crate::reader::ReaderState::default();
@@ -3297,7 +3317,7 @@ impl Shell {
     }
 
     pub fn close_peek(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.media_exit_fullscreen(window, cx);
+        self.exit_fullscreen(window, cx);
         if let Some(session) = &self.preview.media.session {
             let _ = session.control(skwir_core::media::Control::Play(false));
         }
@@ -3516,6 +3536,23 @@ fn discard_parked(parked: crate::members::Parked, window: &mut Window, cx: &mut 
 
 /// The toolbar and the content. Properties is not its to draw (`under_card`).
 fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
+    // With nothing to preview Properties gives way first: the toolbar and
+    // what the content says (why the preview failed) keep their height.
+    let alone = crate::properties::alone(shell);
+    let inner = content(shell, theme, interactive, cx);
+    frame(shell, interactive)
+        .flex_1()
+        .when(!alone, gpui::Styled::min_h_0)
+        .children(interactive.then(|| controls(shell, theme, cx)).flatten())
+        .child(content_area(shell, theme, interactive, alone, inner, cx))
+        .into_any_element()
+}
+
+/// What holds the keys of what is shown, the panel's and the whole
+/// screen's alike: what can be found in and copied from takes the same
+/// keys, one command each (`ui.preview_find`…), whichever shows it; a
+/// player takes its own.
+pub(crate) fn frame(shell: &Shell, interactive: bool) -> gpui::Div {
     let document = matches!(
         &shell.preview.content,
         Some(PreviewContent::Image {
@@ -3524,37 +3561,47 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
         })
     );
     let inspection = matches!(&shell.preview.content, Some(PreviewContent::Inspection(_)));
-    // With nothing to preview Properties gives way first: the toolbar and
-    // what the content says (why the preview failed) keep their height.
-    let alone = crate::properties::alone(shell);
-    let mut frame = div()
-        .flex_1()
-        .when(!alone, gpui::Styled::min_h_0)
+    div()
         .flex()
         .flex_col()
-        // What can be found in and copied from takes the same keys, one
-        // command each (`ui.preview_find`…), whichever shows it.
         .when(document && interactive, |d| {
             d.key_context(format!("{} {}", keymap::PREVIEW, keymap::READER).as_str())
         })
         .when(inspection && interactive, |d| {
             d.key_context(keymap::PREVIEW)
-        });
-    // A location named with nothing to preview (a search, the shelf, with
-    // nothing selected) has no tools.
-    if interactive && !shell.preview.info.name.is_empty() && shell.preview.key.is_some() {
-        let controls = if matches!(shell.preview.content, Some(PreviewContent::Inspection(_))) {
-            crate::inspector::toolbar(shell, theme, cx)
-        } else if shell.preview.media.session.is_some() {
-            crate::media::toolbar(shell, theme, cx)
-        } else if document {
-            crate::reader::toolbar(shell, theme, cx)
-        } else {
-            crate::preview_toolbar::render(shell, theme, cx)
-        };
-        frame = frame.child(div().relative().flex_none().child(controls).when(
-            shell.preview_busy(),
-            |d| {
+        })
+        .when_some(
+            shell.preview.media.focus.as_ref().filter(|_| interactive),
+            |d, focus| d.track_focus(focus).key_context("MediaPlayer"),
+        )
+}
+
+/// The bar of what is shown, its kind's, with the loading line under it.
+/// A location named with nothing to preview (a search, the shelf, with
+/// nothing selected) has no tools.
+pub(crate) fn controls(
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
+    if shell.preview.info.name.is_empty() || shell.preview.key.is_none() {
+        return None;
+    }
+    let bar = match &shell.preview.content {
+        Some(PreviewContent::Inspection(_)) => crate::inspector::toolbar(shell, theme, cx),
+        _ if shell.preview.media.session.is_some() => crate::media::toolbar(shell, theme, cx),
+        Some(PreviewContent::Image {
+            detail: Some(PreviewInfo::Document { .. }),
+            ..
+        }) => crate::reader::toolbar(shell, theme, cx),
+        _ => crate::preview_toolbar::render(shell, theme, cx),
+    };
+    Some(
+        div()
+            .relative()
+            .flex_none()
+            .child(bar)
+            .when(shell.preview_busy(), |d| {
                 d.child(
                     div()
                         .absolute()
@@ -3563,40 +3610,45 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
                         .h(px(2.))
                         .bg(theme.accent),
                 )
-            },
-        ));
-    }
-    frame
+            })
+            .into_any_element(),
+    )
+}
+
+/// Where `inner`, the content, is shown: on paper for what is read, on
+/// the letterbox for what is looked at, with the content's own menu.
+pub(crate) fn content_area(
+    shell: &Shell,
+    theme: &Theme,
+    interactive: bool,
+    alone: bool,
+    inner: AnyElement,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .when(!alone, gpui::Styled::min_h_0)
+        // What is read is on paper; a picture, a page or a film keeps
+        // the panel's own surface as its letterbox.
+        .when(on_paper(shell), |d| d.bg(theme.bg))
+        .when(interactive, |d| {
+            d.on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                    this.open_preview_menu(event.position, window, cx);
+                }),
+            )
+        })
         .when_some(
             shell.preview.media.focus.as_ref().filter(|_| interactive),
-            |d, focus| d.track_focus(focus).key_context("MediaPlayer"),
+            |d, focus| {
+                let focus = focus.clone();
+                d.on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&focus))
+            },
         )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .when(!alone, gpui::Styled::min_h_0)
-                // What is read is on paper; a picture, a page or a film keeps
-                // the panel's own surface as its letterbox.
-                .when(on_paper(shell), |d| d.bg(theme.bg))
-                .when(interactive, |d| {
-                    d.on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
-                            this.open_preview_menu(event.position, window, cx);
-                        }),
-                    )
-                })
-                .when_some(
-                    shell.preview.media.focus.as_ref().filter(|_| interactive),
-                    |d, focus| {
-                        let focus = focus.clone();
-                        d.on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&focus))
-                    },
-                )
-                .child(content(shell, theme, interactive, cx)),
-        )
+        .child(inner)
         .into_any_element()
 }
 
@@ -3634,10 +3686,16 @@ pub(crate) fn notice_strip(text: String, theme: &Theme) -> gpui::Div {
 }
 
 /// Whether the content is something to read rather than something to look at.
-fn on_paper(shell: &Shell) -> bool {
+pub(crate) fn on_paper(shell: &Shell) -> bool {
     let preview = &shell.preview;
     if preview.media.session.is_some() {
         return shell.media_is_audio();
+    }
+    // A picture or a film on its way waits on its letterbox: stepping
+    // through them, or a slideshow, never flashes paper in between.
+    if preview.content.is_none() && (shell.walks_pictures() || shell.media_kind() == Some("video/"))
+    {
+        return false;
     }
     !matches!(preview.content, Some(PreviewContent::Image { .. })) && placeholder(shell).is_none()
 }
@@ -3652,7 +3710,12 @@ fn placeholder(shell: &Shell) -> Option<&PreviewContent> {
         .filter(|_| preview.content.is_none() && shell.preview_busy())
 }
 
-fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
+pub(crate) fn content(
+    shell: &Shell,
+    theme: &Theme,
+    interactive: bool,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     let p = &shell.preview;
     if p.media.session.is_some() && shell.media_is_audio() {
         return crate::media::audio_content(shell, theme, interactive, cx);
@@ -3779,6 +3842,7 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                 picture
             };
             div()
+                .id("preview-picture")
                 .flex_1()
                 .min_h_0()
                 .flex()
@@ -3797,6 +3861,18 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                             .on_mouse_down(MouseButton::Left, move |_, window, _| {
                                 window.focus(&clicked);
                             })
+                    },
+                )
+                // A double click on a picture goes to the whole screen and
+                // back, as one on a film does (which answers it itself).
+                .when(
+                    document.is_none() && interactive && p.media.session.is_none(),
+                    |d| {
+                        d.on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
+                            if event.click_count() == 2 {
+                                this.preview_fullscreen(window, cx);
+                            }
+                        }))
                     },
                 )
                 .child(
@@ -4402,8 +4478,8 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
     if !shell.preview.peek {
         return None;
     }
-    if shell.preview.media.fullscreen.is_some() {
-        return Some(crate::media::fullscreen(shell, cx));
+    if shell.preview.fullscreen.is_some() {
+        return crate::fullscreen::render(shell, cx);
     }
     let theme = cx.global::<Theme>().clone();
     let focus = shell.preview.peek_focus.clone()?;
@@ -4447,6 +4523,8 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                             .border_color(theme.border)
                             .child(if shell.preview.media.session.is_some() {
                                 "Space play/pause · arrows seek · M mute · F fullscreen · Escape exit"
+                            } else if shell.fullscreen_shows().is_some() {
+                                "Space or Escape to close · arrows to move · F fullscreen"
                             } else {
                                 "Space or Escape to close · arrows to move"
                             }),

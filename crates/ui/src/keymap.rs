@@ -63,6 +63,10 @@ pub const INSPECTOR: &str = "Inspector";
 pub const TEXT: &str = "PreviewText";
 /// What the preview plays.
 pub const MEDIA: &str = "MediaPlayer";
+/// The preview on the whole screen (`fullscreen.rs`).
+pub const FULLSCREEN: &str = "Fullscreen";
+/// A picture on the whole screen, which plays as a slideshow.
+pub const SLIDESHOW: &str = "Slideshow";
 /// The sidebar while it has the keyboard (F6): the arrows walk its groups
 /// and places (`sidebar.rs`).
 pub const SIDEBAR: &str = "Sidebar";
@@ -498,7 +502,27 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"delta":1}"#,
         Some("media"),
     ),
-    ("f", "ui.media_fullscreen", "{}", Some("media")),
+    // The whole screen, from whatever shows the preview, and back.
+    ("f", "ui.preview_fullscreen", "{}", Some("media")),
+    ("f", "ui.preview_fullscreen", "{}", Some("image")),
+    ("f", "ui.preview_fullscreen", "{}", Some("preview")),
+    ("f", "ui.preview_fullscreen", "{}", Some("peek")),
+    ("f", "ui.preview_fullscreen", "{}", Some("fullscreen")),
+    ("escape", "ui.preview_fullscreen", "{}", Some("fullscreen")),
+    ("c", "ui.fullscreen_controls", "{}", Some("fullscreen")),
+    (
+        "left",
+        "ui.fullscreen_step",
+        r#"{"delta":-1}"#,
+        Some("fullscreen"),
+    ),
+    (
+        "right",
+        "ui.fullscreen_step",
+        r#"{"delta":1}"#,
+        Some("fullscreen"),
+    ),
+    ("space", "ui.slideshow", "{}", Some("slideshow")),
     (
         "up",
         "ui.media_control",
@@ -562,7 +586,6 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"delta":-0.05}"#,
         Some("player"),
     ),
-    ("c", "ui.media_controls", "{}", Some("media")),
     ("escape", "ui.media_escape", "{}", Some("media")),
     (
         "pageup",
@@ -980,6 +1003,8 @@ pub(crate) const PLACES: &[Place] = &[
     place("image", IMAGE, "Picture preview"),
     place("map", MAP, "Map preview"),
     place("media", MEDIA, "Media player"),
+    place("fullscreen", FULLSCREEN, "Preview on the whole screen"),
+    place("slideshow", SLIDESHOW, "Picture on the whole screen"),
     place("player", PLAYER, "Pinned player"),
     place("terminal", TERMINAL, "Terminal"),
     inside("palette", PALETTE, "Command palette"),

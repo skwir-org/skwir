@@ -16,21 +16,12 @@ enum Poster {
     Dismissed,
 }
 
-struct FullscreenRestore {
-    entered: bool,
-    was_peek: bool,
-}
-
-pub struct Fullscreen {
-    pub controls_hidden: bool,
-    restore: FullscreenRestore,
-    controls_hovered: bool,
-    controls_focus: FocusHandle,
-    pointer: gpui::Point<Pixels>,
-    hide_task: Option<gpui::Task<()>>,
-}
-
 impl MediaState {
+    /// Whether a seek bar's knob is being dragged.
+    pub(crate) fn scrubbing(&self) -> bool {
+        self.scrub.is_some()
+    }
+
     pub(crate) fn accept_poster(&mut self) -> bool {
         if self.session.is_none() || matches!(self.poster, Poster::Dismissed) {
             return false;
@@ -46,7 +37,6 @@ pub struct MediaState {
     pub session: Option<Arc<dyn MediaSession>>,
     pub state: Playback,
     pub focus: Option<FocusHandle>,
-    pub fullscreen: Option<Fullscreen>,
     poster: Poster,
     initial_frame: Option<Frame>,
     scrub: Option<f64>,
@@ -163,13 +153,14 @@ impl Shell {
     /// hundred thousand documents with two songs in it is not scanned whole.
     const NEIGHBOUR_REACH: usize = 4000;
 
-    /// The files of the same kind (`media_kind`) around entry `id` in the
-    /// pane's order. They are kept as entries, not positions, so a sort in
-    /// between cannot turn a step into a jump to whatever took their place.
-    pub(crate) fn media_neighbours(
+    /// The files of the same kind (`same`: a track of the kind playing, a
+    /// picture) around entry `id` in the pane's order. They are kept as
+    /// entries, not positions, so a sort in between cannot turn a step into
+    /// a jump to whatever took their place.
+    pub(crate) fn neighbours(
         &self,
         id: skwir_core::EntryId,
-        kind: &str,
+        same: impl Fn(&skwir_core::Entry) -> bool,
     ) -> (Option<skwir_core::EntryId>, Option<skwir_core::EntryId>) {
         let sorted = self.ui().list.sorted.clone();
         let Some(here) = sorted.iter().position(|entry| *entry == id) else {
@@ -179,11 +170,7 @@ impl Shell {
         let Some(pane) = ws.pane(self.pane) else {
             return (None, None);
         };
-        let track = |index: &usize| {
-            pane.listing
-                .get(sorted[*index])
-                .is_some_and(|entry| is_track(entry, kind))
-        };
+        let track = |index: &usize| pane.listing.get(sorted[*index]).is_some_and(&same);
         (
             (here.saturating_sub(Self::NEIGHBOUR_REACH)..here)
                 .rev()
@@ -282,6 +269,8 @@ impl Shell {
         {
             return Some(id);
         }
+        // The neighbours of a picture are pictures (`fullscreen.rs`).
+        self.media_kind()?;
         let (previous, next) = self.preview.neighbours;
         if delta < 0 { previous } else { next }
     }
@@ -445,7 +434,7 @@ impl Shell {
             // keep the last picture; every later control would only fail.
             // The pin goes with it when it was this session: the desktop's
             // controls and the dock would go on with a dead one.
-            self.media_exit_fullscreen(window, cx);
+            self.exit_fullscreen(window, cx);
             if self.preview_is_pinned() {
                 self.unpin_dead();
             }
@@ -471,7 +460,7 @@ impl Shell {
         if hand_over {
             return self.media_step(1, window, cx);
         }
-        self.arm_media_hide(window, cx);
+        self.arm_fullscreen_hide(window, cx);
     }
 
     /// The one way a control reaches the panel's session: whatever asked
@@ -525,7 +514,7 @@ impl Shell {
                 let playing = !self.preview.media.state.playing();
                 self.media_control(&serde_json::json!({"action": "play"}), cx);
                 if double && !self.media_is_audio() {
-                    self.media_fullscreen(window, cx);
+                    self.preview_fullscreen(window, cx);
                 }
                 playing
             }
@@ -622,170 +611,6 @@ impl Shell {
             self.media_send(Control::Seek(seconds), cx);
         }
         cx.notify();
-    }
-    pub fn media_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.preview.media.fullscreen.is_some() {
-            self.media_exit_fullscreen(window, cx);
-            return;
-        }
-        if self.preview.media.session.is_none() {
-            return;
-        }
-        let entered = !window.is_fullscreen();
-        if entered {
-            window.toggle_fullscreen();
-        }
-        self.preview.media.fullscreen = Some(Fullscreen {
-            restore: FullscreenRestore {
-                entered,
-                was_peek: self.preview.peek,
-            },
-            controls_hidden: false,
-            controls_hovered: false,
-            controls_focus: cx.focus_handle(),
-            pointer: window.mouse_position(),
-            hide_task: None,
-        });
-        self.preview.peek = true;
-        let focus = self
-            .preview
-            .media
-            .focus
-            .clone()
-            .unwrap_or_else(|| cx.focus_handle());
-        self.preview
-            .peek_focus
-            .get_or_insert_with(|| cx.focus_handle());
-        window.focus(&focus);
-        self.preview.menu = None;
-        self.arm_media_hide(window, cx);
-        cx.notify();
-    }
-    pub fn media_exit_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(fullscreen) = self.preview.media.fullscreen.take() else {
-            return;
-        };
-        if fullscreen.restore.entered && window.is_fullscreen() {
-            window.toggle_fullscreen();
-        }
-        self.preview.peek = fullscreen.restore.was_peek;
-        self.preview.menu = None;
-        if !self.preview.peek {
-            window.focus(&self.ui().focus);
-        }
-        cx.notify();
-    }
-    pub fn media_toggle_controls(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(fullscreen) = &mut self.preview.media.fullscreen {
-            fullscreen.controls_hidden = !fullscreen.controls_hidden;
-            fullscreen.hide_task = None;
-            self.preview.menu = None;
-            if let Some(focus) = &self.preview.media.focus {
-                window.focus(focus);
-            }
-            cx.notify();
-        }
-    }
-
-    fn arm_media_hide(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let Some(fullscreen) = &mut self.preview.media.fullscreen else {
-            return;
-        };
-        if fullscreen.controls_hidden
-            || fullscreen.controls_hovered
-            || fullscreen.hide_task.is_some()
-            || self.preview.menu.is_some()
-            || self.preview.media.scrub.is_some()
-            || fullscreen.controls_focus.contains_focused(window, cx)
-        {
-            return;
-        }
-        let focus = fullscreen.controls_focus.clone();
-        let pane = self.pane;
-        tracing::trace!("fullscreen controls: inactivity timer armed");
-        fullscreen.hide_task = Some(cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor().timer(Duration::from_secs(1)).await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                if this.pane != pane {
-                    return;
-                }
-                let Some(fullscreen) = &mut this.preview.media.fullscreen else {
-                    return;
-                };
-                fullscreen.hide_task = None;
-                tracing::trace!(
-                    hovered = fullscreen.controls_hovered,
-                    menu = this.preview.menu.is_some(),
-                    scrub = this.preview.media.scrub.is_some(),
-                    focused = focus.contains_focused(window, cx),
-                    "fullscreen controls: inactivity deadline"
-                );
-                if !fullscreen.controls_hovered
-                    && this.preview.menu.is_none()
-                    && this.preview.media.scrub.is_none()
-                    && !focus.contains_focused(window, cx)
-                {
-                    fullscreen.controls_hidden = true;
-                    cx.notify();
-                }
-            });
-        }));
-    }
-
-    fn media_pointer_moved(
-        &mut self,
-        position: gpui::Point<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(fullscreen) = &mut self.preview.media.fullscreen else {
-            return;
-        };
-        // GPUI can redispatch a stationary pointer after layout/paint. Only real
-        // movement should reveal the toolbar or restart its inactivity deadline.
-        if fullscreen.pointer == position {
-            return;
-        }
-        fullscreen.pointer = position;
-        tracing::trace!(
-            hovered = fullscreen.controls_hovered,
-            menu = self.preview.menu.is_some(),
-            focused = fullscreen.controls_focus.contains_focused(window, cx),
-            "fullscreen controls: pointer moved"
-        );
-        fullscreen.hide_task = None;
-        if !fullscreen.controls_hovered
-            && self.preview.menu.is_none()
-            && fullscreen.controls_focus.contains_focused(window, cx)
-            && let Some(focus) = &self.preview.media.focus
-        {
-            window.focus(focus);
-        }
-        if fullscreen.controls_hidden {
-            fullscreen.controls_hidden = false;
-            cx.notify();
-        }
-        self.arm_media_hide(window, cx);
-    }
-
-    fn media_controls_hovered(
-        &mut self,
-        hovered: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(fullscreen) = &mut self.preview.media.fullscreen {
-            fullscreen.controls_hovered = hovered;
-            fullscreen.hide_task = None;
-            if !hovered
-                && self.preview.menu.is_none()
-                && fullscreen.controls_focus.contains_focused(window, cx)
-                && let Some(focus) = &self.preview.media.focus
-            {
-                window.focus(focus);
-            }
-        }
-        self.arm_media_hide(window, cx);
     }
 }
 
@@ -908,78 +733,32 @@ pub(crate) fn is_track(entry: &skwir_core::Entry, kind: &str) -> bool {
     skwir_platform::mime::of_entry(entry).is_some_and(|mime| mime.as_str().starts_with(kind))
 }
 
-/// A full-window canvas, independent of the preview card's chrome and zoom.
-/// The image fills its bounds with Contain, including upscaling small videos.
-pub fn fullscreen(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
-    let theme = cx.global::<Theme>().clone();
-    let hidden = shell
-        .preview
-        .media
-        .fullscreen
-        .as_ref()
-        .is_some_and(|s| s.controls_hidden);
-    div()
-        .id("video-fullscreen-canvas")
-        .absolute()
-        .inset_0()
-        .bg(gpui::black())
-        .occlude()
-        .key_context("MediaPlayer")
-        .on_mouse_move(
-            cx.listener(|this, event: &gpui::MouseMoveEvent, window, cx| {
-                this.media_pointer_moved(event.position, window, cx);
-            }),
-        )
-        .when_some(shell.preview.media.focus.as_ref(), |d, focus| {
-            let handle = focus.clone();
-            d.track_focus(focus)
-                .on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&handle))
-        })
-        .when_some(shell.preview.content.as_ref(), |d, content| {
-            if let PreviewContent::Image { image, .. } = content {
-                // The surface is a flex child: give it a column to fill.
-                d.child(
-                    div().absolute().inset_0().flex().flex_col().child(surface(
-                        "video-fullscreen-surface",
-                        gpui::img(image.clone())
-                            .absolute()
-                            .size_full()
-                            .object_fit(gpui::ObjectFit::Contain)
-                            .into_any_element(),
-                        Flash::Preview,
-                        shell,
-                        cx,
-                    )),
-                )
-            } else {
-                d
-            }
-        })
-        .when(!hidden, |d| {
-            d.child(
-                div()
-                    .id("video-fullscreen-controls")
+/// A film on the whole screen (`fullscreen::render`): it fills the screen
+/// whatever its size, a small one enlarged, and answers clicks as a player.
+pub(crate) fn film(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    let Some(PreviewContent::Image { image, .. }) = &shell.preview.content else {
+        return None;
+    };
+    // The surface is a flex child: give it a column to fill.
+    Some(
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .flex_col()
+            .child(surface(
+                "video-fullscreen-surface",
+                gpui::img(image.clone())
                     .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    // The film under the bar answers clicks too (`clickable`):
-                    // the bar takes the pointer, or a click on one of its
-                    // buttons would also play or pause.
-                    .occlude()
-                    .flex()
-                    .flex_col()
-                    .when_some(shell.preview.media.fullscreen.as_ref(), |d, fullscreen| {
-                        d.track_focus(&fullscreen.controls_focus)
-                    })
-                    .on_hover(cx.listener(|this, hovered, window, cx| {
-                        this.media_controls_hovered(*hovered, window, cx);
-                    }))
-                    .bg(theme.surface)
-                    .child(toolbar(shell, &theme, cx)),
-            )
-        })
-        .into_any_element()
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Contain)
+                    .into_any_element(),
+                Flash::Preview,
+                shell,
+                cx,
+            ))
+            .into_any_element(),
+    )
 }
 
 /// A frame of a film as a picture for GPUI: the worker sends BGRA, which is
@@ -1236,17 +1015,6 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             serde_json::Value::Null,
         ),
     ));
-    bar.push(Item::button(
-        Slot::View,
-        1,
-        Button::new(
-            "video-fullscreen",
-            "fullscreen",
-            "Fullscreen",
-            "ui.media_fullscreen",
-        )
-        .active(shell.preview.media.fullscreen.is_some()),
-    ));
     // What follows the track: in the row while it has room, in More after.
     let mode = shell.prefs.player.continue_with;
     bar.push(
@@ -1265,6 +1033,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         .opens(CONTINUE_POPUP),
     );
     bar.popups.push((CONTINUE_POPUP, Rc::new(continue_popup)));
+    crate::preview_bar::fullscreen_tool(&mut bar, shell, theme);
     bar.settings = Some(std::rc::Rc::new(settings));
     crate::preview_bar::render(
         &bar,

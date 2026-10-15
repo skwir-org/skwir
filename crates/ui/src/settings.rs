@@ -68,6 +68,16 @@ pub const READING_WIDTH_KEY: &str = "reading.width";
 pub const PRINTED_PAGES_KEY: &str = "reading.printed_pages";
 /// Whether a text's long lines wrap to the panel (`ui.wrap_lines`).
 pub const WRAP_LINES_KEY: &str = "reading.wrap_lines";
+/// How long a slideshow shows each picture, in seconds
+/// (`fullscreen.rs`), chosen here or from its bar.
+pub const SLIDESHOW_KEY: &str = "reading.slideshow";
+/// The paces a slideshow goes at: the setting's choices and its bar's.
+pub const SLIDESHOW_PACES: [(&str, &str); 4] = [
+    ("3", "3 seconds"),
+    ("5", "5 seconds"),
+    ("10", "10 seconds"),
+    ("20", "20 seconds"),
+];
 /// Whether code is drawn light or dark: Automatic is as skwir is
 /// (`code_preview::CodeTheme::chosen`).
 pub const CODE_APPEARANCE_KEY: &str = "reading.code_appearance";
@@ -337,6 +347,16 @@ pub fn declare(app: &App) {
             .unwrap_or_else(|| crate::code_preview::DEFAULT.to_owned());
         app.settings.declare(code_theme_spec(dark, &chosen, None));
     }
+    app.settings.declare(
+        SettingSpec::choice(
+            SLIDESHOW_KEY,
+            "Slideshow",
+            "How long a slideshow shows each picture. A slideshow plays the pictures of the folder or search on the whole screen, in the order they are listed, from the one shown to the last.",
+            "5",
+            &SLIDESHOW_PACES,
+        )
+        .section("Pictures"),
+    );
     app.settings.declare(SettingSpec::state(
         crate::shortcuts::HINTS_KEY,
         "Commands whose shortcut hint was already shown",
@@ -422,6 +442,15 @@ pub fn reader_mode(shell: &crate::shell::Shell) -> bool {
     preference(shell, READER_CONTINUOUS_KEY).is_none_or(|mode| mode != "false")
 }
 
+/// How long the slideshow shows each picture: the choice waiting to be
+/// saved, else the stored one.
+pub fn slideshow_seconds(shell: &crate::shell::Shell) -> u64 {
+    preference(shell, SLIDESHOW_KEY)
+        .and_then(|seconds| seconds.parse().ok())
+        .filter(|seconds| (1..=3600).contains(seconds))
+        .unwrap_or(5)
+}
+
 /// Settings by page (their owner), each page in the order its settings
 /// were declared (`SettingSpec::order`): what has no section first, then
 /// each section where its first setting was.
@@ -493,7 +522,7 @@ static BUILTIN: [Builtin; 7] = [
         owner: Some(READING_OWNER),
         title: "Reading",
         icon: "reading",
-        intro: "How documents, books, comics, Markdown and code read in the preview. Which engine reads each is on its plugin's page.",
+        intro: "How documents, books, comics, Markdown and code read in the preview, and how a slideshow shows pictures. Which engine reads each is on its plugin's page.",
         when_used: false,
     },
     Builtin {
@@ -1518,7 +1547,10 @@ mod tests {
             .map(|column| column.setting)
             .collect();
         assert_eq!(columns, standing);
-        assert_eq!(sections(&specs, READING_OWNER), ["Pages", "Text", "Code"]);
+        assert_eq!(
+            sections(&specs, READING_OWNER),
+            ["Pages", "Text", "Code", "Pictures"]
+        );
         assert_eq!(
             page(&specs, READING_OWNER)
                 .into_iter()

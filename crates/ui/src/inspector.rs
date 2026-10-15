@@ -1672,7 +1672,6 @@ impl Shell {
             _ => return,
         }
         self.cancel_pending_preview();
-        self.media_exit_fullscreen(window, cx);
         self.preview.media = crate::media::MediaState::default();
         self.clear_document_pages(window, cx);
         self.preview.reader = crate::reader::ReaderState::default();
@@ -2120,6 +2119,11 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             "find",
             std::rc::Rc::new(move |shell, theme, cx| find_panel(shell, parked, theme, cx)),
         ));
+    }
+    // The member under a container's view goes to the whole screen, not
+    // the view above it.
+    if !parked {
+        crate::preview_bar::fullscreen_tool(&mut bar, shell, theme);
     }
     crate::preview_bar::render(
         &bar,

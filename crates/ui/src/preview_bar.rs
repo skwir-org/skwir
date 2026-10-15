@@ -38,6 +38,7 @@ pub mod label {
     pub const SOURCE: &str = "Source";
     pub const HEX: &str = "View as hex";
     pub const ZOOM: &str = "Zoom and fit";
+    pub const FULLSCREEN: &str = "Fullscreen";
     pub const MORE: &str = "More";
 }
 
@@ -307,6 +308,58 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
                     size.clone()
                         .map(|size| div().flex_none().text_xs().text_color(muted).child(size)),
                 )
+                .into_any_element()
+        })
+        .fills(),
+    );
+}
+
+/// The whole screen, the same tool at the end of every kind's bar, lit
+/// while on (`ui.preview_fullscreen`), there while the next file loads.
+/// There the bar starts with the name of what is shown, which the card no
+/// longer says, unless a member's name is already there (`close_tool`).
+pub fn fullscreen_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
+    let on = shell.preview.fullscreen.is_some();
+    if !on && shell.fullscreen_shows().is_none() {
+        return;
+    }
+    bar.push(Item::button(
+        Slot::Tools,
+        1,
+        Button::new(
+            "preview-fullscreen",
+            "fullscreen",
+            label::FULLSCREEN,
+            "ui.preview_fullscreen",
+        )
+        .active(on),
+    ));
+    if !on || bar.items.iter().any(|item| item.slot == Slot::Title) {
+        return;
+    }
+    let (name, text) = (shell.preview.info.name.clone(), theme.text);
+    let font = shell.font.clone();
+    bar.push(
+        Item::widget(Slot::Title, 0, move |_, _| {
+            div()
+                .flex_1()
+                .min_w(px(64.))
+                .pl_1()
+                .flex()
+                .items_center()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .child(crate::elements::clip::clipped(
+                    div()
+                        .id("preview-fullscreen-name")
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis_middle()
+                        .text_sm()
+                        .text_color(text),
+                    name.clone(),
+                    font.clone(),
+                ))
                 .into_any_element()
         })
         .fills(),

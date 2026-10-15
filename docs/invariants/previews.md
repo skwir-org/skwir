@@ -722,6 +722,54 @@ is still to come are in `docs/preview-frame.md`.
   leave it (`inspector::edge_step`, tested); a trackpad has to mean it
   (`WheelTurn`). Going back lands at the end of the section before.
 
+### The whole screen
+
+- **One fullscreen for every preview** (`fullscreen.rs`,
+  `ui.preview_fullscreen`): a picture, a document's pages, text, a film,
+  music (`Shell::fullscreen_shows`); a folder, or a file with no preview,
+  has none. It takes peek's place (`render_peek`, `peek` set): the panel
+  is then only a picture of the preview. It stays while the file shown
+  changes (a step, a slideshow, the next track) and leaves when the
+  selection goes or reaches a folder (`sync_preview`). Its state is the
+  preview's (`PreviewState::fullscreen`), not a kind's: resetting a
+  player or a reader never ends it.
+- **Drawn from the frame's own pieces** (`preview::frame`, `controls`,
+  `content_area`, `content`), so every kind is there with its keys and
+  tools and nothing is drawn twice. Only a film has a picture of its
+  own there (`media::film`: enlarged to the screen, a player's clicks).
+  What is looked at lies on `stage` (black in both looks), what is read on
+  paper; a picture or a film on its way waits on its letterbox
+  (`on_paper`), so stepping through them never flashes paper.
+- **The bar** is the kind's own, over the top, starting with the name of
+  what is shown. Every kind's bar ends with Fullscreen
+  (`preview_bar::fullscreen_tool`), lit while on and there while the
+  next file loads. It hides on one cancellable inactivity timer
+  (`arm_fullscreen_hide`), never a loop; a stationary pointer event from
+  layout does not reset it; hover, an open popup, a knob dragged and the
+  keyboard in the bar keep it.
+- **Keys.** Entering gives the keyboard to what is shown (the picture's,
+  the reader's, the inspection's, the player's own handle,
+  `shown_focus`), so its keys work at once, and a preview arriving while
+  there takes it from the canvas (`fullscreen_arrived`); leaving gives
+  it back to what had it before. F toggles wherever a preview has the
+  keyboard (`preview`, `image`, `media`, `peek`, `fullscreen`), Escape
+  and F leave, C hides the bar, ←/→ step (`ui.fullscreen_step`).
+- **Pictures walk the pane's pictures**, by type
+  (`fullscreen::is_picture`, `mime::Kind::Image`), found around the entry
+  as a track's neighbours are (`Shell::neighbours`, when the listing or
+  the entry changes); a step moves the pane's selection and the preview
+  follows. Other files are skipped.
+- **The slideshow** (`ui.slideshow`, Space on a picture, More ›
+  Slideshow in the panel) goes from the picture shown to the last, then
+  stops there, says so and shows its bar. One timer per picture, armed
+  once the picture has arrived or failed (`arm_slideshow`), so a slow
+  decode is shown its whole time; a step, Pause or leaving cancels it,
+  and the timer checks the entry it was armed for. Its pace is
+  `reading.slideshow`, chosen on the Reading page or from its bar
+  (`ui.slideshow_pace`).
+- What answers the user (`set_status`'s toasts) is drawn over the canvas
+  while it shows (`Shell::render`).
+
 ### Maps
 
 - A map (`map_preview.rs`, `elements/map.rs`, ADR-020) is an inspection

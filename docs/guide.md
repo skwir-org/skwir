@@ -263,6 +263,9 @@ archives, and the bytes of any file.
   lines go on sideways.
 - A link in a document opens with a click; an address found in plain
   text with `Ctrl+click`.
+- `F` shows a picture, a document, text or a film on the whole screen;
+  the arrows go to the next picture or page, and `Space` plays the
+  folder's pictures as a slideshow.
 - Music and video can keep playing while you browse, in a player at the
   foot of the panel, steered by the desktop's media keys.
 - Some kinds need a program Skwir does not carry; Settings › Plugins says
