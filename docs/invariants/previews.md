@@ -697,6 +697,11 @@ is still to come are in `docs/preview-frame.md`.
   has; when short, it is decoded again at the next step
   (`preview::sharper`, `Shell::sharpen_picture`), never past its own
   pixels, in place: zoom and scroll stay.
+- A picture larger than the panel scrolls both ways from its top-left
+  corner, a bar on each edge; smaller, it sits in the middle. Its wrapper
+  starts at the left rather than stretching across the panel's column: a
+  stretched one keeps the panel's width, and the picture spilled out of it
+  on both sides, out of reach of the scroll.
 - A zoom step from Fit or Fit width starts at the scale they show
   (`Shell::picture_scale`, read on the key press from the bounds the
   picture's container had in its last prepaint, or the scale the

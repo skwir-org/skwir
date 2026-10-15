@@ -920,6 +920,10 @@ and a document's pages zoomed wider than the panel (a page at a time
 gets its vertical bar too). Where both bars show, each leaves the corner
 to the other.
 
+A picture zoomed wider than the panel scrolls sideways. Its wrapper kept
+the panel's width, so the picture spilled out on both sides and its left
+was out of reach.
+
 ---
 
 ## Maps

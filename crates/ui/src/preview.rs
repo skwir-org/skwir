@@ -4120,6 +4120,10 @@ pub(crate) fn picture(
                 (id, 1usize),
                 crate::elements::scrollbar::Scrolls::Offset(scroll.clone()),
             ))
+            .child(crate::elements::scrollbar::horizontal(
+                (id, 2usize),
+                scroll.clone(),
+            ))
             .into_any_element()
     };
     // The pixels fill the box the layout gave the picture, as large as they
@@ -4150,12 +4154,19 @@ pub(crate) fn picture(
     let watch = sharpen.map(|sharpen| sharpen.watch(raster, (width, height)));
     if let Some(zoom) = zoom {
         // Smaller than the panel, it sits in the middle, as whole; larger,
-        // the wrapper grows with it and it scrolls from its corner.
+        // the wrapper grows with it and it scrolls from its corner. Across
+        // the column, a stretched wrapper would keep the panel's width and
+        // the picture would spill out of it on both sides, out of reach: it
+        // starts at the left instead, as wide as the picture or the panel.
         scrolling(
             div()
                 .flex_grow()
                 .flex_shrink_0()
                 .min_w_full()
+                .map(|mut d| {
+                    d.style().align_self = Some(gpui::AlignSelf::FlexStart);
+                    d
+                })
                 .flex()
                 .items_center()
                 .justify_center()
