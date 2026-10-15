@@ -144,6 +144,16 @@ pub(crate) fn hex_available(shell: &Shell) -> bool {
     hex
 }
 
+/// Whether the panel shows nothing of a file it could read: its preview
+/// failed, or it has none. Not a link that leads nowhere nor a special
+/// file, which are never read (`PreviewKey::content`).
+fn shows_nothing(shell: &Shell) -> bool {
+    matches!(
+        shell.preview.content,
+        Some(PreviewContent::Error(_) | PreviewContent::Generic)
+    ) && shell.preview.shown_content().is_some()
+}
+
 /// What the bar says about content with no bar of its own. An inspection
 /// has its own (`inspector::toolbar`), so it never comes here.
 fn caption(shell: &Shell) -> String {
@@ -218,9 +228,30 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
         picture_tools(&mut bar, shell);
     }
     if hex_available(shell) {
-        bar.push(Item::menu_only(
-            Button::new("preview-hex", "grid", label::HEX, "ui.inspect")
-                .args(serde_json::json!({"action":"hex"})),
+        let hex = Button::new("preview-hex", "grid", label::HEX, "ui.inspect")
+            .args(serde_json::json!({"action":"hex"}));
+        // With nothing else shown (a failure, a file without a preview),
+        // the bytes are the one way left to look: a button of its own.
+        bar.push(if shows_nothing(shell) {
+            Item::button(Slot::View, 2, hex.label(label::HEX))
+        } else {
+            Item::menu_only(hex)
+        });
+    }
+    // A picture written as text (an SVG) has a source, as any rendered text
+    // does: the same button, off while the picture is shown.
+    if image && shell.preview.picture_source.is_some() {
+        bar.push(Item::button(
+            Slot::View,
+            2,
+            Button::new(
+                "preview-source",
+                "code",
+                "The file's own text, as written",
+                "ui.inspect",
+            )
+            .args(serde_json::json!({"action":"source"}))
+            .label(label::SOURCE),
         ));
     }
     let (text, muted) = (caption(shell), theme.text_muted);
@@ -251,7 +282,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
 /// one before, the slideshow, the one after, and the slideshow's pace; in
 /// the panel, the slideshow alone, in More (`ui.slideshow` goes to the
 /// whole screen).
-fn picture_tools(bar: &mut Bar, shell: &Shell) {
+pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
     let Some(fullscreen) = shell.preview.fullscreen.as_ref() else {
         bar.push(Item::menu_only(
             Button::new("preview-slideshow", "play", "Slideshow", "ui.slideshow")

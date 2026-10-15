@@ -972,6 +972,16 @@ settled, so the first answer is already the source; a file of the type
 that is no text opens as usual. The tests now go through the worker's
 own step (`preview::inspect_shown`).
 
+A preview that fails on a text file shows its text, saying why: an HTML
+page over 2 MiB, an invalid JSON or KML file, a drawing that does not
+draw, whatever failed (a plugin, a conversion, a player, a reader, a
+picture). One rule on the worker (`preview::source_instead`) replaced
+the two that structured data and circuits kept each their own way. A
+file that is no text says its failure with View as hex in the bar, as
+does a file with no preview: the one way left to look there, in More
+elsewhere. An SVG drawing has a Source, as rendered text does, kept by
+type. Not exercised in a window: a reader's or a converter's failure.
+
 The columns view moves as yazi's and Finder's do. After the pane's
 column comes the folder under the cursor, listed once the cursor rests
 on it; a click on a folder shows it, with no double click. Right goes

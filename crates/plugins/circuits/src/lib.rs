@@ -212,18 +212,13 @@ impl PreviewProvider for Provider {
         let Some(format) = Format::of(&path) else {
             return Ok(None);
         };
-        if too_large(&path)? {
-            return Ok(Some(Inspection {
-                kind: InspectionKind::Text,
-                title: format.title().into(),
-                source_available: true,
-                notice: format!(
-                    "Too large to draw (more than {})",
-                    inspection::limits::describe(INPUT)
-                ),
-                ..Inspection::default()
-            }));
-        }
+        // Not drawn: the panel shows its source instead, saying why
+        // (`preview::source_instead`).
+        anyhow::ensure!(
+            !too_large(&path)?,
+            "Too large to draw (more than {})",
+            inspection::limits::describe(INPUT)
+        );
         let found = format.read(&path, cancel)?;
         let image = match &found.svg {
             Some(svg) => Some(raster(svg, PANEL_SIDE, cancel)?),
@@ -370,23 +365,21 @@ mod tests {
             .unwrap();
         assert!(data.image.is_none());
         assert_eq!(data.notice, "Nothing is drawn in this file");
-        // Larger than what is drawn: said, the source left to read. The
-        // file is sparse, nothing is written.
+        // Larger than what is drawn: refused, for the panel to show the
+        // source instead. The file is sparse, nothing is written.
         let large = dir.path().join("large.kicad_pcb");
         std::fs::File::create(&large)
             .unwrap()
             .set_len(INPUT as u64 + 1)
             .unwrap();
-        let data = Provider
+        let error = Provider
             .inspect(
                 &request(&large),
                 &InspectRequest::default(),
                 &CancelToken::new(),
             )
-            .unwrap()
-            .unwrap();
-        assert_eq!(data.notice, "Too large to draw (more than 32 MiB)");
-        assert!(data.source_available);
+            .unwrap_err();
+        assert_eq!(error.to_string(), "Too large to draw (more than 32 MiB)");
         // A GIMP brush named like a Gerber layer is not ours: left to the
         // other previews.
         let brush = dir.path().join("pencil.gbr");

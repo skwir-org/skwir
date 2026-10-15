@@ -339,7 +339,7 @@ pub fn read_text(path: &Path, cancel: &CancelToken) -> anyhow::Result<(String, E
     let bytes = read(path, 0, limits::TEXT_INPUT + 1, cancel)?;
     anyhow::ensure!(
         bytes.len() <= limits::TEXT_INPUT,
-        "Text preview limited to {}; use Source or Hex for ranges",
+        "Text exceeds {} preview limit",
         limits::describe(limits::TEXT_INPUT)
     );
     let (text, encoding) = decode(&bytes);

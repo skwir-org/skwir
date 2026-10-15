@@ -48,24 +48,12 @@ impl PreviewProvider for Provider {
     ) -> anyhow::Result<Option<Inspection>> {
         let path = req.entry.resolve()?;
         let language = inspection::extension(&path);
-        let result = inspection::read_text(&path, cancel).and_then(|(text, encoding)| {
-            let mut data = code(&text, &language, view.source, cancel)?;
-            data.notice = encoding.notice().unwrap_or_default();
-            Ok(data)
-        });
-        match result {
-            Ok(data) => Ok(Some(data)),
-            // The source view takes its language from the name, like any
-            // text file, and may hold no line at all (an empty file).
-            Err(error) if !cancel.is_cancelled() => {
-                let mut source = inspection::source(&path, cancel)?;
-                source.notice = format!("Showing source: {error}");
-                // Nothing else to switch to.
-                source.source_available = false;
-                Ok(Some(source))
-            }
-            Err(error) => Err(error),
-        }
+        // A file that cannot be read whole or parsed fails: the panel shows
+        // its source instead, saying why (`preview::source_instead`).
+        let (text, encoding) = inspection::read_text(&path, cancel)?;
+        let mut data = code(&text, &language, view.source, cancel)?;
+        data.notice = encoding.notice().unwrap_or_default();
+        Ok(Some(data))
     }
 }
 

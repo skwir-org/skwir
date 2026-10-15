@@ -132,6 +132,9 @@ struct PreviewResult {
     /// Why the links of what is shown are not followed: a plugin from
     /// outside made it, and may not use the network (ADR-047).
     closed_links: Option<String>,
+    /// A picture written as text (an SVG drawing): the type its Source is
+    /// kept by (`SourceTypes`), which the picture's bar offers.
+    picture_source: Option<String>,
 }
 
 /// Facts shown in the header, read from the entry's metadata.
@@ -514,6 +517,9 @@ pub struct PreviewState {
     /// (`PreviewResult::closed_links`): `Shell::follow_document_link`
     /// says it instead.
     pub closed_links: Option<String>,
+    /// The type a picture written as text offers its Source by
+    /// (`PreviewResult::picture_source`).
+    pub picture_source: Option<String>,
     /// The members the panel went down into, outermost first.
     pub nested: Vec<Arc<Nested>>,
     /// A member asked for and not extracted yet: the worker's next job.
@@ -778,6 +784,7 @@ impl Default for PreviewState {
             neighbours: (None, None),
             queue: None,
             closed_links: None,
+            picture_source: None,
             autoplay: None,
             nested: Vec::new(),
             containers: Vec::new(),
@@ -855,6 +862,12 @@ impl PreviewState {
     /// The entry the panel is showing.
     pub fn entry_id(&self) -> Option<EntryId> {
         self.key.as_ref().map(|key| key.id)
+    }
+
+    /// What is read to show the entry (`PreviewKey::content`): `None` for
+    /// a link that leads nowhere and a special file, which are never read.
+    pub(crate) fn shown_content(&self) -> Option<&EntryRef> {
+        self.key.as_ref()?.content.as_ref()
     }
 
     /// A request for the file shown `depth` members deep (0 is the entry),
@@ -1087,7 +1100,10 @@ impl SourceTypes {
 /// the file's type asked for (`remembered`, `SourceTypes`) is that text
 /// only where the file is text, as for any file shown as text: otherwise
 /// `view.source` is cleared and nothing is answered, for the file to be
-/// asked again as it shows without its source.
+/// asked again as it shows without its source. A provider that fails on a
+/// file that is text leaves its source instead (`source_instead`). `path`
+/// is the file's own, which its source is read from, though a plugin from
+/// outside converted what `request` names.
 pub fn inspect_shown(
     previews: &skwir_core::preview::Previews,
     request: &PreviewRequest,
@@ -1096,7 +1112,10 @@ pub fn inspect_shown(
     remembered: bool,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<skwir_core::inspection::Inspection>> {
-    let found = previews.inspect(request, view, cancel)?;
+    let found = match previews.inspect(request, view, cancel) {
+        Ok(found) => found,
+        Err(error) => return source_instead(view, path, error, cancel).map(Some),
+    };
     if found.is_some() || !view.source {
         return Ok(found);
     }
@@ -1105,6 +1124,68 @@ pub fn inspect_shown(
         return Ok(None);
     }
     skwir_platform::inspection::source(path, cancel).map(Some)
+}
+
+/// An inspection as the panel shows it, of the file at `path`, answering
+/// `request` and `view`, its Source kept by `typed`.
+fn inspected(
+    data: skwir_core::inspection::Inspection,
+    code: &crate::code_preview::CodeTheme,
+    request: &PreviewRequest,
+    view: &skwir_core::inspection::InspectRequest,
+    typed: Option<String>,
+    path: &Path,
+) -> PreviewContent {
+    let mut display = crate::inspector::Display::new(data, code);
+    // Its pictures for later are asked for as it was.
+    display.origin = Some(Box::new((request.clone(), view.clone())));
+    display.typed = typed;
+    // Bytes are shown whole: as many rows as the file holds (`bytes_view`).
+    if display.data.kind == skwir_core::inspection::InspectionKind::Hex {
+        display.bytes = std::fs::metadata(path).ok().map(|m| m.len());
+    }
+    PreviewContent::Inspection(display)
+}
+
+/// What a file whose presentation failed (`error`: a provider's, a
+/// conversion's, a picture's, a reader's) shows instead: its own text, read
+/// as its source is (`inspection::source`, as long as the file), when it
+/// is text, with why it is not presented as the notice; the failure
+/// otherwise. Not when another way of looking at it was chosen (bytes), nor
+/// for a member the provider shows itself (`view.target`), which `path` is
+/// not. There is nothing to switch back to: it offers no Source.
+pub fn source_instead(
+    view: &skwir_core::inspection::InspectRequest,
+    path: &Path,
+    error: anyhow::Error,
+    cancel: &CancelToken,
+) -> anyhow::Result<skwir_core::inspection::Inspection> {
+    if view.provider.is_some()
+        || view.target.is_some()
+        || cancel.is_cancelled()
+        || !read_head(path).is_ok_and(|head| skwir_platform::inspection::is_text(&head))
+    {
+        return Err(error);
+    }
+    let Ok(mut data) = skwir_platform::inspection::source(path, cancel) else {
+        return Err(error);
+    };
+    data.notice = std::iter::once(format!("Shown as written: {error:#}"))
+        .chain((!data.notice.is_empty()).then_some(data.notice))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    data.source_available = false;
+    Ok(data)
+}
+
+/// Whether a picture of type `mime` at `path` is written as text (an SVG
+/// drawing), so that its source is another way of looking at it: its type
+/// descends from text (`mime::Kind::Text`), and so do its bytes. Only such
+/// a type's file is read.
+fn picture_written(mime: &str, path: &Path) -> bool {
+    use skwir_platform::mime::{Kind, Mime, is_kind};
+    is_kind(&Mime(mime.to_owned()), Kind::Text)
+        && read_head(path).is_ok_and(|head| skwir_platform::inspection::is_text(&head))
 }
 
 /// Where this process keeps the members it extracted: in the one deletable
@@ -1817,6 +1898,7 @@ impl Shell {
         // Whether what is shown may send its links to the desktop: not
         // what a plugin from outside made without the network.
         self.preview.closed_links = result.closed_links.take();
+        self.preview.picture_source = result.picture_source.take();
         // A file with no picture of its own (a type without a preview, a
         // film until its first frame) keeps its thumbnail as its picture;
         // any other preview replaces it.
@@ -2016,6 +2098,7 @@ impl Shell {
                 sniffed: None,
                 placeholder: false,
                 closed_links: None,
+                picture_source: None,
             });
             self.app.wake();
             return;
@@ -2075,6 +2158,8 @@ impl Shell {
                 let sniffed = std::cell::RefCell::new(None::<String>);
                 // Why the links of what is shown are closed, if they are.
                 let closed_links = std::cell::RefCell::new(None::<String>);
+                // The type a picture written as text offers its Source by.
+                let picture_source = std::cell::RefCell::new(None::<String>);
                 // Every reply goes this one way: nothing after a cancel, and
                 // the UI woken after each.
                 let send = |content: PreviewContent,
@@ -2091,6 +2176,7 @@ impl Shell {
                             sniffed: sniffed.borrow().clone(),
                             placeholder: false,
                             closed_links: closed_links.borrow().clone(),
+                            picture_source: picture_source.borrow().clone(),
                         });
                         wake();
                     }
@@ -2156,6 +2242,9 @@ impl Shell {
                 if typed.is_some() {
                     inspection.source = remembered;
                 }
+                // The file's own: what its source and its bytes are read
+                // from, whatever a plugin from outside converts it to.
+                let own_path = path.clone();
                 // Asked again, once, without the source its type asked for,
                 // when this file has none.
                 if !is_dir {
@@ -2165,6 +2254,7 @@ impl Shell {
                         // whatever shows its type (the reader, the player, a
                         // picture, an inspection), once. Its bytes and its
                         // source stay the file's own.
+                        let mut failed = None;
                         if inspection.provider.is_none() && !inspection.source {
                             match previews.converted(&request, &cancel) {
                                 Ok(Some(made)) => {
@@ -2177,30 +2267,31 @@ impl Shell {
                                     closed_links.replace(made.closed_links);
                                 }
                                 Ok(None) => {}
-                                Err(error) => return fail(error),
+                                // A conversion that failed is a presentation
+                                // that failed.
+                                Err(error) => {
+                                    failed = Some(
+                                        source_instead(&inspection, &own_path, error, &cancel)
+                                            .map(Some),
+                                    );
+                                }
                             }
                         }
-                        match inspect_shown(
-                            &previews,
-                            &request,
-                            &mut inspection,
-                            &path,
-                            remembered,
-                            &cancel,
-                        ) {
+                        let shown = failed.unwrap_or_else(|| {
+                            inspect_shown(
+                                &previews,
+                                &request,
+                                &mut inspection,
+                                &own_path,
+                                remembered,
+                                &cancel,
+                            )
+                        });
+                        match shown {
                             Ok(Some(data)) => {
-                                let mut display = crate::inspector::Display::new(data, &code);
-                                // Its pictures for later are asked for as it was.
-                                display.origin =
-                                    Some(Box::new((request.clone(), inspection.clone())));
-                                display.typed = typed;
-                                // Bytes are shown whole: as many rows as the file
-                                // holds (`bytes_view`).
-                                if display.data.kind == skwir_core::inspection::InspectionKind::Hex
-                                {
-                                    display.bytes = std::fs::metadata(&path).ok().map(|m| m.len());
-                                }
-                                return send(PreviewContent::Inspection(display), true, None, None);
+                                let display =
+                                    inspected(data, &code, &request, &inspection, typed, &own_path);
+                                return send(display, true, None, None);
                             }
                             Err(error) => return fail(error),
                             Ok(None) if remembered && !inspection.source => remembered = false,
@@ -2259,6 +2350,7 @@ impl Shell {
                                 sniffed: None,
                                 placeholder: true,
                                 closed_links: None,
+                                picture_source: None,
                             });
                             wake();
                         }
@@ -2267,6 +2359,17 @@ impl Shell {
                 if !is_dir && pinned.as_ref() == Some(if own { &shown } else { &path }) {
                     return send(PreviewContent::Generic, true, None, Some(Media::Pinned));
                 }
+                // A presentation that fails from here on, of a file that is
+                // text, leaves its source (`source_instead`).
+                let instead = |error: anyhow::Error| {
+                    source_instead(&inspection, &own_path, error, &cancel).map(|data| {
+                        inspected(data, &code, &request, &inspection, typed.clone(), &own_path)
+                    })
+                };
+                let failed = |error: anyhow::Error| match instead(error) {
+                    Ok(content) => send(content, true, None, None),
+                    Err(error) => fail(error),
+                };
                 // Provider registration owns media recognition, including container MIME types.
                 match previews.open_media(&request, &media_lifetime, wake.clone()) {
                     Ok(Some(media)) => {
@@ -2300,9 +2403,10 @@ impl Shell {
                         }
                         return;
                     }
-                    Err(error) => return fail(error),
+                    Err(error) => return failed(error),
                     Ok(None) => {}
                 }
+                let reused = session.is_some();
                 let reader = if let Some(session) = session {
                     Ok(Some(session))
                 } else if open_document {
@@ -2313,34 +2417,50 @@ impl Shell {
                 match reader {
                     Ok(Some(session)) => {
                         closed_links.replace(session.closed_links().map(str::to_owned));
-                        let content = session
-                            .render(request.page, page_side, &cancel)
-                            .and_then(|page| {
-                                let image = crate::thumbs::page_image(
-                                    page.width,
-                                    page.height,
-                                    page.pixels,
-                                    page.order,
-                                )
-                                .ok_or_else(|| anyhow::anyhow!("invalid document bitmap"))?;
-                                Ok(PreviewContent::Image {
-                                    image,
-                                    width: page.width,
-                                    height: page.height,
-                                    detail: Some(PreviewInfo::Document {
-                                        page: page.content.page,
-                                        pages: session.info().pages,
-                                    }),
-                                    document: Some(page.content),
-                                    facts: Vec::new(),
-                                    pixels: Pixels::Own,
-                                    ink: None,
-                                })
-                            })
-                            .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
-                        return send(content, true, Some(session), None);
+                        let rendered =
+                            session
+                                .render(request.page, page_side, &cancel)
+                                .and_then(|page| {
+                                    let image = crate::thumbs::page_image(
+                                        page.width,
+                                        page.height,
+                                        page.pixels,
+                                        page.order,
+                                    )
+                                    .ok_or_else(|| anyhow::anyhow!("invalid document bitmap"))?;
+                                    Ok(PreviewContent::Image {
+                                        image,
+                                        width: page.width,
+                                        height: page.height,
+                                        detail: Some(PreviewInfo::Document {
+                                            page: page.content.page,
+                                            pages: session.info().pages,
+                                        }),
+                                        document: Some(page.content),
+                                        facts: Vec::new(),
+                                        pixels: Pixels::Own,
+                                        ink: None,
+                                    })
+                                });
+                        // A document opened that shows no page failed as a
+                        // presentation; a page turned to that fails is said
+                        // over the last one (`preview_arrived`).
+                        let error = match rendered {
+                            Ok(content) => return send(content, true, Some(session), None),
+                            Err(error) if reused => error,
+                            Err(error) => match instead(error) {
+                                Ok(content) => return send(content, true, None, None),
+                                Err(error) => error,
+                            },
+                        };
+                        return send(
+                            PreviewContent::Error(format!("{error:#}")),
+                            true,
+                            Some(session),
+                            None,
+                        );
                     }
-                    Err(error) => return fail(error),
+                    Err(error) => return failed(error),
                     Ok(None) => {}
                 }
                 let result = if is_dir {
@@ -2386,6 +2506,23 @@ impl Shell {
                     ),
                     Err(e) => PreviewContent::Error(format!("{e:#}")),
                 };
+                let content = match content {
+                    // A picture not drawn, written as text (an SVG): its
+                    // source, as for any presentation.
+                    PreviewContent::Error(error) if !is_dir => instead(anyhow::anyhow!(error))
+                        .unwrap_or_else(|error| PreviewContent::Error(format!("{error:#}"))),
+                    // A picture written as text offers its source.
+                    PreviewContent::Image { detail: None, .. } => {
+                        picture_source.replace(
+                            typed
+                                .as_deref()
+                                .filter(|typed| picture_written(typed, &own_path))
+                                .map(str::to_owned),
+                        );
+                        content
+                    }
+                    content => content,
+                };
                 send(content, true, None, None);
             });
     }
@@ -2430,12 +2567,16 @@ impl Shell {
         let (Some(mime), Some(content)) = (mime.filter(|_| settled), key.content.clone()) else {
             return;
         };
-        let mime = mime.to_string();
+        // A picture written as text (an SVG) is asked for when stepped to:
+        // it may open on its source (`SourceTypes`), and offers it.
         if entry.is_dir()
-            || !(mime.starts_with("image/") || skwir_platform::thumb_providers::is_drawing(&mime))
+            || !(mime.top_level() == "image"
+                || skwir_platform::thumb_providers::is_drawing(mime.as_str()))
+            || skwir_platform::mime::is_kind(&mime, skwir_platform::mime::Kind::Text)
         {
             return;
         }
+        let mime = mime.to_string();
         let request = PreviewRequest {
             entry: content,
             mime: Some(mime.clone()),
@@ -2490,6 +2631,7 @@ impl Shell {
                             sniffed: None,
                             placeholder: false,
                             closed_links: None,
+                            picture_source: None,
                         });
                         wake();
                     }
@@ -2545,6 +2687,7 @@ impl Shell {
                     sniffed: None,
                     placeholder: false,
                     closed_links: None,
+                    picture_source: None,
                 };
                 self.preview_arrived(result, window, cx);
                 true
@@ -4873,8 +5016,8 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
 #[cfg(test)]
 mod tests {
     use super::{
-        Counted, SHARPEN_STEP, SourceTypes, Version, count_waits, max_width, selection_stamp,
-        sharper, still_counts,
+        Counted, SHARPEN_STEP, SourceTypes, Version, count_waits, max_width, picture_written,
+        selection_stamp, sharper, still_counts,
     };
     use skwir_core::workspace::{PaneId, Selection};
 
@@ -4905,6 +5048,24 @@ mod tests {
         // Turned off, it is forgotten.
         types.set(&markdown, false);
         assert_eq!(types, SourceTypes::default());
+    }
+
+    #[test]
+    fn a_picture_offers_its_source_where_it_is_written_as_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let drawing = dir.path().join("Synthetic drawing's copy.svg");
+        std::fs::write(
+            &drawing,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>"#,
+        )
+        .unwrap();
+        assert!(picture_written("image/svg+xml", &drawing));
+        // A type that is not text is never read for it.
+        assert!(!picture_written("image/png", &drawing));
+        // Bytes that are not text, whatever the name says.
+        let packed = dir.path().join("Synthetic packed.svg");
+        std::fs::write(&packed, b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03").unwrap();
+        assert!(!picture_written("image/svg+xml", &packed));
     }
 
     fn id(ino: u64) -> skwir_core::EntryId {

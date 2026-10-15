@@ -1635,10 +1635,14 @@ impl Shell {
             "source" => {
                 state.request.source = !state.request.source;
                 state.request.offset = 0;
-                // And so for every file of its type from now on.
-                if let Some(PreviewContent::Inspection(display)) = &self.preview.content
-                    && let Some(typed) = &display.typed
-                {
+                // And so for every file of its type from now on: an
+                // inspection's, or a picture's written as text.
+                let typed = match &self.preview.content {
+                    Some(PreviewContent::Inspection(display)) => display.typed.as_ref(),
+                    Some(PreviewContent::Image { .. }) => self.preview.picture_source.as_ref(),
+                    _ => None,
+                };
+                if let Some(typed) = typed {
                     self.preview.source_types.set(typed, state.request.source);
                     remembered = true;
                 }
@@ -1975,6 +1979,11 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             2,
             step("inspect-next", "right", titles.1, next),
         ));
+    }
+    // A picture shown as text (its source, its bytes) is still one of the
+    // pane's pictures: the whole screen's walk and slideshow go on.
+    if shell.walks_pictures() {
+        crate::preview_toolbar::picture_tools(&mut bar, shell);
     }
 
     if data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book {

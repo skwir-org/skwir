@@ -214,13 +214,14 @@ fn structured_source_toggle_and_invalid_input_remain_readable() {
     std::fs::write(&path, "{incomplete").unwrap();
     let invalid = inspect(&app, &path, &InspectRequest::default());
     assert_eq!(invalid.plain_text(), "{incomplete");
-    assert!(invalid.notice.starts_with("Showing source:"));
+    assert!(invalid.notice.starts_with("Shown as written:"));
+    assert!(!invalid.source_available, "nothing else to switch to");
     // Too long a line for the code view: the source, read where it is
     // shown, the line cut into bounded rows (ADR-051).
     let large = format!("\"{}\"", "a".repeat(40000));
     std::fs::write(&path, &large).unwrap();
     let source = inspect(&app, &path, &InspectRequest::default());
-    assert!(source.notice.starts_with("Showing source:"));
+    assert!(source.notice.starts_with("Shown as written:"));
     assert!(source.text.as_ref().is_some_and(|file| file.whole));
     assert!(source.blocks.iter().all(|row| row.text.len() <= 4096));
     assert_eq!(
@@ -447,6 +448,62 @@ fn a_type_shown_as_its_source_opens_on_it_where_the_file_has_one() {
         ..InspectRequest::default()
     };
     assert!(try_inspect(&app, &bytes, &asked).unwrap().source_available);
+}
+
+#[test]
+fn a_presentation_that_fails_on_text_shows_its_source_instead() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    // Too long to be read whole and laid out: its text, read where it is
+    // shown, saying why, and nothing to switch back to.
+    let page = tmp.path().join("Synthetic page's long copy.html");
+    let paragraph = "<p>Some <b>bold</b> text, over and over.</p>\n";
+    let large = paragraph.repeat(2 * 1024 * 1024 / paragraph.len() + 1);
+    std::fs::write(&page, &large).unwrap();
+    let shown = inspect(&app, &page, &InspectRequest::default());
+    assert_eq!(shown.kind, InspectionKind::Code);
+    assert_eq!(
+        shown.notice,
+        "Shown as written: Text exceeds 2 MiB preview limit"
+    );
+    assert!(!shown.source_available);
+    assert!(shown.plain_text().starts_with("<p>Some <b>bold</b>"));
+    assert!(shown.text.is_some(), "read where it is shown (ADR-051)");
+    // Its Source asked for: the same text, and still a way back.
+    let asked = InspectRequest {
+        source: true,
+        ..InspectRequest::default()
+    };
+    let source = inspect(&app, &page, &asked);
+    assert!(source.notice.is_empty() && source.source_available);
+    // Bytes that are not text keep the failure: never shown as text.
+    let bytes = tmp.path().join("Synthetic bytes.html");
+    let mut binary = vec![0u8; 2 * 1024 * 1024 + 1];
+    binary[..4].copy_from_slice(b"<p>\x00");
+    std::fs::write(&bytes, &binary).unwrap();
+    let error = skwir_ui::preview::inspect_shown(
+        &app.previews,
+        &request(&bytes),
+        &mut InspectRequest::default(),
+        &bytes,
+        false,
+        &CancelToken::new(),
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "Text exceeds 2 MiB preview limit");
+    // Nor when another way of looking was chosen, or the wait was given up.
+    let failed = || anyhow::anyhow!("Synthetic failure");
+    let hex = InspectRequest {
+        provider: Some("hex".into()),
+        ..InspectRequest::default()
+    };
+    assert!(skwir_ui::preview::source_instead(&hex, &page, failed(), &CancelToken::new()).is_err());
+    let cancelled = CancelToken::new();
+    cancelled.cancel();
+    assert!(
+        skwir_ui::preview::source_instead(&InspectRequest::default(), &page, failed(), &cancelled)
+            .is_err()
+    );
 }
 
 /// Every preview plugin the binary wires, in the order it wires them.

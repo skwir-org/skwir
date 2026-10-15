@@ -44,10 +44,16 @@ contributors). The rules for working on preview code are in
   bar. With no text selected, Copy takes the selected row or the current
   section.
 - **Source.** A rendered file (Markdown, HTML, a table, a message, a
-  book's chapter, a track) shows its own text with the bar's Source
-  button, lit while on. It stays on for every file of that type, also
-  after a restart, until you turn it off; other types keep their
-  presentation. A file of the type that holds no text opens as usual.
+  book's chapter, a track, an SVG drawing) shows its own text with the
+  bar's Source button, lit while on. It stays on for every file of that
+  type, also after a restart, until you turn it off; other types keep
+  their presentation. A file of the type that holds no text opens as
+  usual.
+- **When a preview fails.** A text file that cannot be presented (too
+  large to lay out, invalid, a drawing that does not draw) shows its
+  text instead, saying why ("Shown as written: …"). Any other file says
+  why it is not shown, with **View as hex** in the bar, the one way left
+  to look at it; elsewhere View as hex is in More.
 - **Find.** `Ctrl+F` searches the preview that has the keyboard; the
   search button is always there. Searching again continues after the
   last match: a text file is searched whole, either way and around its
@@ -374,7 +380,7 @@ parsing ([ADR-009](adr/009-structured-previews.md)):
 
 - Text parsed whole (Markdown, tables, structured code): 2 MiB. Code:
   10,000 lines and 4096 bytes per line. A document that is invalid or
-  too large falls back to paginated source with a diagnostic.
+  too large shows its text instead, read as you scroll, with the reason.
 - DXF drawings and circuit files: 32 MiB.
 - Containers: an archive inside an archive, no deeper.
 

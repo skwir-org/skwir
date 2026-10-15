@@ -645,7 +645,11 @@ is still to come are in `docs/preview-frame.md`.
   has the same `keep`.
 - Copy has no button: it is Ctrl+C and the content's right-click menu
   (`Shell::open_preview_menu`), where people look for it. An action too
-  rare for a button in any variant (View as hex) is `Item::menu_only`.
+  rare for a button in any variant (View as hex) is `Item::menu_only`,
+  but where nothing else is shown of a file that can be read (a failure,
+  a file without a preview: `preview_toolbar::shows_nothing`), View as
+  hex is a button: the one way left to look. A link that leads nowhere
+  and a special file have none.
 - `zoom_tools` is the one zoom group, for a picture and a page alike;
   text's twin is the inspector's text size picker (`text_size_panel`, a
   popup of kind `text`).
@@ -654,7 +658,23 @@ is still to come are in `docs/preview-frame.md`.
   leaves: Source is Source in both states, lit while on. A provider
   offers it (`Inspection::source_available`) only where the file's own
   text differs from what is shown: YAML, TOML and JSON shown as written
-  have none.
+  have none. A picture written as text (an SVG: its type descends from
+  text and so do its bytes, `preview::picture_written`, decided on the
+  worker, `PreviewResult::picture_source`) offers it in the picture's
+  bar, kept by type as any other.
+- **A presentation that fails on text shows its source**
+  (`preview::source_instead`): the file's own text, read where it is
+  shown, its notice "Shown as written: " and why, and no Source, since
+  there is nothing to switch back to. Every failure of the worker for
+  the file itself goes there: a provider's inspection
+  (`inspect_shown`), a conversion by a plugin from outside, the player's
+  or a reader's opening, a document's first page, a picture drawn or
+  decoded. Not a file whose bytes are not text (it says its failure,
+  with View as hex), a way of looking chosen (bytes), a member a
+  provider shows itself (`InspectRequest::target`), a page turned to
+  (the reader keeps the last), nor a cancel. A provider fails rather
+  than building a fallback of its own; the source, never a converted
+  file's, is read from the file's own path.
 - **Source is kept by type** (`preview::SourceTypes`, part of the
   window's shape): turned on or off for one file, it is so for every file
   of that type, by its database name (`mime::unalias`), never for all
@@ -781,9 +801,13 @@ is still to come are in `docs/preview-frame.md`.
   step is, and one still decoding is adopted as the step's request
   (`AheadSlot::Adopted`), never decoded twice. Only what skwir decodes
   itself (`compute`) is read ahead: a type the name settles, which no
-  provider accepts (asked on the worker, as `accepts` may read). A file
+  provider accepts (asked on the worker, as `accepts` may read), and not
+  written as text (an SVG may open on its source, and offers it). A file
   another program, a player or a reader shows is never opened before it
   is asked for. Leaving the whole screen lets it go, pixels and all.
+- A picture shown as text (its source, its bytes) is still one of the
+  pane's pictures: the inspection's bar keeps the walk's tools
+  (`preview_toolbar::picture_tools`), and the slideshow goes on.
 - **The slideshow** (`ui.slideshow`, Space on a picture, More ›
   Slideshow in the panel) goes from the picture shown to the last, then
   stops there, says so and shows its bar. One timer per picture, armed
