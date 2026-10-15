@@ -94,7 +94,8 @@ of bars, split or not.
   `ui.full_path`, every trail starts at `/` under real names.
 - Tabs and history use the sidebar's name (`App::location_title`);
   listings, toasts and Properties use the folder's own. Up goes to the real
-  parent; Ctrl+L edits the real path.
+  parent, the folder left selected there (`App::name_in_parent`; a
+  place's label in the place before it); Ctrl+L edits the real path.
 - Back and Forward list history on right-click or a long press, as in a
   browser (`ui.history_menu`; `back`/`forward` take `steps`). A long
   press is any button's `toolbar::Button::on_hold`: held `HOLD`, it runs

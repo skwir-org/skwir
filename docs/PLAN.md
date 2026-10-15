@@ -929,6 +929,10 @@ the folders farthest up in a narrow pane, and follows its right end,
 where the folder shown is: a folder opened lands there, and it stays in
 view as the pane narrows.
 
+Up selects the folder left, in every view, as other file managers do;
+in a tag's categories, the place left. `navigate` takes `select`, an
+entry to select once listed.
+
 ---
 
 ## Maps

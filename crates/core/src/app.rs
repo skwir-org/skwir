@@ -628,6 +628,31 @@ impl App {
         }
     }
 
+    /// What `location` is called among the entries of its `parent`: a
+    /// folder's name, or a place's label in the place before it in its
+    /// trail (as the columns view marks the way down). `None` when its
+    /// parent is no place it is listed in (the folder a tag's trail starts
+    /// from, the folder a search looks in).
+    pub fn name_in_parent(&self, location: &Location) -> Option<std::ffi::OsString> {
+        if let Some(path) = location.path() {
+            return path.file_name().map(ToOwned::to_owned);
+        }
+        let trail = self.trail(location)?;
+        let [.., _, last] = trail.crumbs.as_slice() else {
+            return None;
+        };
+        Some(last.label.clone().into())
+    }
+
+    /// Select the entry of `pane` called `name` as soon as its listing has
+    /// it (`Pane::reveal`): right after navigating there.
+    pub fn reveal(&self, pane: PaneId, name: std::ffi::OsString) {
+        if let Some(p) = self.workspace.write().pane_mut(pane) {
+            p.reveal(name);
+        }
+        self.wake();
+    }
+
     /// What gestures mean in `location` (`LocationProvider::verbs`): a
     /// folder's meanings when its provider says nothing.
     pub fn verbs(&self, location: &Location) -> crate::location::Verbs {
@@ -1586,6 +1611,11 @@ pub struct NavigateArgs {
     pub location: PathArg,
     #[serde(default)]
     pub pane: Option<PaneId>,
+    /// An entry of it to select once listed, by its name: what was clicked
+    /// in the column of the folder it is in.
+    #[serde(default, with = "crate::os_path::opt")]
+    #[schemars(with = "Option<PathArg>")]
+    pub select: Option<std::ffi::OsString>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
@@ -1879,10 +1909,13 @@ mod builtin {
             "core",
             "navigate",
             "Go to location",
-            "Open a path or location in a pane",
+            "Open a path or location in a pane, an entry of it selected once listed when `select` names one",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 app.navigate(pane, &Location::parse_os(a.location.as_os_str()))?;
+                if let Some(name) = a.select {
+                    app.reveal(pane, name);
+                }
                 Ok(Outcome::Done)
             },
         )
@@ -1969,14 +2002,20 @@ mod builtin {
             "core",
             "up",
             "Parent directory",
-            "Go to the parent of the current directory, or to the place before the one shown in its trail (a tag's category, the folder a search looks in)",
+            "Go to the parent of the current directory, or to the place before the one shown in its trail (a tag's category, the folder a search looks in), the one left selected there",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let shown = app
                     .pane_location(pane)
                     .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
                 if let Some(parent) = app.parent(&shown) {
+                    let left = app.name_in_parent(&shown);
                     app.navigate(pane, &parent)?;
+                    // As every file manager does: the way back down is
+                    // where the cursor is.
+                    if let Some(name) = left {
+                        app.reveal(pane, name);
+                    }
                 }
                 Ok(Outcome::Done)
             },
@@ -1998,10 +2037,7 @@ mod builtin {
                     anyhow::bail!("{} is in no folder", one.path.display());
                 };
                 app.navigate(pane, &Location::from_path(parent))?;
-                if let Some(p) = app.workspace.write().pane_mut(pane) {
-                    p.reveal(name.to_owned());
-                }
-                app.wake();
+                app.reveal(pane, name.to_owned());
                 Ok(Outcome::Done)
             },
         )

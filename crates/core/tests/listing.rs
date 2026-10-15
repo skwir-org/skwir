@@ -495,6 +495,53 @@ fn folders_whose_names_are_not_utf8_can_be_reached() {
     );
 }
 
+/// The name of the entry the cursor of `pane` is on.
+fn cursor_name(app: &skwir_core::app::App, pane: skwir_core::workspace::PaneId) -> Option<String> {
+    let ws = app.workspace.read();
+    let p = ws.pane(pane)?;
+    let id = p.selection.cursor?;
+    Some(p.entry(id)?.name.to_string_lossy().into_owned())
+}
+
+#[test]
+fn up_selects_the_folder_left_and_navigate_the_entry_named() {
+    use skwir_core::command::Invocation;
+    use skwir_core::os_path::PathArg;
+    let tmp = tempfile::tempdir().unwrap();
+    // An apostrophe and a space, among others before and after it.
+    for name in ["a folder", "l'été", "z folder"] {
+        std::fs::create_dir_all(tmp.path().join(name).join("inner")).unwrap();
+    }
+    std::fs::write(tmp.path().join("l'été").join("note.txt"), "x").unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    let deep = tmp.path().join("l'été").join("inner");
+    navigate(&app, &deep);
+    app.dispatch(&Invocation::new("up")).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    assert_eq!(cursor_name(&app, pane).as_deref(), Some("inner"));
+    app.dispatch(&Invocation::new("up")).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    assert_eq!(app.pane_dir(pane).unwrap(), tmp.path());
+    assert_eq!(cursor_name(&app, pane).as_deref(), Some("l'été"));
+
+    // Into a folder with one of its entries selected, as a click in the
+    // column of the folder under the cursor goes.
+    app.dispatch(&Invocation::with_args(
+        "navigate",
+        &serde_json::json!({
+            "location": PathArg::from(tmp.path().join("l'été").as_path()),
+            "select": "note.txt",
+        }),
+    ))
+    .unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    assert_eq!(cursor_name(&app, pane).as_deref(), Some("note.txt"));
+    let ws = app.workspace.read();
+    let selected: Vec<_> = ws.pane(pane).unwrap().selection.iter().collect();
+    assert_eq!(selected.len(), 1, "the entry named, alone");
+}
+
 #[test]
 fn virtual_locations_hydrate_by_path_in_one_batch() {
     use skwir_core::location::OpenContext;
