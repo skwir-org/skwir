@@ -490,13 +490,18 @@ impl Shell {
 pub const SLIDESHOW_POPUP: &str = "slideshow";
 
 /// The canvas over the window: what the preview shows, with its keys, and
-/// its bar over the top while shown.
+/// its bar over the top while shown. What is read (text, pages) starts
+/// under the bar's place, kept whether the bar shows or not, so the bar
+/// never covers its first lines and hiding it moves nothing; what is
+/// looked at (a picture, a film) has the whole screen.
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let fullscreen = shell.preview.fullscreen.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let shows = shell.fullscreen_shows();
     // What is read stays on paper; what is looked at is on the stage.
     let paper = crate::preview::on_paper(shell);
+    // What is read starts under the bar's place, its bar's border included.
+    let read = matches!(shows, Some(Shows::Text | Shows::Pages));
     let inner = match shows {
         Some(Shows::Film) => crate::media::film(shell, cx),
         _ => None,
@@ -522,6 +527,13 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 this.fullscreen_pointer_moved(event.position, window, cx);
             }),
         )
+        .when(read, |canvas| {
+            canvas.child(
+                div()
+                    .flex_none()
+                    .h(gpui::px(crate::preview_bar::HEIGHT + 1.)),
+            )
+        })
         .child(
             crate::preview::frame(shell, true)
                 .flex_1()

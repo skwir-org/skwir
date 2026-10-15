@@ -777,7 +777,10 @@ is still to come are in `docs/preview-frame.md`.
   next file loads. It hides on one cancellable inactivity timer
   (`arm_fullscreen_hide`), never a loop; a stationary pointer event from
   layout does not reset it; hover, an open popup, a knob dragged and the
-  keyboard in the bar keep it.
+  keyboard in the bar keep it. What is read (text, pages) starts under
+  the bar's place, kept whether it shows or not: the bar never covers a
+  first line or a notice, and hiding it moves nothing. What is looked at
+  (a picture, a film, music) has the whole screen, the bar over it.
 - **Keys.** Entering gives the keyboard to what is shown (the picture's,
   the reader's, the inspection's, the player's own handle,
   `shown_focus`), so its keys work at once, and a preview arriving while
