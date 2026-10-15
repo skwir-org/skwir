@@ -3367,3 +3367,101 @@ mod keyboard_click_tests {
         assert_eq!(clicks.get(), 1);
     }
 }
+
+#[cfg(test)]
+mod scroll_axis_tests {
+    use crate::{
+        self as gpui, AppContext as _, Context, InteractiveElement as _, IntoElement, Modifiers,
+        ParentElement as _, Render, ScrollDelta, ScrollHandle, ScrollWheelEvent,
+        StatefulInteractiveElement as _, Styled as _, TestAppContext, VisualTestContext, Window,
+        div, point, px, size,
+    };
+
+    /// A row of columns that scrolls sideways, its first column scrolling
+    /// down, as a board of cards is drawn.
+    struct Board {
+        row: ScrollHandle,
+        column: ScrollHandle,
+        either: bool,
+    }
+
+    impl Render for Board {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut row = div()
+                .id("row")
+                .size_full()
+                .flex()
+                .overflow_x_scroll()
+                .track_scroll(&self.row);
+            if self.either {
+                row.style().restrict_scroll_to_axis = Some(false);
+            }
+            row.child(
+                div()
+                    .id("column")
+                    .w(px(150.))
+                    .h_full()
+                    .flex_none()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.column)
+                    .child(div().w_full().h(px(1000.))),
+            )
+            .children((0..3).map(|_| div().w(px(150.)).h_full().flex_none()))
+        }
+    }
+
+    fn board(cx: &mut TestAppContext, either: bool) -> (&mut VisualTestContext, Board) {
+        let cx = cx.add_empty_window();
+        let (row, column) = (ScrollHandle::new(), ScrollHandle::new());
+        let (r, c) = (row.clone(), column.clone());
+        cx.draw(point(px(0.), px(0.)), size(px(300.), px(200.)), |_, cx| {
+            cx.new(|_| Board {
+                row: r,
+                column: c,
+                either,
+            })
+        });
+        (
+            cx,
+            Board {
+                row,
+                column,
+                either,
+            },
+        )
+    }
+
+    fn wheel(cx: &mut VisualTestContext, x: f32, y: f32, shift: bool) {
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(10.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(x), px(y))),
+            modifiers: Modifiers {
+                shift,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    }
+
+    #[gpui::test]
+    fn the_wheel_scrolls_what_scrolls_along_its_axis(cx: &mut TestAppContext) {
+        let (cx, board) = board(cx, false);
+        // Shift and the wheel, which every platform reports sideways: the
+        // row moves, the column under the pointer does not.
+        wheel(cx, -30., 0., true);
+        assert_eq!(board.row.offset(), point(px(-30.), px(0.)));
+        assert_eq!(board.column.offset(), point(px(0.), px(0.)));
+        // The wheel alone: the column moves, the row does not.
+        wheel(cx, 0., -40., false);
+        assert_eq!(board.row.offset(), point(px(-30.), px(0.)));
+        assert_eq!(board.column.offset(), point(px(0.), px(-40.)));
+    }
+
+    #[gpui::test]
+    fn a_strip_may_take_the_wheel_either_way(cx: &mut TestAppContext) {
+        let (cx, board) = board(cx, true);
+        wheel(cx, 0., -40., false);
+        assert_eq!(board.row.offset(), point(px(-40.), px(0.)));
+        assert_eq!(board.column.offset(), point(px(0.), px(-40.)));
+    }
+}

@@ -156,7 +156,8 @@ pub struct Style {
     pub scrollbar_width: AbsoluteLength,
     /// Whether both x and y axis should be scrollable at the same time.
     pub allow_concurrent_scroll: bool,
-    /// Whether scrolling should be restricted to the axis indicated by the mouse wheel.
+    /// Whether scrolling should be restricted to the axis indicated by the mouse wheel. On by
+    /// default.
     ///
     /// This means that:
     /// - The mouse wheel alone will only ever scroll the Y axis.
@@ -170,13 +171,12 @@ pub struct Style {
     /// The only way to scroll horizontally is to hold down `Shift` while scrolling, which then changes the scroll axis
     /// to the X axis.
     ///
-    /// Currently, GPUI operates differently from the web in that it will scroll an element in either the X or Y axis
-    /// when scrolling with just the mouse wheel. This causes problems when scrolling in a vertical list that contains
-    /// horizontally-scrollable elements, as when you get to the horizontally-scrollable elements the scroll will be
-    /// hijacked.
+    /// An element that scrolls along one axis and lends the wheel's other axis to it scrolls when the wheel was meant
+    /// for another element: scroll containers handle the wheel together, from the innermost out, so a vertical list
+    /// inside a row that scrolls sideways moved with Shift and the wheel, and the row moved with the wheel alone.
     ///
-    /// Ideally we would match the web's behavior and not have a need for this, but right now we're adding this opt-in
-    /// style property to limit the potential blast radius.
+    /// Set it to `false` for an element that scrolls along one axis and should take either (a strip of tabs nothing
+    /// else scrolls around).
     pub restrict_scroll_to_axis: bool,
 
     // Position properties
@@ -796,7 +796,7 @@ impl Default for Style {
                 y: Overflow::Visible,
             },
             allow_concurrent_scroll: false,
-            restrict_scroll_to_axis: false,
+            restrict_scroll_to_axis: true,
             scrollbar_width: AbsoluteLength::default(),
             position: Position::Relative,
             inset: Edges::auto(),

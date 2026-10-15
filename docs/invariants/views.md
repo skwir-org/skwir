@@ -138,6 +138,16 @@ around the views is in [shell.md](shell.md).
   right edge, and on its bottom edge when it scrolls sideways
   (`scrollbar::horizontal`). The view hands it the handle it scrolls with;
   the thumb is placed in prepaint.
+- **The wheel scrolls along its own axis** (vendored patch 0022): alone,
+  up and down; with Shift, which every platform reports sideways, across.
+  Scrollers take the wheel together, from the innermost out, so one that
+  lent the other axis's turn to its own would move with a turn meant for
+  another: a board's column with Shift, its row of columns without it.
+  Only a strip of one line that nothing scrolls around takes either
+  (`restrict_scroll_to_axis = Some(false)`, the search's narrowing pills).
+  An element with a wheel handler of its own moves each axis by its own
+  delta (`elements/rows.rs`, `Shell::reader_wheel`): the platform has
+  already turned Shift's turn sideways.
 - A `gpui::list` measures only what it renders: give it a height estimate
   (`ListState::reset_with_uniform_height`, vendored patch 0004), or the bar
   describes only the rows on screen.

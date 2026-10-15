@@ -909,6 +909,12 @@ dialog asks about a name taken under the name it will be placed under.
 Not done: a Mac's `__MACOSX` beside the one folder still makes two
 members, so a folder around them.
 
+The wheel scrolls along its own axis everywhere: alone up and down, with
+Shift across (vendored patch 0022). gpui let a scroller that moves one
+way take the wheel's other way too, and scrollers inside each other all
+moved: a board's column scrolled down with Shift while the board went
+sideways, and a table went sideways with every turn of the wheel.
+
 ---
 
 ## Maps

@@ -3,7 +3,7 @@
 dependencies to skwir.
 
 Covers our patches (item height hints, truncating the last clamped line,
-keyboard clicks needing their key-down)
+keyboard clicks needing their key-down, the wheel scrolling along its axis)
 alongside the upstream tests of those modules. Needs no GPU.
 """
 from pathlib import Path
@@ -25,5 +25,6 @@ with tempfile.TemporaryDirectory(prefix="skwir-list-tests-") as temporary:
         "--target-dir", str(root / "target"), "--no-default-features",
         "--features", "wayland", "--lib", "--",
         "elements::list", "elements::div::keyboard_click_tests",
+        "elements::div::scroll_axis_tests",
         "text_system::line_wrapper", "text_system::line_layout",
     ], check=True)

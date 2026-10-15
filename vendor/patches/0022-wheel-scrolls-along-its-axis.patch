@@ -1,0 +1,148 @@
+diff --git a/crates/gpui/src/elements/div.rs b/crates/gpui/src/elements/div.rs
+index 64b6d9e..c9ba8ed 100644
+--- a/crates/gpui/src/elements/div.rs
++++ b/crates/gpui/src/elements/div.rs
+@@ -3367,3 +3367,101 @@ mod keyboard_click_tests {
+         assert_eq!(clicks.get(), 1);
+     }
+ }
++
++#[cfg(test)]
++mod scroll_axis_tests {
++    use crate::{
++        self as gpui, AppContext as _, Context, InteractiveElement as _, IntoElement, Modifiers,
++        ParentElement as _, Render, ScrollDelta, ScrollHandle, ScrollWheelEvent,
++        StatefulInteractiveElement as _, Styled as _, TestAppContext, VisualTestContext, Window,
++        div, point, px, size,
++    };
++
++    /// A row of columns that scrolls sideways, its first column scrolling
++    /// down, as a board of cards is drawn.
++    struct Board {
++        row: ScrollHandle,
++        column: ScrollHandle,
++        either: bool,
++    }
++
++    impl Render for Board {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            let mut row = div()
++                .id("row")
++                .size_full()
++                .flex()
++                .overflow_x_scroll()
++                .track_scroll(&self.row);
++            if self.either {
++                row.style().restrict_scroll_to_axis = Some(false);
++            }
++            row.child(
++                div()
++                    .id("column")
++                    .w(px(150.))
++                    .h_full()
++                    .flex_none()
++                    .overflow_y_scroll()
++                    .track_scroll(&self.column)
++                    .child(div().w_full().h(px(1000.))),
++            )
++            .children((0..3).map(|_| div().w(px(150.)).h_full().flex_none()))
++        }
++    }
++
++    fn board(cx: &mut TestAppContext, either: bool) -> (&mut VisualTestContext, Board) {
++        let cx = cx.add_empty_window();
++        let (row, column) = (ScrollHandle::new(), ScrollHandle::new());
++        let (r, c) = (row.clone(), column.clone());
++        cx.draw(point(px(0.), px(0.)), size(px(300.), px(200.)), |_, cx| {
++            cx.new(|_| Board {
++                row: r,
++                column: c,
++                either,
++            })
++        });
++        (
++            cx,
++            Board {
++                row,
++                column,
++                either,
++            },
++        )
++    }
++
++    fn wheel(cx: &mut VisualTestContext, x: f32, y: f32, shift: bool) {
++        cx.simulate_event(ScrollWheelEvent {
++            position: point(px(10.), px(10.)),
++            delta: ScrollDelta::Pixels(point(px(x), px(y))),
++            modifiers: Modifiers {
++                shift,
++                ..Default::default()
++            },
++            ..Default::default()
++        });
++    }
++
++    #[gpui::test]
++    fn the_wheel_scrolls_what_scrolls_along_its_axis(cx: &mut TestAppContext) {
++        let (cx, board) = board(cx, false);
++        // Shift and the wheel, which every platform reports sideways: the
++        // row moves, the column under the pointer does not.
++        wheel(cx, -30., 0., true);
++        assert_eq!(board.row.offset(), point(px(-30.), px(0.)));
++        assert_eq!(board.column.offset(), point(px(0.), px(0.)));
++        // The wheel alone: the column moves, the row does not.
++        wheel(cx, 0., -40., false);
++        assert_eq!(board.row.offset(), point(px(-30.), px(0.)));
++        assert_eq!(board.column.offset(), point(px(0.), px(-40.)));
++    }
++
++    #[gpui::test]
++    fn a_strip_may_take_the_wheel_either_way(cx: &mut TestAppContext) {
++        let (cx, board) = board(cx, true);
++        wheel(cx, 0., -40., false);
++        assert_eq!(board.row.offset(), point(px(-40.), px(0.)));
++        assert_eq!(board.column.offset(), point(px(0.), px(-40.)));
++    }
++}
+diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
+index f94df2b..25401ec 100644
+--- a/crates/gpui/src/style.rs
++++ b/crates/gpui/src/style.rs
+@@ -156,7 +156,8 @@ pub struct Style {
+     pub scrollbar_width: AbsoluteLength,
+     /// Whether both x and y axis should be scrollable at the same time.
+     pub allow_concurrent_scroll: bool,
+-    /// Whether scrolling should be restricted to the axis indicated by the mouse wheel.
++    /// Whether scrolling should be restricted to the axis indicated by the mouse wheel. On by
++    /// default.
+     ///
+     /// This means that:
+     /// - The mouse wheel alone will only ever scroll the Y axis.
+@@ -170,13 +171,12 @@ pub struct Style {
+     /// The only way to scroll horizontally is to hold down `Shift` while scrolling, which then changes the scroll axis
+     /// to the X axis.
+     ///
+-    /// Currently, GPUI operates differently from the web in that it will scroll an element in either the X or Y axis
+-    /// when scrolling with just the mouse wheel. This causes problems when scrolling in a vertical list that contains
+-    /// horizontally-scrollable elements, as when you get to the horizontally-scrollable elements the scroll will be
+-    /// hijacked.
++    /// An element that scrolls along one axis and lends the wheel's other axis to it scrolls when the wheel was meant
++    /// for another element: scroll containers handle the wheel together, from the innermost out, so a vertical list
++    /// inside a row that scrolls sideways moved with Shift and the wheel, and the row moved with the wheel alone.
+     ///
+-    /// Ideally we would match the web's behavior and not have a need for this, but right now we're adding this opt-in
+-    /// style property to limit the potential blast radius.
++    /// Set it to `false` for an element that scrolls along one axis and should take either (a strip of tabs nothing
++    /// else scrolls around).
+     pub restrict_scroll_to_axis: bool,
+ 
+     // Position properties
+@@ -796,7 +796,7 @@ impl Default for Style {
+                 y: Overflow::Visible,
+             },
+             allow_concurrent_scroll: false,
+-            restrict_scroll_to_axis: false,
++            restrict_scroll_to_axis: true,
+             scrollbar_width: AbsoluteLength::default(),
+             position: Position::Relative,
+             inset: Edges::auto(),

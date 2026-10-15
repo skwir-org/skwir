@@ -42,6 +42,7 @@ dependencies stay out of Skwir's workspace:
 | `0019-font-id-without-fallback` | `TextSystem::font_id` public | — |
 | `0020-render-image-into-frames` | `RenderImage::into_frames` returns pixel buffers | — |
 | `0021-x11-clipboard-sends-in-pieces` | X11 clipboard sends large data with INCR; one failed request no longer ends it | — |
+| `0022-wheel-scrolls-along-its-axis` | The wheel scrolls along its own axis by default (`restrict_scroll_to_axis`) | — |
 
 ### 0001: Wayland outgoing drag
 
@@ -308,6 +309,24 @@ Checked on Xvfb (BIG-REQUESTS): Skwir copied 16 MiB of a log, xclip read the
 16,777,216 bytes, identical to the file's; TARGETS was answered after; an xclip
 killed during a transfer left the next one served whole. Before, the same copy
 hung xclip and the clipboard stopped answering.
+
+### 0022: The wheel scrolls along its axis
+
+A scroll container that scrolls along one axis took the wheel's other axis
+as its own (`paint_scroll_listener`), and scroll containers take a wheel
+event together, from the innermost out, none stopping it. So a vertical list
+inside a row that scrolls sideways (Skwir's board) scrolled down with Shift
+and the wheel while the row went sideways, and the row went sideways with the
+wheel alone while the list scrolled; a table that scrolls sideways around its
+list of rows moved sideways with every turn of the wheel. Upstream's
+`restrict_scroll_to_axis` (opt-in "to limit the potential blast radius", its
+doc says, "ideally we would match the web's behavior") is now on by default:
+the wheel alone scrolls down, Shift and the wheel, which every platform
+reports sideways, across. An element that should take either sets it to
+`false` (a strip of tabs nothing else scrolls around).
+
+`elements::div::scroll_axis_tests` (in `just list-check`) cover a list in a
+row that scrolls sideways, and the opt-out.
 
 ## Adding or regenerating a patch
 

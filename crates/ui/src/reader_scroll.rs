@@ -716,12 +716,6 @@ pub fn continuous_element(
                         .id("document-horizontal-scroll")
                         .size_full()
                         .overflow_x_scroll()
-                        .map(|mut d| {
-                            // Vertical wheel gestures belong to the document list;
-                            // do not also convert them into horizontal panning.
-                            d.style().restrict_scroll_to_axis = Some(true);
-                            d
-                        })
                         .child(rows),
                 )
                 .child(bar)

@@ -476,6 +476,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .items_center()
         .gap(px(6.))
         .overflow_x_scroll()
+        // A strip of one line, nothing scrolling around it: the wheel goes
+        // along it too, not only with Shift.
+        .map(|mut d| {
+            d.style().restrict_scroll_to_axis = Some(false);
+            d
+        })
         .border_b_1()
         .border_color(theme.border);
     let mut n = 0usize;

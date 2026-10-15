@@ -416,17 +416,12 @@ impl Element for Rows {
             let mut scroll = scroll.borrow_mut();
             let line = px(scroll.average.max(1.));
             let delta = event.delta.pixel_delta(line);
-            let (mut dx, dy) = (f32::from(delta.x), f32::from(delta.y));
-            if wrap {
-                scroll.pending -= dy;
-            } else {
-                // Shift and the wheel go sideways, as in an editor.
-                if event.modifiers.shift && dx == 0. {
-                    dx = dy;
-                } else {
-                    scroll.pending -= dy;
-                }
-                scroll.x = (scroll.x - dx).max(0.);
+            // Each axis of the wheel moves its own way: Shift and the wheel
+            // arrive sideways from every platform. Rows that wrap leave it
+            // to what scrolls around them (bytes wider than the panel).
+            scroll.pending -= f32::from(delta.y);
+            if !wrap {
+                scroll.x = (scroll.x - f32::from(delta.x)).max(0.);
             }
             drop(scroll);
             window.refresh();
