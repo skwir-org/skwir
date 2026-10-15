@@ -984,7 +984,8 @@ type. Not exercised in a window: a reader's or a converter's failure.
 On the whole screen, the bar of pages or text stays at the top, what is
 shown under it; a picture's, a film's and music's lie over them and hide
 when the pointer rests, as every bar did before, covering a first line
-or a notice while it showed.
+or a notice while it showed. The pointer hides with a floating bar and
+comes back with it, over the window only.
 
 The columns view moves as yazi's and Finder's do. After the pane's
 column comes the folder under the cursor, listed once the cursor rests

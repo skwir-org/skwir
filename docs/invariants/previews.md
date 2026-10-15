@@ -782,8 +782,12 @@ is still to come are in `docs/preview-frame.md`.
   type shows, so a step or the next track moves nothing): on one
   cancellable inactivity timer (`arm_fullscreen_hide`), never a loop; a
   stationary pointer event from layout does not reset it; hover, an open
-  popup, a knob dragged and the keyboard in the bar keep it. C hides or
-  shows either; the pointer moving brings it back.
+  popup, a knob dragged and the keyboard in the bar keep it. A floating
+  bar hidden takes the pointer with it: a layer over the canvas asks for
+  no cursor (`CursorStyle::None`), over whatever asks for another (a
+  film's hand), taking no click, wheel or drag; a cursor style is the
+  window's, so a pointer on another screen keeps its own. C hides or
+  shows either bar; the pointer moving brings it back, and the pointer.
 - **Keys.** Entering gives the keyboard to what is shown (the picture's,
   the reader's, the inspection's, the player's own handle,
   `shown_focus`), so its keys work at once, and a preview arriving while

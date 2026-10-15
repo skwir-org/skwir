@@ -575,5 +575,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     if let Some(focus) = shell.preview.peek_focus.as_ref() {
         canvas = canvas.track_focus(focus);
     }
+    // A floating bar hidden takes the pointer with it, over this window
+    // only (a cursor style is the window's): on top of whatever asks for
+    // another (a zoomed picture's hand), taking no click, wheel or drag
+    // from what is under it. The pointer moving brings both back.
+    if fullscreen.controls_hidden && floats {
+        canvas = canvas.child(div().absolute().inset_0().cursor(gpui::CursorStyle::None));
+    }
     Some(canvas.into_any_element())
 }
