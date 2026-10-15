@@ -58,6 +58,10 @@ around the views is in [shell.md](shell.md).
   closes them under any other.
 - The columns view's columns are a folder's parents or the places of a
   location's trail (`PaneView::kept_locations` is given the trail).
+  Wider than the pane, they scroll sideways, as Finder's do, never cut,
+  and follow their right end while they are at it (`columns::follow_end`):
+  a folder opened lands there, and the folder shown stays in view as the
+  pane narrows. Scrolled away, they stay where they were put.
 - A hydration is remembered by the listing that holds the entry
   (`Pane::listing_of`), so an entry moved between opened folders is asked
   for again.

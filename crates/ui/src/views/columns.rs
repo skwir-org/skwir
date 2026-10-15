@@ -6,14 +6,19 @@
 //! and going up or down one level adopts a listing already there instead of
 //! listing that folder again. A column draws only its visible rows, from
 //! the kept listing, so a parent of 366 000 entries costs no copy of them.
+//!
+//! Wider than the pane, the columns scroll sideways, as Finder's do, and
+//! follow their right end, where the folder shown is (`follow_end`).
 
+use std::cell::Cell;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, Context, MouseButton, ScrollStrategy, UniformListScrollHandle, Window, div,
-    prelude::*, px, uniform_list,
+    AnyElement, Context, MouseButton, ScrollHandle, ScrollStrategy, UniformListScrollHandle,
+    Window, div, point, prelude::*, px, uniform_list,
 };
 use skwir_core::location::Trail;
 use skwir_core::{EntryId, Location, SortSpec};
@@ -46,6 +51,31 @@ pub struct ColumnsView {
     base: Option<Location>,
     ancestors: Vec<Ancestor>,
     scroll: UniformListScrollHandle,
+    /// The columns scrolled sideways.
+    row: ScrollHandle,
+    /// Another folder is shown: the strip goes to its end, where it is.
+    to_end: Rc<Cell<bool>>,
+}
+
+/// The strip of columns follows its right end, where the folder shown is,
+/// while it is there: a folder opened lands at the end, and the end stays
+/// in view as the pane narrows (a preview opened). Scrolled away from it,
+/// it stays where it was put. Decided before the strip's prepaint, which
+/// clamps the offset to the end, whatever the strip's width now.
+fn follow_end(row: ScrollHandle, to_end: Rc<Cell<bool>>) -> impl IntoElement {
+    gpui::canvas(
+        move |_, _, _| {
+            // Where the last frame left it, moved since by the wheel or
+            // the bar.
+            let at_end = row.offset().x <= px(0.5) - row.max_offset().width;
+            if to_end.replace(false) || at_end {
+                row.set_offset(point(px(-f32::MAX), px(0.)));
+            }
+        },
+        |_, (), _, _| {},
+    )
+    .absolute()
+    .size_0()
 }
 
 /// The places above `shown` drawn as columns, farthest first, each with
@@ -288,10 +318,15 @@ fn ancestor_column(
         .border_r_1()
         .border_color(theme.border)
         .child(list)
-        .child(crate::elements::scrollbar::vertical(
-            ("column-scrollbar", k),
-            crate::elements::scrollbar::Scrolls::Offset(a.scroll.0.borrow().base_handle.clone()),
-        ));
+        .child(
+            crate::elements::scrollbar::vertical(
+                ("column-scrollbar", k),
+                crate::elements::scrollbar::Scrolls::Offset(
+                    a.scroll.0.borrow().base_handle.clone(),
+                ),
+            )
+            .across(view.row.clone()),
+        );
     col = match &a.path {
         Some(dir) => dnd::droppable_dir(col, dir.clone(), cx),
         None => dnd::droppable_place(col, a.location.clone(), cx),
@@ -326,6 +361,7 @@ impl PaneView for ColumnsView {
                 self.ancestors.clear();
                 self.base = None;
             }
+            self.to_end.set(true);
         }
         // Each column's order, from the kept listing; the child on the way
         // down is scrolled into view once, when it has listed.
@@ -356,15 +392,20 @@ impl PaneView for ColumnsView {
                 .collect()
         };
 
-        // At least as wide as the pane, the columns from its left; wider,
-        // set against its right edge, so a narrow pane cuts the folders
-        // farthest up and keeps the one shown (layout only).
-        let mut columns = div().h_full().min_w_full().flex_none().flex().flex_row();
+        // The columns from the pane's left; wider than the pane, they scroll
+        // sideways and follow their end (`follow_end`).
+        let pane = shell.pane;
+        let mut columns = div()
+            .id(("columns", pane.0 as usize))
+            .size_full()
+            .flex()
+            .flex_row()
+            .overflow_x_scroll()
+            .track_scroll(&self.row);
         for (k, ids) in orders.into_iter().enumerate() {
-            columns = columns.child(ancestor_column(self, k, ids, shell.pane, &theme, cx));
+            columns = columns.child(ancestor_column(self, k, ids, pane, &theme, cx));
         }
         let count = shell.ui().list.sorted.len();
-        let pane = shell.pane;
         let last = uniform_list(
             "column-last",
             count,
@@ -390,12 +431,15 @@ impl PaneView for ColumnsView {
             .border_r_1()
             .border_color(theme.border)
             .child(last)
-            .child(crate::elements::scrollbar::vertical(
-                ("column-scrollbar-last", pane.0 as usize),
-                crate::elements::scrollbar::Scrolls::Offset(
-                    self.scroll.0.borrow().base_handle.clone(),
-                ),
-            ));
+            .child(
+                crate::elements::scrollbar::vertical(
+                    ("column-scrollbar-last", pane.0 as usize),
+                    crate::elements::scrollbar::Scrolls::Offset(
+                        self.scroll.0.borrow().base_handle.clone(),
+                    ),
+                )
+                .across(self.row.clone()),
+            );
         match base.as_ref().map(|b| (b.path(), b)) {
             Some((Some(dir), _)) => last_col = dnd::droppable_dir(last_col, dir, cx),
             Some((None, place)) => last_col = dnd::droppable_place(last_col, place.clone(), cx),
@@ -405,11 +449,13 @@ impl PaneView for ColumnsView {
         div()
             .relative()
             .size_full()
-            .flex()
-            .flex_row()
-            .justify_end()
-            .overflow_hidden()
+            // Before the strip, which it moves.
+            .child(follow_end(self.row.clone(), Rc::clone(&self.to_end)))
             .child(columns)
+            .child(crate::elements::scrollbar::horizontal(
+                ("columns-bar", pane.0 as usize),
+                self.row.clone(),
+            ))
             // Ctrl and the wheel size the rows, over any column.
             .child(crate::views::zoom_wheel(cx))
             .into_any_element()
