@@ -933,6 +933,12 @@ Up selects the folder left, in every view, as other file managers do;
 in a tag's categories, the place left. `navigate` takes `select`, an
 entry to select once listed.
 
+The columns view moves as yazi's and Finder's do. After the pane's
+column comes the folder under the cursor, listed once the cursor rests
+on it; a click on a folder shows it, with no double click. Right goes
+into it, landing on its first entry, and never opens a file; a press in
+that column goes into it with the row selected.
+
 ---
 
 ## Maps

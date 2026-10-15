@@ -12,9 +12,9 @@ around the views is in [shell.md](shell.md).
   (press, click, drag of the selection, cut dimming, a dropped tag or
   files) is `behave`.
 - A row, a tile or a card draws its own shape around these, never its
-  own copy of them. The columns view's parent folders are not the pane's
-  entries: they take only the picture (`icons::entry_picture`) and the
-  cut dimming.
+  own copy of them. The columns view's parent folders and the folder
+  under its cursor are not the pane's entries: they take only the
+  picture (`icons::entry_picture`) and the cut dimming.
 - Every view marks a link, and a tag's place, with `icons::Mark`.
 - A thumbnail is drawn by `backdrop::Picture::img`, sized and fitted by
   the view. One that lets its background through, whose ink (its
@@ -62,6 +62,19 @@ around the views is in [shell.md](shell.md).
   and follow their right end while they are at it (`columns::follow_end`):
   a folder opened lands there, and the folder shown stays in view as the
   pane narrows. Scrolled away, they stay where they were put.
+- After the pane's column comes the folder under the cursor (yazi's
+  preview of it, Finder's next column), always there, empty on a file. It
+  is listed once the cursor has rested on it (`columns::SETTLE`), so a
+  key held down lists none of the folders it passes, and it is a kept
+  location: going into it adopts its listing. The folder just left going
+  up keeps its listing for it, never listed again.
+  - Right goes into it and never opens a file (Enter does); arriving from
+    it (Right, Open, a double click), the first entry is selected once
+    listed, unless something was meanwhile (`ColumnsView::land`). Left is
+    `up`, the folder left selected.
+  - A click on a folder selects it, and its column follows. A press in
+    that column goes into it, the row pressed selected there (`navigate`
+    with `select`); a press in a column above goes where the row leads.
 - A hydration is remembered by the listing that holds the entry
   (`Pane::listing_of`), so an entry moved between opened folders is asked
   for again.

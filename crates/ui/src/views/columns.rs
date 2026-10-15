@@ -7,14 +7,21 @@
 //! listing that folder again. A column draws only its visible rows, from
 //! the kept listing, so a parent of 366 000 entries costs no copy of them.
 //!
+//! After the pane's column, the folder under the cursor (`Next`): yazi's
+//! preview of it, Finder's next column. It is kept open beside the others,
+//! so going into it adopts its listing. Right goes into it, never opens a
+//! file, and lands on its first entry (`land`); Left goes up, the folder
+//! left selected (the `up` command).
+//!
 //! Wider than the pane, the columns scroll sideways, as Finder's do, and
 //! follow their right end, where the folder shown is (`follow_end`).
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui::{
     AnyElement, Context, MouseButton, ScrollHandle, ScrollStrategy, UniformListScrollHandle,
@@ -25,6 +32,7 @@ use skwir_core::{EntryId, Location, SortSpec};
 
 use crate::dnd;
 use crate::icons;
+use crate::list::Step;
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::view::{Nav, PaneView};
@@ -32,11 +40,13 @@ use crate::views::list::{row_elements, row_height};
 
 const MAX_ANCESTORS: usize = 3;
 const COLUMN_W: f32 = 240.0;
+/// How long the cursor rests on a folder before its column is listed: a
+/// key held down the column (a repeat every 30 to 40 ms) lists none of the
+/// folders it passes.
+const SETTLE: Duration = Duration::from_millis(100);
 
 struct Ancestor {
     location: Location,
-    /// The folder it is, for a folder's column: its rows' paths are in it.
-    path: Option<PathBuf>,
     /// Name of the child on the way to the pane's directory.
     child: std::ffi::OsString,
     scroll: UniformListScrollHandle,
@@ -46,15 +56,47 @@ struct Ancestor {
     looked_at: Option<u64>,
 }
 
+/// The column of the folder under the cursor, once the cursor rested on it
+/// (`SETTLE`).
+#[derive(Default)]
+struct Next {
+    /// The folder under the cursor at the last frame.
+    under: Option<Location>,
+    /// The folder the column shows: `under`, once it rested there. Kept open
+    /// beside the pane's (`kept_locations`).
+    shown: Rc<RefCell<Option<Location>>>,
+    scroll: UniformListScrollHandle,
+    /// Waits out `SETTLE`, then shows `under`; dropped by the next move.
+    settle: Option<gpui::Task<()>>,
+}
+
 #[derive(Default)]
 pub struct ColumnsView {
     base: Option<Location>,
     ancestors: Vec<Ancestor>,
     scroll: UniformListScrollHandle,
+    next: Next,
+    /// A folder gone into from the column of the folder under the cursor:
+    /// once listed, its first entry is selected, unless something else was
+    /// (a row clicked in that column, an arrow pressed meanwhile).
+    land: Option<Location>,
     /// The columns scrolled sideways.
     row: ScrollHandle,
     /// Another folder is shown: the strip goes to its end, where it is.
     to_end: Rc<Cell<bool>>,
+}
+
+/// The folder or place the cursor of the pane drawn is on: where going into
+/// it leads, as Open goes. `None` on a file.
+fn folder_under_cursor(shell: &Shell) -> Option<Location> {
+    let ws = shell.app.workspace.read();
+    let p = ws.pane(shell.pane)?;
+    let id = p.selection.cursor?;
+    if !p.entry(id)?.is_dir() {
+        return None;
+    }
+    p.location_of(id)
+        .or_else(|| p.path_of(id).map(Location::from_path))
 }
 
 /// The strip of columns follows its right end, where the folder shown is,
@@ -118,6 +160,34 @@ fn folders(base: &Path) -> Vec<(PathBuf, std::ffi::OsString)> {
 }
 
 impl ColumnsView {
+    /// The column of the folder under the cursor follows it: emptied as
+    /// the cursor leaves a folder, filled once it has rested on another
+    /// (`SETTLE`), when a wake lists it beside the pane's (`kept_locations`).
+    /// The folder just `left` going up is there at once: its listing was
+    /// kept.
+    fn follow_cursor(&mut self, shell: &Shell, left: Option<&Location>, cx: &mut Context<Shell>) {
+        let under = folder_under_cursor(shell);
+        if under == self.next.under {
+            return;
+        }
+        self.next.under.clone_from(&under);
+        self.next.scroll = UniformListScrollHandle::new();
+        if under.is_some() && under.as_ref() == left {
+            *self.next.shown.borrow_mut() = under;
+            self.next.settle = None;
+            return;
+        }
+        *self.next.shown.borrow_mut() = None;
+        self.next.settle = under.map(|under| {
+            let shown = Rc::clone(&self.next.shown);
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(SETTLE).await;
+                *shown.borrow_mut() = Some(under);
+                let _ = this.update(cx, |_, cx| cx.notify());
+            })
+        });
+    }
+
     /// The ancestors of `base`, nearest last. Those already shown (going one
     /// level down or up keeps most of them) keep their scroll.
     fn rebuild(&mut self, base: &Location, trail: Option<&Trail>) {
@@ -134,7 +204,6 @@ impl ColumnsView {
                 continue;
             }
             self.ancestors.push(Ancestor {
-                path: location.path(),
                 location,
                 child,
                 scroll: UniformListScrollHandle::new(),
@@ -146,8 +215,19 @@ impl ColumnsView {
     }
 }
 
-/// One row of an ancestor column, read from its listing as it is drawn.
-struct AncestorRow {
+/// Which column beside the pane's own.
+enum Side {
+    /// The `k`th folder above, farthest first: the row on the way down is
+    /// marked, and a press goes where a row leads.
+    Above(usize),
+    /// The folder under the cursor: a press goes into it, the row pressed
+    /// selected there, as a click in Finder's next column.
+    Next(Location),
+}
+
+/// One row of a column beside the pane's, read from its listing as it is
+/// drawn.
+struct SideRow {
     id: EntryId,
     name: std::ffi::OsString,
     label: gpui::SharedString,
@@ -158,34 +238,52 @@ struct AncestorRow {
     place: Option<(Location, Option<usize>)>,
 }
 
-fn ancestor_column(
+fn side_column(
     view: &ColumnsView,
-    k: usize,
+    side: Side,
     ids: Arc<[EntryId]>,
     pane: skwir_core::workspace::PaneId,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let a = &view.ancestors[k];
-    let path = a.path.clone();
-    let child = a.child.clone();
-    let location = a.location.clone();
+    let (location, child, scroll, k) = match side {
+        Side::Above(k) => {
+            let a = &view.ancestors[k];
+            (
+                a.location.clone(),
+                Some(a.child.clone()),
+                a.scroll.clone(),
+                k,
+            )
+        }
+        Side::Next(location) => (
+            location,
+            None,
+            view.next.scroll.clone(),
+            view.ancestors.len(),
+        ),
+    };
+    let next = child.is_none();
+    let path = location.path();
+    let ids_of = |name: &'static str| (name, k);
+    // What the rows read their listing by, in the closure that draws them.
+    let at = location.clone();
     let list = uniform_list(
-        ("column", k),
+        ids_of(if next { "column-next" } else { "column" }),
         ids.len(),
         cx.processor(move |this: &mut Shell, range: Range<usize>, _window, cx| {
             let theme = cx.global::<Theme>().clone();
             let icon_px = u16::try_from(this.row_zoom).unwrap_or(u16::MAX);
             let height = row_height(this.row_zoom);
             // Only the rows drawn are read from the kept listing.
-            let rows: Vec<AncestorRow> = {
+            let rows: Vec<SideRow> = {
                 let ws = this.app.workspace.read();
-                let listing = ws.pane(pane).and_then(|p| p.kept(&location));
+                let listing = ws.pane(pane).and_then(|p| p.kept(&at));
                 let p = ws.pane(pane);
                 ids[range.clone()]
                     .iter()
                     .filter_map(|id| listing?.get(*id))
-                    .map(|e| AncestorRow {
+                    .map(|e| SideRow {
                         id: e.id,
                         label: e.name_str().into_owned().into(),
                         name: e.name.clone(),
@@ -196,22 +294,20 @@ fn ancestor_column(
                             icon_px,
                         ),
                         link: icons::Link::of(e),
-                        place: p
-                            .and_then(|p| p.kept_location_of(&location, e.id))
-                            .map(|leads| {
-                                let tag = e
-                                    .metadata
-                                    .value(skwir_core::entry::keys::PLACE_TAG)
-                                    .and_then(skwir_core::Value::as_str);
-                                (leads, tag.map(|tag| this.tag_colors.of(tag)))
-                            }),
+                        place: p.and_then(|p| p.kept_location_of(&at, e.id)).map(|leads| {
+                            let tag = e
+                                .metadata
+                                .value(skwir_core::entry::keys::PLACE_TAG)
+                                .and_then(skwir_core::Value::as_str);
+                            (leads, tag.map(|tag| this.tag_colors.of(tag)))
+                        }),
                     })
                     .collect()
             };
             let mut out = Vec::with_capacity(rows.len());
             for (ix, row) in range.zip(rows) {
                 let target = path.as_ref().map(|dir| dir.join(&row.name));
-                let is_on_path = row.name == child;
+                let is_on_path = child.as_ref().is_some_and(|child| row.name == *child);
                 let mark =
                     icons::Mark::of(row.link, row.place.as_ref().and_then(|(_, color)| *color));
                 let icon = icons::entry_picture(
@@ -221,13 +317,24 @@ fn ancestor_column(
                     mark,
                     &theme,
                 );
-                // What a press opens: a folder, or where a place leads.
-                let leads = match (&row.place, &target) {
-                    (Some((place, _)), _) => Some(serde_json::json!(place.arg())),
-                    (None, Some(target)) if row.is_dir => Some(serde_json::json!(
-                        skwir_core::os_path::PathArg::from(target.as_path())
-                    )),
-                    _ => None,
+                // Where a press goes: into the folder under the cursor, the
+                // row selected there; from a column above, where the row
+                // leads (a folder, or where a place leads).
+                let press = if next {
+                    Some(serde_json::json!({
+                        "location": at.arg(),
+                        "select": skwir_core::os_path::PathArg::from(Path::new(&row.name)),
+                        "pane": pane,
+                    }))
+                } else {
+                    match (&row.place, &target) {
+                        (Some((place, _)), _) => Some(serde_json::json!(place.arg())),
+                        (None, Some(target)) if row.is_dir => Some(serde_json::json!(
+                            skwir_core::os_path::PathArg::from(target.as_path())
+                        )),
+                        _ => None,
+                    }
+                    .map(|leads| serde_json::json!({ "location": leads, "pane": pane }))
                 };
                 let mut el = div()
                     .id(ix)
@@ -257,13 +364,8 @@ fn ancestor_column(
                         MouseButton::Left,
                         cx.listener(move |this, _, window, cx| {
                             this.activate_pane(pane, cx);
-                            if let Some(leads) = &leads {
-                                this.run(
-                                    "navigate",
-                                    serde_json::json!({ "location": leads, "pane": pane }),
-                                    window,
-                                    cx,
-                                );
+                            if let Some(press) = &press {
+                                this.run("navigate", press.clone(), window, cx);
                             }
                         }),
                     )
@@ -307,10 +409,10 @@ fn ancestor_column(
             out
         }),
     )
-    .track_scroll(a.scroll.clone())
+    .track_scroll(scroll.clone())
     .size_full();
     let mut col = div()
-        .id(("colwrap", k))
+        .id(ids_of(if next { "colwrap-next" } else { "colwrap" }))
         .relative()
         .w(px(COLUMN_W))
         .h_full()
@@ -320,16 +422,18 @@ fn ancestor_column(
         .child(list)
         .child(
             crate::elements::scrollbar::vertical(
-                ("column-scrollbar", k),
-                crate::elements::scrollbar::Scrolls::Offset(
-                    a.scroll.0.borrow().base_handle.clone(),
-                ),
+                ids_of(if next {
+                    "column-scrollbar-next"
+                } else {
+                    "column-scrollbar"
+                }),
+                crate::elements::scrollbar::Scrolls::Offset(scroll.0.borrow().base_handle.clone()),
             )
             .across(view.row.clone()),
         );
-    col = match &a.path {
-        Some(dir) => dnd::droppable_dir(col, dir.clone(), cx),
-        None => dnd::droppable_place(col, a.location.clone(), cx),
+    col = match location.path() {
+        Some(dir) => dnd::droppable_dir(col, dir, cx),
+        None => dnd::droppable_place(col, location, cx),
     };
     col.into_any_element()
 }
@@ -343,17 +447,32 @@ impl PaneView for ColumnsView {
         crate::view::COLUMNS
     }
 
-    fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
+    fn render(
+        &mut self,
+        shell: &mut Shell,
+        window: &mut Window,
+        cx: &mut Context<Shell>,
+    ) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
-        let (base, spec) = {
+        let pane = shell.pane;
+        let (base, spec, cursor, complete) = {
             let ws = shell.app.workspace.read();
-            let p = ws.pane(shell.pane);
+            let p = ws.pane(pane);
             (
                 p.and_then(|p| p.location().cloned()),
                 p.map_or_else(SortSpec::default, |p| p.sort),
+                p.and_then(|p| p.selection.cursor),
+                p.is_some_and(|p| p.listing.is_complete()),
             )
         };
+        let mut left = None;
         if base != self.base {
+            // Gone into the folder under the cursor (Right, a double click,
+            // Open): its first entry is the cursor's once it is listed.
+            self.land = base
+                .clone()
+                .filter(|base| self.next.under.as_ref() == Some(base));
+            left = self.base.take();
             if let Some(b) = &base {
                 let trail = shell.ui().place.trail.clone();
                 self.rebuild(b, trail.as_ref());
@@ -363,6 +482,17 @@ impl PaneView for ColumnsView {
             }
             self.to_end.set(true);
         }
+        if self.land.is_some() && (cursor.is_some() || complete) {
+            // Something chose first (a row pressed in that column, an
+            // arrow), or the listing is complete.
+            if self.land.take().is_some() && cursor.is_none() && !shell.ui().list.sorted.is_empty()
+            {
+                cx.defer_in(window, move |shell, window, cx| {
+                    shell.with_pane(pane, |shell| shell.cursor_to(0, Step::Select, window, cx));
+                });
+            }
+        }
+        self.follow_cursor(shell, left.as_ref(), cx);
         // Each column's order, from the kept listing; the child on the way
         // down is scrolled into view once, when it has listed.
         let orders: Vec<Arc<[EntryId]>> = {
@@ -392,9 +522,19 @@ impl PaneView for ColumnsView {
                 .collect()
         };
 
+        // The column of the folder under the cursor, once listed beside.
+        let next = self.next.shown.borrow().clone().map(|next| {
+            let ids = {
+                let ws = shell.app.workspace.read();
+                ws.pane(pane)
+                    .and_then(|p| p.kept(&next))
+                    .map_or_else(|| Arc::from([]), |listing| listing.sorted(spec))
+            };
+            (next, ids)
+        });
+
         // The columns from the pane's left; wider than the pane, they scroll
         // sideways and follow their end (`follow_end`).
-        let pane = shell.pane;
         let mut columns = div()
             .id(("columns", pane.0 as usize))
             .size_full()
@@ -403,7 +543,7 @@ impl PaneView for ColumnsView {
             .overflow_x_scroll()
             .track_scroll(&self.row);
         for (k, ids) in orders.into_iter().enumerate() {
-            columns = columns.child(ancestor_column(self, k, ids, pane, &theme, cx));
+            columns = columns.child(side_column(self, Side::Above(k), ids, pane, &theme, cx));
         }
         let count = shell.ui().list.sorted.len();
         let last = uniform_list(
@@ -446,6 +586,16 @@ impl PaneView for ColumnsView {
             None => {}
         }
         columns = columns.child(last_col);
+        // Always there, empty on a file or while the cursor moves on, so the
+        // columns never shift as it goes.
+        columns = columns.child(match next {
+            Some((next, ids)) => side_column(self, Side::Next(next), ids, pane, &theme, cx),
+            None => div()
+                .w(px(COLUMN_W))
+                .h_full()
+                .flex_none()
+                .into_any_element(),
+        });
         div()
             .relative()
             .size_full()
@@ -466,14 +616,34 @@ impl PaneView for ColumnsView {
     }
 
     fn kept_locations(&self, shown: Option<&Location>, trail: Option<&Trail>) -> Vec<Location> {
-        shown
-            .map(|shown| {
-                chain(shown, trail)
-                    .into_iter()
-                    .map(|(location, _)| location)
-                    .collect()
-            })
-            .unwrap_or_default()
+        let Some(shown) = shown else {
+            return Vec::new();
+        };
+        let mut kept: Vec<Location> = chain(shown, trail)
+            .into_iter()
+            .map(|(location, _)| location)
+            .collect();
+        // The folder under the cursor, never the one shown: the pane has
+        // just gone into it, and adopted its listing.
+        if let Some(next) = self.next.shown.borrow().as_ref()
+            && next != shown
+            && !kept.contains(next)
+        {
+            kept.push(next.clone());
+        }
+        // Just gone up a folder (the view has not drawn since): the one
+        // left, which `up` puts the cursor on, keeps its listing for the
+        // column of the folder under the cursor.
+        if let Some(left) = self.base.as_ref().filter(|left| {
+            left.path()
+                .and_then(|path| path.parent().map(Location::from_path))
+                .as_ref()
+                == Some(shown)
+        }) && !kept.contains(left)
+        {
+            kept.push(left.clone());
+        }
+        kept
     }
 
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
@@ -492,8 +662,18 @@ impl PaneView for ColumnsView {
                 shell.run("up", serde_json::json!({}), window, cx);
                 true
             }
+            // Into the folder under the cursor, as yazi's `l` and Finder's
+            // Right: a file is not opened (Enter opens).
             Nav::Right => {
-                shell.open_selection(window, cx);
+                if let Some(folder) = folder_under_cursor(shell) {
+                    let pane = shell.pane;
+                    shell.run(
+                        "navigate",
+                        serde_json::json!({ "location": folder.arg(), "pane": pane }),
+                        window,
+                        cx,
+                    );
+                }
                 true
             }
             _ => false,

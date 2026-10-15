@@ -82,8 +82,10 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   Folder (`Ctrl+Alt+O`) goes there.
 - **Grid.** Thumbnails and names; View › Fill thumbnails crops pictures
   to their tiles.
-- **Columns.** The folders above, side by side; `Shift` and the wheel scroll
-  to those that do not fit.
+- **Columns.** The folders above, side by side, and what the folder under
+  the cursor holds after them. `→` goes into it, `←` back up; a click on a
+  folder shows what it holds. `Shift` and the wheel scroll to the columns
+  that do not fit.
 - **Tree** opens folders in place. **Board** shows the folders of the one
   shown as columns of cards you can drag between.
 - **Usage** (`Ctrl+4`) draws what takes the room in a folder, counted as
