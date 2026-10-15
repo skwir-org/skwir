@@ -1,8 +1,11 @@
 //! The preview on the whole screen (`ui.preview_fullscreen`): a picture, a
 //! document's pages, text, a film or music, drawn as the panel draws it, on
-//! a canvas over the window. The bar of what is shown lies over its top and
-//! hides after a second of stillness; the pointer moving brings it back
-//! (`arm_fullscreen_hide`, one cancellable timer, never a loop).
+//! a canvas over the window. Above pages or text, the bar of what is shown
+//! stays at the top, what is shown under it; over a picture, a film or
+//! music it lies over the top and hides after a second of stillness, the
+//! pointer moving bringing it back
+//! (`arm_fullscreen_hide`, one cancellable timer, never a loop). C hides
+//! and shows it for any.
 //!
 //! The canvas takes peek's place (`preview::render_peek`): while it shows,
 //! the panel is only a picture of the preview, as under peek, and what the
@@ -234,9 +237,25 @@ impl Shell {
         }
     }
 
-    /// Hide the bar after a second without the pointer moving, unless it is
-    /// pointed at, holds the keyboard, has a popup open or a knob dragged.
+    /// Whether the whole screen's bar lies over what is shown and hides by
+    /// itself: over what is looked at, a picture, a film or music, which
+    /// keep the whole screen. Pages and text are read: their bar stays,
+    /// above them. A file on its way counts as what its type shows, so a
+    /// step or the next track never moves what is shown.
+    pub(crate) fn fullscreen_bar_floats(&self) -> bool {
+        match self.fullscreen_shows() {
+            Some(shows) => matches!(shows, Shows::Picture | Shows::Film | Shows::Music),
+            None => self.media_kind().is_some() || self.walks_pictures(),
+        }
+    }
+
+    /// Hide a floating bar (`fullscreen_bar_floats`) after a second without
+    /// the pointer moving, unless it is pointed at, holds the keyboard, has
+    /// a popup open or a knob dragged.
     pub(crate) fn arm_fullscreen_hide(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if !self.fullscreen_bar_floats() {
+            return;
+        }
         let busy =
             crate::preview::active_popup(self, false).is_some() || self.preview.media.scrubbing();
         let Some(fullscreen) = &mut self.preview.fullscreen else {
@@ -490,18 +509,16 @@ impl Shell {
 pub const SLIDESHOW_POPUP: &str = "slideshow";
 
 /// The canvas over the window: what the preview shows, with its keys, and
-/// its bar over the top while shown. What is read (text, pages) starts
-/// under the bar's place, kept whether the bar shows or not, so the bar
-/// never covers its first lines and hiding it moves nothing; what is
-/// looked at (a picture, a film) has the whole screen.
+/// its bar at the top (`Shell::fullscreen_bar_floats`): above pages or
+/// text, which start under it; over a picture, a film or music, which keep
+/// the whole screen, until it hides.
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let fullscreen = shell.preview.fullscreen.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let shows = shell.fullscreen_shows();
     // What is read stays on paper; what is looked at is on the stage.
     let paper = crate::preview::on_paper(shell);
-    // What is read starts under the bar's place, its bar's border included.
-    let read = matches!(shows, Some(Shows::Text | Shows::Pages));
+    let floats = shell.fullscreen_bar_floats();
     let inner = match shows {
         Some(Shows::Film) => crate::media::film(shell, cx),
         _ => None,
@@ -513,6 +530,26 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     } else {
         keymap::FULLSCREEN.to_owned()
     };
+    let mut bar = (!fullscreen.controls_hidden)
+        .then(|| crate::preview::controls(shell, &theme, cx))
+        .flatten()
+        .map(|controls| {
+            div()
+                .id("preview-fullscreen-controls")
+                .flex_none()
+                .when(floats, |bar| bar.absolute().top_0().left_0().right_0())
+                // What is under the bar answers clicks too (a film plays):
+                // the bar takes the pointer.
+                .occlude()
+                .track_focus(&fullscreen.controls_focus)
+                .on_hover(cx.listener(|this, hovered, window, cx| {
+                    this.fullscreen_controls_hovered(*hovered, window, cx);
+                }))
+                .bg(theme.surface)
+                .border_b_1()
+                .border_color(theme.border)
+                .child(controls)
+        });
     let mut canvas = div()
         .id("preview-fullscreen")
         .absolute()
@@ -527,44 +564,16 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 this.fullscreen_pointer_moved(event.position, window, cx);
             }),
         )
-        .when(read, |canvas| {
-            canvas.child(
-                div()
-                    .flex_none()
-                    .h(gpui::px(crate::preview_bar::HEIGHT + 1.)),
-            )
-        })
+        .children(bar.take_if(|_| !floats))
         .child(
             crate::preview::frame(shell, true)
                 .flex_1()
                 .min_h_0()
                 .child(content),
-        );
+        )
+        .children(bar);
     if let Some(focus) = shell.preview.peek_focus.as_ref() {
         canvas = canvas.track_focus(focus);
-    }
-    if !fullscreen.controls_hidden
-        && let Some(controls) = crate::preview::controls(shell, &theme, cx)
-    {
-        canvas = canvas.child(
-            div()
-                .id("preview-fullscreen-controls")
-                .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                // What is under the bar answers clicks too (a film plays):
-                // the bar takes the pointer.
-                .occlude()
-                .track_focus(&fullscreen.controls_focus)
-                .on_hover(cx.listener(|this, hovered, window, cx| {
-                    this.fullscreen_controls_hovered(*hovered, window, cx);
-                }))
-                .bg(theme.surface)
-                .border_b_1()
-                .border_color(theme.border)
-                .child(controls),
-        );
     }
     Some(canvas.into_any_element())
 }

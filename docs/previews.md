@@ -23,9 +23,11 @@ contributors). The rules for working on preview code are in
 - **Fullscreen.** A picture, a document's pages, text, a film or music
   goes on the whole screen with the bar's Fullscreen button, `F`, or a
   double click on a picture or a film; `F` or `Escape` brings it back.
-  The bar lies over the top and hides when the pointer rests; move it to
-  bring the bar back, or press `C`. The arrows go to the picture before
-  or after in the folder (other files are skipped), or turn the page.
+  Above pages or text the bar stays at the top, what is shown under it;
+  over a picture, a film or music it hides when the pointer rests (move
+  it to bring the bar back). `C` hides or shows it. The arrows go to the
+  picture before or after in the folder (other files are skipped), or
+  turn the page.
   **Slideshow** (`Space` on the whole screen, or More › Slideshow in the
   panel) shows the pictures from the one shown to the last, each for the
   time its bar's picker says (Reading › Pictures). The next picture is

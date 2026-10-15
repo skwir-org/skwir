@@ -771,16 +771,19 @@ is still to come are in `docs/preview-frame.md`.
   What is looked at lies on `stage` (black in both looks), what is read on
   paper; a picture or a film on its way waits on its letterbox
   (`on_paper`), so stepping through them never flashes paper.
-- **The bar** is the kind's own, over the top, starting with the name of
+- **The bar** is the kind's own, at the top, starting with the name of
   what is shown. Every kind's bar ends with Fullscreen
   (`preview_bar::fullscreen_tool`), lit while on and there while the
-  next file loads. It hides on one cancellable inactivity timer
-  (`arm_fullscreen_hide`), never a loop; a stationary pointer event from
-  layout does not reset it; hover, an open popup, a knob dragged and the
-  keyboard in the bar keep it. What is read (text, pages) starts under
-  the bar's place, kept whether it shows or not: the bar never covers a
-  first line or a notice, and hiding it moves nothing. What is looked at
-  (a picture, a film, music) has the whole screen, the bar over it.
+  next file loads. Above pages and text, which are read, it stays, and
+  what is shown starts under it: it never covers a first line or a
+  notice. Over what is looked at, a picture, a film or music, which keep
+  the whole screen, it lies over the top and hides
+  (`Shell::fullscreen_bar_floats`; a file on its way counts as what its
+  type shows, so a step or the next track moves nothing): on one
+  cancellable inactivity timer (`arm_fullscreen_hide`), never a loop; a
+  stationary pointer event from layout does not reset it; hover, an open
+  popup, a knob dragged and the keyboard in the bar keep it. C hides or
+  shows either; the pointer moving brings it back.
 - **Keys.** Entering gives the keyboard to what is shown (the picture's,
   the reader's, the inspection's, the player's own handle,
   `shown_focus`), so its keys work at once, and a preview arriving while

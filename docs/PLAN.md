@@ -981,8 +981,10 @@ file that is no text says its failure with View as hex in the bar, as
 does a file with no preview: the one way left to look there, in More
 elsewhere. An SVG drawing has a Source, as rendered text does, kept by
 type. Not exercised in a window: a reader's or a converter's failure.
-On the whole screen, text and pages start under the bar's place, kept
-while the bar hides: it covered their first line and notice before.
+On the whole screen, the bar of pages or text stays at the top, what is
+shown under it; a picture's, a film's and music's lie over them and hide
+when the pointer rests, as every bar did before, covering a first line
+or a notice while it showed.
 
 The columns view moves as yazi's and Finder's do. After the pane's
 column comes the folder under the cursor, listed once the cursor rests
