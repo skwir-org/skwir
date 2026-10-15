@@ -265,12 +265,18 @@ fn column(
         .border_r_1()
         .border_color(theme.border)
         .child(header)
-        .child(div().flex_1().min_h_0().relative().child(list).child(
-            crate::elements::scrollbar::vertical(
-                ("board-scrollbar", k),
-                crate::elements::scrollbar::Scrolls::Offset(scroll.0.borrow().base_handle.clone()),
+        .child(
+            div().flex_1().min_h_0().relative().child(list).child(
+                crate::elements::scrollbar::vertical(
+                    ("board-scrollbar", k),
+                    crate::elements::scrollbar::Scrolls::Offset(
+                        scroll.0.borrow().base_handle.clone(),
+                    ),
+                )
+                // The columns' bar runs along the bottom of them all.
+                .across(view.row.clone()),
             ),
-        ));
+        );
     // A card from another column moves here (`drop_on_place` tells the
     // column it leaves), files from elsewhere come in as they come in a
     // folder or a tag.

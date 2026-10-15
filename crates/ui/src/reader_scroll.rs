@@ -65,6 +65,9 @@ pub struct DocumentScroll {
     pub continuous: bool,
     pub list: ListState,
     pub single: ScrollHandle,
+    /// The pages scrolled sideways, when a zoom makes them wider than the
+    /// panel.
+    sideways: ScrollHandle,
     /// Shared with each frame's rows, which only read them: a frame costs
     /// a reference, not a copy of every page seen.
     pub(crate) pages: Rc<BTreeMap<u32, CachedPage>>,
@@ -88,6 +91,7 @@ impl Default for DocumentScroll {
             continuous: false,
             list: ListState::new(0, ListAlignment::Top, px(100.)),
             single: ScrollHandle::new(),
+            sideways: ScrollHandle::new(),
             pages: Rc::default(),
             sizes: Rc::default(),
             widest: 0.,
@@ -598,6 +602,7 @@ pub fn continuous_element(
     let list = scroll.list.clone();
     let after_list = list.clone();
     let bar_list = list.clone();
+    let sideways = scroll.sideways.clone();
     let count = list.item_count() as u32;
     let layout = scroll.layout.clone();
     let requested = Rc::new(RefCell::new(Vec::new()));
@@ -706,8 +711,14 @@ pub fn continuous_element(
             .h(bounds.height);
             let bar = crate::elements::scrollbar::vertical(
                 "document-scrollbar",
-                crate::elements::scrollbar::Scrolls::Items(bar_list),
-            );
+                crate::elements::scrollbar::Scrolls::Items(bar_list.clone()),
+            )
+            .across(sideways.clone());
+            let across = crate::elements::scrollbar::horizontal(
+                "document-scrollbar-sideways",
+                sideways.clone(),
+            )
+            .across(crate::elements::scrollbar::Scrolls::Items(bar_list));
             div()
                 .relative()
                 .size_full()
@@ -716,9 +727,11 @@ pub fn continuous_element(
                         .id("document-horizontal-scroll")
                         .size_full()
                         .overflow_x_scroll()
+                        .track_scroll(&sideways)
                         .child(rows),
                 )
                 .child(bar)
+                .child(across)
                 .into_any_element()
         }),
         laid_out: Box::new(move |window, cx| {

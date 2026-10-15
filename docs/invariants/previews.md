@@ -743,8 +743,9 @@ is still to come are in `docs/preview-frame.md`.
   find and copy keep working.
 - A selected row of the byte view is decoded in a strip under it
   (integers in both byte orders, a float, the text), outside the
-  sideways scroller; so is the vertical scrollbar of what scrolls
-  sideways (a table, bytes), kept in view.
+  sideways scroller; so are the bars of what scrolls sideways (a table,
+  bytes), kept in view: the vertical one on the right edge, the
+  horizontal one along the bottom of the rows.
 - **Bytes are read where they are shown** (`bytes_view.rs`, ADR-051). A
   row is `HEX_ROW` bytes, so row `r` is at `r × HEX_ROW` and the file's
   length (`Display::bytes`, read on the worker) says how many there are.

@@ -915,6 +915,11 @@ way take the wheel's other way too, and scrollers inside each other all
 moved: a board's column scrolled down with Shift while the board went
 sideways, and a table went sideways with every turn of the wheel.
 
+What scrolls sideways has its bar along the bottom: a table and bytes,
+and a document's pages zoomed wider than the panel (a page at a time
+gets its vertical bar too). Where both bars show, each leaves the corner
+to the other.
+
 ---
 
 ## Maps

@@ -12,6 +12,10 @@
 //! lists, our uniform grid) and `gpui::list`, which scrolls by item and knows
 //! only what it has measured — so the bar asks each in its own terms and
 //! speaks pixels to the rest of the code.
+//!
+//! Where an area scrolls both ways, each bar leaves the corner to the other
+//! while the other shows: the bar along the other edge drives the same
+//! handle, or the one named with `Scrollbar::across`.
 
 use gpui::{
     Along, App, Axis, Bounds, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior,
@@ -57,6 +61,20 @@ impl From<ScrollHandle> for Scrolls {
     }
 }
 
+impl Metrics {
+    /// Nothing to scroll along this axis.
+    const NONE: Metrics = Metrics {
+        offset: 0.,
+        max: 0.,
+        viewport: 0.,
+    };
+
+    /// Whether a bar along this axis shows a thumb.
+    fn scrolls(self) -> bool {
+        self.max > 1. && self.viewport > 0.
+    }
+}
+
 impl Scrolls {
     fn metrics(&self, axis: Axis) -> Metrics {
         match self {
@@ -65,6 +83,8 @@ impl Scrolls {
                 max: f32::from(handle.max_offset().along(axis)),
                 viewport: f32::from(handle.bounds().size.along(axis)),
             },
+            // A list scrolls only up and down.
+            Scrolls::Items(_) if axis == Axis::Horizontal => Metrics::NONE,
             Scrolls::Items(list) => Metrics {
                 offset: -f32::from(list.scroll_px_offset_for_scrollbar().y),
                 max: f32::from(list.max_offset_for_scrollbar().height),
@@ -119,6 +139,8 @@ pub struct Scrollbar {
     id: ElementId,
     scrolls: Scrolls,
     axis: Axis,
+    /// What the bar along the other edge drives, when not `scrolls`.
+    across: Option<Scrolls>,
 }
 
 /// A vertical scrollbar over `scrolls`. The id must be stable across frames,
@@ -128,6 +150,7 @@ pub fn vertical(id: impl Into<ElementId>, scrolls: Scrolls) -> Scrollbar {
         id: id.into(),
         scrolls,
         axis: Axis::Vertical,
+        across: None,
     }
 }
 
@@ -138,6 +161,17 @@ pub fn horizontal(id: impl Into<ElementId>, scrolls: impl Into<Scrolls>) -> Scro
         id: id.into(),
         scrolls: scrolls.into(),
         axis: Axis::Horizontal,
+        across: None,
+    }
+}
+
+impl Scrollbar {
+    /// The bar along the other edge of the area drives `scrolls` (a list
+    /// inside a row that scrolls sideways): this one leaves it the corner
+    /// while it shows.
+    pub fn across(mut self, scrolls: impl Into<Scrolls>) -> Self {
+        self.across = Some(scrolls.into());
+        self
     }
 }
 
@@ -148,10 +182,20 @@ impl IntoElement for Scrollbar {
     }
 }
 
+/// The gutter along `axis`, less the corner a bar along the other edge
+/// takes while it shows.
+fn track_along(gutter: Bounds<Pixels>, axis: Axis, corner: bool) -> Bounds<Pixels> {
+    if !corner {
+        return gutter;
+    }
+    let length = (gutter.size.along(axis) - px(GUTTER)).max(px(0.));
+    Bounds::new(gutter.origin, gutter.size.apply_along(axis, |_| length))
+}
+
 /// The thumb inside `track`, along `axis`, or `None` when everything fits.
 fn thumb(track: Bounds<Pixels>, metrics: Metrics, axis: Axis) -> Option<Bounds<Pixels>> {
     let length = f32::from(track.size.along(axis));
-    if metrics.max <= 1. || metrics.viewport <= 0. || length <= MIN_THUMB {
+    if !metrics.scrolls() || length <= MIN_THUMB {
         return None;
     }
     let content = metrics.viewport + metrics.max;
@@ -216,7 +260,14 @@ impl Element for Scrollbar {
         _: &mut App,
     ) -> Self::PrepaintState {
         let metrics = self.scrolls.metrics(self.axis);
-        let thumb = thumb(bounds, metrics, self.axis);
+        let corner = self
+            .across
+            .as_ref()
+            .unwrap_or(&self.scrolls)
+            .metrics(self.axis.invert())
+            .scrolls();
+        let track = track_along(bounds, self.axis, corner);
+        let thumb = thumb(track, metrics, self.axis);
         // The gutter takes the pointer only while there is a bar in it: a
         // press here must scroll, not select the row underneath. With
         // nothing to scroll it is not there at all.
@@ -225,14 +276,14 @@ impl Element for Scrollbar {
         } else {
             HitboxBehavior::Normal
         };
-        (window.insert_hitbox(bounds, behavior), thumb, metrics)
+        (window.insert_hitbox(track, behavior), thumb, metrics)
     }
 
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
+        _: Bounds<Pixels>,
         (): &mut (),
         (hitbox, thumb, metrics): &mut Self::PrepaintState,
         window: &mut Window,
@@ -241,6 +292,8 @@ impl Element for Scrollbar {
         let (Some(thumb), Some(global_id)) = (*thumb, global_id) else {
             return;
         };
+        // The track: the gutter, less a corner left to the other bar.
+        let bounds = hitbox.bounds;
         let metrics = *metrics;
         let scrolls = self.scrolls.clone();
         let axis = self.axis;
@@ -341,7 +394,7 @@ impl Element for Scrollbar {
 
 #[cfg(test)]
 mod tests {
-    use super::{MIN_THUMB, Metrics, thumb};
+    use super::{GUTTER, MIN_THUMB, Metrics, thumb, track_along};
     use gpui::{Axis, Bounds, point, px, size};
 
     fn track() -> Bounds<gpui::Pixels> {
@@ -408,6 +461,21 @@ mod tests {
         assert_eq!(long.size.height, px(MIN_THUMB));
         // Half way down the content, half way down the travel.
         assert_eq!(long.origin.y, px((200. - MIN_THUMB) / 2.));
+    }
+
+    #[test]
+    fn a_bar_leaves_the_corner_to_the_other() {
+        let gutter = Bounds::new(point(px(0.), px(300.)), size(px(400.), px(GUTTER)));
+        assert_eq!(track_along(gutter, Axis::Horizontal, false), gutter);
+        // The vertical bar shows: the corner at the right end is its own.
+        let short = track_along(gutter, Axis::Horizontal, true);
+        assert_eq!(short.origin, gutter.origin);
+        assert_eq!(short.size, size(px(400. - GUTTER), px(GUTTER)));
+        let gutter = Bounds::new(point(px(388.), px(0.)), size(px(GUTTER), px(300.)));
+        assert_eq!(
+            track_along(gutter, Axis::Vertical, true).size,
+            size(px(GUTTER), px(300. - GUTTER))
+        );
     }
 
     #[test]

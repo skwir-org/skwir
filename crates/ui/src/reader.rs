@@ -550,21 +550,41 @@ pub fn page_element(
     )
     .absolute()
     .size_0();
+    let single = &shell.preview.reader.scroll.single;
+    // The bars are beside the canvas, not in it, where they would scroll
+    // with the page; the wrapper keeps the column the canvas grew in.
     div()
-        .id("reader-canvas")
+        .relative()
         .flex_1()
         .min_h_0()
         .w_full()
-        .overflow_hidden()
-        .track_scroll(&shell.preview.reader.scroll.single)
-        .on_scroll_wheel(cx.listener(|shell, event, window, cx| {
-            shell.reader_wheel(event, window, cx);
-        }))
-        .when_some(shell.preview.reader.focus.as_ref(), |d, focus| {
-            d.track_focus(focus).key_context(crate::keymap::READER)
-        })
-        .child(element)
-        .child(watch)
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .id("reader-canvas")
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .overflow_hidden()
+                .track_scroll(single)
+                .on_scroll_wheel(cx.listener(|shell, event, window, cx| {
+                    shell.reader_wheel(event, window, cx);
+                }))
+                .when_some(shell.preview.reader.focus.as_ref(), |d, focus| {
+                    d.track_focus(focus).key_context(crate::keymap::READER)
+                })
+                .child(element)
+                .child(watch),
+        )
+        .child(crate::elements::scrollbar::vertical(
+            "reader-scrollbar",
+            crate::elements::scrollbar::Scrolls::Offset(single.clone()),
+        ))
+        .child(crate::elements::scrollbar::horizontal(
+            "reader-scrollbar-sideways",
+            single.clone(),
+        ))
         .into_any_element()
 }
 

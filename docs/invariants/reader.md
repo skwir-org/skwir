@@ -92,6 +92,10 @@ binding, like `AGENTS.md`. Measurements: `docs/pdf-comparison.md`.
   entries.
 - Page interactions carry a page number; never apply an adjacent page's
   selection or links to the opening page.
+- A page zoomed wider than the panel scrolls sideways, with its bar along
+  the bottom, read continuously or a page at a time; a page at a time has
+  its vertical bar too, for the page shown (the wheel past its edge turns
+  the page, `reader_wheel`).
 - Overdraw measurement varies between frames: keep prefetch neighbours
   explicit so a later layout does not cancel work it just requested.
 

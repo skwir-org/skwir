@@ -380,6 +380,8 @@ pub struct State {
     pub(crate) text: Option<crate::text_view::TextView>,
     /// A file's bytes read where they are shown, drawn instead of the list.
     pub(crate) bytes: Option<crate::bytes_view::BytesView>,
+    /// A table or bytes wider than the panel, scrolled sideways.
+    sideways: gpui::ScrollHandle,
 }
 impl Default for State {
     fn default() -> Self {
@@ -406,6 +408,7 @@ impl Default for State {
             labels: None,
             text: None,
             bytes: None,
+            sideways: gpui::ScrollHandle::new(),
         }
     }
 }
@@ -446,6 +449,7 @@ impl State {
         self.selection = None;
         self.dragging = false;
         self.outline = false;
+        self.sideways.set_offset(gpui::point(px(0.), px(0.)));
         self.reindex(data);
     }
     /// A new inspection replaced the content. Its `position` becomes the
@@ -2722,7 +2726,7 @@ pub fn content(
                 )
             })
             // Over what does not scroll sideways: a table or bytes wider
-            // than the panel keep their bar in view (below).
+            // than the panel keep their bars in view (below).
             .when(!wide, |d| {
                 d.child(crate::elements::scrollbar::vertical(
                     "inspect-scrollbar",
@@ -2801,12 +2805,20 @@ pub fn content(
                             .flex_1()
                             .min_h_0()
                             .overflow_x_scroll()
+                            .track_scroll(&state.sideways)
                             .child(body.w(px(width)).min_w_full().h_full()),
                     )
-                    .child(crate::elements::scrollbar::vertical(
-                        "inspect-scrollbar",
-                        scrolls,
-                    )),
+                    .child(
+                        crate::elements::scrollbar::vertical("inspect-scrollbar", scrolls.clone())
+                            .across(state.sideways.clone()),
+                    )
+                    .child(
+                        crate::elements::scrollbar::horizontal(
+                            "inspect-scrollbar-sideways",
+                            state.sideways.clone(),
+                        )
+                        .across(scrolls),
+                    ),
             )
             .children(decoded)
             .into_any_element()

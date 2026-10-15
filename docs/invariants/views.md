@@ -137,7 +137,9 @@ around the views is in [shell.md](shell.md).
 - Every scrolling view has a scrollbar (`elements/scrollbar.rs`) on its
   right edge, and on its bottom edge when it scrolls sideways
   (`scrollbar::horizontal`). The view hands it the handle it scrolls with;
-  the thumb is placed in prepaint.
+  the thumb is placed in prepaint. Where an area scrolls both ways, each
+  bar leaves the corner to the other while it shows (`Scrollbar::across`
+  when the two drive different handles: a board's columns and its row).
 - **The wheel scrolls along its own axis** (vendored patch 0022): alone,
   up and down; with Shift, which every platform reports sideways, across.
   Scrollers take the wheel together, from the innermost out, so one that
