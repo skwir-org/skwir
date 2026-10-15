@@ -43,6 +43,7 @@ dependencies stay out of Skwir's workspace:
 | `0020-render-image-into-frames` | `RenderImage::into_frames` returns pixel buffers | — |
 | `0021-x11-clipboard-sends-in-pieces` | X11 clipboard sends large data with INCR; one failed request no longer ends it | — |
 | `0022-wheel-scrolls-along-its-axis` | The wheel scrolls along its own axis by default (`restrict_scroll_to_axis`) | — |
+| `0023-idle-inhibit` | `Window::set_idle_inhibited` keeps the screen awake (Wayland, X11, Windows) | — |
 
 ### 0001: Wayland outgoing drag
 
@@ -327,6 +328,27 @@ reports sideways, across. An element that should take either sets it to
 
 `elements::div::scroll_axis_tests` (in `just list-check`) cover a list in a
 row that scrolls sideways, and the opt-out.
+
+### 0023: Idle inhibit
+
+`Window::set_idle_inhibited(bool)` (a `PlatformWindow` method, ignored by
+default) keeps the screen on and the session from going idle while a film or
+a slideshow plays, with nothing touched for minutes:
+
+- Wayland: a `zwp_idle_inhibitor_v1` on the window's surface, which holds
+  while the surface is shown (`idle-inhibit-unstable-v1`, bound when the
+  compositor offers it).
+- X11: `ScreenSaverSuspend` (MIT-SCREEN-SAVER 1.1, x11rb's `screensaver`
+  feature), which Xorg also applies to the display's power saving.
+  Suspensions nest per client, one per window that asks; the server ends
+  them when the client goes.
+- Windows: `SetThreadExecutionState` asks for the display while any window
+  holds it (`Win32_System_Power`). Compiled only.
+- macOS: not yet (an `IOPMAssertion` would be its way).
+
+A window releases what it holds when it closes. A desktop that tracks
+idleness itself, outside the X screen saver, is not reached by X11's; its
+D-Bus inhibitor is the application's to ask.
 
 ## Adding or regenerating a patch
 

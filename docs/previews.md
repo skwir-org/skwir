@@ -28,7 +28,8 @@ contributors). The rules for working on preview code are in
   or after in the folder (other files are skipped), or turn the page.
   **Slideshow** (`Space` on the whole screen, or More › Slideshow in the
   panel) shows the pictures from the one shown to the last, each for the
-  time its bar's picker says (Reading › Pictures).
+  time its bar's picker says (Reading › Pictures). The screen stays
+  awake while a slideshow or a film plays.
 - **Files inside an archive or a message** open as what they are: a
   picture zooms, a PDF opens in the reader, JSON folds, Markdown reads.
   The file opens below or beside the archive's list (More › Layout), and

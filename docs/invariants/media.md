@@ -106,6 +106,8 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - Fullscreen is the preview's, for every kind (previews.md, "The whole
   screen"): a film is drawn there enlarged (`media::film`); its bar is
   the panel's and hides as every kind's does, scrubbing keeping it.
+- A film playing, in the panel or the dock, keeps the screen awake
+  (`Shell::sync_awake`); music does not.
 - Pointer movement must not take focus from an open playback popup.
 - A click on the picture (`media::clickable`: film, audio figure, fullscreen
   canvas) toggles playback. Overlays on the film, such as the controls bar,

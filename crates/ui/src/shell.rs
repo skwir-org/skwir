@@ -2435,6 +2435,7 @@ impl Shell {
             this.sync_notes(window, cx);
             this.sync_media(window, cx);
             this.sync_player(window, cx);
+            this.sync_awake(window);
         });
         for id in self.panes.iter().map(|p| p.id).collect::<Vec<_>>() {
             self.with_pane(id, |shell| {

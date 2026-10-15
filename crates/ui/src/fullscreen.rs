@@ -307,6 +307,29 @@ impl Shell {
         self.arm_fullscreen_hide(window, cx);
     }
 
+    /// Keep the screen awake while a slideshow or a film plays, the panel's
+    /// or the pinned one (`Window::set_idle_inhibited`, vendored patch
+    /// 0023): nothing but the time passing happens, and the screen saver
+    /// would take it for an empty room. Music lets it sleep, and so does
+    /// anything at rest. Told on every wake; the window does nothing when
+    /// told what it already does.
+    pub(crate) fn sync_awake(&self, window: &mut Window) {
+        let slideshow = self
+            .preview
+            .fullscreen
+            .as_ref()
+            .is_some_and(|fullscreen| fullscreen.slideshow.is_some());
+        let film = self.preview.media.session.is_some()
+            && !self.media_is_audio()
+            && self.preview.media.state.playing();
+        let pinned = self
+            .player
+            .pinned
+            .as_ref()
+            .is_some_and(|pinned| pinned.video && pinned.state.playing());
+        window.set_idle_inhibited(slideshow || film || pinned);
+    }
+
     /// `ui.fullscreen_step { delta }`: on the whole screen, the arrows go
     /// to the picture before or after, or turn the page or the section.
     pub fn fullscreen_step(&mut self, delta: i64, window: &mut Window, cx: &mut Context<Self>) {

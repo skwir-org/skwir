@@ -1799,6 +1799,16 @@ impl Window {
         self.platform_window.start_external_drag(paths, icon)
     }
 
+    /// Keeps the screen on and the session from going idle (no screen saver,
+    /// no blanking, no lock) while `inhibited` is true, as a film or a
+    /// slideshow needs: Wayland's idle inhibitor while the window is shown,
+    /// the X screen saver suspended, the display required on Windows.
+    /// Ignored on other platforms. Telling it what it already does changes
+    /// nothing; a window that closes releases it.
+    pub fn set_idle_inhibited(&self, inhibited: bool) {
+        self.platform_window.set_idle_inhibited(inhibited);
+    }
+
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
     pub fn set_client_inset(&mut self, inset: Pixels) {
         self.client_inset = Some(inset);

@@ -769,6 +769,11 @@ is still to come are in `docs/preview-frame.md`.
   (`ui.slideshow_pace`).
 - What answers the user (`set_status`'s toasts) is drawn over the canvas
   while it shows (`Shell::render`).
+- **The screen stays awake** while a slideshow or a film plays, the
+  panel's or the pinned one (`Shell::sync_awake`, told on each wake,
+  which the window ignores when nothing changed;
+  `Window::set_idle_inhibited`, vendored patch 0023). Music, a paused
+  film and anything at rest let it sleep.
 
 ### Maps
 

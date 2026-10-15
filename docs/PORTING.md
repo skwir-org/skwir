@@ -360,6 +360,10 @@ Left:
   Spaces), for the terminal's keys, Ctrl+Tab, and word moves (a Mac's are
   Option+arrows: not done). Compiled for Windows, never for a Mac
   (skwir-ui).
+- **The screen kept awake** during a slideshow or a film is gpui patch
+  0023: Wayland's idle inhibitor and X11's screen saver, tried on Linux;
+  Windows' display requirement, compiled only; nothing on a Mac yet (an
+  `IOPMAssertion`).
 - **Drag and drop**: `ui/dnd.rs` outgoing drag is gpui patch 0001,
   Wayland's. A drag's copy modifier is Ctrl; a Mac's is Option (step J, not
   done).

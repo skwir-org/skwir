@@ -15,6 +15,7 @@ use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{Proxy, protocol::wl_surface};
+use wayland_protocols::wp::idle_inhibit::zv1::client::zwp_idle_inhibitor_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
@@ -91,6 +92,8 @@ pub struct WaylandWindowState {
     app_id: Option<String>,
     appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
+    /// While the window keeps the session from going idle.
+    idle_inhibitor: Option<zwp_idle_inhibitor_v1::ZwpIdleInhibitorV1>,
     toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashMap<ObjectId, Output>,
@@ -206,6 +209,7 @@ impl WaylandWindowState {
             decoration,
             app_id: None,
             blur: None,
+            idle_inhibitor: None,
             toplevel,
             viewport,
             globals,
@@ -289,6 +293,9 @@ impl Drop for WaylandWindow {
         }
         if let Some(blur) = &state.blur {
             blur.release();
+        }
+        if let Some(inhibitor) = &state.idle_inhibitor {
+            inhibitor.destroy();
         }
         state.toplevel.destroy();
         if let Some(viewport) = &state.viewport {
@@ -1144,6 +1151,19 @@ impl PlatformWindow for WaylandWindow {
         let client = state.client.clone();
         drop(state);
         client.start_external_drag(&surface, paths, icon)
+    }
+
+    fn set_idle_inhibited(&self, inhibited: bool) {
+        let mut state = self.borrow_mut();
+        if let Some(inhibitor) = state.idle_inhibitor.take_if(|_| !inhibited) {
+            inhibitor.destroy();
+        } else if inhibited && state.idle_inhibitor.is_none() {
+            // A compositor without the protocol keeps its own idle rules.
+            let inhibitor = state.globals.idle_inhibit_manager.as_ref().map(|manager| {
+                manager.create_inhibitor(&state.surface, &state.globals.qh, ())
+            });
+            state.idle_inhibitor = inhibitor;
+        }
     }
 
     fn start_window_resize(&self, edge: crate::ResizeEdge) {

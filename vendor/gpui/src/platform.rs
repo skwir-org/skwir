@@ -569,6 +569,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         false
     }
     fn start_window_resize(&self, _edge: ResizeEdge) {}
+    /// Keep the screen on and the session from going idle (no screen saver,
+    /// no blanking, no lock) while `inhibited`. Ignored where unsupported.
+    fn set_idle_inhibited(&self, _inhibited: bool) {}
     fn window_decorations(&self) -> Decorations {
         Decorations::Server
     }

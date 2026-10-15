@@ -952,8 +952,13 @@ starts once the picture has arrived, so a slow one is shown its whole
 time. `ui.media_fullscreen` and `ui.media_controls` became
 `ui.preview_fullscreen` and `ui.fullscreen_controls`. Not done: the
 next picture is not read ahead, so a slideshow shows the stage for the
-time a picture takes to decode; the screen may still sleep during a
-slideshow or a film (gpui has no idle inhibitor).
+time a picture takes to decode.
+
+The screen stays awake while a slideshow or a film plays, through a new
+gpui patch (0023, `Window::set_idle_inhibited`): Wayland's idle
+inhibitor, X11's screen saver suspended, Windows' display requirement
+(compiled only). Not done: macOS; a desktop that idles by its own rules
+outside these (its D-Bus inhibitor).
 
 The columns view moves as yazi's and Finder's do. After the pane's
 column comes the folder under the cursor, listed once the cursor rests

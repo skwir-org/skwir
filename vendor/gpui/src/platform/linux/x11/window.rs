@@ -19,6 +19,7 @@ use x11rb::{
     errors::ConnectionError,
     properties::WmSizeHints,
     protocol::{
+        screensaver::ConnectionExt as _,
         sync,
         xinput::{self, ConnectionExt as _},
         xproto::{self, ClientMessageEvent, ConnectionExt, TranslateCoordinatesReply},
@@ -273,6 +274,8 @@ pub struct X11WindowState {
     edge_constraints: Option<EdgeConstraints>,
     pub handle: AnyWindowHandle,
     last_insets: [u32; 4],
+    /// While the window keeps the screen saver suspended.
+    idle_inhibited: bool,
 }
 
 impl X11WindowState {
@@ -689,6 +692,7 @@ impl X11WindowState {
                 client_side_decorations_supported,
                 decorations: WindowDecorations::Server,
                 last_insets: [0, 0, 0, 0],
+                idle_inhibited: false,
                 edge_constraints: None,
                 counter_id: sync_request_counter,
                 last_sync_counter: None,
@@ -715,6 +719,18 @@ impl X11WindowState {
     }
 }
 
+/// Suspend the screen saver, and the display's power saving with it, or
+/// resume it (MIT-SCREEN-SAVER 1.1). Suspensions nest per client, one per
+/// window that asks, and the server ends them when the client goes. A
+/// server without the extension keeps its own rules.
+fn suspend_screen_saver(xcb: &XCBConnection, suspend: bool) {
+    check_reply(
+        || "X11 ScreenSaverSuspend failed.",
+        xcb.screensaver_suspend(u32::from(suspend)),
+    )
+    .log_err();
+}
+
 pub(crate) struct X11Window(pub X11WindowStatePtr);
 
 impl Drop for X11Window {
@@ -726,6 +742,10 @@ impl Drop for X11Window {
         // windows with it: there is nothing to destroy there.
         if self.0.xcb.has_error().is_some() {
             return;
+        }
+
+        if state.idle_inhibited {
+            suspend_screen_saver(&self.0.xcb, false);
         }
 
         let destroy_x_window = maybe!({
@@ -1354,6 +1374,14 @@ impl PlatformWindow for X11Window {
         )
         .log_err();
         xcb_flush(&self.0.xcb);
+    }
+
+    fn set_idle_inhibited(&self, inhibited: bool) {
+        let mut state = self.0.state.borrow_mut();
+        if state.idle_inhibited != inhibited {
+            state.idle_inhibited = inhibited;
+            suspend_screen_saver(&self.0.xcb, inhibited);
+        }
     }
 
     fn set_app_id(&mut self, app_id: &str) {

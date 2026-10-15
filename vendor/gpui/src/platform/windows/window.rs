@@ -20,7 +20,7 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
+        System::{Com::*, LibraryLoader::*, Ole::*, Power::*, SystemServices::*},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -57,6 +57,8 @@ pub struct WindowsWindowState {
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
     initial_placement: Option<WindowOpenStatus>,
+    /// While the window keeps the display on (`hold_display`).
+    idle_inhibited: bool,
     hwnd: HWND,
 }
 
@@ -142,6 +144,7 @@ impl WindowsWindowState {
             display,
             fullscreen,
             initial_placement,
+            idle_inhibited: false,
             hwnd,
         })
     }
@@ -498,8 +501,30 @@ impl rwh::HasDisplayHandle for WindowsWindow {
     }
 }
 
+/// How many windows keep the display on. The window thread, which every
+/// window shares, asks for the display while any does.
+static DISPLAY_HOLDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn hold_display(hold: bool) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let holders = if hold {
+        DISPLAY_HOLDERS.fetch_add(1, SeqCst) + 1
+    } else {
+        DISPLAY_HOLDERS.fetch_sub(1, SeqCst) - 1
+    };
+    let state = if holders > 0 {
+        ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
+    } else {
+        ES_CONTINUOUS
+    };
+    unsafe { SetThreadExecutionState(state) };
+}
+
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
+        if self.0.state.borrow().idle_inhibited {
+            hold_display(false);
+        }
         // clone this `Rc` to prevent early release of the pointer
         let this = self.0.clone();
         self.0
@@ -799,6 +824,15 @@ impl PlatformWindow for WindowsWindow {
 
     fn is_fullscreen(&self) -> bool {
         self.0.state.borrow().is_fullscreen()
+    }
+
+    fn set_idle_inhibited(&self, inhibited: bool) {
+        let mut state = self.0.state.borrow_mut();
+        if state.idle_inhibited != inhibited {
+            state.idle_inhibited = inhibited;
+            drop(state);
+            hold_display(inhibited);
+        }
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
