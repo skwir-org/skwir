@@ -8,7 +8,8 @@
 //! the panel is only a picture of the preview, as under peek, and what the
 //! preview shows changes with the pane's selection. A picture walks the
 //! pane's pictures with the arrows (`picture_step`) and plays them as a
-//! slideshow (`ui.slideshow`).
+//! slideshow (`ui.slideshow`); the next one is read ahead
+//! (`Shell::read_ahead`), so a step shows it at once.
 use std::time::Duration;
 
 use gpui::{AnyElement, Context, FocusHandle, Pixels, Point, Task, Window, div, prelude::*};
@@ -29,6 +30,9 @@ pub struct Fullscreen {
     hide_task: Option<Task<()>>,
     /// The slideshow, while it plays.
     pub slideshow: Option<Slideshow>,
+    /// The way the last step went: the picture read ahead is the next one
+    /// that way (`read_ahead_next`).
+    toward: i64,
 }
 
 /// What leaving the whole screen gives back.
@@ -141,6 +145,7 @@ impl Shell {
             pointer: window.mouse_position(),
             hide_task: None,
             slideshow: None,
+            toward: 1,
         });
         self.preview.peek = true;
         // The canvas's own keyboard, where what is shown has none, and
@@ -154,6 +159,7 @@ impl Shell {
         window.focus(&self.shown_focus().unwrap_or(canvas));
         self.preview.menu = None;
         self.arm_fullscreen_hide(window, cx);
+        self.read_ahead_next(window, cx);
         cx.notify();
     }
 
@@ -161,6 +167,7 @@ impl Shell {
         let Some(Fullscreen { restore, .. }) = self.preview.fullscreen.take() else {
             return;
         };
+        self.let_ahead_go(window, cx);
         if restore.entered && window.is_fullscreen() {
             window.toggle_fullscreen();
         }
@@ -187,6 +194,31 @@ impl Shell {
             window.focus(&focus);
         }
         self.arm_slideshow(window, cx);
+        self.read_ahead_next(window, cx);
+    }
+
+    /// Read ahead the picture the next step shows, the way the last went
+    /// (the slideshow's is the next), once the one shown has arrived: the
+    /// two never wait for each other's decode.
+    fn read_ahead_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(fullscreen) = &self.preview.fullscreen else {
+            return;
+        };
+        let (previous, next) = self.preview.neighbours;
+        let ahead = if !self.walks_pictures() {
+            None
+        } else if fullscreen.toward < 0 {
+            previous
+        } else {
+            next
+        };
+        match ahead {
+            None => self.let_ahead_go(window, cx),
+            Some(id) if self.preview.phase == PreviewPhase::Idle => {
+                self.read_ahead(id, crate::preview::screen_side(window), window, cx);
+            }
+            Some(_) => {}
+        }
     }
 
     /// `ui.fullscreen_controls`: show or hide the bar over the whole screen.
@@ -351,13 +383,11 @@ impl Shell {
         let Some(pane) = self.preview.pane() else {
             return;
         };
-        if let Some(slideshow) = self
-            .preview
-            .fullscreen
-            .as_mut()
-            .and_then(|fullscreen| fullscreen.slideshow.as_mut())
-        {
-            slideshow.next = None;
+        if let Some(fullscreen) = &mut self.preview.fullscreen {
+            fullscreen.toward = delta.signum();
+            if let Some(slideshow) = &mut fullscreen.slideshow {
+                slideshow.next = None;
+            }
         }
         self.with_pane(pane, |this| {
             if let Some(index) = this.ui().list.index_of(target) {

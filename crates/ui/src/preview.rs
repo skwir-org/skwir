@@ -85,6 +85,37 @@ enum Media {
     Pinned,
 }
 
+/// A picture read ahead for the whole screen's next step (`read_ahead`):
+/// what it is for, as the step's preview will be keyed, and where its
+/// worker stands.
+pub(crate) struct Ahead {
+    key: PreviewKey,
+    version: Version,
+    /// The side it is decoded at: the screen's (`screen_side`).
+    side: u32,
+    cancel: CancelToken,
+    slot: Arc<parking_lot::Mutex<AheadSlot>>,
+}
+
+/// Where the worker reading ahead stands, and where its picture goes.
+enum AheadSlot {
+    /// Asking whether a provider shows the file.
+    Asking,
+    /// One does: nothing is read ahead.
+    Claimed,
+    Decoding,
+    /// Decoded, waiting for the step.
+    Read(PreviewContent),
+    /// The step came while it decoded: it is the preview's request now,
+    /// and its picture goes the request's way.
+    Adopted {
+        generation: u64,
+        tx: flume::Sender<PreviewResult>,
+    },
+    /// Taken or let go.
+    Done,
+}
+
 struct PreviewResult {
     generation: u64,
     content: PreviewContent,
@@ -214,6 +245,40 @@ struct Version {
     size: Option<u64>,
     /// The colors its code is drawn in.
     code: crate::code_preview::CodeTheme,
+}
+
+/// What the panel shows of entry `id` of `pane`: its key, its version and
+/// the entry; `None` once the pane does not list it.
+fn shown_entry(
+    pane: &skwir_core::workspace::Pane,
+    pane_id: PaneId,
+    id: EntryId,
+    providers: u64,
+    code: &crate::code_preview::CodeTheme,
+) -> Option<(PreviewKey, Version, skwir_core::Entry)> {
+    let entry = pane.entry(id)?;
+    let path = pane.path_of(id)?;
+    Some((
+        PreviewKey {
+            pane: pane_id,
+            id,
+            content: entry.content(&path),
+            path,
+            providers,
+        },
+        Version {
+            modified: entry
+                .metadata
+                .value(keys::MODIFIED)
+                .and_then(skwir_core::Value::as_time),
+            size: entry
+                .metadata
+                .value(keys::SIZE)
+                .and_then(skwir_core::Value::as_u64),
+            code: code.clone(),
+        },
+        entry.clone(),
+    ))
 }
 
 impl Version {
@@ -434,6 +499,8 @@ pub struct PreviewState {
     /// The preview on the whole screen (`fullscreen.rs`): kept while the
     /// file shown changes, so a step or a slideshow stays there.
     pub fullscreen: Option<crate::fullscreen::Fullscreen>,
+    /// The picture read ahead for the whole screen's next step.
+    ahead: Option<Ahead>,
     /// The files of the same kind (music, films, pictures) before and after
     /// this one in the pane's order; found when the listing, its order or
     /// the entry changes (`properties_at`), never while painting.
@@ -704,6 +771,7 @@ impl Default for PreviewState {
             rx,
             peek_focus: None,
             fullscreen: None,
+            ahead: None,
             neighbours: (None, None),
             queue: None,
             closed_links: None,
@@ -1244,8 +1312,8 @@ impl Shell {
         let current = if let Some(id) = cursor {
             let ws = self.app.workspace.read();
             ws.pane(self.pane).and_then(|pane| {
-                let e = pane.entry(id)?;
-                let path = pane.path_of(id)?;
+                let (key, version, e) =
+                    shown_entry(pane, self.pane, id, self.app.previews.revision(), &code)?;
                 // What Properties and the neighbouring tracks were collected
                 // for: the listing's names, in the order shown (a new sort
                 // is a new order), and what is selected; the entry itself
@@ -1263,28 +1331,7 @@ impl Shell {
                     .wrapping_add(pane.selection.revision())
                     .wrapping_mul(2)
                     .wrapping_add(u64::from(skwir_platform::users::loaded()));
-                Some((
-                    seen,
-                    PreviewKey {
-                        pane: self.pane,
-                        id,
-                        content: e.content(&path),
-                        path,
-                        providers: self.app.previews.revision(),
-                    },
-                    Version {
-                        modified: e
-                            .metadata
-                            .value(keys::MODIFIED)
-                            .and_then(skwir_core::Value::as_time),
-                        size: e
-                            .metadata
-                            .value(keys::SIZE)
-                            .and_then(skwir_core::Value::as_u64),
-                        code: code.clone(),
-                    },
-                    e.clone(),
-                ))
+                Some((seen, key, version, e))
             })
         } else {
             self.here(code, window, cx)
@@ -1507,7 +1554,9 @@ impl Shell {
         if self.preview.phase != PreviewPhase::Queued {
             return;
         }
-        self.preview_request(&key, &version, &entry);
+        if !self.take_ahead(&key, &version, window, cx) {
+            self.preview_request(&key, &version, &entry);
+        }
     }
 
     /// What the panel shows while nothing is selected in the active pane:
@@ -2256,6 +2305,197 @@ impl Shell {
                 };
                 send(content, true, None, None);
             });
+    }
+
+    /// Read ahead picture `id` of the pane the panel previews, for the step
+    /// the whole screen takes next (`fullscreen.rs`): decoded on a worker
+    /// as the panel's request would decode it, at `side`, and shown at once
+    /// when stepped to (`take_ahead`). Only a picture skwir decodes itself,
+    /// whose type its name settles: a file a provider shows (by another
+    /// program, as pages, as a film) is never opened before it is asked
+    /// for. One at most; another lets the last go.
+    pub(crate) fn read_ahead(
+        &mut self,
+        id: EntryId,
+        side: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pane) = self.preview.pane() else {
+            return;
+        };
+        let code = cx.global::<Theme>().code.clone();
+        let shown = {
+            let ws = self.app.workspace.read();
+            ws.pane(pane)
+                .and_then(|p| shown_entry(p, pane, id, self.app.previews.revision(), &code))
+        };
+        let Some((key, version, entry)) = shown else {
+            return self.let_ahead_go(window, cx);
+        };
+        if self.preview.ahead.as_ref().is_some_and(|ahead| {
+            ahead.key == key && !ahead.version.rewritten(&version) && ahead.side >= side
+        }) {
+            return;
+        }
+        self.let_ahead_go(window, cx);
+        // Its type as the panel would take it, settled by the name alone
+        // (`sync_preview`): bytes to read first are the request's to read.
+        let mime = skwir_platform::mime::of_entry(&entry);
+        let settled = entry.inode_type().is_some()
+            || (mime.is_some() && !skwir_platform::mime::ambiguous(entry.type_name()));
+        let (Some(mime), Some(content)) = (mime.filter(|_| settled), key.content.clone()) else {
+            return;
+        };
+        let mime = mime.to_string();
+        if entry.is_dir()
+            || !(mime.starts_with("image/") || skwir_platform::thumb_providers::is_drawing(&mime))
+        {
+            return;
+        }
+        let request = PreviewRequest {
+            entry: content,
+            mime: Some(mime.clone()),
+            page: 1,
+            seconds: None,
+            max_side: IMAGE_MAX_SIDE,
+            text_size: None,
+        };
+        let cancel = self.app.lifetime().child();
+        let slot = Arc::new(parking_lot::Mutex::new(AheadSlot::Asking));
+        let previews = Arc::clone(&self.app.previews);
+        let wake = self.app.waker_handle();
+        let job = Arc::clone(&slot);
+        let token = cancel.clone();
+        self.app.scheduler.spawn(
+            Priority::Background,
+            "preview-ahead",
+            cancel.clone(),
+            move || {
+                // A provider that takes the file shows it its own way, when
+                // asked: the request goes there then.
+                let claimed = !previews.accepting(&request).is_empty();
+                {
+                    let mut slot = job.lock();
+                    if !matches!(*slot, AheadSlot::Asking) {
+                        return;
+                    }
+                    *slot = if claimed {
+                        AheadSlot::Claimed
+                    } else {
+                        AheadSlot::Decoding
+                    };
+                }
+                if claimed {
+                    return;
+                }
+                let content = compute(&request.entry.path, false, Some(&mime), &code, side, &token);
+                if token.is_cancelled() {
+                    return;
+                }
+                let mut slot = job.lock();
+                match std::mem::replace(&mut *slot, AheadSlot::Done) {
+                    AheadSlot::Decoding => *slot = AheadSlot::Read(content),
+                    AheadSlot::Adopted { generation, tx } => {
+                        drop(slot);
+                        let _ = tx.send(PreviewResult {
+                            generation,
+                            content,
+                            complete: true,
+                            session: None,
+                            media: None,
+                            sniffed: None,
+                            placeholder: false,
+                            closed_links: None,
+                        });
+                        wake();
+                    }
+                    _ => {}
+                }
+            },
+        );
+        tracing::debug!(path = %key.path.display(), side, "picture read ahead");
+        self.preview.ahead = Some(Ahead {
+            key,
+            version,
+            side,
+            cancel,
+            slot,
+        });
+    }
+
+    /// The picture read ahead, when it is `key`'s as the file stands: shown
+    /// now, in the frame the step is drawn in, or, still decoding, adopted
+    /// as this request's, never decoded twice. False when there is none to
+    /// take; one read for another entry stays for its step.
+    fn take_ahead(
+        &mut self,
+        key: &PreviewKey,
+        version: &Version,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(ahead) = self.preview.ahead.take_if(|ahead| ahead.key == *key) else {
+            return false;
+        };
+        if ahead.version.rewritten(version)
+            || !self.preview.nested.is_empty()
+            || self.preview.descend.is_some()
+        {
+            self.preview.ahead = Some(ahead);
+            self.let_ahead_go(window, cx);
+            return false;
+        }
+        let generation = self.preview.generation;
+        let mut slot = ahead.slot.lock();
+        match std::mem::replace(&mut *slot, AheadSlot::Done) {
+            AheadSlot::Read(content) => {
+                drop(slot);
+                tracing::debug!("picture read ahead shown");
+                self.preview.picture_side = ahead.side;
+                let result = PreviewResult {
+                    generation,
+                    content,
+                    complete: true,
+                    session: None,
+                    media: None,
+                    sniffed: None,
+                    placeholder: false,
+                    closed_links: None,
+                };
+                self.preview_arrived(result, window, cx);
+                true
+            }
+            AheadSlot::Decoding => {
+                *slot = AheadSlot::Adopted {
+                    generation,
+                    tx: self.preview.tx.clone(),
+                };
+                drop(slot);
+                tracing::debug!("picture read ahead taken while decoding");
+                self.preview.picture_side = ahead.side;
+                self.preview.cancel = Some(ahead.cancel);
+                self.preview.phase = PreviewPhase::Loading;
+                true
+            }
+            _ => {
+                drop(slot);
+                ahead.cancel.cancel();
+                false
+            }
+        }
+    }
+
+    /// Let the picture read ahead go: its worker stops, its pixels go.
+    pub(crate) fn let_ahead_go(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ahead) = self.preview.ahead.take() else {
+            return;
+        };
+        ahead.cancel.cancel();
+        let read = std::mem::replace(&mut *ahead.slot.lock(), AheadSlot::Done);
+        if let AheadSlot::Read(PreviewContent::Image { image, .. }) = read {
+            cx.drop_image(image, Some(window));
+        }
     }
 
     pub(crate) fn cancel_pending_preview(&mut self) {
@@ -4307,6 +4547,19 @@ pub(crate) struct Sharpen {
 /// Steps a picture is drawn again at: a zoom step of 1.25 crosses at most
 /// one, and a picture a little short of its pixels is left as it is.
 const SHARPEN_STEP: u32 = 512;
+
+/// The side a picture fitted to the whole screen covers at most, in device
+/// pixels, in `sharper`'s steps: what a picture read ahead is decoded at.
+pub(crate) fn screen_side(window: &Window) -> u32 {
+    use skwir_platform::inspection::limits::PICTURE_SIDE;
+    let size = window.viewport_size();
+    let covered = f32::from(size.width.max(size.height)) * window.scale_factor();
+    if !covered.is_finite() {
+        return IMAGE_MAX_SIDE;
+    }
+    ((covered / SHARPEN_STEP as f32).ceil() as u32 * SHARPEN_STEP)
+        .clamp(IMAGE_MAX_SIDE, PICTURE_SIDE)
+}
 
 impl Sharpen {
     /// A canvas over the picture's box that, once laid out, measures the

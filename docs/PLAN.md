@@ -950,15 +950,19 @@ turn the page, and a slideshow plays the pictures from the one shown to
 the last, at a pace chosen in its bar (`reading.slideshow`). Each wait
 starts once the picture has arrived, so a slow one is shown its whole
 time. `ui.media_fullscreen` and `ui.media_controls` became
-`ui.preview_fullscreen` and `ui.fullscreen_controls`. Not done: the
-next picture is not read ahead, so a slideshow shows the stage for the
-time a picture takes to decode.
+`ui.preview_fullscreen` and `ui.fullscreen_controls`.
 
 The screen stays awake while a slideshow or a film plays, through a new
 gpui patch (0023, `Window::set_idle_inhibited`): Wayland's idle
 inhibitor, X11's screen saver suspended, Windows' display requirement
 (compiled only). Not done: macOS; a desktop that idles by its own rules
 outside these (its D-Bus inhibitor).
+
+On the whole screen the next picture is read ahead, the way the last
+step went: decoded at the screen's side while one is looked at, shown in
+the very frame of the step, adopted by the step when it is still
+decoding. Only pictures skwir decodes itself, which no plugin takes: no
+player, reader or other program is started for a file not yet asked for.
 
 The columns view moves as yazi's and Finder's do. After the pane's
 column comes the folder under the cursor, listed once the cursor rests

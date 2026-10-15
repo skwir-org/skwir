@@ -755,10 +755,24 @@ is still to come are in `docs/preview-frame.md`.
   keyboard (`preview`, `image`, `media`, `peek`, `fullscreen`), Escape
   and F leave, C hides the bar, ←/→ step (`ui.fullscreen_step`).
 - **Pictures walk the pane's pictures**, by type
-  (`fullscreen::is_picture`, `mime::Kind::Image`), found around the entry
-  as a track's neighbours are (`Shell::neighbours`, when the listing or
-  the entry changes); a step moves the pane's selection and the preview
-  follows. Other files are skipped.
+  (`fullscreen::is_picture`, `mime::Kind::Image`, told once with the type,
+  `Info::picture`), found around the entry as a track's neighbours are
+  (`Shell::neighbours`, when the listing or the entry changes); a step
+  moves the pane's selection and the preview follows. Other files are
+  skipped.
+- **The next picture is read ahead** (`Shell::read_ahead`), the way the
+  last step went, once the one shown has arrived (they never wait for
+  each other's decode turn), at the side the screen covers
+  (`screen_side`): one at most, `PreviewState::ahead`, kept beside the
+  preview since a step replaces the preview. It is keyed as the step's
+  preview will be (`shown_entry`); the step takes it in the sync that
+  makes the step (`take_ahead`), so the picture is drawn in the frame the
+  step is, and one still decoding is adopted as the step's request
+  (`AheadSlot::Adopted`), never decoded twice. Only what skwir decodes
+  itself (`compute`) is read ahead: a type the name settles, which no
+  provider accepts (asked on the worker, as `accepts` may read). A file
+  another program, a player or a reader shows is never opened before it
+  is asked for. Leaving the whole screen lets it go, pixels and all.
 - **The slideshow** (`ui.slideshow`, Space on a picture, More ›
   Slideshow in the panel) goes from the picture shown to the last, then
   stops there, says so and shows its bar. One timer per picture, armed
