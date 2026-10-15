@@ -55,7 +55,8 @@ contributors). The rules for working on preview code are in
 | Up, Down; `Page Up`, `Page Down`; `Ctrl+Home`, `Ctrl+End` | Text | A line; a screen; the start or the end |
 | `Alt+Z` | Text | Wrap long lines, or let them go on sideways |
 | `Alt+Page Up`, `Alt+Page Down` | Any preview | Previous or next section, chapter or comic page |
-| `Ctrl++`, `Ctrl+-`, `Ctrl+0` | Reader, picture, map | Zoom in, out, reset |
+| `Ctrl++`, `Ctrl+-`, `Ctrl+0` | Reader, picture, map, text | Zoom in, out, reset; text larger, smaller, as it was |
+| `Ctrl` and the wheel | Over a page, a picture or text | Zoom in or out; text larger or smaller (a map zooms with the wheel alone) |
 | Arrows | Map | Pan |
 | Up, Down; Left, Right | Archive or message | Walk its files; fold or unfold |
 | `Ctrl+Shift+O` | Text and structured previews | Label the links in view for the keyboard |

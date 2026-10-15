@@ -13,6 +13,7 @@ use gpui::{
 use skwir_core::SortKey;
 use skwir_core::entry::keys;
 
+use crate::elements::zoom_wheel::{self, Zoomed};
 use crate::format;
 use crate::list::Step;
 use crate::shell::Shell;
@@ -879,7 +880,7 @@ impl PaneView for ListView {
                     .w_full()
                     .child(list)
                     .child(marquee)
-                    .child(crate::views::zoom_wheel(cx))
+                    .child(zoom_wheel::overlay(Zoomed::View, cx))
                     .child(crate::elements::scrollbar::vertical(
                         ("list-scrollbar", pane.0 as usize),
                         crate::elements::scrollbar::Scrolls::Offset(

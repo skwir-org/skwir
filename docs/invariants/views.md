@@ -123,8 +123,9 @@ around the views is in [shell.md](shell.md).
 
 - A name too long keeps both ends (`text_ellipsis_middle`, vendored patch
   0005), in every view: the extension tells files apart.
-- Ctrl+wheel zooms through a capture-phase listener (`views::zoom_wheel`:
-  grid, list and columns, each with its own size), keeping the first
+- Ctrl+wheel zooms through a capture-phase listener
+  (`elements::zoom_wheel`, `Zoomed::View`: grid, list, columns and Usage,
+  each with its own size; previews.md for the panel), keeping the first
   visible item in place; zoom keys keep the cursor in place. Keys come
   from `keymap::ZOOM_KEYS`.
 - A wheel listener asks `Hitbox::should_handle_scroll`, not `is_hovered`.

@@ -28,6 +28,7 @@ use skwir_core::EntryId;
 use skwir_core::thumbs::ThumbSize;
 
 use crate::elements::uniform_grid::{TileHeights, UniformGridScrollHandle, uniform_grid};
+use crate::elements::zoom_wheel::{self, Zoomed};
 use crate::icons;
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -485,7 +486,7 @@ impl PaneView for GridView {
             drag: shell.marquee.clone(),
         };
         // Ctrl and the wheel resize the tiles.
-        let wheel = crate::views::zoom_wheel(cx);
+        let wheel = zoom_wheel::overlay(Zoomed::View, cx);
         div()
             .relative()
             .size_full()

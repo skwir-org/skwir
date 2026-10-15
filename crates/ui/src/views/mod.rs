@@ -6,43 +6,9 @@ pub mod entry;
 pub mod grid;
 pub mod list;
 
-use gpui::{Context, ScrollWheelEvent, prelude::*};
 use skwir_core::registry::ViewSpec;
 
-use crate::shell::Shell;
 use crate::view::{self, spec};
-
-/// Ctrl and the wheel over a view zoom it (`Shell::zoom_wheel`). An overlay
-/// over the view's scroll area, taking the wheel in the capture phase so the
-/// view under it does not also scroll.
-pub fn zoom_wheel(cx: &mut Context<Shell>) -> impl IntoElement {
-    let shell = cx.weak_entity();
-    gpui::canvas(
-        |bounds, window, _| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
-        move |_, hitbox, window, _| {
-            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                if !phase.capture()
-                    || !event.modifiers.secondary()
-                    || !hitbox.should_handle_scroll(window)
-                {
-                    return;
-                }
-                let delta = event.delta.pixel_delta(window.line_height()).y;
-                let lines = matches!(event.delta, gpui::ScrollDelta::Lines(_));
-                shell
-                    .update(cx, |shell, cx| {
-                        shell.zoom_wheel(f32::from(delta), lines, cx);
-                    })
-                    .ok();
-                cx.stop_propagation();
-            });
-        },
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
-}
 
 /// The specs registered under owner `ui`.
 pub fn specs() -> Vec<ViewSpec> {

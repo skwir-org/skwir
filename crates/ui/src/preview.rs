@@ -3797,20 +3797,6 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                             .on_mouse_down(MouseButton::Left, move |_, window, _| {
                                 window.focus(&clicked);
                             })
-                            .on_scroll_wheel(cx.listener(
-                                |this, event: &gpui::ScrollWheelEvent, window, cx| {
-                                    if event.modifiers.secondary() {
-                                        let up = event.delta.pixel_delta(window.line_height()).y
-                                            > px(0.);
-                                        this.preview_zoom(
-                                            if up { "in" } else { "out" },
-                                            window,
-                                            cx,
-                                        );
-                                        cx.stop_propagation();
-                                    }
-                                },
-                            ))
                     },
                 )
                 .child(
@@ -3821,6 +3807,14 @@ fn content(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<She
                         .flex_1()
                         .min_h_0()
                         .child(picture)
+                        // Ctrl and the wheel zoom a picture or a page, as the
+                        // zoom keys do; a film has neither.
+                        .when(interactive && p.media.session.is_none(), |d| {
+                            d.child(crate::elements::zoom_wheel::overlay(
+                                crate::elements::zoom_wheel::Zoomed::Preview,
+                                cx,
+                            ))
+                        })
                         .when(document.is_some() && interactive, |d| {
                             d.children(crate::reader::outline_drawer(shell, theme, cx))
                         }),

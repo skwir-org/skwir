@@ -26,6 +26,7 @@ use skwir_core::{EntryId, command::Invocation, os_path::PathArg};
 use skwir_platform::mime::Kind;
 
 use crate::elements::treemap::{Laidout, TreemapItem, TreemapStyle, treemap};
+use crate::elements::zoom_wheel::{self, Zoomed};
 use crate::treemap::{Toward, neighbour};
 use crate::{
     format,
@@ -979,7 +980,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                 .min_h_0()
                 .w_full()
                 .child(map)
-                .child(crate::views::zoom_wheel(cx)),
+                .child(zoom_wheel::overlay(Zoomed::View, cx)),
         )
         .children(legend)
         .child(crate::elements::clip::clipped(

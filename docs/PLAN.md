@@ -933,6 +933,14 @@ Up selects the folder left, in every view, as other file managers do;
 in a tag's categories, the place left. `navigate` takes `select`, an
 entry to select once listed.
 
+Ctrl and the wheel do what the zoom keys do over every preview, not only
+a picture: a document's pages zoom (a book laid out by its engine, its
+text), text and structured previews change their text size, a container's
+view kept above a member too. The pane's views had a capture-phase
+overlay for it; the panel now shares it (`elements::zoom_wheel`). A
+zoomed picture no longer scrolls as it zooms, a trackpad has to mean it,
+and a film, which has no zoom keys, no longer zooms.
+
 The columns view moves as yazi's and Finder's do. After the pane's
 column comes the folder under the cursor, listed once the cursor rests
 on it; a click on a folder shows it, with no double click. Right goes

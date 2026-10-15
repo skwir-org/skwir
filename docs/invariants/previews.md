@@ -680,8 +680,17 @@ is still to come are in `docs/preview-frame.md`.
   is one strip under the toolbar, never a grey sentence in the content.
 - **Keys** mean the same wherever they apply: Ctrl+F, Ctrl+C, Ctrl++ and
   Ctrl+- (zoom what is looked at, size what is read), Ctrl+0, `[` and
-  `]` for the previous and next section or page. A picture takes them,
-  and Ctrl+wheel, once clicked.
+  `]` for the previous and next section or page. A picture takes them
+  once clicked.
+- **Ctrl and the wheel** take the zoom keys' step over what is under the
+  pointer, unclicked: a picture's or a page's zoom, an inspection's text
+  size (the container's view kept above a member too), the pane's view
+  (`elements::zoom_wheel`, `Zoomed`). One overlay over what scrolls,
+  listening in the capture phase: GPUI's scrolling reads no modifier, so
+  a listener on an ancestor heard the wheel after the picture had
+  scrolled. A trackpad must mean it (`WheelTurn`). A map has none, its
+  wheel zooming around the pointer with Ctrl or without; a film has no
+  zoom keys, so no zoom.
 - What a zoom key does follows from what is shown, never from a
   per-format switch; the user asks for bigger or smaller and never
   chooses the mechanism. Text in reading mode changes size (the

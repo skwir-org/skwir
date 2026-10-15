@@ -19,3 +19,4 @@ pub mod profile;
 pub mod rows;
 pub mod scrollbar;
 pub mod terminal;
+pub mod zoom_wheel;

@@ -1,5 +1,6 @@
 //! Shared native viewers for optional structured preview plugins.
 use crate::{
+    elements::zoom_wheel::{self, Zoomed},
     preview::{PreviewContent, PreviewPhase},
     shell::Shell,
     theme::Theme,
@@ -925,6 +926,24 @@ impl Shell {
             && Some(&target) != before.as_ref()
         {
             let args = serde_json::json!({"action":"target","target":target});
+            self.inspect_here(&args, window, cx);
+        }
+    }
+
+    /// Ctrl and the wheel over an inspection's text: Larger or Smaller text
+    /// on the view under the pointer, the panel's or the container's kept
+    /// above a member (`parked`).
+    pub(crate) fn inspect_text_step(
+        &mut self,
+        larger: bool,
+        parked: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let args = serde_json::json!({"action": if larger { "larger" } else { "smaller" }});
+        if parked {
+            self.with_parked(|this| this.inspect_here(&args, window, cx));
+        } else {
             self.inspect_here(&args, window, cx);
         }
     }
@@ -2739,7 +2758,14 @@ pub fn content(
                     "inspect-scrollbar-sideways",
                     crate::elements::scrollbar::Scrolls::Rows(view.scroll.clone()),
                 ))
-            }),
+            })
+            // Ctrl and the wheel size the text, as the zoom keys do.
+            .child(zoom_wheel::overlay(
+                Zoomed::Text {
+                    parked: view.parked,
+                },
+                cx,
+            )),
     );
     let mut decoded = None;
     if display.data.kind == InspectionKind::Hex

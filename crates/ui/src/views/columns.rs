@@ -31,6 +31,7 @@ use skwir_core::location::Trail;
 use skwir_core::{EntryId, Location, SortSpec};
 
 use crate::dnd;
+use crate::elements::zoom_wheel::{self, Zoomed};
 use crate::icons;
 use crate::list::Step;
 use crate::shell::Shell;
@@ -607,7 +608,7 @@ impl PaneView for ColumnsView {
                 self.row.clone(),
             ))
             // Ctrl and the wheel size the rows, over any column.
-            .child(crate::views::zoom_wheel(cx))
+            .child(zoom_wheel::overlay(Zoomed::View, cx))
             .into_any_element()
     }
 

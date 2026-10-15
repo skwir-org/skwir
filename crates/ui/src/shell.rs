@@ -265,7 +265,7 @@ pub struct Shell {
     /// The reading width before Full width was switched on from a preview,
     /// to return to when it is switched off.
     reading_width_before: Option<String>,
-    /// Ctrl and the wheel over the grid: a trackpad must mean it.
+    /// Ctrl and the wheel over what zooms: a trackpad must mean it.
     pub zoom_wheel: crate::reader_scroll::WheelTurn,
     /// The wheel over the tab strip, counted in notches like the zoom's.
     pub tab_wheel: crate::reader_scroll::WheelTurn,
@@ -1413,14 +1413,29 @@ impl Shell {
         }
     }
 
-    /// Ctrl and the wheel over a view that zooms. The view stays where it is
-    /// (it keeps its first visible item); only the keys follow the cursor.
-    pub fn zoom_wheel(&mut self, delta: f32, lines: bool, cx: &mut Context<Self>) {
-        match self.zoom_wheel.turn(delta, lines, false) {
-            0 => {}
-            turn => {
-                self.zoom_to(if turn < 0 { "in" } else { "out" }, cx);
+    /// Ctrl and the wheel over what zooms (`elements::zoom_wheel`): the step
+    /// its zoom keys take. A view stays where it is (it keeps its first
+    /// visible item); only the keys follow the cursor.
+    pub fn zoom_wheel(
+        &mut self,
+        delta: f32,
+        lines: bool,
+        zoomed: crate::elements::zoom_wheel::Zoomed,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::elements::zoom_wheel::Zoomed;
+        let larger = match self.zoom_wheel.turn(delta, lines, false) {
+            0 => return,
+            turn => turn < 0,
+        };
+        let dir = if larger { "in" } else { "out" };
+        match zoomed {
+            Zoomed::View => {
+                self.zoom_to(dir, cx);
             }
+            Zoomed::Preview => self.preview_zoom(dir, window, cx),
+            Zoomed::Text { parked } => self.inspect_text_step(larger, parked, window, cx),
         }
     }
 
