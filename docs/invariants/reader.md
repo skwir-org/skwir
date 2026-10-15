@@ -1,16 +1,20 @@
 # Document reader invariants
 
 Read this before touching `crates/pdf-worker`, `crates/poppler-worker`,
-`crates/mupdf-worker`, `crates/platform/src/document.rs`,
-`crates/ui/src/reader*.rs` or `crates/ui/src/elements/document.rs`. It is
-binding, like `AGENTS.md`. Measurements: `docs/pdf-comparison.md`.
+`crates/mupdf-worker`, `crates/djvu-worker`, `crates/djvulibre-worker`,
+`crates/platform/src/document.rs`, `crates/ui/src/reader*.rs` or
+`crates/ui/src/elements/document.rs`. It is binding, like `AGENTS.md`.
+Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
 
 ## Processes and isolation
 
 - Native PDF libraries load only in `skwir-pdf-worker`,
-  `skwir-poppler-worker` and `skwir-mupdf-worker`, never in the UI process.
-  All share one protocol and session manager; `tools/pdf/check.py` runs the
-  same fixtures on each.
+  `skwir-poppler-worker` and `skwir-mupdf-worker`, never in the UI process;
+  DjVuLibre only in `skwir-djvulibre-worker`. djvu-rs, though Rust, is
+  young: it reads documents in `skwir-djvu-worker`, isolated like the
+  others (ADR-061). All share one protocol and session manager;
+  `tools/pdf/check.py` runs the same fixtures on each PDF engine,
+  `tools/djvu/check.py` on each DjVu engine.
 - Pages our own Rust code draws (a fixed-layout book, a comic) run in
   process on the scheduler, like an inspection, under the same contract:
   bounded, cancellable, one owned pixel buffer.
@@ -44,6 +48,9 @@ binding, like `AGENTS.md`. Measurements: `docs/pdf-comparison.md`.
   `LineChannel::missing_runtime`).
 - Report document errors directly; never hide a malformed file by silently
   trying other engines.
+- DjVu's `auto` is DjVuLibre, then djvu-rs (`document::DJVU_AUTO`), under
+  the same rule: the next only when one is absent. A DjVu thumbnail takes
+  that order whatever the reader's.
 - Poppler offers the same reader features as PDFium. The CLI image fallback
   is for `auto` only, when neither of its workers is available.
 
@@ -105,6 +112,18 @@ binding, like `AGENTS.md`. Measurements: `docs/pdf-comparison.md`.
   Fit/zoom transforms belong in `elements/document.rs` prepaint.
 - Poppler's text layout has a top-left origin, its search and link
   rectangles a bottom-left one; normalize in the worker.
+- DjVu's text is in the page's pixels as stored, its links' areas in the
+  page's as shown, both from the bottom left: a page the file turns is
+  drawn turned, and its words turned with it (`Rect::turned`), by both
+  engines. `tools/djvu/check.py` measures where each engine's ink lands
+  against the text that says where it is.
+- An engine that knows words, not glyphs (DjVu's, a plugin from outside
+  Skwir's pages) makes them characters and searches them with
+  `document::words`, so selection, copy and search agree across engines.
+- djvu-rs draws a page larger than it is at a size whose step through it
+  is no whole number of sixteenths of a pixel: its helper draws at the
+  largest size below the side asked that it draws in place
+  (`exact_size`), never at the side asked regardless.
 - Verify rotated pages with `tools/pdf/check.py` for every engine, using
   only its synthetic fixtures.
 - A page's size (`PageContent::width`/`height`) is in CSS pixels (1/96 in;

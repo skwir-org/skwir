@@ -20,6 +20,7 @@
                         WorkingDirectory="INSTALLFOLDER" Icon="skwir.exe" Advertise="yes" />
             </File>
             <File Source="$(Dist)\skwir-pdf-worker.exe" />
+            <File Source="$(Dist)\skwir-djvu-worker.exe" />
             <File Source="$(Dist)\skwir-model-worker.exe" />
             <File Source="$(Dist)\skwir-module-worker.exe" />
             <!-- PDFium, beside its helper (ADR-041). -->

@@ -20,6 +20,29 @@ impl Rect {
     pub fn contains(self, x: f32, y: f32) -> bool {
         x >= self.x && y >= self.y && x <= self.x + self.width && y <= self.y + self.height
     }
+
+    /// Where this part of a page lies once the page is turned `quarters`
+    /// quarter turns counterclockwise: a box of a page as stored, on the
+    /// page as shown.
+    #[must_use]
+    pub fn turned(self, quarters: u8) -> Self {
+        let turn = |u: f32, v: f32| match quarters % 4 {
+            1 => (v, 1. - u),
+            2 => (1. - u, 1. - v),
+            3 => (1. - v, u),
+            _ => (u, v),
+        };
+        let (a, b) = (
+            turn(self.x, self.y),
+            turn(self.x + self.width, self.y + self.height),
+        );
+        Self {
+            x: a.0.min(b.0),
+            y: a.1.min(b.1),
+            width: (a.0 - b.0).abs(),
+            height: (a.1 - b.1).abs(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -228,6 +251,8 @@ pub const PIXELS_FILE: &str = "page.rgba";
 /// the pages' labels, which a PDF's Poppler reads by loading every page.
 pub const FIRST_PAGE: &str = "--first-page";
 
+pub mod words;
+
 /// The worker's side of the protocol, the same for every engine: a worker
 /// greets once, then `serve` answers each request in order.
 pub mod worker {
@@ -410,5 +435,52 @@ mod label_tests {
         // Bounded.
         let long = "x".repeat(200);
         assert_eq!(labels(&[&long])[0].chars().count(), 64);
+    }
+}
+
+#[cfg(test)]
+mod turn_tests {
+    use super::Rect;
+
+    fn near(a: Rect, b: Rect) -> bool {
+        [a.x - b.x, a.y - b.y, a.width - b.width, a.height - b.height]
+            .iter()
+            .all(|d| d.abs() < 1e-6)
+    }
+
+    #[test]
+    fn a_box_follows_its_page_turned_counterclockwise() {
+        // The top right corner of a page as stored.
+        let corner = Rect {
+            x: 0.8,
+            y: 0.,
+            width: 0.2,
+            height: 0.1,
+        };
+        assert!(near(corner.turned(0), corner));
+        // A quarter turn counterclockwise takes it to the top left, its
+        // sides swapped.
+        let quarter = Rect {
+            x: 0.,
+            y: 0.,
+            width: 0.1,
+            height: 0.2,
+        };
+        assert!(near(corner.turned(1), quarter), "{:?}", corner.turned(1));
+        let half = Rect {
+            x: 0.,
+            y: 0.9,
+            width: 0.2,
+            height: 0.1,
+        };
+        assert!(near(corner.turned(2), half), "{:?}", corner.turned(2));
+        let three = Rect {
+            x: 0.9,
+            y: 0.8,
+            width: 0.1,
+            height: 0.2,
+        };
+        assert!(near(corner.turned(3), three), "{:?}", corner.turned(3));
+        assert!(near(corner.turned(4), corner));
     }
 }

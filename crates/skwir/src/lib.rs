@@ -61,6 +61,7 @@ fn built_in() -> Vec<Arc<dyn Plugin>> {
         Arc::new(skwir_plugin_circuits::PreviewPlugin),
         Arc::new(skwir_plugin_email::PreviewPlugin),
         Arc::new(skwir_plugin_comics::PreviewPlugin),
+        Arc::new(skwir_plugin_djvu::PreviewPlugin),
         Arc::new(skwir_plugin_geo::GeoPlugin::default()),
         Arc::new(skwir_plugin_map_tiles::MapTilesPlugin::default()),
         Arc::new(skwir_plugin_hex::PreviewPlugin),

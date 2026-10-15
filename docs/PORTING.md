@@ -298,6 +298,9 @@ Left:
   pinned `pdfium.dll` that way under Wine). PDF thumbnails and converted
   office pages are drawn by the engine (`document::first_page`); `pdftoppm`
   only where there is none.
+- DjVu (ADR-061): djvu-rs's helper, in Rust, is in the macOS and Windows
+  packages (compiled only **(5b)**); DjVuLibre's links a library those
+  packages do not carry, so it is Linux's alone.
 - Left for the machines (ADR-041): audio and video through AVFoundation and
   Media Foundation (a helper per system, not GStreamer bundled); the archive
   helper with libarchive linked statically; LibreOffice on macOS under

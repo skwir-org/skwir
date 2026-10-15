@@ -6,9 +6,9 @@ Comment: skwir's own code is under the Apache License 2.0. It carries PDFium
  pdfium-binaries under PDFium's licence (BSD-3-Clause) with those of what
  it includes (FreeType, HarfBuzz, ICU, libjpeg-turbo, OpenJPEG, libpng,
  LittleCMS, zlib, Abseil and others, all permissive): their texts are in
- /usr/share/doc/skwir/pdfium. The Poppler and MuPDF readers, which link
- libraries under the GPL and the AGPL, are packages of their own
- (skwir-poppler, skwir-mupdf).
+ /usr/share/doc/skwir/pdfium. The Poppler, DjVuLibre and MuPDF readers,
+ which link libraries under the GPL and the AGPL, are packages of their
+ own (skwir-poppler, skwir-djvulibre, skwir-mupdf).
 
 Files: *
 Copyright: The skwir authors

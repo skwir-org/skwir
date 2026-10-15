@@ -21,7 +21,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 CHECKS = ["lint-all", "deny", "test-all", "smoke", "poppler-check",
-          "mupdf-check", "bench-check", "release-tools-check"]
+          "mupdf-check", "djvu-check", "bench-check", "release-tools-check"]
 PACKAGES = [("appimage", ["package-appimage"]),
             *[(d, ["package-try", d]) for d in ("debian", "ubuntu", "fedora", "arch")]]
 # Markdown link targets, inline (after its text's `]`) or defined by reference (not

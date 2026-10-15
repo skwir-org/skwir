@@ -14,7 +14,7 @@ use serde_json::json;
 use skwir_core::cache::CacheSlot;
 use skwir_core::document::{
     Destination, DocumentInfo, DocumentPage, DocumentSession, Link, MAX_PAGE_SIZE, Outline,
-    PageContent, PixelOrder, Rect, SearchHit, TextChar,
+    PageContent, PixelOrder, Rect, SearchHit, TextChar, words,
 };
 use skwir_core::permissions::Capability;
 use skwir_core::{CancelToken, FileId};
@@ -25,8 +25,6 @@ use crate::external::Runner;
 
 /// What the pages a plugin drew may take of the cache.
 const BUDGET: u64 = 256 * 1024 * 1024;
-/// The most characters a page's text keeps: a page, not a book.
-const CHARS: usize = 200_000;
 /// The most matches a search answers.
 const HITS: usize = 10_000;
 /// The most links a page keeps, and headings an outline.
@@ -305,20 +303,14 @@ impl DocumentSession for Pages {
     /// Every page's text read (kept, or asked without its picture) and
     /// matched whatever the case, a line break matching a space.
     fn search(&self, query: &str, cancel: &CancelToken) -> anyhow::Result<Vec<SearchHit>> {
-        let needle: Vec<char> = query.chars().map(folded).collect();
-        if needle.iter().all(|c| *c == ' ') {
+        if query.chars().all(char::is_whitespace) {
             return Ok(Vec::new());
         }
         let mut hits = Vec::new();
         for page in 1..=self.info.pages {
             anyhow::ensure!(!cancel.is_cancelled(), "search cancelled");
             let chars = chars(&self.words(page, cancel)?.text);
-            for at in found(&chars, &needle) {
-                let bounds = chars[at..at + needle.len()]
-                    .iter()
-                    .map(|c| c.bounds)
-                    .filter(|b| b.height > 0.)
-                    .collect();
+            for bounds in words::matches(&chars, query) {
                 hits.push(SearchHit { page, bounds });
                 if hits.len() == HITS {
                     return Ok(hits);
@@ -333,89 +325,22 @@ impl DocumentSession for Pages {
     }
 }
 
-/// Where `needle` (folded) starts in `chars`, each match after the last.
-fn found(chars: &[TextChar], needle: &[char]) -> Vec<usize> {
-    let hay: Vec<char> = chars
-        .iter()
-        .map(|c| c.text.chars().next().map_or(' ', folded))
-        .collect();
-    let mut starts = Vec::new();
-    let mut at = 0;
-    while at + needle.len() <= hay.len() {
-        if hay[at..at + needle.len()] == *needle {
-            starts.push(at);
-            at += needle.len();
-        } else {
-            at += 1;
-        }
-    }
-    starts
-}
-
-/// A character as a search compares it: lowercase, any white space a space.
-fn folded(c: char) -> char {
-    if c.is_whitespace() {
-        ' '
-    } else {
-        c.to_lowercase().next().unwrap_or(c)
-    }
-}
-
-/// A page's runs as the reader's characters: each where its run's edges
-/// say it starts, else an equal column of the run's box; between two
-/// runs, a space when they share a line, else a line break, drawn
-/// nowhere. Boxes are kept on the page.
+/// A page's runs as the reader's characters (`words::chars`).
 fn chars(runs: &[TextRun]) -> Vec<TextChar> {
-    let mut chars = Vec::new();
-    for (i, run) in runs.iter().enumerate() {
-        if chars.len() >= CHARS {
-            break;
-        }
-        let (x, y) = (unit(run.x), unit(run.y));
-        let (width, height) = (unit(run.width).min(1. - x), unit(run.height).min(1. - y));
-        let letters: Vec<char> = run.text.chars().collect();
-        #[allow(clippy::cast_precision_loss)] // A run's length.
-        let each = width / letters.len().max(1) as f32;
-        // Each character's own start, when the run gives one a character
-        // in order and within it.
-        let edges = (run.edges.len() == letters.len()
-            && run.edges.windows(2).all(|pair| pair[0] <= pair[1]))
-        .then(|| {
-            run.edges
-                .iter()
-                .map(|edge| unit(*edge).clamp(x, x + width))
-                .collect::<Vec<f32>>()
-        });
-        for (k, letter) in letters.iter().enumerate() {
-            #[allow(clippy::cast_precision_loss)]
-            let (left, right) = match &edges {
-                Some(edges) => (edges[k], edges.get(k + 1).copied().unwrap_or(x + width)),
-                None => (x + each * k as f32, x + each * (k + 1) as f32),
-            };
-            chars.push(TextChar {
-                text: letter.to_string(),
-                bounds: Rect {
-                    x: left,
-                    y,
-                    width: right - left,
-                    height,
-                },
-            });
-        }
-        if let Some(next) = runs.get(i + 1) {
-            let same_line = unit(next.y) < y + height && y < unit(next.y) + unit(next.height);
-            chars.push(TextChar {
-                text: if same_line { " " } else { "\n" }.into(),
-                bounds: Rect {
-                    x: x + width,
-                    y,
-                    width: 0.,
-                    height: 0.,
-                },
-            });
-        }
-    }
-    chars
+    let runs: Vec<words::Run> = runs
+        .iter()
+        .map(|run| words::Run {
+            text: run.text.clone(),
+            bounds: Rect {
+                x: run.x,
+                y: run.y,
+                width: run.width,
+                height: run.height,
+            },
+            edges: run.edges.clone(),
+        })
+        .collect();
+    words::chars(&runs)
 }
 
 #[cfg(test)]
@@ -431,70 +356,6 @@ mod tests {
             height: 0.1,
             edges: Vec::new(),
         }
-    }
-
-    #[test]
-    fn a_run_that_says_where_its_characters_start_is_selected_glyph_by_glyph() {
-        let wide = TextRun {
-            edges: vec![0.1, 0.4, 0.5],
-            ..run("Wil", 0.1, 0.1, 0.5)
-        };
-        let chars = chars(&[wide]);
-        let spans: Vec<(f32, f32)> = chars
-            .iter()
-            .map(|c| (c.bounds.x, c.bounds.x + c.bounds.width))
-            .collect();
-        for ((left, right), (l, r)) in spans.iter().zip([(0.1, 0.4), (0.4, 0.5), (0.5, 0.6)]) {
-            assert!(
-                (left - l).abs() < 1e-6 && (right - r).abs() < 1e-6,
-                "{spans:?}"
-            );
-        }
-        // Edges that do not hold together (too few, backwards) are not
-        // trusted: equal columns.
-        for edges in [vec![0.1, 0.2], vec![0.5, 0.4, 0.3]] {
-            let chars = super::chars(&[TextRun {
-                edges,
-                ..run("Wil", 0.1, 0.1, 0.6)
-            }]);
-            assert!((chars[1].bounds.x - 0.3).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn runs_are_characters_spaced_on_a_line_and_broken_between_lines() {
-        let chars = chars(&[
-            run("Hello", 0.1, 0.1, 0.5),
-            run("you", 0.7, 0.1, 0.3),
-            run("café", 0.1, 0.3, 0.4),
-        ]);
-        let text: String = chars.iter().map(|c| c.text.as_str()).collect();
-        assert_eq!(text, "Hello you\ncafé");
-        // Each letter a column of its run's box.
-        assert!((chars[1].bounds.x - 0.2).abs() < 1e-6);
-        assert!((chars[1].bounds.width - 0.1).abs() < 1e-6);
-        // What joins them is drawn nowhere.
-        assert!(chars[5].bounds.height.abs() < f32::EPSILON);
-        // A box off the page is kept on it.
-        let off = super::chars(&[run("x", 0.9, -1., 5.)]);
-        assert_eq!(
-            (off[0].bounds.y, off[0].bounds.x + off[0].bounds.width),
-            (0., 1.)
-        );
-    }
-
-    #[test]
-    fn a_match_is_found_whatever_its_case_and_across_lines() {
-        let chars = chars(&[
-            run("Hello", 0.1, 0.1, 0.5),
-            run("you", 0.7, 0.1, 0.3),
-            run("Café", 0.1, 0.3, 0.4),
-            run("you", 0.1, 0.5, 0.3),
-            run("CAFÉ", 0.5, 0.5, 0.4),
-        ]);
-        let needle: Vec<char> = "YOU café".chars().map(folded).collect();
-        assert_eq!(found(&chars, &needle), [6, 15]);
-        assert!(found(&chars, &['z']).is_empty());
     }
 
     /// A plugin of three pages: page `n` reads `page n` across its top,

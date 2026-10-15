@@ -224,6 +224,22 @@ The player, in the panel or pinned at its foot:
   at a time. Pages are in numeric file-name order, each decoded at the
   size shown.
 
+### DjVu (`djvu`)
+
+- **DjVu** documents (`.djvu`, `.djv`), scanned books mostly, in the
+  document reader: continuous or a page at a time, zoom, search, contents,
+  links, text selection and copy, where the document has a text layer.
+  The grid shows the first page.
+- **DjVu engine**: Automatic prefers DjVuLibre, where its helper and
+  library are installed, and falls back to djvu-rs, which every package
+  carries; or choose one. DjVuLibre's pages are a little smoother when
+  shrunk, and it reads the names a book gives its pages (`ii`).
+- On the whole screen the arrows and the slideshow walk past DjVu files,
+  as past other documents: only its bytes say whether one is a page or a
+  book.
+- Not read: a document whose pages are files of their own (an
+  "indirect" DjVu), annotations other than links.
+
 ### E-mail (`email`)
 
 - EML messages: headers, the body as inert HTML or text, embedded
@@ -239,8 +255,8 @@ The player, in the panel or pinned at its foot:
   the desktop's thumbnailer for them draws them, at most 1024 pixels,
   when one is installed (`thumbnails` plugin). Otherwise ImageMagick
   draws them (**Use ImageMagick**, on by default): AVIF, HEIC, JPEG XL,
-  JPEG 2000, raw files, Photoshop and GIMP images, DjVu, whatever its
-  build reads.
+  JPEG 2000, raw files, Photoshop and GIMP images, whatever its build
+  reads (DjVu too, when the `djvu` plugin is off).
 - Thumbnailers and ImageMagick run isolated from your files and the
   network where bubblewrap works
   ([ADR-031](adr/031-pictures-by-imagemagick-thumbnailers-isolated.md)).
@@ -398,6 +414,8 @@ external program or network service.
 | PDF | `skwir-pdf-worker` | PDFium (the packages carry it) |
 | PDF through Poppler | `skwir-poppler-worker` | Poppler |
 | PDF and books through MuPDF | `skwir-mupdf-worker` | MuPDF (linked) |
+| DjVu | `skwir-djvu-worker` | Nothing (djvu-rs, Rust, built by default) |
+| DjVu through DjVuLibre | `skwir-djvulibre-worker` | DjVuLibre (`libdjvulibre`) |
 | Audio and video | `skwir-media-worker` | GStreamer playback and codec plugins; the spectrum element from the good plugins; ASF from `gst-plugins-ugly`'s [ASF demuxer](https://gstreamer.freedesktop.org/documentation/asf/asfdemux.html), with `gst-libav` for Windows Media codecs; optional FFmpeg (`ffprobe`) for cover art |
 | Archives, comics | `skwir-archive-worker` | libarchive (neither it nor 7-Zip loads into Skwir's process) |
 | Office documents as pages | | LibreOffice, bubblewrap |
@@ -423,6 +441,10 @@ ImageMagick runs only there.
   `--names`, `--bytes`) from `skwir_platform::inspection::limits`.
 - `just media-check` plays a synthetic two-track video with subtitles
   through GStreamer.
+- `just djvu-check` makes DjVu documents with DjVuLibre's tools (a
+  colour page, a turned one, text, links, an outline, page titles, an
+  indirect and a broken document) and runs the same checks on both DjVu
+  helpers, measuring where each draws the ink its text layer points at.
 - Parser and plugin lifecycle regressions run in the normal suite
   (`just test`).
 

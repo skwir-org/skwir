@@ -4,7 +4,8 @@
 # shipped (tools/package/programs) built for shipping, PDFium fetched
 # (tools/package/pdfium.sh), then cargo-generate-rpm, from
 # crates/skwir/Cargo.toml's [package.metadata.generate-rpm]: skwir, and
-# skwir-media, skwir-poppler, skwir-mermaid and skwir-mupdf (its variants).
+# skwir-media, skwir-poppler, skwir-djvulibre, skwir-mermaid and
+# skwir-mupdf (its variants).
 #
 #     tools/package/rpm.sh        # into target/generate-rpm/
 #
@@ -33,6 +34,6 @@ cargo build --locked --profile dist $(sed 's/^/-p /' tools/package/programs)
 tools/package/notices.py
 tools/package/pdfium.sh "$platform" target/pdfium
 cargo generate-rpm -p crates/skwir --profile dist
-for variant in media poppler mermaid mupdf; do
+for variant in media poppler djvulibre mermaid mupdf; do
     cargo generate-rpm -p crates/skwir --profile dist --variant "$variant"
 done

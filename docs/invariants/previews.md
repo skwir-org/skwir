@@ -800,7 +800,9 @@ is still to come are in `docs/preview-frame.md`.
   `Info::picture`), found around the entry as a track's neighbours are
   (`Shell::neighbours`, when the listing or the entry changes); a step
   moves the pane's selection and the preview follows. Other files are
-  skipped.
+  skipped, and so is a file whose name several types claim
+  (`mime::ambiguous`): the walk reads no bytes, and a `.djvu` may be a
+  book, whose pages would then keep the arrows.
 - **The next picture is read ahead** (`Shell::read_ahead`), the way the
   last step went, once the one shown has arrived (they never wait for
   each other's decode turn), at the side the screen covers

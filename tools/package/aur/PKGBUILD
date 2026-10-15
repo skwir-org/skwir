@@ -1,8 +1,9 @@
 # skwir's Arch packages, for the AUR (ADR-040, ADR-041): built from a
 # release's source with Arch's own Rust, PDFium from the release
 # tools/package/pdfium.lock pins (aur/build.sh checks they agree). skwir
-# carries its helpers, the Poppler reader's and the player's libraries
-# left optional (skwir says the engine is not installed without them);
+# carries its helpers, the Poppler and DjVuLibre readers' and the
+# player's libraries left optional (skwir says the engine is not installed
+# without them);
 # Mermaid and MuPDF are packages of their own. The files are those of the
 # Debian and RPM packages (crates/skwir/Cargo.toml). `just package-aur`
 # writes .SRCINFO beside this file. `just aur-prepare <tag>` fills the
@@ -24,7 +25,7 @@ license=('Apache-2.0')
 makedepends=(
   'cargo' 'clang' 'cmake' 'cargo-about' 'python'
   'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'sqlite' 'libarchive'
-  'cairo' 'glib2' 'poppler-glib' 'gstreamer' 'gst-plugins-base-libs'
+  'cairo' 'glib2' 'poppler-glib' 'djvulibre' 'gstreamer' 'gst-plugins-base-libs'
   'fontconfig' 'vulkan-icd-loader' 'vulkan-driver'
 )
 # makepkg's LTO compiles the C that crates build (MuPDF) into GCC's
@@ -73,6 +74,7 @@ package_skwir() {
     'gst-plugins-ugly: more audio and video formats'
     'gst-libav: more audio and video formats'
     'poppler-glib: PDFs through Poppler, beside the PDFium skwir carries'
+    'djvulibre: DjVu through DjVuLibre, beside the djvu-rs reader skwir carries'
     'skwir-mermaid: Mermaid diagrams drawn in Markdown previews'
     'skwir-mupdf: the MuPDF engine, PDFs and books laid out into pages'
     'bubblewrap: LibreOffice, ImageMagick and thumbnailers run isolated'
@@ -84,9 +86,9 @@ package_skwir() {
     'plocate: instant name searches over whole disks'
     'udisks2: unmounting volumes from the sidebar'
   )
-  # skwir's own, PDFium's, and the Poppler reader's: a program linking
-  # Poppler, whose core is GPL v2 or v3, with code under Apache-2.0 is
-  # under the GPL v3 (ADR-042).
+  # skwir's own, PDFium's, and the Poppler and DjVuLibre readers': a
+  # program linking Poppler (GPL v2 or v3) or DjVuLibre (GPL v2 or later)
+  # with code under Apache-2.0 is under the GPL v3 (ADR-042, ADR-061).
   license=('Apache-2.0' 'BSD-3-Clause' 'GPL-3.0-only')
   cd "$pkgbase-$pkgver"
   install -Dm755 target/dist/skwir "$pkgdir/usr/bin/skwir"

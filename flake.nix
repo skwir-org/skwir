@@ -91,7 +91,7 @@
         gst-libav
       ];
       buildInputs =
-        [pkgs.libarchive pkgs.poppler_gi pkgs.cairo pkgs.glib pkgs.gst_all_1.gstreamer]
+        [pkgs.libarchive pkgs.poppler_gi pkgs.djvulibre pkgs.cairo pkgs.glib pkgs.gst_all_1.gstreamer]
         ++ mediaPlugins
         ++ (lib.optionals stdenv.hostPlatform.isLinux linuxBuildInputs) ++ darwinBuildInputs;
 
@@ -124,6 +124,7 @@
           jq
           vulkan-tools # vulkaninfo for the toolkit spike
           pandoc # Office documents read as text, without LibreOffice
+          djvulibre # the DjVu checks' fixtures (cjb2, c44, djvused, djvm)
           zig # the C compiler of the Windows and macOS checks
           cargo-zigbuild
           # The type database the macOS and Windows packages carry,
@@ -214,8 +215,8 @@
           meta = {
             # The words every package says skwir in.
             inherit ((builtins.fromTOML (builtins.readFile ./crates/skwir/Cargo.toml)).package) description;
-            # skwir's own; the Poppler and MuPDF readers, which link
-            # libraries under the GPL and the AGPL (ADR-042).
+            # skwir's own; the Poppler, DjVuLibre and MuPDF readers, which
+            # link libraries under the GPL and the AGPL (ADR-042, ADR-061).
             license = with lib.licenses; [asl20 gpl3Only agpl3Plus];
             mainProgram = "skwir";
           };

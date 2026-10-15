@@ -132,7 +132,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -143,7 +143,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1931,7 +1931,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.3",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1970,6 +1970,88 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "djvu-bitmap"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "036c33d325015136b15e5efbb73a4eb06765eff474a007216e7e12c29626ab90"
+
+[[package]]
+name = "djvu-bzz"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e15e13b48fb9bea3060d381077904bfaafcbf6554b28f770f1f2d337830eb74"
+dependencies = [
+ "djvu-zp",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "djvu-iff"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d00e955e36c724fe350c5ec0f9bbc2190f112a20c25039f20f1e374428a9d20"
+dependencies = [
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "djvu-iw44"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3364e279f355becdc24e2c6e92672259b679fe90b5fec85bb1fc2b485a600c"
+dependencies = [
+ "djvu-pixmap",
+ "djvu-zp",
+ "thiserror 2.0.20",
+ "wide",
+]
+
+[[package]]
+name = "djvu-jb2"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3b56cfa802ec88838dd94b4493f966ad76693752fbea7e7a058f16c7bb54b66"
+dependencies = [
+ "djvu-bitmap",
+ "djvu-zp",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "djvu-pixmap"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c72937602604318fbaf5bacc9b46c943a26c50886ad80cf84424d7bfd40284bd"
+
+[[package]]
+name = "djvu-rs"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c39f7585887a2d8a22e49593e47c2bf679cf302403935f8868afc5acad39b759"
+dependencies = [
+ "djvu-bitmap",
+ "djvu-bzz",
+ "djvu-iff",
+ "djvu-iw44",
+ "djvu-jb2",
+ "djvu-pixmap",
+ "djvu-zp",
+ "png 0.17.16",
+ "thiserror 2.0.20",
+ "wide",
+ "zune-jpeg",
+]
+
+[[package]]
+name = "djvu-zp"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31bcafff1f9716285eb0f9fb9eda76eefe5569c4173081e6c3c3079f03617143"
+dependencies = [
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -2178,7 +2260,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2759,7 +2841,7 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4666,7 +4748,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "536bfad37a309d62069485248eeaba1e8d9853aaf951caaeaed0585a95346f08"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4860,7 +4942,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5969,7 +6051,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6458,7 +6540,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6535,7 +6617,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6625,6 +6707,15 @@ name = "ryu-js"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04d056b875a9d2e6cb9a61d127afee9ac5999b9f87bcb32079d1318e505be714"
+
+[[package]]
+name = "safe_arch"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "same-file"
@@ -7053,6 +7144,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dirs 7.0.0",
+ "djvu-rs",
  "embed-resource",
  "flate2",
  "proptest",
@@ -7067,6 +7159,7 @@ dependencies = [
  "skwir-plugin-circuits",
  "skwir-plugin-comics",
  "skwir-plugin-control",
+ "skwir-plugin-djvu",
  "skwir-plugin-documents",
  "skwir-plugin-edit-as-buffer",
  "skwir-plugin-email",
@@ -7179,6 +7272,25 @@ dependencies = [
  "trash",
  "windows-sys 0.61.2",
  "xattr 1.6.1",
+]
+
+[[package]]
+name = "skwir-djvu-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "djvu-rs",
+ "serde_json",
+ "skwir-core",
+ "tempfile",
+]
+
+[[package]]
+name = "skwir-djvulibre-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "skwir-core",
 ]
 
 [[package]]
@@ -7424,6 +7536,15 @@ dependencies = [
  "tokio",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-djvu"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "skwir-core",
+ "skwir-platform",
 ]
 
 [[package]]
@@ -8016,7 +8137,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8053,7 +8174,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8468,7 +8589,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9005,7 +9126,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9889,6 +10010,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wide"
+version = "0.7.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
+dependencies = [
+ "bytemuck",
+ "safe_arch",
+]
+
+[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9910,7 +10041,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

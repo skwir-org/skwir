@@ -36,7 +36,7 @@ has never run on either system: see [how to help](docs/HELP-WANTED.md).
   contents in one query, kept in the sidebar if you like.
 - **Tags, ratings and comments** kept on the files, where Dolphin, darktable,
   Lightroom, a Mac's Finder and TagSpaces read them.
-- **Previews of almost anything**: code, Markdown, tables, PDFs, office
+- **Previews of almost anything**: code, Markdown, tables, PDFs, DjVu, office
   documents, books, pictures, audio and video, fonts, 3D models, maps,
   archives ([the list](docs/previews.md)).
 - **Every change undoable**: copies, moves and renames are plans with
@@ -58,15 +58,16 @@ has never run on either system: see [how to help](docs/HELP-WANTED.md).
 ## Installing
 
 Each [release](https://github.com/skwir-org/skwir/releases) has packages for
-x86-64 Linux. `skwir` holds the program and its PDF, archive and 3D-model
-helpers; the rest is optional:
+x86-64 Linux. `skwir` holds the program and its PDF, DjVu, archive and
+3D-model helpers; the rest is optional:
 
-| Package         | Adds                                                  |
-| --------------- | ----------------------------------------------------- |
-| `skwir-media`   | Audio and video, through GStreamer                    |
-| `skwir-poppler` | PDFs through Poppler (GPL), beside PDFium             |
-| `skwir-mermaid` | Mermaid diagrams in Markdown                          |
-| `skwir-mupdf`   | PDFs and books laid out in pages through MuPDF (AGPL) |
+| Package           | Adds                                                  |
+| ----------------- | ----------------------------------------------------- |
+| `skwir-media`     | Audio and video, through GStreamer                    |
+| `skwir-poppler`   | PDFs through Poppler (GPL), beside PDFium             |
+| `skwir-djvulibre` | DjVu through DjVuLibre (GPL), beside djvu-rs          |
+| `skwir-mermaid`   | Mermaid diagrams in Markdown                          |
+| `skwir-mupdf`     | PDFs and books laid out in pages through MuPDF (AGPL) |
 
 Some previews use programs you may already have, such as LibreOffice or
 ffmpeg: [Previews](docs/previews.md) says which.
@@ -98,8 +99,8 @@ paru -S skwir                                          # or: yay -S skwir
 git clone https://aur.archlinux.org/skwir.git && cd skwir && makepkg -si
 ```
 
-Arch's `skwir` holds the player and the Poppler reader; install
-`gst-plugins-base` and `poppler-glib` to use them. `skwir-mermaid` and
+Arch's `skwir` holds the player and the Poppler and DjVuLibre readers;
+install `gst-plugins-base`, `poppler-glib` and `djvulibre` to use them. `skwir-mermaid` and
 `skwir-mupdf` are packages of their own.
 
 ### Any other distribution: AppImage or tarball
@@ -242,9 +243,9 @@ this repository ([index](docs/README.md)):
 ## License
 
 Skwir is under the Apache License 2.0 ([`LICENSE`](LICENSE)), and so are
-contributions to it (section 5 of the licence). The Poppler and MuPDF readers
-are separate programs that link libraries under the GPL and the AGPL;
-distributed, they are under the GPL version 3 and the AGPL version 3
-respectively. Skwir itself links neither
+contributions to it (section 5 of the licence). The Poppler, DjVuLibre and
+MuPDF readers are separate programs that link libraries under the GPL and the
+AGPL; distributed, they are under the GPL version 3 (Poppler's and
+DjVuLibre's) and the AGPL version 3 (MuPDF's). Skwir itself links none
 ([ADR-042](docs/adr/042-apache-2.0.md)). Each package carries the notices of the
 crates its programs are built from (`THIRD-PARTY-NOTICES`).

@@ -21,8 +21,9 @@ if (-not (Test-Path "$MimeDatabase\globs2")) {
 }
 # The helpers an installer carries (ADR-041): Mermaid and MuPDF are left
 # out, as Linux's packages only suggest them; those linking native
-# libraries (GStreamer, libarchive) wait for their libraries here.
-cargo build --profile dist -p skwir -p skwir-pdf-worker -p skwir-model-worker -p skwir-module-worker
+# libraries (GStreamer, libarchive, DjVuLibre) wait for their libraries
+# here. DjVu is read by djvu-rs, in Rust (ADR-061).
+cargo build --profile dist -p skwir -p skwir-pdf-worker -p skwir-djvu-worker -p skwir-model-worker -p skwir-module-worker
 # PDFium, beside the PDF helper, where it finds it (ADR-041): the release
 # tools\package\pdfium.lock pins, checked against its sum.
 $lock = Get-Content tools\package\pdfium.lock | Where-Object { $_ -notmatch '^#' }

@@ -42,8 +42,9 @@ jobs:
             run: just smoke && just bench-check
           - name: readers
             # The native Poppler and MuPDF readers (their first build
-            # compiles MuPDF) on synthetic PDFs.
-            run: just poppler-check && just mupdf-check
+            # compiles MuPDF) on synthetic PDFs, and both DjVu readers on
+            # synthetic DjVu documents.
+            run: just poppler-check && just mupdf-check && just djvu-check
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 240

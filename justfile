@@ -37,9 +37,9 @@ release-upload tag:
 build:
     cargo build
 
-# Build the optional native workers (Poppler, MuPDF, GStreamer, libarchive).
+# Build the optional native workers (Poppler, MuPDF, DjVuLibre, GStreamer, libarchive).
 workers:
-    cargo build -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-media-worker -p skwir-archive-worker
+    cargo build -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvulibre-worker -p skwir-media-worker -p skwir-archive-worker
 
 # Build everything, native workers included.
 build-all:
@@ -89,6 +89,13 @@ mupdf-check:
     cargo build -p skwir-mupdf-worker
     python3 tools/pdf/check.py --engine mupdf --worker target/debug/skwir-mupdf-worker
 
+# Exercise both DjVu readers, DjVuLibre and djvu-rs, with the same synthetic
+# documents, made by DjVuLibre's own tools (ADR-061).
+djvu-check:
+    cargo build -p skwir-djvulibre-worker -p skwir-djvu-worker
+    python3 tools/djvu/check.py --engine djvulibre --worker target/debug/skwir-djvulibre-worker
+    python3 tools/djvu/check.py --engine djvu-rs --worker target/debug/skwir-djvu-worker
+
 # Exercise GStreamer playback using a synthetic two-track video and subtitles.
 media-check:
     cargo build -p skwir-media-worker
@@ -137,7 +144,7 @@ check-windows:
 
 # Compile and lint the macOS build, but for the crates built on gpui.
 check-macos:
-    CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target aarch64-apple-darwin --all-targets --workspace --exclude skwir-ui --exclude skwir --exclude skwir-poppler-worker --exclude skwir-mupdf-worker --exclude skwir-media-worker --exclude skwir-archive-worker -- -D warnings
+    CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target aarch64-apple-darwin --all-targets --workspace --exclude skwir-ui --exclude skwir --exclude skwir-poppler-worker --exclude skwir-mupdf-worker --exclude skwir-djvulibre-worker --exclude skwir-media-worker --exclude skwir-archive-worker -- -D warnings
 
 # Run the Windows build's tests under Wine (args go to nextest: `-p skwir-core`).
 test-windows *args:
@@ -219,12 +226,12 @@ spike toolkit gpu="intel" rows="100000":
 
 # Run the app (release) on a directory, default: the current one.
 run dir=".":
-    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-model-worker -p skwir-module-worker
+    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvu-worker -p skwir-djvulibre-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-model-worker -p skwir-module-worker
     ./target/release/skwir {{dir}}
 
 # Profile the app with samply (opens the Firefox Profiler UI when done).
 flame dir=".":
-    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-model-worker -p skwir-module-worker
+    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvu-worker -p skwir-djvulibre-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-model-worker -p skwir-module-worker
     samply record ./target/release/skwir {{dir}}
 
 # Profile a bench profile's listing with a flamegraph SVG.

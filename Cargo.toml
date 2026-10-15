@@ -14,16 +14,19 @@ members = [
     "crates/pdf-worker",
     "crates/poppler-worker",
     "crates/mupdf-worker",
+    "crates/djvu-worker",
+    "crates/djvulibre-worker",
     "crates/media-worker",
     "crates/archive-worker",
     "crates/mermaid-worker",
     "crates/model-worker",
     "crates/module-worker",
 ]
-# The native workers link Poppler, MuPDF, GStreamer and libarchive. They are optional
-# at runtime and stay out of the default build so the application, plugins and
-# tests compile without those libraries; `just workers` / `just test-all`
-# include them; release-check and the manual full workflow run the full set.
+# The native workers link Poppler, MuPDF, DjVuLibre, GStreamer and
+# libarchive. They are optional at runtime and stay out of the default build
+# so the application, plugins and tests compile without those libraries;
+# `just workers` / `just test-all` include them; release-check and the manual
+# full workflow run the full set.
 default-members = [
     "crates/core",
     "crates/platform",
@@ -36,6 +39,7 @@ default-members = [
     "crates/skwir",
     "crates/alloc",
     "crates/pdf-worker",
+    "crates/djvu-worker",
     "crates/mermaid-worker",
     "crates/model-worker",
     "crates/module-worker",
@@ -94,6 +98,7 @@ skwir-plugin-models = { path = "crates/plugins/models" }
 skwir-plugin-circuits = { path = "crates/plugins/circuits" }
 skwir-plugin-email = { path = "crates/plugins/email" }
 skwir-plugin-comics = { path = "crates/plugins/comics" }
+skwir-plugin-djvu = { path = "crates/plugins/djvu" }
 skwir-plugin-documents = { path = "crates/plugins/documents" }
 skwir-plugin-terminal = { path = "crates/plugins/terminal" }
 skwir-plugin-geo = { path = "crates/plugins/geo" }
@@ -167,6 +172,9 @@ two-face = { version = "0.5", default-features = false, features = ["syntect-fer
 indexmap = "2"
 proptest = "1"
 tempfile = "3"
+# DjVu in Rust (ADR-061). Pinned: young, and released weekly; an update is
+# read and tried with `just djvu-check` before it is taken.
+djvu-rs = { version = "=0.42.0", default-features = false, features = ["std"] }
 # Windows' own calls (ADR-035): the version most of the tree already links.
 windows-sys = "0.61"
 

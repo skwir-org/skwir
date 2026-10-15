@@ -74,3 +74,4 @@ them by topic.
 | [058](058-properties.md) | Properties: the panel, not a dialog; access changed by plans; no administrator rights | built |
 | [059](059-archives-are-made-of-what-skwir-hands-the-helper.md) | Archives made by libarchive of what skwir hands it; passwords asked, names taken settled | built; macOS and Windows compiled only |
 | [060](060-code-is-colored-by-ferroni-and-its-grammars-are-let-go-of.md) | Code colored by Ferroni (vendored syntect and two-face); compiled grammars let go of after a minute unused | built |
+| [061](061-djvu-read-by-djvulibre-or-djvu-rs.md) | DjVu read by DjVuLibre or djvu-rs, Automatic preferring DjVuLibre | built; DjVuLibre's helper on Linux, djvu-rs's compiled only on macOS and Windows |

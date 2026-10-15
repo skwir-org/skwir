@@ -13,11 +13,12 @@ out="$root/target/package"
 app="$out/skwir.app"
 # The helpers a bundle carries (ADR-041): Mermaid and MuPDF are left out,
 # as Linux's packages only suggest them.
-helpers="skwir-pdf-worker skwir-model-worker skwir-module-worker"
+helpers="skwir-pdf-worker skwir-djvu-worker skwir-model-worker skwir-module-worker"
 
 cd "$root"
-# The helpers that link native libraries (Poppler, MuPDF, GStreamer,
-# libarchive) need those libraries in the bundle too: not done yet.
+# The helpers that link native libraries (Poppler, MuPDF, DjVuLibre,
+# GStreamer, libarchive) need those libraries in the bundle too: not done
+# yet. DjVu is read by djvu-rs, in Rust (ADR-061).
 # shellcheck disable=SC2046 # one `-p name` per helper
 cargo build --profile dist -p skwir $(for h in $helpers; do printf -- '-p %s ' "$h"; done)
 

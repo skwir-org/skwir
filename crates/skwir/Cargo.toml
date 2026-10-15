@@ -58,6 +58,7 @@ skwir-plugin-models.workspace = true
 skwir-plugin-circuits.workspace = true
 skwir-plugin-email.workspace = true
 skwir-plugin-comics.workspace = true
+skwir-plugin-djvu.workspace = true
 skwir-plugin-documents.workspace = true
 skwir-plugin-terminal.workspace = true
 skwir-plugin-geo.workspace = true
@@ -85,6 +86,8 @@ proptest.workspace = true
 tempfile.workspace = true
 dirs.workspace = true
 serde_json.workspace = true
+# DjVu documents written for the DjVu plugin's tests.
+djvu-rs.workspace = true
 
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
@@ -115,10 +118,11 @@ folders, previews of documents, pictures, music, films, archives and \
 maps, tags kept on the files themselves, and every change undoable."""
 depends = "$auto, libvulkan1, libfontconfig1"
 recommends = "skwir-media, mesa-vulkan-drivers, bubblewrap, udisks2"
-suggests = "skwir-poppler, skwir-mermaid, skwir-mupdf, poppler-utils, libreoffice-writer, libreoffice-calc, libreoffice-impress, pandoc, imagemagick, ffmpeg, libimage-exiftool-perl, plocate"
+suggests = "skwir-poppler, skwir-djvulibre, skwir-mermaid, skwir-mupdf, poppler-utils, libreoffice-writer, libreoffice-calc, libreoffice-impress, pandoc, imagemagick, ffmpeg, libimage-exiftool-perl, plocate"
 assets = [
     ["target/release/skwir", "usr/bin/", "755"],
     ["target/release/skwir-pdf-worker", "usr/lib/skwir/", "755"],
+    ["target/release/skwir-djvu-worker", "usr/lib/skwir/", "755"],
     ["target/release/skwir-archive-worker", "usr/lib/skwir/", "755"],
     ["target/release/skwir-model-worker", "usr/lib/skwir/", "755"],
     ["target/release/skwir-module-worker", "usr/lib/skwir/", "755"],
@@ -155,6 +159,18 @@ assets = [
     ["../../target/notices/skwir-poppler/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-poppler/", "644"],
 ]
 
+[package.metadata.deb.variants.djvulibre]
+name = "skwir-djvulibre"
+extended-description = "skwir's DjVu reader through DjVuLibre, beside the djvu-rs one skwir carries."
+depends = "$auto, skwir"
+recommends = ""
+suggests = ""
+assets = [
+    ["target/release/skwir-djvulibre-worker", "usr/lib/skwir/", "755"],
+    ["../../tools/package/linux/copyright-djvulibre", "usr/share/doc/skwir-djvulibre/copyright", "644"],
+    ["../../target/notices/skwir-djvulibre/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-djvulibre/", "644"],
+]
+
 [package.metadata.deb.variants.mermaid]
 name = "skwir-mermaid"
 extended-description = "Mermaid diagrams drawn in skwir's Markdown previews."
@@ -189,13 +205,15 @@ assets = [
 # as container images are) keeps them: cargo-generate-rpm cannot mark a
 # file %license. Fedora keeps no common licence texts, so each package
 # holds its own: skwir's, and the GPL's or the AGPL's for the readers
-# that link Poppler or MuPDF (the FSF's texts, tools/package/licenses).
+# that link Poppler, DjVuLibre or MuPDF (the FSF's texts,
+# tools/package/licenses).
 license = "Apache-2.0 AND BSD-3-Clause"
 url = "https://skwir.org"
 auto-req = "auto"
 assets = [
     { source = "target/release/skwir", dest = "/usr/bin/skwir", mode = "755" },
     { source = "target/release/skwir-pdf-worker", dest = "/usr/libexec/skwir/skwir-pdf-worker", mode = "755" },
+    { source = "target/release/skwir-djvu-worker", dest = "/usr/libexec/skwir/skwir-djvu-worker", mode = "755" },
     { source = "target/release/skwir-archive-worker", dest = "/usr/libexec/skwir/skwir-archive-worker", mode = "755" },
     { source = "target/release/skwir-model-worker", dest = "/usr/libexec/skwir/skwir-model-worker", mode = "755" },
     { source = "target/release/skwir-module-worker", dest = "/usr/libexec/skwir/skwir-module-worker", mode = "755" },
@@ -221,6 +239,7 @@ udisks2 = "*"
 
 [package.metadata.generate-rpm.suggests]
 skwir-poppler = "*"
+skwir-djvulibre = "*"
 skwir-mermaid = "*"
 skwir-mupdf = "*"
 poppler-utils = "*"
@@ -255,6 +274,20 @@ assets = [
     { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-poppler/LICENSE", mode = "644" },
     { source = "../../target/notices/skwir-poppler/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-poppler/THIRD-PARTY-NOTICES", mode = "644" },
     { source = "../../tools/package/licenses/GPL-3.0", dest = "/usr/share/licenses/skwir-poppler/GPL-3.0", mode = "644" },
+]
+requires = { skwir = "*" }
+recommends = {}
+suggests = {}
+
+[package.metadata.generate-rpm.variants.djvulibre]
+name = "skwir-djvulibre"
+summary = "skwir's DjVu reader through DjVuLibre"
+license = "GPL-3.0-only"
+assets = [
+    { source = "target/release/skwir-djvulibre-worker", dest = "/usr/libexec/skwir/skwir-djvulibre-worker", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-djvulibre/LICENSE", mode = "644" },
+    { source = "../../target/notices/skwir-djvulibre/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-djvulibre/THIRD-PARTY-NOTICES", mode = "644" },
+    { source = "../../tools/package/licenses/GPL-3.0", dest = "/usr/share/licenses/skwir-djvulibre/GPL-3.0", mode = "644" },
 ]
 requires = { skwir = "*" }
 recommends = {}

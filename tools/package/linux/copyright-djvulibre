@@ -1,0 +1,17 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: skwir
+Source: https://skwir.org/source
+Comment: skwir-djvulibre-worker, skwir's own code (Apache-2.0), links
+ DjVuLibre, under the GPL version 2 or later: code under the Apache
+ License can join it only under the GPL version 3, so the program is
+ distributed under it (ADR-042, ADR-061), its source being skwir's
+ repository and DjVuLibre's. skwir itself links neither: it speaks to it
+ over its worker protocol, and reads DjVu without it through djvu-rs.
+
+Files: *
+Copyright: The skwir authors; the DjVuLibre developers
+License: GPL-3
+
+License: GPL-3
+ On Debian systems, the full text of the GNU General Public License
+ version 3 is in /usr/share/common-licenses/GPL-3.

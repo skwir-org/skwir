@@ -389,7 +389,8 @@ crates/platform    per-OS adapters: MIME, icons, thumbnails, places, open, termi
 crates/ui          the gpui shell: views, panels, prompts, keymap, elements
 crates/skwir       the binary: wires plugins and starts the UI
 crates/*-worker    optional helper processes: pdf (PDFium, loaded at runtime),
-                   poppler, mupdf (AGPL, ADR-014), media (GStreamer), archive
+                   poppler, mupdf (AGPL, ADR-014), djvulibre and djvu
+                   (djvu-rs, pure Rust; ADR-061), media (GStreamer), archive
                    (libarchive), mermaid and model (pure Rust), module (a
                    plugin's WebAssembly module, Wasmtime)
 crates/plugins/*   one crate per plugin
@@ -437,7 +438,7 @@ with the commit that moves the pin and fixes them.
 ```
 just build / test / lint   default members (no native workers); tests via nextest;
                            lint is rustfmt --check + clippy -D warnings
-just workers               build the Poppler, MuPDF, GStreamer and libarchive workers
+just workers               build the Poppler, MuPDF, DjVuLibre, GStreamer and libarchive workers
 just test-all / lint-all   every crate, workers included; lint-all adds check-cross
 just check-cross           clippy for Windows and macOS from Linux (ADR-035)
 just test-windows          the Windows build's tests under Wine (args go to nextest)
@@ -456,12 +457,12 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
 
 - **Done means the full checks are green:** `just release-check` runs
   `lint-all`, `deny`, `test-all`, `smoke`, `poppler-check`, `mupdf-check`,
-  `bench-check` and `release-tools-check`. Routine GitHub CI runs only
-  `ci-check`; the full suite and Linux packaging are also manual workflows
-  (ADR-053). A green routine CI alone is not the full gate. The native workers
-  are outside `default-members`, so the default build needs no Poppler,
-  MuPDF, GStreamer or libarchive; run the `-all` recipes before
-  committing worker changes. `spikes/` is a separate workspace, not
+  `djvu-check`, `bench-check` and `release-tools-check`. Routine GitHub CI
+  runs only `ci-check`; the full suite and Linux packaging are also manual
+  workflows (ADR-053). A green routine CI alone is not the full gate. The
+  native workers are outside `default-members`, so the default build needs
+  no Poppler, MuPDF, DjVuLibre, GStreamer or libarchive; run the `-all`
+  recipes before committing worker changes. `spikes/` is a separate workspace, not
   covered by the root checks.
 - A dependency added or updated passes `just deny`: fix an advisory by an
   update, or ignore it in `deny.toml` with its reason.

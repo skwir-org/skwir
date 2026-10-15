@@ -54,6 +54,11 @@ pub enum Engine {
     Poppler,
     /// Chosen explicitly only: `auto` does not try it (ADR-014).
     Mupdf,
+    /// `DjVu` by `DjVuLibre`, the reference library: its worker links it, and
+    /// is a package of its own (ADR-061).
+    Djvulibre,
+    /// `DjVu` by djvu-rs, in Rust: every package carries its worker.
+    DjvuRs,
 }
 
 impl Engine {
@@ -63,6 +68,8 @@ impl Engine {
             Engine::Pdfium => "PDFium",
             Engine::Poppler => "Poppler",
             Engine::Mupdf => "MuPDF",
+            Engine::Djvulibre => "DjVuLibre",
+            Engine::DjvuRs => "djvu-rs",
         }
     }
 }
@@ -79,6 +86,8 @@ pub fn worker(engine: Engine) -> crate::process::Worker {
         Engine::Pdfium => ("SKWIR_PDF_WORKER", "skwir-pdf-worker"),
         Engine::Poppler => ("SKWIR_POPPLER_WORKER", "skwir-poppler-worker"),
         Engine::Mupdf => ("SKWIR_MUPDF_WORKER", "skwir-mupdf-worker"),
+        Engine::Djvulibre => ("SKWIR_DJVULIBRE_WORKER", "skwir-djvulibre-worker"),
+        Engine::DjvuRs => ("SKWIR_DJVU_WORKER", "skwir-djvu-worker"),
     };
     crate::process::Worker {
         variable,
@@ -160,6 +169,34 @@ pub type PdfiumChoice = Arc<parking_lot::RwLock<Option<PathBuf>>>;
 /// The engines `auto` tries, in its order: `PDFium` (the one skwir's
 /// packages carry), then Poppler. `MuPDF` only when chosen (ADR-014).
 pub const AUTO: [Engine; 2] = [Engine::Pdfium, Engine::Poppler];
+
+/// The engines that read `DjVu`, in `auto`'s order: `DjVuLibre` where it is
+/// installed, then djvu-rs, which skwir's packages carry (ADR-061).
+pub const DJVU_AUTO: [Engine; 2] = [Engine::Djvulibre, Engine::DjvuRs];
+
+/// The document at `source` read by the first of `engines` whose worker
+/// there is, for the reader. `None` when there is none: an engine gives
+/// way to the next only when it is absent, never when it fails on the
+/// document (that is the document's error). Called on a scheduler worker.
+pub fn open(
+    source: &Path,
+    engines: &[Engine],
+    lifetime: &CancelToken,
+) -> anyhow::Result<Option<Arc<dyn DocumentSession>>> {
+    for &engine in engines {
+        if let Some(session) = WorkerSession::open(
+            engine,
+            source.to_owned(),
+            source.to_owned(),
+            crate::file::memory_dir("skwir-pages-")?,
+            Setup::default(),
+            lifetime.clone(),
+        )? {
+            return Ok(Some(session));
+        }
+    }
+    Ok(None)
+}
 
 /// The first page of the PDF at `pdf`, at most `side` pixels on its
 /// longer side, drawn by the first of `engines` there is, `PDFium` told

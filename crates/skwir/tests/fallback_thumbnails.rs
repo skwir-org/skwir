@@ -1,7 +1,8 @@
 //! Thumbnails skwir makes when the desktop cannot (PDF and Office pages,
-//! the pictures Office documents keep, audio, book and comic covers): tried only after the desktop's cache and
-//! thumbnailers, whichever plugin registers first, and shared through the
-//! desktop's cache.
+//! the pictures Office documents keep, audio, book and comic covers, `DjVu`
+//! pages): tried only after the desktop's cache and thumbnailers,
+//! whichever plugin registers first, and shared through the desktop's
+//! cache.
 use skwir_core::{
     App, CancelToken,
     app::AppConfig,
@@ -17,7 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const THUMBNAILS: &str = "thumbnails";
-const FALLBACK_PLUGINS: [&str; 4] = ["documents", "media", "epub", "comics"];
+const FALLBACK_PLUGINS: [&str; 5] = ["documents", "media", "epub", "comics", "djvu"];
 
 /// The plugins with fallbacks first: the reverse of the binary's order.
 fn app(root: &Path) -> Arc<App> {
@@ -27,6 +28,7 @@ fn app(root: &Path) -> Arc<App> {
         Arc::new(skwir_plugin_media::PreviewPlugin::default()),
         Arc::new(skwir_plugin_epub::PreviewPlugin),
         Arc::new(skwir_plugin_comics::PreviewPlugin),
+        Arc::new(skwir_plugin_djvu::PreviewPlugin),
         Arc::new(skwir_plugin_thumbnails::ThumbnailsPlugin::default()),
     ] {
         app.plugins.add(plugin, &app);
@@ -52,6 +54,7 @@ fn assert_order(app: &App, after: &str) {
         [
             "audio-covers",
             "comic-covers",
+            "djvu-pages",
             "epub-covers",
             "office-pages",
             "office-stored-pictures",
@@ -83,6 +86,7 @@ fn fallbacks_come_after_the_desktop_whoever_registers_first() {
         ("documents.backend", "poppler"),
         ("epub.backend", "mupdf"),
         ("media.backend", "stills"),
+        ("djvu.engine", "djvu-rs"),
         ("thumbnails.write_cache", "false"),
     ] {
         let value = if value == "false" {

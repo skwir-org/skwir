@@ -12,6 +12,7 @@ libxcb1-dev
 libsqlite3-dev
 libfontconfig-dev
 libpoppler-glib-dev
+libdjvulibre-dev
 libcairo2-dev
 libglib2.0-dev
 libgstreamer1.0-dev

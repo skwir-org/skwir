@@ -1,0 +1,18 @@
+[package]
+name = "skwir-djvulibre-worker"
+description = "On-demand DjVuLibre document worker for skwir"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+# Our source is Apache-2.0 like the rest of skwir. The worker binary
+# links DjVuLibre, GPL v2 or later: whoever distributes this executable
+# distributes it under the GPL v3 (ADR-061).
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+skwir-core.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

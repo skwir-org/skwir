@@ -993,6 +993,28 @@ on it; a click on a folder shows it, with no double click. Right goes
 into it, landing on its first entry, and never opens a file; a press in
 that column goes into it with the row selected.
 
+DjVu documents open in the reader (ADR-061, `djvu` plugin), their first
+page their thumbnail: pages, zoom, search, text selection, links and
+contents, as a PDF's. Two engines behind the PDF readers' protocol, each
+its own isolated helper: DjVuLibre, linked by `skwir-djvulibre-worker`
+(GPL, a package of its own where packages are split), and djvu-rs, in
+Rust, whose helper every package carries. **DjVu engine** Automatic
+prefers DjVuLibre and gives way to djvu-rs only where DjVuLibre is
+absent. djvu-rs shrinks a page by averaging it drawn twice as large, and
+is drawn at sizes it places exactly: its step through a page is
+truncated to sixteenths of a pixel, which drew a page 2% too large at
+two thirds. A page's words became characters and are searched by the
+code a plugin from outside Skwir's pages used, moved to
+`document::words`. `just djvu-check` runs both helpers on documents
+DjVuLibre's tools make (a colour page, a turned one, links, an outline,
+page titles) and measures where their ink lands: within 0.18% of the
+page for DjVuLibre, 0.32% for djvu-rs. Not read: an indirect document,
+whose pages are files the isolated helper cannot see; annotations other
+than links; djvu-rs gives no page titles. DjVuLibre's helper is not in
+the macOS and Windows packages. The whole screen's walk through a pane's
+pictures now passes a file whose name several types claim: a `.djvu` is
+a page or a book, and stepping onto a book left the arrows to its pages.
+
 ---
 
 ## Maps

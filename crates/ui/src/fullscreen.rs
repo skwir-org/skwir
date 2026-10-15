@@ -66,10 +66,15 @@ pub enum Shows {
 }
 
 /// Whether `entry` is a picture, as the desktop groups types
-/// (`mime::Kind::Image`): what the arrows and the slideshow walk.
+/// (`mime::Kind::Image`), by a type its name settles: what the arrows and
+/// the slideshow walk. A name several types claim is left to the bytes,
+/// which the walk does not read: a `.djvu` is a page or a book of them,
+/// and a book stepped onto would keep the arrows to turn its pages.
 pub(crate) fn is_picture(entry: &skwir_core::Entry) -> bool {
-    skwir_platform::mime::of_entry(entry)
-        .is_some_and(|mime| skwir_platform::mime::is_kind(&mime, skwir_platform::mime::Kind::Image))
+    !skwir_platform::mime::ambiguous(entry.type_name())
+        && skwir_platform::mime::of_entry(entry).is_some_and(|mime| {
+            skwir_platform::mime::is_kind(&mime, skwir_platform::mime::Kind::Image)
+        })
 }
 
 /// Whether the type `mime` is a picture's, as `is_picture` tells.
@@ -583,4 +588,31 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         canvas = canvas.child(div().absolute().inset_0().cursor(gpui::CursorStyle::None));
     }
     Some(canvas.into_any_element())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_picture;
+    use skwir_core::entry::{Entry, EntryId, EntryKind};
+
+    fn file(name: &str) -> Entry {
+        Entry::new(
+            EntryId {
+                file: skwir_core::FileId { dev: 1, ino: 2 },
+                at: 0,
+            },
+            name,
+            EntryKind::File,
+        )
+    }
+
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_walk_takes_a_picture_only_where_its_name_says_so() {
+        assert!(is_picture(&file("Synthetic sky.png")));
+        assert!(!is_picture(&file("notes.txt")));
+        // A page or a book of them: the bytes say which.
+        assert!(!is_picture(&file("Synthetic scan.djvu")));
+    }
 }
