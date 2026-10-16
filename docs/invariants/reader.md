@@ -102,7 +102,9 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
 - A page zoomed wider than the panel scrolls sideways, with its bar along
   the bottom, read continuously or a page at a time; a page at a time has
   its vertical bar too, for the page shown (the wheel past its edge turns
-  the page, `reader_wheel`).
+  the page, `reader_wheel`; so do Up and Down at its edge, `reader_arrow`,
+  waiting while a turn is on its way, so a held key starts the next page
+  at its top).
 - Overdraw measurement varies between frames: keep prefetch neighbours
   explicit so a later layout does not cancel work it just requested.
 

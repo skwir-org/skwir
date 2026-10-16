@@ -713,6 +713,20 @@ is still to come are in `docs/preview-frame.md`.
   Ctrl+- (zoom what is looked at, size what is read), Ctrl+0, `[` and
   `]` for the previous and next section or page. A picture takes them
   once clicked.
+- **The arrows** move what is shown, as a document reader's
+  (`ui.preview_scroll`, bound on the frame, `preview`, and on a picture,
+  `image`): Up and Down a tenth of the view (`preview::arrow_step`; rows
+  of text and bytes a row), and a page read a page at a time turns at
+  its edge, as under the wheel, never while a turn is on its way. Left
+  and Right go sideways where what is shown is wider than its box (an
+  edge reached stops them), else step as on the whole screen
+  (`fullscreen_step`), but a picture in the panel: its step moves the
+  pane's selection, which gives the keys back to the pane
+  (`cancel_preview`). What has arrows of its own keeps them by being
+  deeper: an archive's files, a map, a player, rows of text up and down.
+  Page Up, Page Down, Ctrl+Home and Ctrl+End scroll every structured
+  preview (`ui.inspect`'s `scroll`, on the side with the keyboard); in
+  the reader the page keys turn the page.
 - **Ctrl and the wheel** take the zoom keys' step over what is under the
   pointer, unclicked: a picture's or a page's zoom, an inspection's text
   size (the container's view kept above a member too), the pane's view
@@ -794,7 +808,10 @@ is still to come are in `docs/preview-frame.md`.
   there takes it from the canvas (`fullscreen_arrived`); leaving gives
   it back to what had it before. F toggles wherever a preview has the
   keyboard (`preview`, `image`, `media`, `peek`, `fullscreen`), Escape
-  and F leave, C hides the bar, ←/→ step (`ui.fullscreen_step`).
+  and F leave, C hides the bar, ←/→ step: what is shown takes the
+  arrows first (`ui.preview_scroll`, deeper), moves sideways where it is
+  wider than the screen and steps where it fits; `ui.fullscreen_step`,
+  bound on the canvas, answers where nothing shown holds the keyboard.
 - **Pictures walk the pane's pictures**, by type
   (`fullscreen::is_picture`, `mime::Kind::Image`, told once with the type,
   `Info::picture`), found around the entry as a track's neighbours are

@@ -3128,6 +3128,48 @@ impl Shell {
         self.preview_go_page(next, cx);
     }
 
+    /// `ui.preview_scroll { to }`: the arrows over what is shown, as a
+    /// document reader's. Up and Down move it a step; read a page at a
+    /// time, a page turns at its edge, as under the wheel. Left and Right
+    /// move it sideways when it is wider than its box, and otherwise go to
+    /// the page or section before or after, as on the whole screen
+    /// (`fullscreen_step`), and there to the picture before or after. In
+    /// the panel a picture's step would move the pane's selection, and the
+    /// keys go back to the pane with the preview it replaces
+    /// (`cancel_preview`): there the pane's own arrows walk the files.
+    /// What has arrows of its own (an archive's files, a map, a player,
+    /// rows of text) takes them where it has the keyboard.
+    pub fn preview_scroll(&mut self, to: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let (dx, dy) = match to {
+            "up" => (0, -1),
+            "down" => (0, 1),
+            "left" => (-1, 0),
+            "right" => (1, 0),
+            _ => return,
+        };
+        let sideways = match &self.preview.content {
+            Some(PreviewContent::Image {
+                document: Some(_), ..
+            }) => self.reader_arrow(dx, dy, window, cx),
+            Some(PreviewContent::Image { .. }) => arrow(&self.preview.picture_scroll, dx, dy),
+            Some(PreviewContent::Inspection(_)) => {
+                let wide =
+                    self.preview.inspection.wide() || self.container_has_keyboard(window, cx);
+                if dx == 0 || wide {
+                    let args = serde_json::json!({"action":"scroll","to":to});
+                    self.inspect_command(&args, window, cx);
+                }
+                wide
+            }
+            _ => return,
+        };
+        let steps = self.preview.fullscreen.is_some() || !self.walks_pictures();
+        if dx != 0 && !sideways && steps {
+            self.fullscreen_step(dx.into(), window, cx);
+        }
+        cx.notify();
+    }
+
     pub(crate) fn reader_mode_changed(&mut self) {
         self.cancel_pending_preview();
         let loaded = matches!(&self.preview.content, Some(PreviewContent::Image { document: Some(page), .. }) if page.page == self.preview.page);
@@ -4607,6 +4649,35 @@ pub(crate) const PANE_KEEP_HEIGHT: f32 = 160.;
 /// The tab strip above the panes, when it shows (`tabs::render`).
 const TOOLBAR_HEIGHT: f32 = crate::tabs::STRIP_HEIGHT;
 
+/// How far an arrow moves what a preview shows: a tenth of the view along
+/// its way, a document reader's step. Rows of text go a row instead.
+pub(crate) fn arrow_step(view: f32) -> f32 {
+    (view / 10.).max(1.)
+}
+
+/// Where an arrow toward `toward` (-1 or 1) takes an offset that runs from
+/// 0 down to `-most` (a `ScrollHandle`'s) over a view `view` long: `None`
+/// where what is shown fits it, and nothing scrolls.
+fn arrowed(offset: f32, most: f32, view: f32, toward: i32) -> Option<f32> {
+    (most > 0.).then(|| (offset - arrow_step(view) * toward as f32).clamp(-most, 0.))
+}
+
+/// Move what `handle` scrolls a step (`dx` or `dy`, -1 or 1) within its
+/// bounds. Whether it scrolls that way at all: not where it fits.
+pub(crate) fn arrow(handle: &gpui::ScrollHandle, dx: i32, dy: i32) -> bool {
+    let (mut offset, most, view) = (handle.offset(), handle.max_offset(), handle.bounds().size);
+    let moved = if dx == 0 {
+        arrowed(offset.y.into(), most.height.into(), view.height.into(), dy)
+            .map(|y| offset.y = px(y))
+    } else {
+        arrowed(offset.x.into(), most.width.into(), view.width.into(), dx).map(|x| offset.x = px(x))
+    };
+    if moved.is_some() {
+        handle.set_offset(offset);
+    }
+    moved.is_some()
+}
+
 /// A picture as every preview shows one: whole in the panel (Fit), as wide
 /// as the panel (Fit width), or at a share of its own size, scrolling in
 /// both directions past the panel, with a scrollbar when it scrolls. Pages
@@ -5016,10 +5087,24 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
 #[cfg(test)]
 mod tests {
     use super::{
-        Counted, SHARPEN_STEP, SourceTypes, Version, count_waits, max_width, picture_written,
-        selection_stamp, sharper, still_counts,
+        Counted, SHARPEN_STEP, SourceTypes, Version, arrowed, count_waits, max_width,
+        picture_written, selection_stamp, sharper, still_counts,
     };
     use skwir_core::workspace::{PaneId, Selection};
+
+    #[test]
+    fn an_arrow_goes_a_tenth_of_the_view_and_stops_at_the_ends() {
+        // Offsets run from 0 (the top, the left) down to -most.
+        assert_eq!(arrowed(0., 1000., 600., 1), Some(-60.));
+        assert_eq!(arrowed(-60., 1000., 600., -1), Some(0.));
+        assert_eq!(arrowed(-980., 1000., 600., 1), Some(-1000.), "the end");
+        assert_eq!(arrowed(-20., 1000., 600., -1), Some(0.), "the start");
+        assert_eq!(arrowed(0., 1000., 600., -1), Some(0.), "held there");
+        // What fits its box does not scroll: Left and Right then step.
+        assert_eq!(arrowed(0., 0., 600., 1), None);
+        // A view not laid out yet still moves.
+        assert_eq!(arrowed(0., 1000., 0., 1), Some(-1.));
+    }
 
     #[test]
     fn a_type_shown_as_its_source_is_kept_by_its_one_name() {

@@ -2061,6 +2061,11 @@ impl Shell {
                 window,
                 cx,
             ),
+            "preview_scroll" => {
+                if let Some(to) = arg("to") {
+                    self.preview_scroll(&to, window, cx);
+                }
+            }
             "preview_seek" => self.preview_seek(
                 args.get("delta")
                     .and_then(serde_json::Value::as_f64)

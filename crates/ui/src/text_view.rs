@@ -803,7 +803,8 @@ impl Shell {
 }
 
 /// `ui.inspect`'s `scroll` on rows read where they are shown (a text, a
-/// file's bytes): `to` a row up or down, a screen, either end.
+/// file's bytes): `to` a row up or down, a screen, either end, or a step
+/// sideways along lines that do not wrap.
 pub(crate) fn scroll(scroll: &Scroll, args: &serde_json::Value) {
     let mut scroll = scroll.borrow_mut();
     let by = match args["to"].as_str().unwrap_or("") {
@@ -813,6 +814,12 @@ pub(crate) fn scroll(scroll: &Scroll, args: &serde_json::Value) {
         "page_down" => scroll.page(),
         "start" => return scroll.to_edge(false),
         "end" => return scroll.to_edge(true),
+        to @ ("left" | "right") => {
+            let (x, most, view) = scroll.horizontal();
+            let step = crate::preview::arrow_step(view);
+            let x = if to == "left" { x - step } else { x + step };
+            return scroll.scroll_horizontally_to(x.min(most));
+        }
         _ => return,
     };
     scroll.scroll_by(by);

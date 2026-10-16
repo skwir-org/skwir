@@ -655,13 +655,58 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"action":"back"}"#,
         Some("member"),
     ),
+    // The arrows over what a preview shows, as a document reader's: Up and
+    // Down move it (a page read a page at a time turns at its edge), Left
+    // and Right move it sideways when it is wider than the panel, else go
+    // to the page, section or picture before or after, as on the whole
+    // screen. What has arrows of its own takes them where it has the
+    // keyboard, deeper: an archive's files, a map, rows of text.
+    ("up", "ui.preview_scroll", r#"{"to":"up"}"#, Some("preview")),
+    (
+        "down",
+        "ui.preview_scroll",
+        r#"{"to":"down"}"#,
+        Some("preview"),
+    ),
+    (
+        "left",
+        "ui.preview_scroll",
+        r#"{"to":"left"}"#,
+        Some("preview"),
+    ),
+    (
+        "right",
+        "ui.preview_scroll",
+        r#"{"to":"right"}"#,
+        Some("preview"),
+    ),
+    ("up", "ui.preview_scroll", r#"{"to":"up"}"#, Some("image")),
+    (
+        "down",
+        "ui.preview_scroll",
+        r#"{"to":"down"}"#,
+        Some("image"),
+    ),
+    (
+        "left",
+        "ui.preview_scroll",
+        r#"{"to":"left"}"#,
+        Some("image"),
+    ),
+    (
+        "right",
+        "ui.preview_scroll",
+        r#"{"to":"right"}"#,
+        Some("image"),
+    ),
     // A map moves under the arrows, as it does under a drag.
     ("left", "ui.map_pan", r#"{"dx":-1,"dy":0}"#, Some("map")),
     ("right", "ui.map_pan", r#"{"dx":1,"dy":0}"#, Some("map")),
     ("up", "ui.map_pan", r#"{"dx":0,"dy":-1}"#, Some("map")),
     ("down", "ui.map_pan", r#"{"dx":0,"dy":1}"#, Some("map")),
-    // A text read where it is shown goes row by row, a screen at a time,
-    // or to either end; Alt+Z wraps its lines or not.
+    // A text read where it is shown goes row by row; Alt+Z wraps its lines
+    // or not. Every structured preview goes a screen at a time, or to
+    // either end.
     (
         "up",
         "ui.inspect",
@@ -678,25 +723,25 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "pageup",
         "ui.inspect",
         r#"{"action":"scroll","to":"page_up"}"#,
-        Some("text"),
+        Some("inspector"),
     ),
     (
         "pagedown",
         "ui.inspect",
         r#"{"action":"scroll","to":"page_down"}"#,
-        Some("text"),
+        Some("inspector"),
     ),
     (
         "ctrl-home",
         "ui.inspect",
         r#"{"action":"scroll","to":"start"}"#,
-        Some("text"),
+        Some("inspector"),
     ),
     (
         "ctrl-end",
         "ui.inspect",
         r#"{"action":"scroll","to":"end"}"#,
-        Some("text"),
+        Some("inspector"),
     ),
     ("alt-z", "ui.wrap_lines", "{}", Some("text")),
     ("[", "ui.preview_page", r#"{"delta":-1}"#, Some("inspector")),
@@ -2043,6 +2088,95 @@ mod tests {
         assert_eq!(
             run("shift-insert", &terminal).as_deref(),
             Some("ui.terminal_paste")
+        );
+    }
+
+    /// The arrows go to what has the keyboard in a preview, deepest first,
+    /// read as GPUI reads the bindings `install` makes: the pages, a
+    /// picture, a page of reading scroll (`ui.preview_scroll`); an
+    /// archive's files, a map, rows of text, a player and peek keep their
+    /// own; on the whole screen, what is shown takes them before the
+    /// screen's step, which only what holds no keyboard of its own leaves.
+    #[test]
+    fn the_arrows_go_to_what_has_the_keyboard_in_a_preview() {
+        use super::{
+            FULLSCREEN, IMAGE, INSPECTOR, MAP, MEDIA, PEEK, PREVIEW, READER, ROOT, SLIDESHOW,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::commands::declare_all(&app);
+        let keymap = gpui::Keymap::new(super::gpui_bindings(&super::bindings(&app, &[])));
+        let run = |keys: &str, places: &[&str]| -> Option<(String, serde_json::Value)> {
+            let stack: Vec<gpui::KeyContext> = places
+                .iter()
+                .map(|place| gpui::KeyContext::parse(place).unwrap())
+                .collect();
+            let stroke = gpui::Keystroke::parse(keys).unwrap();
+            let (found, _) = keymap.bindings_for_input(&[stroke], &stack);
+            found.first().map(|binding| {
+                let run = binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<super::RunCommand>()
+                    .expect("a command");
+                (run.name.clone(), run.args.clone())
+            })
+        };
+        let scroll = |to: &str| {
+            Some((
+                "ui.preview_scroll".to_owned(),
+                serde_json::json!({ "to": to }),
+            ))
+        };
+        let name = |keys: &str, places: &[&str]| run(keys, places).map(|(name, _)| name);
+        // The frame of what is shown, then what holds the keyboard in it.
+        let reader = [ROOT, "Preview DocumentReader", READER];
+        for (keys, to) in [
+            ("up", "up"),
+            ("down", "down"),
+            ("left", "left"),
+            ("right", "right"),
+        ] {
+            assert_eq!(run(keys, &reader), scroll(to), "{keys}");
+            assert_eq!(run(keys, &[ROOT, IMAGE]), scroll(to), "{keys}");
+            let reading = [ROOT, PREVIEW, INSPECTOR];
+            assert_eq!(run(keys, &reading), scroll(to), "{keys}");
+        }
+        assert_eq!(
+            name("pagedown", &reader).as_deref(),
+            Some("ui.preview_page")
+        );
+        let reading = [ROOT, PREVIEW, INSPECTOR];
+        assert_eq!(
+            run("pagedown", &reading),
+            Some((
+                "ui.inspect".to_owned(),
+                serde_json::json!({"action":"scroll","to":"page_down"})
+            ))
+        );
+        // Rows of text go a row up or down; sideways is the preview's.
+        let text = [ROOT, PREVIEW, "Inspector PreviewText"];
+        assert_eq!(name("up", &text).as_deref(), Some("ui.inspect"));
+        assert_eq!(run("left", &text), scroll("left"));
+        let members = [ROOT, PREVIEW, "Inspector PreviewMembers"];
+        for keys in ["up", "down", "left", "right"] {
+            assert_eq!(name(keys, &members).as_deref(), Some("ui.inspect"));
+            let map = [ROOT, PREVIEW, INSPECTOR, MAP];
+            assert_eq!(name(keys, &map).as_deref(), Some("ui.map_pan"));
+            assert_eq!(name(keys, &[ROOT, PEEK]).as_deref(), Some("ui.cursor"));
+        }
+        assert_eq!(
+            name("left", &[ROOT, MEDIA]).as_deref(),
+            Some("ui.preview_seek")
+        );
+        // On the whole screen.
+        let screen = format!("{FULLSCREEN} {SLIDESHOW}");
+        let pages = [ROOT, FULLSCREEN, "Preview DocumentReader", READER];
+        assert_eq!(run("right", &pages), scroll("right"));
+        assert_eq!(run("right", &[ROOT, &screen, IMAGE]), scroll("right"));
+        assert_eq!(
+            name("right", &[ROOT, &screen]).as_deref(),
+            Some("ui.fullscreen_step")
         );
     }
 

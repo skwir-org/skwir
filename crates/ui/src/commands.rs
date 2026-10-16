@@ -300,6 +300,21 @@ mod args {
         dy: Option<f64>,
     }
 
+    /// Which way an arrow moves what the preview shows.
+    #[derive(Deserialize, JsonSchema)]
+    #[serde(rename_all = "snake_case")]
+    pub(super) enum Arrow {
+        Up,
+        Down,
+        Left,
+        Right,
+    }
+
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct PreviewScroll {
+        to: Arrow,
+    }
+
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Pointer {
         #[serde(default)]
@@ -412,8 +427,8 @@ mod args {
 use args::{
     Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold, Folders,
     History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player,
-    Pointer, Popup, Scrub, Settings, Split, Submit, TagsPrompt, TerminalPaste, Text, Unlock, Url,
-    UsageMode, View,
+    Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submit, TagsPrompt, TerminalPaste, Text,
+    Unlock, Url, UsageMode, View,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -495,6 +510,7 @@ const SHOWS: &[&str] = &[
     "ui.properties_fold",
     "ui.preview_menu",
     "ui.preview_page",
+    "ui.preview_scroll",
     "ui.preview_seek",
     "ui.preview_zoom",
     "ui.inspect",
@@ -694,6 +710,23 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
         "ui.player_volume",
         r#"{"delta":-0.05}"#,
         "Player: volume down",
+    ),
+    // The arrows over what a preview shows.
+    ("ui.preview_scroll", r#"{"to":"up"}"#, "Preview: scroll up"),
+    (
+        "ui.preview_scroll",
+        r#"{"to":"down"}"#,
+        "Preview: scroll down",
+    ),
+    (
+        "ui.preview_scroll",
+        r#"{"to":"left"}"#,
+        "Preview: scroll left, or the previous page or picture",
+    ),
+    (
+        "ui.preview_scroll",
+        r#"{"to":"right"}"#,
+        "Preview: scroll right, or the next page or picture",
     ),
     // The arrows on the whole screen: a picture's neighbours, or a page.
     (
@@ -1464,6 +1497,12 @@ pub fn declare_all(app: &App) {
         "ui.preview_page",
         "Preview: next page",
         "Go a page, a section or a chapter on or back",
+    );
+    declare::<PreviewScroll>(
+        app,
+        "ui.preview_scroll",
+        "Preview: scroll",
+        "Move what the preview shows a step up, down or sideways; where it fits, Left and Right go to the page or section before or after, and on the whole screen to the picture",
     );
     declare::<Amount>(
         app,

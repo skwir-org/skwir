@@ -1026,6 +1026,20 @@ Words lying over one another are now one run over the box around them
 Skwir's pages): on a 71-page specification, 603,592 pairs of characters
 covered each other, none now.
 
+The arrows move what a preview shows once it has the keyboard, as a
+document reader's do (`ui.preview_scroll`): a document's pages, a
+picture, Markdown, a book's chapter, a table. Up and Down go a tenth of
+the view; read a page at a time, a page turns at its edge, as under the
+wheel, and a held key waits for the page it turned to. Left and Right go
+sideways where what is shown is wider than the panel, else to the page
+or section before or after, as they did on the whole screen, where a
+picture zoomed past the screen now moves before the walk goes on. In the
+panel a picture's Left and Right only move it: a step to the next
+picture would give the keys back to the pane. What had arrows keeps them
+(an archive's files, a map, a player, a text's rows, which also go
+sideways now). Page Up, Page Down, Ctrl+Home and Ctrl+End, a text's
+alone before, scroll every structured preview.
+
 ---
 
 ## Maps

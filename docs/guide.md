@@ -263,6 +263,9 @@ archives, and the bytes of any file.
   lines go on sideways.
 - A link in a document opens with a click; an address found in plain
   text with `Ctrl+click`.
+- Once clicked, a preview takes the arrows, as a PDF reader does: Up and
+  Down scroll, Left and Right scroll sideways when it is wider than the
+  panel, or else turn the page or the chapter.
 - `F` shows a picture, a document, text or a film on the whole screen;
   the arrows go to the next picture or page, and `Space` plays the
   folder's pictures as a slideshow.

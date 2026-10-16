@@ -389,6 +389,17 @@ pub struct State {
     /// A table or bytes wider than the panel, scrolled sideways.
     sideways: gpui::ScrollHandle,
 }
+impl State {
+    /// Whether what is shown is wider than the panel: lines that do not
+    /// wrap, a table or bytes. The arrows then move it sideways rather than
+    /// step to the section before or after (`Shell::preview_scroll`).
+    pub(crate) fn wide(&self) -> bool {
+        match &self.text {
+            Some(view) => view.scroll.borrow().horizontal().1 > 0.,
+            None => self.sideways.max_offset().width > px(0.),
+        }
+    }
+}
 impl Default for State {
     fn default() -> Self {
         Self {
@@ -908,6 +919,7 @@ const VIEW_ONLY: &[&str] = &[
     "links",
     "links_close",
     "label_key",
+    "scroll",
 ];
 
 impl Shell {
@@ -1174,11 +1186,8 @@ impl Shell {
         if matches!(action, "find" | "copy" | "jump") && self.bytes_action(action, args, cx) {
             return;
         }
-        if action == "scroll"
-            && let Some(view) = self.preview.inspection.bytes.as_ref()
-        {
-            crate::text_view::scroll(&view.scroll, args);
-            return cx.notify();
+        if action == "scroll" {
+            return self.inspect_scroll(args, window, cx);
         }
         if let Some(PreviewContent::Inspection(display)) = &self.preview.content {
             match action {
@@ -1762,6 +1771,57 @@ impl Shell {
                 cx,
             );
         }
+    }
+
+    /// `ui.inspect`'s `scroll` on what is not a text (`text_view::scroll`
+    /// has that): `to` a step up or down (a row of bytes), a screen less a
+    /// step, either end, or a step sideways where a table or bytes are
+    /// wider than the panel.
+    fn inspect_scroll(
+        &mut self,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let state = &mut self.preview.inspection;
+        // A note stays under its reference: the text moving away closes it.
+        if state.notes.open.is_some() {
+            state.notes.close(window);
+        }
+        let to = args["to"].as_str().unwrap_or("");
+        match (to, state.bytes.as_ref()) {
+            ("left", _) => {
+                crate::preview::arrow(&state.sideways, -1, 0);
+            }
+            ("right", _) => {
+                crate::preview::arrow(&state.sideways, 1, 0);
+            }
+            (_, Some(view)) => crate::text_view::scroll(&view.scroll, args),
+            (_, None) => {
+                let list = &state.list;
+                let view = f32::from(list.viewport_bounds().size.height);
+                let step = crate::preview::arrow_step(view);
+                let screen = (view - step).max(step);
+                let by = match to {
+                    "up" => -step,
+                    "down" => step,
+                    "page_up" => -screen,
+                    "page_down" => screen,
+                    "start" | "end" => {
+                        // Past the last item, the layout settles on the end.
+                        let item_ix = if to == "end" { list.item_count() } else { 0 };
+                        list.scroll_to(gpui::ListOffset {
+                            item_ix,
+                            offset_in_item: px(0.),
+                        });
+                        return cx.notify();
+                    }
+                    _ => return,
+                };
+                list.scroll_by(px(by));
+            }
+        }
+        cx.notify();
     }
 
     /// The chapter field, open on the chapter shown.

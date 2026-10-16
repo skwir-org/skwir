@@ -185,6 +185,18 @@ impl WheelTurn {
     }
 }
 
+/// Whether a page shown a page at a time, scrolled to `offset` of `-most`
+/// (its `ScrollHandle`'s), is at its edge toward `toward` (-1 up, 1 down):
+/// an arrow there turns the page. The handle clamps to exactly these
+/// bounds, so they are compared exactly.
+fn at_page_edge(offset: f32, most: f32, toward: i32) -> bool {
+    if toward > 0 {
+        -offset >= most
+    } else {
+        offset >= 0.
+    }
+}
+
 /// A backward turn lands on the new page's bottom edge, but only when the
 /// turn actually changed the page: at page 1 the current page keeps its offset.
 fn lands_at_bottom(turn: i32, before: u32, after: u32) -> bool {
@@ -381,6 +393,53 @@ impl Shell {
             self.preview.reader.scroll.bottom_on_load =
                 lands_at_bottom(turn, before, self.preview.page);
         }
+    }
+
+    /// An arrow over the pages (`Shell::preview_scroll`): whether they
+    /// scroll along its way. Read continuously, the column moves. A page at
+    /// a time, Up or Down at its edge turns it, as the wheel does, and a
+    /// turn back lands on the bottom of the page before; while a turn is on
+    /// its way they wait, so a held key never scrolls the page left behind
+    /// and the next one starts at its top.
+    pub(crate) fn reader_arrow(
+        &mut self,
+        dx: i32,
+        dy: i32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let scroll = &self.preview.reader.scroll;
+        if dx != 0 {
+            let across = if scroll.continuous {
+                &scroll.sideways
+            } else {
+                &scroll.single
+            };
+            return crate::preview::arrow(across, dx, 0);
+        }
+        if scroll.continuous {
+            let view = f32::from(scroll.list.viewport_bounds().size.height);
+            scroll
+                .list
+                .scroll_by(px(crate::preview::arrow_step(view) * dy as f32));
+            return true;
+        }
+        let shown = matches!(
+            &self.preview.content,
+            Some(PreviewContent::Image { document: Some(page), .. }) if page.page == self.preview.page
+        );
+        if !shown {
+            return true;
+        }
+        let (offset, most) = (scroll.single.offset(), scroll.single.max_offset());
+        if !at_page_edge(offset.y.into(), most.height.into(), dy) {
+            crate::preview::arrow(&scroll.single, 0, dy);
+            return true;
+        }
+        let before = self.preview.page;
+        self.preview_page(dy, window, cx);
+        self.preview.reader.scroll.bottom_on_load = lands_at_bottom(dy, before, self.preview.page);
+        true
     }
 
     pub(crate) fn clear_document_pages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -906,6 +965,19 @@ mod tests {
         assert_eq!(wheel.turn(-40., false, false), 0);
         assert_eq!(wheel.turn(-40., false, true), 0);
         assert_eq!(wheel.turn(-40., false, false), 0);
+    }
+
+    #[test]
+    fn an_arrow_turns_a_page_only_at_its_edge() {
+        // A page taller than the panel: 800 to scroll.
+        assert!(at_page_edge(0., 800., -1), "Up at the top");
+        assert!(!at_page_edge(0., 800., 1), "Down at the top scrolls");
+        assert!(!at_page_edge(-400., 800., -1));
+        assert!(!at_page_edge(-400., 800., 1));
+        assert!(at_page_edge(-800., 800., 1), "Down at the bottom");
+        // A page that fits turns either way at once.
+        assert!(at_page_edge(0., 0., 1));
+        assert!(at_page_edge(0., 0., -1));
     }
 
     #[test]
