@@ -47,6 +47,18 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   (`Shell::film_waited`).
 - A track's cover is its thumbnail at once, then the poster's: the same
   picture, sharper.
+- Unasked, a film's own moment is the first keyframe from a tenth of it
+  on (at most 30 s in), only keyframes decoded (`ffmpeg_keyframe`), and
+  its time is the keyframe's: a picture always says the time of the frame
+  it shows. Not the keyframe before: in a short clip with keyframes far
+  apart it was the first frame, black where a film fades in. A moment
+  asked for (a still's step) is decoded exactly. Timestamps stay the
+  file's, from its start (`-copyts -start_at_zero`). The time is read in
+  the filter graph, before the output: a frame the output drops (one
+  with a negative timestamp, as `-noaccurate_seek` left the keyframe
+  before the seek) leaves the time of another. The opt-in test
+  `a_film_s_own_moment_is_a_keyframe_shown_at_its_time` compares the
+  picture with the frame at the time it says.
 - Play and Seek cancel extraction and reject late posters; poster work
   never moves the position or delays playback.
 

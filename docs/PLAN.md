@@ -358,12 +358,16 @@ dates, measurements and what is left.
   frame (recorded at 30 fps on Xvfb: 230, 270 and 900 ms after the
   click, a 1080p H.264 clip, ffmpegthumbnailer's film strip). It now
   shows one frame of its own: the poster, else the player's first
-  frame; the thumbnail only when no frame comes. Measured the same way:
-  an uncached 1080p poster at about 600 ms, "Loading…" from 230 ms; a
-  cached one at 270 ms; without `ffmpeg`, the player's frame at 200 ms;
-  with autoplay, frames playing at 200 ms. Left: the poster is read
-  only once the player has started (about 200 ms), so even a cached
-  one shows "Loading…" for a moment.
+  frame; the thumbnail only when no frame comes. The poster is the first
+  keyframe from a tenth of the film on, only keyframes decoded, told at
+  its own time (`ffmpeg` alone: 440 to 100 ms at 1080p, 970 to 150 ms
+  at 4K). Measured the same way: an uncached poster at about 330 ms at
+  1080p and 470 ms at 4K (600 and 730 before), "Loading…" from 230 ms;
+  a cached one at 200 ms, with no "Loading…"; without `ffmpeg`, the
+  player's frame at 200 ms; with autoplay, frames playing at 200 ms.
+  Left: the poster is read only once the player has started (about
+  200 ms); read alongside, an uncached one would mostly come before
+  "Loading…".
 - **More formats** (2026-09-28):
   - SVG by resvg; OpenEXR and DDS decoded in process; HEIC, AVIF, JPEG
     XL and raw by the desktop's thumbnailer at 1024 px. Code highlighted

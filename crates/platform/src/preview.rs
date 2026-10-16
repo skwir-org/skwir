@@ -248,7 +248,7 @@ impl PreviewProvider for MediaPreviews {
                 tool_stamp(&ffprobe)?,
                 req.seconds,
                 req.max_side,
-                "native-video-v2",
+                "native-video-v3",
             ),
         )?;
         if let Some(preview) = cached(&self.cache, &key, req.max_side) {
@@ -273,23 +273,30 @@ impl PreviewProvider for MediaPreviews {
             .as_str()
             .and_then(|s| s.parse::<f64>().ok())
             .filter(|d| d.is_finite() && *d > 0.0);
+        let asked = req.seconds.filter(|t| t.is_finite());
         let seconds = if self.audio {
             0.
         } else {
-            req.seconds
-                .filter(|t| t.is_finite())
+            asked
                 .unwrap_or_else(|| duration.map_or(0.0, |d| (d * 0.1).min(30.0)))
                 .max(0.0)
                 .min(duration.map_or(f64::MAX, |d| (d - 0.1).max(0.0)))
         };
-        let png = ffmpeg_picture(
-            &ffmpeg,
-            &path,
-            (!self.audio).then_some(seconds),
-            req.max_side.clamp(64, MAX_VIDEO_SIDE),
-            tmp.path(),
-            cancel,
-        )?;
+        let side = req.max_side.clamp(64, MAX_VIDEO_SIDE);
+        let exact = |seconds| ffmpeg_picture(&ffmpeg, &path, seconds, side, tmp.path(), cancel);
+        // A film's own moment, unasked, is the first keyframe from it on:
+        // keyframes alone decoded, not every frame since the last one. A
+        // moment asked for (a step) is that one.
+        let (png, seconds) = if self.audio {
+            (exact(None)?, seconds)
+        } else if asked.is_some() {
+            (exact(Some(seconds))?, seconds)
+        } else {
+            match ffmpeg_keyframe(&ffmpeg, &path, seconds, side, tmp.path(), cancel)? {
+                Some(found) => found,
+                None => (exact(Some(seconds))?, seconds),
+            }
+        };
         anyhow::ensure!(
             fingerprint(req, &path)? == base,
             "file changed during preview"
@@ -730,11 +737,95 @@ pub(crate) fn ffmpeg_picture(
     scratch: &Path,
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<u8>> {
+    let frame = seconds.map_or(Frame::First, Frame::At);
+    ffmpeg_frame(ffmpeg, path, frame, side, scratch, cancel)?;
+    read_artifact(&scratch.join("frame.png"))
+}
+
+/// The first keyframe of `path` from `seconds` on, made as `ffmpeg_picture`
+/// makes a frame, and its time. Not the one before: in a short clip with
+/// keyframes far apart it was the first frame, black where a film fades in.
+/// `None` when there is none from there to the end.
+fn ffmpeg_keyframe(
+    ffmpeg: &Path,
+    path: &Path,
+    seconds: f64,
+    side: u32,
+    scratch: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<(Vec<u8>, f64)>> {
+    ffmpeg_frame(
+        ffmpeg,
+        path,
+        Frame::Keyframe(seconds),
+        side,
+        scratch,
+        cancel,
+    )?;
+    // `frame:0    pts:128000  pts_time:8.333333`, empty when no frame was
+    // decoded.
+    let printed = read_artifact(&scratch.join("frame.txt")).unwrap_or_default();
+    let Some(time) = String::from_utf8_lossy(&printed)
+        .lines()
+        .next()
+        .and_then(|line| {
+            line.split_whitespace()
+                .find_map(|word| word.strip_prefix("pts_time:"))
+        })
+        .and_then(|time| time.parse::<f64>().ok())
+        .filter(|time| time.is_finite())
+    else {
+        return Ok(None);
+    };
+    Ok(Some((
+        read_artifact(&scratch.join("frame.png"))?,
+        time.max(0.0),
+    )))
+}
+
+/// Which frame `ffmpeg_frame` asks `ffmpeg` for.
+#[derive(Clone, Copy)]
+enum Frame {
+    /// The first of the first video stream: a recording's cover.
+    First,
+    /// The one shown at this time, decoded from the keyframe before it.
+    At(f64),
+    /// The first keyframe from this time on, only keyframes decoded. Its
+    /// time from the file's start is printed beside it (`frame.txt`).
+    Keyframe(f64),
+}
+
+/// `frame` of `path`, as `frame.png` in `scratch` (`ffmpeg_picture`).
+fn ffmpeg_frame(
+    ffmpeg: &Path,
+    path: &Path,
+    frame: Frame,
+    side: u32,
+    scratch: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<()> {
     let mut run = sandbox::untrusted(ffmpeg, path, scratch, Otherwise::Run)?;
     let command = &mut run.command;
-    command.args(["-nostdin", "-v", "error", "-threads", "1"]);
-    if let Some(seconds) = seconds {
-        command.arg("-ss").arg(format!("{seconds:.3}"));
+    command.args(["-nostdin", "-y", "-v", "error", "-threads", "1"]);
+    let mut filters = String::new();
+    match frame {
+        Frame::First => {}
+        Frame::At(seconds) => {
+            command.arg("-ss").arg(format!("{seconds:.3}"));
+        }
+        Frame::Keyframe(seconds) => {
+            // Only keyframes are decoded, from the one before `seconds`;
+            // those before it are dropped. Timestamps stay the file's,
+            // from its start, so the time printed is the frame's own.
+            command
+                .args(["-copyts", "-start_at_zero", "-skip_frame", "nokey", "-ss"])
+                .arg(format!("{seconds:.3}"));
+            // The metadata filter prints only a frame that carries some.
+            // The file is named from the working folder, `work`.
+            filters.push_str(
+                "metadata=mode=add:key=skwir:value=1,metadata=mode=print:file=frame.txt,",
+            );
+        }
     }
     command
         .args(["-protocol_whitelist", "file", "-i"])
@@ -751,12 +842,12 @@ pub(crate) fn ffmpeg_picture(
             "-vf",
         ])
         .arg(format!(
-            "scale='min(iw,{side})':'min(ih,{side})':force_original_aspect_ratio=decrease,setsar=1"
+            "{filters}scale='min(iw,{side})':'min(ih,{side})':force_original_aspect_ratio=decrease,setsar=1"
         ))
         .args(["-threads", "1", "-compression_level", "1"])
         .arg(run.work.join("frame.png"));
     process::run(command, cancel, RENDER_TIMEOUT)?;
-    read_artifact(&scratch.join("frame.png"))
+    Ok(())
 }
 
 /// One page of `pdf` rendered by Poppler's `pdftoppm` (`renderer`), its
@@ -1387,6 +1478,53 @@ mod tests {
             backend.render(&req, &token).unwrap().image.rgba,
             later.image.rgba
         );
+    }
+
+    #[test]
+    #[ignore = "requires installed FFmpeg and ffprobe; run explicitly for preview changes"]
+    fn a_film_s_own_moment_is_a_keyframe_shown_at_its_time() {
+        let tmp = tempfile::tempdir().unwrap();
+        let token = CancelToken::new();
+        let ffmpeg = process::required("ffmpeg").unwrap();
+        let film = tmp.path().join("Synthetic d'Example film.mkv");
+        // The same frames where time does not start at 0 and the seek
+        // has no index to land on.
+        let stream = tmp.path().join("Synthetic d'Example film.ts");
+        for path in [&film, &stream] {
+            // 25 s, a keyframe every 2 s: its own moment, 10 %, is 2.5 s.
+            process::run(
+                Command::new(&ffmpeg)
+                    .args(["-nostdin", "-v", "error", "-f", "lavfi", "-i"])
+                    .args(["testsrc2=size=160x90:rate=10", "-t", "25"])
+                    .args(["-c:v", "mpeg4", "-g", "20"])
+                    .arg(path),
+                &token,
+                RENDER_TIMEOUT,
+            )
+            .unwrap();
+        }
+        let backend = MediaPreviews::new(Cache::new(tmp.path()).namespace("preview"));
+        for (path, mime) in [(&film, "video/x-matroska"), (&stream, "video/mp2t")] {
+            let mut req = request(path);
+            req.mime = Some(mime.into());
+            let own = backend.render(&req, &token).unwrap();
+            let PreviewInfo::Video { seconds, .. } = own.info else {
+                panic!("not a film's picture: {:?}", own.info);
+            };
+            assert!(
+                (seconds - 4.0).abs() < 0.001,
+                "{}: the first keyframe from 2.5 s, said {seconds}",
+                path.display()
+            );
+            req.seconds = Some(seconds);
+            let there = backend.render(&req, &token).unwrap();
+            assert_eq!(
+                own.image.rgba,
+                there.image.rgba,
+                "{}: the frame at the time it says, {seconds}",
+                path.display()
+            );
+        }
     }
 
     #[test]
