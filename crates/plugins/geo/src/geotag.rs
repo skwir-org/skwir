@@ -85,7 +85,7 @@ pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
             "geo.remove_location",
             "kind:image".to_owned(),
             561,
-            "close",
+            "location-minus",
         ),
     ] {
         app.registry.menus.add(

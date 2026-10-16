@@ -37,6 +37,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "usage",
         "layers",
         "map",
+        "location-minus",
         "spread",
         "grip",
         "calendar",
