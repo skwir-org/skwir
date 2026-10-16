@@ -352,6 +352,18 @@ dates, measurements and what is left.
   loader (its `font-kit` broke the workspace build).
 - **One plugin for audio and video** (2026-09-25, ADR-016):
   `preview-audio` folded into `media`.
+- **One picture for a film** (2026-10-16, ADR-008 amended): a film
+  selected showed its desktop thumbnail full size, then the same
+  thumbnail at 256 px once its player opened, then its poster, another
+  frame (recorded at 30 fps on Xvfb: 230, 270 and 900 ms after the
+  click, a 1080p H.264 clip, ffmpegthumbnailer's film strip). It now
+  shows one frame of its own: the poster, else the player's first
+  frame; the thumbnail only when no frame comes. Measured the same way:
+  an uncached 1080p poster at about 600 ms, "Loading…" from 230 ms; a
+  cached one at 270 ms; without `ffmpeg`, the player's frame at 200 ms;
+  with autoplay, frames playing at 200 ms. Left: the poster is read
+  only once the player has started (about 200 ms), so even a cached
+  one shows "Loading…" for a moment.
 - **More formats** (2026-09-28):
   - SVG by resvg; OpenEXR and DDS decoded in process; HEIC, AVIF, JPEG
     XL and raw by the desktop's thumbnailer at 1024 px. Code highlighted

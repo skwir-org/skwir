@@ -465,8 +465,10 @@ is still to come are in `docs/preview-frame.md`.
   header), so only sharpness changes; a document's where the reader
   draws page one; anything else at its proportions, as large as a
   preview may be. A preview replaces it; a file with no picture of its
-  own (no preview for its type, a film until its player has a frame)
-  keeps it.
+  own (no preview for its type) keeps it. A film's never stands in: it
+  is another frame than the one the panel shows, so the wait would end
+  on a different picture. It is the film's picture only when no frame
+  comes (media.md, Posters).
 - **A changed file is read again in place.** Pane, entry, path and
   providers identify a preview (`PreviewKey`); a change in any is another
   preview, and nothing of the last survives. The file's date, size and

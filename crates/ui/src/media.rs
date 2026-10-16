@@ -7,12 +7,20 @@ use gpui::{
 use skwir_core::media::{Control, Frame, MediaSession, Playback};
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 
+/// What stands for a film or a track before its player's frames do.
 #[derive(Default)]
 enum Poster {
+    /// The poster is on its way. A film's first frame waits aside for it
+    /// (`initial_frame`): one picture, then another, flickers.
     #[default]
     Waiting,
-    Thumbnail,
+    /// A still stands for it (the poster, a track's cover): the player's
+    /// frames wait for Play or a seek.
+    Still,
+    /// No still yet: the player's frames are the picture, the one waiting
+    /// aside first. A track's cover is still welcome.
     Unavailable,
+    /// Played, sought or shown live: frames only, a late poster refused.
     Dismissed,
 }
 
@@ -26,9 +34,22 @@ impl MediaState {
         if self.session.is_none() || matches!(self.poster, Poster::Dismissed) {
             return false;
         }
-        self.poster = Poster::Thumbnail;
+        self.poster = Poster::Still;
         self.initial_frame = None;
         true
+    }
+
+    /// No poster comes for the film (no `ffmpeg`, or it failed): its
+    /// player's frames are its picture.
+    pub(crate) fn without_poster(&mut self) {
+        if matches!(self.poster, Poster::Waiting) {
+            self.poster = Poster::Unavailable;
+        }
+    }
+
+    /// Whether the film's poster may still come.
+    pub(crate) fn poster_awaited(&self) -> bool {
+        matches!(self.poster, Poster::Waiting)
     }
 }
 
@@ -332,6 +353,26 @@ impl Shell {
         });
     }
 
+    /// A film's picture is shown, or none will be: the panel stops
+    /// waiting. While a player is open the panel waits for nothing else.
+    pub(crate) fn film_waited(&mut self, cx: &mut Context<Self>) {
+        if self.preview.phase == crate::preview::PreviewPhase::Loading {
+            self.preview.phase = crate::preview::PreviewPhase::Idle;
+            self.sync_busy(cx);
+        }
+    }
+
+    /// No frame of the film comes: no poster, and its player ended before
+    /// its first. The desktop's thumbnail, kept aside, is its picture.
+    pub(crate) fn film_without_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview.content.is_none()
+            && let Some(thumbnail) = self.preview.placeholder.take()
+        {
+            self.replace_preview_content(Some(thumbnail), window, cx);
+        }
+        self.film_waited(cx);
+    }
+
     pub fn sync_media(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let MediaState {
             session, recycled, ..
@@ -355,10 +396,19 @@ impl Shell {
                 && self.track_neighbours().1;
         }
         let mut frame = update.frame.filter(|_| !hand_over);
-        if !matches!(self.preview.media.poster, Poster::Dismissed) {
-            if matches!(self.preview.media.poster, Poster::Waiting) {
+        let audio = self.media_is_audio();
+        match self.preview.media.poster {
+            // A film's poster on its way: the player's first frame waits
+            // aside, its picture only if no poster comes.
+            Poster::Waiting if !audio => {
+                if frame.is_some() {
+                    self.preview.media.initial_frame = frame.take();
+                }
+            }
+            // A track's cover: the desktop's thumbnail, until the poster's.
+            Poster::Waiting => {
                 use skwir_core::thumbs::ThumbState;
-                match self.video_thumbnail() {
+                match self.cover_thumbnail() {
                     ThumbState::Ready(image) => {
                         if let Some(render) = crate::thumbs::to_render_image(&image) {
                             self.replace_preview_content(
@@ -370,19 +420,17 @@ impl Shell {
                                     document: None,
                                     facts: Vec::new(),
                                     pixels: crate::preview::Pixels::Own,
-                                    // A film's.
                                     ink: None,
                                 }),
                                 window,
                                 cx,
                             );
                         }
-                        self.preview.media.poster = Poster::Thumbnail;
+                        self.preview.media.poster = Poster::Still;
                         self.preview.media.initial_frame = None;
                     }
                     ThumbState::Unavailable => {
                         self.preview.media.poster = Poster::Unavailable;
-                        frame = frame.or_else(|| self.preview.media.initial_frame.take());
                     }
                     ThumbState::Pending => {
                         if frame.is_some() {
@@ -390,12 +438,26 @@ impl Shell {
                         }
                     }
                 }
+                if !matches!(self.preview.media.poster, Poster::Unavailable) {
+                    frame = None;
+                }
             }
-            if !matches!(self.preview.media.poster, Poster::Unavailable) {
-                frame = None;
-            }
+            Poster::Still => frame = None,
+            Poster::Unavailable | Poster::Dismissed => {}
         }
-        if let Some((image, width, height)) = frame.and_then(frame_image) {
+        if matches!(
+            self.preview.media.poster,
+            Poster::Unavailable | Poster::Dismissed
+        ) {
+            frame = frame.or_else(|| self.preview.media.initial_frame.take());
+        }
+        let picture = frame.and_then(frame_image);
+        // The film's picture came, or a recording turned out to have none:
+        // the panel stops waiting (a poster ends the wait as it arrives).
+        if picture.is_some() || audio {
+            self.film_waited(cx);
+        }
+        if let Some((image, width, height)) = picture {
             // The frame it replaces goes back to the session once nothing
             // draws it.
             if let Some(PreviewContent::Image {
@@ -454,6 +516,9 @@ impl Shell {
                     Some(peek) => window.focus(peek),
                     None => window.focus(&self.ui().focus),
                 }
+            }
+            if !self.preview.media.poster_awaited() {
+                self.film_without_frame(window, cx);
             }
             self.set_status_about(error, "media.backend", cx);
         }

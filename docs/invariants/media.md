@@ -34,9 +34,21 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 
 ## Posters
 
-- Show the shared thumbnail at once, then an optional native-resolution
-  poster. Play and Seek cancel extraction and reject late posters; poster
-  work never moves the position or delays playback.
+- A film shows one picture before it plays, a frame of its own: the
+  native-resolution poster, or, when none comes (`Media::NoPoster`, or
+  the request reading it was cancelled), the player's first frame, held
+  aside until then. Never one picture then another: the second is a
+  flicker.
+- A film's desktop thumbnail is a frame its thumbnailer chose (another
+  moment, often a film strip drawn on it), so it never stands in for
+  the wait (`preview::placeholder`). It is the picture only when no
+  frame comes (`Shell::film_without_frame`). Until a picture comes the
+  panel is loading; the frame or the poster ends the wait
+  (`Shell::film_waited`).
+- A track's cover is its thumbnail at once, then the poster's: the same
+  picture, sharper.
+- Play and Seek cancel extraction and reject late posters; poster work
+  never moves the position or delays playback.
 
 ## Generations, seeking and errors
 

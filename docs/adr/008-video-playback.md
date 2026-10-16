@@ -1,7 +1,8 @@
 # ADR-008: Optional GStreamer video playback
 
 Status: accepted, 2026-09-19. Amended by ADR-016 (one plugin for audio and
-video). Area rules: `docs/invariants/media.md`.
+video) and 2026-10-16 (no thumbnail before a film's frame). Area rules:
+`docs/invariants/media.md`.
 
 ## Context
 
@@ -33,7 +34,10 @@ cross-process mappings.
   - Playback output at most 1920 px per axis, square pixels.
   - The poster comes from installed FFmpeg at source resolution (at most
     8192 px per side): cancellable, optional, cached, never delaying controls
-    or moving the clock; the desktop thumbnail shows meanwhile and on failure.
+    or moving the clock. Without one, the player's first frame is the
+    picture; the desktop thumbnail shows only when no frame comes (shown
+    meanwhile until 2026-10-16, it was a second picture the frame
+    replaced, a flicker).
   - Software decoders at most 4 threads where `max-threads` exists (no
     reference-frame pools that grow with the CPU count); conversion and
     scaling at most 4 where supported.

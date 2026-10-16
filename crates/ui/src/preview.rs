@@ -83,6 +83,9 @@ enum Media {
     /// The file is the pinned track: the panel shows the session that plays
     /// it rather than open a second one.
     Pinned,
+    /// No poster comes for the player just opened: its frames are the
+    /// film's picture.
+    NoPoster,
 }
 
 /// A picture read ahead for the whole screen's next step (`read_ahead`):
@@ -1895,14 +1898,31 @@ impl Shell {
             cx.notify();
             return;
         }
+        // A film's player has no poster to wait for: the frame it holds
+        // aside, or its next, is the picture (`sync_media`). A track's
+        // cover is the desktop's thumbnail meanwhile, as it was.
+        if matches!(result.media, Some(Media::NoPoster)) {
+            if !self.media_is_audio() {
+                self.preview.media.without_poster();
+                if self.preview.media.session.is_none() {
+                    self.film_without_frame(window, cx);
+                }
+            }
+            return;
+        }
         // Whether what is shown may send its links to the desktop: not
         // what a plugin from outside made without the network.
         self.preview.closed_links = result.closed_links.take();
         self.preview.picture_source = result.picture_source.take();
+        // A film's picture is a frame of its own, still on its way when its
+        // player opens: its poster, else the player's first frame. Its
+        // thumbnail, a frame the desktop's thumbnailer chose, stays aside,
+        // the picture only if no frame comes (`film_without_frame`).
+        let film = matches!(result.media, Some(Media::Opened(_))) && !self.media_is_audio();
         // A file with no picture of its own (a type without a preview, a
-        // film until its first frame) keeps its thumbnail as its picture;
-        // any other preview replaces it.
-        if let Some(placeholder) = self.preview.placeholder.take() {
+        // track before its cover) keeps its thumbnail as its picture; any
+        // other preview replaces it.
+        if !film && let Some(placeholder) = self.preview.placeholder.take() {
             if matches!(result.content, PreviewContent::Generic) && result.complete {
                 result.content = placeholder;
             } else if let PreviewContent::Image { image, .. } = placeholder {
@@ -1928,7 +1948,7 @@ impl Shell {
                     self.preview.phase = PreviewPhase::Queued;
                     return;
                 }
-                Some(Media::Pinned) | None => {}
+                Some(Media::Pinned | Media::NoPoster) | None => {}
             }
             if let Some(session) = result.session {
                 self.reader_opened(session, window, cx);
@@ -1970,8 +1990,9 @@ impl Shell {
             self.set_status(error.clone(), true, cx);
             return;
         }
-        // Opening a player must not replace its thumbnail with a generic
-        // card while the initial paused pipeline is warming up.
+        // Opening a player replaces nothing with a generic card while its
+        // paused pipeline warms up; its poster stands for it until Play or
+        // a seek.
         let poster = matches!(
             &result.content,
             PreviewContent::Image {
@@ -1979,13 +2000,14 @@ impl Shell {
                 ..
             }
         ) && self.preview.media.accept_poster();
-        // A film's thumbnail stands for it until its player has a frame.
+        // A track's thumbnail stands for its cover until the poster's.
         let thumbnail = self.preview.content.is_none()
             && matches!(result.content, PreviewContent::Image { detail: None, .. });
         if self.preview.media.session.is_none() || poster || thumbnail {
             self.replace_preview_content(Some(result.content), window, cx);
         }
-        self.preview.phase = if result.complete {
+        // The film's picture is still to come (`Shell::film_waited`).
+        self.preview.phase = if result.complete && !film {
             PreviewPhase::Idle
         } else {
             PreviewPhase::Loading
@@ -2400,6 +2422,8 @@ impl Shell {
                                 ink: crate::backdrop::ink(&preview.image.rgba),
                             };
                             send(content, true, None, None);
+                        } else {
+                            send(PreviewContent::Generic, true, None, Some(Media::NoPoster));
                         }
                         return;
                     }
@@ -2727,6 +2751,11 @@ impl Shell {
     pub(crate) fn cancel_pending_preview(&mut self) {
         if let Some(cancel) = self.preview.cancel.take() {
             cancel.cancel();
+        }
+        // A film's poster goes with the request that reads it: its open
+        // player's frames are its picture, never a wait for nothing.
+        if self.preview.media.session.is_some() && !self.media_is_audio() {
+            self.preview.media.without_poster();
         }
         self.preview.generation = self.preview.generation.wrapping_add(1);
         // Whatever asks next says for itself whether it is a refresh.
@@ -3877,7 +3906,9 @@ impl Shell {
         cx.notify();
     }
 
-    pub fn video_thumbnail(&self) -> skwir_core::thumbs::ThumbState {
+    /// The desktop's thumbnail of the track playing: its cover, until the
+    /// poster's.
+    pub fn cover_thumbnail(&self) -> skwir_core::thumbs::ThumbState {
         use skwir_core::thumbs::{ThumbRequest, ThumbSize, ThumbState};
         let Some(content) = self
             .preview
@@ -4250,13 +4281,14 @@ pub(crate) fn on_paper(shell: &Shell) -> bool {
 }
 
 /// The thumbnail standing in for the preview, once the wait has lasted
-/// (`BUSY_AFTER`) and while nothing else is shown.
+/// (`BUSY_AFTER`) and while nothing else is shown. Never a film's: it is
+/// the frame its thumbnailer chose, not the one the panel will show, so
+/// the wait ends on another picture.
 fn placeholder(shell: &Shell) -> Option<&PreviewContent> {
     let preview = &shell.preview;
-    preview
-        .placeholder
-        .as_ref()
-        .filter(|_| preview.content.is_none() && shell.preview_busy())
+    preview.placeholder.as_ref().filter(|_| {
+        preview.content.is_none() && shell.preview_busy() && shell.media_kind() != Some("video/")
+    })
 }
 
 pub(crate) fn content(
