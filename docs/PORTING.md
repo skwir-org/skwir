@@ -367,6 +367,12 @@ Left:
   0023: Wayland's idle inhibitor and X11's screen saver, tried on Linux;
   Windows' display requirement, compiled only; nothing on a Mac yet (an
   `IOPMAssertion`).
+- **Files on the clipboard** (ADR-062) are gpui patch 0024, Wayland's and
+  X11's (`ui/clipboard.rs` behind `cfg(target_os = "linux")`). On macOS
+  (`public.file-url` items; no cut, Finder moves at paste time) and Windows
+  (`CF_HDROP` and "Preferred DropEffect"; gpui's `CF_HDROP` read joins the
+  names with no separator) Skwir's own clipboard stays apart from the
+  system's, and a paste with nothing in it says there is nothing to paste.
 - **Drag and drop**: `ui/dnd.rs` outgoing drag is gpui patch 0001,
   Wayland's. A drag's copy modifier is Ctrl; a Mac's is Option (step J, not
   done).

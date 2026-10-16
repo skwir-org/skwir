@@ -47,7 +47,9 @@ use x11rb::{
     wrapper::ConnectionExt as _,
 };
 
-use crate::{ClipboardItem, Image, ImageFormat, hash};
+use crate::{
+    ClipboardFiles, ClipboardItem, Image, ImageFormat, hash, platform::linux::clipboard_files,
+};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -77,7 +79,11 @@ x11rb::atom_manager! {
         TEXT_MIME_UNKNOWN: b"text/plain",
 
         // HTML: b"text/html",
-        // URI_LIST: b"text/uri-list",
+        // Files, as Linux file managers put them there (`clipboard_files`).
+        URI_LIST: b"text/uri-list",
+        GNOME_COPIED: b"x-special/gnome-copied-files",
+        MATE_COPIED: b"x-special/mate-copied-files",
+        KDE_CUT: b"application/x-kde-cutselection",
 
         PNG__MIME: ImageFormat::mime_type(ImageFormat::Png ).as_bytes(),
         JPEG_MIME: ImageFormat::mime_type(ImageFormat::Jpeg).as_bytes(),
@@ -157,6 +163,9 @@ struct Inner {
 
     /// Incremental transfers under way, touched only by the serving thread.
     transfers: Mutex<Vec<Transfer>>,
+
+    /// Called on the serving thread when another client takes the CLIPBOARD.
+    on_clipboard_cleared: Mutex<Option<Box<dyn Fn() + Send>>>,
 }
 
 impl XContext {
@@ -245,6 +254,7 @@ impl Inner {
             handover_cv: Condvar::new(),
             serve_stopped: AtomicBool::new(false),
             transfers: Mutex::new(Vec::new()),
+            on_clipboard_cleared: Mutex::new(None),
         })
     }
 
@@ -716,6 +726,7 @@ impl Inner {
                         // add all equivalent formats to the supported targets
                         targets.push(self.atoms.UTF8_MIME_0);
                         targets.push(self.atoms.UTF8_MIME_1);
+                        targets.push(self.atoms.TEXT_MIME_UNKNOWN);
                     }
                 }
             }
@@ -735,8 +746,17 @@ impl Inner {
         } else {
             log::trace!("Handling request for (probably) the clipboard contents.");
             let data = self.selection_of(selection).data.read();
+            // The text's other names, which TARGETS lists beside UTF8_STRING.
+            let utf8_alias = [
+                self.atoms.UTF8_MIME_0,
+                self.atoms.UTF8_MIME_1,
+                self.atoms.TEXT_MIME_UNKNOWN,
+            ]
+            .contains(&event.target);
             if let Some(data_list) = &*data {
-                success = match data_list.iter().find(|d| d.format == event.target) {
+                success = match data_list.iter().find(|d| {
+                    d.format == event.target || (utf8_alias && d.format == self.atoms.UTF8_STRING)
+                }) {
                     // More than one request carries: in pieces (INCR).
                     Some(data) if data.bytes.len() > self.max_property_bytes() => {
                         self.start_transfer(&event, data)?;
@@ -983,6 +1003,11 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
                     let selection = context.selection_of(selection);
                     let mut data_guard = selection.data.write();
                     *data_guard = None;
+                    if event.selection == context.atoms.CLIPBOARD
+                        && let Some(cleared) = &*context.on_clipboard_cleared.lock()
+                    {
+                        cleared();
+                    }
 
                     // It is important that this mutex is locked at the time of calling
                     // `notify_all` to prevent notifications getting lost in case the sleeping
@@ -1209,6 +1234,88 @@ impl Clipboard {
 
     pub fn is_owner(&self, selection: ClipboardKind) -> bool {
         self.inner.is_owner(selection).unwrap_or(false)
+    }
+
+    /// Files on the clipboard, as Linux file managers put them there, with
+    /// `text` for the clients that take text.
+    pub(crate) fn set_files(&self, files: &ClipboardFiles, text: String) -> Result<()> {
+        let atoms = &self.inner.atoms;
+        let mut data = vec![ClipboardData {
+            bytes: text.into_bytes(),
+            format: atoms.UTF8_STRING,
+        }];
+        for (format, mime_type) in [
+            (atoms.GNOME_COPIED, clipboard_files::GNOME_COPIED_FILES),
+            (atoms.MATE_COPIED, clipboard_files::MATE_COPIED_FILES),
+            (atoms.URI_LIST, clipboard_files::URI_LIST),
+            (atoms.KDE_CUT, clipboard_files::KDE_CUT_SELECTION),
+        ] {
+            if let Some(bytes) = clipboard_files::bytes_for(files, mime_type) {
+                data.push(ClipboardData { bytes, format });
+            }
+        }
+        self.inner
+            .write(data, ClipboardKind::Clipboard, WaitConfig::None)
+    }
+
+    /// Give up the CLIPBOARD, emptying it.
+    pub(crate) fn clear(&self) -> Result<()> {
+        let inner = &self.inner;
+        *inner.clipboard.data.write() = None;
+        inner
+            .server
+            .conn
+            .set_selection_owner(x11rb::NONE, inner.atoms.CLIPBOARD, Time::CURRENT_TIME)
+            .map_err(into_unknown)?;
+        inner.server.conn.flush().map_err(into_unknown)?;
+        Ok(())
+    }
+
+    /// Call `cleared` on the serving thread when another client takes the
+    /// CLIPBOARD.
+    pub(crate) fn on_clipboard_cleared(&self, cleared: Box<dyn Fn() + Send>) {
+        *self.inner.on_clipboard_cleared.lock() = Some(cleared);
+    }
+
+    /// What reads the files on the CLIPBOARD, on any thread.
+    pub(crate) fn files_reader(&self) -> FilesReader {
+        FilesReader(Arc::clone(&self.inner))
+    }
+}
+
+/// Reads the files another client put on the CLIPBOARD: GTK's (or MATE's)
+/// list, else the URI list with KDE's flag. Each read waits on the X server
+/// (up to `LONG_TIMEOUT_DUR` a format): never on the main thread.
+pub(crate) struct FilesReader(Arc<Inner>);
+
+impl FilesReader {
+    pub(crate) fn read(self) -> Option<ClipboardFiles> {
+        let inner = &self.0;
+        let atoms = &inner.atoms;
+        let selection = ClipboardKind::Clipboard;
+        let one = |format: Atom| {
+            inner
+                .read(&[format], selection)
+                .ok()
+                .filter(|data| data.format == format)
+                .map(|data| data.bytes)
+        };
+        let first = inner
+            .read(
+                &[atoms.GNOME_COPIED, atoms.MATE_COPIED, atoms.URI_LIST],
+                selection,
+            )
+            .ok()?;
+        if first.format == atoms.URI_LIST {
+            let kde_cut = one(atoms.KDE_CUT);
+            return clipboard_files::files_from(None, Some(&first.bytes), kde_cut.as_deref());
+        }
+        let files = clipboard_files::files_from(Some(&first.bytes), None, None)?;
+        if files.others.is_empty() {
+            return Some(files);
+        }
+        let uri_list = one(atoms.URI_LIST);
+        clipboard_files::files_from(Some(&first.bytes), uri_list.as_deref(), None)
     }
 }
 

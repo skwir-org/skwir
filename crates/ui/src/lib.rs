@@ -21,6 +21,7 @@ mod backdrop;
 pub mod bytes_view;
 pub mod choose;
 pub mod clashes;
+mod clipboard;
 mod code_preview;
 pub mod commands;
 pub mod controls;

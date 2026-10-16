@@ -46,4 +46,18 @@ impl SerialTracker {
             .map(|serial_data| serial_data.serial)
             .unwrap_or(0)
     }
+
+    /// The serial of the latest key or button press: what a selection set
+    /// now answers. A Copy chosen with the pointer is no key press, and a
+    /// key press older than another client's selection may be refused.
+    pub fn latest_input(&self) -> u32 {
+        let key = self.get(SerialKind::KeyPress);
+        let press = self.get(SerialKind::MousePress);
+        // Serials wrap: the later is less than half the range ahead.
+        if press.wrapping_sub(key) < u32::MAX / 2 {
+            press
+        } else {
+            key
+        }
+    }
 }

@@ -369,6 +369,21 @@ pub(crate) enum PendingActivation {
 #[derive(Clone)]
 pub struct WaylandClientStatePtr(Weak<RefCell<WaylandClientState>>);
 
+/// Tell the application the files it put on the clipboard are no longer
+/// there. Called with the client's state not borrowed.
+fn clipboard_files_gone(client: &Rc<RefCell<WaylandClientState>>) {
+    let callback = client
+        .borrow_mut()
+        .common
+        .callbacks
+        .clipboard_files_gone
+        .take();
+    if let Some(mut callback) = callback {
+        callback();
+        client.borrow_mut().common.callbacks.clipboard_files_gone = Some(callback);
+    }
+}
+
 impl WaylandClientStatePtr {
     /// Start a compositor drag of `paths` out of `surface`. Needs an implicit
     /// pointer grab (a button held): the serial is the last mouse press.
@@ -1014,14 +1029,69 @@ impl LinuxClient for WaylandClient {
             return;
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
-            state.clipboard.set(item);
-            let serial = state.serial_tracker.get(SerialKind::KeyPress);
+            let gone = state.clipboard.set(item);
+            let serial = state.serial_tracker.latest_input();
             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
             for mime_type in TEXT_MIME_TYPES {
                 data_source.offer(mime_type.to_string());
             }
             data_source.offer(state.clipboard.self_mime());
             data_device.set_selection(Some(&data_source), serial);
+            drop(state);
+            if gone {
+                clipboard_files_gone(&self.0);
+            }
+        }
+    }
+
+    fn write_files_to_clipboard(&self, files: crate::ClipboardFiles, text: String) {
+        let mut state = self.0.borrow_mut();
+        let (Some(data_device_manager), Some(data_device)) = (
+            state.globals.data_device_manager.clone(),
+            state.data_device.clone(),
+        ) else {
+            return;
+        };
+        if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
+            let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
+            for mime_type in crate::platform::linux::clipboard_files::mime_types(&files) {
+                data_source.offer(mime_type.to_string());
+            }
+            for mime_type in TEXT_MIME_TYPES {
+                data_source.offer(mime_type.to_string());
+            }
+            data_source.offer(state.clipboard.self_mime());
+            state.clipboard.set_files(files, text);
+            let serial = state.serial_tracker.latest_input();
+            data_device.set_selection(Some(&data_source), serial);
+        }
+    }
+
+    fn read_files_from_clipboard(
+        &self,
+    ) -> futures::channel::oneshot::Receiver<Option<crate::ClipboardFiles>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let state = self.0.borrow();
+        let request = state.clipboard.request_files();
+        state
+            .common
+            .background_executor
+            .spawn(async move {
+                tx.send(request.read()).ok();
+            })
+            .detach();
+        rx
+    }
+
+    fn clear_clipboard_files(&self) {
+        let mut state = self.0.borrow_mut();
+        let Some(data_device) = state.data_device.clone() else {
+            return;
+        };
+        if state.clipboard.files().is_some() {
+            state.clipboard.clear();
+            let serial = state.serial_tracker.latest_input();
+            data_device.set_selection(None, serial);
         }
     }
 
@@ -2068,15 +2138,19 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 }
             }
             wl_data_device::Event::Selection { id: data_offer } => {
-                if let Some(offer) = data_offer {
+                let gone = if let Some(offer) = data_offer {
                     let offer = state
                         .data_offers
                         .iter()
                         .find(|wrapper| wrapper.inner.id() == offer.id());
                     let offer = offer.cloned();
-                    state.clipboard.set_offer(offer);
+                    state.clipboard.set_offer(offer)
                 } else {
-                    state.clipboard.set_offer(None);
+                    state.clipboard.set_offer(None)
+                };
+                drop(state);
+                if gone {
+                    clipboard_files_gone(&client);
                 }
             }
 

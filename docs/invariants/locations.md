@@ -19,7 +19,8 @@ the others with no UI branch.
 | what gestures mean there | `LocationProvider::verbs` |
 | whether notes keep a rating | `NoteStores::held` |
 | a modified click on a place | `Place::clicks` |
-| what a command put on the clipboard | `Outcome::Clipboard` |
+| what a command put on the clipboard | `Outcome::Clipboard`, `Outcome::Files` |
+| what the clipboard holds, for a command | `WantsClipboard`, answered as `clipboard` |
 | a footer count | `tally::Tally` |
 | which preview shows bytes | `PreviewProvider::shows_bytes` |
 | F5 in a view; its own empty state | `PaneView::refresh`, `draws_empty` |

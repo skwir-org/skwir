@@ -35,13 +35,14 @@ use util::{ResultExt, debug_panic};
 use crate::InspectorElementRegistry;
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
-    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
-    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
-    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    AssetSource, BackgroundExecutor, Bounds, ClipboardFiles, ClipboardItem, CursorStyle,
+    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
+    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, Point, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render,
+    RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -570,6 +571,7 @@ pub struct App {
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
+    pub(crate) clipboard_files_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -650,6 +652,7 @@ impl App {
                 keystroke_observers: SubscriberSet::new(),
                 keystroke_interceptors: SubscriberSet::new(),
                 keyboard_layout_observers: SubscriberSet::new(),
+                clipboard_files_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 restart_observers: SubscriberSet::new(),
@@ -684,6 +687,26 @@ impl App {
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
                 }
+            }
+        }));
+
+        // Called by the platform as it learns it, maybe within an update:
+        // the observers run once that is done.
+        platform.on_clipboard_files_gone(Box::new({
+            let app = Rc::downgrade(&app);
+            let executor = platform.foreground_executor();
+            move || {
+                let app = app.clone();
+                executor
+                    .spawn(async move {
+                        if let Some(app) = app.upgrade() {
+                            let cx = &mut app.borrow_mut();
+                            cx.clipboard_files_observers
+                                .clone()
+                                .retain(&(), move |callback| (callback)(cx));
+                        }
+                    })
+                    .detach();
             }
         }));
 
@@ -1056,6 +1079,46 @@ impl App {
     /// Reads data from the platform clipboard.
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.platform.read_from_clipboard()
+    }
+
+    /// Puts files on the platform clipboard as file managers do, copied or
+    /// cut, with `text` for the applications that take text. Where
+    /// unsupported, only the text.
+    pub fn write_files_to_clipboard(&self, files: ClipboardFiles, text: String) {
+        self.platform.write_files_to_clipboard(files, text)
+    }
+
+    /// The files on the platform clipboard, read off the main thread: `None`
+    /// when it holds none, or where unsupported.
+    pub fn read_files_from_clipboard(
+        &self,
+    ) -> impl Future<Output = Option<ClipboardFiles>> + use<> {
+        let files = self.platform.read_files_from_clipboard();
+        async move { files.await.ok().flatten() }
+    }
+
+    /// Empties the platform clipboard if it still holds the files this
+    /// application put there.
+    pub fn clear_clipboard_files(&self) {
+        self.platform.clear_clipboard_files()
+    }
+
+    /// Invokes a handler once the files this application put on the
+    /// clipboard are no longer there: another application copied
+    /// something, or this one did. Never where unsupported.
+    pub fn on_clipboard_files_gone<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        let (subscription, activate) = self.clipboard_files_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
     }
 
     /// Writes credentials to the platform keychain.

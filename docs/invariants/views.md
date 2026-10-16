@@ -38,6 +38,19 @@ around the views is in [shell.md](shell.md).
 
 ## What waits for a paste
 
+- The clipboard is the system's (ADR-062): Copy and Cut hand their files
+  to the window (`Outcome::Files`), which puts them there as Linux file
+  managers do (both families: GNOME's list, MATE's, the URI list and
+  KDE's cut flag, with the paths as text). Skwir's own clipboard keeps
+  them by identity while they are there; once anything else is copied,
+  here or in another application, the window forgets them
+  (`on_clipboard_files_gone`, `clipboard_clear`), and once Skwir's own is
+  empty (a cut all pasted) the window empties the system's of them.
+- A paste with nothing in Skwir's own answers `WantsClipboard`; the window
+  reads the system's off the UI thread, reads each file from the disk on a
+  worker, and runs the paste again with them as `clipboard`, into the pane
+  it was asked in. Only `file://` URIs are files (ADR-021); text is never
+  taken for paths. An agent's paste never reads the user's clipboard.
 - The clipboard's owner publishes it in `App::pending` (each entry by
   file and name, and whether pasting moves it); the shell snapshots it
   once per frame.

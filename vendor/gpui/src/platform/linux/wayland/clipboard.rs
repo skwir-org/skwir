@@ -11,8 +11,8 @@ use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
 use crate::{
-    ClipboardEntry, ClipboardItem, Image, ImageFormat, WaylandClientStatePtr, hash,
-    platform::linux::platform::read_fd,
+    ClipboardEntry, ClipboardFiles, ClipboardItem, Image, ImageFormat, WaylandClientStatePtr, hash,
+    platform::linux::{clipboard_files, platform::read_fd},
 };
 
 /// Text mime types that we'll offer to other programs.
@@ -31,6 +31,9 @@ pub(crate) struct Clipboard {
     // Internal clipboard
     contents: Option<ClipboardItem>,
     primary_contents: Option<ClipboardItem>,
+    /// Files this application put on the clipboard, beside `contents`'s
+    /// text, until another application's offer takes their place.
+    files: Option<ClipboardFiles>,
 
     // External clipboard
     cached_read: Option<ClipboardItem>,
@@ -76,6 +79,16 @@ impl<T: ReceiveData> DataOffer<T> {
 
     fn has_mime_type(&self, mime_type: &str) -> bool {
         self.mime_types.iter().any(|t| t == mime_type)
+    }
+
+    /// Ask for `mime_type` through a pipe, read off the main thread once the
+    /// connection is flushed.
+    fn receive_pipe(&self, mime_type: &str) -> Option<filedescriptor::FileDescriptor> {
+        let pipe = Pipe::new().ok()?;
+        self.inner.receive_data(mime_type.to_string(), unsafe {
+            BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
+        });
+        Some(pipe.read)
     }
 
     fn read_bytes(&self, connection: &Connection, mime_type: &str) -> Option<Vec<u8>> {
@@ -137,6 +150,49 @@ impl<T: ReceiveData> DataOffer<T> {
     }
 }
 
+/// How the files on the clipboard are read.
+pub(crate) enum FilesRequest {
+    /// This application's own.
+    Own(ClipboardFiles),
+    /// Another application's lists, through pipes.
+    Pipes {
+        copied: Option<filedescriptor::FileDescriptor>,
+        uri_list: Option<filedescriptor::FileDescriptor>,
+        kde_cut: Option<filedescriptor::FileDescriptor>,
+    },
+    /// No files.
+    Nothing,
+}
+
+impl FilesRequest {
+    /// Read off the main thread: another application's pipes until they
+    /// close or `clipboard_files::READ_DEADLINE`.
+    pub fn read(self) -> Option<ClipboardFiles> {
+        match self {
+            FilesRequest::Own(files) => Some(files),
+            FilesRequest::Nothing => None,
+            FilesRequest::Pipes {
+                copied,
+                uri_list,
+                kde_cut,
+            } => {
+                let deadline = std::time::Instant::now() + clipboard_files::READ_DEADLINE;
+                let read = |fd: Option<filedescriptor::FileDescriptor>| {
+                    fd.and_then(|fd| clipboard_files::read_until(fd, deadline))
+                };
+                let copied = read(copied);
+                let uri_list = read(uri_list);
+                let kde_cut = read(kde_cut);
+                clipboard_files::files_from(
+                    copied.as_deref(),
+                    uri_list.as_deref(),
+                    kde_cut.as_deref(),
+                )
+            }
+        }
+    }
+}
+
 impl Clipboard {
     pub fn new(
         connection: Connection,
@@ -149,6 +205,7 @@ impl Clipboard {
 
             contents: None,
             primary_contents: None,
+            files: None,
 
             cached_read: None,
             current_offer: None,
@@ -157,17 +214,75 @@ impl Clipboard {
         }
     }
 
-    pub fn set(&mut self, item: ClipboardItem) {
+    /// This application's text on the clipboard; true when it took the
+    /// place of files this application had put there.
+    pub fn set(&mut self, item: ClipboardItem) -> bool {
         self.contents = Some(item);
+        self.files.take().is_some()
+    }
+
+    /// This application's files on the clipboard, with a text.
+    pub fn set_files(&mut self, files: ClipboardFiles, text: String) {
+        self.contents = Some(ClipboardItem::new_string(text));
+        self.files = Some(files);
+    }
+
+    /// The files this application put on the clipboard, while they are there.
+    pub fn files(&self) -> Option<&ClipboardFiles> {
+        self.files.as_ref()
+    }
+
+    /// Nothing of this application's is on the clipboard any more: it emptied it.
+    pub fn clear(&mut self) {
+        self.contents = None;
+        self.files = None;
+    }
+
+    /// What reading the files on the clipboard takes: this application's
+    /// own, or pipes from the application whose offer it is.
+    pub fn request_files(&self) -> FilesRequest {
+        if let Some(files) = &self.files {
+            return FilesRequest::Own(files.clone());
+        }
+        let Some(offer) = self.current_offer.as_ref() else {
+            return FilesRequest::Nothing;
+        };
+        let pipe = |mime_type: &str| {
+            offer
+                .has_mime_type(mime_type)
+                .then(|| offer.receive_pipe(mime_type))
+                .flatten()
+        };
+        let copied = pipe(clipboard_files::GNOME_COPIED_FILES)
+            .or_else(|| pipe(clipboard_files::MATE_COPIED_FILES));
+        let uri_list = pipe(clipboard_files::URI_LIST);
+        let kde_cut = pipe(clipboard_files::KDE_CUT_SELECTION);
+        if copied.is_none() && uri_list.is_none() {
+            return FilesRequest::Nothing;
+        }
+        self.connection.flush().ok();
+        FilesRequest::Pipes {
+            copied,
+            uri_list,
+            kde_cut,
+        }
     }
 
     pub fn set_primary(&mut self, item: ClipboardItem) {
         self.primary_contents = Some(item);
     }
 
-    pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) {
+    /// The clipboard's new offer. True when it is another application's
+    /// and takes the place of files this one had put there (an offer that
+    /// carries this application's own type is still its own, re-offered by
+    /// a clipboard manager).
+    pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) -> bool {
         self.cached_read = None;
+        let own = data_offer
+            .as_ref()
+            .is_some_and(|offer| offer.has_mime_type(&self.self_mime));
         self.current_offer = data_offer;
+        !own && self.files.take().is_some()
     }
 
     pub fn set_primary_offer(&mut self, data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>) {
@@ -179,8 +294,14 @@ impl Clipboard {
         self.self_mime.clone()
     }
 
-    pub fn send(&self, _mime_type: String, fd: OwnedFd) {
-        if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
+    pub fn send(&self, mime_type: String, fd: OwnedFd) {
+        if let Some(bytes) = self
+            .files
+            .as_ref()
+            .and_then(|files| clipboard_files::bytes_for(files, &mime_type))
+        {
+            self.send_internal(fd, bytes);
+        } else if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
             self.send_internal(fd, text.as_bytes().to_owned());
         }
     }

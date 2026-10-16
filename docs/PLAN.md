@@ -1064,6 +1064,20 @@ their length: a row's text was shifted by a negative margin, which laid
 the row out shorter by as much, so how far the rows could go shrank as
 they went; the text is moved by position now (`CodeRow::shift`).
 
+Copy Path copies the selected paths as text, one a line, from the
+menu's top level, Ctrl+Shift+C or Ctrl+Alt+C (Dolphin's Copy Location
+key), the folder's with nothing selected; Properties shows the whole
+Path, copied by a click. Copying for a shell, quoted, stays in the
+palette. The clipboard is the desktop's on Linux (ADR-062, gpui patch
+0024): a copy or a cut puts the files there as both families of Linux
+file managers read them (GNOME's list, MATE's, the URI list and KDE's
+cut flag, the paths as text), and a paste with nothing of Skwir's reads
+what another application put there, off the UI thread, as a drop from it
+is. Tried on Xvfb with Thunar 4.20.7 and Dolphin 26.08 both ways (a cut
+moves in each; Thunar cannot paste Dolphin's files nor Dolphin move
+Thunar's cut, which Skwir does) and on a headless sway with
+wl-clipboard. macOS and Windows keep Skwir's own clipboard (not yet).
+
 ---
 
 ## Maps

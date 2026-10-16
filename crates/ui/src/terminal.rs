@@ -376,15 +376,41 @@ impl Shell {
     }
 
     /// `ui.terminal_paste`: the clipboard, or with `from: primary` what
-    /// the middle button pastes (Shift+Insert).
+    /// the middle button pastes (Shift+Insert). Files on the clipboard
+    /// (ADR-062) are typed quoted, as when dropped: their paths as text,
+    /// a line each, would run line by line in a shell that takes no
+    /// bracketed paste.
     pub(crate) fn terminal_paste(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
+        if self.terminal_session().is_none() {
+            return;
+        }
+        if args.get("from").and_then(serde_json::Value::as_str) == Some("primary") {
+            self.terminal_paste_text(primary(cx));
+            return;
+        }
+        let files = cx.read_files_from_clipboard();
+        cx.spawn(async move |this, cx| {
+            let files = files.await;
+            this.update(cx, |shell, cx| match files {
+                Some(files) if !files.paths.is_empty() => {
+                    let Some(session) = shell.terminal_session() else {
+                        return;
+                    };
+                    match session.quote(&files.paths) {
+                        Ok(words) => session.send(Input::Paste(format!("{words} "))),
+                        Err(error) => shell.set_status(format!("{error:#}"), true, cx),
+                    }
+                }
+                _ => shell.terminal_paste_text(cx.read_from_clipboard()),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn terminal_paste_text(&mut self, item: Option<ClipboardItem>) {
         let Some(session) = self.terminal_session() else {
             return;
-        };
-        let item = if args.get("from").and_then(serde_json::Value::as_str) == Some("primary") {
-            primary(cx)
-        } else {
-            cx.read_from_clipboard()
         };
         if let Some(text) = item
             .and_then(|item| item.text())

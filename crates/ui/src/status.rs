@@ -35,6 +35,8 @@ impl Shell {
     pub fn report_error(&mut self, error: &anyhow::Error, cx: &mut Context<Self>) {
         if skwir_core::command::is_nothing_selected(error) {
             self.set_status(crate::shell::NOTHING_SELECTED, false, cx);
+        } else if skwir_core::command::wants_clipboard(error) {
+            self.set_status("Nothing to paste", false, cx);
         } else {
             self.set_status(format!("{error:#}"), true, cx);
         }

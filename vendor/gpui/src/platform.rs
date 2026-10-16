@@ -266,6 +266,30 @@ pub(crate) trait Platform: 'static {
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
 
+    /// Put `files` on the clipboard as file managers do, with `text` for
+    /// the applications that take text. Where unsupported, only the text.
+    fn write_files_to_clipboard(&self, files: ClipboardFiles, text: String) {
+        let _ = files;
+        self.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+    /// The files on the clipboard, read off the main thread: `None` when it
+    /// holds none, or where unsupported.
+    fn read_files_from_clipboard(&self) -> oneshot::Receiver<Option<ClipboardFiles>> {
+        let (tx, rx) = oneshot::channel();
+        tx.send(None).ok();
+        rx
+    }
+    /// Empty the clipboard if it still holds the files this application
+    /// put there.
+    fn clear_clipboard_files(&self) {}
+    /// Call `callback` when the files this application put on the clipboard
+    /// are no longer there: another application copied something, or this
+    /// one did. It may be called while the application is being updated:
+    /// it must only schedule work. Where unsupported, never called.
+    fn on_clipboard_files_gone(&self, callback: Box<dyn FnMut()>) {
+        let _ = callback;
+    }
+
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
     fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
@@ -1544,6 +1568,19 @@ impl Default for CursorStyle {
     fn default() -> Self {
         Self::Arrow
     }
+}
+
+/// Files on the clipboard, as file managers put them there: copied, or cut,
+/// which the application that pastes them moves.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ClipboardFiles {
+    /// The files.
+    pub paths: Vec<PathBuf>,
+    /// Pasting them moves them.
+    pub cut: bool,
+    /// What the clipboard named that is no local file (`sftp://…`), left
+    /// out of `paths`.
+    pub others: Vec<String>,
 }
 
 /// A clipboard item that should be copied to the clipboard

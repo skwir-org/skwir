@@ -114,7 +114,8 @@ fn run(
                     "Copy",
                     Invocation::with_args("ui.copy_text", &json!({ "text": text })),
                 ),
-                Ok(Outcome::Done) => {}
+                // A plugin from outside answers no files (`CommandAnswer`).
+                Ok(Outcome::Done | Outcome::Files { .. }) => {}
                 Err(error) => app.notify(NotifyLevel::Error, format!("{title}: {error:#}")),
             }
         },

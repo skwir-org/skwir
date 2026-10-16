@@ -473,10 +473,12 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   program wrote leads before it is followed, as its tooltip does.
 - Paths reach the prompt quoted by the session for its shell
   (`TerminalSession::quote`, the family `cd` uses), as a paste, never
-  with an Enter: files dropped on the panel, or the selection with
+  with an Enter: files dropped on the panel, the selection with
   Ctrl+Shift+Enter (`ui.terminal_paths`, from the files or the
-  terminal). A shell whose quoting is not known (nu, xonsh) is typed
-  nothing, and says so; neither is a name a line cannot carry.
+  terminal), or files on the clipboard pasted (ADR-062: their text, a
+  path a line, would run line by line in a shell that takes no
+  bracketed paste). A shell whose quoting is not known (nu, xonsh) is
+  typed nothing, and says so; neither is a name a line cannot carry.
 - The plugin types a `cd` only while the shell's process group has the
   terminal. Test with a real `/bin/sh`
   (`crates/plugins/terminal/tests/session.rs`).

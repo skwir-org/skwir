@@ -44,6 +44,7 @@ dependencies stay out of Skwir's workspace:
 | `0021-x11-clipboard-sends-in-pieces` | X11 clipboard sends large data with INCR; one failed request no longer ends it | — |
 | `0022-wheel-scrolls-along-its-axis` | The wheel scrolls along its own axis by default (`restrict_scroll_to_axis`) | — |
 | `0023-idle-inhibit` | `Window::set_idle_inhibited` keeps the screen awake (Wayland, X11, Windows) | — |
+| `0024-clipboard-files` | Files on the clipboard as Linux file managers put them there, read off the main thread (Wayland, X11) | — |
 
 ### 0001: Wayland outgoing drag
 
@@ -349,6 +350,51 @@ a slideshow plays, with nothing touched for minutes:
 A window releases what it holds when it closes. A desktop that tracks
 idleness itself, outside the X screen saver, is not reached by X11's; its
 D-Bus inhibitor is the application's to ask.
+
+### 0024: Files on the clipboard
+
+Skwir's ADR-062. `ClipboardFiles` (paths, whether they were cut, and what
+named no local file) and four `App` methods, each a `Platform` method with
+a default for the systems not done (macOS, Windows: the text alone):
+
+- `write_files_to_clipboard(files, text)` offers both families of Linux
+  file managers, which do not read each other: GTK's
+  `x-special/gnome-copied-files` (`copy` or `cut`, then a URI a line, no
+  newline after the last: Nautilus 44 refuses one) and MATE's same bytes
+  as `x-special/mate-copied-files`; KDE's `text/uri-list` (CRLF), with
+  `application/x-kde-cutselection` = `1` for a cut; and `text`. A path is
+  its URI byte for byte (`url`'s `from_file_path`), so a name that is not
+  UTF-8 is the file it names.
+- `read_files_from_clipboard()` reads another client's: GTK's or MATE's
+  list, else the URI list and KDE's flag, `file://` URIs as paths and the
+  rest said apart; where GTK's names GVfs locations, its URI list (their
+  FUSE paths) takes their place. Wayland asks for the types through pipes
+  on the main thread and reads them on the background executor until they
+  close or 5 s pass (`clipboard_files::read_until`); X11 reads on the
+  background executor (each read is its own X connection, as arboard's
+  already were). This application's own files come back at once.
+- `clear_clipboard_files()` empties the clipboard if it still holds this
+  application's files.
+- `on_clipboard_files_gone(callback)` says when they are no longer there:
+  another client's selection (Wayland's `Selection` event without this
+  client's `pid/` type, which a clipboard manager re-offering ours keeps;
+  X11's `SelectionClear`, carried from the serving thread to the main loop
+  and checked against the selection's owner), or this application writing
+  something else. The platform may learn it within an update, so the
+  observers run in a task spawned after it.
+
+Also: on Wayland a selection set takes the latest key or button press's
+serial (`SerialTracker::latest_input`; a Copy from a menu used the last key
+press's, which a compositor may refuse once another client set the
+selection since); `send` answers each type asked for, no longer the text
+for all. On X11 a request for `text/plain;charset=utf-8` or `text/plain`
+is served from the stored UTF8_STRING (TARGETS listed them, nothing
+answered them), and `text/plain` is listed too.
+
+The formats' tests are `platform::linux::clipboard_files::tests`, run by
+`just list-check`. Checked on 2026-10-16 on Xvfb with Thunar 4.20.7 and
+Dolphin 26.08 (copy and cut both ways, a Latin-1 name) and on a headless
+sway with wl-clipboard: see ADR-062.
 
 ## Adding or regenerating a patch
 

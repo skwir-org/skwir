@@ -11,7 +11,9 @@ rust-version.workspace = true
 skwir-core.workspace = true
 anyhow.workspace = true
 parking_lot.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

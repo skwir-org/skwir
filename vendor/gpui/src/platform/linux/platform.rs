@@ -70,6 +70,18 @@ pub trait LinuxClient {
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
+    fn write_files_to_clipboard(&self, files: crate::ClipboardFiles, text: String) {
+        let _ = files;
+        self.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+    fn read_files_from_clipboard(
+        &self,
+    ) -> futures::channel::oneshot::Receiver<Option<crate::ClipboardFiles>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        tx.send(None).ok();
+        rx
+    }
+    fn clear_clipboard_files(&self) {}
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
@@ -91,6 +103,8 @@ pub(crate) struct PlatformHandlers {
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
+    /// The files this application put on the clipboard are no longer there.
+    pub(crate) clipboard_files_gone: Option<Box<dyn FnMut()>>,
 }
 
 pub(crate) struct LinuxCommon {
@@ -157,6 +171,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
         self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
+    }
+
+    fn on_clipboard_files_gone(&self, callback: Box<dyn FnMut()>) {
+        self.with_common(|common| common.callbacks.clipboard_files_gone = Some(callback));
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
@@ -587,6 +605,20 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.read_from_clipboard()
+    }
+
+    fn write_files_to_clipboard(&self, files: crate::ClipboardFiles, text: String) {
+        LinuxClient::write_files_to_clipboard(self, files, text)
+    }
+
+    fn read_files_from_clipboard(
+        &self,
+    ) -> futures::channel::oneshot::Receiver<Option<crate::ClipboardFiles>> {
+        LinuxClient::read_files_from_clipboard(self)
+    }
+
+    fn clear_clipboard_files(&self) {
+        LinuxClient::clear_clipboard_files(self)
     }
 
     fn add_recent_document(&self, _path: &Path) {}

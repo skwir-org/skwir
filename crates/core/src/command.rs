@@ -102,6 +102,47 @@ pub fn is_nothing_selected(error: &anyhow::Error) -> bool {
         .any(<dyn std::error::Error + 'static>::is::<NothingSelected>)
 }
 
+/// The error of a command that takes what the clipboard holds when Skwir's
+/// own holds nothing (ADR-062): a window reads the system's clipboard and
+/// runs the command again with what it holds as [`ClipboardArg`]; an agent
+/// or a script is told there is nothing to paste. Test with
+/// [`wants_clipboard`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WantsClipboard;
+
+impl std::fmt::Display for WantsClipboard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("nothing to paste")
+    }
+}
+
+impl std::error::Error for WantsClipboard {}
+
+/// Whether `error`, or anything it wraps, is [`WantsClipboard`].
+pub fn wants_clipboard(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(<dyn std::error::Error + 'static>::is::<WantsClipboard>)
+}
+
+/// What the system's clipboard holds, as the window read it for a command
+/// that answered [`WantsClipboard`], under [`ClipboardArg::FIELD`]: files
+/// another application copied or cut, each read from the disk on a worker.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ClipboardArg {
+    /// The files, by absolute path.
+    #[serde(default)]
+    pub entries: Vec<crate::op::EntryArg>,
+    /// They were cut: pasting moves them.
+    #[serde(default)]
+    pub cut: bool,
+}
+
+impl ClipboardArg {
+    /// The argument a command that wants the clipboard takes it as.
+    pub const FIELD: &'static str = "clipboard";
+}
+
 /// Arguments of a command that takes none.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct NoArgs {}
@@ -119,6 +160,13 @@ pub enum Outcome {
     Clipboard {
         text: String,
         said: String,
+    },
+    /// Files copied or cut (`cut`), for the clipboard: the window puts them
+    /// on the system's as file managers do (ADR-062); a script or an agent
+    /// gets the paths.
+    Files {
+        paths: Vec<std::path::PathBuf>,
+        cut: bool,
     },
 }
 

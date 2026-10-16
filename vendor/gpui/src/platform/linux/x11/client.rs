@@ -215,6 +215,8 @@ pub struct X11ClientState {
     pub(crate) common: LinuxCommon,
     pub(crate) clipboard: Clipboard,
     pub(crate) clipboard_item: Option<ClipboardItem>,
+    /// Files this client put on the CLIPBOARD, while it holds them.
+    pub(crate) clipboard_files: Option<crate::ClipboardFiles>,
     pub(crate) xdnd_state: Xdnd,
     /// The X server went away; said once (`X11Client::connection_lost`).
     connection_lost: bool,
@@ -471,6 +473,20 @@ impl X11Client {
             })
             .map_err(|err| anyhow!("Failed to initialize XDP event source: {err:?}"))?;
 
+        // Another client took the CLIPBOARD: said on the thread that serves
+        // it, heard here.
+        let (cleared_tx, cleared_rx) = calloop::channel::channel::<()>();
+        clipboard.on_clipboard_cleared(Box::new(move || {
+            cleared_tx.send(()).ok();
+        }));
+        handle
+            .insert_source(cleared_rx, |event, _, client| {
+                if let calloop::channel::Event::Msg(()) = event {
+                    client.clipboard_cleared();
+                }
+            })
+            .map_err(|err| anyhow!("Failed to initialize the clipboard's source: {err:?}"))?;
+
         xcb_flush(&xcb_connection);
 
         Ok(X11Client(Rc::new(RefCell::new(X11ClientState {
@@ -516,6 +532,7 @@ impl X11Client {
 
             clipboard,
             clipboard_item: None,
+            clipboard_files: None,
             xdnd_state: Xdnd::default(),
             connection_lost: false,
         }))))
@@ -1386,6 +1403,38 @@ impl X11Client {
         Some(())
     }
 
+    /// Another client took the CLIPBOARD: the files this one put there, if
+    /// any, are gone. Asked of the server, for a loss said before this
+    /// client took it again.
+    fn clipboard_cleared(&self) {
+        let gone = {
+            let mut state = self.0.borrow_mut();
+            state.clipboard_files.is_some()
+                && !state
+                    .clipboard
+                    .is_owner(clipboard::ClipboardKind::Clipboard)
+                && state.clipboard_files.take().is_some()
+        };
+        if gone {
+            self.clipboard_files_gone();
+        }
+    }
+
+    /// Tell the application the files it put on the clipboard are gone.
+    fn clipboard_files_gone(&self) {
+        let callback = self
+            .0
+            .borrow_mut()
+            .common
+            .callbacks
+            .clipboard_files_gone
+            .take();
+        if let Some(mut callback) = callback {
+            callback();
+            self.0.borrow_mut().common.callbacks.clipboard_files_gone = Some(callback);
+        }
+    }
+
     fn handle_keyboard_layout_change(&self) {
         let mut state = self.0.borrow_mut();
         let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
@@ -1588,6 +1637,56 @@ impl LinuxClient for X11Client {
             .context("X11: Failed to write to clipboard (clipboard)")
             .log_with_level(log::Level::Debug);
         state.clipboard_item.replace(item);
+        let gone = state.clipboard_files.take().is_some();
+        drop(state);
+        if gone {
+            self.clipboard_files_gone();
+        }
+    }
+
+    fn write_files_to_clipboard(&self, files: crate::ClipboardFiles, text: String) {
+        let mut state = self.0.borrow_mut();
+        let written = state
+            .clipboard
+            .set_files(&files, text.clone())
+            .context("X11: Failed to write files to clipboard")
+            .log_with_level(log::Level::Debug);
+        if written.is_some() {
+            state.clipboard_item = Some(ClipboardItem::new_string(text));
+            state.clipboard_files = Some(files);
+        }
+    }
+
+    fn read_files_from_clipboard(
+        &self,
+    ) -> futures::channel::oneshot::Receiver<Option<crate::ClipboardFiles>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let state = self.0.borrow();
+        if let Some(files) = &state.clipboard_files {
+            tx.send(Some(files.clone())).ok();
+            return rx;
+        }
+        let reader = state.clipboard.files_reader();
+        state
+            .common
+            .background_executor
+            .spawn(async move {
+                tx.send(reader.read()).ok();
+            })
+            .detach();
+        rx
+    }
+
+    fn clear_clipboard_files(&self) {
+        let mut state = self.0.borrow_mut();
+        if state.clipboard_files.take().is_some() {
+            state.clipboard_item = None;
+            state
+                .clipboard
+                .clear()
+                .context("X11: Failed to empty the clipboard")
+                .log_with_level(log::Level::Debug);
+        }
     }
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {

@@ -118,7 +118,10 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   `Shift+F10` opens the context menu.
 - **Copy, cut, paste:** `Ctrl+C`, `Ctrl+X`, `Ctrl+V`. What waits for a
   paste is dimmed and counted in the footer; a click on the count
-  forgets it. With two panes, `Shift+F5` copies the selection to
+  forgets it. On Linux the clipboard is the desktop's: files copied or
+  cut in Skwir paste in other file managers (GNOME's, Thunar, Dolphin…)
+  and as their paths where text goes, and files copied there paste in
+  Skwir. Copying anything else forgets a cut. With two panes, `Shift+F5` copies the selection to
   the other pane and `Shift+F6` moves it there; `Shift+F7` asks, as a
   drop does (and offers to extract an archive there).
 - **Drag and drop.** Files dropped on a folder ask whether to move, copy

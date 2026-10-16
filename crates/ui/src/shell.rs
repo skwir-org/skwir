@@ -383,6 +383,8 @@ pub struct Shell {
     pub sidebar_keys: crate::sidebar::Keys,
     started: Instant,
     first_frame_logged: bool,
+    /// What of Skwir's the system's clipboard may hold (ADR-062).
+    pub(crate) clipboard_holds: crate::clipboard::Held,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -427,6 +429,12 @@ impl Shell {
             cx.notify();
         }));
         subs.push(cx.observe_pending_input(window, Self::on_pending_input));
+        // Anything else copied, here or in another application: Skwir's
+        // own clipboard forgets the files it put on the system's.
+        let shell = cx.entity().downgrade();
+        subs.push(cx.on_clipboard_files_gone(move |cx| {
+            shell.update(cx, Shell::clipboard_files_gone).ok();
+        }));
         // The keyboard is never left with nothing to act on. When what had
         // focus leaves the window (a tab or pane closed, a placeholder or a
         // toolbar variant replaced, a dialog giving focus back to something
@@ -626,6 +634,7 @@ impl Shell {
             sidebar_keys: crate::sidebar::Keys::new(cx.focus_handle()),
             started,
             first_frame_logged: false,
+            clipboard_holds: crate::clipboard::Held::Nothing,
             _subscriptions: subs,
         };
         // The tab left stays drawn until the tab shown is ready (`tabs.rs`).
@@ -1571,7 +1580,11 @@ impl Shell {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
                 self.set_status(said, false, cx);
             }
+            Ok(Outcome::Files { paths, cut }) => self.put_files_on_clipboard(paths, cut, cx),
             Ok(Outcome::Plan(plan)) => self.apply_user_plan(plan, window, cx),
+            Err(e) if skwir_core::command::wants_clipboard(&e) => {
+                self.run_with_clipboard(inv, window, cx);
+            }
             Err(e) => self.report_error(&e, cx),
         }
         cx.notify();
@@ -2243,6 +2256,7 @@ impl Shell {
             self.run(&request.name, request.args, window, cx);
         }
         self.pending = self.app.pending.get();
+        self.sync_clipboard_files(cx);
         let revision = self.app.settings.revision();
         if revision != self.theme_revision {
             self.theme_revision = revision;

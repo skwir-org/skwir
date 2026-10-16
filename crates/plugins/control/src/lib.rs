@@ -527,12 +527,22 @@ fn dispatched(
         Err(error) if skwir_core::command::is_nothing_selected(&error) => {
             anyhow::bail!("nothing is selected: name the files in `entries`, by absolute path")
         }
+        // The system's clipboard is the user's: never read for an agent.
+        Err(error) if skwir_core::command::wants_clipboard(&error) => {
+            anyhow::bail!(
+                "nothing to paste: name the files in `clipboard.entries`, by absolute path, and whether they were cut"
+            )
+        }
         outcome => outcome?,
     };
     let value = match outcome {
         Outcome::Done => json!({ "done": true }),
         Outcome::Value(value) => value,
         Outcome::Clipboard { text, said } => json!({ "text": text, "said": said }),
+        Outcome::Files { paths, cut } => json!({
+            "paths": paths.into_iter().map(skwir_core::os_path::PathArg::from).collect::<Vec<_>>(),
+            "cut": cut,
+        }),
         Outcome::Plan(plan) => return Ok(planned(app, plan, mode, cancelled)),
     };
     Ok(Answer {

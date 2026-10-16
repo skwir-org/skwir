@@ -1,6 +1,12 @@
-//! skwir plugin: ops-basic. The default keymap and context menu, plus an
-//! in-app clipboard (copy / cut / paste as plans) and Copy Path, the
-//! paths as text on the system's.
+//! skwir plugin: ops-basic. The default keymap and context menu, the
+//! clipboard (copy / cut / paste as plans) and Copy Path, the paths as text.
+//!
+//! The clipboard is the system's (ADR-062): Copy and Cut hand their files to
+//! the window (`Outcome::Files`), and remember them here by identity while
+//! they are there (the window forgets them with `clipboard_clear` once
+//! anything else is copied). Paste with nothing remembered asks the window
+//! for what the system's holds (`WantsClipboard`), and takes it as
+//! `clipboard`.
 //!
 //! # The `when` mini-language
 //!
@@ -29,7 +35,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use skwir_core::app::{App, PaneArg, TargetsArgs};
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{ClipboardArg, Invocation, Outcome, WantsClipboard};
 use skwir_core::op::{Change, Copy, EntryRef, Move, Operation, Plan};
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{KeyBinding, MenuItem};
@@ -47,6 +53,56 @@ struct Clipboard {
     /// Places cut or copied (a tag's): pasted in a folder, copied there as
     /// their location says (`Verbs::export`); in a place, given to it.
     places: Vec<skwir_core::Location>,
+}
+
+/// `clipboard_paste`: into a pane, from Skwir's clipboard or, when given,
+/// what the system's holds.
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
+struct PasteArgs {
+    /// The pane to paste into; the active pane when omitted.
+    #[serde(default)]
+    pane: Option<PaneId>,
+    /// Files to paste instead of Skwir's clipboard: what another
+    /// application copied or cut, as the window read it.
+    #[serde(default)]
+    clipboard: Option<ClipboardArg>,
+}
+
+/// What a copy or a cut hands the window for the system's clipboard: the
+/// files' paths; nothing for places alone (a tag's), which have none.
+fn handed(entries: &[EntryRef], cut: bool) -> Outcome {
+    if entries.is_empty() {
+        return Outcome::Done;
+    }
+    Outcome::Files {
+        paths: entries.iter().map(|entry| entry.path.clone()).collect(),
+        cut,
+    }
+}
+
+/// What a paste takes: the files, whether they were cut, places, and where
+/// they were taken from; from Skwir's clipboard, else what the window read
+/// of the system's.
+type Taken = (
+    Vec<EntryRef>,
+    bool,
+    Vec<skwir_core::Location>,
+    Option<skwir_core::Location>,
+);
+
+fn taken(clipboard: &Mutex<Clipboard>, given: Option<ClipboardArg>) -> anyhow::Result<Taken> {
+    if let Some(given) = given {
+        let entries = skwir_core::op::EntryArg::refs(given.entries)?;
+        if entries.is_empty() {
+            anyhow::bail!("nothing to paste");
+        }
+        return Ok((entries, given.cut, Vec::new(), None));
+    }
+    let c = clipboard.lock();
+    if c.entries.is_empty() && c.places.is_empty() {
+        return Err(WantsClipboard.into());
+    }
+    Ok((c.entries.clone(), c.cut, c.places.clone(), c.from.clone()))
 }
 
 /// The ops-basic plugin.
@@ -173,18 +229,12 @@ fn follow(clipboard: &Mutex<Clipboard>, changes: &[Change], app: &App) {
     }
 }
 
-fn paste(clipboard: &Mutex<Clipboard>, pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
-    let pane = app.pane_or_active(pane);
+fn paste(clipboard: &Mutex<Clipboard>, a: PasteArgs, app: &App) -> anyhow::Result<Outcome> {
+    let pane = app.pane_or_active(a.pane);
     let Ok(dest) = app.pane_dir(pane) else {
-        return paste_on_place(clipboard, pane, app);
+        return paste_on_place(clipboard, pane, a.clipboard, app);
     };
-    let (entries, cut, places) = {
-        let c = clipboard.lock();
-        if c.entries.is_empty() && c.places.is_empty() {
-            anyhow::bail!("clipboard is empty");
-        }
-        (c.entries.clone(), c.cut, c.places.clone())
-    };
+    let (entries, cut, places, _) = taken(clipboard, a.clipboard)?;
     // Places (a tag's) are copied in as their location says: a folder of
     // their files.
     for place in places {
@@ -225,6 +275,7 @@ fn paste(clipboard: &Mutex<Clipboard>, pane: Option<PaneId>, app: &App) -> anyho
 fn paste_on_place(
     clipboard: &Mutex<Clipboard>,
     pane: PaneId,
+    given: Option<ClipboardArg>,
     app: &App,
 ) -> anyhow::Result<Outcome> {
     let shown = app
@@ -233,13 +284,8 @@ fn paste_on_place(
     let Some(drop) = app.verbs(&shown).drop else {
         anyhow::bail!("nothing can be pasted here");
     };
-    let (entries, cut, from, places) = {
-        let c = clipboard.lock();
-        if c.entries.is_empty() && c.places.is_empty() {
-            anyhow::bail!("clipboard is empty");
-        }
-        (c.entries.clone(), c.cut, c.from.clone(), c.places.clone())
-    };
+    let own = given.is_none();
+    let (entries, cut, places, from) = taken(clipboard, given)?;
     let mut invocation = drop;
     if !invocation.args.is_object() {
         invocation.args = serde_json::json!({});
@@ -252,7 +298,7 @@ fn paste_on_place(
         invocation.args["from"] = serde_json::json!(from.to_string());
     }
     let outcome = app.dispatch(&invocation)?;
-    if cut {
+    if cut && own {
         *clipboard.lock() = Clipboard::default();
         app.pending.clear();
         app.wake();
@@ -464,13 +510,14 @@ impl Plugin for OpsBasicPlugin {
                 let from = taken_from(app, &a);
                 let (entries, places) = take_selection(app, a.pane, a.entries)?;
                 publish(app, &entries, false);
+                let outcome = handed(&entries, false);
                 *cb.lock() = Clipboard {
                     entries,
                     cut: false,
                     from,
                     places,
                 };
-                Ok(Outcome::Done)
+                Ok(outcome)
             },
         );
         let cb = Arc::clone(&self.clipboard);
@@ -483,13 +530,14 @@ impl Plugin for OpsBasicPlugin {
                 let from = taken_from(app, &a);
                 let (entries, places) = take_selection(app, a.pane, a.entries)?;
                 publish(app, &entries, true);
+                let outcome = handed(&entries, true);
                 *cb.lock() = Clipboard {
                     entries,
                     cut: true,
                     from,
                     places,
                 };
-                Ok(Outcome::Done)
+                Ok(outcome)
             },
         );
         app.commands
@@ -516,12 +564,12 @@ impl Plugin for OpsBasicPlugin {
         );
         let cb = Arc::clone(&self.clipboard);
         app.commands
-            .register::<PaneArg, _>(
+            .register::<PasteArgs, _>(
                 ID,
                 "clipboard_paste",
                 "Paste",
-                "Copy or move the clipboard into the current directory (plan)",
-                move |a, app| paste(&cb, a.pane, app),
+                "Copy or move the clipboard into the current directory (plan): Skwir's, or the files given as `clipboard`",
+                move |a, app| paste(&cb, a, app),
             )
             .plans();
         let cb = Arc::clone(&self.clipboard);
@@ -725,6 +773,75 @@ mod tests {
             error.to_string().contains("is not text"),
             "refused: {error}"
         );
+    }
+
+    /// ADR-062: Copy and Cut hand their files to the window; Paste with
+    /// nothing in Skwir's clipboard asks for the system's, and takes it as
+    /// `clipboard`, a copy or a move as it says.
+    #[test]
+    fn the_clipboard_is_handed_to_the_window_and_taken_from_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("it's from");
+        let dst = tmp.path().join("to");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("a b.txt"), b"a").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(OpsBasicPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&src)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        app.dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "names": ["a b.txt"] }),
+        ))
+        .unwrap();
+        for (command, was_cut) in [("clipboard_copy", false), ("clipboard_cut", true)] {
+            let Outcome::Files { paths, cut } = app.dispatch(&Invocation::new(command)).unwrap()
+            else {
+                panic!("{command}: files for the window");
+            };
+            assert_eq!((paths, cut), (vec![src.join("a b.txt")], was_cut));
+        }
+        app.dispatch(&Invocation::new("clipboard_clear")).unwrap();
+
+        app.navigate(pane, &Location::from_path(&dst)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        let error = app
+            .dispatch(&Invocation::new("clipboard_paste"))
+            .unwrap_err();
+        assert!(
+            skwir_core::command::wants_clipboard(&error),
+            "nothing of Skwir's: the window reads the system's ({error})"
+        );
+        let given = |cut: bool| {
+            Invocation::with_args(
+                "clipboard_paste",
+                &serde_json::json!({ "clipboard": {
+                    "entries": [skwir_core::os_path::PathArg::from(src.join("a b.txt"))],
+                    "cut": cut,
+                }}),
+            )
+        };
+        for (cut, kind) in [(false, "copy"), (true, "move")] {
+            let Outcome::Plan(plan) = app.dispatch(&given(cut)).unwrap() else {
+                panic!("expected a plan")
+            };
+            assert_eq!(plan.steps.len(), 1);
+            assert_eq!(plan.steps[0].kind(), kind);
+        }
+        let Outcome::Plan(plan) = app.dispatch(&given(true)).unwrap() else {
+            panic!("expected a plan")
+        };
+        assert!(
+            app.executor
+                .execute_blocking(&plan, app.lifetime())
+                .error
+                .is_none()
+        );
+        assert!(dst.join("a b.txt").exists() && !src.join("a b.txt").exists());
+        let gone = app.dispatch(&given(false)).unwrap_err();
+        assert!(gone.to_string().contains("does not exist"), "{gone}");
     }
 
     #[test]
