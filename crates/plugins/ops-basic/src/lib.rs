@@ -293,8 +293,10 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     // In the trash too: pasted, a file of the trash leaves it as a
     // restore does, to where it is pasted (`op::Move`).
     ("secondary-x", "clipboard_cut", Some("pane selection")),
-    // As Windows' Copy as path; with nothing selected, the folder's.
+    // Windows' Copy as path and Dolphin's Copy Location; with nothing
+    // selected, the folder's.
     ("ctrl-shift-c", "copy_paths", Some("pane selection|folder")),
+    ("ctrl-alt-c", "copy_paths", Some("pane selection|folder")),
     // Into the folder shown, or a place that takes files (a tag gives
     // them itself): a search has neither.
     ("secondary-v", "clipboard_paste", Some("pane folder|drops")),

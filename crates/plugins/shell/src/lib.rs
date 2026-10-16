@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use skwir_core::app::{App, TargetsArgs};
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::plugin::Plugin;
-use skwir_core::registry::{KeyBinding, MenuItem};
+use skwir_core::registry::MenuItem;
 use skwir_core::settings::SettingSpec;
 use skwir_core::workspace::PaneId;
 
@@ -236,27 +236,9 @@ impl Plugin for ShellPlugin {
             "Run a shell command in a terminal in the current directory",
             |a, app| run(app, &a.command, a.pane, None),
         );
-        // Ctrl+Shift+C is the paths as plain text (`copy_paths`).
-        app.registry.keymap.add(
-            ID,
-            KeyBinding {
-                keys: "ctrl-alt-c".into(),
-                command: Invocation::new("shell.copy_paths"),
-                when: Some("pane selection".into()),
-            },
-        );
-        app.registry.menus.add(
-            ID,
-            MenuItem::new(
-                "context",
-                "Copy for Shell",
-                "copy",
-                135,
-                Invocation::new("shell.copy_paths"),
-            )
-            .when("selection !place")
-            .submenu("More"),
-        );
+        // No key and no menu item: copying for a shell is rare, and the
+        // menu's Copy Path, Ctrl+Shift+C and Ctrl+Alt+C copy the paths as
+        // text (`copy_paths`). The palette has it, and a key can be given.
         app.registry.menus.add(
             ID,
             MenuItem {

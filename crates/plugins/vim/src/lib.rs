@@ -161,8 +161,9 @@ const KEYS: &[(&str, &str, &str, &str)] = &[
     ("S", "ui.search", r#"{"text":"content:"}"#, "pane"),
     ("z", "ui.jump", "{}", "pane"),
     ("Z", "ui.jump", "{}", "pane"),
-    // Copying paths.
-    ("c c", "shell.copy_paths", "{}", "pane selection"),
+    // Copying paths, as text (yazi's `cc`); the folder's with nothing
+    // selected, as Ctrl+Shift+C.
+    ("c c", "copy_paths", "{}", "pane selection|folder"),
     // Filtering is what skwir's search in a folder does.
     ("f", "ui.search", "{}", "pane"),
     // Finding a name.
