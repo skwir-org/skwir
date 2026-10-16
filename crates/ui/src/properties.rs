@@ -1124,7 +1124,7 @@ fn preview_group(shell: &Shell) -> Option<Group> {
             document,
             facts,
             ..
-        }) if document.is_none() && preview.media.session.is_none() => {
+        }) if document.is_none() && !shell.shows_player() => {
             rows.push(Row::new("Dimensions", format!("{width} × {height} px")));
             rows.extend(facts.iter().map(Row::of));
         }
@@ -1149,7 +1149,7 @@ fn preview_group(shell: &Shell) -> Option<Group> {
     if let Some(pages) = crate::reader::pages(shell) {
         rows.push(Row::new("Pages", pages.to_string()));
     }
-    if preview.media.session.is_some() {
+    if shell.shows_player() {
         let state = &preview.media.state;
         for (label, value) in [
             ("Title", &state.title),
@@ -1271,7 +1271,7 @@ fn star_picker(
 /// above it (`PreviewState::parked`): that view is content, so Properties
 /// stays as the card left it, opened and closed on demand.
 pub fn alone(shell: &Shell) -> bool {
-    shell.preview.media.session.is_none()
+    !shell.shows_player()
         && shell.preview.parked().is_none()
         && match &shell.preview.content {
             None => shell.preview.phase == crate::preview::PreviewPhase::Idle,

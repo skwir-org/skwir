@@ -35,10 +35,24 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 ## Posters
 
 - A film shows one picture before it plays, a frame of its own: the
-  native-resolution poster, or, when none comes (`Media::NoPoster`, or
-  the request reading it was cancelled), the player's first frame, held
-  aside until then. Never one picture then another: the second is a
-  flicker.
+  poster, or, when none comes (`Media::NoPoster`, or the request reading
+  it was cancelled), the player's first frame, held aside until then.
+  Never one picture then another: the second is a flicker.
+- The picture and the player are asked at once (`PreviewProvider::media`
+  says a file is a film or a track), and each is shown as it comes: a
+  poster may come before its player or after. What did not come is said
+  after what did: `Media::NoPoster` after the player, `Media::NoPlayer`
+  after the picture (Still frames, no GStreamer: the picture is then the
+  preview, the still and the poster one request). A wish to play the
+  track stepped to ends with the player's outcome, never with a picture.
+- The picture is asked at the size it is shown at: the side the
+  content's area covers in device pixels (`media_side`, measured where
+  it is used, in 512 px steps), so a resize within a step reuses it. It
+  carries the film's own size (`PreviewInfo::Video::size`), which it is
+  laid out by. A film's frame is kept as JPEG at high quality, a cover
+  as PNG. At 1080p and 4K a poster went from 4 and 16 MB of PNG at the
+  film's size to 60 to 400 KB, so the media cache's 128 MB holds
+  hundreds of films rather than eight to thirty.
 - A film's desktop thumbnail is a frame its thumbnailer chose (another
   moment, often a film strip drawn on it), so it never stands in for
   the wait (`preview::placeholder`). It is the picture only when no

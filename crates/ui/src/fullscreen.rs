@@ -93,7 +93,7 @@ impl Shell {
         if preview.entry_id().is_none() || preview.info.is_dir {
             return None;
         }
-        if preview.media.session.is_some() {
+        if self.shows_player() {
             return Some(if self.media_is_audio() {
                 Shows::Music
             } else {

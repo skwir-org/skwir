@@ -86,6 +86,9 @@ enum Media {
     /// No poster comes for the player just opened: its frames are the
     /// film's picture.
     NoPoster,
+    /// No player opens for the film or track whose picture came (Still
+    /// frames, no GStreamer): the picture is its preview.
+    NoPlayer,
 }
 
 /// A picture read ahead for the whole screen's next step (`read_ahead`):
@@ -494,6 +497,11 @@ pub struct PreviewState {
     /// shown at (`Shell::document_shown`), kept from one document to the
     /// next, so a page opens at the size the panel shows it.
     pub(crate) page_side: u32,
+    /// The side a film's or a track's picture is asked at: what the
+    /// content's area covers, in device pixels and `SHARPEN_STEP`s
+    /// (`watch_area`), kept from one file to the next. Larger later, the
+    /// picture shown asks again (`Sharpen`).
+    pub(crate) media_side: u32,
     /// The size a book laid out by its engine is read at (`MuPDF`'s books),
     /// in pixels; `None` until the reader changes it. A book in reading mode
     /// keeps its own (`inspector::State`), pictures and pages zoom instead.
@@ -778,6 +786,7 @@ impl Default for PreviewState {
             placeholder: None,
             picture_side: 0,
             page_side: FIRST_PAGE_SIDE,
+            media_side: 2 * SHARPEN_STEP,
             text_size: None,
             tx,
             rx,
@@ -969,6 +978,40 @@ impl Drop for PreviewState {
 /// moved on meanwhile, so the peak is one picture and passed-over files are
 /// never decoded.
 static DECODE_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// A film's or a track's picture (`PreviewProvider::media`), asked at the
+/// side it is shown at, laid out by its own size, which `Sharpen` asks
+/// more of.
+fn media_picture(
+    previews: &skwir_core::preview::Previews,
+    request: &PreviewRequest,
+    path: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<PreviewContent> {
+    let preview = previews
+        .render(request, cancel)?
+        .ok_or_else(|| anyhow::anyhow!("Nothing shows this file"))?;
+    let image = crate::thumbs::to_render_image(&preview.image)
+        .ok_or_else(|| anyhow::anyhow!("Invalid preview image"))?;
+    let (width, height) = match preview.info {
+        PreviewInfo::Video {
+            size: Some(size), ..
+        } => size,
+        _ => (preview.image.width, preview.image.height),
+    };
+    Ok(PreviewContent::Image {
+        image,
+        width,
+        height,
+        detail: Some(preview.info),
+        document: None,
+        // Where it was recorded, which Properties shows beside what the
+        // player says.
+        facts: skwir_platform::mp4::details(path),
+        pixels: Pixels::Own,
+        ink: crate::backdrop::ink(&preview.image.rgba),
+    })
+}
 
 /// Whether the file shown opens in the document reader, as pages: its
 /// thumbnail, while it loads, stands where the reader will put its first.
@@ -1910,15 +1953,27 @@ impl Shell {
             }
             return;
         }
+        // No player for the film or track whose picture came: a wish to
+        // play the track stepped to ends here (`autoplay`).
+        if matches!(result.media, Some(Media::NoPlayer)) {
+            self.preview.media.settle();
+            if self.preview.autoplay_matches() {
+                self.preview.autoplay = None;
+            }
+            cx.notify();
+            return;
+        }
         // Whether what is shown may send its links to the desktop: not
         // what a plugin from outside made without the network.
         self.preview.closed_links = result.closed_links.take();
         self.preview.picture_source = result.picture_source.take();
-        // A film's picture is a frame of its own, still on its way when its
-        // player opens: its poster, else the player's first frame. Its
+        // A film's picture is a frame of its own, on its way when its player
+        // opens first: its poster, else the player's first frame. Its
         // thumbnail, a frame the desktop's thumbnailer chose, stays aside,
         // the picture only if no frame comes (`film_without_frame`).
-        let film = matches!(result.media, Some(Media::Opened(_))) && !self.media_is_audio();
+        let film = matches!(result.media, Some(Media::Opened(_)))
+            && !self.media_is_audio()
+            && self.preview.media.poster_awaited();
         // A file with no picture of its own (a type without a preview, a
         // track before its cover) keeps its thumbnail as its picture; any
         // other preview replaces it.
@@ -1932,8 +1987,17 @@ impl Shell {
         if result.complete {
             self.preview.reader.tried = true;
             // The track stepped to is shown now, playable or not: the wish
-            // ends here either way.
-            let autoplay = self.preview.autoplay_matches();
+            // ends here either way, but not with a film's or a track's
+            // picture, which may come before its player (`Media::NoPlayer`).
+            let picture = result.media.is_none()
+                && matches!(
+                    &result.content,
+                    PreviewContent::Image {
+                        detail: Some(PreviewInfo::Video { .. }),
+                        ..
+                    }
+                );
+            let autoplay = !picture && self.preview.autoplay_matches();
             if autoplay {
                 self.preview.autoplay = None;
             }
@@ -1948,7 +2012,7 @@ impl Shell {
                     self.preview.phase = PreviewPhase::Queued;
                     return;
                 }
-                Some(Media::Pinned | Media::NoPoster) | None => {}
+                Some(Media::Pinned | Media::NoPoster | Media::NoPlayer) | None => {}
             }
             if let Some(session) = result.session {
                 self.reader_opened(session, window, cx);
@@ -2024,6 +2088,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.preview.media.session = Some(session);
+        self.preview.media.settle();
         let focus = cx.focus_handle();
         if self.preview.peek
             && self
@@ -2149,6 +2214,9 @@ impl Shell {
             (!is_dir && !self.preview.info.identified).then(|| entry.type_name().to_owned());
         let session = self.preview.reader.session.clone();
         let picture_side = self.preview.picture_side;
+        // A film's picture is asked at the side it is shown at, or the one
+        // a zoom or the whole screen asked for (`sharpen_picture`).
+        let media_side = self.preview.media_side.max(picture_side);
         // A document's page is rendered at the side pages are shown at.
         let page_side = self.preview.page_side;
         self.preview.reader.shown_side = page_side;
@@ -2392,43 +2460,82 @@ impl Shell {
                     Ok(content) => send(content, true, None, None),
                     Err(error) => fail(error),
                 };
-                // Provider registration owns media recognition, including container MIME types.
-                match previews.open_media(&request, &media_lifetime, wake.clone()) {
-                    Ok(Some(media)) => {
-                        send(
-                            PreviewContent::Generic,
-                            true,
-                            None,
-                            Some(Media::Opened(media)),
-                        );
-                        // Keep startup/playback independent of optional poster
-                        // extraction. The same cancellation token stops FFmpeg
-                        // when Play/Seek, selection or provider changes supersede it.
-                        let mut poster = request.clone();
-                        poster.max_side = u32::MAX;
-                        if let Ok(Some(preview)) = previews.render(&poster, &cancel)
-                            && let Some(image) = crate::thumbs::to_render_image(&preview.image)
-                        {
-                            let content = PreviewContent::Image {
-                                image,
-                                width: preview.image.width,
-                                height: preview.image.height,
-                                detail: Some(preview.info),
-                                document: None,
-                                // Where it was recorded, which Properties
-                                // shows beside what the player says.
-                                facts: skwir_platform::mp4::details(&path),
-                                pixels: Pixels::Own,
-                                ink: crate::backdrop::ink(&preview.image.rgba),
+                // A film or a track (provider registration owns media
+                // recognition, container types included): its picture is
+                // read while its player opens, and each is shown as it
+                // comes, so neither waits for the other. Without a player
+                // (Still frames, no GStreamer) the picture is the preview.
+                if previews.media(&request) {
+                    let mut asked = request.clone();
+                    asked.max_side = media_side;
+                    // The picture goes with the request (Play, Seek, another
+                    // file), and with a player that failed to open.
+                    let picture_cancel = cancel.child();
+                    let sniffed_now = sniffed.borrow().clone();
+                    return std::thread::scope(|scope| {
+                        let picture = scope.spawn(|| {
+                            match media_picture(&previews, &asked, &path, &picture_cancel) {
+                                Ok(content) => {
+                                    if !cancel.is_cancelled() {
+                                        let _ = tx.send(PreviewResult {
+                                            generation,
+                                            content,
+                                            complete: true,
+                                            session: None,
+                                            media: None,
+                                            sniffed: sniffed_now,
+                                            placeholder: false,
+                                            closed_links: None,
+                                            picture_source: None,
+                                        });
+                                        wake();
+                                    }
+                                    None
+                                }
+                                Err(error) => Some(error),
+                            }
+                        });
+                        let opened =
+                            match previews.open_media(&request, &media_lifetime, wake.clone()) {
+                                Ok(Some(media)) => {
+                                    send(
+                                        PreviewContent::Generic,
+                                        true,
+                                        None,
+                                        Some(Media::Opened(media)),
+                                    );
+                                    true
+                                }
+                                Ok(None) => false,
+                                Err(error) => {
+                                    picture_cancel.cancel();
+                                    let _ = picture.join();
+                                    return failed(error);
+                                }
                             };
-                            send(content, true, None, None);
-                        } else {
-                            send(PreviewContent::Generic, true, None, Some(Media::NoPoster));
+                        let unshown = picture.join().unwrap_or_else(|_| {
+                            Some(anyhow::anyhow!("the picture's reader failed"))
+                        });
+                        // What did not come is said after what did: a poster
+                        // missing after its player, a player after its picture.
+                        match (opened, unshown) {
+                            (true, None) => {}
+                            (true, Some(_)) => {
+                                send(PreviewContent::Generic, true, None, Some(Media::NoPoster));
+                            }
+                            (false, None) => {
+                                send(PreviewContent::Generic, true, None, Some(Media::NoPlayer));
+                            }
+                            (false, Some(error)) => {
+                                send(
+                                    PreviewContent::Error(format!("{error:#}")),
+                                    true,
+                                    None,
+                                    None,
+                                );
+                            }
                         }
-                        return;
-                    }
-                    Err(error) => return failed(error),
-                    Ok(None) => {}
+                    });
                 }
                 let reused = session.is_some();
                 let reader = if let Some(session) = session {
@@ -3255,7 +3362,11 @@ impl Shell {
     }
 
     pub fn preview_seek(&mut self, delta: f64, cx: &mut Context<Self>) {
-        if self.preview.media.session.is_some() {
+        // A player opening takes no seek yet; a still's steps are a still's.
+        if self.shows_player() {
+            if self.preview.media.session.is_none() {
+                return;
+            }
             // Same gate as the seek bar: a non-seekable stream ignores keys.
             if self.preview.media.state.seekable {
                 self.media_send(
@@ -4169,7 +4280,7 @@ pub(crate) fn controls(
     }
     let bar = match &shell.preview.content {
         Some(PreviewContent::Inspection(_)) => crate::inspector::toolbar(shell, theme, cx),
-        _ if shell.preview.media.session.is_some() => crate::media::toolbar(shell, theme, cx),
+        _ if shell.shows_player() => crate::media::toolbar(shell, theme, cx),
         Some(PreviewContent::Image {
             detail: Some(PreviewInfo::Document { .. }),
             ..
@@ -4228,8 +4339,53 @@ pub(crate) fn content_area(
                 d.on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&focus))
             },
         )
+        // Measured where it is used: the panel, peek or the whole screen,
+        // not the copy drawn behind peek.
+        .when(interactive, |d| {
+            d.on_children_prepainted(watch_area(shell, cx))
+        })
         .child(inner)
         .into_any_element()
+}
+
+/// What the content's area hands the shell once laid out (its one child
+/// fills it): the side a film's picture is asked at there (`media_side`),
+/// when it crosses a step.
+fn watch_area(
+    shell: &Shell,
+    cx: &mut Context<Shell>,
+) -> impl Fn(Vec<gpui::Bounds<gpui::Pixels>>, &mut Window, &mut gpui::App) + 'static {
+    let known = shell.preview.media_side;
+    let shell = cx.entity().downgrade();
+    move |bounds, window, cx| {
+        // Nothing to show takes no room, and says nothing of the area.
+        let Some(bounds) = bounds
+            .first()
+            .filter(|b| b.size.width > gpui::px(0.) && b.size.height > gpui::px(0.))
+        else {
+            return;
+        };
+        let covered = f32::from(bounds.size.width.max(bounds.size.height)) * window.scale_factor();
+        let side = step_covering(covered);
+        if side != known {
+            let shell = shell.clone();
+            window.defer(cx, move |_, cx| {
+                if let Some(shell) = shell.upgrade() {
+                    shell.update(cx, |shell, _| shell.preview.media_side = side);
+                }
+            });
+        }
+    }
+}
+
+/// The side a picture covering `covered` device pixels is asked at: the
+/// next `SHARPEN_STEP`, within `limits::PICTURE_SIDE`.
+fn step_covering(covered: f32) -> u32 {
+    use skwir_platform::inspection::limits::PICTURE_SIDE;
+    if !covered.is_finite() || covered <= 0. {
+        return SHARPEN_STEP;
+    }
+    ((covered / SHARPEN_STEP as f32).ceil() as u32 * SHARPEN_STEP).clamp(SHARPEN_STEP, PICTURE_SIDE)
 }
 
 /// The popup of the preview's bar that is open: More, the zoom menu, or the
@@ -4268,7 +4424,7 @@ pub(crate) fn notice_strip(text: String, theme: &Theme) -> gpui::Div {
 /// Whether the content is something to read rather than something to look at.
 pub(crate) fn on_paper(shell: &Shell) -> bool {
     let preview = &shell.preview;
-    if preview.media.session.is_some() {
+    if shell.shows_player() {
         return shell.media_is_audio();
     }
     // A picture or a film on its way waits on its letterbox: stepping
@@ -4298,7 +4454,7 @@ pub(crate) fn content(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let p = &shell.preview;
-    if p.media.session.is_some() && shell.media_is_audio() {
+    if shell.shows_player() && shell.media_is_audio() {
         return crate::media::audio_content(shell, theme, interactive, cx);
     }
     match &p.content {
@@ -4411,7 +4567,7 @@ pub(crate) fn content(
                 )
             };
             // A film answers a click like a player does.
-            let picture = if p.media.session.is_some() && interactive {
+            let picture = if shell.shows_player() && interactive {
                 crate::media::surface(
                     "video-surface",
                     picture,
@@ -4447,7 +4603,7 @@ pub(crate) fn content(
                 // A double click on a picture goes to the whole screen and
                 // back, as one on a film does (which answers it itself).
                 .when(
-                    document.is_none() && interactive && p.media.session.is_none(),
+                    document.is_none() && interactive && !shell.shows_player(),
                     |d| {
                         d.on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
                             if event.click_count() == 2 {
@@ -4466,7 +4622,7 @@ pub(crate) fn content(
                         .child(picture)
                         // Ctrl and the wheel zoom a picture or a page, as the
                         // zoom keys do; a film has neither.
-                        .when(interactive && p.media.session.is_none(), |d| {
+                        .when(interactive && !shell.shows_player(), |d| {
                             d.child(crate::elements::zoom_wheel::overlay(
                                 crate::elements::zoom_wheel::Zoomed::Preview,
                                 cx,
@@ -5239,7 +5395,7 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                             .text_color(theme.text_muted)
                             .border_t_1()
                             .border_color(theme.border)
-                            .child(if shell.preview.media.session.is_some() {
+                            .child(if shell.shows_player() {
                                 "Space play/pause · arrows seek · M mute · F fullscreen · Escape exit"
                             } else if shell.fullscreen_shows().is_some() {
                                 "Space or Escape to close · arrows to move · F fullscreen"

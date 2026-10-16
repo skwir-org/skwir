@@ -365,9 +365,21 @@ dates, measurements and what is left.
   1080p and 470 ms at 4K (600 and 730 before), "Loading…" from 230 ms;
   a cached one at 200 ms, with no "Loading…"; without `ffmpeg`, the
   player's frame at 200 ms; with autoplay, frames playing at 200 ms.
-  Left: the poster is read only once the player has started (about
-  200 ms); read alongside, an uncached one would mostly come before
-  "Loading…".
+  Left then: the poster was read only once the player had started.
+- **Posters at the size shown** (2026-10-17, ADR-008 amended): a film's
+  or a track's picture is read while its player opens
+  (`PreviewProvider::media`), at the side the panel shows it in 512 px
+  steps, as JPEG, laid out by the film's own size; the still and the
+  poster are one request. Measured on grainy H.264 clips (`ffmpeg`
+  alone): 215 to 102 ms at 1080p, 804 to 281 ms at 4K, entries 4 and
+  16 MB of PNG to 122 and 59 KB. In the window (Xvfb, recorded at 30
+  fps): an uncached poster at about 130 to 170 ms (330 and 470 before),
+  a cached one at 33 ms (200), the player's toolbar from the first
+  picture on; a track's halo at 70 ms; a track stepped to while one
+  plays still plays. Left: a track's glow changes hue when its cover
+  goes from the desktop's thumbnail to its own (the tint is worked out
+  per picture), as it did before; a poster smaller than a panel made
+  larger stays soft until sharpened (the next step).
 - **More formats** (2026-09-28):
   - SVG by resvg; OpenEXR and DDS decoded in process; HEIC, AVIF, JPEG
     XL and raw by the desktop's thumbnailer at 1024 px. Code highlighted

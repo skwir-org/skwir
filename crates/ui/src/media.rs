@@ -30,8 +30,10 @@ impl MediaState {
         self.scrub.is_some()
     }
 
+    /// A poster stands for the film until it plays or seeks, whether it
+    /// came before its player or after.
     pub(crate) fn accept_poster(&mut self) -> bool {
-        if self.session.is_none() || matches!(self.poster, Poster::Dismissed) {
+        if matches!(self.poster, Poster::Dismissed) {
             return false;
         }
         self.poster = Poster::Still;
@@ -51,6 +53,17 @@ impl MediaState {
     pub(crate) fn poster_awaited(&self) -> bool {
         matches!(self.poster, Poster::Waiting)
     }
+
+    /// Whether a player may still open for the file shown: its picture can
+    /// come first (`Media::NoPlayer`).
+    pub(crate) fn awaiting_player(&self) -> bool {
+        !self.settled && self.session.is_none()
+    }
+
+    /// The player's outcome is known: one opened, or none will.
+    pub(crate) fn settle(&mut self) {
+        self.settled = true;
+    }
 }
 
 #[derive(Default)]
@@ -59,6 +72,8 @@ pub struct MediaState {
     pub state: Playback,
     pub focus: Option<FocusHandle>,
     poster: Poster,
+    /// Whether the file's player opened or none will (`awaiting_player`).
+    settled: bool,
     initial_frame: Option<Frame>,
     scrub: Option<f64>,
     /// The file the session went on to by itself (gapless), for whoever
@@ -129,6 +144,7 @@ impl MediaState {
     /// Show the session's frames as they come, with no poster first: for a
     /// session that is already playing.
     pub(crate) fn show_live(&mut self) {
+        self.settled = true;
         self.poster = Poster::Dismissed;
         self.initial_frame = None;
     }
@@ -163,6 +179,21 @@ impl Shell {
 
     /// The kind of media the panel shows, as the start of its type:
     /// `audio/` or `video/`. Stepping and a shuffle keep to that kind.
+    /// Whether a player shows the file, or may still: its picture came
+    /// first (`MediaState::awaiting_player`). What is drawn of it is the
+    /// player's from the picture on, so nothing changes when it opens.
+    pub(crate) fn shows_player(&self) -> bool {
+        self.preview.media.session.is_some()
+            || (self.preview.media.awaiting_player()
+                && matches!(
+                    &self.preview.content,
+                    Some(PreviewContent::Image {
+                        detail: Some(skwir_core::preview::PreviewInfo::Video { .. }),
+                        ..
+                    })
+                ))
+    }
+
     pub(crate) fn media_kind(&self) -> Option<&'static str> {
         let mime = self.preview.info.mime.as_deref()?;
         ["audio/", "video/"]
@@ -477,6 +508,7 @@ impl Shell {
                     detail: Some(skwir_core::preview::PreviewInfo::Video {
                         seconds: state.position,
                         duration: state.duration,
+                        size: None,
                     }),
                     document: None,
                     facts: Vec::new(),

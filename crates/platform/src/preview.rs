@@ -117,7 +117,8 @@ pub fn made_key(
     key(&fingerprint_of(id, path)?, (tool_stamp(tool)?, what))
 }
 
-// A tiny JSON header followed by compressed PNG, not an array of JSON pixels.
+// A tiny JSON header followed by the compressed picture (PNG, or JPEG for a
+// film's frame), not an array of JSON pixels.
 fn cached(cache: &CacheSlot, key: &[u8], max_side: u32) -> Option<Preview> {
     let bytes = cache.get(key)?;
     let n = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
@@ -219,6 +220,9 @@ impl PreviewProvider for MediaPreviews {
         }
         Ok(session)
     }
+    fn media(&self) -> bool {
+        true
+    }
     fn id(&self) -> &'static str {
         if self.audio {
             AUDIO_PROVIDER
@@ -248,7 +252,7 @@ impl PreviewProvider for MediaPreviews {
                 tool_stamp(&ffprobe)?,
                 req.seconds,
                 req.max_side,
-                "native-video-v3",
+                "video-v4",
             ),
         )?;
         if let Some(preview) = cached(&self.cache, &key, req.max_side) {
@@ -261,8 +265,10 @@ impl PreviewProvider for MediaPreviews {
             .args([
                 "-v",
                 "error",
+                "-select_streams",
+                "v:0",
                 "-show_entries",
-                "format=duration",
+                "format=duration:stream=width,height",
                 "-of",
                 "json",
             ])
@@ -273,6 +279,14 @@ impl PreviewProvider for MediaPreviews {
             .as_str()
             .and_then(|s| s.parse::<f64>().ok())
             .filter(|d| d.is_finite() && *d > 0.0);
+        // The picture is asked at the size it is shown at; the film's own
+        // size is what it is laid out by and can be had at.
+        let stored = &value["streams"][0];
+        let stored = stored["width"]
+            .as_u64()
+            .zip(stored["height"].as_u64())
+            .and_then(|(w, h)| Some((u32::try_from(w).ok()?, u32::try_from(h).ok()?)))
+            .filter(|&(w, h)| w > 0 && h > 0);
         let asked = req.seconds.filter(|t| t.is_finite());
         let seconds = if self.audio {
             0.
@@ -287,7 +301,7 @@ impl PreviewProvider for MediaPreviews {
         // A film's own moment, unasked, is the first keyframe from it on:
         // keyframes alone decoded, not every frame since the last one. A
         // moment asked for (a step) is that one.
-        let (png, seconds) = if self.audio {
+        let (picture, seconds) = if self.audio {
             (exact(None)?, seconds)
         } else if asked.is_some() {
             (exact(Some(seconds))?, seconds)
@@ -301,12 +315,25 @@ impl PreviewProvider for MediaPreviews {
             fingerprint(req, &path)? == base,
             "file changed during preview"
         );
+        let image = decode_preview(&picture, req.max_side)?;
+        // Stored as it is decoded; turned, a phone's film is the other way.
+        let own = stored.map(|(w, h)| {
+            if (w >= h) == (image.width >= image.height) {
+                (w, h)
+            } else {
+                (h, w)
+            }
+        });
         finish(
             &self.cache,
             &key,
-            decode_preview(&png, req.max_side)?,
-            &png,
-            PreviewInfo::Video { seconds, duration },
+            image,
+            &picture,
+            PreviewInfo::Video {
+                seconds,
+                duration,
+                size: own,
+            },
             cancel,
         )
     }
@@ -721,9 +748,9 @@ impl PreviewProvider for DocumentPreviews {
     }
 }
 
-/// One picture of `path` made by `ffmpeg`, through `scratch`, as PNG bytes:
-/// the frame at `seconds` of a film, or with `None` the first video stream
-/// of a recording, its cover. Its longest side is at most `side`, never
+/// One picture of `path` made by `ffmpeg`, through `scratch`: the frame at
+/// `seconds` of a film, as JPEG, or with `None` the first video stream of a
+/// recording, its cover, as PNG. Its longest side is at most `side`, never
 /// enlarged. Only local files are read: thumbnails are made for whatever a
 /// folder holds, and a playlist must not send `ffmpeg` to the network.
 /// Recent `ffmpeg` refuses already (a playlist is recognised only by its
@@ -738,8 +765,7 @@ pub(crate) fn ffmpeg_picture(
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<u8>> {
     let frame = seconds.map_or(Frame::First, Frame::At);
-    ffmpeg_frame(ffmpeg, path, frame, side, scratch, cancel)?;
-    read_artifact(&scratch.join("frame.png"))
+    read_artifact(&ffmpeg_frame(ffmpeg, path, frame, side, scratch, cancel)?)
 }
 
 /// The first keyframe of `path` from `seconds` on, made as `ffmpeg_picture`
@@ -754,7 +780,7 @@ fn ffmpeg_keyframe(
     scratch: &Path,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<(Vec<u8>, f64)>> {
-    ffmpeg_frame(
+    let picture = ffmpeg_frame(
         ffmpeg,
         path,
         Frame::Keyframe(seconds),
@@ -777,10 +803,7 @@ fn ffmpeg_keyframe(
     else {
         return Ok(None);
     };
-    Ok(Some((
-        read_artifact(&scratch.join("frame.png"))?,
-        time.max(0.0),
-    )))
+    Ok(Some((read_artifact(&picture)?, time.max(0.0))))
 }
 
 /// Which frame `ffmpeg_frame` asks `ffmpeg` for.
@@ -795,7 +818,7 @@ enum Frame {
     Keyframe(f64),
 }
 
-/// `frame` of `path`, as `frame.png` in `scratch` (`ffmpeg_picture`).
+/// `frame` of `path`, written in `scratch` (`ffmpeg_picture`): where.
 fn ffmpeg_frame(
     ffmpeg: &Path,
     path: &Path,
@@ -803,7 +826,7 @@ fn ffmpeg_frame(
     side: u32,
     scratch: &Path,
     cancel: &CancelToken,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<std::path::PathBuf> {
     let mut run = sandbox::untrusted(ffmpeg, path, scratch, Otherwise::Run)?;
     let command = &mut run.command;
     command.args(["-nostdin", "-y", "-v", "error", "-threads", "1"]);
@@ -844,10 +867,21 @@ fn ffmpeg_frame(
         .arg(format!(
             "{filters}scale='min(iw,{side})':'min(ih,{side})':force_original_aspect_ratio=decrease,setsar=1"
         ))
-        .args(["-threads", "1", "-compression_level", "1"])
-        .arg(run.work.join("frame.png"));
+        .args(["-threads", "1"]);
+    // A film's frame, already a lossy decode, is kept as JPEG at high
+    // quality: a quarter of the PNG at the same size, and quicker to make
+    // and read (`docs/invariants/media.md`, Posters). A cover may have
+    // transparency.
+    let name = if matches!(frame, Frame::First) {
+        command.args(["-compression_level", "1"]);
+        "frame.png"
+    } else {
+        command.args(["-q:v", "2"]);
+        "frame.jpg"
+    };
+    command.arg(run.work.join(name));
     process::run(command, cancel, RENDER_TIMEOUT)?;
-    Ok(())
+    Ok(scratch.join(name))
 }
 
 /// One page of `pdf` rendered by Poppler's `pdftoppm` (`renderer`), its
@@ -1472,7 +1506,7 @@ mod tests {
         let later = backend.render(&req, &token).unwrap();
         assert_ne!(start.image.rgba, later.image.rgba);
         assert!(
-            matches!(later.info, PreviewInfo::Video { seconds, duration: Some(d) } if (seconds - 2.0).abs() < 0.001 && d >= 3.0)
+            matches!(later.info, PreviewInfo::Video { seconds, duration: Some(d), .. } if (seconds - 2.0).abs() < 0.001 && d >= 3.0)
         );
         assert_eq!(
             backend.render(&req, &token).unwrap().image.rgba,
@@ -1564,6 +1598,21 @@ mod tests {
         assert_eq!(
             backend.render(&req, &token).unwrap().image.rgba,
             poster.image.rgba
+        );
+        // Asked at the size it is shown at, it says its own.
+        req.max_side = 1024;
+        let shown = backend.render(&req, &token).unwrap();
+        assert_eq!((shown.image.width, shown.image.height), (1024, 576));
+        assert!(
+            matches!(
+                shown.info,
+                PreviewInfo::Video {
+                    size: Some((3840, 2160)),
+                    ..
+                }
+            ),
+            "{:?}",
+            shown.info
         );
         token.cancel();
         assert!(backend.render(&req, &token).is_err());

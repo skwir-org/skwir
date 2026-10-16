@@ -179,7 +179,9 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
     let mut bar = Bar::new("preview-tools");
     crate::preview_bar::close_tool(&mut bar, shell, theme);
     if let Some(PreviewContent::Image {
-        detail: Some(PreviewInfo::Video { seconds, duration }),
+        detail: Some(PreviewInfo::Video {
+            seconds, duration, ..
+        }),
         ..
     }) = &shell.preview.content
     {

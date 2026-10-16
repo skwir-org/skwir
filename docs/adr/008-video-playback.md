@@ -1,8 +1,8 @@
 # ADR-008: Optional GStreamer video playback
 
 Status: accepted, 2026-09-19. Amended by ADR-016 (one plugin for audio and
-video) and 2026-10-16 (no thumbnail before a film's frame). Area rules:
-`docs/invariants/media.md`.
+video) and 2026-10-16 (no thumbnail before a film's frame; the poster at the
+size shown). Area rules: `docs/invariants/media.md`.
 
 ## Context
 
@@ -32,15 +32,18 @@ cross-process mappings.
   command; GPUI atlas entries are evicted explicitly when replaced or closed.
 - **Resources.**
   - Playback output at most 1920 px per axis, square pixels.
-  - The poster comes from installed FFmpeg at source resolution (at most
-    8192 px per side): cancellable, optional, cached, never delaying controls
-    or moving the clock. Its moment is the first keyframe from a tenth of the
-    film on, only keyframes decoded, told at its own time (since 2026-10-16:
-    decoding every frame from the keyframe before an exact tenth took 440 ms
-    at 1080p and 970 ms at 4K, keyframes alone about 100 and 150). Without
-    one, the player's first frame is the picture; the desktop thumbnail
-    shows only when no frame comes (shown meanwhile until 2026-10-16, it was
-    a second picture the frame replaced, a flicker).
+  - The poster comes from installed FFmpeg at the size the panel shows it,
+    as JPEG, the film's own size kept for its layout (since 2026-10-16; at
+    source resolution until then, at most 8192 px per side, 4 to 16 MB of
+    PNG a film in a 128 MB cache): cancellable, optional, cached, read while
+    the player opens, never delaying controls or moving the clock. Its
+    moment is the first keyframe from a tenth of the film on, only keyframes
+    decoded, told at its own time (since 2026-10-16: decoding every frame
+    from the keyframe before an exact tenth took 440 ms at 1080p and 970 ms
+    at 4K, keyframes alone about 100 and 150). Without one, the player's
+    first frame is the picture; the desktop thumbnail shows only when no
+    frame comes (shown meanwhile until 2026-10-16, it was a second picture
+    the frame replaced, a flicker).
   - Software decoders at most 4 threads where `max-threads` exists (no
     reference-frame pools that grow with the CPU count); conversion and
     scaling at most 4 where supported.

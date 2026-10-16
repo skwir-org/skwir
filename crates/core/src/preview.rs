@@ -35,6 +35,10 @@ pub enum PreviewInfo {
     Video {
         seconds: f64,
         duration: Option<f64>,
+        /// The film's own size, when the picture was asked smaller (at the
+        /// size it is shown at): what it is laid out by and can be had at.
+        #[serde(default)]
+        size: Option<(u32, u32)>,
     },
     /// A picture another program drew at a size of its choosing (a desktop
     /// thumbnailer, for a format skwir does not decode): what it drew is all
@@ -91,6 +95,13 @@ pub trait PreviewProvider: Send + Sync {
     /// view a preview offers for every file (View as hex), asked by role,
     /// never by a plugin's name (`Previews::bytes_view`).
     fn shows_bytes(&self) -> bool {
+        false
+    }
+    /// Whether it shows what it accepts as media, a film or a track: a
+    /// still of it (`render`), and a player when one opens (`open_media`).
+    /// The panel asks for the picture while the player opens, so neither
+    /// waits for the other.
+    fn media(&self) -> bool {
         false
     }
     fn accepts(&self, request: &PreviewRequest) -> bool;
@@ -286,6 +297,16 @@ impl Previews {
                 |p, cancel| p.converted(request, cancel),
             )?
             .flatten())
+    }
+
+    /// Whether the provider that shows `request` shows it as media
+    /// (`PreviewProvider::media`): the one `open_media` and `render` go to.
+    pub fn media(&self, request: &PreviewRequest) -> bool {
+        let providers = self.providers.read().clone();
+        providers
+            .iter()
+            .find(|p| p.provider.accepts(request))
+            .is_some_and(|p| p.provider.media())
     }
 
     /// Blocking startup on a scheduler worker; subsequent controls are nonblocking.
