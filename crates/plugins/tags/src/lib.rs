@@ -1153,7 +1153,7 @@ impl Plugin for TagsPlugin {
                     let pane = app.pane_or_active(a.pane);
                     let items = remembered_comment(app, pane).map(|comment| MenuItem {
                         submenu: Some("Notes".into()),
-                        ..menu_item("Comment…", ask_comment(Some(&comment)), 160, "comment")
+                        ..menu_item("Comment…", ask_comment(Some(&comment)), 560, "comment")
                     });
                     Ok(Outcome::Value(
                         serde_json::json!({ "items": items.into_iter().collect::<Vec<_>>() }),
@@ -1229,7 +1229,7 @@ impl Plugin for TagsPlugin {
         );
         app.registry.menus.add(
             ID,
-            menu_item("Tags…", Invocation::new("ui.tags_prompt"), 150, "tag"),
+            menu_item("Tags…", Invocation::new("ui.tags_prompt"), 550, "tag"),
         );
         // The folder's own menu, beside Search here and the Usage view.
         app.registry.menus.add(
@@ -1257,7 +1257,7 @@ impl Plugin for TagsPlugin {
                     ..menu_item(
                         &title,
                         Invocation::with_args("notes.rate", &serde_json::json!({ "stars": stars })),
-                        151 + i32::from(5 - stars),
+                        551 + i32::from(5 - stars),
                         if stars == 0 { "minus" } else { "star" },
                     )
                 },
@@ -1267,7 +1267,7 @@ impl Plugin for TagsPlugin {
             ID,
             MenuItem {
                 submenu: Some("Notes".into()),
-                ..menu_item("Comment…", ask_comment(None), 160, "comment")
+                ..menu_item("Comment…", ask_comment(None), 560, "comment")
             },
         );
         // The comment already there, to edit rather than retype.

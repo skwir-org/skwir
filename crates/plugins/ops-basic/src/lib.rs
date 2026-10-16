@@ -304,9 +304,10 @@ const BINDINGS_ARGS: &[(&str, &str, &str)] = &[
 
 // Context menu items: (title, command, when, order). Order follows the
 // convention documented on `skwir_core::registry::MenuItem`: hundreds are
-// groups (0 open, 100 edit, 200 create, 300 destructive, 400 misc), the UI
-// draws a separator between groups. "Open" and "Open Terminal Here" are
-// contributed by the open-with plugin, which owns those commands.
+// groups (0 open, 100 edit, 200 create, 300 destructive, 400 misc, 500
+// metadata), the UI draws a separator between groups. "Open" and "Open
+// Terminal Here" are contributed by the open-with plugin, which owns those
+// commands.
 const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
     ("Open in New Tab", "tab.open", Some("dir"), 2, "tab-new"),
     (

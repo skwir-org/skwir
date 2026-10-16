@@ -61,7 +61,7 @@ pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
     app.commands.register::<RemoveArgs, _>(
         ID,
         "geo.remove_location",
-        "Remove pictures' locations",
+        "Remove pictures' GPS locations",
         "Take the location out of the selected pictures (plan); those without one are left as they are",
         |args, app| remove_location(app, args),
     )
@@ -77,14 +77,14 @@ pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
             "Geotag from Track",
             "geo.geotag",
             format!("has:image {}", tracks.join("|")),
-            160,
+            560,
             "map",
         ),
         (
-            "Remove Location",
+            "Remove GPS Location",
             "geo.remove_location",
             "kind:image".to_owned(),
-            161,
+            561,
             "close",
         ),
     ] {

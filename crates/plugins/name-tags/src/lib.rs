@@ -401,10 +401,10 @@ impl Plugin for NameTagsPlugin {
         .plans();
         app.registry
             .menus
-            .add(ID, menu_item("Tags into Name", "names.tag", 170, "tag"));
+            .add(ID, menu_item("Tags into Name", "names.tag", 570, "tag"));
         app.registry.menus.add(
             ID,
-            menu_item("Tags out of Name", "names.untag", 171, "rename"),
+            menu_item("Tags out of Name", "names.untag", 571, "rename"),
         );
     }
 }

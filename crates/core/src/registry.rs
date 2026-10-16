@@ -411,8 +411,10 @@ pub struct Aspect {
 /// `order` sorts items and groups them: the hundreds digit is the group and
 /// the UI draws a separator between groups. Convention for `context`:
 /// 0xx open/navigate, 1xx edit (rename, cut, copy, paste), 2xx create,
-/// 3xx destructive (trash, delete), 4xx misc (refresh), 9xx the menu's
-/// end, after the submenus (the shell's Properties).
+/// 3xx destructive (trash, delete), 4xx misc (refresh), 5xx metadata
+/// (tags, ratings, comments, a picture's position: what is said of a
+/// file, kept apart from what is done to it), 9xx the menu's end, after
+/// the submenus (the shell's Properties).
 ///
 /// `drop` is the menu a drop in a folder asks with (`core.drop_asks`):
 /// after Move, Copy and Link Here (0xx) and before Cancel (9xx), so its
