@@ -1049,6 +1049,21 @@ under the pointer and the share of it there are landed by the layout at
 the new zoom, which knows the rows' heights. The zoom keys keep their
 place, as before.
 
+Find in a preview marks what it finds, as a browser does: while the
+field is open, every match in the text drawn, and the one it is on more
+strongly (`inspector_text::Sought`, `Theme::find_*`), in a text file,
+Markdown or a book. It goes from match to match, within a line too
+(`text_rows::find` from a row and a byte, `Display::find` from a block
+and a byte), and brings the match into view where it was drawn
+(`RowScroll::reveal_spot`): along a line that does not wrap, down one
+that wraps taller than the view, out from under the find field where the
+view can move. In a file of one long line, each 4 KiB row it is cut
+into held matches Find stepped over, and the row selected was all it
+showed. Lines that do not wrap could not be scrolled past about half
+their length: a row's text was shifted by a negative margin, which laid
+the row out shorter by as much, so how far the rows could go shrank as
+they went; the text is moved by position now (`CodeRow::shift`).
+
 ---
 
 ## Maps

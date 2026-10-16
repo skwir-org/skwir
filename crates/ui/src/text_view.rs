@@ -28,7 +28,7 @@ use skwir_platform::links::WrittenPaths;
 use skwir_platform::text_rows::{self, Form, Index, Point, STRIDE};
 
 use crate::code_preview::{Highlighter, Palette, Resume};
-use crate::elements::rows::Scroll;
+use crate::elements::rows::{Scroll, Seen};
 use crate::latest::Latest;
 use crate::shell::Shell;
 
@@ -160,9 +160,10 @@ struct Reply {
     read: anyhow::Result<(Chunk, Option<Resume>)>,
 }
 
-/// What a search or a line asked for found: the row to show, or what to
-/// say instead.
+/// What a search or a line asked for found: the match and its row, the
+/// row to show, or what to say instead.
 pub(crate) enum Found {
+    Match(u64, Range<usize>),
     Row(u64),
     Nothing(String),
 }
@@ -190,6 +191,9 @@ pub struct TextView {
     /// The chunk asked for, while it is.
     asking: Option<u64>,
     pub(crate) scroll: Scroll,
+    /// Where the match a find landed on was drawn, for the rows to bring
+    /// it into view (`RowScroll::reveal_spot`).
+    pub(crate) spot: Seen,
     found: Latest<Found>,
     copied: Latest<anyhow::Result<Copied>>,
     /// A line (from 1) a link asked for, until it is counted.
@@ -303,6 +307,7 @@ impl TextView {
             asked: Latest::default(),
             asking: None,
             scroll: scroll.unwrap_or_default(),
+            spot: Seen::default(),
             found: Latest::default(),
             copied: Latest::default(),
             line: None,
@@ -484,8 +489,9 @@ impl TextView {
         true
     }
 
-    /// Look for `query` (lowercase) from `from`, forward or `back`.
-    fn find(&mut self, app: &Arc<skwir_core::App>, query: String, from: u64, back: bool) {
+    /// Look for `query` from `from` (a row and a byte in it), forward or
+    /// `back`.
+    fn find(&mut self, app: &Arc<skwir_core::App>, query: String, from: (u64, usize), back: bool) {
         let (path, index) = (self.file.path.clone(), Arc::clone(&self.index));
         self.found.ask(
             app,
@@ -493,7 +499,7 @@ impl TextView {
             Priority::Visible,
             "text-rows-find",
             move |cancel| match text_rows::find(&path, &index, &query, from, back, cancel) {
-                Ok(Some(row)) => Found::Row(row),
+                Ok(Some((row, found))) => Found::Match(row, found),
                 Ok(None) if index.read().done() => Found::Nothing("No match in the file".into()),
                 Ok(None) => Found::Nothing("No match in what is counted so far".into()),
                 Err(error) => Found::Nothing(format!("{error:#}")),
@@ -562,6 +568,8 @@ pub(crate) struct Look {
     pub entity: gpui::WeakEntity<Shell>,
     /// Whether lines wrap to the width (`reading.wrap_lines`).
     pub wrap: bool,
+    /// What the find field's popup hides of the rows, while it is open.
+    pub covered: Option<crate::elements::rows::Covered>,
 }
 
 /// The rows of `view`, those read drawn as the code view draws a line
@@ -584,8 +592,10 @@ pub(crate) fn element(view: &TextView, look: Look) -> gpui::AnyElement {
         pane,
         entity,
         wrap,
+        covered,
     } = look;
     let laid = entity.clone();
+    let spot = Rc::clone(&view.spot);
     crate::elements::rows::rows(
         "text-rows",
         Rc::clone(&view.scroll),
@@ -624,6 +634,8 @@ pub(crate) fn element(view: &TextView, look: Look) -> gpui::AnyElement {
             shell.update(cx, |shell, cx| shell.text_laid(range, cx));
         }
     })
+    .seen(spot)
+    .covered(covered)
     .into_any_element()
 }
 
@@ -697,6 +709,15 @@ impl Shell {
         if let Some(found) = view.found.take() {
             changed = true;
             match found {
+                // The match in view, however far along its row.
+                Found::Match(row, found) => {
+                    view.scroll.borrow_mut().reveal_spot(row);
+                    state.selected = Some(row as usize);
+                    state.selection = None;
+                    if let Some(sought) = state.sought.as_mut() {
+                        sought.current = Some((row as usize, found));
+                    }
+                }
                 Found::Row(row) => {
                     view.scroll.borrow_mut().reveal(row);
                     state.selected = Some(row as usize);
@@ -753,16 +774,16 @@ impl Shell {
         };
         match action {
             "find" => {
-                let query = args["value"].as_str().unwrap_or("").to_lowercase();
+                let query = args["value"].as_str().unwrap_or("").to_owned();
                 let back = args["back"].as_bool() == Some(true);
-                let top = view.scroll.borrow().top;
-                // After the row selected, or before it; else from the top.
-                let from = match (selected, back) {
-                    (Some(row), false) => row as u64 + 1,
-                    (Some(row), true) => row as u64,
-                    (None, _) => top,
-                };
-                view.find(&app, query, from, back);
+                let top = view.scroll.borrow().top as usize;
+                // From the match the find is on, else after the row
+                // selected or before it, else from the top.
+                let (row, at) = state.find_from(&query, back, (top, 0));
+                if let Some(view) = state.text.as_mut() {
+                    view.find(&app, query, (row as u64, at), back);
+                }
+                cx.notify();
             }
             "select_all" => {
                 let last = view.rows().saturating_sub(1) as usize;

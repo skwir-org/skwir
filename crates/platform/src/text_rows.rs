@@ -476,34 +476,83 @@ pub fn row_of_line(
     Ok(None)
 }
 
-/// The first row from `from` on that holds `query` (already lowercase),
-/// going on from the start once the end is passed, as far as `from`; or
-/// the last before `from`, going on from the end, when `back`. Rows are
-/// compared lowercase. Only the rows counted are searched.
+/// `text` lowercase, a character at a time: what a find compares. A
+/// character's lowercase may be longer than it ('İ'), so offsets in it are
+/// not the text's (`matches` maps them back).
+pub fn fold(text: &str) -> String {
+    text.chars().flat_map(char::to_lowercase).collect()
+}
+
+/// Where `query` is in `text`, case ignored (both `fold`ed): the ranges of
+/// `text` it covers, in order, none overlapping. A match that ends inside
+/// what a character lowercases to covers the character.
+pub fn matches(text: &str, query: &str) -> Vec<Range<usize>> {
+    let query = fold(query);
+    if query.is_empty() {
+        return Vec::new();
+    }
+    // ASCII lowercases byte for byte: its offsets are the text's.
+    if text.is_ascii() {
+        let lower = text.to_ascii_lowercase();
+        return lower
+            .match_indices(query.as_str())
+            .map(|(at, found)| at..at + found.len())
+            .collect();
+    }
+    let lower = fold(text);
+    if !lower.contains(query.as_str()) {
+        return Vec::new();
+    }
+    // Each byte of `lower`: where the character it came from starts.
+    let mut origin = Vec::with_capacity(lower.len());
+    for (at, c) in text.char_indices() {
+        let wide: usize = c.to_lowercase().map(char::len_utf8).sum();
+        origin.extend(std::iter::repeat_n(at, wide));
+    }
+    lower
+        .match_indices(query.as_str())
+        .map(|(at, found)| {
+            let last = origin[at + found.len() - 1];
+            let end = last + text[last..].chars().next().map_or(0, char::len_utf8);
+            origin[at]..end
+        })
+        .collect()
+}
+
+/// The first match of `query` (case ignored, `matches`) at or after `from`
+/// (row, byte in the row's text), going on from the start once the end is
+/// passed, as far as `from`; or the last before `from`, going on from the
+/// end, when `back`. Its row and where it is in the row's text. Only the
+/// rows counted are searched, each on its own: a match is within a row.
 pub fn find(
     path: &Path,
     index: &RwLock<Index>,
     query: &str,
-    from: u64,
+    from: (u64, usize),
     back: bool,
     cancel: &CancelToken,
-) -> anyhow::Result<Option<u64>> {
+) -> anyhow::Result<Option<(u64, Range<usize>)>> {
     let (form, rows) = {
         let index = index.read();
         (index.form, index.rows)
     };
-    if query.is_empty() || rows == 0 {
+    if fold(query).is_empty() || rows == 0 {
         return Ok(None);
     }
-    let from = from.min(rows);
-    let holds = |text: &str| text.to_lowercase().contains(query);
+    let from = if from.0 >= rows { (rows, 0) } else { from };
+    // The matches of a row that come at or after `from`, or before it.
+    let after = |row: u64, text: &str, later: bool| -> Vec<Range<usize>> {
+        let mut found = matches(text, query);
+        found.retain(|range| ((row, range.start) >= from) == later);
+        found
+    };
     let place = |chunk: u64| -> Option<(u64, Point)> {
         let point = index.read().point(chunk)?;
         Some((chunk * STRIDE, point))
     };
     if !back {
-        // Forward: `from` to the end, then the start to `from`.
-        for span in [from..rows, 0..from] {
+        // Forward: `from` to the end, then the start up to `from`.
+        for (span, later) in [(from.0..rows, true), (0..(from.0 + 1).min(rows), false)] {
             if span.is_empty() {
                 continue;
             }
@@ -521,17 +570,21 @@ pub fn find(
                 let Some(found) = cutter.next()? else {
                     break;
                 };
-                if row >= span.start && holds(&form.decode(&cutter.buf[found.bytes])) {
-                    return Ok(Some(row));
+                if row >= span.start
+                    && let Some(range) = after(row, &form.decode(&cutter.buf[found.bytes]), later)
+                        .into_iter()
+                        .next()
+                {
+                    return Ok(Some((row, range)));
                 }
                 row += 1;
             }
         }
         return Ok(None);
     }
-    // Back: from `from` toward the start, then from the end to `from`,
-    // a chunk at a time.
-    for span in [0..from, from..rows] {
+    // Back: from `from` toward the start, then from the end down to
+    // `from`, a chunk at a time.
+    for (span, later) in [(0..(from.0 + 1).min(rows), false), (from.0..rows, true)] {
         if span.is_empty() {
             continue;
         }
@@ -541,9 +594,12 @@ pub fn find(
                 continue;
             };
             let wanted = at.max(span.start)..(at + STRIDE).min(span.end);
-            let rows = read(path, form, (at, point), wanted.clone(), cancel)?;
-            if let Some(n) = rows.iter().rposition(|row| holds(&row.text)) {
-                return Ok(Some(wanted.start + n as u64));
+            let read = read(path, form, (at, point), wanted.clone(), cancel)?;
+            for (n, text) in read.iter().enumerate().rev() {
+                let row = wanted.start + n as u64;
+                if let Some(range) = after(row, &text.text, later).pop() {
+                    return Ok(Some((row, range)));
+                }
             }
         }
     }
@@ -797,10 +853,12 @@ mod tests {
         let cancel = CancelToken::new();
         let row_of = |line: u64| row_of_line(&path, &index, line, &cancel).unwrap().unwrap();
         let find = |query: &str, from: u64, back: bool| {
-            find(&path, &index, query, from, back, &cancel).unwrap()
+            find(&path, &index, query, (from, 0), back, &cancel)
+                .unwrap()
+                .map(|(row, _)| row)
         };
         // "123 LIGNE": lowercase on both sides.
-        assert_eq!(find("123 ligne", 0, false), Some(row_of(123)));
+        assert_eq!(find("123 LIGNE", 0, false), Some(row_of(123)));
         assert_eq!(
             find("123 ligne", row_of(123) + 1, false),
             Some(row_of(123)),
@@ -815,6 +873,45 @@ mod tests {
         );
         assert_eq!(find("absent", 400, false), None);
         assert_eq!(find("absent", 400, true), None);
+    }
+
+    #[test]
+    fn find_goes_from_match_to_match_within_a_row() {
+        // One long line, cut into rows: "needle" four times in the first
+        // row, then once in the next line.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("one line.min.js");
+        let mut line = "x".repeat(ROW_BYTES * 2);
+        for at in [10, 200, 900, 3000] {
+            line.replace_range(at..at + 6, "Needle");
+        }
+        std::fs::write(&path, format!("{line}\nneedle\n")).unwrap();
+        let index = counted(&path);
+        let cancel = CancelToken::new();
+        let find = |from: (u64, usize), back: bool| {
+            find(&path, &index, "NEEDLE", from, back, &cancel).unwrap()
+        };
+        assert_eq!(find((0, 0), false), Some((0, 10..16)));
+        assert_eq!(find((0, 11), false), Some((0, 200..206)), "the next");
+        assert_eq!(find((0, 3001), false), Some((2, 0..6)), "the next row");
+        assert_eq!(find((2, 1), false), Some((0, 10..16)), "around");
+        assert_eq!(find((0, 900), true), Some((0, 200..206)), "the one before");
+        assert_eq!(find((0, 10), true), Some((2, 0..6)), "back around");
+        assert_eq!(find((2, 0), true), Some((0, 3000..3006)));
+    }
+
+    #[test]
+    fn a_match_is_where_it_is_in_the_text_whatever_its_case() {
+        assert_eq!(matches("A needle, a NEEDLE", "needle"), [2..8, 12..18]);
+        assert_eq!(matches("Été, ÉTÉ", "été"), [0..5, 7..12]);
+        // 'İ' lowercases to two characters: a match ending in them covers
+        // it, and what follows is where it is in the text.
+        assert_eq!(matches("İx İ", "i"), [0..2, 4..6]);
+        assert_eq!(matches("İx İx", "x"), [2..3, 6..7]);
+        // The Kelvin sign lowercases to an ASCII 'k'.
+        assert_eq!(matches("\u{212A}m \u{212A}m", "km"), [0..4, 5..9]);
+        assert!(matches("needle", "").is_empty());
+        assert!(matches("needle", "pin").is_empty());
     }
 
     #[test]

@@ -62,7 +62,10 @@ contributors). The rules for working on preview code are in
   end; hex search streams on from the byte after it; a book searches the
   rest of the chapter and then the next chapter with a match, wrapping
   around; other previews search the loaded section after the selected
-  item.
+  item. While the field is open, every match in the text is marked and
+  the one found stands out, as in a browser; Enter and `F3` go from match
+  to match, several in one line included, and bring the one found into
+  view, along a long line too.
 - Each kind is a plugin, turned on or off in Settings › Plugins.
 
 ### Keys

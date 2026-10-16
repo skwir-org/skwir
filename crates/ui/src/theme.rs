@@ -18,6 +18,7 @@
 //!   whatever is under the pointer, `selection_*` for what is chosen,
 //!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
 //!   `stage` behind a picture, a page or a film on the whole screen,
+//!   `find_*` for what a find found in text,
 //!   `drop_target` under a drag, `on_fill` for text on a saturated fill,
 //!   `handle` for an edge being dragged, `band` and `band_edge` for the
 //!   rubber band, `block_hover` and `block_selected` for a block of the
@@ -81,6 +82,13 @@ pub struct Theme {
     /// Laid over a picture of a page: selected text, and a search match.
     pub page_selection: Hsla,
     pub page_match: Hsla,
+    /// What a find looks for, wherever text holds it (`find_match`), and
+    /// the match it is on (`find_current`, its text `find_current_text`,
+    /// dark on it in either look), marked as a browser marks them: a word
+    /// found in a long line is seen at a glance.
+    pub find_match: Hsla,
+    pub find_current: Hsla,
+    pub find_current_text: Hsla,
     /// A folder, row or place that a drag would drop into.
     pub drop_target: Hsla,
     /// Text and glyphs on a saturated fill (`accent`, `error`, chart blocks).
@@ -162,6 +170,9 @@ impl Theme {
             band_edge: Hsla::from(rgb(0x2f6feb)).opacity(0.8),
             page_selection: Hsla::from(rgb(0x2f6feb)).opacity(0.35),
             page_match: Hsla::from(rgb(0xffce33)).opacity(0.4),
+            find_match: Hsla::from(rgb(0xffce33)).opacity(0.5),
+            find_current: rgb(0xff9632).into(),
+            find_current_text: rgb(0x1f1f1f).into(),
             drop_target: Hsla::from(rgb(0xd6e4ff)).opacity(0.6),
             on_fill: gpui::white(),
             tags: [
@@ -215,6 +226,9 @@ impl Theme {
             band_edge: Hsla::from(rgb(0x6ea8fe)).opacity(0.8),
             page_selection: Hsla::from(rgb(0x6ea8fe)).opacity(0.35),
             page_match: Hsla::from(rgb(0xffce33)).opacity(0.4),
+            find_match: Hsla::from(rgb(0xffce33)).opacity(0.35),
+            find_current: rgb(0xff9632).into(),
+            find_current_text: rgb(0x1f1f1f).into(),
             drop_target: Hsla::from(rgb(0x2c4f8a)).opacity(0.6),
             on_fill: gpui::white(),
             tags: [

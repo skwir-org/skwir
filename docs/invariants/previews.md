@@ -705,6 +705,15 @@ is still to come are in `docs/preview-frame.md`.
 - **Find** is a field under its button with Enter and F3, the same in the
   reader and in structured previews (`preview_bar::find_popup`, key
   context `PreviewFind`).
+- **A find marks what it finds** in a structured preview's text, while
+  its field is open: every match of what it looks for in the text drawn
+  (`Theme::find_match`), the one it is on more strongly (`find_current`),
+  drawn with the text (`inspector_text::Sought`), never by measuring it
+  in `render`. Finding and marking match alike, case ignored a character
+  at a time, at the text's own offsets (`text_rows::matches`). A find
+  goes from the match it is on, past it, unless the query is new
+  (`State::find_from`): from match to match, several in a block or a row
+  included.
 - **Contents** is one drawer (`outline.rs`) for a document's outline, a
   file's headings and a book's chapters.
 - What a preview says about itself (how it is shown, what was left out)
@@ -1005,10 +1014,17 @@ is still to come are in `docs/preview-frame.md`.
     rows on screen, in prepaint; it keeps nothing per row. After
     Ctrl+End it follows the end until moved up, a file written to
     included. Lines wrap or not (`reading.wrap_lines`); unwrapped, a row
-    shifts its text and keeps its gutter (`CodeRow::shift`).
+    moves its text and keeps its gutter (`CodeRow::shift`): moved by
+    position, never by a margin, which would lay the row out shorter the
+    further it is scrolled, and the rows would stop short of its end.
   - Find, copy and a line a link names (`file:12`) read the file on a
     worker (`text_rows::find`, `text`, `row_of_line`): never only what is
     loaded. Copy stops at `text_view::COPY_BYTES` and says so.
+  - Find lands on a match, a row and where it is in it. The rows bring
+    it into view where its text says it drew it once placed
+    (`RowScroll::reveal_spot`, `Rows::seen`): along a line that does not
+    wrap, down a row that wraps taller than the view, out from under the
+    find field (`Rows::covered`, `Field::drawn`), in the next frame.
 - HTML files open in the inert reading mode, like Markdown, their source
   one toggle away.
 - Code inspections hold one bounded logical line per block. Fold ranges

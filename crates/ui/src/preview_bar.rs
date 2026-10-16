@@ -535,6 +535,9 @@ pub fn render(
 /// run commands of the shell, so a field does what its buttons do.
 pub struct Field {
     pub input: gpui::Entity<crate::input::TextInput>,
+    /// Where its popup was last drawn (`find_popup`): what it hides of
+    /// what the preview shows under it.
+    pub drawn: Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     _subscription: gpui::Subscription,
 }
 
@@ -562,6 +565,7 @@ impl Field {
         );
         Field {
             input,
+            drawn: Rc::default(),
             _subscription: subscription,
         }
     }
@@ -586,7 +590,8 @@ fn split(command: &'static str) -> (&'static str, serde_json::Value) {
 /// The find field under its button, the same in the reader and in a
 /// structured preview: the field, a line saying where the search stands,
 /// and the buttons that step through the matches and close it. `context`
-/// names its keys (`keymap::PREVIEW_FIND`).
+/// names its keys (`keymap::PREVIEW_FIND`). The field is told where it was
+/// drawn (`Field::drawn`).
 pub fn find_popup(
     field: &Field,
     context: &'static str,
@@ -628,5 +633,16 @@ pub fn find_popup(
                 .child(div().flex_1().text_color(theme.text_muted).child(status))
                 .children(buttons.into_iter().map(|button| button.render(shell, cx))),
         )
+        .child({
+            let drawn = Rc::clone(&field.drawn);
+            gpui::canvas(
+                move |bounds, _, _| drawn.set(Some(bounds)),
+                |_, (), _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        })
         .into_any_element()
 }

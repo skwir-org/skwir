@@ -1,4 +1,5 @@
 //! Native rich-text selection. Geometry is read only for pointer hit testing.
+use crate::elements::rows::{Seen, Spot};
 use crate::{markdown::MarkdownStyle, shell::Shell};
 use gpui::{
     AnyElement, HighlightStyle, MouseButton, RunPosition, SharedString, StrikethroughStyle,
@@ -109,6 +110,65 @@ pub fn render(
 pub struct Marks<'a> {
     pub armed: Option<&'a std::ops::Range<usize>>,
     pub labels: &'a [(usize, SharedString)],
+    /// What a find found (`Sought::marks`), and whether each is the match
+    /// it is on.
+    pub found: &'a [(std::ops::Range<usize>, bool)],
+}
+
+/// What a find marks in the text a frame draws, while its field is open:
+/// every match of what it looks for (`Theme::find_match`), and the one it
+/// is on more strongly (`find_current`).
+#[derive(Clone)]
+pub struct Sought {
+    /// What it looks for, as typed: matched as `text_rows::matches` does.
+    pub query: String,
+    /// The match it is on: its block (or row) and where it is there.
+    pub current: Option<(usize, std::ops::Range<usize>)>,
+    /// Told where that one was drawn, when the view brings it into sight.
+    pub seen: Option<Seen>,
+}
+
+impl Sought {
+    /// The matches in `range` of block `index`, in the block's
+    /// coordinates, and whether each is the one the find is on.
+    pub fn marks(
+        &self,
+        block: &Block,
+        index: usize,
+        range: std::ops::Range<usize>,
+    ) -> Vec<(std::ops::Range<usize>, bool)> {
+        let Some(text) = block.text.get(range.clone()) else {
+            return Vec::new();
+        };
+        let current = self
+            .current
+            .as_ref()
+            .filter(|(at, _)| *at == index)
+            .map(|(_, found)| found);
+        skwir_platform::text_rows::matches(text, &self.query)
+            .into_iter()
+            .map(|found| {
+                let found = found.start + range.start..found.end + range.start;
+                let on = current == Some(&found);
+                (found, on)
+            })
+            .collect()
+    }
+}
+
+/// Where `range` of a text laid out and placed is drawn: from its start,
+/// one line high, to its end when that is on the same line.
+fn spot_of(layout: &gpui::TextLayout, range: std::ops::Range<usize>) -> Option<Spot> {
+    let start = layout.position_for_index(range.start)?;
+    let end = layout
+        .position_for_index(range.end)
+        .filter(|end| end.y == start.y)
+        .unwrap_or(start);
+    let line = layout.line_height();
+    Some(Spot {
+        area: gpui::Bounds::from_corners(start, gpui::point(end.x.max(start.x), start.y + line)),
+        text_left: layout.bounds().left(),
+    })
 }
 
 /// The text of `range` as drawn and its highlights (relative to `range`):
@@ -130,6 +190,13 @@ pub fn styled(
     edges.extend(reduced.iter().flat_map(|r| [r.start, r.end]));
     if selection.start < selection.end {
         edges.extend([selection.start, selection.end]);
+    }
+    for (found, _) in marks.found {
+        edges.extend(
+            [found.start, found.end]
+                .into_iter()
+                .filter(|edge| (range.start..=range.end).contains(edge)),
+        );
     }
     for r in &block.runs {
         edges.extend(
@@ -191,6 +258,16 @@ pub fn styled(
                         color: None,
                         wavy: false,
                     });
+                }
+            }
+            if let Some((_, on)) = marks.found.iter().find(|(found, _)| found.contains(&start)) {
+                highlight.background_color = Some(if *on {
+                    style.find_current
+                } else {
+                    style.find_match
+                });
+                if *on {
+                    highlight.color = Some(style.find_current_text);
                 }
             }
             if selection.contains(&start) {
@@ -324,13 +401,34 @@ pub fn part(
         .as_ref()
         .and_then(|labels| labels.get(&index))
         .map_or(&[][..], Vec::as_slice);
+    let found = style
+        .sought
+        .as_deref()
+        .map(|sought| sought.marks(block, index, range.clone()))
+        .unwrap_or_default();
+    // The match the find is on, where the view is told it was drawn: not
+    // while labels move the text along.
+    let spot = style
+        .sought
+        .as_ref()
+        .and_then(|sought| sought.seen.clone())
+        .zip(
+            found
+                .iter()
+                .find(|(_, on)| *on)
+                .map(|(found, _)| found.clone()),
+        )
+        .filter(|_| labels.is_empty());
     let marks = Marks {
         armed: armed.as_ref(),
         labels,
+        found: &found,
     };
     let (shown, highlights) = styled(block, range.clone(), selection, style, marks);
     let text = StyledText::new(shown).with_highlights(highlights);
     let down = text.layout().clone();
+    let placed = text.layout().clone();
+    let start = range.start;
     let moved = down.clone();
     // While labelled the text moved along by its labels: the keys follow
     // links then, not the pointer.
@@ -412,6 +510,19 @@ pub fn part(
         .id(gpui::ElementId::from((id, "select")))
         .cursor_text()
         .child(text)
+        // Prepainted after the text: where the match is drawn is known.
+        .when_some(spot, |d, (seen, found)| {
+            d.child(
+                gpui::canvas(
+                    move |_, _, _| {
+                        seen.set(spot_of(&placed, found.start - start..found.end - start));
+                    },
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .size_0(),
+            )
+        })
         .when_some(hovered, |d, (element, weak)| {
             d.on_hover(move |inside, _, cx| {
                 if !*inside {

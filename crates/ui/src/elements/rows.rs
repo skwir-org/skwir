@@ -34,6 +34,9 @@ pub struct RowScroll {
     pending: f32,
     /// A row to bring into view, a third down the view when it was not in it.
     reveal: Option<u64>,
+    /// What to bring into view in it once drawn (a match found): where it
+    /// is said to be (`Rows::seen`), in a row long enough to hide it.
+    seek: bool,
     /// The last rows stay on the bottom, however tall they turn out once
     /// read, or however many more come (a log written to), until the view
     /// is moved up.
@@ -48,21 +51,46 @@ pub struct RowScroll {
     /// The rows wholly on screen, and whether the last is the last row.
     shown: Range<u64>,
     at_end: bool,
+    /// The rows laid out, some maybe only in part.
+    laid: Range<u64>,
 }
 
 /// The place of a view of rows.
 pub type Scroll = Rc<RefCell<RowScroll>>;
 
+/// Where something to bring into view was drawn (a match found), in the
+/// window: its bounds, and the left of the text it is in as laid out,
+/// scrolled sideways.
+#[derive(Clone, Copy, Debug)]
+pub struct Spot {
+    pub area: Bounds<Pixels>,
+    pub text_left: Pixels,
+}
+
+/// Told where a row drew what `RowScroll::reveal_spot` brings into view,
+/// by what drew it, once placed.
+pub type Seen = Rc<std::cell::Cell<Option<Spot>>>;
+
 impl RowScroll {
     /// Bring `row` into view at the next layout, unless it is wholly there.
     pub fn reveal(&mut self, row: u64) {
         self.reveal = Some(row);
+        self.seek = false;
         self.follow = false;
+    }
+
+    /// Bring what is in `row` into view, where the row says it drew it
+    /// (`Rows::seen`): the row, unless it is laid out already, then the
+    /// spot, a third into the view along the way it was out of it.
+    pub fn reveal_spot(&mut self, row: u64) {
+        self.reveal(row);
+        self.seek = true;
     }
 
     /// Scroll by `pixels`, down when positive, at the next layout.
     pub fn scroll_by(&mut self, pixels: f32) {
         self.pending += pixels;
+        self.seek = false;
     }
 
     /// A row's height, as the last layout found them: what the arrows go.
@@ -78,6 +106,7 @@ impl RowScroll {
     /// To the first row, or past the last (the layout stops at the end).
     pub fn to_edge(&mut self, end: bool) {
         self.pending = 0.;
+        self.seek = false;
         self.offset = 0.;
         self.top = if end { self.count } else { 0 };
         self.follow = end;
@@ -111,6 +140,7 @@ impl RowScroll {
         let average = self.average.max(1.);
         let (_, max, _) = self.vertical();
         self.pending = 0.;
+        self.seek = false;
         if to >= max && max > 0. {
             return self.to_edge(true);
         }
@@ -122,7 +152,50 @@ impl RowScroll {
 
     pub(crate) fn scroll_horizontally_to(&mut self, to: f32) {
         self.x = to.max(0.);
+        self.seek = false;
     }
+}
+
+/// How far to move (sideways, down) to bring `spot` into the rows' view
+/// `bounds`, scrolled `shift` sideways: a third into the view along an
+/// axis it is out of, and not sideways when rows wrap. What a popup over
+/// the rows hides (`covered`, a find field's) is out of view down to its
+/// foot, where it is over the spot. `None` when it is in view. The text
+/// starts at its left as laid out, unscrolled.
+fn bring(
+    spot: Spot,
+    bounds: Bounds<Pixels>,
+    shift: f32,
+    wrap: bool,
+    covered: Option<Bounds<Pixels>>,
+) -> Option<(f32, f32)> {
+    let area = spot.area;
+    let left = f32::from(spot.text_left) + shift;
+    let right = f32::from(bounds.right());
+    let (from, to) = (f32::from(area.left()), f32::from(area.right()));
+    let dx = if !wrap && (from < left || to > right) {
+        from - (left + (right - left) / 3.)
+    } else {
+        0.
+    };
+    // Where the spot will be once moved sideways: under the popup or not.
+    let moved = |x: Pixels| x - px(dx);
+    let bottom = f32::from(bounds.bottom());
+    let top = covered
+        .filter(|hidden| {
+            hidden.intersects(&bounds)
+                && hidden.left() < moved(area.right())
+                && hidden.right() > moved(area.left())
+        })
+        .map_or(f32::from(bounds.top()), |hidden| {
+            f32::from(hidden.bottom().max(bounds.top())).min(bottom)
+        });
+    let dy = if f32::from(area.top()) < top || f32::from(area.bottom()) > bottom {
+        f32::from(area.top()) - (top + (bottom - top) / 3.)
+    } else {
+        0.
+    };
+    (dx != 0. || dy != 0.).then_some((dx, dy))
 }
 
 /// `top` and `offset` moved by `pending` pixels (down when positive) over
@@ -188,7 +261,12 @@ pub struct Rows {
     wrap: bool,
     row: Rc<dyn Fn(u64, f32, &mut Window, &mut App) -> AnyElement>,
     on_laid: Option<Rc<dyn Fn(Range<u64>, &mut Window, &mut App)>>,
+    seen: Option<Seen>,
+    covered: Option<Covered>,
 }
+
+/// Where a popup over the rows was last drawn (`preview_bar::Field::drawn`).
+pub type Covered = Rc<std::cell::Cell<Option<Bounds<Pixels>>>>;
 
 /// `count` rows, each built by `row` (given how far rows are scrolled
 /// sideways), scrolled by `scroll`. They wrap to the width when `wrap`,
@@ -207,6 +285,8 @@ pub fn rows(
         wrap,
         row: Rc::new(row),
         on_laid: None,
+        seen: None,
+        covered: None,
     }
 }
 
@@ -214,6 +294,20 @@ impl Rows {
     /// Told the rows laid out, after each layout.
     pub fn on_laid(mut self, laid: impl Fn(Range<u64>, &mut Window, &mut App) + 'static) -> Self {
         self.on_laid = Some(Rc::new(laid));
+        self
+    }
+
+    /// Where the rows tell they drew what `RowScroll::reveal_spot` brings
+    /// into view, as they are placed.
+    pub fn seen(mut self, seen: Seen) -> Self {
+        self.seen = Some(seen);
+        self
+    }
+
+    /// What a popup over the rows hides of them, as it was last drawn:
+    /// what is brought into view is brought out from under it.
+    pub fn covered(mut self, covered: Option<Covered>) -> Self {
+        self.covered = covered;
         self
     }
 }
@@ -293,10 +387,16 @@ impl Element for Rows {
         let mut scroll = self.scroll.borrow_mut();
         scroll.viewport = viewport;
         scroll.count = count;
-        // A row asked for: left alone when wholly on screen, else a third
-        // down the view, what comes before it above.
+        // A row asked for: left alone when wholly on screen, or laid out
+        // when what is in it is brought into view after, else a third down
+        // the view, what comes before it above.
+        let around = if scroll.seek {
+            scroll.laid.clone()
+        } else {
+            scroll.shown.clone()
+        };
         if let Some(row) = scroll.reveal.take().filter(|row| *row < count)
-            && !scroll.shown.contains(&row)
+            && !around.contains(&row)
         {
             scroll.top = row;
             scroll.offset = 0.;
@@ -370,7 +470,11 @@ impl Element for Rows {
             scroll.x = scroll.x.clamp(0., (widest - viewport.0).max(0.));
         }
         let range = top..top + laid.len() as u64;
+        scroll.laid = range.clone();
         drop(scroll);
+        if let Some(seen) = &self.seen {
+            seen.set(None);
+        }
         let mut elements = Vec::with_capacity(laid.len());
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for (mut element, y, _) in laid {
@@ -378,6 +482,21 @@ impl Element for Rows {
                 elements.push(element);
             }
         });
+        // What was to be brought into view was drawn: where it is shows
+        // how far to go, in the next frame.
+        let mut scroll = self.scroll.borrow_mut();
+        if scroll.seek
+            && let Some(spot) = self.seen.as_ref().and_then(|seen| seen.get())
+        {
+            scroll.seek = false;
+            let covered = self.covered.as_ref().and_then(|covered| covered.get());
+            if let Some((dx, dy)) = bring(spot, bounds, shift, self.wrap, covered) {
+                scroll.x = (shift + dx).max(0.);
+                scroll.pending += dy;
+                window.on_next_frame(|window, _| window.refresh());
+            }
+        }
+        drop(scroll);
         if let Some(on_laid) = self.on_laid.clone() {
             window.defer(cx, move |window, cx| on_laid(range, window, cx));
         }
@@ -420,6 +539,7 @@ impl Element for Rows {
             // arrive sideways from every platform. Rows that wrap leave it
             // to what scrolls around them (bytes wider than the panel).
             scroll.pending -= f32::from(delta.y);
+            scroll.seek = false;
             if !wrap {
                 scroll.x = (scroll.x - f32::from(delta.x)).max(0.);
             }
@@ -478,6 +598,56 @@ mod tests {
         scroll.to_edge(true);
         scroll.reveal(40);
         assert!(!scroll.follow, "a row was asked for");
+    }
+
+    #[test]
+    fn a_spot_out_of_view_comes_a_third_into_it() {
+        // Rows from x 100 to 700 and y 50 to 350, their text from 180 (a
+        // gutter before it).
+        let bounds = Bounds::new(point(px(100.), px(50.)), size(px(600.), px(300.)));
+        let spot = |x: f32, y: f32, text_left: f32| Spot {
+            area: Bounds::new(point(px(x), px(y)), size(px(40.), px(18.))),
+            text_left: px(text_left),
+        };
+        let third = 180. + 520. / 3.;
+        assert_eq!(bring(spot(400., 100., 180.), bounds, 0., false, None), None);
+        // Past the right edge of rows that do not wrap: along them.
+        assert_eq!(
+            bring(spot(1000., 100., 180.), bounds, 0., false, None),
+            Some((1000. - third, 0.))
+        );
+        // Scrolled 500 along, the text laid out from -320: one under the
+        // gutter comes back.
+        assert_eq!(
+            bring(spot(150., 100., -320.), bounds, 500., false, None),
+            Some((150. - third, 0.))
+        );
+        // Rows that wrap never go sideways; below the view, down.
+        assert_eq!(
+            bring(spot(400., 400., 180.), bounds, 0., true, None),
+            Some((0., 400. - 150.))
+        );
+        assert_eq!(bring(spot(1000., 100., 180.), bounds, 0., true, None), None);
+        // A find field hangs over the top of the view, from x 400 to 680
+        // and down to y 140: a match under it comes a third into what it
+        // leaves, one beside it stays.
+        let field = Some(Bounds::new(
+            point(px(400.), px(10.)),
+            size(px(280.), px(130.)),
+        ));
+        assert_eq!(
+            bring(spot(500., 100., 180.), bounds, 0., false, field),
+            Some((0., 100. - (140. + 210. / 3.)))
+        );
+        assert_eq!(
+            bring(spot(200., 100., 180.), bounds, 0., false, field),
+            None
+        );
+        // Moved sideways out from under it, it is not under it.
+        assert_eq!(
+            bring(spot(1000., 100., 180.), bounds, 0., false, field),
+            Some((1000. - third, 0.))
+        );
     }
 
     #[test]

@@ -71,6 +71,12 @@ pub struct MarkdownStyle {
     pub labels: Option<std::rc::Rc<std::collections::HashMap<usize, Vec<(usize, SharedString)>>>>,
     /// A label's text, on `link`.
     pub label_text: Hsla,
+    /// While a find is open: what it marks (`inspector_text::Sought`), in
+    /// the theme's `find_*`.
+    pub sought: Option<std::rc::Rc<inspector_text::Sought>>,
+    pub find_match: Hsla,
+    pub find_current: Hsla,
+    pub find_current_text: Hsla,
     /// What a code block is drawn with, when not this: its theme's
     /// background, and the tokens of the look `reading.code_appearance`
     /// keeps code in (`code`).
@@ -138,6 +144,10 @@ impl MarkdownStyle {
             armed_link: None,
             labels: None,
             label_text: theme.on_fill,
+            sought: None,
+            find_match: theme.find_match,
+            find_current: theme.find_current,
+            find_current_text: theme.find_current_text,
             code_look: None,
         }
     }
@@ -149,6 +159,7 @@ impl MarkdownStyle {
             measure: self.measure,
             armed_link: self.armed_link.clone(),
             labels: self.labels.clone(),
+            sought: self.sought.clone(),
             ..Self::new(theme, self.body_size, self.reading, None)
         }
     }

@@ -82,3 +82,7 @@ ADR-009's bounds (`TEXT_PAGE`, `SOURCE_PAGE`).
 - The byte view is read the same way (2026-10-12): rows of 16 bytes need
   no index, the file's length counts them, and its pages are asked of the
   bytes view (a plugin from outside too) as they come into view.
+- Find lands on the match, not only its row (2026-10-16): a row of a
+  minified file is 4 KiB of one line, with several matches. It goes from
+  match to match, marks them in the rows drawn, and brings the one it is
+  on into view along its row.

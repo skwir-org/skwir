@@ -150,15 +150,12 @@ impl Display {
             }))
             .map(|i| i.and_then(|i| crate::backdrop::Picture::of(&i)))
             .collect();
+        let fold = skwir_platform::text_rows::fold;
         let folded = data
             .blocks
             .iter()
-            .map(|b| b.text.to_lowercase())
-            .chain(
-                listed(&data)
-                    .iter()
-                    .map(|r| r.cells.join("\t").to_lowercase()),
-            )
+            .map(|b| fold(&b.text))
+            .chain(listed(&data).iter().map(|r| fold(&r.cells.join("\t"))))
             .collect();
         let table = (data.kind == InspectionKind::Table)
             .then(|| Arc::new(crate::inspector_rows::shape(&data.columns, &data.rows)));
@@ -191,32 +188,72 @@ impl Display {
             typed: None,
         }
     }
-    /// The next block or row (blocks first, then rows offset by the block
-    /// count) containing `query`, which must already be lowercase. Starts after
-    /// `after` and wraps to the beginning when `wrap` is set.
-    pub fn find(&self, query: &str, after: Option<usize>, wrap: bool) -> Option<usize> {
-        if query.is_empty() || self.folded.is_empty() {
+    /// The matches of `query` (`folded` too) in block or row `i`: where
+    /// they are in a block's text; a row's is the row, at its start.
+    fn hits(&self, i: usize, query: &str, folded: &str) -> Vec<std::ops::Range<usize>> {
+        if !self.folded[i].contains(folded) {
+            return Vec::new();
+        }
+        match self.data.blocks.get(i) {
+            Some(block) => skwir_platform::text_rows::matches(&block.text, query),
+            None => std::iter::once(0..0).collect(),
+        }
+    }
+    /// The first match of `query` (case ignored, `text_rows::matches`) at
+    /// or after `from`: a block or a row (blocks first, then rows offset by
+    /// the block count) and a byte in a block's text. Wraps to the
+    /// beginning when `wrap`. Its block or row, and where it is there.
+    pub fn find(
+        &self,
+        query: &str,
+        from: (usize, usize),
+        wrap: bool,
+    ) -> Option<(usize, std::ops::Range<usize>)> {
+        let (folded, len) = (skwir_platform::text_rows::fold(query), self.folded.len());
+        if folded.is_empty() || len == 0 {
             return None;
         }
-        let start = after.map_or(0, |i| i + 1);
-        let hit = |range: std::ops::Range<usize>| {
-            range.into_iter().find(|&i| self.folded[i].contains(query))
+        let from = (from.0.min(len), from.1);
+        let first = |items: std::ops::Range<usize>, later: bool| {
+            items.into_iter().find_map(|i| {
+                let found = self.hits(i, query, &folded);
+                let found = found
+                    .into_iter()
+                    .find(|r| ((i, r.start) >= from) == later)?;
+                Some((i, found))
+            })
         };
-        hit(start.min(self.folded.len())..self.folded.len())
-            .or_else(|| wrap.then(|| hit(0..start.min(self.folded.len()))).flatten())
+        first(from.0..len, true).or_else(|| {
+            wrap.then(|| first(0..(from.0 + 1).min(len), false))
+                .flatten()
+        })
     }
 
-    /// The last block before `before` that contains `query`, wrapping to
-    /// the end when `wrap`: Shift+F3, as [`Display::find`] is F3.
-    pub fn find_back(&self, query: &str, before: Option<usize>, wrap: bool) -> Option<usize> {
-        if query.is_empty() || self.folded.is_empty() {
+    /// The last match before `from`, wrapping to the end when `wrap`:
+    /// Shift+F3, as [`Display::find`] is F3.
+    pub fn find_back(
+        &self,
+        query: &str,
+        from: (usize, usize),
+        wrap: bool,
+    ) -> Option<(usize, std::ops::Range<usize>)> {
+        let (folded, len) = (skwir_platform::text_rows::fold(query), self.folded.len());
+        if folded.is_empty() || len == 0 {
             return None;
         }
-        let len = self.folded.len();
-        let end = before.unwrap_or(len).min(len);
-        let hit =
-            |range: std::ops::Range<usize>| range.rev().find(|&i| self.folded[i].contains(query));
-        hit(0..end).or_else(|| wrap.then(|| hit(end..len)).flatten())
+        let from = (from.0.min(len), from.1);
+        let last = |items: std::ops::Range<usize>, later: bool| {
+            items.rev().find_map(|i| {
+                let found = self.hits(i, query, &folded);
+                let found = found
+                    .into_iter()
+                    .rev()
+                    .find(|r| ((i, r.start) >= from) == later)?;
+                Some((i, found))
+            })
+        };
+        last(0..(from.0 + 1).min(len), false)
+            .or_else(|| wrap.then(|| last(from.0..len, true)).flatten())
     }
 }
 /// Whether the book's position counts its printed pages: the preference,
@@ -362,6 +399,10 @@ pub struct State {
     outline: bool,
     /// The find field, open under its button like the document reader's.
     find: Option<crate::preview_bar::Field>,
+    /// What the find looked for last and the match it is on (a block or
+    /// a row, a text's row, and where it is there), marked while the field
+    /// is open.
+    pub(crate) sought: Option<crate::inspector_text::Sought>,
     /// The chapter field while it is edited (`preview_bar::number_tool`).
     pub(crate) section_input: Option<crate::preview_bar::Field>,
     /// Where the printed pages of the section shown start: (block, page),
@@ -414,6 +455,7 @@ impl Default for State {
             font_size: TEXT_SIZE,
             outline: false,
             find: None,
+            sought: None,
             section_input: None,
             page_starts: Vec::new(),
             sort: None,
@@ -442,6 +484,41 @@ impl State {
     /// Whether the find field is open.
     pub fn finding(&self) -> bool {
         self.find.is_some()
+    }
+    /// Where a find for `query` starts, forward or `back`, and what it
+    /// looks for from now (`sought`): from the match it is on while that is
+    /// the item selected (past it, unless the query is new; before it,
+    /// `back`), else after the item selected or before it, else from
+    /// `top` (an item and a byte in it). A new query is marked at once;
+    /// the match it is on goes with the old one.
+    pub(crate) fn find_from(
+        &mut self,
+        query: &str,
+        back: bool,
+        top: (usize, usize),
+    ) -> (usize, usize) {
+        let fold = skwir_platform::text_rows::fold;
+        let on = self.sought.as_ref().and_then(|sought| {
+            let (item, found) = sought.current.clone()?;
+            let same = fold(&sought.query) == fold(query);
+            (Some(item) == self.selected).then_some((item, found, same))
+        });
+        let from = match (&on, self.selected, back) {
+            (Some((item, found, same)), _, false) => (*item, found.start + usize::from(*same)),
+            (Some((item, found, _)), _, true) => (*item, found.start),
+            (None, Some(item), false) => (item + 1, 0),
+            (None, Some(item), true) => (item, 0),
+            (None, None, _) => top,
+        };
+        let current = on
+            .filter(|(_, _, same)| *same)
+            .map(|(item, found, _)| (item, found));
+        self.sought = Some(crate::inspector_text::Sought {
+            query: query.to_owned(),
+            current,
+            seen: None,
+        });
+        from
     }
     /// The item highlighted: a block, or a row after the blocks.
     pub fn selected(&self) -> Option<usize> {
@@ -497,6 +574,11 @@ impl State {
         } else {
             self.reset(data);
         }
+        // The match the find was on was in what went; what it looks for
+        // is marked in what came.
+        if let Some(sought) = self.sought.as_mut() {
+            sought.current = None;
+        }
         self.request.offset = data.position;
         // Whether it is the source is the worker's to say: its type's
         // choice (`preview::SourceTypes`), where the file has one.
@@ -537,9 +619,12 @@ impl State {
         if data.kind == InspectionKind::Book
             && !refresh
             && let Some(query) = self.request.query.as_deref()
-            && let Some(i) = display.find(&query.to_lowercase(), None, false)
+            && let Some((i, found)) = display.find(query, (0, 0), false)
         {
             self.reveal(data, i);
+            if let Some(sought) = self.sought.as_mut() {
+                sought.current = Some((i, found));
+            }
         }
     }
     /// The printed page at the top of the view: the last to start at or
@@ -1077,6 +1162,7 @@ impl Shell {
             }
             "find_close" => {
                 self.preview.inspection.find = None;
+                self.preview.inspection.sought = None;
                 if let Some(focus) = &self.preview.inspection.focus {
                     window.focus(focus);
                 }
@@ -1447,17 +1533,22 @@ impl Shell {
                     if !State::hex_file(display.data.kind)
                         && display.data.kind != InspectionKind::Font =>
                 {
-                    let query = args["value"].as_str().unwrap_or("").to_lowercase();
+                    let query = args["value"].as_str().unwrap_or("").to_owned();
                     let book = display.data.kind == InspectionKind::Book;
                     let back = args["back"].as_bool() == Some(true);
                     let state = &mut self.preview.inspection;
+                    let top = if back { (usize::MAX, 0) } else { (0, 0) };
+                    let from = state.find_from(&query, back, top);
                     let found = if back {
-                        display.find_back(&query, state.selected, !book)
+                        display.find_back(&query, from, !book)
                     } else {
-                        display.find(&query, state.selected, !book)
+                        display.find(&query, from, !book)
                     };
-                    if let Some(i) = found {
+                    if let Some((i, found)) = found {
                         state.reveal(&display.data, i);
+                        if let Some(sought) = state.sought.as_mut() {
+                            sought.current = Some((i, found));
+                        }
                         cx.notify();
                         return;
                     }
@@ -2417,6 +2508,22 @@ pub fn content(
     let mut list_style = list_style;
     list_style.armed_link = shell.armed_link();
     list_style.labels = state.labels.as_ref().map(|labels| Rc::new(labels.shown()));
+    // While the find is open, what it looks for is marked; a text read
+    // where it is shown is told where the match it is on was drawn.
+    list_style.sought = state
+        .sought
+        .as_ref()
+        .filter(|_| state.find.is_some())
+        .map(|sought| {
+            Rc::new(crate::inspector_text::Sought {
+                seen: state
+                    .text
+                    .as_ref()
+                    .filter(|_| display.data.text.is_some())
+                    .map(|text| Rc::clone(&text.spot)),
+                ..sought.clone()
+            })
+        });
     // Code in the look its colors are for, which may not be skwir's
     // (`reading.code_appearance`), on the background its theme is for:
     // the code view whole, its gutter too, and a document's code blocks.
@@ -2479,6 +2586,7 @@ pub fn content(
                 pane,
                 entity: entity.clone(),
                 wrap,
+                covered: state.find.as_ref().map(|find| Rc::clone(&find.drawn)),
             },
         )
     });
@@ -3280,12 +3388,22 @@ mod tests {
             ],
             vec![0..5, 2..4],
         );
-        assert_eq!(display.find("needle", None, true), Some(1));
-        assert_eq!(display.find("needle", Some(1), true), Some(3));
-        assert_eq!(display.find("needle", Some(3), true), Some(1), "wraps");
-        assert_eq!(display.find("needle", Some(3), false), None);
-        assert_eq!(display.find("absent", None, true), None);
-        assert_eq!(display.find("", None, true), None);
+        assert_eq!(display.find("needle", (0, 0), true), Some((1, 3..9)));
+        assert_eq!(display.find("needle", (1, 4), true), Some((3, 5..11)));
+        assert_eq!(
+            display.find("needle", (3, 6), true),
+            Some((1, 3..9)),
+            "wraps"
+        );
+        assert_eq!(display.find("needle", (3, 6), false), None);
+        assert_eq!(display.find_back("NEEDLE", (3, 5), true), Some((1, 3..9)));
+        assert_eq!(
+            display.find_back("needle", (1, 3), true),
+            Some((3, 5..11)),
+            "back around the end"
+        );
+        assert_eq!(display.find("absent", (0, 0), true), None);
+        assert_eq!(display.find("", (0, 0), true), None);
         let mut state = State::default();
         state.reset(&display.data);
         state.collapse_all(&display.data, true);
@@ -3293,6 +3411,54 @@ mod tests {
         state.reveal(&display.data, 3);
         assert_eq!(state.selected, Some(3));
         assert_eq!(state.visible(), [0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn find_goes_from_match_to_match_and_marks_them() {
+        let display = code(&["a needle and a Needle", "needle"], Vec::new());
+        let mut state = State::default();
+        state.reset(&display.data);
+        // As F3 and Shift+F3 do: from where the find is, to the match.
+        let mut step = |query: &str, back: bool| {
+            let top = if back { (usize::MAX, 0) } else { (0, 0) };
+            let from = state.find_from(query, back, top);
+            let found = if back {
+                display.find_back(query, from, true)
+            } else {
+                display.find(query, from, true)
+            };
+            let (item, range) = found.unwrap();
+            state.selected = Some(item);
+            state.sought.as_mut().unwrap().current = Some((item, range.clone()));
+            (item, range)
+        };
+        assert_eq!(step("needle", false), (0, 2..8));
+        assert_eq!(step("needle", false), (0, 15..21), "the next in its line");
+        assert_eq!(step("NEEDLE", false), (1, 0..6), "the same, in capitals");
+        assert_eq!(step("needle", true), (0, 15..21));
+        assert_eq!(
+            step("need", false),
+            (0, 15..19),
+            "a new query, from the match it was on"
+        );
+        // Every match of what it looks for is marked, the one it is on
+        // more strongly.
+        state.find_from("needle", false, (0, 0));
+        state.sought.as_mut().unwrap().current = Some((0, 15..21));
+        let sought = state.sought.as_ref().unwrap();
+        let block = &display.data.blocks[0];
+        assert_eq!(
+            sought.marks(block, 0, 0..block.text.len()),
+            [(2..8, false), (15..21, true)]
+        );
+        assert_eq!(
+            sought.marks(block, 0, 10..block.text.len()),
+            [(15..21, true)]
+        );
+        assert_eq!(
+            sought.marks(block, 1, 0..block.text.len())[1],
+            (15..21, false)
+        );
     }
 
     #[test]
@@ -3380,8 +3546,9 @@ mod tests {
     #[test]
     fn rows_are_searchable_after_blocks_and_a_book_selects_its_match_on_arrival() {
         let display = archive();
-        assert_eq!(display.find("zoo's", None, true), Some(2));
-        assert_eq!(display.find("child", Some(2), false), Some(5));
+        let item = |found: Option<(usize, std::ops::Range<usize>)>| found.map(|(item, _)| item);
+        assert_eq!(item(display.find("zoo's", (0, 0), true)), Some(2));
+        assert_eq!(item(display.find("child", (3, 0), false)), Some(5));
         let book = Display::new(
             Inspection {
                 kind: InspectionKind::Book,

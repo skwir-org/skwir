@@ -622,9 +622,17 @@ impl CodeRow<'_> {
                     .min_w_0()
                     .pr_2()
                     .when(shift > 0., gpui::Styled::overflow_hidden)
-                    .child(div().ml(px(-shift)).child(crate::inspector_text::render(
-                        block, index, selection, style, pane, entity,
-                    ))),
+                    // Moved, not laid out shorter: the row measures as
+                    // wide however far it is scrolled, so the rows know
+                    // how far they can go (`elements::rows`).
+                    .child(
+                        div()
+                            .relative()
+                            .left(px(-shift))
+                            .child(crate::inspector_text::render(
+                                block, index, selection, style, pane, entity,
+                            )),
+                    ),
             )
             .when_some(fold.filter(|_| folded), |d, (range, _)| {
                 d.child(
