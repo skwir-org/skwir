@@ -54,6 +54,11 @@ impl MediaState {
         matches!(self.poster, Poster::Waiting)
     }
 
+    /// Whether the poster stands for the film or the track (`Poster::Still`).
+    pub(crate) fn poster_shown(&self) -> bool {
+        matches!(self.poster, Poster::Still)
+    }
+
     /// Whether a player may still open for the file shown: its picture can
     /// come first (`Media::NoPlayer`).
     pub(crate) fn awaiting_player(&self) -> bool {
@@ -94,6 +99,8 @@ pub struct MediaState {
     /// The frames shown and replaced, until their buffers go back to the
     /// session.
     recycled: Recycled,
+    /// The poster read again with more pixels (`Shell::sharpen_poster`).
+    pub(crate) sharper: crate::latest::Latest<anyhow::Result<PreviewContent>>,
 }
 
 /// A film's frames the window drew and let go of, kept until nothing
@@ -402,6 +409,18 @@ impl Shell {
             self.replace_preview_content(Some(thumbnail), window, cx);
         }
         self.film_waited(cx);
+    }
+
+    /// A sharper poster, once read: it takes the place of the one shown,
+    /// while that one still stands for the film.
+    pub fn sync_poster(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.preview.media.sharper.take() {
+            Some(Ok(sharper)) if self.preview.media.poster_shown() => {
+                self.replace_preview_content(Some(sharper), window, cx);
+            }
+            Some(Err(error)) => tracing::debug!("poster not sharpened: {error:#}"),
+            _ => {}
+        }
     }
 
     pub fn sync_media(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -833,9 +852,27 @@ pub(crate) fn is_track(entry: &skwir_core::Entry, kind: &str) -> bool {
 /// A film on the whole screen (`fullscreen::render`): it fills the screen
 /// whatever its size, a small one enlarged, and answers clicks as a player.
 pub(crate) fn film(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    let Some(PreviewContent::Image { image, .. }) = &shell.preview.content else {
+    let Some(PreviewContent::Image {
+        image,
+        width,
+        height,
+        ..
+    }) = &shell.preview.content
+    else {
         return None;
     };
+    // The poster asks for the screen's pixels, as a picture does; the
+    // player's frames are what they are.
+    let watch = shell.preview.media.poster_shown().then(|| {
+        let size = image.size(0);
+        let raster = u32::try_from(size.width.0.max(size.height.0)).unwrap_or(0);
+        crate::preview::Sharpen {
+            shell: cx.entity().downgrade(),
+            asked: shell.preview.picture_side,
+            most: (*width).max(*height),
+        }
+        .watch(raster, (*width as f32, *height as f32))
+    });
     // The surface is a flex child: give it a column to fill.
     Some(
         div()
@@ -845,10 +882,16 @@ pub(crate) fn film(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
             .flex_col()
             .child(surface(
                 "video-fullscreen-surface",
-                gpui::img(image.clone())
+                div()
                     .absolute()
                     .size_full()
-                    .object_fit(gpui::ObjectFit::Contain)
+                    .child(
+                        gpui::img(image.clone())
+                            .absolute()
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Contain),
+                    )
+                    .children(watch)
                     .into_any_element(),
                 Flash::Preview,
                 shell,

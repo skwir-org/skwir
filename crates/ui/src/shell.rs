@@ -2454,6 +2454,7 @@ impl Shell {
             this.sync_text(cx);
             this.sync_bytes(cx);
             this.sync_notes(window, cx);
+            this.sync_poster(window, cx);
             this.sync_media(window, cx);
             this.sync_player(window, cx);
             this.sync_awake(window);

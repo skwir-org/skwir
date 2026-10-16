@@ -982,7 +982,7 @@ static DECODE_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// A film's or a track's picture (`PreviewProvider::media`), asked at the
 /// side it is shown at, laid out by its own size, which `Sharpen` asks
 /// more of.
-fn media_picture(
+pub(crate) fn media_picture(
     previews: &skwir_core::preview::Previews,
     request: &PreviewRequest,
     path: &Path,
@@ -3943,9 +3943,21 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         match &self.preview.content {
-            Some(PreviewContent::Image { document: None, .. })
-                if self.preview.media.session.is_none() =>
-            {
+            // A film's or a track's picture shown as its player's: read
+            // again alone, never with a second player (`sharpen_poster`).
+            Some(PreviewContent::Image {
+                document: None,
+                detail: Some(PreviewInfo::Video { seconds, .. }),
+                ..
+            }) if self.shows_player() => {
+                let seconds = *seconds;
+                if side > self.preview.picture_side && self.preview.media.poster_shown() {
+                    self.preview.picture_side = side;
+                    self.sharpen_poster(side, seconds);
+                }
+                return;
+            }
+            Some(PreviewContent::Image { document: None, .. }) => {
                 if side <= self.preview.picture_side {
                     return;
                 }
@@ -3958,6 +3970,41 @@ impl Shell {
         self.preview.refresh = true;
         self.preview.phase = PreviewPhase::Queued;
         cx.notify();
+    }
+
+    /// The poster shows more pixels than it has (a larger panel, the
+    /// whole screen): read it again at `side` alone, the frame it shows
+    /// (`seconds`), never with a second player. The one shown stays until
+    /// the sharper comes (`sync_poster`): only its sharpness changes.
+    pub(crate) fn sharpen_poster(&mut self, side: u32, seconds: f64) {
+        let Some(entry) = self
+            .preview
+            .key
+            .as_ref()
+            .and_then(|key| key.content.clone())
+        else {
+            return;
+        };
+        let request = skwir_core::preview::PreviewRequest {
+            entry,
+            mime: self.preview.info.mime.clone(),
+            page: 1,
+            seconds: Some(seconds),
+            max_side: side,
+            text_size: None,
+        };
+        tracing::debug!(side, "draw the poster sharper");
+        let previews = Arc::clone(&self.app.previews);
+        self.preview.media.sharper.ask(
+            &self.app,
+            self.app.lifetime(),
+            skwir_core::scheduler::Priority::Visible,
+            "poster",
+            move |cancel| {
+                let path = request.entry.path.clone();
+                crate::preview::media_picture(&previews, &request, &path, cancel)
+            },
+        );
     }
 
     /// Whether the reader shows a book its engine laid out into pages.
@@ -5185,7 +5232,7 @@ pub(crate) fn screen_side(window: &Window) -> u32 {
 impl Sharpen {
     /// A canvas over the picture's box that, once laid out, measures the
     /// device pixels the picture covers (whole in the box, like `Contain`).
-    fn watch(self, raster: u32, (width, height): (f32, f32)) -> gpui::Canvas<()> {
+    pub(crate) fn watch(self, raster: u32, (width, height): (f32, f32)) -> gpui::Canvas<()> {
         gpui::canvas(
             move |bounds, window, cx| {
                 let scale = (f32::from(bounds.size.width) / width)

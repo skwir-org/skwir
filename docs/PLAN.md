@@ -378,8 +378,11 @@ dates, measurements and what is left.
   picture on; a track's halo at 70 ms; a track stepped to while one
   plays still plays. Left: a track's glow changes hue when its cover
   goes from the desktop's thumbnail to its own (the tint is worked out
-  per picture), as it did before; a poster smaller than a panel made
-  larger stays soft until sharpened (the next step).
+  per picture), as it did before. A poster drawn larger than its
+  pixels (a wider panel, the whole screen) is read again alone at the
+  next step, the same frame: in a window on Xvfb, a 4K film's 1024 px
+  poster was replaced by a 1536 px one in fullscreen, 0.3 % of the
+  pixels changing, all on edges, and playing asked for nothing more.
 - **More formats** (2026-09-28):
   - SVG by resvg; OpenEXR and DDS decoded in process; HEIC, AVIF, JPEG
     XL and raw by the desktop's thumbnailer at 1024 px. Code highlighted

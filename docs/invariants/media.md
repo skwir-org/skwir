@@ -53,6 +53,12 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   as PNG. At 1080p and 4K a poster went from 4 and 16 MB of PNG at the
   film's size to 60 to 400 KB, so the media cache's 128 MB holds
   hundreds of films rather than eight to thirty.
+- A poster drawn larger than its pixels (a panel made wider, the whole
+  screen) is read again at the next step, as a picture is (`Sharpen`,
+  in fullscreen too), but alone (`Shell::sharpen_poster`): the frame at
+  the time it says, never the whole preview, which would open a second
+  player. The one shown stays until the sharper comes, so only its
+  sharpness changes. A film playing shows its frames as they are.
 - A film's desktop thumbnail is a frame its thumbnailer chose (another
   moment, often a film strip drawn on it), so it never stands in for
   the wait (`preview::placeholder`). It is the picture only when no
