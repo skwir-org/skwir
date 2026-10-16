@@ -152,8 +152,11 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
 - **New folder:** `Ctrl+Shift+N`.
 - **Open with** another application: `Shift+Enter`. In the list, `Alt+A`
   switches Always use for… to make the choice the default.
-- **Copy paths:** `Ctrl+Shift+C`. **Run Command…** in the context menu
-  runs a shell command on the selection in a terminal.
+- **Copy Path:** `Ctrl+Shift+C`, or in the context menu: the selected
+  paths as text, one per line; on the folder's background, the folder's.
+  **Copy for Shell** (`Ctrl+Alt+C`, under More) quotes them for a shell
+  command line. **Run Command…** in the context menu runs a shell command
+  on the selection in a terminal.
 - **Extract Here**, in an archive's menu, extracts it beside it (its one
   folder or file as it is, several in a folder named after it), asking
   a ZIP's password when it has one. **Compress to
@@ -284,7 +287,8 @@ and requirements.
 shows everything known about the selection in the panel, under the
 file's name: its exact size and the room it takes on the drive, where it
 is, who owns it and who may use it, its times, your notes, and the drive
-it is on. On the folder's background it describes the folder shown.
+it is on. On the folder's background it describes the folder shown. A
+click on a row copies what it says (its Path, its Folder).
 
 - **What a folder holds** is counted when you ask: Properties counts it
   at once, or click Count. The total grows as it goes; Stop keeps what

@@ -71,6 +71,9 @@ pub struct Row {
     /// Its links change who may use the file: a read-only drive takes
     /// them away (`render`).
     pub edits_access: bool,
+    /// A click copies its value; not one that says a path lossily (a
+    /// name that is not text), which would name another file.
+    pub copies: bool,
 }
 
 impl Row {
@@ -83,6 +86,16 @@ impl Row {
             actions: Vec::new(),
             actions_shown: false,
             edits_access: false,
+            copies: true,
+        }
+    }
+
+    /// A path, said as text: one that is not text is said lossily, and
+    /// a click does not copy it.
+    fn path(label: impl Into<SharedString>, path: &std::path::Path) -> Self {
+        Row {
+            copies: path.to_str().is_some(),
+            ..Row::new(label, path.to_string_lossy().into_owned())
         }
     }
 
@@ -446,8 +459,12 @@ pub fn entry_groups(
             Invocation::with_args("navigate", &serde_json::json!({ "location": from })),
         ));
     }
+    // The whole path, to copy with a click; a place (a tag's) has none.
+    if !entry.is_place() && path.is_absolute() {
+        location.push(Row::path("Path", path));
+    }
     if let Some(parent) = path.parent() {
-        location.push(Row::new("Folder", parent.to_string_lossy().into_owned()));
+        location.push(Row::path("Folder", parent));
     }
     if let Some(target) = meta.value(keys::LINK_TARGET).and_then(Value::as_str) {
         location.push(Row::new("Links to", target.to_owned()));
@@ -1569,7 +1586,7 @@ fn links(
 /// but its links has them where its value would be. Links that show with
 /// the pointer come over the end of the row's last line, taking no room
 /// while hidden and moving nothing when they show. A click copies the
-/// value.
+/// value, unless it says a path lossily (`Row::copies`).
 fn row_element(
     shell: &Shell,
     row: Row,
@@ -1577,7 +1594,7 @@ fn row_element(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
-    let (label, value) = (row.label.clone(), row.value.clone());
+    let (label, value, copies) = (row.label.clone(), row.value.clone(), row.copies);
     let shown = row.links_shown();
     let said = match &row.show {
         Show::Text => {
@@ -1605,6 +1622,10 @@ fn row_element(
         .cursor_pointer()
         .hover(|d| d.bg(theme.hover))
         .on_click(cx.listener(move |this, _, _, cx| {
+            if !copies {
+                this.set_status("The path is not text the clipboard can hold", true, cx);
+                return;
+            }
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(value.to_string()));
             this.set_status(format!("Copied {}", label.to_lowercase()), false, cx);
         }))
@@ -1754,6 +1775,19 @@ mod tests {
     use super::*;
     use skwir_core::entry::{EntryId, EntryKind};
 
+    /// A name that is not UTF-8 is said lossily, which names another
+    /// file: such a row is not copied.
+    #[cfg(unix)]
+    #[test]
+    fn a_path_that_is_not_text_is_said_but_not_copied() {
+        let name = skwir_core::os_path::from_bytes(b"caf\xe9.txt".to_vec());
+        let path = std::path::Path::new("/data").join(name);
+        let row = Row::path("Path", &path);
+        assert!(!row.copies && row.value.contains('\u{FFFD}'));
+        let folder = Row::path("Folder", path.parent().unwrap());
+        assert!(folder.copies, "its folder is text");
+    }
+
     #[test]
     fn an_entry_says_what_it_knows_and_who_said_it() {
         let mut entry = Entry::new(
@@ -1808,6 +1842,12 @@ mod tests {
             find("General", "Name").is_none() && find("General", "Type").is_none(),
             "the header shows them"
         );
+        let whole = find("Location", "Path").unwrap();
+        assert_eq!(
+            whole.value, "/data/notes/it's a café.txt",
+            "copied as it is"
+        );
+        assert!(whole.copies);
         assert_eq!(find("Location", "Folder").unwrap().value, "/data/notes");
         assert_eq!(
             find("Permissions", "Access").unwrap().value,

@@ -120,8 +120,9 @@ fn the_palette_names_each_thing_to_do_once() {
 /// named here, so a new command that only reads says which it is.
 #[test]
 fn what_only_reads_is_data_unless_the_window_shows_its_answer() {
-    // Copies the selected paths to the clipboard, and says so.
-    const SHOWN: [&str; 1] = ["shell.copy_paths"];
+    // Copy the selected paths to the clipboard, as text or for a shell,
+    // and say so.
+    const SHOWN: [&str; 2] = ["copy_paths", "shell.copy_paths"];
     let tmp = tempfile::tempdir().unwrap();
     let app = Arc::new(App::new(AppConfig::ephemeral(tmp.path())).unwrap());
     skwir_ui::commands::declare_all(&app);

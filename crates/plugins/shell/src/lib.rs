@@ -206,7 +206,7 @@ impl Plugin for ShellPlugin {
             .register::<TargetsArgs, _>(
                 ID,
                 "shell.copy_paths",
-                "Copy paths",
+                "Copy paths for a shell",
                 "The selected paths, or the entries', shell-quoted, for the clipboard",
                 |a, app| {
                     let paths: Vec<PathBuf> = app
@@ -236,10 +236,11 @@ impl Plugin for ShellPlugin {
             "Run a shell command in a terminal in the current directory",
             |a, app| run(app, &a.command, a.pane, None),
         );
+        // Ctrl+Shift+C is the paths as plain text (`copy_paths`).
         app.registry.keymap.add(
             ID,
             KeyBinding {
-                keys: "ctrl-shift-c".into(),
+                keys: "ctrl-alt-c".into(),
                 command: Invocation::new("shell.copy_paths"),
                 when: Some("pane selection".into()),
             },
@@ -248,7 +249,7 @@ impl Plugin for ShellPlugin {
             ID,
             MenuItem::new(
                 "context",
-                "Copy Paths",
+                "Copy for Shell",
                 "copy",
                 135,
                 Invocation::new("shell.copy_paths"),

@@ -1275,7 +1275,7 @@ mod tests {
     fn submenu_items_wait_under_their_parent_until_it_is_expanded() {
         let items = [
             item("Open", None),
-            item("Copy Paths", Some("More")),
+            item("Copy for Shell", Some("More")),
             item("Rename", None),
             item("Run Command…", Some("More")),
             MenuItem {

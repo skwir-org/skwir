@@ -1,5 +1,6 @@
 //! skwir plugin: ops-basic. The default keymap and context menu, plus an
-//! in-app clipboard (copy / cut / paste as plans).
+//! in-app clipboard (copy / cut / paste as plans) and Copy Path, the
+//! paths as text on the system's.
 //!
 //! # The `when` mini-language
 //!
@@ -91,6 +92,41 @@ fn taken_from(app: &App, a: &TargetsArgs) -> Option<skwir_core::Location> {
         .is_empty()
         .then(|| app.pane_location(app.pane_or_active(a.pane)))
         .flatten()
+}
+
+/// The paths of the selection, or of the entries given, as text: one per
+/// line, as other applications take them (a file chooser, a chat). With
+/// nothing selected, the folder shown. A path that is not text is
+/// refused: written lossily, it would name another file.
+fn copy_paths(app: &App, a: TargetsArgs) -> anyhow::Result<Outcome> {
+    let pane = app.pane_or_active(a.pane);
+    let paths = match app.targets(Some(pane), a.entries) {
+        Ok(refs) => refs.into_iter().map(|r| r.path).collect(),
+        Err(e) if skwir_core::command::is_nothing_selected(&e) => {
+            vec![app.pane_dir(pane).map_err(|_| e)?]
+        }
+        Err(e) => return Err(e),
+    };
+    let lines = paths
+        .iter()
+        .map(|path| {
+            path.to_str().ok_or_else(|| {
+                let name = std::path::Path::new(path.file_name().unwrap_or(path.as_os_str()));
+                anyhow::anyhow!(
+                    "The path of {} is not text the clipboard can hold",
+                    name.display()
+                )
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let said = match lines.len() {
+        1 => "Copied the path".to_owned(),
+        n => format!("Copied {n} paths"),
+    };
+    Ok(Outcome::Clipboard {
+        text: lines.join("\n"),
+        said,
+    })
 }
 
 /// Let every view show what is waiting for a paste.
@@ -257,6 +293,8 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     // In the trash too: pasted, a file of the trash leaves it as a
     // restore does, to where it is pasted (`op::Move`).
     ("secondary-x", "clipboard_cut", Some("pane selection")),
+    // As Windows' Copy as path; with nothing selected, the folder's.
+    ("ctrl-shift-c", "copy_paths", Some("pane selection|folder")),
     // Into the folder shown, or a place that takes files (a tag gives
     // them itself): a search has neither.
     ("secondary-v", "clipboard_paste", Some("pane folder|drops")),
@@ -334,6 +372,23 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
     // elsewhere leaves the trash.
     ("Cut", "clipboard_cut", Some("selection"), 110, "cut"),
     ("Copy", "clipboard_copy", Some("selection"), 120, "copy"),
+    // Their paths as text; a place (a tag's) has none. On the background,
+    // the folder's own.
+    (
+        "Copy Path",
+        "copy_paths",
+        Some("single !place"),
+        125,
+        "link",
+    ),
+    (
+        "Copy Paths",
+        "copy_paths",
+        Some("selection !single !place"),
+        125,
+        "link",
+    ),
+    ("Copy Path", "copy_paths", Some("empty folder"), 125, "link"),
     (
         "Paste",
         "clipboard_paste",
@@ -435,6 +490,15 @@ impl Plugin for OpsBasicPlugin {
                 Ok(Outcome::Done)
             },
         );
+        app.commands
+            .register::<TargetsArgs, _>(
+                ID,
+                "copy_paths",
+                "Copy paths",
+                "The selected paths, or the entries', or with nothing selected the folder shown, as text for the clipboard, one per line",
+                |a, app| copy_paths(app, a),
+            )
+            .reads();
         let cb = Arc::clone(&self.clipboard);
         app.commands.register::<PaneArg, _>(
             ID,
@@ -590,6 +654,74 @@ mod tests {
         assert!(
             app.pending.get().is_empty(),
             "nothing is waiting after the move"
+        );
+    }
+
+    fn copied(app: &App) -> (String, String) {
+        match app.dispatch(&Invocation::new("copy_paths")).unwrap() {
+            Outcome::Clipboard { text, said } => (text, said),
+            other => panic!("expected text for the clipboard, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn copy_paths_gives_plain_text_and_the_folder_with_nothing_selected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("it's a folder");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["a b.txt", "café's.txt"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(OpsBasicPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&dir)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        assert_eq!(
+            copied(&app),
+            (dir.to_str().unwrap().to_owned(), "Copied the path".into()),
+            "nothing selected: the folder shown, unquoted"
+        );
+
+        app.dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "names": ["a b.txt", "café's.txt"] }),
+        ))
+        .unwrap();
+        let (text, said) = copied(&app);
+        let mut lines: Vec<&str> = text.lines().collect();
+        lines.sort_unstable();
+        assert_eq!(
+            lines,
+            [
+                dir.join("a b.txt").to_str().unwrap(),
+                dir.join("café's.txt").to_str().unwrap(),
+            ],
+            "one path a line, as it is"
+        );
+        assert_eq!(said, "Copied 2 paths");
+    }
+
+    /// A name that is not UTF-8 has no text that names it: the copy is
+    /// refused rather than naming another file.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn copy_paths_refuses_a_path_that_is_not_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("latin1");
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = skwir_core::os_path::from_bytes(b"caf\xe9.txt".to_vec());
+        std::fs::write(dir.join(&name), b"x").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(OpsBasicPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&dir)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        app.dispatch(&Invocation::new("select_all")).unwrap();
+        let error = app.dispatch(&Invocation::new("copy_paths")).unwrap_err();
+        assert!(
+            error.to_string().contains("is not text"),
+            "refused: {error}"
         );
     }
 

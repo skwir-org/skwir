@@ -3678,7 +3678,11 @@ impl Shell {
         let Some(key) = &self.preview.key else {
             return;
         };
-        let path = key.path.to_string_lossy().into_owned();
+        // Written lossily, a path that is not text would name another file.
+        let Some(path) = key.path.to_str().map(str::to_owned) else {
+            self.set_status("The path is not text the clipboard can hold", true, cx);
+            return;
+        };
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(path));
         self.set_status("Copied the path", false, cx);
     }
