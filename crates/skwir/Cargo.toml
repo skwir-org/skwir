@@ -132,7 +132,7 @@ assets = [
     ["../../tools/package/linux/org.skwir.skwir.metainfo.xml", "usr/share/metainfo/", "644"],
     ["../../crates/ui/assets/org.skwir.skwir.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["../../tools/package/linux/copyright", "usr/share/doc/skwir/copyright", "644"],
-    ["../../target/notices/skwir/THIRD-PARTY-NOTICES", "usr/share/doc/skwir/", "644"],
+    ["../../tools/package/notices/skwir/THIRD-PARTY-NOTICES", "usr/share/doc/skwir/", "644"],
     ["../../README.md", "usr/share/doc/skwir/", "644"],
 ]
 
@@ -144,7 +144,7 @@ recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good"
 suggests = "gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav"
 assets = [
     ["target/release/skwir-media-worker", "usr/lib/skwir/", "755"],
-    ["../../target/notices/skwir-media/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-media/", "644"],
+    ["../../tools/package/notices/skwir-media/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-media/", "644"],
 ]
 
 [package.metadata.deb.variants.poppler]
@@ -156,7 +156,7 @@ suggests = ""
 assets = [
     ["target/release/skwir-poppler-worker", "usr/lib/skwir/", "755"],
     ["../../tools/package/linux/copyright-poppler", "usr/share/doc/skwir-poppler/copyright", "644"],
-    ["../../target/notices/skwir-poppler/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-poppler/", "644"],
+    ["../../tools/package/notices/skwir-poppler/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-poppler/", "644"],
 ]
 
 [package.metadata.deb.variants.djvulibre]
@@ -168,7 +168,7 @@ suggests = ""
 assets = [
     ["target/release/skwir-djvulibre-worker", "usr/lib/skwir/", "755"],
     ["../../tools/package/linux/copyright-djvulibre", "usr/share/doc/skwir-djvulibre/copyright", "644"],
-    ["../../target/notices/skwir-djvulibre/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-djvulibre/", "644"],
+    ["../../tools/package/notices/skwir-djvulibre/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-djvulibre/", "644"],
 ]
 
 [package.metadata.deb.variants.mermaid]
@@ -179,7 +179,7 @@ recommends = ""
 suggests = ""
 assets = [
     ["target/release/skwir-mermaid-worker", "usr/lib/skwir/", "755"],
-    ["../../target/notices/skwir-mermaid/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-mermaid/", "644"],
+    ["../../tools/package/notices/skwir-mermaid/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-mermaid/", "644"],
 ]
 
 [package.metadata.deb.variants.mupdf]
@@ -191,7 +191,7 @@ suggests = ""
 assets = [
     ["target/release/skwir-mupdf-worker", "usr/lib/skwir/", "755"],
     ["../../tools/package/linux/copyright-mupdf", "usr/share/doc/skwir-mupdf/copyright", "644"],
-    ["../../target/notices/skwir-mupdf/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-mupdf/", "644"],
+    ["../../tools/package/notices/skwir-mupdf/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-mupdf/", "644"],
 ]
 
 # Fedora, openSUSE and the others that install RPMs (cargo-generate-rpm):
@@ -223,7 +223,7 @@ assets = [
     { source = "../../tools/package/linux/org.skwir.skwir.metainfo.xml", dest = "/usr/share/metainfo/org.skwir.skwir.metainfo.xml", mode = "644" },
     { source = "../../crates/ui/assets/org.skwir.skwir.svg", dest = "/usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg", mode = "644" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/skwir/LICENSE", mode = "644" },
-    { source = "../../target/notices/skwir/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir/THIRD-PARTY-NOTICES", mode = "644" },
+    { source = "../../tools/package/notices/skwir/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir/THIRD-PARTY-NOTICES", mode = "644" },
     { source = "../../README.md", dest = "/usr/share/doc/skwir/README.md", mode = "644", doc = true },
 ]
 
@@ -259,7 +259,7 @@ summary = "skwir's audio and video player, through GStreamer"
 assets = [
     { source = "target/release/skwir-media-worker", dest = "/usr/libexec/skwir/skwir-media-worker", mode = "755" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-media/LICENSE", mode = "644" },
-    { source = "../../target/notices/skwir-media/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-media/THIRD-PARTY-NOTICES", mode = "644" },
+    { source = "../../tools/package/notices/skwir-media/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-media/THIRD-PARTY-NOTICES", mode = "644" },
 ]
 requires = { skwir = "*" }
 recommends = { gstreamer1-plugins-base = "*", gstreamer1-plugins-good = "*" }
@@ -272,7 +272,7 @@ license = "GPL-3.0-only"
 assets = [
     { source = "target/release/skwir-poppler-worker", dest = "/usr/libexec/skwir/skwir-poppler-worker", mode = "755" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-poppler/LICENSE", mode = "644" },
-    { source = "../../target/notices/skwir-poppler/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-poppler/THIRD-PARTY-NOTICES", mode = "644" },
+    { source = "../../tools/package/notices/skwir-poppler/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-poppler/THIRD-PARTY-NOTICES", mode = "644" },
     { source = "../../tools/package/licenses/GPL-3.0", dest = "/usr/share/licenses/skwir-poppler/GPL-3.0", mode = "644" },
 ]
 requires = { skwir = "*" }
@@ -286,7 +286,7 @@ license = "GPL-3.0-only"
 assets = [
     { source = "target/release/skwir-djvulibre-worker", dest = "/usr/libexec/skwir/skwir-djvulibre-worker", mode = "755" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-djvulibre/LICENSE", mode = "644" },
-    { source = "../../target/notices/skwir-djvulibre/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-djvulibre/THIRD-PARTY-NOTICES", mode = "644" },
+    { source = "../../tools/package/notices/skwir-djvulibre/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-djvulibre/THIRD-PARTY-NOTICES", mode = "644" },
     { source = "../../tools/package/licenses/GPL-3.0", dest = "/usr/share/licenses/skwir-djvulibre/GPL-3.0", mode = "644" },
 ]
 requires = { skwir = "*" }
@@ -300,7 +300,7 @@ summary = "Mermaid diagrams drawn in skwir's Markdown previews"
 assets = [
     { source = "target/release/skwir-mermaid-worker", dest = "/usr/libexec/skwir/skwir-mermaid-worker", mode = "755" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-mermaid/LICENSE", mode = "644" },
-    { source = "../../target/notices/skwir-mermaid/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-mermaid/THIRD-PARTY-NOTICES", mode = "644" },
+    { source = "../../tools/package/notices/skwir-mermaid/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-mermaid/THIRD-PARTY-NOTICES", mode = "644" },
 ]
 requires = { skwir = "*" }
 recommends = {}
@@ -313,7 +313,7 @@ license = "AGPL-3.0-or-later"
 assets = [
     { source = "target/release/skwir-mupdf-worker", dest = "/usr/libexec/skwir/skwir-mupdf-worker", mode = "755" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-mupdf/LICENSE", mode = "644" },
-    { source = "../../target/notices/skwir-mupdf/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-mupdf/THIRD-PARTY-NOTICES", mode = "644" },
+    { source = "../../tools/package/notices/skwir-mupdf/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-mupdf/THIRD-PARTY-NOTICES", mode = "644" },
     { source = "../../tools/package/licenses/AGPL-3.0", dest = "/usr/share/licenses/skwir-mupdf/AGPL-3.0", mode = "644" },
 ]
 requires = { skwir = "*" }

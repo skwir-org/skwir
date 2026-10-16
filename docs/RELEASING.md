@@ -40,8 +40,10 @@ just release-verify v0.1.0
 ```
 
 `release-build` first runs `just release-check`: `lint-all` (including
-Windows/macOS cross checks), `deny`, `test-all`, `smoke`, `poppler-check`,
-`mupdf-check`, `djvu-check`, `bench-check` and `release-tools-check`. There is no skip
+Windows/macOS cross checks), `deny`, `notices-check` (the packages' notices
+in `tools/package/notices` are current, ADR-063), `test-all`, `smoke`,
+`poppler-check`, `mupdf-check`, `djvu-check`, `bench-check` and
+`release-tools-check`. There is no skip
 checks option. These checks are also useful before committing a change;
 `release-check` itself does not require a tag or a clean tree.
 

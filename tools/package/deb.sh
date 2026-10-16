@@ -13,17 +13,13 @@
 # Debian's (skwir_0.1.0-1_amd64.deb) in a release.
 #
 # Needs rustup's Rust (a distribution's may be older than skwir needs),
-# cargo-deb (`cargo install cargo-deb`), cargo-about (`cargo install
-# --locked --features cli cargo-about`, for each package's notices) and what
-# tools/package/linux/build-deps.debian lists.
+# cargo-deb (`cargo install cargo-deb`) and what
+# tools/package/linux/build-deps.debian lists. Each package's notices are
+# the source's (tools/package/notices, ADR-063).
 set -eu
 cd "$(dirname "$0")/../.."
 if ! command -v cargo-deb >/dev/null; then
     echo "cargo-deb is needed: cargo install cargo-deb" >&2
-    exit 1
-fi
-if ! command -v cargo-about >/dev/null; then
-    echo "cargo-about is needed: cargo install --locked --features cli cargo-about" >&2
     exit 1
 fi
 case "$(uname -m)" in
@@ -33,7 +29,6 @@ aarch64) platform=linux-arm64 ;;
 esac
 # shellcheck disable=SC2046 # one `-p name` per program
 cargo build --locked --profile dist $(sed 's/^/-p /' tools/package/programs)
-tools/package/notices.py
 tools/package/pdfium.sh "$platform" target/pdfium
 revision=1
 if [ -r /etc/os-release ]; then

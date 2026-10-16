@@ -7,12 +7,8 @@ source_date="$1"
 export CARGO_TARGET_DIR=/build/target
 export CARGO_INCREMENTAL=0
 python3 tools/package/appimage/gstreamer.py
-# Notices read the locked graph offline, including target-specific crates
-# that this machine does not compile.
-cargo fetch --locked
 # shellcheck disable=SC2046 # the shared list is one package per line
 cargo build --locked --profile dist $(sed 's/^/-p /' tools/package/programs)
-tools/package/notices.py
 tools/package/pdfium.sh linux-x64 target/pdfium
 for tool in linuxdeploy appimagetool; do
     rm -rf "/opt/$tool"

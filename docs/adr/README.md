@@ -76,3 +76,4 @@ them by topic.
 | [060](060-code-is-colored-by-ferroni-and-its-grammars-are-let-go-of.md) | Code colored by Ferroni (vendored syntect and two-face); compiled grammars let go of after a minute unused | built |
 | [061](061-djvu-read-by-djvulibre-or-djvu-rs.md) | DjVu read by DjVuLibre or djvu-rs, Automatic preferring DjVuLibre | built; DjVuLibre's helper on Linux, djvu-rs's compiled only on macOS and Windows |
 | [062](062-files-on-the-system-clipboard.md) | Files on the system clipboard, as both families of Linux file managers put them | built on Linux (X11, Wayland); macOS and Windows keep Skwir's own |
+| [063](063-the-notices-are-kept-with-the-source.md) | The packages' third-party notices made once and kept with the source; no package build runs cargo-about | built for the Linux packages |

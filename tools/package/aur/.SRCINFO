@@ -9,7 +9,6 @@ pkgbase = skwir
 	makedepends = cargo
 	makedepends = clang
 	makedepends = cmake
-	makedepends = cargo-about
 	makedepends = python
 	makedepends = libxcb
 	makedepends = libxkbcommon

@@ -78,8 +78,9 @@ called `taxes 2026` can be `folder a`.
    bookmarks; media keys (Now Playing). PORTING sections 4, 6, 8, "10–15".
 8. **The package** (code). `tools/package/macos.sh` builds `skwir.app` and a
    disk image; it has never run. It must also carry the crates' notices
-   (`tools/package/notices.py`, as the Linux packages do) in
-   `Contents/Resources/licenses`. Signing and notarization need an Apple
+   in `Contents/Resources/licenses`, made for macOS's targets by
+   `tools/package/notices.py` and kept in `tools/package/notices` as the
+   Linux packages' are (ADR-063). Signing and notarization need an Apple
    developer identity: the project decides that with you.
 9. **CI** (code). The `native` job in `.github/workflows/ci.yml` builds,
    lints and tests on `macos-latest`. It does not block merging until it
@@ -115,7 +116,9 @@ called `taxes 2026` can be `folder a`.
    6, 7, 8, "10–15".
 8. **The package** (code). `tools/package/windows.ps1` builds what ships and
    an installer from `tools/package/windows/skwir.wxs` (WiX); it has never
-   run. It must also carry the crates' notices (`tools/package/notices.py`).
+   run. It must also carry the crates' notices, made for Windows' targets
+   by `tools/package/notices.py` and kept in `tools/package/notices` as
+   the Linux packages' are (ADR-063).
    Signing needs a code-signing certificate: the project decides that with
    you.
 9. **CI** (code). The `native` job runs on `windows-latest` too.

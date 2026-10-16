@@ -155,9 +155,15 @@ package-nix:
     nix build "git+file://{{justfile_directory()}}#default"
 
 # The notices of the crates each package's programs link, into
-# target/notices (the package scripts make them; cargo-about, offline).
+# tools/package/notices, kept with the source for the packages to copy
+# (ADR-063): made again when a dependency, or what a package ships,
+# changes. cargo-about, every platform's crates read offline.
 notices:
     tools/package/notices.py
+
+# Whether tools/package/notices is what the crates say now (release-check).
+notices-check:
+    tools/package/notices.py --check
 
 # Debian's and Ubuntu's package, made on the distribution it is for
 # (ADR-040), into target/debian.

@@ -448,7 +448,7 @@ just bench-check           generate bench-data/ on demand and enforce budgets
 just idle-pss              idle memory and first frame on this display (ADR-033)
 just smoke                 the release window on an X display of its own (CI)
 just screenshots           the README's screenshots, made again (docs/images)
-just deny / notices        dependency licences and advisories; third-party notices
+just deny / notices        dependency licences and advisories; the packages' notices
 just plugins               build the plugins from outside as modules (target/plugins)
 just package-nix/deb/rpm/aur, package-try <distro>   Linux packages (ADR-040)
 just ci-check              cheap routine GitHub CI (core/API, formatting, release tools)
@@ -458,24 +458,27 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
 ```
 
 - **Done means the full checks are green:** `just release-check` runs
-  `lint-all`, `deny`, `test-all`, `smoke`, `poppler-check`, `mupdf-check`,
-  `djvu-check`, `bench-check` and `release-tools-check`. Routine GitHub CI
-  runs only `ci-check`; the full suite and Linux packaging are also manual
-  workflows (ADR-053). A green routine CI alone is not the full gate. The
-  native workers are outside `default-members`, so the default build needs
-  no Poppler, MuPDF, DjVuLibre, GStreamer or libarchive; run the `-all`
-  recipes before committing worker changes. `spikes/` is a separate workspace, not
-  covered by the root checks.
+  `lint-all`, `deny`, `notices-check`, `test-all`, `smoke`, `poppler-check`,
+  `mupdf-check`, `djvu-check`, `bench-check` and `release-tools-check`.
+  Routine GitHub CI runs only `ci-check`; the full suite and Linux
+  packaging are also manual workflows (ADR-053). A green routine CI alone
+  is not the full gate. The native workers are outside `default-members`,
+  so the default build needs no Poppler, MuPDF, DjVuLibre, GStreamer or
+  libarchive; run the `-all` recipes before committing worker changes.
+  `spikes/` is a separate workspace, not covered by the root checks.
 - A dependency added or updated passes `just deny`: fix an advisory by an
-  update, or ignore it in `deny.toml` with its reason.
+  update, or ignore it in `deny.toml` with its reason. Then `just notices`
+  makes the packages' notices again: they are kept with the source, in
+  `tools/package/notices`, for the packages to copy (ADR-063).
 - Clippy runs pedantic with the allowances in the root `Cargo.toml`; an
   allowance in code needs a reason in a comment.
 - A new helper program is listed in `tools/package/programs` (and
   `tools/package/optional` when a package of its own holds it), in the
   packages' file lists (`crates/skwir/Cargo.toml`'s metadata, the
-  PKGBUILD) and in the macOS and Windows scripts where it ships. It
-  answers `--probe` (ADR-040, ADR-041) and `--build` (its `build.rs`
-  includes `tools/build/identity.rs`; see `docs/invariants/settings.md`).
+  PKGBUILD) and in the macOS and Windows scripts where it ships, and its
+  notices are made (`just notices`). It answers `--probe` (ADR-040,
+  ADR-041) and `--build` (its `build.rs` includes
+  `tools/build/identity.rs`; see `docs/invariants/settings.md`).
 
 ### Tests
 

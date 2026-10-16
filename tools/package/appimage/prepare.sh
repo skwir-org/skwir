@@ -15,7 +15,6 @@ if [ "$(cat /root/.skwir-appimage-prepared 2>/dev/null || true)" != "$key" ]; th
     fi
     channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
     rustup toolchain install "$channel" --profile minimal --component clippy,rustfmt
-    command -v cargo-about >/dev/null || cargo install --locked --features cli cargo-about
     printf '%s\n' "$key" > /root/.skwir-appimage-prepared
     apt-get clean
 fi

@@ -1825,8 +1825,12 @@ Phase 7.
    Done 2026-10-07: `THIRD-PARTY-NOTICES` in every package (each linked
    crate's licence and text, by cargo-about through
    `tools/package/notices.py`, offline; `linux/check.sh` checks it is
-   installed, in the distributions' roots on 2026-10-10); `deny.toml`
-   (licences, RustSec advisories, crates.io; `just deny`, a CI step).
+   installed, in the distributions' roots on 2026-10-10; since
+   2026-10-17 made once and kept in `tools/package/notices`, checked by
+   `notices-check` in `release-check`, ADR-063, after an Arch build of
+   0.1.0 in a clean environment stopped at cargo-about, whose `cargo
+   metadata` reads every platform's crates); `deny.toml` (licences,
+   RustSec advisories, crates.io; `just deny`, a CI step).
    Found by it: Wasmtime 38.0.4 had seventeen advisories (an
    out-of-bounds write in the component model's string transcoding, a
    heap access miscompiled into a sandbox escape on aarch64, loads

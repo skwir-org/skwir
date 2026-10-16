@@ -10,18 +10,14 @@
 #     tools/package/rpm.sh        # into target/generate-rpm/
 #
 # Needs rustup's Rust (a distribution's may be older than skwir needs),
-# cargo-generate-rpm (`cargo install cargo-generate-rpm`), cargo-about
-# (`cargo install --locked --features cli cargo-about`, for each package's
-# notices) and what tools/package/linux/build-deps.fedora lists (named as
-# Fedora names them).
+# cargo-generate-rpm (`cargo install cargo-generate-rpm`) and what
+# tools/package/linux/build-deps.fedora lists (named as Fedora names
+# them). Each package's notices are the source's (tools/package/notices,
+# ADR-063).
 set -eu
 cd "$(dirname "$0")/../.."
 if ! command -v cargo-generate-rpm >/dev/null; then
     echo "cargo-generate-rpm is needed: cargo install cargo-generate-rpm" >&2
-    exit 1
-fi
-if ! command -v cargo-about >/dev/null; then
-    echo "cargo-about is needed: cargo install --locked --features cli cargo-about" >&2
     exit 1
 fi
 case "$(uname -m)" in
@@ -31,7 +27,6 @@ aarch64) platform=linux-arm64 ;;
 esac
 # shellcheck disable=SC2046 # one `-p name` per program
 cargo build --locked --profile dist $(sed 's/^/-p /' tools/package/programs)
-tools/package/notices.py
 tools/package/pdfium.sh "$platform" target/pdfium
 cargo generate-rpm -p crates/skwir --profile dist
 for variant in media poppler djvulibre mermaid mupdf; do
