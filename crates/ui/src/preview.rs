@@ -3719,6 +3719,43 @@ impl Shell {
         cx.notify();
     }
 
+    /// Ctrl and the wheel over a picture or a page: zoom as the zoom keys
+    /// do, keeping what is under the pointer (in the window) where it is,
+    /// as image and document viewers do. A book laid out again, or a zoom
+    /// at its limit, moves nothing.
+    pub(crate) fn preview_zoom_toward(
+        &mut self,
+        direction: &str,
+        pointer: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (zoom, fit_width) = (self.preview.zoom, self.preview.fit_width);
+        self.preview_zoom(direction, window, cx);
+        let Some(to) = self.preview.zoom.filter(|to| Some(*to) != zoom) else {
+            return;
+        };
+        match &self.preview.content {
+            Some(PreviewContent::Image {
+                document: Some(page),
+                ..
+            }) => {
+                let opened = (page.page, (page.width, page.height));
+                self.reader_zoom_toward(opened, (zoom, fit_width), to, pointer);
+            }
+            Some(PreviewContent::Image { width, height, .. }) => {
+                let before = Lay {
+                    own: (*width as f32, *height as f32),
+                    zoom,
+                    fit_width,
+                    picture: true,
+                };
+                zoom_toward(&self.preview.picture_scroll, before, to, pointer);
+            }
+            _ => {}
+        }
+    }
+
     /// The scale Fit or Fit width shows the picture at: an image's, from the
     /// bounds its container had in the last prepaint; a document's pages',
     /// as they reported it (`Shell::document_shown`). Read when a key asks,
@@ -4649,6 +4686,101 @@ pub(crate) const PANE_KEEP_HEIGHT: f32 = 160.;
 /// The tab strip above the panes, when it shows (`tabs::render`).
 const TOOLBAR_HEIGHT: f32 = crate::tabs::STRIP_HEIGHT;
 
+/// How a picture or a page lies in the view that scrolls it (`picture`,
+/// `reader::page_element`), for a zoom to keep what is under the pointer
+/// where it is (`Shell::preview_zoom_toward`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Lay {
+    /// Its own size: what 100% shows.
+    pub own: (f32, f32),
+    pub zoom: Option<f32>,
+    pub fit_width: bool,
+    /// A picture: at a zoom, shorter than its view, it sits in the middle,
+    /// and Fit never enlarges it. A page at a zoom starts at the corner.
+    pub picture: bool,
+}
+
+impl Lay {
+    /// Where it starts and how long it is, across then down, from the
+    /// view's corner, scrolled by `offset` (a `ScrollHandle`'s, 0 or less).
+    fn placed(&self, view: (f32, f32), offset: (f32, f32)) -> [(f32, f32); 2] {
+        let (width, height) = (self.own.0.max(1.), self.own.1.max(1.));
+        if let Some(zoom) = self.zoom {
+            let axis = |own: f32, view: f32, offset: f32| {
+                let long = own * zoom;
+                let middle = if self.picture {
+                    ((view - long) / 2.).max(0.)
+                } else {
+                    0.
+                };
+                (middle + offset, long)
+            };
+            return [
+                axis(width, view.0, offset.0),
+                axis(height, view.1, offset.1),
+            ];
+        }
+        if self.fit_width {
+            return [(0., view.0), (offset.1, height * view.0 / width)];
+        }
+        // Whole, in the middle.
+        let mut scale = (view.0 / width).min(view.1 / height);
+        if self.picture {
+            scale = scale.min(1.);
+        }
+        let (across, down) = (width * scale, height * scale);
+        [
+            ((view.0 - across) / 2., across),
+            ((view.1 - down) / 2., down),
+        ]
+    }
+}
+
+/// The scroll offset that keeps what is under `pointer` (from the view's
+/// corner) there once `before` is shown at `zoom`, within what it can
+/// scroll: where it fits its view, it does not scroll.
+pub(crate) fn zoomed_offset(
+    before: Lay,
+    zoom: f32,
+    view: (f32, f32),
+    offset: (f32, f32),
+    pointer: (f32, f32),
+) -> (f32, f32) {
+    let after = Lay {
+        zoom: Some(zoom),
+        fit_width: false,
+        ..before
+    };
+    let (was, now) = (before.placed(view, offset), after.placed(view, (0., 0.)));
+    let axis = |i: usize, pointer: f32, view: f32| {
+        let share = (pointer - was[i].0) / was[i].1.max(1.);
+        let (start, long) = now[i];
+        (pointer - start - share * long).clamp((view - long).min(0.), 0.)
+    };
+    (axis(0, pointer.0, view.0), axis(1, pointer.1, view.1))
+}
+
+/// Zoom what `handle` scrolls, laid as `before`, to `zoom`, keeping what is
+/// under `pointer` (in the window) there. The view's bounds are the ones
+/// its last prepaint found; a zoom does not change them.
+pub(crate) fn zoom_toward(
+    handle: &gpui::ScrollHandle,
+    before: Lay,
+    zoom: f32,
+    pointer: gpui::Point<gpui::Pixels>,
+) {
+    let (bounds, offset) = (handle.bounds(), handle.offset());
+    let at = pointer - bounds.origin;
+    let (x, y) = zoomed_offset(
+        before,
+        zoom,
+        (bounds.size.width.into(), bounds.size.height.into()),
+        (offset.x.into(), offset.y.into()),
+        (at.x.into(), at.y.into()),
+    );
+    handle.set_offset(gpui::point(px(x), px(y)));
+}
+
 /// How far an arrow moves what a preview shows: a tenth of the view along
 /// its way, a document reader's step. Rows of text go a row instead.
 pub(crate) fn arrow_step(view: f32) -> f32 {
@@ -5087,10 +5219,67 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
 #[cfg(test)]
 mod tests {
     use super::{
-        Counted, SHARPEN_STEP, SourceTypes, Version, arrowed, count_waits, max_width,
-        picture_written, selection_stamp, sharper, still_counts,
+        Counted, Lay, SHARPEN_STEP, SourceTypes, Version, arrowed, count_waits, max_width,
+        picture_written, selection_stamp, sharper, still_counts, zoomed_offset,
     };
     use skwir_core::workspace::{PaneId, Selection};
+
+    #[test]
+    fn a_zoom_keeps_what_is_under_the_pointer_there() {
+        let close = |(x, y): (f32, f32), (ex, ey): (f32, f32)| {
+            assert!((x - ex).abs() < 1e-3 && (y - ey).abs() < 1e-3, "{x} {y}");
+        };
+        let view = (500., 400.);
+        let picture = Lay {
+            own: (1000., 800.),
+            zoom: Some(1.),
+            fit_width: false,
+            picture: true,
+        };
+        // Its middle under the pointer in the middle of the view, its
+        // corners at the view's corners, stay there twice as large.
+        let middle = zoomed_offset(picture, 2., view, (-250., -200.), (250., 200.));
+        close(middle, (-750., -600.));
+        close(
+            zoomed_offset(picture, 2., view, (0., 0.), (0., 0.)),
+            (0., 0.),
+        );
+        let far = zoomed_offset(picture, 2., view, (-500., -400.), (500., 400.));
+        close(far, (-1500., -1200.));
+        // Smaller than the view, it sits in the middle: nothing scrolls.
+        let small = zoomed_offset(picture, 0.25, view, (-250., -200.), (250., 200.));
+        close(small, (0., 0.));
+        // From Fit, whole at half its size: a fifth across, a quarter down.
+        let fit = Lay {
+            zoom: None,
+            ..picture
+        };
+        close(
+            zoomed_offset(fit, 0.625, view, (0., 0.), (100., 100.)),
+            (-25., -25.),
+        );
+        // A page at a zoom starts at the view's corner.
+        let page = Lay {
+            own: (600., 800.),
+            zoom: Some(0.5),
+            fit_width: false,
+            picture: false,
+        };
+        let page_view = (400., 600.);
+        let zoomed = zoomed_offset(page, 1., page_view, (0., 0.), (150., 200.));
+        close(zoomed, (-150., -200.));
+        // As wide as the view, scrolled down from its top.
+        let width = Lay {
+            zoom: None,
+            fit_width: true,
+            ..page
+        };
+        let from_width = zoomed_offset(width, 1., (300., 600.), (0., 0.), (150., 100.));
+        close(from_width, (-150., -100.));
+        // Only as far as it scrolls: its edge stops it.
+        let edge = zoomed_offset(page, 1., (500., 600.), (0., 0.), (150., 200.));
+        close(edge, (-100., -200.));
+    }
 
     #[test]
     fn an_arrow_goes_a_tenth_of_the_view_and_stops_at_the_ends() {

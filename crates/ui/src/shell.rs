@@ -1422,6 +1422,7 @@ impl Shell {
         delta: f32,
         lines: bool,
         zoomed: crate::elements::zoom_wheel::Zoomed,
+        pointer: gpui::Point<gpui::Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1435,7 +1436,7 @@ impl Shell {
             Zoomed::View => {
                 self.zoom_to(dir, cx);
             }
-            Zoomed::Preview => self.preview_zoom(dir, window, cx),
+            Zoomed::Preview => self.preview_zoom_toward(dir, pointer, window, cx),
             Zoomed::Text { parked } => self.inspect_text_step(larger, parked, window, cx),
         }
     }

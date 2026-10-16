@@ -736,6 +736,16 @@ is still to come are in `docs/preview-frame.md`.
   scrolled. A trackpad must mean it (`WheelTurn`). A map has none, its
   wheel zooming around the pointer with Ctrl or without; a film has no
   zoom keys, so no zoom.
+- **A picture or a page zooms around the pointer** under Ctrl and the
+  wheel (`Shell::preview_zoom_toward`): what is under it stays there, as
+  far as what is shown can scroll (a picture shorter than its view sits
+  in its middle, a page at a zoom at its corner). Their layout is known
+  (`preview::Lay`), so the new offset is worked out on the wheel's turn
+  from the view's bounds of the last prepaint, which a zoom does not
+  change. Read continuously, row heights change with the zoom: the page
+  under the pointer and the share of it there wait for the layout at the
+  new zoom (`reader_scroll::ZoomAnchor`, `landing`, in prepaint). The
+  zoom keys keep their place.
 - What a zoom key does follows from what is shown, never from a
   per-format switch; the user asks for bigger or smaller and never
   chooses the mechanism. Text in reading mode changes size (the

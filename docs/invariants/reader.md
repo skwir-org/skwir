@@ -89,7 +89,9 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   fit/zoom changes are resolved in prepaint: they change every row's height,
   so rows reset to a new uniform estimate (old heights would mislead the
   scrollbar) and the anchor is restored in the same prepaint
-  (`continuous_element`).
+  (`continuous_element`). After Ctrl and the wheel the anchor is the page
+  under the pointer and the share of it there (`ZoomAnchor`), landed
+  under the pointer at the new rows' own heights (`landing`).
 - An arriving page invalidates only its own height
   (`ListState::remeasure_items`), without resetting the anchor or splicing:
   a spliced row forgets its height, and the scrollbar jumps while dragged.

@@ -81,6 +81,9 @@ pub struct DocumentScroll {
     tx: flume::Sender<PageResult>,
     rx: flume::Receiver<PageResult>,
     layout: Rc<RefCell<Option<(gpui::Size<gpui::Pixels>, Option<f32>, bool)>>>,
+    /// Where Ctrl and the wheel zoomed from, put back under the pointer
+    /// by the layout at the new zoom (`continuous_element`).
+    zoom_anchor: Rc<std::cell::Cell<Option<ZoomAnchor>>>,
     wheel: WheelTurn,
     pub bottom_on_load: bool,
 }
@@ -102,6 +105,7 @@ impl Default for DocumentScroll {
             tx,
             rx,
             layout: Rc::default(),
+            zoom_anchor: Rc::default(),
             wheel: WheelTurn::default(),
             bottom_on_load: false,
         }
@@ -135,6 +139,35 @@ impl DocumentScroll {
             }
         }
         evicted
+    }
+    /// The page read continuously under `pointer` (in the window) and the
+    /// share of it across and down there, as the last layout placed the
+    /// rows. `opened` is as `Shell::reader_zoom_toward` has it.
+    fn page_under(
+        &self,
+        pointer: gpui::Point<gpui::Pixels>,
+        opened: (u32, (f32, f32)),
+    ) -> Option<(u32, (f32, f32))> {
+        let list = &self.list;
+        let first = list.logical_scroll_top().item_ix;
+        let (index, row) = (first..list.item_count())
+            .map_while(|index| list.bounds_for_item(index).map(|row| (index, row)))
+            .find(|(_, row)| pointer.y < row.bottom())?;
+        let number = index as u32 + 1;
+        let (width, height) = if number == opened.0 {
+            opened.1
+        } else {
+            self.sizes.get(&number).copied().unwrap_or(opened.1)
+        };
+        // A row is the page, centred across the column, and its gap.
+        let down = (f32::from(row.size.height) - PAGE_GAP).max(1.);
+        let across = (width * down / height.max(1.)).max(1.);
+        let left = f32::from(row.left()) + (f32::from(row.size.width) - across) / 2.;
+        let share = (
+            (f32::from(pointer.x) - left) / across,
+            f32::from(pointer.y - row.top()) / down,
+        );
+        Some((number, share))
     }
     fn cancel(&mut self) {
         if let Some((_, token)) = self.pending.take() {
@@ -183,6 +216,57 @@ impl WheelTurn {
             0
         }
     }
+}
+
+/// The room under each page read continuously, before the next.
+const PAGE_GAP: f32 = 12.;
+
+/// The scale a page `page` long (across, down) is shown at, read
+/// continuously in a view `view` long: the zoom, else as wide as the view
+/// (Fit width), else whole above its gap (Fit).
+fn page_scale(zoom: Option<f32>, fit_width: bool, view: (f32, f32), page: (f32, f32)) -> f32 {
+    zoom.unwrap_or_else(|| {
+        let across = view.0 / page.0.max(1.);
+        if fit_width {
+            across
+        } else {
+            across.min((view.1 - PAGE_GAP).max(1.) / page.1.max(1.))
+        }
+    })
+}
+
+/// Where Ctrl and the wheel zoomed from, read continuously: the page under
+/// the pointer, the share of it across and down there, and where the
+/// pointer is from the view's corner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ZoomAnchor {
+    page: u32,
+    share: (f32, f32),
+    at: (f32, f32),
+}
+
+/// Where the column lands for `anchor` to be under the pointer again, its
+/// pages shown `shown(page)` large (across, down) in a column
+/// `content_width` wide, in a view `width` wide: the row at the top and how
+/// far down into it, and the sideways offset. Rows above the page are
+/// counted at their own heights; the start and the sides stop it.
+fn landing(
+    anchor: ZoomAnchor,
+    shown: impl Fn(u32) -> (f32, f32),
+    content_width: f32,
+    width: f32,
+) -> ((usize, f32), f32) {
+    let (across, down) = shown(anchor.page);
+    let mut top = anchor.at.1 - anchor.share.1 * down;
+    let mut row = anchor.page.saturating_sub(1) as usize;
+    while top > 0. && row > 0 {
+        row -= 1;
+        top -= shown(row as u32 + 1).1.max(1.) + PAGE_GAP;
+    }
+    let left = (content_width - across) / 2.;
+    let x =
+        (anchor.at.0 - left - anchor.share.0 * across).clamp((width - content_width).min(0.), 0.);
+    ((row, (-top).max(0.)), x)
 }
 
 /// Whether a page shown a page at a time, scrolled to `offset` of `-most`
@@ -442,6 +526,44 @@ impl Shell {
         true
     }
 
+    /// Ctrl and the wheel zoomed the pages from `zoom` (or Fit width) to
+    /// `to`: what is under `pointer` (in the window) stays there
+    /// (`Shell::preview_zoom_toward`). A page at a time scrolls now. Read
+    /// continuously, the page under the pointer and the share of it there
+    /// wait for the layout at the new zoom, where the rows' heights are
+    /// known (`continuous_element`); a turn of the wheel that layout has
+    /// not caught up with keeps the place the last one found. `opened` is
+    /// the page the preview opened on and its size, which pages not seen
+    /// yet are counted at.
+    pub(crate) fn reader_zoom_toward(
+        &mut self,
+        opened: (u32, (f32, f32)),
+        (zoom, fit_width): (Option<f32>, bool),
+        to: f32,
+        pointer: gpui::Point<gpui::Pixels>,
+    ) {
+        let scroll = &self.preview.reader.scroll;
+        if !scroll.continuous {
+            let before = crate::preview::Lay {
+                own: opened.1,
+                zoom,
+                fit_width,
+                picture: false,
+            };
+            return crate::preview::zoom_toward(&scroll.single, before, to, pointer);
+        }
+        // The view, not the column scrolled sideways inside it.
+        let at = pointer - scroll.sideways.bounds().origin;
+        let at = (f32::from(at.x), f32::from(at.y));
+        let anchor = match scroll.zoom_anchor.take() {
+            Some(anchor) => Some(ZoomAnchor { at, ..anchor }),
+            None => scroll
+                .page_under(pointer, opened)
+                .map(|(page, share)| ZoomAnchor { page, share, at }),
+        };
+        scroll.zoom_anchor.set(anchor);
+    }
+
     pub(crate) fn clear_document_pages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let scroll = &mut self.preview.reader.scroll;
         scroll.cancel();
@@ -664,6 +786,7 @@ pub fn continuous_element(
     let sideways = scroll.sideways.clone();
     let count = list.item_count() as u32;
     let layout = scroll.layout.clone();
+    let zoom_anchor = scroll.zoom_anchor.clone();
     let requested = Rc::new(RefCell::new(Vec::new()));
     let seen = requested.clone();
     // What the rows cover, read once they are laid out.
@@ -686,44 +809,54 @@ pub fn continuous_element(
             // A page that has not been drawn is worth about as much as the
             // one we know: without that, the scrollbar would measure the
             // handful of pages on screen and call the book nearly read.
-            let (fw, fh) = fallback;
-            let estimate = zoom.unwrap_or_else(|| {
-                if fit_width {
-                    width / fw.max(1.)
+            let estimate =
+                page_scale(zoom, fit_width, (width, height), fallback) * fallback.1 + PAGE_GAP;
+            let content_width = zoom.map_or(width, |z| width.max(widest * z));
+            let opened = page.page;
+            let size_of = move |number: u32| {
+                if number == opened {
+                    fallback
                 } else {
-                    (width / fw.max(1.)).min((height - 12.).max(1.) / fh.max(1.))
+                    sizes.get(&number).copied().unwrap_or(fallback)
                 }
-            }) * fh
-                + 12.;
+            };
+            // Ctrl and the wheel zoomed here: what was under the pointer
+            // lands back there, at the scales this layout gives the pages.
+            let anchor = zoom_anchor.take();
             let signature = (bounds, zoom, fit_width);
             if layout.borrow().as_ref() != Some(&signature) {
                 let offset = list.logical_scroll_top();
                 list.reset_with_uniform_height(list.item_count(), px(estimate.max(1.)));
-                list.scroll_to(offset);
+                match anchor {
+                    Some(anchor) => {
+                        let shown = |number| {
+                            let (across, down) = size_of(number);
+                            let scale =
+                                page_scale(zoom, fit_width, (width, height), (across, down));
+                            (across * scale, down * scale)
+                        };
+                        let ((item_ix, down), x) = landing(anchor, shown, content_width, width);
+                        list.scroll_to(ListOffset {
+                            item_ix,
+                            offset_in_item: px(down),
+                        });
+                        sideways.set_offset(point(px(x), px(0.)));
+                    }
+                    None => list.scroll_to(offset),
+                }
                 *layout.borrow_mut() = Some(signature);
             }
-            let content_width = zoom.map_or(width, |z| width.max(widest * z));
             let rows = gpui::list(list, move |index, _, _| {
                 let number = index as u32 + 1;
                 seen.borrow_mut().push(number);
-                let (pw, ph) = if number == page.page {
-                    fallback
-                } else {
-                    sizes.get(&number).copied().unwrap_or(fallback)
-                };
-                let scale = zoom.unwrap_or_else(|| {
-                    if fit_width {
-                        width / pw.max(1.)
-                    } else {
-                        (width / pw.max(1.)).min((height - 12.).max(1.) / ph.max(1.))
-                    }
-                });
+                let (pw, ph) = size_of(number);
+                let scale = page_scale(zoom, fit_width, (width, height), (pw, ph));
                 let row_height = (ph * scale).max(1.);
                 let mut row = div()
                     .id(("continuous-page", index))
                     .w(px(content_width))
-                    .h(px(row_height + 12.))
-                    .pb(px(12.))
+                    .h(px(row_height + PAGE_GAP))
+                    .pb(px(PAGE_GAP))
                     .flex()
                     .justify_center();
                 // A page drawn again sharper replaces the one it opened on.
@@ -965,6 +1098,44 @@ mod tests {
         assert_eq!(wheel.turn(-40., false, false), 0);
         assert_eq!(wheel.turn(-40., false, true), 0);
         assert_eq!(wheel.turn(-40., false, false), 0);
+    }
+
+    #[test]
+    fn a_zoom_lands_what_was_under_the_pointer_back_under_it() {
+        // Pages shown 600 × 800, a column 600 wide in a view 400 wide.
+        let shown = |_| (600., 800.);
+        let anchor = ZoomAnchor {
+            page: 3,
+            share: (0.5, 0.25),
+            at: (200., 300.),
+        };
+        // The page starts 100 down the view: the row before it is on top,
+        // 712 into it (its 800 and the gap under it).
+        assert_eq!(landing(anchor, shown, 600., 400.), ((1, 712.), -100.));
+        // Far down the page, the page itself is on top.
+        let low = ZoomAnchor {
+            share: (0.5, 0.75),
+            at: (200., 100.),
+            ..anchor
+        };
+        assert_eq!(landing(low, shown, 600., 400.), ((2, 500.), -100.));
+        // The start stops it, and a column narrower than the view does not
+        // go sideways.
+        let first = ZoomAnchor {
+            page: 1,
+            share: (0.5, 0.),
+            at: (100., 300.),
+        };
+        assert_eq!(landing(first, shown, 600., 800.), ((0, 0.), 0.));
+        // Rows above count at their own heights.
+        let mixed = |page| {
+            if page == 2 {
+                (600., 400.)
+            } else {
+                (600., 800.)
+            }
+        };
+        assert_eq!(landing(anchor, mixed, 600., 400.), ((1, 312.), -100.));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Ctrl and the wheel zoom what is under the pointer as the zoom keys do
-//! where it has the keyboard: the pane's view, a picture or a page, the text
-//! of an inspection. One overlay over what scrolls, taking the wheel in the
+//! where it has the keyboard: the pane's view, a picture or a page (around
+//! the pointer, `Shell::preview_zoom_toward`), the text of an inspection. One overlay over what scrolls, taking the wheel in the
 //! capture phase: GPUI's scrolling reads no modifier, so what is under it
 //! would scroll too. A map has none: its wheel zooms around the pointer,
 //! with Ctrl or without.
@@ -39,7 +39,14 @@ pub fn overlay(zoomed: Zoomed, cx: &mut Context<Shell>) -> impl IntoElement {
                 let lines = matches!(event.delta, gpui::ScrollDelta::Lines(_));
                 shell
                     .update(cx, |shell, cx| {
-                        shell.zoom_wheel(f32::from(delta), lines, zoomed, window, cx);
+                        shell.zoom_wheel(
+                            f32::from(delta),
+                            lines,
+                            zoomed,
+                            event.position,
+                            window,
+                            cx,
+                        );
                     })
                     .ok();
                 cx.stop_propagation();

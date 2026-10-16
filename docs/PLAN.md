@@ -1040,6 +1040,15 @@ picture would give the keys back to the pane. What had arrows keeps them
 sideways now). Page Up, Page Down, Ctrl+Home and Ctrl+End, a text's
 alone before, scroll every structured preview.
 
+Ctrl and the wheel zoom a picture or a document's pages around the
+pointer, as image and document viewers do: what is under it stays there
+as far as the picture or the page can scroll. A picture and a page read
+a page at a time are laid out by known rules (`preview::Lay`), so the
+offset is worked out on the wheel's turn; read continuously, the page
+under the pointer and the share of it there are landed by the layout at
+the new zoom, which knows the rows' heights. The zoom keys keep their
+place, as before.
+
 ---
 
 ## Maps
