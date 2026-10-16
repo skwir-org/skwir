@@ -34,6 +34,9 @@ pub struct SelectionCtx {
     /// The pane shows a folder, not a search, the shelf or another virtual
     /// location.
     pub folder: bool,
+    /// The pane shows a search (`LocationProvider::searches`), whose pills
+    /// take the trail's place.
+    pub search: bool,
     /// Every selected entry is a place, no file (`EntryId::is_place`: a
     /// tag's in a tag location).
     pub all_places: bool,
@@ -52,14 +55,16 @@ pub struct SelectionCtx {
 /// What `when` can say about the selection, for menu items and key bindings
 /// alike: one vocabulary, one table. `empty` is nothing selected; `folder`
 /// is the pane showing a folder, which an item about the folder shown (New
-/// Folder, Bookmark This Folder) needs beside `empty`.
-pub const SELECTION_TOKENS: [&str; 11] = [
+/// Folder, Bookmark This Folder) needs beside `empty`; `search` is the pane
+/// showing a search.
+pub const SELECTION_TOKENS: [&str; 12] = [
     "empty",
     "selection",
     "single",
     "dir",
     "file",
     "folder",
+    "search",
     "place",
     "refs",
     "drops",
@@ -77,6 +82,7 @@ impl SelectionCtx {
             "dir" => self.count > 0 && self.all_dirs,
             "file" => self.count > 0 && self.all_files,
             "folder" => self.folder,
+            "search" => self.search,
             "place" => self.count > 0 && self.all_places,
             "refs" => self.refs,
             "drops" => self.drops,
@@ -1332,6 +1338,12 @@ mod tests {
             !when_holds(Some("empty folder"), ctx(0, true, true)),
             "a search"
         );
+        let search = SelectionCtx {
+            search: true,
+            ..ctx(0, true, true)
+        };
+        assert!(when_holds(Some("empty search"), search));
+        assert!(!when_holds(Some("search"), folder));
         // Alternatives: a selection anywhere, or the folder itself.
         assert!(when_holds(Some("selection|folder"), folder));
         assert!(when_holds(Some("selection|folder"), ctx(1, false, true)));

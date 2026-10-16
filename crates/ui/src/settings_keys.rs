@@ -1203,12 +1203,12 @@ mod tests {
     }
 
     /// Escape freed in the file list frees it where narrower bindings of
-    /// other actions had it too (clearing the filter, the clipboard): the
-    /// change says which before it is saved.
+    /// other actions had it too (clearing the filter, leaving a search):
+    /// the change says which before it is saved.
     #[test]
     fn freeing_keys_in_a_place_says_what_it_frees_beside_them() {
         let (_tmp, app) = app();
-        for (command, when) in [("select_none", "pane"), ("clipboard_clear", "pane empty")] {
+        for (command, when) in [("select_none", "pane"), ("up", "pane empty search")] {
             app.registry.keymap.add(
                 "plugin",
                 KeyBinding {
@@ -1230,9 +1230,9 @@ mod tests {
         let freed = effects(&app, &[], &Edit::Remove(escape), Some(&none.id()));
         let lost: Vec<&str> = freed.lost.iter().map(|lost| lost.title.as_str()).collect();
         let filter = crate::keymap::title(&app, "filter", &serde_json::json!({}));
-        let clipboard = crate::keymap::title(&app, "clipboard_clear", &serde_json::json!({}));
+        let up = crate::keymap::title(&app, "up", &serde_json::json!({}));
         assert!(lost.contains(&filter.as_str()), "{lost:?}");
-        assert!(lost.contains(&clipboard.as_str()), "{lost:?}");
+        assert!(lost.contains(&up.as_str()), "{lost:?}");
         assert!(freed.refused.is_none());
         // Changed to other keys, the same: the old ones are freed.
         let changed = effects(

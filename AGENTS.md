@@ -346,11 +346,11 @@ working in an area, also read that area's rules (see
   `g g` for a sequence. gpui leaves out the Shift a symbol took: bind
   `ctrl-?` and `ctrl-+`; `ctrl-shift-?` parses and never fires.
 - `when` is a space-separated list of tokens that must all hold:
-  `selection`, `single`, `dir`, `file`, `empty`, `folder`, `sweep`,
-  `place`, `refs`, `drops`, `creates`, `restores`, and a place by its
-  token (`pane`, `address`, `palette`, `sidebar`, `preview`, `menu`…,
-  each listed once in `keymap::PLACES` with its key context and what F1
-  calls it). `a|b` holds when either does, `!a` when it does not.
+  `selection`, `single`, `dir`, `file`, `empty`, `folder`, `search`,
+  `sweep`, `place`, `refs`, `drops`, `creates`, `restores`, and a place
+  by its token (`pane`, `address`, `palette`, `sidebar`, `preview`,
+  `menu`…, each listed once in `keymap::PLACES` with its key context and
+  what F1 calls it). `a|b` holds when either does, `!a` when it does not.
 - Menu `order` groups by its hundreds: 0xx open, 1xx edit (the file
   itself: its name, the clipboard), 2xx create, 3xx destructive, 4xx
   misc, 5xx metadata (tags, ratings, a picture's position), 9xx the end,

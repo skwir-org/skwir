@@ -266,9 +266,13 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("secondary-a", "select_all", Some("pane")),
     ("secondary-shift-i", "select_invert", Some("pane")),
     ("escape", "select_none", Some("pane")),
-    // With nothing selected Escape has one thing left to cancel: a pending
-    // cut or copy. Later bindings win, and `empty` holds only then.
-    ("escape", "clipboard_clear", Some("pane empty")),
+    // With nothing selected, Escape leaves a search for the folder it looks
+    // in: its pills hide the trail that would lead back. A tag keeps its
+    // trail: Escape never leaves a place, as it never leaves a folder.
+    // Later bindings win, and `empty` holds only then. A cut or a copy
+    // waits through Escape, to be pasted where it leads (the footer's
+    // count, or `clipboard_clear` in the palette, forgets it).
+    ("escape", "up", Some("pane empty search")),
     ("f5", "refresh", None),
     ("secondary-r", "refresh", None),
     // The folder or search being looked at, as in Nautilus and browsers.

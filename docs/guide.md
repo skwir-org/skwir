@@ -60,7 +60,8 @@ that work where the keyboard is.
 - **Typing in the address.** Words filter the folder shown as you type,
   and stay after the trail as a pill with a funnel, as a Narrow by choice
   does; `Escape` or its × shows everything again. A search, by contrast,
-  takes the trail's place. The dropdown says what `Enter` does
+  takes the trail's place; `Escape` with nothing selected goes back to the
+  folder it looks in. The dropdown says what `Enter` does
   and offers the rest: a path goes there, words search the folder shown
   (`Alt+Enter`: the home folder), `>` hands the rest to the palette.
 - **Type the first letters of a name** in the file list to go to it.
@@ -116,8 +117,8 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   clears. Drag from an empty spot for a rectangle. The Menu key or
   `Shift+F10` opens the context menu.
 - **Copy, cut, paste:** `Ctrl+C`, `Ctrl+X`, `Ctrl+V`. What waits for a
-  paste is dimmed and counted in the footer; `Escape` with nothing
-  selected forgets it. With two panes, `Shift+F5` copies the selection to
+  paste is dimmed and counted in the footer; a click on the count
+  forgets it. With two panes, `Shift+F5` copies the selection to
   the other pane and `Shift+F6` moves it there; `Shift+F7` asks, as a
   drop does (and offers to extract an archive there).
 - **Drag and drop.** Files dropped on a folder ask whether to move, copy

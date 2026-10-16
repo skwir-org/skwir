@@ -344,9 +344,11 @@ impl Shell {
         // Where the pane is, read every time: navigating replaces the
         // listing, whose version can then repeat the cached one.
         let folder = pane.location().is_some_and(skwir_core::Location::is_path);
-        let verbs = &self.ui().place.verbs;
+        let place = &self.ui().place;
+        let verbs = &place.verbs;
         let here = |ctx: SelectionCtx| SelectionCtx {
             folder,
+            search: place.search,
             refs: verbs.remove.is_some(),
             drops: verbs.drop.is_some(),
             creates: verbs.create.is_some(),

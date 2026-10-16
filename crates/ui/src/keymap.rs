@@ -1134,6 +1134,7 @@ pub(crate) fn condition(flag: &str) -> String {
         "dir" => "on a folder",
         "file" => "on a file",
         "folder" => "in a folder",
+        "search" => "in a search",
         "sweep" => "selecting as the cursor moves",
         "place" => "on a tag or another place",
         "refs" => "where removing leaves files where they are",
@@ -1912,12 +1913,7 @@ mod tests {
     #[test]
     fn a_later_binding_that_asks_for_no_more_hides_an_earlier_one() {
         let specs = [
-            spec(
-                "escape",
-                "clipboard_clear",
-                Some("pane empty"),
-                Layer::Plugin,
-            ),
+            spec("escape", "up", Some("pane empty search"), Layer::Plugin),
             spec(
                 "f2",
                 "ui.rename_bulk_prompt",
@@ -1946,7 +1942,7 @@ mod tests {
         // F2 for one item and for several both apply somewhere; Ctrl+F in
         // the list leaves Ctrl+F elsewhere; Escape while sweeping adds a
         // case, it hides nothing.
-        assert_eq!(hidden, ["clipboard_clear", "ui.peek"]);
+        assert_eq!(hidden, ["up", "ui.peek"]);
     }
 
     #[test]

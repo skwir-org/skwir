@@ -144,6 +144,11 @@ of bars, split or not.
   shown; filtered-out entries are deselected). Showing another location
   clears it; Escape (`filtered` key context) shows everything; once the
   field lets go, the filter stays as a pill on the trail.
+- A search's pills take the trail's place, so nothing on screen leads
+  back: Escape with nothing selected goes to the folder it looks in (`up`,
+  `search` in the key context). A tag location keeps its trail and is a
+  place: Escape never leaves it, as it never leaves a folder (Backspace
+  and Alt+G do).
 - What narrows the folder shown (the filter typed, a Narrow by choice, a
   tag location's `with`) is a pill after the trail with a funnel
   (`filter`); a search's pills are drawn in the trail's place, its words

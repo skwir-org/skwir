@@ -26,13 +26,14 @@ use crate::theme::Theme;
 const SHOWN: usize = 8;
 
 /// The file list's conditions a shortcut may ask for, as `when` says them.
-const FLAGS: [&str; 8] = [
+const FLAGS: [&str; 9] = [
     "selection",
     "single",
     "empty",
     "dir",
     "file",
     "folder",
+    "search",
     "split",
     "!restores",
 ];

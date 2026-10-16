@@ -43,8 +43,9 @@ around the views is in [shell.md](shell.md).
   once per frame.
 - Every view dims cut entries (`views::list::CUT_OPACITY`), and the last
   pane's footer shows the count, since the clipboard is invisible once the
-  pane moves on. Escape with nothing selected, or a click on the count,
-  forgets it.
+  pane moves on. A click on the count forgets it (`clipboard_clear`).
+  Escape does not: a cut waits through it, to be pasted where it leads
+  (out of a search, [shell.md](shell.md)).
 
 ## Folders opened in place (ADR-025)
 
