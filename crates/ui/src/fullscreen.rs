@@ -590,7 +590,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     Some(canvas.into_any_element())
 }
 
-#[cfg(test)]
+// Types from the free desktops' database (step E, ADR-035).
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::is_picture;
     use skwir_core::entry::{Entry, EntryId, EntryKind};
@@ -606,8 +607,6 @@ mod tests {
         )
     }
 
-    // Types from the free desktops' database (step E, ADR-035).
-    #[cfg(target_os = "linux")]
     #[test]
     fn the_walk_takes_a_picture_only_where_its_name_says_so() {
         assert!(is_picture(&file("Synthetic sky.png")));

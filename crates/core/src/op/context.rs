@@ -52,9 +52,12 @@ impl Pause {
         true
     }
 
-    /// Let the plan go on. Whether it was held.
-    pub(super) fn resume(&self) -> bool {
-        self.held.lock().take().is_some()
+    /// Take the plan's hold off it, `None` when it was not held: the plan
+    /// goes on once what this returns is dropped, so whoever resumes it
+    /// says so first, and its next step is told after.
+    #[must_use]
+    pub(super) fn resume(&self) -> Option<(Sender<()>, Receiver<()>)> {
+        self.held.lock().take()
     }
 
     pub(super) fn is_paused(&self) -> bool {

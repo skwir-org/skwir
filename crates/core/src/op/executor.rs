@@ -572,23 +572,25 @@ impl Executor {
     }
 
     fn hold(&self, plan: PlanId, paused: bool) -> bool {
-        let changed = {
+        let (held, released) = {
             let running = self.running.lock();
             let Some(active) = running.iter().find(|a| a.plan == plan) else {
                 return false;
             };
             if paused {
-                active.pause.pause()
+                (active.pause.pause(), None)
             } else {
-                active.pause.resume()
+                (false, active.pause.resume())
             }
         };
-        if changed {
-            self.emit(if paused {
-                ExecEvent::Paused { plan }
-            } else {
-                ExecEvent::Resumed { plan }
-            });
+        if held {
+            self.emit(ExecEvent::Paused { plan });
+        }
+        // Resumed is told before the plan goes on: its next step, told by
+        // the plans' thread once the hold is dropped, comes after.
+        if let Some(hold) = released {
+            self.emit(ExecEvent::Resumed { plan });
+            drop(hold);
         }
         true
     }
