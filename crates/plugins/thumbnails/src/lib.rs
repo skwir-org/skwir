@@ -613,6 +613,7 @@ mod tests {
             seconds: None,
             max_side: 2048,
             text_size: None,
+            fit: None,
         };
         assert!(
             !pictures.accepts(&request("image/png")),
@@ -711,6 +712,7 @@ mod tests {
             seconds: None,
             max_side: 2048,
             text_size: None,
+            fit: None,
         };
         assert!(
             pictures(false)

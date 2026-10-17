@@ -497,11 +497,11 @@ pub struct PreviewState {
     /// shown at (`Shell::document_shown`), kept from one document to the
     /// next, so a page opens at the size the panel shows it.
     pub(crate) page_side: u32,
-    /// The side a film's or a track's picture is asked at: what the
-    /// content's area covers, in device pixels and `SHARPEN_STEP`s
+    /// The box a film's or a track's picture is asked to fit: the content's
+    /// area, width by height in device pixels, each in `SHARPEN_STEP`s
     /// (`watch_area`), kept from one file to the next. Larger later, the
     /// picture shown asks again (`Sharpen`).
-    pub(crate) media_side: u32,
+    pub(crate) media_box: (u32, u32),
     /// The size a book laid out by its engine is read at (`MuPDF`'s books),
     /// in pixels; `None` until the reader changes it. A book in reading mode
     /// keeps its own (`inspector::State`), pictures and pages zoom instead.
@@ -786,7 +786,7 @@ impl Default for PreviewState {
             placeholder: None,
             picture_side: 0,
             page_side: FIRST_PAGE_SIDE,
-            media_side: 2 * SHARPEN_STEP,
+            media_box: (2 * SHARPEN_STEP, 2 * SHARPEN_STEP),
             text_size: None,
             tx,
             rx,
@@ -902,6 +902,7 @@ impl PreviewState {
             seconds: None,
             max_side: 0,
             text_size: None,
+            fit: None,
         })
     }
 
@@ -2197,6 +2198,7 @@ impl Shell {
             seconds: self.preview.seconds,
             max_side: IMAGE_MAX_SIDE,
             text_size: self.preview.text_size,
+            fit: None,
         };
         let mut inspection = self.preview.inspection.request.clone();
         let source_types = self.preview.source_types.clone();
@@ -2214,9 +2216,11 @@ impl Shell {
             (!is_dir && !self.preview.info.identified).then(|| entry.type_name().to_owned());
         let session = self.preview.reader.session.clone();
         let picture_side = self.preview.picture_side;
-        // A film's picture is asked at the side it is shown at, or the one
-        // a zoom or the whole screen asked for (`sharpen_picture`).
-        let media_side = self.preview.media_side.max(picture_side);
+        // A film's picture is asked to fit the box it is shown in, or at
+        // the side a zoom or the whole screen asked for (`sharpen_picture`).
+        let media_box = self.preview.media_box;
+        let media_side = media_box.0.max(media_box.1).max(picture_side);
+        let media_fit = (picture_side == 0).then_some(media_box);
         // A document's page is rendered at the side pages are shown at.
         let page_side = self.preview.page_side;
         self.preview.reader.shown_side = page_side;
@@ -2481,6 +2485,7 @@ impl Shell {
                 if previews.media(&request) {
                     let mut asked = request.clone();
                     asked.max_side = media_side;
+                    asked.fit = media_fit;
                     // The picture goes with the request (Play, Seek, another
                     // file), and with a player that failed to open.
                     let picture_cancel = cancel.child();
@@ -2728,6 +2733,7 @@ impl Shell {
             seconds: None,
             max_side: IMAGE_MAX_SIDE,
             text_size: None,
+            fit: None,
         };
         let cancel = self.app.lifetime().child();
         let slot = Arc::new(parking_lot::Mutex::new(AheadSlot::Asking));
@@ -4005,6 +4011,7 @@ impl Shell {
             seconds: Some(seconds),
             max_side: side,
             text_size: None,
+            fit: None,
         };
         tracing::debug!(side, "draw the poster sharper");
         let previews = Arc::clone(&self.app.previews);
@@ -4409,13 +4416,13 @@ pub(crate) fn content_area(
 }
 
 /// What the content's area hands the shell once laid out (its one child
-/// fills it): the side a film's picture is asked at there (`media_side`),
+/// fills it): the box a film's picture is asked to fit there (`media_box`),
 /// when it crosses a step.
 fn watch_area(
     shell: &Shell,
     cx: &mut Context<Shell>,
 ) -> impl Fn(Vec<gpui::Bounds<gpui::Pixels>>, &mut Window, &mut gpui::App) + 'static {
-    let known = shell.preview.media_side;
+    let known = shell.preview.media_box;
     let shell = cx.entity().downgrade();
     move |bounds, window, cx| {
         // Nothing to show takes no room, and says nothing of the area.
@@ -4425,13 +4432,13 @@ fn watch_area(
         else {
             return;
         };
-        let covered = f32::from(bounds.size.width.max(bounds.size.height)) * window.scale_factor();
-        let side = step_covering(covered);
-        if side != known {
+        let covered = |side: gpui::Pixels| step_covering(f32::from(side) * window.scale_factor());
+        let area = (covered(bounds.size.width), covered(bounds.size.height));
+        if area != known {
             let shell = shell.clone();
             window.defer(cx, move |_, cx| {
                 if let Some(shell) = shell.upgrade() {
-                    shell.update(cx, |shell, _| shell.preview.media_side = side);
+                    shell.update(cx, |shell, _| shell.preview.media_box = area);
                 }
             });
         }
@@ -5767,6 +5774,7 @@ mod tests {
             seconds: None,
             max_side: 1024,
             text_size: None,
+            fit: None,
         };
         let notice = |path: &Path, mime: Option<&str>| match compute(
             path,

@@ -227,6 +227,7 @@ mod tests {
                 seconds: None,
                 max_side: 64,
                 text_size: None,
+                fit: None,
             })
         };
         for name in ["a.zip", "a.tar.gz", "a.7z", "a.deb", "a.jar", "a.iso"] {

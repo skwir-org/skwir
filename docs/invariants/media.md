@@ -45,14 +45,18 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   after the picture (Still frames, no GStreamer: the picture is then the
   preview, the still and the poster one request). A wish to play the
   track stepped to ends with the player's outcome, never with a picture.
-- The picture is asked at the size it is shown at: the side the
-  content's area covers in device pixels (`media_side`, measured where
-  it is used, in 512 px steps), so a resize within a step reuses it. It
-  carries the film's own size (`PreviewInfo::Video::size`), which it is
-  laid out by. A film's frame is kept as JPEG at high quality, a cover
-  as PNG. At 1080p and 4K a poster went from 4 and 16 MB of PNG at the
-  film's size to 60 to 400 KB, so the media cache's 128 MB holds
-  hundreds of films rather than eight to thirty.
+- The picture is asked at the size it is shown at: to fit the content's
+  area, its width and height in device pixels (`media_box`, measured
+  where it is used, each in 512 px steps), so a resize within a step
+  reuses it. Only the provider knows the film's shape before decoding
+  it (`ffprobe`, turned as a phone's film is shown), so it fits the box
+  (`PreviewRequest::fit`): a landscape film in a tall panel is as wide
+  as the panel, not as tall. It carries the film's own size
+  (`PreviewInfo::Video::size`), which it is laid out by. A film's frame
+  is kept as JPEG at high quality, a cover as PNG. At 1080p and 4K a
+  poster went from 4 and 16 MB of PNG at the film's size to 60 to 400
+  KB, so the media cache's 128 MB holds hundreds of films rather than
+  eight to thirty.
 - A poster drawn larger than its pixels (a panel made wider, the whole
   screen) is read again at the next step, as a picture is (`Sharpen`,
   in fullscreen too), but alone (`Shell::sharpen_poster`): the frame at

@@ -645,6 +645,7 @@ impl Shell {
                             seconds: None,
                             max_side: 0,
                             text_size: None,
+                            fit: None,
                         };
                         previews.open_media(&request, &lifetime, wake.clone())
                     });
@@ -715,6 +716,7 @@ impl Shell {
                         seconds: None,
                         max_side: 512,
                         text_size: None,
+                        fit: None,
                     };
                     let image = previews.render(&request, &job).ok()??.image;
                     let picture =

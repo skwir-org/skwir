@@ -423,6 +423,7 @@ mod tests {
                 seconds: None,
                 max_side: 64,
                 text_size: None,
+                fit: None,
             })
         };
         assert!(accepts("a.ttf", None));

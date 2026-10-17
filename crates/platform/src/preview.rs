@@ -252,6 +252,7 @@ impl PreviewProvider for MediaPreviews {
                 tool_stamp(&ffprobe)?,
                 req.seconds,
                 req.max_side,
+                req.fit,
                 "video-v4",
             ),
         )?;
@@ -268,7 +269,7 @@ impl PreviewProvider for MediaPreviews {
                 "-select_streams",
                 "v:0",
                 "-show_entries",
-                "format=duration:stream=width,height",
+                "format=duration:stream=width,height:stream_side_data=rotation",
                 "-of",
                 "json",
             ])
@@ -281,12 +282,20 @@ impl PreviewProvider for MediaPreviews {
             .filter(|d| d.is_finite() && *d > 0.0);
         // The picture is asked at the size it is shown at; the film's own
         // size is what it is laid out by and can be had at.
-        let stored = &value["streams"][0];
-        let stored = stored["width"]
+        let stream = &value["streams"][0];
+        let stored = stream["width"]
             .as_u64()
-            .zip(stored["height"].as_u64())
+            .zip(stream["height"].as_u64())
             .and_then(|(w, h)| Some((u32::try_from(w).ok()?, u32::try_from(h).ok()?)))
             .filter(|&(w, h)| w > 0 && h > 0);
+        // A phone's film is stored the other way and turned when decoded.
+        let turned = stream["side_data_list"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|data| data["rotation"].as_f64())
+            .any(|degrees| (degrees / 90.).round() as i64 % 2 != 0);
+        let shown = stored.map(|(w, h)| if turned { (h, w) } else { (w, h) });
         let asked = req.seconds.filter(|t| t.is_finite());
         let seconds = if self.audio {
             0.
@@ -296,7 +305,7 @@ impl PreviewProvider for MediaPreviews {
                 .max(0.0)
                 .min(duration.map_or(f64::MAX, |d| (d - 0.1).max(0.0)))
         };
-        let side = req.max_side.clamp(64, MAX_VIDEO_SIDE);
+        let side = fitted_side(shown, req.fit, req.max_side).clamp(64, MAX_VIDEO_SIDE);
         let exact = |seconds| ffmpeg_picture(&ffmpeg, &path, seconds, side, tmp.path(), cancel);
         // A film's own moment, unasked, is the first keyframe from it on:
         // keyframes alone decoded, not every frame since the last one. A
@@ -748,6 +757,21 @@ impl PreviewProvider for DocumentPreviews {
     }
 }
 
+/// The longest side a picture of `own` pixels (as shown, turned) is asked
+/// at to fit `fit`, the box it is shown in, as `Contain` lays it out:
+/// as wide as a tall box for a landscape film. Within `max_side`, which is
+/// all there is without either size.
+fn fitted_side(own: Option<(u32, u32)>, fit: Option<(u32, u32)>, max_side: u32) -> u32 {
+    let (Some((width, height)), Some((across, down))) = (own, fit) else {
+        return max_side;
+    };
+    if width == 0 || height == 0 || across == 0 || down == 0 {
+        return max_side;
+    }
+    let scale = (f64::from(across) / f64::from(width)).min(f64::from(down) / f64::from(height));
+    ((f64::from(width.max(height)) * scale).ceil() as u32).min(max_side)
+}
+
 /// One picture of `path` made by `ffmpeg`, through `scratch`: the frame at
 /// `seconds` of a film, as JPEG, or with `None` the first video stream of a
 /// recording, its cover, as PNG. Its longest side is at most `side`, never
@@ -980,6 +1004,7 @@ mod tests {
             seconds: None,
             max_side: 256,
             text_size: None,
+            fit: None,
         }
     }
 
@@ -1637,8 +1662,78 @@ mod tests {
             "{:?}",
             shown.info
         );
+        // In a tall box, a landscape film is as wide as the box.
+        req.max_side = 1536;
+        req.fit = Some((1024, 1536));
+        let fitted = backend.render(&req, &token).unwrap();
+        assert_eq!((fitted.image.width, fitted.image.height), (1024, 576));
+        // A phone's film, stored the other way, fits as it is shown.
+        let turned = tmp.path().join("Synthetic turned.mp4");
+        for (args, out) in [
+            (
+                vec![
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=red:size=1920x1080:rate=1",
+                    "-t",
+                    "2",
+                    "-c:v",
+                    "mpeg4",
+                ],
+                tmp.path().join("plain.mp4"),
+            ),
+            (
+                vec!["-display_rotation", "90", "-i", "plain.mp4", "-c", "copy"],
+                turned.clone(),
+            ),
+        ] {
+            process::run(
+                Command::new(process::required("ffmpeg").unwrap())
+                    .current_dir(tmp.path())
+                    .args(["-nostdin", "-v", "error", "-threads", "1"])
+                    .args(args)
+                    .arg(&out),
+                &token,
+                RENDER_TIMEOUT,
+            )
+            .unwrap();
+        }
+        let mut phone = request(&turned);
+        phone.mime = Some("video/mp4".into());
+        phone.max_side = 1536;
+        phone.fit = Some((1024, 1536));
+        let upright = backend.render(&phone, &token).unwrap();
+        assert_eq!((upright.image.width, upright.image.height), (864, 1536));
+        assert!(
+            matches!(
+                upright.info,
+                PreviewInfo::Video {
+                    size: Some((1080, 1920)),
+                    ..
+                }
+            ),
+            "{:?}",
+            upright.info
+        );
         token.cancel();
         assert!(backend.render(&req, &token).is_err());
+    }
+
+    #[test]
+    fn a_film_is_asked_at_the_side_it_covers_in_its_box() {
+        let tall = Some((1024, 1536));
+        assert_eq!(fitted_side(Some((1920, 1080)), tall, 1536), 1024);
+        assert_eq!(fitted_side(Some((1080, 1920)), tall, 1536), 1536);
+        assert_eq!(fitted_side(Some((1440, 1080)), tall, 1536), 1024);
+        // Bounded still, and told nothing, the side asked.
+        assert_eq!(
+            fitted_side(Some((1080, 1920)), Some((4096, 4096)), 2048),
+            2048
+        );
+        assert_eq!(fitted_side(None, tall, 1536), 1536);
+        assert_eq!(fitted_side(Some((1920, 1080)), None, 1536), 1536);
+        assert_eq!(fitted_side(Some((0, 1080)), tall, 1536), 1536);
     }
 
     #[test]

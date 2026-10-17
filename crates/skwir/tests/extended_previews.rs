@@ -40,6 +40,7 @@ fn request(path: &Path) -> PreviewRequest {
         seconds: None,
         max_side: 512,
         text_size: None,
+        fit: None,
     }
 }
 /// What the preview worker shows: the provider's inspection, else, for the
@@ -589,6 +590,7 @@ fn format_providers_never_compete_for_the_same_file() {
             seconds: None,
             max_side: 64,
             text_size: None,
+            fit: None,
         };
         let accepting = app.previews.accepting(&request);
         for (i, (owner, id, priority)) in accepting.iter().enumerate() {

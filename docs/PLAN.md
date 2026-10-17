@@ -408,6 +408,14 @@ dates, measurements and what is left.
   now tells, and the frame at the tenth is decoded exactly. Found by an
   opt-in test of a 2 s phone film; in a window, such a clip got its
   poster.
+- **Posters fitted by the film's shape** (2026-10-17, ADR-008 amended):
+  the poster was asked at the panel's longer side, so a landscape film
+  in a panel taller than wide was read up to twice as large as shown.
+  The panel now measures its content's area as a box (`media_box`, each
+  side in 512 px steps) and the provider fits the film's own size into
+  it (`PreviewRequest::fit`), turned as a phone's film is shown. In a
+  window on Xvfb with a 420 px panel: a 1080p film's poster at 512×288
+  (1024×576 before), a phone's portrait film at 512×911, upright.
 - **More formats** (2026-09-28):
   - SVG by resvg; OpenEXR and DDS decoded in process; HEIC, AVIF, JPEG
     XL and raw by the desktop's thumbnailer at 1024 px. Code highlighted

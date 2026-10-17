@@ -349,6 +349,7 @@ mod tests {
             seconds: None,
             max_side: 2048,
             text_size: None,
+            fit: None,
         }
     }
 

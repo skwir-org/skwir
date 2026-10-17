@@ -169,6 +169,7 @@ fn an_office_document_has_a_thumbnail_once_previewed() {
         seconds: None,
         max_side: 512,
         text_size: None,
+        fit: None,
     };
     app.previews
         .render(&preview, &CancelToken::new())

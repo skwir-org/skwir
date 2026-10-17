@@ -24,6 +24,13 @@ pub struct PreviewRequest {
     /// default. Pictures and fixed pages ignore it: they are zoomed instead.
     #[serde(default)]
     pub text_size: Option<f32>,
+    /// The box the picture is shown in, width by height in device pixels,
+    /// for a provider that knows a picture's shape before decoding it (a
+    /// film's frame): it asks no more than the picture covers there, so a
+    /// landscape film in a tall panel is as wide as the panel, not as tall.
+    /// `max_side` bounds it still; `None` is `max_side` alone.
+    #[serde(default)]
+    pub fit: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -484,6 +491,7 @@ mod tests {
             seconds: None,
             max_side: 128,
             text_size: None,
+            fit: None,
         };
         for attempt in 0..8 {
             previews.register("test", provider.clone());

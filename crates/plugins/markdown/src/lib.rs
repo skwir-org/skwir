@@ -232,6 +232,7 @@ mod tests {
                 seconds: None,
                 max_side: 64,
                 text_size: None,
+                fit: None,
             })
         };
         assert!(format("a.md") == Some(Format::Markdown));
@@ -253,6 +254,7 @@ mod tests {
             seconds: None,
             max_side: 64,
             text_size: None,
+            fit: None,
         };
         Provider
             .inspect(&request, view, &CancelToken::new())
@@ -362,6 +364,7 @@ mod tests {
             seconds: None,
             max_side: 64,
             text_size: None,
+            fit: None,
         };
         let image = Provider
             .picture(

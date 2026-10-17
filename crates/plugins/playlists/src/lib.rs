@@ -332,6 +332,7 @@ mod tests {
                 seconds: None,
                 max_side: 256,
                 text_size: None,
+                fit: None,
             };
             Provider
                 .inspect(&request, &InspectRequest::default(), &CancelToken::new())
@@ -381,6 +382,7 @@ mod tests {
             seconds: None,
             max_side: 256,
             text_size: None,
+            fit: None,
         };
         let cancel = CancelToken::new();
         let data = Provider

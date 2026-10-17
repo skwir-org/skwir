@@ -180,6 +180,7 @@ mod tests {
             seconds: None,
             max_side: 64,
             text_size: None,
+            fit: None,
         };
         let cancel = CancelToken::new();
         let search = |offset: u64| {

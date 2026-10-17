@@ -842,6 +842,7 @@ mod tests {
             seconds: None,
             max_side: 64,
             text_size: None,
+            fit: None,
         };
         Provider::default()
             .inspect(&request, view, &CancelToken::new())
@@ -860,6 +861,7 @@ mod tests {
             seconds: None,
             max_side: 64,
             text_size: Some(20.),
+            fit: None,
         };
         let cancel = CancelToken::new();
         // The built-in engine inspects; it opens no document.
@@ -1278,6 +1280,7 @@ mod tests {
             seconds: None,
             max_side: 64,
             text_size: None,
+            fit: None,
         };
         let provider = Provider::default();
         let cancel = CancelToken::new();
@@ -1333,6 +1336,7 @@ mod tests {
             seconds: None,
             max_side: 64,
             text_size: None,
+            fit: None,
         };
         let cancel = CancelToken::new();
         let view = InspectRequest::default();

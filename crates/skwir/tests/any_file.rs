@@ -277,6 +277,7 @@ fn request(path: &Path) -> PreviewRequest {
         seconds: None,
         max_side: 256,
         text_size: None,
+        fit: None,
     }
 }
 
