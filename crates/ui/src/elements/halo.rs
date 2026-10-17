@@ -165,13 +165,29 @@ pub fn dots(length: f32, pitch: f32) -> usize {
 
 /// The colour a cover is remembered by: the average of its pixels weighted by
 /// how colourful they are, so a white border or a black background does not
-/// wash it out. `bgra` is the decoded image; `None` when it is all grey.
-pub fn tint(bgra: &[u8]) -> Option<(f32, f32, f32)> {
+/// wash it out. `bgra` is the decoded image, `width` pixels a row; `None`
+/// when it is all grey.
+///
+/// A few thousand samples say as much as every pixel, at the same places
+/// in the picture whatever its size: the middles of a grid over its width
+/// and its height. Every n-th pixel in a row's order read only a few
+/// columns when the width was a multiple of n (four of a 1024 px cover),
+/// so a track's thumbnail and its own cover, the same picture, glowed in
+/// colours of their own.
+pub fn tint(bgra: &[u8], width: usize) -> Option<(f32, f32, f32)> {
+    const GRID: usize = 64;
+    let pixels = bgra.as_chunks::<4>().0;
+    let width = width.clamp(1, pixels.len().max(1));
+    let height = pixels.len() / width;
+    let (across, down) = (width.min(GRID), height.min(GRID));
+    let middle = |cell: usize, cells: usize, side: usize| (2 * cell + 1) * side / (2 * cells);
+    let samples = (0..down).flat_map(|row| {
+        let y = middle(row, down, height);
+        (0..across).map(move |column| y * width + middle(column, across, width))
+    });
     let (mut red, mut green, mut blue, mut weight) = (0., 0., 0., 0.);
-    // A few thousand samples say as much as every pixel.
-    let step = (bgra.len() / 4 / 4096).max(1);
-    for [b, g, r, _] in bgra.as_chunks::<4>().0.iter().step_by(step) {
-        let (b, g, r) = (f32::from(*b), f32::from(*g), f32::from(*r));
+    for [b, g, r, _] in samples.map(|at| pixels[at]) {
+        let (b, g, r) = (f32::from(b), f32::from(g), f32::from(r));
         let (high, low) = (r.max(g).max(b), r.min(g).min(b));
         let colourful = (high - low) / 255.;
         let w = colourful * colourful * (high / 255.);
@@ -427,23 +443,36 @@ mod tests {
         assert_eq!(dots(f32::NAN, 5.), 0);
     }
 
+    /// A `side` px square picture (BGRA) with `pixel` saying each one.
+    fn picture(side: usize, pixel: impl Fn(usize, usize) -> [u8; 4]) -> Vec<u8> {
+        (0..side * side)
+            .flat_map(|at| pixel(at % side, at / side))
+            .collect()
+    }
+
+    const ORANGE: [u8; 4] = [0, 128, 255, 255];
+    const BLUE: [u8; 4] = [230, 90, 20, 255];
+
     #[test]
     fn a_cover_is_remembered_by_its_colour_not_its_border() {
-        // Mostly white and black, with a patch of orange (BGRA).
-        let mut pixels = Vec::new();
-        for index in 0..4000 {
-            pixels.extend(match index % 10 {
-                0 => [0u8, 128, 255, 255],
-                1..=5 => [255, 255, 255, 255],
-                _ => [0, 0, 0, 255],
-            });
-        }
-        let (red, green, blue) = tint(&pixels).expect("the orange counts");
+        // A white border round black, with a patch of orange in the middle.
+        let pixels = picture(200, |x, y| {
+            let inside = |v: usize, from, to| (from..to).contains(&v);
+            if !inside(x, 20, 180) || !inside(y, 20, 180) {
+                [255, 255, 255, 255]
+            } else if inside(x, 70, 130) && inside(y, 70, 130) {
+                ORANGE
+            } else {
+                [0, 0, 0, 255]
+            }
+        });
+        let (red, green, blue) = tint(&pixels, 200).expect("the orange counts");
         assert!(red > 0.95 && (green - 0.5).abs() < 0.05 && blue < 0.05);
         assert!(
-            tint(&[128, 128, 128, 255].repeat(500)).is_none(),
+            tint(&[128, 128, 128, 255].repeat(500), 20).is_none(),
             "all grey"
         );
+        assert!(tint(&[], 0).is_none(), "nothing");
         // Whatever the average, the colour drawn with is bright enough to see.
         let dim = vivid((0.1, 0.05, 0.05));
         assert!(dim.l >= 0.48 && dim.s >= 0.55);
@@ -452,5 +481,29 @@ mod tests {
         let magenta = gpui::hsla(0.9, 1., 0.5, 1.);
         let between = blend(red, magenta, 0.5);
         assert!(between.h > 0.9 || between.h < 0.05);
+    }
+
+    #[test]
+    fn a_cover_and_its_thumbnail_are_remembered_by_one_colour() {
+        // Blue, with a thin orange line every 256 px: the lines that every
+        // 256th pixel in a row's order read and nothing else.
+        let cover = picture(1024, |x, _| if x % 256 == 0 { ORANGE } else { BLUE });
+        // Its thumbnail, each pixel the average of four by four.
+        let thumbnail = picture(256, |x, y| {
+            let mut sum = [0u32; 4];
+            for (dx, dy) in (0..4).flat_map(|dx| (0..4).map(move |dy| (dx, dy))) {
+                let at = 4 * ((4 * y + dy) * 1024 + 4 * x + dx);
+                for (total, byte) in sum.iter_mut().zip(&cover[at..at + 4]) {
+                    *total += u32::from(*byte);
+                }
+            }
+            sum.map(|total| (total / 16) as u8)
+        });
+        let big = tint(&cover, 1024).expect("blue");
+        let small = tint(&thumbnail, 256).expect("blue");
+        assert!(big.2 > big.0, "the cover is blue: {big:?}");
+        for (a, b) in [(big.0, small.0), (big.1, small.1), (big.2, small.2)] {
+            assert!((a - b).abs() < 0.05, "{big:?} and {small:?}");
+        }
     }
 }

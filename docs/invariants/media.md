@@ -66,7 +66,7 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   panel is loading; the frame or the poster ends the wait
   (`Shell::film_waited`).
 - A track's cover is its thumbnail at once, then the poster's: the same
-  picture, sharper.
+  picture, sharper, glowing in the same colour.
 - Unasked, a film's own moment is the first keyframe from a tenth of it
   on (at most 30 s in), only keyframes decoded (`ffmpeg_keyframe`), and
   its time is the keyframe's: a picture always says the time of the frame
@@ -176,6 +176,11 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - The cover's colour is computed once per cover (`halo::tint`, weighted by
   how colourful a pixel is so a border does not wash it out). Everything is
   sized in `paint`.
+- It is read at the same places in the picture at any size: the middles
+  of a grid over its width and its height, so a track's thumbnail and its
+  own cover glow alike. Every n-th pixel in a row's order read only a few
+  columns when the width was a multiple of n (four of a 1024 px cover):
+  the test pattern's thumbnail glowed magenta, its cover green.
 
 ## Sound
 

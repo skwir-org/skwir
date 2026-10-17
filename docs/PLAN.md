@@ -376,13 +376,21 @@ dates, measurements and what is left.
   fps): an uncached poster at about 130 to 170 ms (330 and 470 before),
   a cached one at 33 ms (200), the player's toolbar from the first
   picture on; a track's halo at 70 ms; a track stepped to while one
-  plays still plays. Left: a track's glow changes hue when its cover
-  goes from the desktop's thumbnail to its own (the tint is worked out
-  per picture), as it did before. A poster drawn larger than its
+  plays still plays. A track's glow changed hue when its cover went
+  from the desktop's thumbnail to its own, as it did before (fixed
+  below). A poster drawn larger than its
   pixels (a wider panel, the whole screen) is read again alone at the
   next step, the same frame: in a window on Xvfb, a 4K film's 1024 px
   poster was replaced by a 1536 px one in fullscreen, 0.3 % of the
   pixels changing, all on edges, and playing asked for nothing more.
+- **A cover's colour at any size** (2026-10-17): the halo's tint was
+  read from every n-th pixel in a row's order, so only a few columns
+  when the width was a multiple of n: 16 of a 256 px thumbnail, 4 of a
+  1024 px cover. The test pattern's thumbnail glowed magenta (297°), its
+  own cover green (139°). Read at the middles of a 64 by 64 grid, they
+  are 140° and 149°. In a window on Xvfb, an uncached track's glow kept
+  its colour from the thumbnail to the cover (the ring's mean moved by
+  0.1 of 255), the disc 0.4 % of its pixels sharper.
 - **More formats** (2026-09-28):
   - SVG by resvg; OpenEXR and DDS decoded in process; HEIC, AVIF, JPEG
     XL and raw by the desktop's thumbnailer at 1024 px. Code highlighted

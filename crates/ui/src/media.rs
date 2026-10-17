@@ -1378,7 +1378,7 @@ pub(crate) fn cover_tint(
             }
             let colour = cover
                 .as_bytes(0)
-                .and_then(crate::elements::halo::tint)
+                .and_then(|bgra| crate::elements::halo::tint(bgra, cover.size(0).width.0 as usize))
                 .map(crate::elements::halo::vivid);
             cache.set(Some((cover.id, colour)));
             colour
