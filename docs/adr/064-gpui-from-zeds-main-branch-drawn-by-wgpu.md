@@ -87,8 +87,15 @@ elements are yet to use it.
 - **What stays as it was:**
   - X11 and Windows hand no drag out of the window.
   - X11 polls at the display's rate.
-  - Skwir keeps the pointer while keys move through files
-    (`CursorHideMode::Never`), where upstream hides it at every bound key.
+- **The pointer hides while a key types a character**, until the mouse moves
+  (`CursorHideMode::OnTyping`, chosen 2026-10-18), as Windows and macOS do
+  while typing:
+  - in a text field;
+  - in type-ahead;
+  - under a key scheme of letters.
+
+  Upstream's default would also hide it at every key that runs a binding,
+  the arrows through files among them.
 - **Checks:** `just gpui-check` replaces `list-check` and `atlas-check`; the
   wgpu atlas's own tests cover what 0003's did.
 - **macOS remains compiled only for Skwir's other crates.** `check-macos`

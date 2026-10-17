@@ -396,6 +396,10 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   it without one in a place.
 - Type-ahead is on only while no binding takes an unmodified character in
   the file list (`Keymap::typeahead`).
+- A key that types a character hides the pointer until the mouse moves
+  (`CursorHideMode::OnTyping`, set at startup in `lib.rs`). A key that
+  only moves, such as an arrow, leaves it. The fullscreen preview hides
+  it with its controls.
 - Multi-stroke bindings wait without a timeout (vendored patch 0010);
   `sequence.rs` shows what can follow.
 - A plugin that changes standard keys is off until asked

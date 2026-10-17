@@ -296,9 +296,9 @@ Recovering a lost device takes the same path. Checked:
 
 `App::hide_cursor_until_mouse_moves` makes public what upstream's
 `CursorHideMode` does while typing. Skwir's fullscreen preview hides the
-pointer with its controls (`crates/ui/src/fullscreen.rs`). Skwir sets
-`CursorHideMode::Never` otherwise: the pointer stays while keys move through
-files.
+pointer with its controls (`crates/ui/src/fullscreen.rs`). Elsewhere Skwir
+sets `CursorHideMode::OnTyping`: a key that types a character hides the
+pointer, and a key that only moves (the arrows through files) leaves it.
 
 ### 0027: Windows manifest built on Windows
 

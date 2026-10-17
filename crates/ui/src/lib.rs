@@ -245,9 +245,10 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
             // A key that begins a binding of several strokes waits for the
             // next as long as it takes; `sequence.rs` shows what can follow.
             cx.set_key_sequence_timeout(None);
-            // The pointer stays where it is while keys move through files: gpui's
-            // default hides it at each bound key, as an editor does while typing.
-            cx.set_cursor_hide_mode(gpui::CursorHideMode::Never);
+            // A key that types a character hides the pointer until the mouse
+            // moves, as Windows and macOS do while typing; keys that only move
+            // (the arrows through files) leave it, which gpui's default would not.
+            cx.set_cursor_hide_mode(gpui::CursorHideMode::OnTyping);
             // Debug aid: `RUST_LOG=skwir_ui=trace` shows every keystroke GPUI saw.
             cx.observe_keystrokes(|ev, _, _| {
                 tracing::trace!(keystroke = %ev.keystroke.unparse(), "keystroke");
