@@ -1,8 +1,10 @@
+0020 render-image-into-frames: RenderImage::into_frames returns pixel buffers
+
 diff --git a/crates/gpui/src/assets.rs b/crates/gpui/src/assets.rs
-index 8930b58..0e15d99 100644
+index cb8b47e..c1d8dce 100644
 --- a/crates/gpui/src/assets.rs
 +++ b/crates/gpui/src/assets.rs
-@@ -67,6 +67,15 @@ impl RenderImage {
+@@ -68,6 +68,15 @@ impl RenderImage {
          }
      }
  

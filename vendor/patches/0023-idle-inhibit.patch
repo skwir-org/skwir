@@ -1,157 +1,132 @@
-diff --git a/crates/gpui/Cargo.toml b/crates/gpui/Cargo.toml
-index 1730ea4..dc32539 100644
---- a/crates/gpui/Cargo.toml
-+++ b/crates/gpui/Cargo.toml
-@@ -564,6 +564,7 @@ features = [
+0023 idle-inhibit: Window::set_idle_inhibited keeps the screen awake (Wayland, X11, Windows)
+
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index ec4309d..5039992 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -1342,6 +1342,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+         Decorations::Server
+     }
+     fn set_app_id(&mut self, _app_id: &str) {}
++    /// Keep the screen on and the session from going idle (no screen saver,
++    /// no blanking, no lock) while `inhibited`. Ignored where unsupported.
++    fn set_idle_inhibited(&self, _inhibited: bool) {}
+     fn map_window(&mut self) -> anyhow::Result<()> {
+         Ok(())
+     }
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index a4d4623..e7777a6 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -3074,6 +3074,16 @@ impl Window {
+         self.platform_window.set_app_id(app_id);
+     }
+ 
++    /// Keeps the screen on and the session from going idle (no screen saver,
++    /// no blanking, no lock) while `inhibited` is true, as a film or a
++    /// slideshow needs: Wayland's idle inhibitor while the window is shown,
++    /// the X screen saver suspended, the display required on Windows.
++    /// Ignored on other platforms. Telling it what it already does changes
++    /// nothing; a window that closes releases it.
++    pub fn set_idle_inhibited(&self, inhibited: bool) {
++        self.platform_window.set_idle_inhibited(inhibited);
++    }
++
+     /// Sets the window background appearance.
+     pub fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
+         self.platform_window
+diff --git a/crates/gpui_linux/Cargo.toml b/crates/gpui_linux/Cargo.toml
+index a91818a..9b1fed0 100644
+--- a/crates/gpui_linux/Cargo.toml
++++ b/crates/gpui_linux/Cargo.toml
+@@ -120,6 +120,7 @@ x11rb = { version = "0.13.1", features = [
      "xinput",
      "cursor",
      "resource_manager",
 +    "screensaver",
      "sync",
- ]
- optional = true
-@@ -709,6 +710,7 @@ features = [
-     "Win32_System_Ole",
-     "Win32_System_Performance",
-     "Win32_System_Pipes",
-+    "Win32_System_Power",
-     "Win32_System_SystemInformation",
-     "Win32_System_SystemServices",
-     "Win32_System_Threading",
-diff --git a/crates/gpui/README.skwir.md b/crates/gpui/README.skwir.md
-index 03e8714..57f83b3 100644
---- a/crates/gpui/README.skwir.md
-+++ b/crates/gpui/README.skwir.md
-@@ -43,6 +43,7 @@ dependencies stay out of Skwir's workspace:
- | `0020-render-image-into-frames` | `RenderImage::into_frames` returns pixel buffers | — |
- | `0021-x11-clipboard-sends-in-pieces` | X11 clipboard sends large data with INCR; one failed request no longer ends it | — |
- | `0022-wheel-scrolls-along-its-axis` | The wheel scrolls along its own axis by default (`restrict_scroll_to_axis`) | — |
-+| `0023-idle-inhibit` | `Window::set_idle_inhibited` keeps the screen awake (Wayland, X11, Windows) | — |
- 
- ### 0001: Wayland outgoing drag
- 
-@@ -328,6 +329,27 @@ reports sideways, across. An element that should take either sets it to
- `elements::div::scroll_axis_tests` (in `just list-check`) cover a list in a
- row that scrolls sideways, and the opt-out.
- 
-+### 0023: Idle inhibit
-+
-+`Window::set_idle_inhibited(bool)` (a `PlatformWindow` method, ignored by
-+default) keeps the screen on and the session from going idle while a film or
-+a slideshow plays, with nothing touched for minutes:
-+
-+- Wayland: a `zwp_idle_inhibitor_v1` on the window's surface, which holds
-+  while the surface is shown (`idle-inhibit-unstable-v1`, bound when the
-+  compositor offers it).
-+- X11: `ScreenSaverSuspend` (MIT-SCREEN-SAVER 1.1, x11rb's `screensaver`
-+  feature), which Xorg also applies to the display's power saving.
-+  Suspensions nest per client, one per window that asks; the server ends
-+  them when the client goes.
-+- Windows: `SetThreadExecutionState` asks for the display while any window
-+  holds it (`Win32_System_Power`). Compiled only.
-+- macOS: not yet (an `IOPMAssertion` would be its way).
-+
-+A window releases what it holds when it closes. A desktop that tracks
-+idleness itself, outside the X screen saver, is not reached by X11's; its
-+D-Bus inhibitor is the application's to ask.
-+
- ## Adding or regenerating a patch
- 
- Edit `vendor/gpui`, then diff it against the published crate:
-diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
-index 2cc655b..3968306 100644
---- a/crates/gpui/src/platform.rs
-+++ b/crates/gpui/src/platform.rs
-@@ -569,6 +569,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
-         false
-     }
-     fn start_window_resize(&self, _edge: ResizeEdge) {}
-+    /// Keep the screen on and the session from going idle (no screen saver,
-+    /// no blanking, no lock) while `inhibited`. Ignored where unsupported.
-+    fn set_idle_inhibited(&self, _inhibited: bool) {}
-     fn window_decorations(&self) -> Decorations {
-         Decorations::Server
-     }
-diff --git a/crates/gpui/src/platform/linux/wayland/client.rs b/crates/gpui/src/platform/linux/wayland/client.rs
-index d65dc76..bc586b9 100644
---- a/crates/gpui/src/platform/linux/wayland/client.rs
-+++ b/crates/gpui/src/platform/linux/wayland/client.rs
-@@ -55,6 +55,9 @@ use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::{
- use wayland_protocols::wp::text_input::zv3::client::{
-     zwp_text_input_manager_v3, zwp_text_input_v3,
+     "dri3",
+ ], optional = true }
+diff --git a/crates/gpui_linux/src/linux/wayland/client.rs b/crates/gpui_linux/src/linux/wayland/client.rs
+index 98b41fb..7af73ec 100644
+--- a/crates/gpui_linux/src/linux/wayland/client.rs
++++ b/crates/gpui_linux/src/linux/wayland/client.rs
+@@ -41,6 +41,9 @@ use wayland_client::{
+         wl_shm_pool, wl_surface,
+     },
  };
 +use wayland_protocols::wp::idle_inhibit::zv1::client::{
 +    zwp_idle_inhibit_manager_v1, zwp_idle_inhibitor_v1,
 +};
- use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
- use wayland_protocols::xdg::activation::v1::client::{xdg_activation_token_v1, xdg_activation_v1};
- use wayland_protocols::xdg::decoration::zv1::client::{
-@@ -117,6 +120,7 @@ pub struct Globals {
-     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
+ use wayland_protocols::wp::pointer_gestures::zv1::client::{
+     zwp_pointer_gesture_pinch_v1, zwp_pointer_gestures_v1,
+ };
+@@ -255,6 +258,7 @@ pub struct Globals {
+     pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
      pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
      pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
 +    pub idle_inhibit_manager: Option<zwp_idle_inhibit_manager_v1::ZwpIdleInhibitManagerV1>,
-     pub executor: ForegroundExecutor,
- }
- 
-@@ -154,6 +158,7 @@ impl Globals {
-             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
+     pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
+     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
+     pub system_bell: Option<xdg_system_bell_v1::XdgSystemBellV1>,
+@@ -305,6 +309,7 @@ impl Globals {
+             layer_shell: globals.bind(&qh, 1..=5, ()).ok(),
              blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
              text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
 +            idle_inhibit_manager: globals.bind(&qh, 1..=1, ()).ok(),
-             executor,
-             qh,
-         }
-@@ -1129,6 +1134,8 @@ delegate_noop!(WaylandClientStatePtr: ignore zxdg_decoration_manager_v1::ZxdgDec
- delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur_manager::OrgKdeKwinBlurManager);
- delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextInputManagerV3);
- delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
+             gesture_manager: globals.bind(&qh, 1..=3, ()).ok(),
+             dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
+             system_bell: globals.bind(&qh, 1..=1, ()).ok(),
+@@ -1778,6 +1783,8 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
+ delegate_noop!(WaylandClientStatePtr: ignore xdg_activation_v1::XdgActivationV1);
+ delegate_noop!(WaylandClientStatePtr: ignore xdg_system_bell_v1::XdgSystemBellV1);
+ delegate_noop!(WaylandClientStatePtr: ignore wl_compositor::WlCompositor);
 +delegate_noop!(WaylandClientStatePtr: ignore zwp_idle_inhibit_manager_v1::ZwpIdleInhibitManagerV1);
 +delegate_noop!(WaylandClientStatePtr: ignore zwp_idle_inhibitor_v1::ZwpIdleInhibitorV1);
- delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
- delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
- 
-diff --git a/crates/gpui/src/platform/linux/wayland/window.rs b/crates/gpui/src/platform/linux/wayland/window.rs
-index 660a65f..73aac16 100644
---- a/crates/gpui/src/platform/linux/wayland/window.rs
-+++ b/crates/gpui/src/platform/linux/wayland/window.rs
-@@ -15,6 +15,7 @@ use raw_window_handle as rwh;
- use wayland_backend::client::ObjectId;
- use wayland_client::WEnum;
- use wayland_client::{Proxy, protocol::wl_surface};
+ delegate_noop!(WaylandClientStatePtr: ignore wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
+ delegate_noop!(WaylandClientStatePtr: ignore wp_cursor_shape_manager_v1::WpCursorShapeManagerV1);
+ delegate_noop!(WaylandClientStatePtr: ignore wl_data_device_manager::WlDataDeviceManager);
+diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
+index e397b04..f509432 100644
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -18,6 +18,7 @@ use wayland_client::{
+     Proxy,
+     protocol::{wl_callback, wl_output, wl_seat, wl_surface},
+ };
 +use wayland_protocols::wp::idle_inhibit::zv1::client::zwp_idle_inhibitor_v1;
  use wayland_protocols::wp::viewporter::client::wp_viewport;
  use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
- use wayland_protocols::xdg::shell::client::xdg_surface;
-@@ -91,6 +92,8 @@ pub struct WaylandWindowState {
-     app_id: Option<String>,
-     appearance: WindowAppearance,
-     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
+ use wayland_protocols::xdg::shell::client::xdg_popup;
+@@ -105,6 +106,8 @@ pub struct WaylandWindowState {
+     /// Child surfaces mapped to whether they block this window's input (dialogs
+     /// block, popups don't). Children are closed before this window closes.
+     children: FxHashMap<ObjectId, bool>,
 +    /// While the window keeps the session from going idle.
 +    idle_inhibitor: Option<zwp_idle_inhibitor_v1::ZwpIdleInhibitorV1>,
-     toplevel: xdg_toplevel::XdgToplevel,
-     viewport: Option<wp_viewport::WpViewport>,
-     outputs: HashMap<ObjectId, Output>,
-@@ -206,6 +209,7 @@ impl WaylandWindowState {
-             decoration,
-             app_id: None,
-             blur: None,
+     pub surface: wl_surface::WlSurface,
+     app_id: Option<String>,
+     appearance: WindowAppearance,
+@@ -617,6 +620,7 @@ impl WaylandWindowState {
+             surface_state,
+             parent,
+             children: FxHashMap::default(),
 +            idle_inhibitor: None,
-             toplevel,
-             viewport,
-             globals,
-@@ -290,6 +294,9 @@ impl Drop for WaylandWindow {
-         if let Some(blur) = &state.blur {
-             blur.release();
+             surface,
+             app_id: options.app_id,
+             blur: None,
+@@ -786,6 +790,9 @@ impl Drop for WaylandWindow {
+         if let Some(parent) = state.parent.as_ref() {
+             parent.state.borrow_mut().children.remove(&surface_id);
          }
-+        if let Some(inhibitor) = &state.idle_inhibitor {
++        if let Some(inhibitor) = state.idle_inhibitor.take() {
 +            inhibitor.destroy();
 +        }
-         state.toplevel.destroy();
-         if let Some(viewport) = &state.viewport {
-             viewport.destroy();
-@@ -1146,6 +1153,19 @@ impl PlatformWindow for WaylandWindow {
-         client.start_external_drag(&surface, paths, icon)
+ 
+         let client = state.client.clone();
+ 
+@@ -1902,6 +1909,21 @@ impl PlatformWindow for WaylandWindow {
+         }
      }
  
 +    fn set_idle_inhibited(&self, inhibited: bool) {
@@ -160,48 +135,50 @@ index 660a65f..73aac16 100644
 +            inhibitor.destroy();
 +        } else if inhibited && state.idle_inhibitor.is_none() {
 +            // A compositor without the protocol keeps its own idle rules.
-+            let inhibitor = state.globals.idle_inhibit_manager.as_ref().map(|manager| {
-+                manager.create_inhibitor(&state.surface, &state.globals.qh, ())
-+            });
++            let inhibitor = state
++                .globals
++                .idle_inhibit_manager
++                .as_ref()
++                .map(|manager| manager.create_inhibitor(&state.surface, &state.globals.qh, ()));
 +            state.idle_inhibitor = inhibitor;
 +        }
 +    }
 +
-     fn start_window_resize(&self, edge: crate::ResizeEdge) {
-         let state = self.borrow();
-         state.toplevel.resize(
-diff --git a/crates/gpui/src/platform/linux/x11/window.rs b/crates/gpui/src/platform/linux/x11/window.rs
-index 14ed477..601a200 100644
---- a/crates/gpui/src/platform/linux/x11/window.rs
-+++ b/crates/gpui/src/platform/linux/x11/window.rs
-@@ -19,6 +19,7 @@ use x11rb::{
+     fn set_app_id(&mut self, app_id: &str) {
+         let mut state = self.borrow_mut();
+         if let Some(toplevel) = state.surface_state.toplevel() {
+diff --git a/crates/gpui_linux/src/linux/x11/window.rs b/crates/gpui_linux/src/linux/x11/window.rs
+index f6ee76a..c2d2f14 100644
+--- a/crates/gpui_linux/src/linux/x11/window.rs
++++ b/crates/gpui_linux/src/linux/x11/window.rs
+@@ -21,6 +21,7 @@ use x11rb::{
      errors::ConnectionError,
-     properties::WmSizeHints,
+     properties::{WmHints, WmSizeHints},
      protocol::{
 +        screensaver::ConnectionExt as _,
          sync,
          xinput::{self, ConnectionExt as _},
          xproto::{self, ClientMessageEvent, ConnectionExt, TranslateCoordinatesReply},
-@@ -273,6 +274,8 @@ pub struct X11WindowState {
-     edge_constraints: Option<EdgeConstraints>,
-     pub handle: AnyWindowHandle,
-     last_insets: [u32; 4],
+@@ -259,6 +260,8 @@ pub struct Callbacks {
+ pub struct X11WindowState {
+     parent: Option<X11WindowStatePtr>,
+     children: FxHashSet<xproto::Window>,
 +    /// While the window keeps the screen saver suspended.
 +    idle_inhibited: bool,
- }
- 
- impl X11WindowState {
-@@ -689,6 +692,7 @@ impl X11WindowState {
-                 client_side_decorations_supported,
-                 decorations: WindowDecorations::Server,
-                 last_insets: [0, 0, 0, 0],
+     client: X11ClientStatePtr,
+     executor: ForegroundExecutor,
+     atoms: XcbAtoms,
+@@ -828,6 +831,7 @@ impl X11WindowState {
+             Ok(Self {
+                 parent,
+                 children: FxHashSet::default(),
 +                idle_inhibited: false,
-                 edge_constraints: None,
-                 counter_id: sync_request_counter,
-                 last_sync_counter: None,
-@@ -715,6 +719,18 @@ impl X11WindowState {
-     }
- }
+                 client,
+                 executor,
+                 display,
+@@ -879,6 +883,18 @@ impl X11WindowState {
+ 
+ pub(crate) struct X11Window(pub X11WindowStatePtr);
  
 +/// Suspend the screen saver, and the display's power saving with it, or
 +/// resume it (MIT-SCREEN-SAVER 1.1). Suspensions nest per client, one per
@@ -215,21 +192,21 @@ index 14ed477..601a200 100644
 +    .log_err();
 +}
 +
- pub(crate) struct X11Window(pub X11WindowStatePtr);
- 
  impl Drop for X11Window {
-@@ -728,6 +744,10 @@ impl Drop for X11Window {
-             return;
+     fn drop(&mut self) {
+         let mut state = self.0.state.borrow_mut();
+@@ -887,6 +903,10 @@ impl Drop for X11Window {
+             parent.state.borrow_mut().children.remove(&self.0.x_window);
          }
  
 +        if state.idle_inhibited {
 +            suspend_screen_saver(&self.0.xcb, false);
 +        }
 +
-         let destroy_x_window = maybe!({
-             check_reply(
-                 || "X11 DestroyWindow failure.",
-@@ -1356,6 +1376,14 @@ impl PlatformWindow for X11Window {
+         // The renderer's GPU objects use the X connection, and a display mode switch closes the
+         // connection once no window is left in the client's window map, so both go now.
+         state.renderer.take();
+@@ -1594,6 +1614,14 @@ impl PlatformWindow for X11Window {
          xcb_flush(&self.0.xcb);
      }
  
@@ -242,39 +219,52 @@ index 14ed477..601a200 100644
 +    }
 +
      fn set_app_id(&mut self, app_id: &str) {
-         let mut data = Vec::with_capacity(app_id.len() * 2 + 1);
+         let mut data = Vec::with_capacity(app_id.len() * 2 + 2);
          data.extend(app_id.bytes()); // instance https://unix.stackexchange.com/a/494170
-diff --git a/crates/gpui/src/platform/windows/window.rs b/crates/gpui/src/platform/windows/window.rs
-index e765fa1..0533acd 100644
---- a/crates/gpui/src/platform/windows/window.rs
-+++ b/crates/gpui/src/platform/windows/window.rs
-@@ -20,7 +20,7 @@ use windows::{
-     Win32::{
-         Foundation::*,
+diff --git a/crates/gpui_windows/Cargo.toml b/crates/gpui_windows/Cargo.toml
+index 37e4a2f..e0e1d7e 100644
+--- a/crates/gpui_windows/Cargo.toml
++++ b/crates/gpui_windows/Cargo.toml
+@@ -58,6 +58,7 @@ windows = { workspace = true, features = [
+     "Win32_System_Diagnostics_Debug",
+     "Win32_System_Memory",
+     "Win32_System_Performance",
++    "Win32_System_Power",
+     "Win32_System_StationsAndDesktops",
+     "Win32_System_SystemInformation",
+     "Win32_System_SystemServices",
+diff --git a/crates/gpui_windows/src/window.rs b/crates/gpui_windows/src/window.rs
+index c467101..7b80af9 100644
+--- a/crates/gpui_windows/src/window.rs
++++ b/crates/gpui_windows/src/window.rs
+@@ -21,7 +21,8 @@ use windows::{
+         Graphics::Dwm::*,
          Graphics::Gdi::*,
--        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
-+        System::{Com::*, LibraryLoader::*, Ole::*, Power::*, SystemServices::*},
+         System::{
+-            Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Ole::*, SystemServices::*,
++            Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Ole::*, Power::*,
++            SystemServices::*,
+         },
          UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
      },
-     core::*,
-@@ -57,6 +57,8 @@ pub struct WindowsWindowState {
-     pub display: WindowsDisplay,
-     fullscreen: Option<StyleAndBounds>,
-     initial_placement: Option<WindowOpenStatus>,
+@@ -47,6 +48,8 @@ pub struct WindowsWindowState {
+     pub logical_size: Cell<Size<Pixels>>,
+     pub min_size: Option<Size<Pixels>>,
+     pub fullscreen_restore_bounds: Cell<Bounds<Pixels>>,
 +    /// While the window keeps the display on (`hold_display`).
-+    idle_inhibited: bool,
-     hwnd: HWND,
- }
- 
-@@ -142,6 +144,7 @@ impl WindowsWindowState {
-             display,
-             fullscreen,
-             initial_placement,
-+            idle_inhibited: false,
-             hwnd,
-         })
-     }
-@@ -498,8 +501,30 @@ impl rwh::HasDisplayHandle for WindowsWindow {
++    idle_inhibited: Cell<bool>,
+     pub border_offset: WindowBorderOffset,
+     pub appearance: Cell<WindowAppearance>,
+     pub background_appearance: Cell<WindowBackgroundAppearance>,
+@@ -162,6 +165,7 @@ impl WindowsWindowState {
+             origin: Cell::new(origin),
+             logical_size: Cell::new(logical_size),
+             fullscreen_restore_bounds: Cell::new(fullscreen_restore_bounds),
++            idle_inhibited: Cell::new(false),
+             border_offset,
+             appearance: Cell::new(appearance),
+             background_appearance: Cell::new(WindowBackgroundAppearance::Opaque),
+@@ -608,8 +612,30 @@ impl rwh::HasDisplayHandle for WindowsWindow {
      }
  }
  
@@ -299,46 +289,22 @@ index e765fa1..0533acd 100644
 +
  impl Drop for WindowsWindow {
      fn drop(&mut self) {
-+        if self.0.state.borrow().idle_inhibited {
++        if self.0.state.idle_inhibited.get() {
 +            hold_display(false);
 +        }
-         // clone this `Rc` to prevent early release of the pointer
-         let this = self.0.clone();
-         self.0
-@@ -801,6 +826,15 @@ impl PlatformWindow for WindowsWindow {
-         self.0.state.borrow().is_fullscreen()
+         self.0.dialog_owner.close();
+         unsafe { ShowWindowAsync(self.0.hwnd, SW_HIDE).ok().log_err() };
+         // `DestroyWindow` below sends `WM_SHOWWINDOW`; without a callback the
+@@ -1061,6 +1087,12 @@ impl PlatformWindow for WindowsWindow {
+         self.state.renderer.borrow().gpu_specs().log_err()
      }
  
 +    fn set_idle_inhibited(&self, inhibited: bool) {
-+        let mut state = self.0.state.borrow_mut();
-+        if state.idle_inhibited != inhibited {
-+            state.idle_inhibited = inhibited;
-+            drop(state);
++        if self.state.idle_inhibited.replace(inhibited) != inhibited {
 +            hold_display(inhibited);
 +        }
 +    }
 +
-     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
-         self.0.state.borrow_mut().callbacks.request_frame = Some(callback);
-     }
-diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index 841b147..1f260fc 100644
---- a/crates/gpui/src/window.rs
-+++ b/crates/gpui/src/window.rs
-@@ -1799,6 +1799,16 @@ impl Window {
-         self.platform_window.start_external_drag(paths, icon)
-     }
- 
-+    /// Keeps the screen on and the session from going idle (no screen saver,
-+    /// no blanking, no lock) while `inhibited` is true, as a film or a
-+    /// slideshow needs: Wayland's idle inhibitor while the window is shown,
-+    /// the X screen saver suspended, the display required on Windows.
-+    /// Ignored on other platforms. Telling it what it already does changes
-+    /// nothing; a window that closes releases it.
-+    pub fn set_idle_inhibited(&self, inhibited: bool) {
-+        self.platform_window.set_idle_inhibited(inhibited);
-+    }
-+
-     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
-     pub fn set_client_inset(&mut self, inset: Pixels) {
-         self.client_inset = Some(inset);
+     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+         let scale_factor = self.state.scale_factor.get();
+         let caret_position = POINT {

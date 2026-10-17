@@ -298,7 +298,7 @@ impl SettingsView {
             |this, _, event: &InputEvent, window, cx| match event {
                 InputEvent::Cancel => {
                     this.keys.new = None;
-                    window.focus(&this.keys.focus);
+                    window.focus(&this.keys.focus, cx);
                     cx.notify();
                 }
                 InputEvent::Submit => {
@@ -312,7 +312,7 @@ impl SettingsView {
         );
         self.keys.editor = None;
         self.keys.as_records = false;
-        search.update(cx, |input, _| input.focus(window));
+        search.update(cx, |input, cx| input.focus(window, cx));
         self.keys.new = Some(NewShortcut {
             search,
             candidates: Rc::new(candidates(&self.app)),
@@ -331,13 +331,13 @@ impl SettingsView {
     pub(crate) fn focus_new_shortcut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match &self.keys.new {
             Some(new) if new.picked.is_none() => {
-                new.search.update(cx, |input, _| input.focus(window));
+                new.search.update(cx, |input, cx| input.focus(window, cx));
             }
             Some(_) => {
                 let save = self.handle("new-save", cx);
-                window.focus(&save);
+                window.focus(&save, cx);
             }
-            None => window.focus(&self.keys.focus),
+            None => window.focus(&self.keys.focus, cx),
         }
     }
 
@@ -437,7 +437,7 @@ impl SettingsView {
             new.changed();
         }
         match first {
-            Some(input) => input.update(cx, |input, _| input.focus(window)),
+            Some(input) => input.update(cx, |input, cx| input.focus(window, cx)),
             None => self.open_key_editor(Target::New, window, cx),
         }
         cx.notify();
@@ -772,7 +772,7 @@ impl SettingsView {
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.keys.new = None;
                         this.keys.editor = None;
-                        window.focus(&this.keys.focus);
+                        window.focus(&this.keys.focus, cx);
                         cx.notify();
                     })),
                 )

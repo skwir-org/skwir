@@ -486,7 +486,7 @@ impl Shell {
             .menu
             .take_if(|popup| popup.kind == crate::media::CONTINUE_POPUP)
         {
-            popup.restore(window);
+            popup.restore(window, cx);
         }
         self.prefs.player.continue_with = mode;
         crate::settings::remember(
@@ -907,7 +907,7 @@ impl Shell {
                 .as_ref()
                 .is_some_and(|menu| menu.kind == crate::dock::MENU)
         {
-            self.close_popup(window);
+            self.close_popup(window, cx);
             cx.notify();
         }
         self.publish_now_playing();

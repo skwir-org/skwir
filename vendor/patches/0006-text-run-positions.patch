@@ -1,145 +1,54 @@
+0006 text-run-positions: superscript, subscript and small-capital runs (RunPosition)
+
+diff --git a/crates/gpui/examples/input.rs b/crates/gpui/examples/input.rs
+index 106d06d..0739fbc 100644
+--- a/crates/gpui/examples/input.rs
++++ b/crates/gpui/examples/input.rs
+@@ -531,6 +531,7 @@ impl Element for TextElement {
+             background_color: None,
+             underline: None,
+             strikethrough: None,
++            position: Default::default(),
+         };
+         let runs = if let Some(marked_range) = input.marked_range.as_ref() {
+             vec![
+diff --git a/crates/gpui/examples/view_example/example_editor.rs b/crates/gpui/examples/view_example/example_editor.rs
+index 2064d7c..4b14f24 100644
+--- a/crates/gpui/examples/view_example/example_editor.rs
++++ b/crates/gpui/examples/view_example/example_editor.rs
+@@ -417,6 +417,7 @@ impl Element for EditorText {
+                 background_color: None,
+                 underline: None,
+                 strikethrough: None,
++                position: Default::default(),
+             };
+             vec![
+                 window
+@@ -435,6 +436,7 @@ impl Element for EditorText {
+                         background_color: None,
+                         underline: None,
+                         strikethrough: None,
++                        position: Default::default(),
+                     };
+                     window
+                         .text_system()
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index 42841ac..9bfee7f 100644
 --- a/crates/gpui/src/platform.rs
 +++ b/crates/gpui/src/platform.rs
-@@ -719,6 +719,7 @@ impl PlatformTextSystem for NoopTextSystem {
-         let mut runs = Vec::default();
+@@ -1637,6 +1637,7 @@ impl PlatformTextSystem for NoopTextSystem {
          if !glyphs.is_empty() {
              runs.push(ShapedRun {
-+                position: crate::RunPosition::Baseline,
                  font_id: FontId(0),
++                position: Default::default(),
                  glyphs,
              });
---- a/crates/gpui/src/platform/linux/text_system.rs
-+++ b/crates/gpui/src/platform/linux/text_system.rs
-@@ -440,6 +440,7 @@ impl CosmicTextSystemState {
-                 last_run.glyphs.push(shaped_glyph);
-             } else {
-                 runs.push(ShapedRun {
-+                    position: crate::RunPosition::Baseline,
-                     font_id,
-                     glyphs: vec![shaped_glyph],
-                 });
---- a/crates/gpui/src/platform/mac/text_system.rs
-+++ b/crates/gpui/src/platform/mac/text_system.rs
-@@ -501,6 +501,7 @@ impl MacTextSystemState {
-                 Some(run) if run.font_id == font_id => &mut run.glyphs,
-                 _ => {
-                     runs.push(ShapedRun {
-+                        position: crate::RunPosition::Baseline,
-                         font_id,
-                         glyphs: Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0)),
-                     });
-@@ -719,6 +720,7 @@ mod tests {
-         let mut style = FontRun {
-             font_id,
-             len: line.len(),
-+            position: crate::RunPosition::Baseline,
-         };
- 
-         let layout = fonts.layout_line(line, px(16.), &[style]);
-@@ -740,10 +742,12 @@ mod tests {
-             FontRun {
-                 len: "\u{feff}".len(),
-                 font_id,
-+                position: crate::RunPosition::Baseline,
-             },
-             FontRun {
-                 len: "ab".len(),
-                 font_id,
-+                position: crate::RunPosition::Baseline,
-             },
-         ];
-         let layout = fonts.layout_line(line, px(16.), font_runs);
-@@ -762,8 +766,16 @@ mod tests {
- 
-         let text = "hello world";
-         let font_runs = &[
--            FontRun { font_id, len: 5 }, // "hello"
--            FontRun { font_id, len: 6 }, // " world"
-+            FontRun {
-+                font_id,
-+                len: 5,
-+                position: crate::RunPosition::Baseline,
-+            }, // "hello"
-+            FontRun {
-+                font_id,
-+                len: 6,
-+                position: crate::RunPosition::Baseline,
-+            }, // " world"
-         ];
- 
-         let layout = fonts.layout_line(text, px(16.), font_runs);
-@@ -783,11 +795,16 @@ mod tests {
-         // Test with different font runs - should not insert ZWNJ
-         let font_id2 = fonts.font_id(&font("Times")).unwrap_or(font_id);
-         let font_runs_different = &[
--            FontRun { font_id, len: 5 }, // "hello"
-+            FontRun {
-+                font_id,
-+                len: 5,
-+                position: crate::RunPosition::Baseline,
-+            }, // "hello"
-             // " world"
-             FontRun {
-                 font_id: font_id2,
-                 len: 6,
-+                position: crate::RunPosition::Baseline,
-             },
-         ];
- 
-@@ -812,15 +829,31 @@ mod tests {
-         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
- 
-         let text = "hello";
--        let font_runs = &[FontRun { font_id, len: 5 }];
-+        let font_runs = &[FontRun {
-+                font_id,
-+                len: 5,
-+                position: crate::RunPosition::Baseline,
-+            }];
-         let layout = fonts.layout_line(text, px(16.), font_runs);
-         assert_eq!(layout.len, text.len());
- 
-         let text = "abc";
-         let font_runs = &[
--            FontRun { font_id, len: 1 }, // "a"
--            FontRun { font_id, len: 1 }, // "b"
--            FontRun { font_id, len: 1 }, // "c"
-+            FontRun {
-+                font_id,
-+                len: 1,
-+                position: crate::RunPosition::Baseline,
-+            }, // "a"
-+            FontRun {
-+                font_id,
-+                len: 1,
-+                position: crate::RunPosition::Baseline,
-+            }, // "b"
-+            FontRun {
-+                font_id,
-+                len: 1,
-+                position: crate::RunPosition::Baseline,
-+            }, // "c"
-         ];
-         let layout = fonts.layout_line(text, px(16.), font_runs);
-         assert_eq!(layout.len, text.len());
---- a/crates/gpui/src/platform/windows/direct_write.rs
-+++ b/crates/gpui/src/platform/windows/direct_write.rs
-@@ -1520,7 +1520,11 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
-             }
-             glyph_idx += cluster_glyph_count;
-         }
--        context.runs.push(ShapedRun { font_id, glyphs });
-+        context.runs.push(ShapedRun {
-+            font_id,
-+            glyphs,
-+            position: crate::RunPosition::Baseline,
-+        });
-         Ok(())
-     }
- 
+         } else {
+diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
+index 9150fdd..2ec7301 100644
 --- a/crates/gpui/src/style.rs
 +++ b/crates/gpui/src/style.rs
-@@ -399,6 +399,10 @@ pub struct TextStyle {
+@@ -480,6 +480,10 @@ pub struct TextStyle {
  
      /// The number of lines to display before truncating the text
      pub line_clamp: Option<usize>,
@@ -150,7 +59,7 @@
  }
  
  impl Default for TextStyle {
-@@ -420,6 +424,7 @@ impl Default for TextStyle {
+@@ -501,6 +505,7 @@ impl Default for TextStyle {
              text_overflow: None,
              text_align: TextAlign::default(),
              line_clamp: None,
@@ -158,7 +67,7 @@
          }
      }
  }
-@@ -455,6 +460,10 @@ impl TextStyle {
+@@ -536,6 +541,10 @@ impl TextStyle {
              self.strikethrough = Some(strikethrough);
          }
  
@@ -169,7 +78,7 @@
          self
      }
  
-@@ -489,6 +498,48 @@ impl TextStyle {
+@@ -570,6 +579,46 @@ impl TextStyle {
              background_color: self.background_color,
              underline: self.underline,
              strikethrough: self.strikethrough,
@@ -183,9 +92,7 @@
 +/// in stretches of one position, each at its own size, and painted with each
 +/// run's glyphs at that size and height; the line keeps the height and
 +/// baseline its text gives it.
-+#[derive(
-+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
-+)]
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 +pub enum RunPosition {
 +    /// At the text's size, on the baseline.
 +    #[default]
@@ -218,7 +125,7 @@
          }
      }
  }
-@@ -517,6 +568,9 @@ pub struct HighlightStyle {
+@@ -598,6 +647,9 @@ pub struct HighlightStyle {
  
      /// Similar to the CSS `opacity` property, this will cause the text to be less vibrant.
      pub fade_out: Option<f32>,
@@ -228,7 +135,7 @@
  }
  
  impl Eq for HighlightStyle {}
-@@ -529,6 +583,7 @@ impl Hash for HighlightStyle {
+@@ -610,6 +662,7 @@ impl Hash for HighlightStyle {
          self.background_color.hash(state);
          self.underline.hash(state);
          self.strikethrough.hash(state);
@@ -236,7 +143,7 @@
          state.write_u32(u32::from_be_bytes(
              self.fade_out.map(|f| f.to_be_bytes()).unwrap_or_default(),
          ));
-@@ -869,6 +924,7 @@ impl From<&TextStyle> for HighlightStyle {
+@@ -906,6 +959,7 @@ impl From<&TextStyle> for HighlightStyle {
              underline: other.underline,
              strikethrough: other.strikethrough,
              fade_out: None,
@@ -244,7 +151,7 @@
          }
      }
  }
-@@ -901,6 +957,7 @@ impl HighlightStyle {
+@@ -938,6 +992,7 @@ impl HighlightStyle {
              background_color: other.background_color.or(self.background_color),
              underline: other.underline.or(self.underline),
              strikethrough: other.strikethrough.or(self.strikethrough),
@@ -252,7 +159,7 @@
              fade_out: other
                  .fade_out
                  .map(|source_fade| {
-@@ -1319,6 +1376,7 @@ mod tests {
+@@ -1356,6 +1411,7 @@ mod tests {
              fade_out: Some(0.),
              font_style: Some(FontStyle::Italic),
              font_weight: Some(FontWeight(300.)),
@@ -260,7 +167,7 @@
              background_color: Some(yellow()),
              underline: Some(UnderlineStyle {
                  thickness: px(2.),
-@@ -1351,6 +1409,7 @@ mod tests {
+@@ -1388,6 +1444,7 @@ mod tests {
              fade_out: Some(0.),
              font_style: Some(FontStyle::Oblique),
              font_weight: Some(FontWeight(800.)),
@@ -268,7 +175,7 @@
              background_color: Some(green()),
              underline: Some(UnderlineStyle {
                  thickness: px(4.),
-@@ -1369,6 +1428,7 @@ mod tests {
+@@ -1406,6 +1463,7 @@ mod tests {
              fade_out: Some(0.),
              font_style: Some(FontStyle::Oblique),
              font_weight: Some(FontWeight(800.)),
@@ -276,6 +183,8 @@
              background_color: Some(green()),
              underline: Some(UnderlineStyle {
                  thickness: px(4.),
+diff --git a/crates/gpui/src/text_system.rs b/crates/gpui/src/text_system.rs
+index cf6bb10..e76b90f 100644
 --- a/crates/gpui/src/text_system.rs
 +++ b/crates/gpui/src/text_system.rs
 @@ -13,8 +13,8 @@ use schemars::JsonSchema;
@@ -283,13 +192,21 @@
  
  use crate::{
 -    Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
--    StrikethroughStyle, UnderlineStyle, px,
+-    StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
 +    Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, RunPosition,
-+    SharedString, Size, StrikethroughStyle, UnderlineStyle, px,
++    SharedString, Size, StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
  };
  use anyhow::{Context as _, anyhow};
- use collections::FxHashMap;
-@@ -457,6 +457,7 @@ impl WindowTextSystem {
+ use collections::{FxHashMap, FxHashSet};
+@@ -453,6 +453,7 @@ impl TextSystem {
+                 &[FontRun {
+                     len: buffer.len(),
+                     font_id,
++                    position: RunPosition::Baseline,
+                 }],
+             )
+             .width
+@@ -797,6 +798,7 @@ impl WindowTextSystem {
                  let font_id = self.resolve_font(&run.font);
                  if let Some(font_run) = font_runs.last_mut()
                      && font_id == font_run.font_id
@@ -297,7 +214,7 @@
                      && !decoration_changed
                  {
                      font_run.len += run_len_within_line;
-@@ -464,6 +465,7 @@ impl WindowTextSystem {
+@@ -804,6 +806,7 @@ impl WindowTextSystem {
                      font_runs.push(FontRun {
                          len: run_len_within_line,
                          font_id,
@@ -305,15 +222,15 @@
                      });
                  }
  
-@@ -560,6 +562,7 @@ impl WindowTextSystem {
- 
+@@ -911,6 +914,7 @@ impl WindowTextSystem {
+             let font_id = self.resolve_font(&run.font);
              if let Some(font_run) = font_runs.last_mut()
-                 && Some(font_run.font_id) == last_font
+                 && font_id == font_run.font_id
 +                && font_run.position == run.position
                  && !decoration_changed
              {
                  font_run.len += run.len;
-@@ -569,6 +572,7 @@ impl WindowTextSystem {
+@@ -918,6 +922,7 @@ impl WindowTextSystem {
                  font_runs.push(FontRun {
                      len: run.len,
                      font_id,
@@ -321,7 +238,47 @@
                  });
              }
          }
-@@ -743,6 +747,8 @@ pub struct TextRun {
+@@ -945,6 +950,7 @@ impl WindowTextSystem {
+                 &[FontRun {
+                     len: buffer.len(),
+                     font_id,
++                    position: RunPosition::Baseline,
+                 }],
+                 None,
+             )
+@@ -993,6 +999,7 @@ impl WindowTextSystem {
+             let font_id = self.resolve_font(&run.font);
+             if let Some(font_run) = font_runs.last_mut()
+                 && font_id == font_run.font_id
++                && font_run.position == run.position
+                 && !decoration_changed
+             {
+                 font_run.len += run.len;
+@@ -1000,6 +1007,7 @@ impl WindowTextSystem {
+                 font_runs.push(FontRun {
+                     len: run.len,
+                     font_id,
++                    position: run.position,
+                 });
+             }
+         }
+@@ -1055,6 +1063,7 @@ impl WindowTextSystem {
+             let font_id = self.resolve_font(&run.font);
+             if let Some(font_run) = font_runs.last_mut()
+                 && font_id == font_run.font_id
++                && font_run.position == run.position
+                 && !decoration_changed
+             {
+                 font_run.len += run.len;
+@@ -1062,6 +1071,7 @@ impl WindowTextSystem {
+                 font_runs.push(FontRun {
+                     len: run.len,
+                     font_id,
++                    position: run.position,
+                 });
+             }
+         }
+@@ -1238,6 +1248,8 @@ pub struct TextRun {
      pub underline: Option<UnderlineStyle>,
      /// The strikethrough style (if any)
      pub strikethrough: Option<StrikethroughStyle>,
@@ -330,9 +287,19 @@
  }
  
  #[cfg(all(target_os = "macos", test))]
+diff --git a/crates/gpui/src/text_system/line.rs b/crates/gpui/src/text_system/line.rs
+index f521005..3bfadc6 100644
 --- a/crates/gpui/src/text_system/line.rs
 +++ b/crates/gpui/src/text_system/line.rs
-@@ -228,7 +228,11 @@ fn paint_line(
+@@ -315,6 +315,7 @@ impl<'a> ShapedLineCursor<'a> {
+             if start < end {
+                 runs.push(crate::ShapedRun {
+                     font_id: run.font_id,
++                    position: run.position,
+                     glyphs: run.glyphs[start..end]
+                         .iter()
+                         .map(|glyph| crate::ShapedGlyph {
+@@ -570,7 +571,11 @@ fn paint_line(
          let mut max_glyph_size = size(px(0.), px(0.));
          let mut first_glyph_x = origin.x;
          for (run_ix, run) in layout.runs.iter().enumerate() {
@@ -345,12 +312,12 @@
  
              for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                  glyph_origin.x += glyph.position.x - prev_glyph_position.x;
-@@ -371,17 +375,17 @@ fn paint_line(
-                 if max_glyph_bounds.intersects(&content_mask.bounds) {
+@@ -733,17 +738,17 @@ fn paint_line(
+                     let vertical_offset = point(px(0.0), glyph.position.y);
                      if glyph.is_emoji {
                          window.paint_emoji(
--                            glyph_origin + baseline_offset,
-+                            glyph_origin + baseline_offset - rise,
+-                            glyph_origin + baseline_offset + vertical_offset,
++                            glyph_origin + baseline_offset + vertical_offset - rise,
                              run.font_id,
                              glyph.id,
 -                            layout.font_size,
@@ -358,8 +325,8 @@
                          )?;
                      } else {
                          window.paint_glyph(
--                            glyph_origin + baseline_offset,
-+                            glyph_origin + baseline_offset - rise,
+-                            glyph_origin + baseline_offset + vertical_offset,
++                            glyph_origin + baseline_offset + vertical_offset - rise,
                              run.font_id,
                              glyph.id,
 -                            layout.font_size,
@@ -367,7 +334,7 @@
                              color,
                          )?;
                      }
-@@ -460,7 +464,9 @@ fn paint_line_background(
+@@ -827,7 +832,9 @@ fn paint_line_background(
          let mut prev_glyph_position = Point::default();
          let mut max_glyph_size = size(px(0.), px(0.));
          for (run_ix, run) in layout.runs.iter().enumerate() {
@@ -378,6 +345,48 @@
  
              for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                  glyph_origin.x += glyph.position.x - prev_glyph_position.x;
+@@ -1041,6 +1048,7 @@ mod tests {
+                 descent: px(4.0),
+                 runs: vec![ShapedRun {
+                     font_id: FontId(0),
++                    position: Default::default(),
+                     glyphs: shaped_glyphs,
+                 }],
+                 len: text.len(),
+@@ -1508,6 +1516,7 @@ mod tests {
+                                 is_emoji: false,
+                             },
+                         ],
++                        position: Default::default(),
+                     },
+                     ShapedRun {
+                         font_id: FontId(1),
+@@ -1531,6 +1540,7 @@ mod tests {
+                                 is_emoji: false,
+                             },
+                         ],
++                        position: Default::default(),
+                     },
+                 ],
+                 len: 6,
+@@ -1754,6 +1764,7 @@ mod tests {
+                                 is_emoji: false,
+                             },
+                         ],
++                        position: Default::default(),
+                     },
+                     ShapedRun {
+                         font_id: FontId(8),
+@@ -1771,6 +1782,7 @@ mod tests {
+                                 is_emoji: false,
+                             },
+                         ],
++                        position: Default::default(),
+                     },
+                 ],
+                 len: 10,
+diff --git a/crates/gpui/src/text_system/line_layout.rs b/crates/gpui/src/text_system/line_layout.rs
+index f0bf121..9ec6aaa 100644
 --- a/crates/gpui/src/text_system/line_layout.rs
 +++ b/crates/gpui/src/text_system/line_layout.rs
 @@ -1,4 +1,6 @@
@@ -388,7 +397,7 @@
  use collections::FxHashMap;
  use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
  use smallvec::SmallVec;
-@@ -35,6 +37,21 @@ pub struct ShapedRun {
+@@ -38,6 +40,21 @@ pub struct ShapedRun {
      pub font_id: FontId,
      /// The glyphs that make up this run
      pub glyphs: Vec<ShapedGlyph>,
@@ -410,7 +419,23 @@
  }
  
  /// A single glyph, ready to paint.
-@@ -561,9 +578,7 @@ impl LineLayoutCache {
+@@ -148,6 +165,7 @@ impl LineLayout {
+             if split_pos > 0 {
+                 left_runs.push(ShapedRun {
+                     font_id: run.font_id,
++                    position: run.position,
+                     glyphs: run.glyphs[..split_pos].to_vec(),
+                 });
+             }
+@@ -164,6 +182,7 @@ impl LineLayout {
+                     .collect();
+                 right_runs.push(ShapedRun {
+                     font_id: run.font_id,
++                    position: run.position,
+                     glyphs: right_glyphs,
+                 });
+             }
+@@ -697,9 +716,7 @@ impl LineLayoutCache {
              layout
          } else {
              let text = SharedString::from(text);
@@ -420,8 +445,19 @@
 +            let mut layout = shape(&*self.platform_text_system, &text, font_size, runs);
  
              if let Some(force_width) = force_width {
-                 let mut glyph_pos = 0;
-@@ -592,11 +607,64 @@ impl LineLayoutCache {
+                 apply_force_width_to_layout(&mut layout, force_width);
+@@ -848,9 +865,7 @@ impl LineLayoutCache {
+         }
+ 
+         let text = materialize_text();
+-        let mut layout = self
+-            .platform_text_system
+-            .layout_line(&text, font_size, runs);
++        let mut layout = shape(&*self.platform_text_system, &text, font_size, runs);
+ 
+         if let Some(force_width) = force_width {
+             apply_force_width_to_layout(&mut layout, force_width);
+@@ -921,12 +936,65 @@ fn apply_force_width_to_layout(layout: &mut LineLayout, force_width: Pixels) {
      }
  }
  
@@ -479,20 +515,29 @@
 +
  /// A run of text with a single font.
  #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+ #[expect(missing_docs)]
  pub struct FontRun {
-     pub(crate) len: usize,
-     pub(crate) font_id: FontId,
-+    pub(crate) position: RunPosition,
+     pub len: usize,
+     pub font_id: FontId,
++    pub position: RunPosition,
  }
  
  trait AsCacheKeyRef {
-@@ -670,3 +738,63 @@ impl AsCacheKeyRef for CacheKeyRef<'_> {
-         *self
+@@ -1091,6 +1159,7 @@ mod tests {
+             descent: px(4.),
+             runs: vec![ShapedRun {
+                 font_id: FontId(0),
++                position: Default::default(),
+                 glyphs,
+             }],
+             len: 0,
+@@ -1188,3 +1257,63 @@ mod tests {
+         assert_eq!(positions, vec![0.5, 0.5]);
      }
  }
 +
 +#[cfg(test)]
-+mod tests {
++mod run_position_tests {
 +    use super::*;
 +    use crate::platform::NoopTextSystem;
 +
@@ -550,37 +595,356 @@
 +        assert_eq!(run.rise(px(20.)), px(7.));
 +    }
 +}
---- a/crates/gpui/src/text_system/line_wrapper.rs
-+++ b/crates/gpui/src/text_system/line_wrapper.rs
-@@ -327,6 +327,7 @@ impl LineWrapper {
-                 &[FontRun {
-                     len: buffer.len(),
-                     font_id: self.font_id,
-+                    position: crate::RunPosition::Baseline,
-                 }],
-             )
-             .width
-@@ -477,6 +478,7 @@ mod tests {
-                 background_color: None,
-                 underline: None,
-                 strikethrough: None,
+diff --git a/crates/gpui_apple/src/text_system.rs b/crates/gpui_apple/src/text_system.rs
+index 3c0e17d..c9795dd 100644
+--- a/crates/gpui_apple/src/text_system.rs
++++ b/crates/gpui_apple/src/text_system.rs
+@@ -599,6 +599,7 @@ impl AppleTextSystemState {
+                 _ => {
+                     runs.push(ShapedRun {
+                         font_id,
++                        position: Default::default(),
+                         glyphs: Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0)),
+                     });
+                     &mut runs.last_mut().unwrap().glyphs
+@@ -794,6 +795,7 @@ mod tests {
+             px(16.),
+             &[FontRun {
+                 font_id: configured_id,
 +                position: Default::default(),
-             })
-             .collect()
-     }
-@@ -878,6 +880,7 @@ mod tests {
-                 underline: Default::default(),
-                 strikethrough: None,
-                 background_color: None,
-+                position: Default::default(),
-             };
-             let bold = TextRun {
-                 len: 0,
-@@ -886,6 +889,7 @@ mod tests {
-                 underline: Default::default(),
-                 strikethrough: None,
-                 background_color: None,
-+                position: Default::default(),
-             };
+                 len: 6,
+             }],
+         );
+@@ -808,6 +810,7 @@ mod tests {
+         let line = "\u{feff}";
+         let mut style = FontRun {
+             font_id,
++            position: Default::default(),
+             len: line.len(),
+         };
  
-             let text = "aa bbb cccc ddddd eeee".into();
+@@ -830,10 +833,12 @@ mod tests {
+             FontRun {
+                 len: "\u{feff}".len(),
+                 font_id,
++                position: Default::default(),
+             },
+             FontRun {
+                 len: "ab".len(),
+                 font_id,
++                position: Default::default(),
+             },
+         ];
+         let layout = fonts.layout_line(line, px(16.), font_runs);
+@@ -852,8 +857,16 @@ mod tests {
+ 
+         let text = "hello world";
+         let font_runs = &[
+-            FontRun { font_id, len: 5 }, // "hello"
+-            FontRun { font_id, len: 6 }, // " world"
++            FontRun {
++                font_id,
++                len: 5,
++                position: Default::default(),
++            }, // "hello"
++            FontRun {
++                font_id,
++                len: 6,
++                position: Default::default(),
++            }, // " world"
+         ];
+ 
+         let layout = fonts.layout_line(text, px(16.), font_runs);
+@@ -873,10 +886,15 @@ mod tests {
+         // Test with different font runs - should not insert ZWNJ
+         let font_id2 = fonts.font_id(&font("Times")).unwrap_or(font_id);
+         let font_runs_different = &[
+-            FontRun { font_id, len: 5 }, // "hello"
++            FontRun {
++                font_id,
++                len: 5,
++                position: Default::default(),
++            }, // "hello"
+             // " world"
+             FontRun {
+                 font_id: font_id2,
++                position: Default::default(),
+                 len: 6,
+             },
+         ];
+@@ -902,15 +920,31 @@ mod tests {
+         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+ 
+         let text = "hello";
+-        let font_runs = &[FontRun { font_id, len: 5 }];
++        let font_runs = &[FontRun {
++            font_id,
++            len: 5,
++            position: Default::default(),
++        }];
+         let layout = fonts.layout_line(text, px(16.), font_runs);
+         assert_eq!(layout.len, text.len());
+ 
+         let text = "abc";
+         let font_runs = &[
+-            FontRun { font_id, len: 1 }, // "a"
+-            FontRun { font_id, len: 1 }, // "b"
+-            FontRun { font_id, len: 1 }, // "c"
++            FontRun {
++                font_id,
++                len: 1,
++                position: Default::default(),
++            }, // "a"
++            FontRun {
++                font_id,
++                len: 1,
++                position: Default::default(),
++            }, // "b"
++            FontRun {
++                font_id,
++                len: 1,
++                position: Default::default(),
++            }, // "c"
+         ];
+         let layout = fonts.layout_line(text, px(16.), font_runs);
+         assert_eq!(layout.len, text.len());
+diff --git a/crates/gpui_web/examples/hello_web/font_fallback_test.rs b/crates/gpui_web/examples/hello_web/font_fallback_test.rs
+index 039da24..4bd0995 100644
+--- a/crates/gpui_web/examples/hello_web/font_fallback_test.rs
++++ b/crates/gpui_web/examples/hello_web/font_fallback_test.rs
+@@ -34,6 +34,7 @@ pub fn test_missing_glyph_notifications() -> Result<(), JsValue> {
+     let runs = [FontRun {
+         len: text.len(),
+         font_id,
++        position: Default::default(),
+     }];
+     let layout = text_system.layout_line(text, px(24.), &runs);
+     assert!(
+@@ -68,6 +69,7 @@ pub fn test_missing_glyph_notifications() -> Result<(), JsValue> {
+             &[FontRun {
+                 len: text.len(),
+                 font_id,
++                position: Default::default(),
+             }],
+         );
+         let glyphs = layout
+@@ -101,6 +103,7 @@ pub fn test_missing_glyph_notifications() -> Result<(), JsValue> {
+         &[FontRun {
+             len: bundled.len(),
+             font_id,
++            position: Default::default(),
+         }],
+     );
+     for run in &layout.runs {
+diff --git a/crates/gpui_web/src/run_replacements.rs b/crates/gpui_web/src/run_replacements.rs
+index 2a190a2..050867e 100644
+--- a/crates/gpui_web/src/run_replacements.rs
++++ b/crates/gpui_web/src/run_replacements.rs
+@@ -167,6 +167,7 @@ pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Repl
+     let source_run_count = layout.runs.len();
+     layout.runs.resize_with(final_run_count, || ShapedRun {
+         font_id: FontId(0),
++        position: Default::default(),
+         glyphs: Vec::new(),
+     });
+ 
+@@ -191,6 +192,7 @@ pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Repl
+                 );
+                 layout.runs[destination_index] = ShapedRun {
+                     font_id: segment.font_id,
++                    position: Default::default(),
+                     glyphs,
+                 };
+                 glyph_end = glyph_start;
+@@ -233,6 +235,7 @@ mod tests {
+             &[FontRun {
+                 len: text.len(),
+                 font_id: FontId(7),
++                position: Default::default(),
+             }],
+             &layout,
+         );
+@@ -270,10 +273,12 @@ mod tests {
+             FontRun {
+                 len: 3,
+                 font_id: FontId(7),
++                position: Default::default(),
+             },
+             FontRun {
+                 len: 3,
+                 font_id: FontId(7),
++                position: Default::default(),
+             },
+         ];
+         let candidates = collect_candidates(text, &font_runs, &layout);
+@@ -306,6 +311,7 @@ mod tests {
+             &[FontRun {
+                 len: 6,
+                 font_id: FontId(7),
++                position: Default::default(),
+             }],
+             &layout,
+         );
+@@ -334,6 +340,7 @@ mod tests {
+         let font_runs = [FontRun {
+             len: "😀".len(),
+             font_id: FontId(7),
++            position: Default::default(),
+         }];
+         for (id, color) in [(0, false), (1, false), (0, true), (1, true)] {
+             layout.runs[0].glyphs = vec![source_glyph(0, 0.0, id, color)];
+@@ -375,6 +382,7 @@ mod tests {
+                 index += length;
+                 ShapedRun {
+                     font_id: FontId(font),
++                    position: Default::default(),
+                     glyphs,
+                 }
+             })
+@@ -439,6 +447,7 @@ mod tests {
+             } else {
+                 layout.runs.push(ShapedRun {
+                     font_id,
++                    position: Default::default(),
+                     glyphs: vec![glyph],
+                 });
+             }
+diff --git a/crates/gpui_web/src/text_system.rs b/crates/gpui_web/src/text_system.rs
+index e8ce869..6607ee2 100644
+--- a/crates/gpui_web/src/text_system.rs
++++ b/crates/gpui_web/src/text_system.rs
+@@ -405,6 +405,7 @@ impl PlatformTextSystem for WebTextSystem {
+                         .map(|run| FontRun {
+                             len: run.len,
+                             font_id: self.native_font_id(run.font_id),
++                            position: Default::default(),
+                         })
+                         .collect(),
+                 )
+diff --git a/crates/gpui_wgpu/benches/layout_line.rs b/crates/gpui_wgpu/benches/layout_line.rs
+index 6d66a7a..111a799 100644
+--- a/crates/gpui_wgpu/benches/layout_line.rs
++++ b/crates/gpui_wgpu/benches/layout_line.rs
+@@ -73,14 +73,17 @@ fn bench_layout_line(c: &mut Criterion) {
+     let runs_no_fallback = vec![FontRun {
+         len: text.len(),
+         font_id: font_id_no_fallback,
++        position: Default::default(),
+     }];
+     let runs_with_fallback = vec![FontRun {
+         len: text.len(),
+         font_id: font_id_with_fallback,
++        position: Default::default(),
+     }];
+     let runs_mixed_direction = vec![FontRun {
+         len: text_mixed_direction.len(),
+         font_id: font_id_no_fallback,
++        position: Default::default(),
+     }];
+ 
+     let mut group = c.benchmark_group("layout_line");
+diff --git a/crates/gpui_wgpu/src/cosmic_text_system.rs b/crates/gpui_wgpu/src/cosmic_text_system.rs
+index b7c38bb..8bcd1f1 100644
+--- a/crates/gpui_wgpu/src/cosmic_text_system.rs
++++ b/crates/gpui_wgpu/src/cosmic_text_system.rs
+@@ -829,6 +829,7 @@ impl CosmicTextSystemState {
+             } else {
+                 runs.push(ShapedRun {
+                     font_id,
++                    position: Default::default(),
+                     glyphs: vec![shaped_glyph],
+                 });
+             }
+@@ -957,6 +958,7 @@ fn clip_font_runs(font_runs: &[FontRun], range: Range<usize>) -> SmallVec<[FontR
+             clipped.push(FontRun {
+                 len: end - start,
+                 font_id: run.font_id,
++                position: run.position,
+             });
+         }
+     }
+@@ -1295,6 +1297,7 @@ mod tests {
+         let runs = [FontRun {
+             len: text.len(),
+             font_id,
++            position: Default::default(),
+         }];
+         Ok(text_system.layout_line(text, gpui::px(14.0), &runs))
+     }
+@@ -1367,6 +1370,7 @@ mod tests {
+         let runs = [FontRun {
+             len: text.len(),
+             font_id,
++            position: Default::default(),
+         }];
+ 
+         let missing_glyphs = text_system
+@@ -1496,10 +1500,12 @@ mod tests {
+             FontRun {
+                 len: "ab\u{001c}\u{05d0}".len(),
+                 font_id,
++                position: Default::default(),
+             },
+             FontRun {
+                 len: "\u{05d1}".len(),
+                 font_id,
++                position: Default::default(),
+             },
+         ];
+         let layout = text_system.layout_line(text, gpui::px(14.0), &runs);
+@@ -1597,10 +1603,12 @@ mod tests {
+             FontRun {
+                 len: 3,
+                 font_id: fid(1),
++                position: Default::default(),
+             },
+             FontRun {
+                 len: 4,
+                 font_id: fid(2),
++                position: Default::default(),
+             },
+         ];
+ 
+@@ -1610,11 +1618,13 @@ mod tests {
+             &[
+                 FontRun {
+                     len: 1,
+-                    font_id: fid(1)
++                    font_id: fid(1),
++                    position: Default::default(),
+                 },
+                 FontRun {
+                     len: 2,
+-                    font_id: fid(2)
++                    font_id: fid(2),
++                    position: Default::default(),
+                 },
+             ]
+         );
+@@ -1622,7 +1632,8 @@ mod tests {
+             clip_font_runs(&runs, 3..7).as_slice(),
+             &[FontRun {
+                 len: 4,
+-                font_id: fid(2)
++                font_id: fid(2),
++                position: Default::default(),
+             }]
+         );
+         assert!(clip_font_runs(&runs, 5..5).is_empty());
+diff --git a/crates/gpui_windows/src/direct_write.rs b/crates/gpui_windows/src/direct_write.rs
+index 304dc38..3e1191c 100644
+--- a/crates/gpui_windows/src/direct_write.rs
++++ b/crates/gpui_windows/src/direct_write.rs
+@@ -1619,7 +1619,11 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
+             }
+             glyph_idx += cluster_glyph_count;
+         }
+-        context.runs.push(ShapedRun { font_id, glyphs });
++        context.runs.push(ShapedRun {
++            font_id,
++            glyphs,
++            position: Default::default(),
++        });
+         Ok(())
+     }
+ 

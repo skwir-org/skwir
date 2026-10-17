@@ -49,7 +49,7 @@ pub fn applies(predicate: &str, holds: &dyn Fn(&str) -> bool) -> bool {
 impl Shell {
     pub fn toggle_shortcuts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(open) = self.shortcuts.take() {
-            open.previous.restore(window, &self.ui().focus);
+            open.previous.restore(window, &self.ui().focus, cx);
             cx.notify();
             return;
         }
@@ -89,7 +89,7 @@ impl Shell {
         groups.sort_by_key(|(name, _)| name == "Anywhere");
         let previous = FocusReturn::capture(window, cx);
         let focus = cx.focus_handle();
-        window.focus(&focus);
+        window.focus(&focus, cx);
         self.shortcuts = Some(Overview {
             focus,
             all: cx.focus_handle(),
@@ -229,7 +229,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 _ => return cx.propagate(),
             };
             if let Some(overview) = &this.shortcuts {
-                modal::tab_among(&[&overview.all, &overview.close], delta, window);
+                modal::tab_among(&[&overview.all, &overview.close], delta, window, cx);
             }
         }))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

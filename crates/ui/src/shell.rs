@@ -362,6 +362,8 @@ pub struct Shell {
     /// A plain press on a row of a multi-selection, waiting for its
     /// release to make the selection that row (unless a drag starts).
     pub press_collapse: Option<(PaneId, skwir_core::EntryId)>,
+    /// The icon of the files dragged last (`dnd::FilesIcon`).
+    pub files_icon: Option<crate::dnd::FilesIcon>,
     /// A file to select once the folder it lives in has listed it: a listing
     /// streams, so a link followed to another folder cannot select its target
     /// in the same frame it navigates.
@@ -452,7 +454,7 @@ impl Shell {
                     None => this.drawn_focus(),
                 };
                 if let Some(focus) = focus {
-                    window.focus(&focus);
+                    window.focus(&focus, cx);
                     cx.notify();
                 }
             });
@@ -626,6 +628,7 @@ impl Shell {
             tallies: Vec::new(),
             tallies_revision: None,
             press_collapse: None,
+            files_icon: None,
             reveal: None,
             reveal_asked: 0,
             links: crate::links::LinkState::default(),
@@ -1144,7 +1147,7 @@ impl Shell {
     pub(crate) fn toggle_split(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // The popup open closes, as a click on Split closes it: F3 or a
         // script would otherwise leave a pane's menu after its pane.
-        self.close_popup(window);
+        self.close_popup(window, cx);
         if self.is_split() {
             // An arrangement made for this split ends with it.
             self.layout.split = None;
@@ -1153,7 +1156,7 @@ impl Shell {
                 self.app.workspace.write().close_pane(pane);
             }
             self.sync_tabs(window, cx);
-            window.focus(&self.ui().focus);
+            window.focus(&self.ui().focus, cx);
             self.remember_session();
             cx.notify();
             return;
@@ -1178,7 +1181,7 @@ impl Shell {
     fn focus_other_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(o) = self.other_pane() {
             self.activate_pane(o, cx);
-            window.focus(&self.ui().focus);
+            window.focus(&self.ui().focus, cx);
         }
     }
 
@@ -1364,7 +1367,7 @@ impl Shell {
     /// switch; the unit picker closes on its choice.
     fn set_printed_pages(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(popup) = self.preview.menu.take_if(|popup| popup.kind == "unit") {
-            popup.restore(window);
+            popup.restore(window, cx);
         }
         self.prefs.printed_pages = on;
         cx.notify();
@@ -1677,7 +1680,7 @@ impl Shell {
         let arg = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::to_owned);
         match name {
             "focus_address" => self.omnibox_begin(false, None, window, cx),
-            "focus_pane" => window.focus(&self.ui().focus),
+            "focus_pane" => window.focus(&self.ui().focus, cx),
             "settings" => self.open_settings(args, window, cx),
             // The focused button and the open popup answer these; one
             // that reaches here found neither.
@@ -1686,11 +1689,11 @@ impl Shell {
             "toolbar_next" | "toolbar_prev"
                 if self.walk_dialog(name == "toolbar_next", window, cx) => {}
             "toolbar_next" => {
-                window.focus_next();
+                window.focus_next(cx);
                 self.reveal_focused_row(window, cx);
             }
             "toolbar_prev" => {
-                window.focus_prev();
+                window.focus_prev(cx);
                 self.reveal_focused_row(window, cx);
             }
             "toolbar_first" => {
@@ -2503,7 +2506,7 @@ impl Shell {
         self.sync_roots();
         crate::trail::sync(self);
         // After the trail's sync, which says whether it is a search.
-        crate::search_bar::sync(self, window);
+        crate::search_bar::sync(self, window, cx);
         let address_bar = address::render_address(self, window, cx);
         // A view that draws its own empty states (Usage) keeps them.
         let draws_empty = self

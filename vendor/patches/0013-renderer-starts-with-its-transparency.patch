@@ -1,8 +1,42 @@
-diff --git a/crates/gpui/src/platform/linux/wayland/window.rs b/crates/gpui/src/platform/linux/wayland/window.rs
-index 21c069b..660a65f 100644
---- a/crates/gpui/src/platform/linux/wayland/window.rs
-+++ b/crates/gpui/src/platform/linux/wayland/window.rs
-@@ -179,13 +179,22 @@ impl WaylandWindowState {
+0013 renderer-starts-with-its-transparency: WindowParams carry the background and decorations
+
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index 9bfee7f..ec4309d 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -2685,6 +2685,14 @@ pub struct WindowParams {
+ 
+     pub window_min_size: Option<Size<Pixels>>,
+ 
++    /// The background the window opens with and the decorations it asks
++    /// for, which the window sets once it is open: a renderer can start
++    /// with the transparency they give instead of switching to it.
++    #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
++    pub window_background: WindowBackgroundAppearance,
++    #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
++    pub window_decorations: Option<WindowDecorations>,
++
+     #[cfg(target_os = "macos")]
+     pub tabbing_identifier: Option<String>,
+ 
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 817782d..a4d4623 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -1630,6 +1630,8 @@ impl Window {
+                 show,
+                 display_id,
+                 window_min_size,
++                window_background,
++                window_decorations,
+                 app_id: app_id.clone(),
+                 icon,
+                 #[cfg(target_os = "macos")]
+diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
+index 8d92234..e397b04 100644
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -575,12 +575,21 @@ impl WaylandWindowState {
                      .display_ptr()
                      .cast::<c_void>(),
              };
@@ -15,60 +49,13 @@ index 21c069b..660a65f 100644
 +                .unwrap_or(WindowDecorations::Server)
 +                == WindowDecorations::Client
 +                || options.window_background != WindowBackgroundAppearance::Opaque;
-             let config = BladeSurfaceConfig {
-                 size: gpu::Extent {
-                     width: options.bounds.size.width.0 as u32,
-                     height: options.bounds.size.height.0 as u32,
-                     depth: 1,
+             let config = WgpuSurfaceConfig {
+                 size: Size {
+                     width: DevicePixels(f32::from(options.bounds.size.width) as i32),
+                     height: DevicePixels(f32::from(options.bounds.size.height) as i32),
                  },
 -                transparent: true,
 +                transparent,
+                 // Prefer Mailbox to avoid blocking. Falls back to FIFO if Mailbox is unsupported.
+                 preferred_present_mode: Some(wgpu::PresentMode::Mailbox),
              };
-             BladeRenderer::new(gpu_context, &raw_window, config)?
-         };
-diff --git a/crates/gpui/src/platform/mac/window.rs b/crates/gpui/src/platform/mac/window.rs
-index 95efffa..0262ff5 100644
---- a/crates/gpui/src/platform/mac/window.rs
-+++ b/crates/gpui/src/platform/mac/window.rs
-@@ -581,6 +581,8 @@ impl MacWindow {
-             show,
-             display_id,
-             window_min_size,
-+            window_background: _,
-+            window_decorations: _,
-             tabbing_identifier,
-         }: WindowParams,
-         executor: ForegroundExecutor,
-diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
-index 64a53cc..2cc655b 100644
---- a/crates/gpui/src/platform.rs
-+++ b/crates/gpui/src/platform.rs
-@@ -1214,6 +1214,15 @@ pub(crate) struct WindowParams {
-     pub display_id: Option<DisplayId>,
- 
-     pub window_min_size: Option<Size<Pixels>>,
-+
-+    /// The background the window opens with and the decorations it asks
-+    /// for, which the window sets once it is open: a renderer can start
-+    /// with the transparency they give instead of switching to it.
-+    #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
-+    pub window_background: WindowBackgroundAppearance,
-+    #[cfg_attr(not(feature = "wayland"), allow(dead_code))]
-+    pub window_decorations: Option<WindowDecorations>,
-+
-     #[cfg(target_os = "macos")]
-     pub tabbing_identifier: Option<String>,
- }
-diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index dfdb285..841b147 100644
---- a/crates/gpui/src/window.rs
-+++ b/crates/gpui/src/window.rs
-@@ -992,6 +992,8 @@ impl Window {
-                 show,
-                 display_id,
-                 window_min_size,
-+                window_background,
-+                window_decorations,
-                 #[cfg(target_os = "macos")]
-                 tabbing_identifier,
-             },

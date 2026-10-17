@@ -354,7 +354,7 @@ impl Shell {
                 }
             },
         );
-        input.update(cx, |i, _| i.focus(window));
+        input.update(cx, |i, cx| i.focus(window, cx));
         self.prompt = Some(PromptState {
             title: title.to_owned(),
             kind,
@@ -409,7 +409,7 @@ impl Shell {
     pub fn close_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(prompt) = self.prompt.take() {
             self.give_up_secret(prompt.kind);
-            prompt.back.restore(window, &self.ui().focus);
+            prompt.back.restore(window, &self.ui().focus, cx);
         }
         cx.notify();
     }
@@ -483,7 +483,7 @@ impl Shell {
     ) {
         let back = FocusReturn::capture(window, cx);
         let focus = cx.focus_handle();
-        window.focus(&focus);
+        window.focus(&focus, cx);
         self.confirm = Some(ConfirmState {
             message,
             then,
@@ -497,7 +497,7 @@ impl Shell {
 
     pub fn confirm_accept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(c) = self.confirm.take() {
-            c.back.restore(window, &self.ui().focus);
+            c.back.restore(window, &self.ui().focus, cx);
             match c.then {
                 // Asked and answered: applied as it is.
                 Confirmed::Apply(plan) => self.app.apply_whole(plan),
@@ -509,7 +509,7 @@ impl Shell {
 
     pub fn confirm_dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(c) = self.confirm.take() {
-            c.back.restore(window, &self.ui().focus);
+            c.back.restore(window, &self.ui().focus, cx);
             cx.notify();
         }
     }

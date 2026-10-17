@@ -469,7 +469,7 @@ fn invoke(
     // What a button runs closes the popup open, as a press outside it
     // does: a menu's row closes its menu, and the popup's own button,
     // pressed again, leaves it closed (`Shell::toggle_popup`).
-    if let Some(was) = shell.close_popup(window) {
+    if let Some(was) = shell.close_popup(window, cx) {
         shell.dismissed = Some((shell.presses, was));
     }
     shell.note_pointer_use(command, &args, cx);
@@ -486,22 +486,26 @@ impl Shell {
     /// menu of places, a search pill's choices, a preview's menu): there is
     /// one at most. Returns what it was, as its toggle names it. A menu of
     /// places still being read is no longer wanted (`nav_asked`).
-    pub(crate) fn close_popup(&mut self, window: &mut Window) -> Option<String> {
+    pub(crate) fn close_popup(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) -> Option<String> {
         self.nav_asked += 1;
         let mut was = None;
         if let Some(popup) = self.toolbar_menu.take() {
             was = Some(popup.kind.to_owned());
-            popup.restore(window);
+            popup.restore(window, cx);
         }
-        if let Some(what) = self.close_nav_menu(window) {
+        if let Some(what) = self.close_nav_menu(window, cx) {
             was = Some(what.key());
         }
-        if let Some(key) = self.close_search_chip(window) {
+        if let Some(key) = self.close_search_chip(window, cx) {
             was = Some(key);
         }
         if let Some(popup) = self.preview.menu.take() {
             was = Some(format!("preview {}", popup.kind));
-            popup.restore(window);
+            popup.restore(window, cx);
         }
         was
     }
@@ -517,8 +521,9 @@ impl Shell {
         key: &str,
         args: &serde_json::Value,
         window: &mut Window,
+        cx: &mut gpui::App,
     ) -> bool {
-        let was = self.close_popup(window);
+        let was = self.close_popup(window, cx);
         if args.get("close").and_then(serde_json::Value::as_bool) == Some(true) {
             if let Some(was) = was {
                 self.note_dismissed(args, was);
@@ -556,7 +561,7 @@ impl Shell {
     /// or the last row of the popup it is in. GPUI knows only the stop
     /// before and the one after: walk them while the keyboard stays in the
     /// popup (`ToolbarPopup`), and stay at the last one that was.
-    pub(crate) fn toolbar_popup_end(&mut self, last: bool, window: &mut Window, cx: &App) {
+    pub(crate) fn toolbar_popup_end(&mut self, last: bool, window: &mut Window, cx: &mut App) {
         let in_popup = |window: &Window| {
             window
                 .context_stack()
@@ -572,12 +577,12 @@ impl Shell {
                 return;
             };
             if last {
-                window.focus_next();
+                window.focus_next(cx);
             } else {
-                window.focus_prev();
+                window.focus_prev(cx);
             }
             if !in_popup(window) || window.focused(cx).as_ref() == Some(&at) {
-                window.focus(&at);
+                window.focus(&at, cx);
                 return;
             }
         }
@@ -642,7 +647,7 @@ impl Popup {
     pub fn new(kind: &'static str, window: &mut Window, cx: &mut Context<Shell>) -> Self {
         let previous = crate::modal::FocusReturn::capture(window, cx);
         let focus = cx.focus_handle().tab_index(1).tab_stop(false);
-        window.focus(&focus);
+        window.focus(&focus, cx);
         Self {
             kind,
             focus,
@@ -650,8 +655,8 @@ impl Popup {
             scroll: ScrollHandle::new(),
         }
     }
-    pub fn restore(self, window: &mut Window) {
-        self.previous.restore_if_any(window);
+    pub fn restore(self, window: &mut Window, cx: &mut gpui::App) {
+        self.previous.restore_if_any(window, cx);
     }
 }
 

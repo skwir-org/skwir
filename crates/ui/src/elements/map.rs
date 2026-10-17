@@ -1788,6 +1788,7 @@ impl Element for Map {
                 window.with_content_mask(Some(ContentMask { bounds: tile.clip }), |window| {
                     if let Err(error) = window.paint_image(
                         tile.bounds,
+                        tile.bounds,
                         gpui::Corners::default(),
                         Arc::clone(&tile.image),
                         0,
@@ -1876,7 +1877,14 @@ impl Element for Map {
                     BorderStyle::Solid,
                 ));
                 let text = cluster.at - point(cluster.count.width / 2., px(LINE_HEIGHT / 2.));
-                let _ = cluster.count.paint(text, px(LINE_HEIGHT), window, cx);
+                let _ = cluster.count.paint(
+                    text,
+                    px(LINE_HEIGHT),
+                    gpui::TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                );
             }
             for dot in &prepaint.dots {
                 if let Some(picture) = &dot.picture {
@@ -1916,6 +1924,7 @@ impl Element for Map {
                     );
                     window.with_content_mask(Some(ContentMask { bounds: inner }), |window| {
                         let _ = window.paint_image(
+                            cover,
                             cover,
                             gpui::Corners::default(),
                             Arc::clone(picture),
@@ -1974,7 +1983,14 @@ impl Element for Map {
                         BorderStyle::default(),
                     ));
                 }
-                if let Err(error) = label.line.paint(label.origin, px(LINE_HEIGHT), window, cx) {
+                if let Err(error) = label.line.paint(
+                    label.origin,
+                    px(LINE_HEIGHT),
+                    gpui::TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                ) {
                     tracing::debug!(%error, "map label");
                 }
             }
@@ -1993,6 +2009,8 @@ impl Element for Map {
                 let _ = words.paint(
                     foot - point(px(0.), px(LINE_HEIGHT + 4.)),
                     px(LINE_HEIGHT),
+                    gpui::TextAlign::Left,
+                    None,
                     window,
                     cx,
                 );
@@ -2010,6 +2028,8 @@ impl Element for Map {
                 let _ = line.paint(
                     card.origin + point(px(4.), px(1.)),
                     px(LINE_HEIGHT),
+                    gpui::TextAlign::Left,
+                    None,
                     window,
                     cx,
                 );

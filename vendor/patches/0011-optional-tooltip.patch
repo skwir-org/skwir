@@ -1,8 +1,10 @@
+0011 optional-tooltip: a tooltip builder may decline
+
 diff --git a/crates/gpui/src/elements/div.rs b/crates/gpui/src/elements/div.rs
-index cf6ce62..64b6d9e 100644
+index 5d3b03b..dcfb628 100644
 --- a/crates/gpui/src/elements/div.rs
 +++ b/crates/gpui/src/elements/div.rs
-@@ -538,6 +538,26 @@ impl Interactivity {
+@@ -698,6 +698,26 @@ impl Interactivity {
      pub fn tooltip(&mut self, build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static)
      where
          Self: Sized,
@@ -29,7 +31,7 @@ index cf6ce62..64b6d9e 100644
      {
          debug_assert!(
              self.tooltip_builder.is_none(),
-@@ -563,7 +583,7 @@ impl Interactivity {
+@@ -723,7 +743,7 @@ impl Interactivity {
              "calling tooltip more than once on the same element is not supported"
          );
          self.tooltip_builder = Some(TooltipBuilder {
@@ -38,7 +40,7 @@ index cf6ce62..64b6d9e 100644
              hoverable: true,
          });
      }
-@@ -1166,6 +1186,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
+@@ -1687,6 +1707,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
          self
      }
  
@@ -56,10 +58,10 @@ index cf6ce62..64b6d9e 100644
 +        self
 +    }
 +
-     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
+     /// Constructs a tooltip when the element is hovered or long-pressed.
      /// The tooltip itself is also hoverable and won't disappear when the user moves the mouse into
-     /// the tooltip. The fluent API equivalent to [`Interactivity::hoverable_tooltip`]
-@@ -1202,7 +1236,7 @@ type DropListener = Box<dyn Fn(&dyn Any, &mut Window, &mut App) + 'static>;
+     /// the tooltip. The fluent API equivalent to [`Interactivity::hoverable_tooltip`].
+@@ -1773,7 +1807,7 @@ type DropListener = Box<dyn Fn(&dyn Any, &mut Window, &mut App) + 'static>;
  type CanDropPredicate = Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static>;
  
  pub(crate) struct TooltipBuilder {
@@ -68,7 +70,7 @@ index cf6ce62..64b6d9e 100644
      hoverable: bool,
  }
  
-@@ -2295,7 +2329,7 @@ impl Interactivity {
+@@ -3200,7 +3234,7 @@ impl Interactivity {
  
                  let tooltip_is_hoverable = tooltip_builder.hoverable;
                  let build_tooltip = Rc::new(move |window: &mut Window, cx: &mut App| {
@@ -77,17 +79,17 @@ index cf6ce62..64b6d9e 100644
                  });
                  // Use bounds instead of testing hitbox since this is called during prepaint.
                  let check_is_hovered_during_prepaint = Rc::new({
-@@ -2786,8 +2820,12 @@ fn handle_tooltip_mouse_move(
-                                     is_hoverable: tooltip_is_hoverable,
-                                 }
-                             });
-+                        // A builder that declined leaves nothing to draw.
-+                        let shown = new_tooltip.is_some();
-                         *active_tooltip.borrow_mut() = new_tooltip;
--                        window.refresh();
-+                        if shown {
-+                            window.refresh();
-+                        }
-                     })
-                     .ok();
-                 }
+@@ -3950,8 +3984,12 @@ fn show_tooltip(
+         }
+     });
+     let did_show = new_tooltip.is_some();
++    // A builder that declined leaves nothing to draw.
++    let shown = new_tooltip.is_some();
+     *active_tooltip.borrow_mut() = new_tooltip;
+-    window.refresh();
++    if shown {
++        window.refresh();
++    }
+     did_show
+ }
+ 

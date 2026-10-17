@@ -1,9 +1,11 @@
+0022 wheel-scrolls-along-its-axis: restrict_scroll_to_axis on by default
+
 diff --git a/crates/gpui/src/elements/div.rs b/crates/gpui/src/elements/div.rs
-index 64b6d9e..c9ba8ed 100644
+index dcfb628..691a9a0 100644
 --- a/crates/gpui/src/elements/div.rs
 +++ b/crates/gpui/src/elements/div.rs
-@@ -3367,3 +3367,101 @@ mod keyboard_click_tests {
-         assert_eq!(clicks.get(), 1);
+@@ -5766,3 +5766,102 @@ mod tests {
+         assert_eq!(bounds("cell-2").origin.x, px(300.));
      }
  }
 +
@@ -59,6 +61,7 @@ index 64b6d9e..c9ba8ed 100644
 +                column: c,
 +                either,
 +            })
++            .into_any_element()
 +        });
 +        (
 +            cx,
@@ -105,20 +108,19 @@ index 64b6d9e..c9ba8ed 100644
 +    }
 +}
 diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
-index f94df2b..25401ec 100644
+index 2ec7301..78eeb99 100644
 --- a/crates/gpui/src/style.rs
 +++ b/crates/gpui/src/style.rs
-@@ -156,7 +156,8 @@ pub struct Style {
+@@ -192,7 +192,7 @@ pub struct Style {
      pub scrollbar_width: AbsoluteLength,
      /// Whether both x and y axis should be scrollable at the same time.
      pub allow_concurrent_scroll: bool,
--    /// Whether scrolling should be restricted to the axis indicated by the mouse wheel.
-+    /// Whether scrolling should be restricted to the axis indicated by the mouse wheel. On by
-+    /// default.
+-    /// Whether scrolling should be restricted to the input gesture's axis.
++    /// Whether scrolling should be restricted to the input gesture's axis. On by default.
      ///
-     /// This means that:
-     /// - The mouse wheel alone will only ever scroll the Y axis.
-@@ -170,13 +171,12 @@ pub struct Style {
+     /// Pixel-based scroll gestures are locked to their initially dominant axis. The lock may be
+     /// released when the gesture changes direction strongly. Touch phases delimit gestures when
+@@ -210,13 +210,12 @@ pub struct Style {
      /// The only way to scroll horizontally is to hold down `Shift` while scrolling, which then changes the scroll axis
      /// to the X axis.
      ///
@@ -137,7 +139,7 @@ index f94df2b..25401ec 100644
      pub restrict_scroll_to_axis: bool,
  
      // Position properties
-@@ -796,7 +796,7 @@ impl Default for Style {
+@@ -831,7 +830,7 @@ impl Default for Style {
                  y: Overflow::Visible,
              },
              allow_concurrent_scroll: false,

@@ -103,8 +103,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Application, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, font,
-    prelude::*, px, size,
+    Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, font, prelude::*, px, size,
 };
 use skwir_core::{App, Location};
 
@@ -230,7 +229,8 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
     // The shell's own commands, known to every surface as the others are.
     commands::declare_all(&app);
 
-    Application::new()
+    // The system's backend, with AccessKit (ADR-064).
+    gpui_platform::application()
         .with_assets(icons::FsAssets)
         .run(move |cx: &mut gpui::App| {
             tracing::debug!(
@@ -245,6 +245,9 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
             // A key that begins a binding of several strokes waits for the
             // next as long as it takes; `sequence.rs` shows what can follow.
             cx.set_key_sequence_timeout(None);
+            // The pointer stays where it is while keys move through files: gpui's
+            // default hides it at each bound key, as an editor does while typing.
+            cx.set_cursor_hide_mode(gpui::CursorHideMode::Never);
             // Debug aid: `RUST_LOG=skwir_ui=trace` shows every keystroke GPUI saw.
             cx.observe_keystrokes(|ev, _, _| {
                 tracing::trace!(keystroke = %ev.keystroke.unparse(), "keystroke");
@@ -254,7 +257,7 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
             // last window first, so nothing is left on screen while the
             // plans wind down.
             let stats_app = Arc::clone(&app);
-            cx.on_window_closed(move |cx| {
+            cx.on_window_closed(move |cx, _| {
                 if cx.windows().is_empty() {
                     remember_location(&stats_app);
                     let (decoded, skipped, bytes) = stats_app.thumbnails.stats();
@@ -294,7 +297,7 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
             tracing::debug!(ms = started.elapsed().as_millis() as u64, "window opened");
             window
                 .update(cx, |shell, window, cx| {
-                    window.focus(&shell.ui().focus);
+                    window.focus(&shell.ui().focus, cx);
                     cx.activate(true);
                 })
                 .ok();

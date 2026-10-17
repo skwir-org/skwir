@@ -53,10 +53,10 @@ impl Notes {
             .is_some_and(|open| open.popup.focus.contains_focused(window, cx))
     }
     /// Close the note and forget one on its way, giving the keyboard back.
-    pub(crate) fn close(&mut self, window: &mut Window) {
+    pub(crate) fn close(&mut self, window: &mut Window, cx: &mut gpui::App) {
         self.asked.forget();
         if let Some(open) = self.open.take() {
-            open.popup.restore(window);
+            open.popup.restore(window, cx);
         }
     }
 }
@@ -117,7 +117,7 @@ impl Shell {
         let Some((request, view)) = display.origin.as_deref().cloned() else {
             return false;
         };
-        self.preview.inspection.notes.close(window);
+        self.preview.inspection.notes.close(window, cx);
         let previews = Arc::clone(&self.app.previews);
         let (target, fragment) = (target.to_owned(), fragment.to_owned());
         self.preview.inspection.notes.asked.ask(
@@ -166,7 +166,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.preview.inspection.notes.close(window);
+        self.preview.inspection.notes.close(window, cx);
         let popup = toolbar::Popup::new("note", window, cx);
         self.preview.inspection.notes.open = Some(Open {
             popup,
@@ -191,7 +191,7 @@ impl Shell {
             .open
             .as_ref()
             .map(|open| open.target.clone());
-        self.preview.inspection.notes.close(window);
+        self.preview.inspection.notes.close(window, cx);
         if args["go"].as_bool() == Some(true)
             && let Some(target) = target
         {
@@ -255,7 +255,7 @@ pub(crate) fn popover(
                         let target = links[i].1.clone();
                         let _ = entity.update(cx, |shell, cx| {
                             shell.with_pane(pane, |shell| {
-                                shell.preview.inspection.notes.close(window);
+                                shell.preview.inspection.notes.close(window, cx);
                                 shell.run(
                                     "ui.inspect",
                                     serde_json::json!({"action":"link","target":target}),

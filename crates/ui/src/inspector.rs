@@ -437,7 +437,7 @@ impl State {
     pub(crate) fn wide(&self) -> bool {
         match &self.text {
             Some(view) => view.scroll.borrow().horizontal().1 > 0.,
-            None => self.sideways.max_offset().width > px(0.),
+            None => self.sideways.max_offset().x > px(0.),
         }
     }
 }
@@ -1164,7 +1164,7 @@ impl Shell {
                 self.preview.inspection.find = None;
                 self.preview.inspection.sought = None;
                 if let Some(focus) = &self.preview.inspection.focus {
-                    window.focus(focus);
+                    window.focus(focus, cx);
                 }
                 return cx.notify();
             }
@@ -1188,7 +1188,7 @@ impl Shell {
             "section_cancel" => {
                 self.preview.inspection.section_input = None;
                 if let Some(focus) = &self.preview.inspection.focus {
-                    window.focus(focus);
+                    window.focus(focus, cx);
                 }
                 return cx.notify();
             }
@@ -1351,7 +1351,7 @@ impl Shell {
                         state.selected = Some(index);
                         if action == "text_down" {
                             if let Some(focus) = &state.focus {
-                                window.focus(focus);
+                                window.focus(focus, cx);
                             }
                             state.selection = Some(crate::inspector_text::Selection {
                                 start: (index, offset),
@@ -1437,7 +1437,7 @@ impl Shell {
                 "select" => {
                     self.preview.inspection.selected = args["index"].as_u64().map(|i| i as usize);
                     if let Some(focus) = &self.preview.inspection.focus {
-                        window.focus(focus);
+                        window.focus(focus, cx);
                     }
                     cx.notify();
                     return;
@@ -1485,7 +1485,7 @@ impl Shell {
                     state.list.remeasure_items(0..count);
                     // The size picker closes on its choice.
                     if let Some(popup) = self.preview.menu.take_if(|popup| popup.kind == "text") {
-                        popup.restore(window);
+                        popup.restore(window, cx);
                     }
                     cx.notify();
                     return;
@@ -1819,7 +1819,7 @@ impl Shell {
     ) {
         // A note stays under its reference: the text moving away closes it.
         if self.preview.inspection.notes.open.is_some() {
-            self.preview.inspection.notes.close(window);
+            self.preview.inspection.notes.close(window, cx);
             cx.notify();
         }
         let Some(PreviewContent::Inspection(display)) = &self.preview.content else {
@@ -1832,7 +1832,7 @@ impl Shell {
         }
         let pending = self.preview.phase != PreviewPhase::Idle;
         let state = &mut self.preview.inspection;
-        let bottom = state.list.max_offset_for_scrollbar().height;
+        let bottom = state.list.max_offset_for_scrollbar().y;
         let offset = -state.list.scroll_px_offset_for_scrollbar().y;
         let toward: i8 = if delta < 0. { 1 } else { -1 };
         let here = if toward == 1 {
@@ -1877,7 +1877,7 @@ impl Shell {
         let state = &mut self.preview.inspection;
         // A note stays under its reference: the text moving away closes it.
         if state.notes.open.is_some() {
-            state.notes.close(window);
+            state.notes.close(window, cx);
         }
         let to = args["to"].as_str().unwrap_or("");
         match (to, state.bytes.as_ref()) {
@@ -1942,7 +1942,7 @@ impl Shell {
         field.input.update(cx, |input, cx| {
             input.set_text(current, cx);
             input.select_all_now(cx);
-            input.focus(window);
+            input.focus(window, cx);
         });
         self.preview.inspection.section_input = Some(field);
         cx.notify();
@@ -1968,7 +1968,7 @@ impl Shell {
             ));
         }
         if let Some(find) = &self.preview.inspection.find {
-            find.input.read(cx).focus(window);
+            find.input.update(cx, |i, cx| i.focus(window, cx));
         }
         self.preview.menu = None;
         cx.notify();

@@ -139,7 +139,7 @@ impl Shell {
             if select {
                 input.select_all_now(cx);
             }
-            input.focus(window);
+            input.focus(window, cx);
         });
         cx.notify();
     }
@@ -277,7 +277,7 @@ impl Shell {
         let scope = self.omni_root();
         let pane = self.pane;
         self.ui_mut().omni = None;
-        window.focus(&self.ui().focus);
+        window.focus(&self.ui().focus, cx);
         match chosen {
             _ if text.is_empty() => {
                 self.set_filter(None);
@@ -328,7 +328,7 @@ impl Shell {
         let shown = self.ui().address_shown.clone();
         let address = self.ui().address.clone();
         address.update(cx, |input, cx| input.set_text(shown, cx));
-        window.focus(&self.ui().focus);
+        window.focus(&self.ui().focus, cx);
         cx.notify();
     }
 

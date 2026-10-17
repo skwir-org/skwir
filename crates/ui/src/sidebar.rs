@@ -1622,7 +1622,7 @@ impl Shell {
     /// sidebar put away comes back for it.
     pub fn focus_sidebar(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
         if self.sidebar_keys.focus.is_focused(window) {
-            window.focus(&self.ui().focus);
+            window.focus(&self.ui().focus, cx);
             cx.notify();
             return;
         }
@@ -1637,7 +1637,7 @@ impl Shell {
         // The cursor goes where the pane is, as the frame finds it.
         self.sidebar_keys.cursor = None;
         self.sidebar_keys.reveal = true;
-        window.focus(&self.sidebar_keys.focus);
+        window.focus(&self.sidebar_keys.focus, cx);
         cx.notify();
     }
 
@@ -1718,7 +1718,7 @@ impl Shell {
                     open_in_tab(&arranged.place)
                 } else {
                     // Where it opens is where the keys go next.
-                    window.focus(&self.ui().focus);
+                    window.focus(&self.ui().focus, cx);
                     open_invocation(&arranged.place)
                 };
                 self.run(&run.name, run.args, window, cx);

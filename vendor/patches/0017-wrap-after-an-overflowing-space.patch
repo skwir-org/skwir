@@ -1,28 +1,22 @@
+0017 wrap-after-an-overflowing-space: wrapper and layout agree after an overflowing space
+
 diff --git a/crates/gpui/src/text_system/line_wrapper.rs b/crates/gpui/src/text_system/line_wrapper.rs
-index 278c732..18b6df5 100644
+index ca821bb..8116227 100644
 --- a/crates/gpui/src/text_system/line_wrapper.rs
 +++ b/crates/gpui/src/text_system/line_wrapper.rs
-@@ -97,6 +97,10 @@ impl LineWrapper {
-                 };
- 
-                 width += item_width;
-+                // The candidate is on the line whether or not it wraps it: a word after a
-+                // space that overflowed must still see that space, or it is no candidate
-+                // and the next line breaks inside it (as the shaped layout never does).
-+                prev_c = new_prev_c;
-                 if width > wrap_width && ix > last_wrap_ix {
-                     if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
-                     {
-@@ -120,8 +124,6 @@ impl LineWrapper {
- 
-                     return Some(Boundary::new(last_wrap_ix, indent.unwrap_or(0)));
-                 }
--
--                prev_c = new_prev_c;
-             }
- 
-             None
-@@ -497,6 +499,14 @@ mod tests {
+@@ -168,6 +168,11 @@ impl LineWrapper {
+                     if wrap_at_candidate {
+                         last_wrap_ix = last_candidate_ix;
+                         width -= last_candidate_width;
++                        // What overflowed goes on with the next line, after the candidate: a
++                        // word after a space that overflowed must still see that space, or it
++                        // is no candidate and the next line breaks inside it (as the shaped
++                        // layout never does).
++                        prev_c = new_prev_c;
+                     } else {
+                         last_wrap_ix = ix;
+                         width = item_width;
+@@ -784,6 +789,18 @@ mod tests {
                  Boundary::new(18, 0)
              ],
          );
@@ -30,23 +24,14 @@ index 278c732..18b6df5 100644
 +        // so the second line breaks before it, not inside it.
 +        assert_eq!(
 +            wrapper
-+                .wrap_line(&[LineFragment::text("aa bbbb ccccc")], px(72.))
++                .wrap_line(
++                    &[LineFragment::text("aa bbbb ccccc")],
++                    px(72.),
++                    IndentAdjustment::default()
++                )
 +                .collect::<Vec<_>>(),
 +            &[Boundary::new(3, 0), Boundary::new(8, 0)],
 +        );
          assert_eq!(
              wrapper
-                 .wrap_line(&[LineFragment::text("aaa aaaaaaaaaaaaaaaaaa")], px(72.0))
-@@ -637,6 +647,12 @@ mod tests {
-         assert_eq!(elide("aa bbb cccc ddddd.zip", &[21], 2).0, "aa bbb ccc…zip");
-         // No whitespace beside the ellipsis.
-         assert_eq!(elide("aa bbb cc  ddddd e.zip", &[22], 2).0, "aa bbb cc…zip");
-+        // The last line starts where the layout starts it, after a space that overflowed
-+        // the line above: elided from inside "ccccc", it was wider than its line.
-+        assert_eq!(
-+            elide("aa bbbb ccccc dddddddd.zip", &[26], 3).0,
-+            "aa bbbb ccc…zip"
-+        );
-         // It fits: untouched, and so are its runs.
-         assert_eq!(elide("aa bbb cccc", &[3, 8], 2), ("aa bbb cccc".into(), vec![3, 8]));
-         // The runs lose what was removed; the ellipsis joins the run it began in.
+                 .wrap_line(

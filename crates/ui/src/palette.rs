@@ -447,7 +447,7 @@ impl Shell {
                 InputEvent::Changed => cx.notify(),
             },
         );
-        input.update(cx, |i, _| i.focus(window));
+        input.update(cx, |i, cx| i.focus(window, cx));
         let items = self.palette_items();
         self.palette = Some(PaletteState {
             input,
@@ -464,7 +464,7 @@ impl Shell {
 
     pub fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(palette) = self.palette.take() {
-            palette.back.restore(window, &self.ui().focus);
+            palette.back.restore(window, &self.ui().focus, cx);
         }
         cx.notify();
     }

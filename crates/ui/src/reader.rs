@@ -187,7 +187,7 @@ impl Shell {
         field.input.update(cx, |input, cx| {
             input.set_text(current, cx);
             input.select_all_now(cx);
-            input.focus(window);
+            input.focus(window, cx);
         });
         self.preview.reader.page_input = Some(field);
         cx.notify();
@@ -240,9 +240,9 @@ impl Shell {
     pub fn reader_page_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.preview.reader.page_input = None;
         if let Some(focus) = &self.preview.reader.focus {
-            window.focus(focus);
+            window.focus(focus, cx);
         } else {
-            window.focus(&self.ui().focus);
+            window.focus(&self.ui().focus, cx);
         }
         cx.notify();
     }
@@ -266,7 +266,7 @@ impl Shell {
         };
         if phase == "down" {
             if let Some(focus) = &self.preview.reader.focus {
-                window.focus(focus);
+                window.focus(focus, cx);
             }
             let reader = &mut self.preview.reader;
             reader.down = Some((x, y));
@@ -354,6 +354,7 @@ impl Shell {
                     .focus
                     .as_ref()
                     .unwrap_or(&self.ui().focus),
+                cx,
             );
         }
         cx.notify();
@@ -372,7 +373,7 @@ impl Shell {
             ));
         }
         if let Some(find) = &self.preview.reader.find {
-            find.input.read(cx).focus(window);
+            find.input.update(cx, |i, cx| i.focus(window, cx));
         }
         cx.notify();
     }
@@ -383,7 +384,7 @@ impl Shell {
         reader.hits.clear();
         reader.active_hit = None;
         if let Some(focus) = &reader.focus {
-            window.focus(focus);
+            window.focus(focus, cx);
         }
         cx.notify();
     }

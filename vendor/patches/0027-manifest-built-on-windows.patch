@@ -1,0 +1,18 @@
+0027 manifest-built-on-windows: the Windows manifest embedded only when built on Windows
+
+diff --git a/crates/gpui/build.rs b/crates/gpui/build.rs
+index 3fdbb0f..4b777b4 100644
+--- a/crates/gpui/build.rs
++++ b/crates/gpui/build.rs
+@@ -28,7 +28,10 @@ fn main() {
+         println!("cargo::rustc-cfg=gpui_hot_reload");
+     }
+ 
+-    if target_os == "windows" {
++    // SKWIR: embedded when built on Windows, whose resource compiler it needs,
++    // as gpui 0.2.2 did: a check from another system (`check-cross`, Wine's
++    // tests) leaves it out rather than fail without MinGW's `windres`.
++    if target_os == "windows" && cfg!(windows) {
+         #[cfg(feature = "windows-manifest")]
+         embed_resource();
+     }

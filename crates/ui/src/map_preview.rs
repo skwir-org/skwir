@@ -93,8 +93,8 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
         .when_some(focus, |d, focus| {
             let clicked = focus.clone();
             d.track_focus(&focus)
-                .on_mouse_down(MouseButton::Left, move |_, window, _| {
-                    window.focus(&clicked);
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    window.focus(&clicked, cx);
                 })
         })
         .child(div().flex_1().min_h_0().child(element(

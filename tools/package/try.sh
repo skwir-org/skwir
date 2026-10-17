@@ -87,11 +87,12 @@ enter() {
     else
         package_home=/home/builder
     fi
-    mkdir -p "$root$package_home/.cargo/registry"
+    mkdir -p "$root$package_home/.cargo/registry" "$root$package_home/.cargo/git" "$HOME/.cargo/git"
     bwrap --unshare-user --uid "$uid" --gid "$uid" --unshare-pid --share-net --die-with-parent \
         --bind "$root" / --proc /proc --dev /dev --tmpfs /tmp \
         --ro-bind "$tree/tools" /tools \
         --bind "$HOME/.cargo/registry" "$package_home/.cargo/registry" \
+        --bind "$HOME/.cargo/git" "$package_home/.cargo/git" \
         --clearenv --setenv HOME "$package_home" --setenv LANG C.UTF-8 \
         --setenv PATH "$package_home/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
         --setenv CARGO_BUILD_JOBS "${CARGO_BUILD_JOBS:-8}" \

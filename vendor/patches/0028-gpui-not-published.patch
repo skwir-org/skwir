@@ -1,0 +1,15 @@
+0028 gpui-not-published: gpui is a path dependency of Skwir's, published by Zed only
+
+diff --git a/crates/gpui/Cargo.toml b/crates/gpui/Cargo.toml
+index 28a3658..3ffb8af 100644
+--- a/crates/gpui/Cargo.toml
++++ b/crates/gpui/Cargo.toml
+@@ -5,7 +5,7 @@ edition.workspace = true
+ authors = ["Nathan Sobo <nathan@zed.dev>"]
+ description = "Zed's GPU-accelerated UI framework"
+ repository = "https://github.com/zed-industries/zed"
+-publish = true
++publish = false
+ license = "Apache-2.0"
+ homepage = "https://gpui.rs"
+ readme = "README.md"

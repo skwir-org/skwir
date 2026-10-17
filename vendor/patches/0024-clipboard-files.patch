@@ -1,46 +1,26 @@
+0024 clipboard-files + 0021 x11-clipboard-sends-in-pieces: files on the Linux clipboard (Wayland, X11), INCR sending
+
 diff --git a/crates/gpui/src/app.rs b/crates/gpui/src/app.rs
-index c149037..8fed759 100644
+index 6af8965..3945c76 100644
 --- a/crates/gpui/src/app.rs
 +++ b/crates/gpui/src/app.rs
-@@ -35,13 +35,14 @@ use util::{ResultExt, debug_panic};
- use crate::InspectorElementRegistry;
- use crate::{
-     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
--    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
--    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
--    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
--    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
--    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
--    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
--    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
-+    AssetSource, BackgroundExecutor, Bounds, ClipboardFiles, ClipboardItem, CursorStyle,
-+    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
-+    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
-+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
-+    PlatformKeyboardMapper, Point, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render,
-+    RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
-+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
-+    WindowHandle, WindowId, WindowInvalidator,
-     colors::{Colors, GlobalColors},
-     current_platform, hash, init_app_menus,
- };
-@@ -570,6 +571,7 @@ pub struct App {
+@@ -849,6 +849,7 @@ pub struct App {
      pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
      pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
      pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
 +    pub(crate) clipboard_files_observers: SubscriberSet<(), Handler>,
-     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
-     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
-     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
-@@ -650,6 +652,7 @@ impl App {
+     missing_glyph_callback: Rc<MissingGlyphCallbackSlot>,
+     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
+     pub(crate) display_observers: SubscriberSet<(), DisplayHandler>,
+@@ -994,6 +995,7 @@ impl App {
                  keystroke_observers: SubscriberSet::new(),
                  keystroke_interceptors: SubscriberSet::new(),
                  keyboard_layout_observers: SubscriberSet::new(),
 +                clipboard_files_observers: SubscriberSet::new(),
-                 global_observers: SubscriberSet::new(),
-                 quit_observers: SubscriberSet::new(),
-                 restart_observers: SubscriberSet::new(),
-@@ -687,6 +690,26 @@ impl App {
+                 missing_glyph_callback: Rc::default(),
+                 thermal_state_observers: SubscriberSet::new(),
+                 display_observers: SubscriberSet::new(),
+@@ -1052,6 +1054,27 @@ impl App {
              }
          }));
  
@@ -54,37 +34,35 @@ index c149037..8fed759 100644
 +                executor
 +                    .spawn(async move {
 +                        if let Some(app) = app.upgrade() {
-+                            let cx = &mut app.borrow_mut();
-+                            cx.clipboard_files_observers
-+                                .clone()
-+                                .retain(&(), move |callback| (callback)(cx));
++                            app.borrow_mut().update(|cx| {
++                                cx.clipboard_files_observers
++                                    .clone()
++                                    .retain(&(), |callback| callback(cx));
++                            });
 +                        }
 +                    })
 +                    .detach();
 +            }
 +        }));
 +
-         platform.on_quit(Box::new({
-             let cx = app.clone();
+         platform.on_thermal_state_change(Box::new({
+             let app = Rc::downgrade(&app);
              move || {
-@@ -1058,6 +1081,46 @@ impl App {
-         self.platform.read_from_clipboard()
+@@ -1826,6 +1849,43 @@ impl App {
+         self.platform.write_to_clipboard(item)
      }
  
 +    /// Puts files on the platform clipboard as file managers do, copied or
 +    /// cut, with `text` for the applications that take text. Where
 +    /// unsupported, only the text.
-+    pub fn write_files_to_clipboard(&self, files: ClipboardFiles, text: String) {
++    pub fn write_files_to_clipboard(&self, files: crate::ClipboardFiles, text: String) {
 +        self.platform.write_files_to_clipboard(files, text)
 +    }
 +
 +    /// The files on the platform clipboard, read off the main thread: `None`
 +    /// when it holds none, or where unsupported.
-+    pub fn read_files_from_clipboard(
-+        &self,
-+    ) -> impl Future<Output = Option<ClipboardFiles>> + use<> {
-+        let files = self.platform.read_files_from_clipboard();
-+        async move { files.await.ok().flatten() }
++    pub fn read_files_from_clipboard(&self) -> Task<Option<crate::ClipboardFiles>> {
++        self.platform.read_files_from_clipboard()
 +    }
 +
 +    /// Empties the platform clipboard if it still holds the files this
@@ -111,16 +89,16 @@ index c149037..8fed759 100644
 +        subscription
 +    }
 +
-     /// Writes credentials to the platform keychain.
-     pub fn write_credentials(
-         &self,
+     /// Reads data from the primary selection buffer.
+     /// Only available on Linux.
+     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
-index 3968306..ce8ff39 100644
+index 5039992..9706818 100644
 --- a/crates/gpui/src/platform.rs
 +++ b/crates/gpui/src/platform.rs
-@@ -266,6 +266,30 @@ pub(crate) trait Platform: 'static {
-     fn read_from_primary(&self) -> Option<ClipboardItem>;
-     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
+@@ -584,6 +584,28 @@ pub trait Platform: 'static {
+         Task::ready(Ok(self.read_from_clipboard()))
+     }
  
 +    /// Put `files` on the clipboard as file managers do, with `text` for
 +    /// the applications that take text. Where unsupported, only the text.
@@ -130,10 +108,8 @@ index 3968306..ce8ff39 100644
 +    }
 +    /// The files on the clipboard, read off the main thread: `None` when it
 +    /// holds none, or where unsupported.
-+    fn read_files_from_clipboard(&self) -> oneshot::Receiver<Option<ClipboardFiles>> {
-+        let (tx, rx) = oneshot::channel();
-+        tx.send(None).ok();
-+        rx
++    fn read_files_from_clipboard(&self) -> Task<Option<ClipboardFiles>> {
++        Task::ready(None)
 +    }
 +    /// Empty the clipboard if it still holds the files this application
 +    /// put there.
@@ -146,11 +122,11 @@ index 3968306..ce8ff39 100644
 +        let _ = callback;
 +    }
 +
-     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
-     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
-     fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
-@@ -1546,6 +1570,19 @@ impl Default for CursorStyle {
-     }
+     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+     fn read_from_primary(&self) -> Option<ClipboardItem>;
+     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+@@ -3044,6 +3066,19 @@ pub enum CursorStyle {
+     ContextualMenu,
  }
  
 +/// Files on the clipboard, as file managers put them there: copied, or cut,
@@ -169,744 +145,26 @@ index 3968306..ce8ff39 100644
  /// A clipboard item that should be copied to the clipboard
  #[derive(Clone, Debug, Eq, PartialEq)]
  pub struct ClipboardItem {
-diff --git a/crates/gpui/src/platform/linux.rs b/crates/gpui/src/platform/linux.rs
-index 5221f71..60926a5 100644
---- a/crates/gpui/src/platform/linux.rs
-+++ b/crates/gpui/src/platform/linux.rs
-@@ -12,6 +12,9 @@ mod x11;
+diff --git a/crates/gpui_linux/src/linux.rs b/crates/gpui_linux/src/linux.rs
+index e4da54b..f68bc4c 100644
+--- a/crates/gpui_linux/src/linux.rs
++++ b/crates/gpui_linux/src/linux.rs
+@@ -14,6 +14,9 @@ mod x11;
  #[cfg(any(feature = "wayland", feature = "x11"))]
  mod xdg_desktop_portal;
  
 +#[cfg(any(feature = "wayland", feature = "x11"))]
 +mod clipboard_files;
 +
- pub(crate) use dispatcher::*;
+ pub use dispatcher::*;
+ pub(crate) use display_connection::{Backend, DisplayConnection, select_backend};
  pub(crate) use headless::*;
- pub(crate) use keyboard::*;
-diff --git a/crates/gpui/src/platform/linux/platform.rs b/crates/gpui/src/platform/linux/platform.rs
-index 322f5d7..94b20e5 100644
---- a/crates/gpui/src/platform/linux/platform.rs
-+++ b/crates/gpui/src/platform/linux/platform.rs
-@@ -70,6 +70,18 @@ pub trait LinuxClient {
-     fn write_to_clipboard(&self, item: ClipboardItem);
-     fn read_from_primary(&self) -> Option<ClipboardItem>;
-     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
-+    fn write_files_to_clipboard(&self, files: crate::ClipboardFiles, text: String) {
-+        let _ = files;
-+        self.write_to_clipboard(ClipboardItem::new_string(text));
-+    }
-+    fn read_files_from_clipboard(
-+        &self,
-+    ) -> futures::channel::oneshot::Receiver<Option<crate::ClipboardFiles>> {
-+        let (tx, rx) = futures::channel::oneshot::channel();
-+        tx.send(None).ok();
-+        rx
-+    }
-+    fn clear_clipboard_files(&self) {}
-     fn active_window(&self) -> Option<AnyWindowHandle>;
-     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
-     fn run(&self);
-@@ -91,6 +103,8 @@ pub(crate) struct PlatformHandlers {
-     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
-     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
-     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
-+    /// The files this application put on the clipboard are no longer there.
-+    pub(crate) clipboard_files_gone: Option<Box<dyn FnMut()>>,
- }
- 
- pub(crate) struct LinuxCommon {
-@@ -159,6 +173,10 @@ impl<P: LinuxClient + 'static> Platform for P {
-         self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
-     }
- 
-+    fn on_clipboard_files_gone(&self, callback: Box<dyn FnMut()>) {
-+        self.with_common(|common| common.callbacks.clipboard_files_gone = Some(callback));
-+    }
-+
-     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
-         on_finish_launching();
- 
-@@ -589,6 +607,20 @@ impl<P: LinuxClient + 'static> Platform for P {
-         self.read_from_clipboard()
-     }
- 
-+    fn write_files_to_clipboard(&self, files: crate::ClipboardFiles, text: String) {
-+        LinuxClient::write_files_to_clipboard(self, files, text)
-+    }
-+
-+    fn read_files_from_clipboard(
-+        &self,
-+    ) -> futures::channel::oneshot::Receiver<Option<crate::ClipboardFiles>> {
-+        LinuxClient::read_files_from_clipboard(self)
-+    }
-+
-+    fn clear_clipboard_files(&self) {
-+        LinuxClient::clear_clipboard_files(self)
-+    }
-+
-     fn add_recent_document(&self, _path: &Path) {}
- }
- 
-diff --git a/crates/gpui/src/platform/linux/wayland/client.rs b/crates/gpui/src/platform/linux/wayland/client.rs
-index bc586b9..d96153b 100644
---- a/crates/gpui/src/platform/linux/wayland/client.rs
-+++ b/crates/gpui/src/platform/linux/wayland/client.rs
-@@ -369,6 +369,21 @@ pub(crate) enum PendingActivation {
- #[derive(Clone)]
- pub struct WaylandClientStatePtr(Weak<RefCell<WaylandClientState>>);
- 
-+/// Tell the application the files it put on the clipboard are no longer
-+/// there. Called with the client's state not borrowed.
-+fn clipboard_files_gone(client: &Rc<RefCell<WaylandClientState>>) {
-+    let callback = client
-+        .borrow_mut()
-+        .common
-+        .callbacks
-+        .clipboard_files_gone
-+        .take();
-+    if let Some(mut callback) = callback {
-+        callback();
-+        client.borrow_mut().common.callbacks.clipboard_files_gone = Some(callback);
-+    }
-+}
-+
- impl WaylandClientStatePtr {
-     /// Start a compositor drag of `paths` out of `surface`. Needs an implicit
-     /// pointer grab (a button held): the serial is the last mouse press.
-@@ -1014,17 +1029,72 @@ impl LinuxClient for WaylandClient {
-             return;
-         };
-         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
--            state.clipboard.set(item);
--            let serial = state.serial_tracker.get(SerialKind::KeyPress);
-+            let gone = state.clipboard.set(item);
-+            let serial = state.serial_tracker.latest_input();
-+            let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
-+            for mime_type in TEXT_MIME_TYPES {
-+                data_source.offer(mime_type.to_string());
-+            }
-+            data_source.offer(state.clipboard.self_mime());
-+            data_device.set_selection(Some(&data_source), serial);
-+            drop(state);
-+            if gone {
-+                clipboard_files_gone(&self.0);
-+            }
-+        }
-+    }
-+
-+    fn write_files_to_clipboard(&self, files: crate::ClipboardFiles, text: String) {
-+        let mut state = self.0.borrow_mut();
-+        let (Some(data_device_manager), Some(data_device)) = (
-+            state.globals.data_device_manager.clone(),
-+            state.data_device.clone(),
-+        ) else {
-+            return;
-+        };
-+        if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
-             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
-+            for mime_type in crate::platform::linux::clipboard_files::mime_types(&files) {
-+                data_source.offer(mime_type.to_string());
-+            }
-             for mime_type in TEXT_MIME_TYPES {
-                 data_source.offer(mime_type.to_string());
-             }
-             data_source.offer(state.clipboard.self_mime());
-+            state.clipboard.set_files(files, text);
-+            let serial = state.serial_tracker.latest_input();
-             data_device.set_selection(Some(&data_source), serial);
-         }
-     }
- 
-+    fn read_files_from_clipboard(
-+        &self,
-+    ) -> futures::channel::oneshot::Receiver<Option<crate::ClipboardFiles>> {
-+        let (tx, rx) = futures::channel::oneshot::channel();
-+        let state = self.0.borrow();
-+        let request = state.clipboard.request_files();
-+        state
-+            .common
-+            .background_executor
-+            .spawn(async move {
-+                tx.send(request.read()).ok();
-+            })
-+            .detach();
-+        rx
-+    }
-+
-+    fn clear_clipboard_files(&self) {
-+        let mut state = self.0.borrow_mut();
-+        let Some(data_device) = state.data_device.clone() else {
-+            return;
-+        };
-+        if state.clipboard.files().is_some() {
-+            state.clipboard.clear();
-+            let serial = state.serial_tracker.latest_input();
-+            data_device.set_selection(None, serial);
-+        }
-+    }
-+
-     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
-         self.0.borrow_mut().clipboard.read_primary()
-     }
-@@ -2068,15 +2138,19 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
-                 }
-             }
-             wl_data_device::Event::Selection { id: data_offer } => {
--                if let Some(offer) = data_offer {
-+                let gone = if let Some(offer) = data_offer {
-                     let offer = state
-                         .data_offers
-                         .iter()
-                         .find(|wrapper| wrapper.inner.id() == offer.id());
-                     let offer = offer.cloned();
--                    state.clipboard.set_offer(offer);
-+                    state.clipboard.set_offer(offer)
-                 } else {
--                    state.clipboard.set_offer(None);
-+                    state.clipboard.set_offer(None)
-+                };
-+                drop(state);
-+                if gone {
-+                    clipboard_files_gone(&client);
-                 }
-             }
- 
-diff --git a/crates/gpui/src/platform/linux/wayland/clipboard.rs b/crates/gpui/src/platform/linux/wayland/clipboard.rs
-index f2fc511..f810d13 100644
---- a/crates/gpui/src/platform/linux/wayland/clipboard.rs
-+++ b/crates/gpui/src/platform/linux/wayland/clipboard.rs
-@@ -11,8 +11,8 @@ use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
- use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
- 
- use crate::{
--    ClipboardEntry, ClipboardItem, Image, ImageFormat, WaylandClientStatePtr, hash,
--    platform::linux::platform::read_fd,
-+    ClipboardEntry, ClipboardFiles, ClipboardItem, Image, ImageFormat, WaylandClientStatePtr, hash,
-+    platform::linux::{clipboard_files, platform::read_fd},
- };
- 
- /// Text mime types that we'll offer to other programs.
-@@ -31,6 +31,9 @@ pub(crate) struct Clipboard {
-     // Internal clipboard
-     contents: Option<ClipboardItem>,
-     primary_contents: Option<ClipboardItem>,
-+    /// Files this application put on the clipboard, beside `contents`'s
-+    /// text, until another application's offer takes their place.
-+    files: Option<ClipboardFiles>,
- 
-     // External clipboard
-     cached_read: Option<ClipboardItem>,
-@@ -78,6 +81,16 @@ impl<T: ReceiveData> DataOffer<T> {
-         self.mime_types.iter().any(|t| t == mime_type)
-     }
- 
-+    /// Ask for `mime_type` through a pipe, read off the main thread once the
-+    /// connection is flushed.
-+    fn receive_pipe(&self, mime_type: &str) -> Option<filedescriptor::FileDescriptor> {
-+        let pipe = Pipe::new().ok()?;
-+        self.inner.receive_data(mime_type.to_string(), unsafe {
-+            BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
-+        });
-+        Some(pipe.read)
-+    }
-+
-     fn read_bytes(&self, connection: &Connection, mime_type: &str) -> Option<Vec<u8>> {
-         let pipe = Pipe::new().unwrap();
-         self.inner.receive_data(mime_type.to_string(), unsafe {
-@@ -137,6 +150,49 @@ impl<T: ReceiveData> DataOffer<T> {
-     }
- }
- 
-+/// How the files on the clipboard are read.
-+pub(crate) enum FilesRequest {
-+    /// This application's own.
-+    Own(ClipboardFiles),
-+    /// Another application's lists, through pipes.
-+    Pipes {
-+        copied: Option<filedescriptor::FileDescriptor>,
-+        uri_list: Option<filedescriptor::FileDescriptor>,
-+        kde_cut: Option<filedescriptor::FileDescriptor>,
-+    },
-+    /// No files.
-+    Nothing,
-+}
-+
-+impl FilesRequest {
-+    /// Read off the main thread: another application's pipes until they
-+    /// close or `clipboard_files::READ_DEADLINE`.
-+    pub fn read(self) -> Option<ClipboardFiles> {
-+        match self {
-+            FilesRequest::Own(files) => Some(files),
-+            FilesRequest::Nothing => None,
-+            FilesRequest::Pipes {
-+                copied,
-+                uri_list,
-+                kde_cut,
-+            } => {
-+                let deadline = std::time::Instant::now() + clipboard_files::READ_DEADLINE;
-+                let read = |fd: Option<filedescriptor::FileDescriptor>| {
-+                    fd.and_then(|fd| clipboard_files::read_until(fd, deadline))
-+                };
-+                let copied = read(copied);
-+                let uri_list = read(uri_list);
-+                let kde_cut = read(kde_cut);
-+                clipboard_files::files_from(
-+                    copied.as_deref(),
-+                    uri_list.as_deref(),
-+                    kde_cut.as_deref(),
-+                )
-+            }
-+        }
-+    }
-+}
-+
- impl Clipboard {
-     pub fn new(
-         connection: Connection,
-@@ -149,6 +205,7 @@ impl Clipboard {
- 
-             contents: None,
-             primary_contents: None,
-+            files: None,
- 
-             cached_read: None,
-             current_offer: None,
-@@ -157,17 +214,75 @@ impl Clipboard {
-         }
-     }
- 
--    pub fn set(&mut self, item: ClipboardItem) {
-+    /// This application's text on the clipboard; true when it took the
-+    /// place of files this application had put there.
-+    pub fn set(&mut self, item: ClipboardItem) -> bool {
-         self.contents = Some(item);
-+        self.files.take().is_some()
-+    }
-+
-+    /// This application's files on the clipboard, with a text.
-+    pub fn set_files(&mut self, files: ClipboardFiles, text: String) {
-+        self.contents = Some(ClipboardItem::new_string(text));
-+        self.files = Some(files);
-+    }
-+
-+    /// The files this application put on the clipboard, while they are there.
-+    pub fn files(&self) -> Option<&ClipboardFiles> {
-+        self.files.as_ref()
-+    }
-+
-+    /// Nothing of this application's is on the clipboard any more: it emptied it.
-+    pub fn clear(&mut self) {
-+        self.contents = None;
-+        self.files = None;
-+    }
-+
-+    /// What reading the files on the clipboard takes: this application's
-+    /// own, or pipes from the application whose offer it is.
-+    pub fn request_files(&self) -> FilesRequest {
-+        if let Some(files) = &self.files {
-+            return FilesRequest::Own(files.clone());
-+        }
-+        let Some(offer) = self.current_offer.as_ref() else {
-+            return FilesRequest::Nothing;
-+        };
-+        let pipe = |mime_type: &str| {
-+            offer
-+                .has_mime_type(mime_type)
-+                .then(|| offer.receive_pipe(mime_type))
-+                .flatten()
-+        };
-+        let copied = pipe(clipboard_files::GNOME_COPIED_FILES)
-+            .or_else(|| pipe(clipboard_files::MATE_COPIED_FILES));
-+        let uri_list = pipe(clipboard_files::URI_LIST);
-+        let kde_cut = pipe(clipboard_files::KDE_CUT_SELECTION);
-+        if copied.is_none() && uri_list.is_none() {
-+            return FilesRequest::Nothing;
-+        }
-+        self.connection.flush().ok();
-+        FilesRequest::Pipes {
-+            copied,
-+            uri_list,
-+            kde_cut,
-+        }
-     }
- 
-     pub fn set_primary(&mut self, item: ClipboardItem) {
-         self.primary_contents = Some(item);
-     }
- 
--    pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) {
-+    /// The clipboard's new offer. True when it is another application's
-+    /// and takes the place of files this one had put there (an offer that
-+    /// carries this application's own type is still its own, re-offered by
-+    /// a clipboard manager).
-+    pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) -> bool {
-         self.cached_read = None;
-+        let own = data_offer
-+            .as_ref()
-+            .is_some_and(|offer| offer.has_mime_type(&self.self_mime));
-         self.current_offer = data_offer;
-+        !own && self.files.take().is_some()
-     }
- 
-     pub fn set_primary_offer(&mut self, data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>) {
-@@ -179,8 +294,14 @@ impl Clipboard {
-         self.self_mime.clone()
-     }
- 
--    pub fn send(&self, _mime_type: String, fd: OwnedFd) {
--        if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
-+    pub fn send(&self, mime_type: String, fd: OwnedFd) {
-+        if let Some(bytes) = self
-+            .files
-+            .as_ref()
-+            .and_then(|files| clipboard_files::bytes_for(files, &mime_type))
-+        {
-+            self.send_internal(fd, bytes);
-+        } else if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
-             self.send_internal(fd, text.as_bytes().to_owned());
-         }
-     }
-diff --git a/crates/gpui/src/platform/linux/wayland/serial.rs b/crates/gpui/src/platform/linux/wayland/serial.rs
-index eadc7a9..51dd377 100644
---- a/crates/gpui/src/platform/linux/wayland/serial.rs
-+++ b/crates/gpui/src/platform/linux/wayland/serial.rs
-@@ -46,4 +46,18 @@ impl SerialTracker {
-             .map(|serial_data| serial_data.serial)
-             .unwrap_or(0)
-     }
-+
-+    /// The serial of the latest key or button press: what a selection set
-+    /// now answers. A Copy chosen with the pointer is no key press, and a
-+    /// key press older than another client's selection may be refused.
-+    pub fn latest_input(&self) -> u32 {
-+        let key = self.get(SerialKind::KeyPress);
-+        let press = self.get(SerialKind::MousePress);
-+        // Serials wrap: the later is less than half the range ahead.
-+        if press.wrapping_sub(key) < u32::MAX / 2 {
-+            press
-+        } else {
-+            key
-+        }
-+    }
- }
-diff --git a/crates/gpui/src/platform/linux/x11/client.rs b/crates/gpui/src/platform/linux/x11/client.rs
-index 4f9aa4a..f18069c 100644
---- a/crates/gpui/src/platform/linux/x11/client.rs
-+++ b/crates/gpui/src/platform/linux/x11/client.rs
-@@ -215,6 +215,8 @@ pub struct X11ClientState {
-     pub(crate) common: LinuxCommon,
-     pub(crate) clipboard: Clipboard,
-     pub(crate) clipboard_item: Option<ClipboardItem>,
-+    /// Files this client put on the CLIPBOARD, while it holds them.
-+    pub(crate) clipboard_files: Option<crate::ClipboardFiles>,
-     pub(crate) xdnd_state: Xdnd,
-     /// The X server went away; said once (`X11Client::connection_lost`).
-     connection_lost: bool,
-@@ -471,6 +473,20 @@ impl X11Client {
-             })
-             .map_err(|err| anyhow!("Failed to initialize XDP event source: {err:?}"))?;
- 
-+        // Another client took the CLIPBOARD: said on the thread that serves
-+        // it, heard here.
-+        let (cleared_tx, cleared_rx) = calloop::channel::channel::<()>();
-+        clipboard.on_clipboard_cleared(Box::new(move || {
-+            cleared_tx.send(()).ok();
-+        }));
-+        handle
-+            .insert_source(cleared_rx, |event, _, client| {
-+                if let calloop::channel::Event::Msg(()) = event {
-+                    client.clipboard_cleared();
-+                }
-+            })
-+            .map_err(|err| anyhow!("Failed to initialize the clipboard's source: {err:?}"))?;
-+
-         xcb_flush(&xcb_connection);
- 
-         Ok(X11Client(Rc::new(RefCell::new(X11ClientState {
-@@ -516,6 +532,7 @@ impl X11Client {
- 
-             clipboard,
-             clipboard_item: None,
-+            clipboard_files: None,
-             xdnd_state: Xdnd::default(),
-             connection_lost: false,
-         }))))
-@@ -1386,6 +1403,38 @@ impl X11Client {
-         Some(())
-     }
- 
-+    /// Another client took the CLIPBOARD: the files this one put there, if
-+    /// any, are gone. Asked of the server, for a loss said before this
-+    /// client took it again.
-+    fn clipboard_cleared(&self) {
-+        let gone = {
-+            let mut state = self.0.borrow_mut();
-+            state.clipboard_files.is_some()
-+                && !state
-+                    .clipboard
-+                    .is_owner(clipboard::ClipboardKind::Clipboard)
-+                && state.clipboard_files.take().is_some()
-+        };
-+        if gone {
-+            self.clipboard_files_gone();
-+        }
-+    }
-+
-+    /// Tell the application the files it put on the clipboard are gone.
-+    fn clipboard_files_gone(&self) {
-+        let callback = self
-+            .0
-+            .borrow_mut()
-+            .common
-+            .callbacks
-+            .clipboard_files_gone
-+            .take();
-+        if let Some(mut callback) = callback {
-+            callback();
-+            self.0.borrow_mut().common.callbacks.clipboard_files_gone = Some(callback);
-+        }
-+    }
-+
-     fn handle_keyboard_layout_change(&self) {
-         let mut state = self.0.borrow_mut();
-         let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
-@@ -1588,6 +1637,56 @@ impl LinuxClient for X11Client {
-             .context("X11: Failed to write to clipboard (clipboard)")
-             .log_with_level(log::Level::Debug);
-         state.clipboard_item.replace(item);
-+        let gone = state.clipboard_files.take().is_some();
-+        drop(state);
-+        if gone {
-+            self.clipboard_files_gone();
-+        }
-+    }
-+
-+    fn write_files_to_clipboard(&self, files: crate::ClipboardFiles, text: String) {
-+        let mut state = self.0.borrow_mut();
-+        let written = state
-+            .clipboard
-+            .set_files(&files, text.clone())
-+            .context("X11: Failed to write files to clipboard")
-+            .log_with_level(log::Level::Debug);
-+        if written.is_some() {
-+            state.clipboard_item = Some(ClipboardItem::new_string(text));
-+            state.clipboard_files = Some(files);
-+        }
-+    }
-+
-+    fn read_files_from_clipboard(
-+        &self,
-+    ) -> futures::channel::oneshot::Receiver<Option<crate::ClipboardFiles>> {
-+        let (tx, rx) = futures::channel::oneshot::channel();
-+        let state = self.0.borrow();
-+        if let Some(files) = &state.clipboard_files {
-+            tx.send(Some(files.clone())).ok();
-+            return rx;
-+        }
-+        let reader = state.clipboard.files_reader();
-+        state
-+            .common
-+            .background_executor
-+            .spawn(async move {
-+                tx.send(reader.read()).ok();
-+            })
-+            .detach();
-+        rx
-+    }
-+
-+    fn clear_clipboard_files(&self) {
-+        let mut state = self.0.borrow_mut();
-+        if state.clipboard_files.take().is_some() {
-+            state.clipboard_item = None;
-+            state
-+                .clipboard
-+                .clear()
-+                .context("X11: Failed to empty the clipboard")
-+                .log_with_level(log::Level::Debug);
-+        }
-     }
- 
-     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
-diff --git a/crates/gpui/src/platform/linux/x11/clipboard.rs b/crates/gpui/src/platform/linux/x11/clipboard.rs
-index 47a0f32..dfb81fe 100644
---- a/crates/gpui/src/platform/linux/x11/clipboard.rs
-+++ b/crates/gpui/src/platform/linux/x11/clipboard.rs
-@@ -47,7 +47,9 @@ use x11rb::{
-     wrapper::ConnectionExt as _,
- };
- 
--use crate::{ClipboardItem, Image, ImageFormat, hash};
-+use crate::{
-+    ClipboardFiles, ClipboardItem, Image, ImageFormat, hash, platform::linux::clipboard_files,
-+};
- 
- type Result<T, E = Error> = std::result::Result<T, E>;
- 
-@@ -77,7 +79,11 @@ x11rb::atom_manager! {
-         TEXT_MIME_UNKNOWN: b"text/plain",
- 
-         // HTML: b"text/html",
--        // URI_LIST: b"text/uri-list",
-+        // Files, as Linux file managers put them there (`clipboard_files`).
-+        URI_LIST: b"text/uri-list",
-+        GNOME_COPIED: b"x-special/gnome-copied-files",
-+        MATE_COPIED: b"x-special/mate-copied-files",
-+        KDE_CUT: b"application/x-kde-cutselection",
- 
-         PNG__MIME: ImageFormat::mime_type(ImageFormat::Png ).as_bytes(),
-         JPEG_MIME: ImageFormat::mime_type(ImageFormat::Jpeg).as_bytes(),
-@@ -157,6 +163,9 @@ struct Inner {
- 
-     /// Incremental transfers under way, touched only by the serving thread.
-     transfers: Mutex<Vec<Transfer>>,
-+
-+    /// Called on the serving thread when another client takes the CLIPBOARD.
-+    on_clipboard_cleared: Mutex<Option<Box<dyn Fn() + Send>>>,
- }
- 
- impl XContext {
-@@ -245,6 +254,7 @@ impl Inner {
-             handover_cv: Condvar::new(),
-             serve_stopped: AtomicBool::new(false),
-             transfers: Mutex::new(Vec::new()),
-+            on_clipboard_cleared: Mutex::new(None),
-         })
-     }
- 
-@@ -716,6 +726,7 @@ impl Inner {
-                         // add all equivalent formats to the supported targets
-                         targets.push(self.atoms.UTF8_MIME_0);
-                         targets.push(self.atoms.UTF8_MIME_1);
-+                        targets.push(self.atoms.TEXT_MIME_UNKNOWN);
-                     }
-                 }
-             }
-@@ -735,8 +746,17 @@ impl Inner {
-         } else {
-             log::trace!("Handling request for (probably) the clipboard contents.");
-             let data = self.selection_of(selection).data.read();
-+            // The text's other names, which TARGETS lists beside UTF8_STRING.
-+            let utf8_alias = [
-+                self.atoms.UTF8_MIME_0,
-+                self.atoms.UTF8_MIME_1,
-+                self.atoms.TEXT_MIME_UNKNOWN,
-+            ]
-+            .contains(&event.target);
-             if let Some(data_list) = &*data {
--                success = match data_list.iter().find(|d| d.format == event.target) {
-+                success = match data_list.iter().find(|d| {
-+                    d.format == event.target || (utf8_alias && d.format == self.atoms.UTF8_STRING)
-+                }) {
-                     // More than one request carries: in pieces (INCR).
-                     Some(data) if data.bytes.len() > self.max_property_bytes() => {
-                         self.start_transfer(&event, data)?;
-@@ -983,6 +1003,11 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
-                     let selection = context.selection_of(selection);
-                     let mut data_guard = selection.data.write();
-                     *data_guard = None;
-+                    if event.selection == context.atoms.CLIPBOARD
-+                        && let Some(cleared) = &*context.on_clipboard_cleared.lock()
-+                    {
-+                        cleared();
-+                    }
- 
-                     // It is important that this mutex is locked at the time of calling
-                     // `notify_all` to prevent notifications getting lost in case the sleeping
-@@ -1210,6 +1235,88 @@ impl Clipboard {
-     pub fn is_owner(&self, selection: ClipboardKind) -> bool {
-         self.inner.is_owner(selection).unwrap_or(false)
-     }
-+
-+    /// Files on the clipboard, as Linux file managers put them there, with
-+    /// `text` for the clients that take text.
-+    pub(crate) fn set_files(&self, files: &ClipboardFiles, text: String) -> Result<()> {
-+        let atoms = &self.inner.atoms;
-+        let mut data = vec![ClipboardData {
-+            bytes: text.into_bytes(),
-+            format: atoms.UTF8_STRING,
-+        }];
-+        for (format, mime_type) in [
-+            (atoms.GNOME_COPIED, clipboard_files::GNOME_COPIED_FILES),
-+            (atoms.MATE_COPIED, clipboard_files::MATE_COPIED_FILES),
-+            (atoms.URI_LIST, clipboard_files::URI_LIST),
-+            (atoms.KDE_CUT, clipboard_files::KDE_CUT_SELECTION),
-+        ] {
-+            if let Some(bytes) = clipboard_files::bytes_for(files, mime_type) {
-+                data.push(ClipboardData { bytes, format });
-+            }
-+        }
-+        self.inner
-+            .write(data, ClipboardKind::Clipboard, WaitConfig::None)
-+    }
-+
-+    /// Give up the CLIPBOARD, emptying it.
-+    pub(crate) fn clear(&self) -> Result<()> {
-+        let inner = &self.inner;
-+        *inner.clipboard.data.write() = None;
-+        inner
-+            .server
-+            .conn
-+            .set_selection_owner(x11rb::NONE, inner.atoms.CLIPBOARD, Time::CURRENT_TIME)
-+            .map_err(into_unknown)?;
-+        inner.server.conn.flush().map_err(into_unknown)?;
-+        Ok(())
-+    }
-+
-+    /// Call `cleared` on the serving thread when another client takes the
-+    /// CLIPBOARD.
-+    pub(crate) fn on_clipboard_cleared(&self, cleared: Box<dyn Fn() + Send>) {
-+        *self.inner.on_clipboard_cleared.lock() = Some(cleared);
-+    }
-+
-+    /// What reads the files on the CLIPBOARD, on any thread.
-+    pub(crate) fn files_reader(&self) -> FilesReader {
-+        FilesReader(Arc::clone(&self.inner))
-+    }
-+}
-+
-+/// Reads the files another client put on the CLIPBOARD: GTK's (or MATE's)
-+/// list, else the URI list with KDE's flag. Each read waits on the X server
-+/// (up to `LONG_TIMEOUT_DUR` a format): never on the main thread.
-+pub(crate) struct FilesReader(Arc<Inner>);
-+
-+impl FilesReader {
-+    pub(crate) fn read(self) -> Option<ClipboardFiles> {
-+        let inner = &self.0;
-+        let atoms = &inner.atoms;
-+        let selection = ClipboardKind::Clipboard;
-+        let one = |format: Atom| {
-+            inner
-+                .read(&[format], selection)
-+                .ok()
-+                .filter(|data| data.format == format)
-+                .map(|data| data.bytes)
-+        };
-+        let first = inner
-+            .read(
-+                &[atoms.GNOME_COPIED, atoms.MATE_COPIED, atoms.URI_LIST],
-+                selection,
-+            )
-+            .ok()?;
-+        if first.format == atoms.URI_LIST {
-+            let kde_cut = one(atoms.KDE_CUT);
-+            return clipboard_files::files_from(None, Some(&first.bytes), kde_cut.as_deref());
-+        }
-+        let files = clipboard_files::files_from(Some(&first.bytes), None, None)?;
-+        if files.others.is_empty() {
-+            return Some(files);
-+        }
-+        let uri_list = one(atoms.URI_LIST);
-+        clipboard_files::files_from(Some(&first.bytes), uri_list.as_deref(), None)
-+    }
- }
- 
- impl Drop for Clipboard {
-diff --git a/crates/gpui/src/platform/linux/clipboard_files.rs b/crates/gpui/src/platform/linux/clipboard_files.rs
+diff --git a/crates/gpui_linux/src/linux/clipboard_files.rs b/crates/gpui_linux/src/linux/clipboard_files.rs
 new file mode 100644
-index 0000000..0e0b5f6
+index 0000000..89b7de9
 --- /dev/null
-+++ b/crates/gpui/src/platform/linux/clipboard_files.rs
-@@ -0,0 +1,291 @@
++++ b/crates/gpui_linux/src/linux/clipboard_files.rs
+@@ -0,0 +1,257 @@
 +//! Files on the clipboard as Linux file managers put them there, in the two
 +//! families that do not read each other: GTK's (`x-special/gnome-copied-files`,
 +//! MATE's under its own name: `copy` or `cut`, then one URI a line) and KDE's
@@ -916,26 +174,15 @@ index 0000000..0e0b5f6
 +//! A path is a URI byte for byte (`file:///lat%E9.txt`), never through text:
 +//! a name that is not UTF-8 stays the file it names.
 +
-+use std::{
-+    io::Read,
-+    os::fd::AsRawFd,
-+    path::Path,
-+    time::{Duration, Instant},
-+};
++use std::path::Path;
 +
-+use filedescriptor::{FileDescriptor, POLLIN, pollfd};
++use gpui::ClipboardFiles;
 +use http_client::Url;
-+
-+use crate::ClipboardFiles;
 +
 +pub(crate) const GNOME_COPIED_FILES: &str = "x-special/gnome-copied-files";
 +pub(crate) const MATE_COPIED_FILES: &str = "x-special/mate-copied-files";
 +pub(crate) const URI_LIST: &str = "text/uri-list";
 +pub(crate) const KDE_CUT_SELECTION: &str = "application/x-kde-cutselection";
-+
-+/// How long another application has to hand its files over: one that never
-+/// does (gone, or stuck) is not waited for.
-+pub(crate) const READ_DEADLINE: Duration = Duration::from_secs(5);
 +
 +/// The `file://` URI of `path`, its bytes percent-encoded as they are.
 +fn uri_of(path: &Path) -> Option<String> {
@@ -983,6 +230,7 @@ index 0000000..0e0b5f6
 +}
 +
 +/// The types offered for `files`, before the text's.
++#[cfg_attr(not(feature = "wayland"), allow(dead_code))]
 +pub(crate) fn mime_types(files: &ClipboardFiles) -> Vec<&'static str> {
 +    let mut types = vec![GNOME_COPIED_FILES, MATE_COPIED_FILES, URI_LIST];
 +    if files.cut {
@@ -1066,30 +314,6 @@ index 0000000..0e0b5f6
 +        None => listed?,
 +    };
 +    (!files.paths.is_empty() || !files.others.is_empty()).then_some(files)
-+}
-+
-+/// Read a pipe to its end, giving up at `deadline`: what another
-+/// application hands over through it.
-+pub(crate) fn read_until(mut fd: FileDescriptor, deadline: Instant) -> Option<Vec<u8>> {
-+    let mut out = Vec::new();
-+    let mut chunk = [0u8; 8192];
-+    loop {
-+        let left = deadline.checked_duration_since(Instant::now())?;
-+        let mut poll = [pollfd {
-+            fd: fd.as_raw_fd(),
-+            events: POLLIN,
-+            revents: 0,
-+        }];
-+        if filedescriptor::poll(&mut poll, Some(left)).ok()? == 0 {
-+            return None;
-+        }
-+        match fd.read(&mut chunk) {
-+            Ok(0) => return Some(out),
-+            Ok(n) => out.extend_from_slice(&chunk[..n]),
-+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
-+            Err(_) => return None,
-+        }
-+    }
 +}
 +
 +#[cfg(test)]
@@ -1198,3 +422,878 @@ index 0000000..0e0b5f6
 +        assert!(kde_cut(b"1\n"));
 +    }
 +}
+diff --git a/crates/gpui_linux/src/linux/display_connection.rs b/crates/gpui_linux/src/linux/display_connection.rs
+index d7849d0..00d1557 100644
+--- a/crates/gpui_linux/src/linux/display_connection.rs
++++ b/crates/gpui_linux/src/linux/display_connection.rs
+@@ -182,6 +182,26 @@ impl DisplayConnection {
+         dispatch!(self, connection => connection.write_to_clipboard(item), headless => ())
+     }
+ 
++    pub(crate) fn write_files_to_clipboard(&self, files: gpui::ClipboardFiles, text: String) {
++        dispatch!(
++            self,
++            connection => connection.write_files_to_clipboard(files, text),
++            headless => ()
++        )
++    }
++
++    pub(crate) fn read_files_from_clipboard(&self) -> gpui::Task<Option<gpui::ClipboardFiles>> {
++        dispatch!(
++            self,
++            connection => connection.read_files_from_clipboard(),
++            headless => gpui::Task::ready(None)
++        )
++    }
++
++    pub(crate) fn clear_clipboard_files(&self) {
++        dispatch!(self, connection => connection.clear_clipboard_files(), headless => ())
++    }
++
+     pub(crate) fn read_from_primary(&self) -> Option<ClipboardItem> {
+         dispatch!(self, connection => connection.read_from_primary(), headless => None)
+     }
+diff --git a/crates/gpui_linux/src/linux/platform.rs b/crates/gpui_linux/src/linux/platform.rs
+index 1fd4139..079fbd2 100644
+--- a/crates/gpui_linux/src/linux/platform.rs
++++ b/crates/gpui_linux/src/linux/platform.rs
+@@ -72,6 +72,8 @@ pub(crate) struct PlatformHandlers {
+     pub(crate) system_sleep: Option<Box<dyn FnMut()>>,
+     pub(crate) system_wake: Option<Box<dyn FnMut()>>,
+     pub(crate) displays_changed: Option<Box<dyn FnMut()>>,
++    /// The files this application put on the clipboard are no longer there.
++    pub(crate) clipboard_files_gone: Option<Box<dyn FnMut()>>,
+ }
+ 
+ /// A logind `PrepareForSleep` signal, forwarded from the D-Bus listener to
+@@ -239,6 +241,24 @@ impl LinuxCommon {
+             }
+         }
+     }
++
++    /// Tells the app the files it put on the clipboard are no longer there,
++    /// without `common` borrowed: the callback only schedules work.
++    #[cfg_attr(
++        not(any(feature = "wayland", feature = "x11")),
++        allow(dead_code, reason = "only a display server's clipboard holds files")
++    )]
++    pub(crate) fn clipboard_files_gone(common: &RefCell<Self>) {
++        let callback = common.borrow_mut().callbacks.clipboard_files_gone.take();
++        if let Some(mut callback) = callback {
++            callback();
++            common
++                .borrow_mut()
++                .callbacks
++                .clipboard_files_gone
++                .get_or_insert(callback);
++        }
++    }
+ }
+ 
+ #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+@@ -572,6 +592,10 @@ impl Platform for LinuxPlatform {
+         self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
+     }
+ 
++    fn on_clipboard_files_gone(&self, callback: Box<dyn FnMut()>) {
++        self.with_common(|common| common.callbacks.clipboard_files_gone = Some(callback));
++    }
++
+     fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
+ 
+     fn thermal_state(&self) -> ThermalState {
+@@ -1119,6 +1143,20 @@ impl Platform for LinuxPlatform {
+         self.connection.borrow().read_from_clipboard()
+     }
+ 
++    fn write_files_to_clipboard(&self, files: gpui::ClipboardFiles, text: String) {
++        self.connection
++            .borrow()
++            .write_files_to_clipboard(files, text)
++    }
++
++    fn read_files_from_clipboard(&self) -> Task<Option<gpui::ClipboardFiles>> {
++        self.connection.borrow().read_files_from_clipboard()
++    }
++
++    fn clear_clipboard_files(&self) {
++        self.connection.borrow().clear_clipboard_files()
++    }
++
+     fn add_recent_document(&self, _path: &Path) {}
+ }
+ 
+diff --git a/crates/gpui_linux/src/linux/wayland/client.rs b/crates/gpui_linux/src/linux/wayland/client.rs
+index 7af73ec..33d5528 100644
+--- a/crates/gpui_linux/src/linux/wayland/client.rs
++++ b/crates/gpui_linux/src/linux/wayland/client.rs
+@@ -1590,7 +1590,9 @@ impl WaylandConnection {
+             return;
+         };
+         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
+-            state.clipboard.set(item);
++            if state.clipboard.set(item) {
++                LinuxCommon::clipboard_files_gone(&state.common);
++            }
+             let Some(serial) = state.serial_tracker.selection_serial() else {
+                 log::warn!(
+                     "Skipping Wayland clipboard ownership request because no keyboard or pointer press serial has been received"
+@@ -1607,6 +1609,61 @@ impl WaylandConnection {
+         }
+     }
+ 
++    /// Files on the clipboard as file managers put them there (see
++    /// `clipboard_files`), with `text` for the applications that take text.
++    pub(crate) fn write_files_to_clipboard(&self, files: gpui::ClipboardFiles, text: String) {
++        let mut state = self.0.borrow_mut();
++        let (Some(data_device_manager), Some(data_device)) = (
++            state.globals.data_device_manager.clone(),
++            state.data_device.clone(),
++        ) else {
++            return;
++        };
++        if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
++            let Some(serial) = state.serial_tracker.selection_serial() else {
++                log::warn!(
++                    "Skipping Wayland clipboard ownership request because no keyboard or pointer press serial has been received"
++                );
++                return;
++            };
++            let data_source = data_device_manager
++                .create_data_source(&state.globals.qh, DataSourceKind::Clipboard);
++            for mime_type in crate::linux::clipboard_files::mime_types(&files) {
++                data_source.offer(mime_type.to_string());
++            }
++            for mime_type in TEXT_MIME_TYPES {
++                data_source.offer(mime_type.to_string());
++            }
++            data_source.offer(state.clipboard.self_mime());
++            state.clipboard.set_files(files, text);
++            data_device.set_selection(Some(&data_source), serial.as_raw());
++        }
++    }
++
++    /// The files on the clipboard: this application's own at once, another's
++    /// asked for through pipes here and read on the background executor.
++    pub(crate) fn read_files_from_clipboard(&self) -> gpui::Task<Option<gpui::ClipboardFiles>> {
++        let state = self.0.borrow();
++        let request = state.clipboard.request_files();
++        let executor = state.common.borrow().background_executor.clone();
++        executor.spawn(async move { request.read() })
++    }
++
++    /// Empty the clipboard if it still holds this application's files.
++    pub(crate) fn clear_clipboard_files(&self) {
++        let mut state = self.0.borrow_mut();
++        let Some(data_device) = state.data_device.clone() else {
++            return;
++        };
++        if state.clipboard.files().is_some() {
++            state.clipboard.clear();
++            let Some(serial) = state.serial_tracker.selection_serial() else {
++                return;
++            };
++            data_device.set_selection(None, serial.as_raw());
++        }
++    }
++
+     pub(crate) fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
+         self.0.borrow_mut().clipboard.read_primary()
+     }
+@@ -2997,15 +3054,18 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
+                 }
+             }
+             wl_data_device::Event::Selection { id: data_offer } => {
+-                if let Some(offer) = data_offer {
++                let gone = if let Some(offer) = data_offer {
+                     let offer = state
+                         .data_offers
+                         .iter()
+                         .find(|wrapper| wrapper.inner.id() == offer.id());
+                     let offer = offer.cloned();
+-                    state.clipboard.set_offer(offer);
++                    state.clipboard.set_offer(offer)
+                 } else {
+-                    state.clipboard.set_offer(None);
++                    state.clipboard.set_offer(None)
++                };
++                if gone {
++                    LinuxCommon::clipboard_files_gone(&state.common);
+                 }
+             }
+ 
+diff --git a/crates/gpui_linux/src/linux/wayland/clipboard.rs b/crates/gpui_linux/src/linux/wayland/clipboard.rs
+index 86dc7da..a62fb75 100644
+--- a/crates/gpui_linux/src/linux/wayland/clipboard.rs
++++ b/crates/gpui_linux/src/linux/wayland/clipboard.rs
+@@ -10,8 +10,11 @@ use strum::IntoEnumIterator;
+ use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
+ use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
+ 
+-use crate::linux::platform::{PIPE_READ_TIMEOUT, read_fd_with_timeout};
+-use gpui::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
++use crate::linux::{
++    clipboard_files,
++    platform::{PIPE_READ_TIMEOUT, read_fd_with_timeout},
++};
++use gpui::{ClipboardEntry, ClipboardFiles, ClipboardItem, Image, ImageFormat, hash};
+ 
+ /// Text mime types that we'll offer to other programs.
+ pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
+@@ -29,6 +32,9 @@ pub(crate) struct Clipboard {
+     // Internal clipboard
+     contents: Option<ClipboardItem>,
+     primary_contents: Option<ClipboardItem>,
++    /// Files this application put on the clipboard, beside `contents`'s
++    /// text, until another application's offer takes their place.
++    files: Option<ClipboardFiles>,
+ 
+     // External clipboard
+     cached_read: Option<ClipboardItem>,
+@@ -76,6 +82,16 @@ impl<T: ReceiveData> DataOffer<T> {
+         self.mime_types.iter().any(|t| t == mime_type)
+     }
+ 
++    /// Ask for `mime_type` through a pipe, read off the main thread once the
++    /// connection is flushed.
++    fn receive_pipe(&self, mime_type: &str) -> Option<filedescriptor::FileDescriptor> {
++        let pipe = Pipe::new().ok()?;
++        self.inner.receive_data(mime_type.to_string(), unsafe {
++            BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
++        });
++        Some(pipe.read)
++    }
++
+     fn read_bytes(&self, connection: &Connection, mime_type: &str) -> Option<Vec<u8>> {
+         let pipe = Pipe::new().unwrap();
+         self.inner.receive_data(mime_type.to_string(), unsafe {
+@@ -135,6 +151,52 @@ impl<T: ReceiveData> DataOffer<T> {
+     }
+ }
+ 
++/// How the files on the clipboard are read.
++pub(crate) enum FilesRequest {
++    /// This application's own.
++    Own(ClipboardFiles),
++    /// Another application's lists, through pipes.
++    Pipes {
++        copied: Option<filedescriptor::FileDescriptor>,
++        uri_list: Option<filedescriptor::FileDescriptor>,
++        kde_cut: Option<filedescriptor::FileDescriptor>,
++    },
++    /// No files.
++    Nothing,
++}
++
++impl FilesRequest {
++    /// Read off the main thread: another application's pipes until they
++    /// close, or until `PIPE_READ_TIMEOUT` has passed for them all.
++    pub fn read(self) -> Option<ClipboardFiles> {
++        match self {
++            FilesRequest::Own(files) => Some(files),
++            FilesRequest::Nothing => None,
++            FilesRequest::Pipes {
++                copied,
++                uri_list,
++                kde_cut,
++            } => {
++                let deadline = std::time::Instant::now() + PIPE_READ_TIMEOUT;
++                let read = |fd: Option<filedescriptor::FileDescriptor>| {
++                    let left = deadline.checked_duration_since(std::time::Instant::now())?;
++                    read_fd_with_timeout(fd?, left)
++                        .map_err(|err| log::error!("error reading clipboard files: {err:?}"))
++                        .ok()
++                };
++                let copied = read(copied);
++                let uri_list = read(uri_list);
++                let kde_cut = read(kde_cut);
++                clipboard_files::files_from(
++                    copied.as_deref(),
++                    uri_list.as_deref(),
++                    kde_cut.as_deref(),
++                )
++            }
++        }
++    }
++}
++
+ impl Clipboard {
+     pub fn new(connection: Connection, loop_handle: LoopHandle<'static, ()>) -> Self {
+         Self {
+@@ -144,6 +206,7 @@ impl Clipboard {
+ 
+             contents: None,
+             primary_contents: None,
++            files: None,
+ 
+             cached_read: None,
+             current_offer: None,
+@@ -152,17 +215,75 @@ impl Clipboard {
+         }
+     }
+ 
+-    pub fn set(&mut self, item: ClipboardItem) {
++    /// This application's text on the clipboard; true when it took the
++    /// place of files this application had put there.
++    pub fn set(&mut self, item: ClipboardItem) -> bool {
+         self.contents = Some(item);
++        self.files.take().is_some()
++    }
++
++    /// This application's files on the clipboard, with a text.
++    pub fn set_files(&mut self, files: ClipboardFiles, text: String) {
++        self.contents = Some(ClipboardItem::new_string(text));
++        self.files = Some(files);
++    }
++
++    /// The files this application put on the clipboard, while they are there.
++    pub fn files(&self) -> Option<&ClipboardFiles> {
++        self.files.as_ref()
++    }
++
++    /// Nothing of this application's is on the clipboard any more: it emptied it.
++    pub fn clear(&mut self) {
++        self.contents = None;
++        self.files = None;
++    }
++
++    /// What reading the files on the clipboard takes: this application's
++    /// own, or pipes from the application whose offer it is.
++    pub fn request_files(&self) -> FilesRequest {
++        if let Some(files) = &self.files {
++            return FilesRequest::Own(files.clone());
++        }
++        let Some(offer) = self.current_offer.as_ref() else {
++            return FilesRequest::Nothing;
++        };
++        let pipe = |mime_type: &str| {
++            offer
++                .has_mime_type(mime_type)
++                .then(|| offer.receive_pipe(mime_type))
++                .flatten()
++        };
++        let copied = pipe(clipboard_files::GNOME_COPIED_FILES)
++            .or_else(|| pipe(clipboard_files::MATE_COPIED_FILES));
++        let uri_list = pipe(clipboard_files::URI_LIST);
++        let kde_cut = pipe(clipboard_files::KDE_CUT_SELECTION);
++        if copied.is_none() && uri_list.is_none() {
++            return FilesRequest::Nothing;
++        }
++        self.connection.flush().ok();
++        FilesRequest::Pipes {
++            copied,
++            uri_list,
++            kde_cut,
++        }
+     }
+ 
+     pub fn set_primary(&mut self, item: ClipboardItem) {
+         self.primary_contents = Some(item);
+     }
+ 
+-    pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) {
++    /// The clipboard's new offer. True when it is another application's
++    /// and takes the place of files this one had put there (an offer that
++    /// carries this application's own type is still its own, re-offered by
++    /// a clipboard manager).
++    pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) -> bool {
+         self.cached_read = None;
++        let own = data_offer
++            .as_ref()
++            .is_some_and(|offer| offer.has_mime_type(&self.self_mime));
+         self.current_offer = data_offer;
++        !own && self.files.take().is_some()
+     }
+ 
+     pub fn set_primary_offer(&mut self, data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>) {
+@@ -174,8 +295,14 @@ impl Clipboard {
+         self.self_mime.clone()
+     }
+ 
+-    pub fn send(&self, _mime_type: String, fd: OwnedFd) {
+-        if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
++    pub fn send(&self, mime_type: String, fd: OwnedFd) {
++        if let Some(bytes) = self
++            .files
++            .as_ref()
++            .and_then(|files| clipboard_files::bytes_for(files, &mime_type))
++        {
++            self.send_bytes(fd, bytes);
++        } else if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
+             self.send_bytes(fd, text.as_bytes().to_owned());
+         }
+     }
+diff --git a/crates/gpui_linux/src/linux/x11/client.rs b/crates/gpui_linux/src/linux/x11/client.rs
+index 601eb93..66bb8fe 100644
+--- a/crates/gpui_linux/src/linux/x11/client.rs
++++ b/crates/gpui_linux/src/linux/x11/client.rs
+@@ -238,6 +238,8 @@ pub struct X11ClientState {
+     pub(crate) common: Rc<RefCell<LinuxCommon>>,
+     pub(crate) clipboard: Clipboard,
+     pub(crate) clipboard_item: Option<ClipboardItem>,
++    /// Files this client put on the CLIPBOARD, while it holds them.
++    pub(crate) clipboard_files: Option<gpui::ClipboardFiles>,
+     pub(crate) xdnd_state: Xdnd,
+ }
+ 
+@@ -553,6 +555,7 @@ impl X11Connection {
+ 
+                 clipboard,
+                 clipboard_item: None,
++                clipboard_files: None,
+                 xdnd_state: Xdnd::default(),
+             })
+         })));
+@@ -631,6 +634,29 @@ impl X11Client {
+             .map_err(|err| anyhow!("Failed to initialize XDP event source: {err:?}"))?;
+         self.0.borrow_mut().registrations.push(token);
+ 
++        // Another client took the CLIPBOARD: said on the thread that serves
++        // it, heard here.
++        let (cleared_tx, cleared_rx) = calloop::channel::channel::<()>();
++        self.0
++            .borrow()
++            .clipboard
++            .on_clipboard_cleared(Box::new(move || {
++                cleared_tx.send(()).ok();
++            }));
++        let token = handle
++            .insert_source(cleared_rx, {
++                let this = this.clone();
++                move |event, _, _| {
++                    if let calloop::channel::Event::Msg(()) = event
++                        && let Some(client) = this.get_client()
++                    {
++                        client.clipboard_cleared();
++                    }
++                }
++            })
++            .map_err(|err| anyhow!("Failed to initialize the clipboard's source: {err:?}"))?;
++        self.0.borrow_mut().registrations.push(token);
++
+         // Runnables' requests can read events into xcb's queue, where they don't wake the loop.
+         let common = self.0.borrow().common.clone();
+         common.borrow_mut().after_runnable = Some(Rc::new(move || {
+@@ -1625,6 +1651,21 @@ impl X11Client {
+             }
+         }
+     }
++
++    /// Another client took the CLIPBOARD: the files this one put there, if
++    /// any, are gone. Asked of the server, for a loss said before this
++    /// client took it again.
++    fn clipboard_cleared(&self) {
++        let mut state = self.0.borrow_mut();
++        if state.clipboard_files.is_some()
++            && !state
++                .clipboard
++                .is_owner(clipboard::ClipboardKind::Clipboard)
++        {
++            state.clipboard_files = None;
++            LinuxCommon::clipboard_files_gone(&state.common);
++        }
++    }
+ }
+ 
+ impl X11Client {
+@@ -1848,6 +1889,49 @@ impl X11Client {
+             .context("X11: Failed to write to clipboard (clipboard)")
+             .log_with_level(log::Level::Debug);
+         state.clipboard_item.replace(item);
++        if state.clipboard_files.take().is_some() {
++            LinuxCommon::clipboard_files_gone(&state.common);
++        }
++    }
++
++    /// Files on the CLIPBOARD as file managers put them there (see
++    /// `clipboard_files`), with `text` for the clients that take text.
++    pub(crate) fn write_files_to_clipboard(&self, files: gpui::ClipboardFiles, text: String) {
++        let mut state = self.0.borrow_mut();
++        let written = state
++            .clipboard
++            .set_files(&files, text.clone())
++            .context("X11: Failed to write files to clipboard")
++            .log_with_level(log::Level::Debug);
++        if written.is_some() {
++            state.clipboard_item = Some(ClipboardItem::new_string(text));
++            state.clipboard_files = Some(files);
++        }
++    }
++
++    /// The files on the CLIPBOARD: this client's own at once, another's
++    /// read on the background executor (each read is its own X connection).
++    pub(crate) fn read_files_from_clipboard(&self) -> gpui::Task<Option<gpui::ClipboardFiles>> {
++        let state = self.0.borrow();
++        if let Some(files) = &state.clipboard_files {
++            return gpui::Task::ready(Some(files.clone()));
++        }
++        let reader = state.clipboard.files_reader();
++        let executor = state.common.borrow().background_executor.clone();
++        executor.spawn(async move { reader.read() })
++    }
++
++    /// Empty the CLIPBOARD if it still holds this client's files.
++    pub(crate) fn clear_clipboard_files(&self) {
++        let mut state = self.0.borrow_mut();
++        if state.clipboard_files.take().is_some() {
++            state.clipboard_item = None;
++            state
++                .clipboard
++                .clear()
++                .context("X11: Failed to empty the clipboard")
++                .log_with_level(log::Level::Debug);
++        }
+     }
+ 
+     pub(crate) fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
+diff --git a/crates/gpui_linux/src/linux/x11/clipboard.rs b/crates/gpui_linux/src/linux/x11/clipboard.rs
+index 9835786..8d77e09 100644
+--- a/crates/gpui_linux/src/linux/x11/clipboard.rs
++++ b/crates/gpui_linux/src/linux/x11/clipboard.rs
+@@ -34,20 +34,21 @@ use std::{
+ use parking_lot::{Condvar, Mutex, MutexGuard, RwLock};
+ use x11rb::{
+     COPY_DEPTH_FROM_PARENT, COPY_FROM_PARENT, NONE,
+-    connection::Connection,
++    connection::{Connection, RequestConnection as _},
+     protocol::{
+         Event,
+         xproto::{
+-            Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, Property,
+-            PropertyNotifyEvent, SELECTION_NOTIFY_EVENT, SelectionNotifyEvent,
+-            SelectionRequestEvent, Time, WindowClass,
++            Atom, AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, CreateWindowAux,
++            EventMask, PropMode, Property, PropertyNotifyEvent, SELECTION_NOTIFY_EVENT,
++            SelectionNotifyEvent, SelectionRequestEvent, Time, Window, WindowClass,
+         },
+     },
+     rust_connection::RustConnection,
+     wrapper::ConnectionExt as _,
+ };
+ 
+-use gpui::{ClipboardItem, Image, ImageFormat, hash};
++use crate::linux::clipboard_files;
++use gpui::{ClipboardFiles, ClipboardItem, Image, ImageFormat, hash};
+ use strum::IntoEnumIterator;
+ 
+ type Result<T, E = Error> = std::result::Result<T, E>;
+@@ -78,7 +79,11 @@ x11rb::atom_manager! {
+         TEXT_MIME_UNKNOWN: b"text/plain",
+ 
+         // HTML: b"text/html",
+-        // URI_LIST: b"text/uri-list",
++        // Files, as Linux file managers put them there (`clipboard_files`).
++        URI_LIST: b"text/uri-list",
++        GNOME_COPIED: b"x-special/gnome-copied-files",
++        MATE_COPIED: b"x-special/mate-copied-files",
++        KDE_CUT: b"application/x-kde-cutselection",
+ 
+         PNG__MIME: ImageFormat::mime_type(ImageFormat::Png ).as_bytes(),
+         JPEG_MIME: ImageFormat::mime_type(ImageFormat::Jpeg).as_bytes(),
+@@ -104,6 +109,25 @@ thread_local! {
+ const LONG_TIMEOUT_DUR: Duration = Duration::from_millis(4000);
+ const SHORT_TIMEOUT_DUR: Duration = Duration::from_millis(10);
+ 
++/// A ChangeProperty request's header, BIG-REQUESTS' longer length included.
++const CHANGE_PROPERTY_HEADER: usize = 28;
++/// How long an incremental transfer waits for its requestor to take the
++/// next piece before it is dropped: a requestor that went away never does.
++const INCR_ABANDONED: Duration = Duration::from_secs(30);
++
++/// Data too large for one request, handed to a requestor in pieces (ICCCM
++/// 2.7.2, INCR): each piece once it deleted the one before, then an empty
++/// one.
++struct Transfer {
++    requestor: Window,
++    property: Atom,
++    format: Atom,
++    bytes: Vec<u8>,
++    sent: usize,
++    /// When the requestor last took a piece.
++    progress: Instant,
++}
++
+ #[derive(Debug, PartialEq, Eq)]
+ enum ManagerHandoverState {
+     Idle,
+@@ -139,6 +163,12 @@ struct Inner {
+     handover_cv: Condvar,
+ 
+     serve_stopped: AtomicBool,
++
++    /// Incremental transfers under way, touched only by the serving thread.
++    transfers: Mutex<Vec<Transfer>>,
++
++    /// Called on the serving thread when another client takes the CLIPBOARD.
++    on_clipboard_cleared: Mutex<Option<Box<dyn Fn() + Send>>>,
+ }
+ 
+ impl XContext {
+@@ -227,6 +257,8 @@ impl Inner {
+             handover_state: Mutex::new(ManagerHandoverState::Idle),
+             handover_cv: Condvar::new(),
+             serve_stopped: AtomicBool::new(false),
++            transfers: Mutex::new(Vec::new()),
++            on_clipboard_cleared: Mutex::new(None),
+         })
+     }
+ 
+@@ -698,6 +730,7 @@ impl Inner {
+                         // add all equivalent formats to the supported targets
+                         targets.push(self.atoms.UTF8_MIME_0);
+                         targets.push(self.atoms.UTF8_MIME_1);
++                        targets.push(self.atoms.TEXT_MIME_UNKNOWN);
+                     }
+                 }
+             }
+@@ -717,8 +750,22 @@ impl Inner {
+         } else {
+             log::trace!("Handling request for (probably) the clipboard contents.");
+             let data = self.selection_of(selection).data.read();
++            // The text's other names, which TARGETS lists beside UTF8_STRING.
++            let utf8_alias = [
++                self.atoms.UTF8_MIME_0,
++                self.atoms.UTF8_MIME_1,
++                self.atoms.TEXT_MIME_UNKNOWN,
++            ]
++            .contains(&event.target);
+             if let Some(data_list) = &*data {
+-                success = match data_list.iter().find(|d| d.format == event.target) {
++                success = match data_list.iter().find(|d| {
++                    d.format == event.target || (utf8_alias && d.format == self.atoms.UTF8_STRING)
++                }) {
++                    // More than one request carries: in pieces (INCR).
++                    Some(data) if data.bytes.len() > self.max_property_bytes() => {
++                        self.start_transfer(&event, data)?;
++                        true
++                    }
+                     Some(data) => {
+                         self.server
+                             .conn
+@@ -770,6 +817,96 @@ impl Inner {
+         self.server.conn.flush().map_err(into_unknown)
+     }
+ 
++    /// The most data one ChangeProperty request carries on this server.
++    fn max_property_bytes(&self) -> usize {
++        self.server
++            .conn
++            .maximum_request_bytes()
++            .saturating_sub(CHANGE_PROPERTY_HEADER)
++            & !3
++    }
++
++    /// Answer `event` with INCR (ICCCM 2.7.2): the property says how much
++    /// is coming, and each piece follows once the requestor deleted the one
++    /// before (`continue_transfer`). The pieces have the type asked for, as
++    /// a reply in one piece has.
++    fn start_transfer(&self, event: &SelectionRequestEvent, data: &ClipboardData) -> Result<()> {
++        let mut transfers = self.transfers.lock();
++        transfers.retain(|transfer| {
++            transfer.progress.elapsed() < INCR_ABANDONED
++                && (transfer.requestor, transfer.property) != (event.requestor, event.property)
++        });
++        // Its PropertyNotify events come to this connection.
++        self.server
++            .conn
++            .change_window_attributes(
++                event.requestor,
++                &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE),
++            )
++            .map_err(into_unknown)?;
++        self.server
++            .conn
++            .change_property32(
++                PropMode::REPLACE,
++                event.requestor,
++                event.property,
++                self.atoms.INCR,
++                &[u32::try_from(data.bytes.len()).unwrap_or(u32::MAX)],
++            )
++            .map_err(into_unknown)?;
++        transfers.push(Transfer {
++            requestor: event.requestor,
++            property: event.property,
++            format: event.target,
++            bytes: data.bytes.clone(),
++            sent: 0,
++            progress: Instant::now(),
++        });
++        Ok(())
++    }
++
++    /// The requestor of an incremental transfer deleted its property: the
++    /// next piece, or the empty one that ends it.
++    fn continue_transfer(&self, event: &PropertyNotifyEvent) -> Result<()> {
++        if event.state != Property::DELETE {
++            return Ok(());
++        }
++        let mut transfers = self.transfers.lock();
++        let Some(index) = transfers.iter().position(|transfer| {
++            (transfer.requestor, transfer.property) == (event.window, event.atom)
++        }) else {
++            return Ok(());
++        };
++        let piece = self.max_property_bytes();
++        let transfer = &mut transfers[index];
++        let end = (transfer.sent + piece).min(transfer.bytes.len());
++        self.server
++            .conn
++            .change_property8(
++                PropMode::REPLACE,
++                transfer.requestor,
++                transfer.property,
++                transfer.format,
++                &transfer.bytes[transfer.sent..end],
++            )
++            .map_err(into_unknown)?;
++        if transfer.sent == end {
++            // The empty piece went: done, and its window no longer watched.
++            let transfer = transfers.remove(index);
++            self.server
++                .conn
++                .change_window_attributes(
++                    transfer.requestor,
++                    &ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT),
++                )
++                .map_err(into_unknown)?;
++        } else {
++            transfer.sent = end;
++            transfer.progress = Instant::now();
++        }
++        self.server.conn.flush().map_err(into_unknown)
++    }
++
+     fn ask_clipboard_manager_to_request_our_data(&self) -> Result<()> {
+         if self.server.win_id == 0 {
+             // This shouldn't really ever happen but let's just check.
+@@ -871,6 +1008,11 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
+                     let selection = context.selection_of(selection);
+                     let mut data_guard = selection.data.write();
+                     *data_guard = None;
++                    if event.selection == context.atoms.CLIPBOARD
++                        && let Some(cleared) = &*context.on_clipboard_cleared.lock()
++                    {
++                        cleared();
++                    }
+ 
+                     // It is important that this mutex is locked at the time of calling
+                     // `notify_all` to prevent notifications getting lost in case the sleeping
+@@ -887,10 +1029,11 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
+                     context.atom_name(event.selection),
+                     context.atom_name(event.target),
+                 );
+-                // Someone is requesting the clipboard content from us.
+-                context
+-                    .handle_selection_request(event)
+-                    .map_err(into_unknown)?;
++                // Someone is requesting the clipboard content from us. One
++                // request that cannot be answered leaves the next ones served.
++                if let Err(error) = context.handle_selection_request(event) {
++                    log::warn!("Could not answer a clipboard request: {error}");
++                }
+ 
+                 // if we are in the progress of saving to the clipboard manager
+                 // make sure we save that we have finished writing
+@@ -940,6 +1083,12 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
+                     }
+                 }
+             }
++            // A requestor took a piece of an incremental transfer.
++            Event::PropertyNotify(event) => {
++                if let Err(error) = context.continue_transfer(&event) {
++                    log::warn!("Could not go on with a clipboard transfer: {error}");
++                }
++            }
+             _event => {
+                 // May be useful for debugging but nothing else really.
+                 //log::trace!("Received unwanted event: {:?}", event);
+@@ -1075,6 +1224,88 @@ impl Clipboard {
+     pub fn is_owner(&self, selection: ClipboardKind) -> bool {
+         self.inner.is_owner(selection).unwrap_or(false)
+     }
++
++    /// Files on the clipboard, as Linux file managers put them there, with
++    /// `text` for the clients that take text.
++    pub(crate) fn set_files(&self, files: &ClipboardFiles, text: String) -> Result<()> {
++        let atoms = &self.inner.atoms;
++        let mut data = vec![ClipboardData {
++            bytes: text.into_bytes(),
++            format: atoms.UTF8_STRING,
++        }];
++        for (format, mime_type) in [
++            (atoms.GNOME_COPIED, clipboard_files::GNOME_COPIED_FILES),
++            (atoms.MATE_COPIED, clipboard_files::MATE_COPIED_FILES),
++            (atoms.URI_LIST, clipboard_files::URI_LIST),
++            (atoms.KDE_CUT, clipboard_files::KDE_CUT_SELECTION),
++        ] {
++            if let Some(bytes) = clipboard_files::bytes_for(files, mime_type) {
++                data.push(ClipboardData { bytes, format });
++            }
++        }
++        self.inner
++            .write(data, ClipboardKind::Clipboard, WaitConfig::None)
++    }
++
++    /// Give up the CLIPBOARD, emptying it.
++    pub(crate) fn clear(&self) -> Result<()> {
++        let inner = &self.inner;
++        *inner.clipboard.data.write() = None;
++        inner
++            .server
++            .conn
++            .set_selection_owner(x11rb::NONE, inner.atoms.CLIPBOARD, Time::CURRENT_TIME)
++            .map_err(into_unknown)?;
++        inner.server.conn.flush().map_err(into_unknown)?;
++        Ok(())
++    }
++
++    /// Call `cleared` on the serving thread when another client takes the
++    /// CLIPBOARD.
++    pub(crate) fn on_clipboard_cleared(&self, cleared: Box<dyn Fn() + Send>) {
++        *self.inner.on_clipboard_cleared.lock() = Some(cleared);
++    }
++
++    /// What reads the files on the CLIPBOARD, on any thread.
++    pub(crate) fn files_reader(&self) -> FilesReader {
++        FilesReader(Arc::clone(&self.inner))
++    }
++}
++
++/// Reads the files another client put on the CLIPBOARD: GTK's (or MATE's)
++/// list, else the URI list with KDE's flag. Each read waits on the X server
++/// (up to `LONG_TIMEOUT_DUR` a format): never on the main thread.
++pub(crate) struct FilesReader(Arc<Inner>);
++
++impl FilesReader {
++    pub(crate) fn read(self) -> Option<ClipboardFiles> {
++        let inner = &self.0;
++        let atoms = &inner.atoms;
++        let selection = ClipboardKind::Clipboard;
++        let one = |format: Atom| {
++            inner
++                .read(&[format], selection)
++                .ok()
++                .filter(|data| data.format == format)
++                .map(|data| data.bytes)
++        };
++        let first = inner
++            .read(
++                &[atoms.GNOME_COPIED, atoms.MATE_COPIED, atoms.URI_LIST],
++                selection,
++            )
++            .ok()?;
++        if first.format == atoms.URI_LIST {
++            let kde_cut = one(atoms.KDE_CUT);
++            return clipboard_files::files_from(None, Some(&first.bytes), kde_cut.as_deref());
++        }
++        let files = clipboard_files::files_from(Some(&first.bytes), None, None)?;
++        if files.others.is_empty() {
++            return Some(files);
++        }
++        let uri_list = one(atoms.URI_LIST);
++        clipboard_files::files_from(Some(&first.bytes), uri_list.as_deref(), None)
++    }
+ }
+ 
+ impl Drop for Clipboard {

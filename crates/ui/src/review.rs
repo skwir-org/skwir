@@ -159,7 +159,7 @@ impl Shell {
             (false, false) if !self.modal_open() => {
                 let back = FocusReturn::capture(window, cx);
                 let focus = cx.focus_handle();
-                window.focus(&focus);
+                window.focus(&focus, cx);
                 self.review_focus = Some(ReviewFocus {
                     focus,
                     cancel: cx.focus_handle(),
@@ -170,7 +170,7 @@ impl Shell {
             }
             (true, true) => {
                 if let Some(review) = self.review_focus.take() {
-                    review.back.restore(window, &self.ui().focus);
+                    review.back.restore(window, &self.ui().focus, cx);
                 }
                 cx.notify();
             }

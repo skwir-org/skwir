@@ -112,7 +112,7 @@ impl Shell {
     /// Open About, or close it.
     pub fn toggle_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(open) = self.about.take() {
-            open.previous.restore(window, &self.ui().focus);
+            open.previous.restore(window, &self.ui().focus, cx);
             cx.notify();
             return;
         }
@@ -141,7 +141,7 @@ impl Shell {
                 }
                 let previous = FocusReturn::capture(window, cx);
                 let focus = cx.focus_handle();
-                window.focus(&focus);
+                window.focus(&focus, cx);
                 this.about = Some(About {
                     focus,
                     copy: cx.focus_handle(),
@@ -162,9 +162,9 @@ impl Shell {
 
     /// Tab and Shift+Tab: the next or the previous of its buttons, round
     /// their ends.
-    fn about_tab(&mut self, delta: isize, window: &mut Window) {
+    fn about_tab(&mut self, delta: isize, window: &mut Window, cx: &mut gpui::App) {
         if let Some(about) = &self.about {
-            modal::tab_among(&about.buttons(), delta, window);
+            modal::tab_among(&about.buttons(), delta, window, cx);
         }
     }
 
@@ -285,8 +285,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .key_context("About")
         .on_action(cx.listener(
             |this, action: &RunCommand, window, cx| match action.name.as_str() {
-                "ui.toolbar_next" => this.about_tab(1, window),
-                "ui.toolbar_prev" => this.about_tab(-1, window),
+                "ui.toolbar_next" => this.about_tab(1, window, cx),
+                "ui.toolbar_prev" => this.about_tab(-1, window, cx),
                 _ => cx.propagate(),
             },
         ))

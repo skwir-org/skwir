@@ -132,7 +132,11 @@ impl GridView {
                 wrapped_now += 1;
                 let name = entry.name_str();
                 let breaks = wrapper
-                    .wrap_line(&[gpui::LineFragment::text(&name)], width)
+                    .wrap_line(
+                        &[gpui::LineFragment::text(&name)],
+                        width,
+                        gpui::IndentAdjustment::default(),
+                    )
                     .take(usize::from(MAX_LINES) - 1)
                     .count();
                 let lines = breaks as u8 + 1;

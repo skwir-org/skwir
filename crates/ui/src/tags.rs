@@ -546,7 +546,7 @@ impl Shell {
             if let Some(text) = text {
                 i.set_text(text, cx);
             }
-            i.focus(window);
+            i.focus(window, cx);
         });
         let request = REQUESTS.fetch_add(1, Ordering::Relaxed);
         let items = entries.len();
@@ -615,7 +615,7 @@ impl Shell {
 
     pub fn close_tag_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.tag_editor.take() {
-            editor.back.restore(window, &self.ui().focus);
+            editor.back.restore(window, &self.ui().focus, cx);
         }
         cx.notify();
     }
@@ -792,7 +792,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 move |this, _, window, cx| {
                     this.tag_editor_pick(&shown, cx);
                     if let Some(e) = &this.tag_editor {
-                        e.input.update(cx, |i, _| i.focus(window));
+                        e.input.update(cx, |i, cx| i.focus(window, cx));
                     }
                 }
             }));
@@ -838,7 +838,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                                 cx.stop_propagation();
                                 if let Some(e) = &mut this.tag_editor {
                                     e.colors_of = (e.colors_of != Some(index)).then_some(index);
-                                    e.input.update(cx, |i, _| i.focus(window));
+                                    e.input.update(cx, |i, cx| i.focus(window, cx));
                                 }
                                 cx.notify();
                             }))
@@ -1001,7 +1001,7 @@ fn color_strip(
                         cx,
                     );
                     if let Some(e) = &this.tag_editor {
-                        e.input.update(cx, |i, _| i.focus(window));
+                        e.input.update(cx, |i, cx| i.focus(window, cx));
                     }
                 }))
                 .child(dot(index, theme).size(px(14.))),
@@ -1025,7 +1025,7 @@ fn color_strip(
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.run("tags.color", serde_json::json!({ "tag": tag }), window, cx);
                 if let Some(e) = &this.tag_editor {
-                    e.input.update(cx, |i, _| i.focus(window));
+                    e.input.update(cx, |i, cx| i.focus(window, cx));
                 }
             }))
             .child("Automatic"),

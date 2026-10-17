@@ -16,6 +16,7 @@ rust-version.workspace = true
 parking_lot.workspace = true
 skwir-core.workspace = true
 gpui.workspace = true
+gpui_platform.workspace = true
 flume.workspace = true
 nucleo-matcher.workspace = true
 anyhow.workspace = true

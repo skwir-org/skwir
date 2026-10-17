@@ -110,7 +110,7 @@ fn follow_end(row: ScrollHandle, to_end: Rc<Cell<bool>>) -> impl IntoElement {
         move |_, _, _| {
             // Where the last frame left it, moved since by the wheel or
             // the bar.
-            let at_end = row.offset().x <= px(0.5) - row.max_offset().width;
+            let at_end = row.offset().x <= px(0.5) - row.max_offset().x;
             if to_end.replace(false) || at_end {
                 row.set_offset(point(px(-f32::MAX), px(0.)));
             }
@@ -410,7 +410,7 @@ fn side_column(
             out
         }),
     )
-    .track_scroll(scroll.clone())
+    .track_scroll(&scroll)
     .size_full();
     let mut col = div()
         .id(ids_of(if next { "colwrap-next" } else { "colwrap" }))
@@ -561,7 +561,7 @@ impl PaneView for ColumnsView {
                 })
             }),
         )
-        .track_scroll(self.scroll.clone())
+        .track_scroll(&self.scroll)
         .size_full();
         let mut last_col = div()
             .id("column-last-wrap")

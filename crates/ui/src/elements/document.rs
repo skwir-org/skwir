@@ -150,6 +150,7 @@ impl Element for DocumentElement {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let _ = window.paint_image(
                 image_bounds,
+                image_bounds,
                 Corners::default(),
                 self.image.clone(),
                 0,

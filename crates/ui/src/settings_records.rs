@@ -219,7 +219,7 @@ impl SettingsView {
         }
         // The first field takes the keyboard.
         if let Some((_, FieldInput::Text(input))) = inputs.first() {
-            window.focus(&input.focus_handle(cx));
+            window.focus(&input.focus_handle(cx), cx);
         }
         self.drafts.insert(
             key.to_owned(),
@@ -274,7 +274,7 @@ impl SettingsView {
         if let Some((_, FieldInput::Pairs(pairs))) = draft.fields.get_mut(index) {
             pairs.push(pair);
             draft.subscriptions.extend(subscriptions);
-            window.focus(&focus);
+            window.focus(&focus, cx);
         }
         cx.notify();
     }
@@ -309,7 +309,7 @@ impl SettingsView {
     pub(crate) fn cancel_record(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         if self.drafts.get(key).is_some_and(|d| !d.busy) {
             self.drafts.remove(key);
-            window.focus(&self.root);
+            window.focus(&self.root, cx);
             cx.notify();
         }
     }

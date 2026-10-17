@@ -106,13 +106,11 @@ previews-check:
     cargo build -p skwir-media-worker -p skwir-archive-worker
     python3 tools/previews/check.py --temporary
 
-# Run the vendored Blade atlas regression tests with a real GPU context.
-atlas-check:
-    python3 tools/gpui/check-atlas.py
-
-# Run the vendored GPUI tests that cover our list and text patches.
-list-check:
-    python3 tools/gpui/check-list.py
+# Run the vendored gpui crates' tests that cover our patches, on a copy of
+# vendor/zed (`just gpui-check gpui_wgpu`: one crate; the atlas's and the
+# renderer's tests need a wgpu adapter, lavapipe will do).
+gpui-check *args:
+    python3 tools/gpui/check.py {{args}}
 
 # Lint: rustfmt check + clippy with warnings as errors (default members).
 lint:

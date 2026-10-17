@@ -12,9 +12,11 @@
 //! copied.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use gpui::{
-    Context, Div, ExternalPaths, Pixels, Point, Render, Stateful, Window, div, prelude::*, px,
+    Context, Div, ExternalPaths, Pixels, Point, Render, RenderImage, Stateful, Window, div, img,
+    point, prelude::*, px,
 };
 use skwir_core::EntryId;
 use skwir_core::command::Invocation;
@@ -190,14 +192,23 @@ pub struct DragPayload {
     pub pane: PaneId,
 }
 
-/// The floating preview under the cursor. Empty once the compositor owns
-/// the drag: it draws the icon itself, and this element would only freeze
-/// at the last in-window pointer position.
+/// The icon of the files a drag carries (`dragicon.rs`): drawn under the
+/// pointer in the window, and handed to the compositor when the drag leaves
+/// it, so crossing the window's edge changes nothing. Kept until the next
+/// drag of files, which lets go of its texture.
+pub struct FilesIcon {
+    icon: Arc<gpui::ExternalDragIcon>,
+    image: Arc<RenderImage>,
+}
+
+/// The floating preview under the cursor: what is dragged, named, and for
+/// files their icon above the name.
 pub struct DragPreview {
     count: usize,
     label: String,
     position: Point<Pixels>,
-    hidden: bool,
+    /// The files' icon and the point of it under the pointer.
+    icon: Option<(Arc<RenderImage>, Point<Pixels>)>,
 }
 
 impl DragPreview {
@@ -207,16 +218,13 @@ impl DragPreview {
             count: 1,
             label,
             position,
-            hidden: false,
+            icon: None,
         }
     }
 }
 
 impl Render for DragPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.hidden {
-            return div();
-        }
         let theme = cx.global::<Theme>().clone();
         let text = if self.count == 1 {
             self.label.clone()
@@ -231,20 +239,39 @@ impl Render for DragPreview {
             Some(DropOp::Link) => format!("Link {text}"),
             None => text,
         };
-        div()
-            .pl(self.position.x + px(12.))
-            .pt(self.position.y + px(12.))
-            .child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(theme.accent)
-                    .text_color(theme.on_fill)
-                    .text_xs()
-                    .shadow_md()
-                    .child(text),
-            )
+        let label = div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(theme.accent)
+            .text_color(theme.on_fill)
+            .text_xs()
+            .shadow_md()
+            .child(text);
+        let Some((image, hotspot)) = &self.icon else {
+            return div()
+                .pl(self.position.x + px(12.))
+                .pt(self.position.y + px(12.))
+                .child(label);
+        };
+        // Where the compositor puts the same icon once the drag leaves.
+        let size = image.size(0);
+        div().child(
+            div()
+                .absolute()
+                .left(self.position.x - hotspot.x)
+                .top(self.position.y - hotspot.y)
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap_1()
+                .child(
+                    img(image.clone())
+                        .w(px(size.width.0 as f32))
+                        .h(px(size.height.0 as f32)),
+                )
+                .child(label),
+        )
     }
 }
 
@@ -257,6 +284,23 @@ impl Shell {
                 pane.selection
                     .iter()
                     .filter_map(|id| pane.path_of(id))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The selection's paths, each with whether it opens as a folder, for a
+    /// drag handed to the compositor.
+    fn drag_files(&self, pane: PaneId) -> Vec<(PathBuf, bool)> {
+        let ws = self.app.workspace.read();
+        ws.pane(pane)
+            .map(|pane| {
+                pane.selection
+                    .iter()
+                    .filter_map(|id| {
+                        let dir = pane.entry(id).is_some_and(skwir_core::Entry::is_dir);
+                        Some((pane.path_of(id)?, dir))
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -636,38 +680,56 @@ impl Shell {
 /// carries (paths, label, icon) is built when it starts, not per frame.
 pub fn draggable(el: Stateful<Div>, pane: PaneId, cx: &mut Context<Shell>) -> Stateful<Div> {
     let shell = cx.weak_entity();
+    let files = shell.clone();
     el.on_drag(
         DragPayload { pane },
         move |p: &DragPayload, position, window, cx| {
             let pane = p.pane;
-            let (paths, (count, label), icon) = shell
-                .update(cx, |shell, _| {
+            let ((count, label), icon) = shell
+                .update(cx, |shell, cx| {
                     // A drag is not the click that collapses a multi-selection.
                     shell.press_collapse = None;
-                    shell.with_pane(pane, |shell| {
-                        (
-                            shell.drag_paths(pane),
-                            shell.drag_label(pane),
-                            Some(shell.drag_icon()),
-                        )
-                    })
+                    let (label, icon) =
+                        shell.with_pane(pane, |shell| (shell.drag_label(pane), shell.drag_icon()));
+                    // The last drag's icon is drawn no more.
+                    if let Some(last) = shell.files_icon.take() {
+                        cx.drop_image(last.image, Some(window));
+                    }
+                    let hotspot = point(px(icon.hotspot_x as f32), px(icon.hotspot_y as f32));
+                    let image = crate::thumbs::owned_render_image(
+                        icon.width,
+                        icon.height,
+                        icon.rgba.clone(),
+                    );
+                    shell.files_icon = image.clone().map(|image| FilesIcon {
+                        icon: Arc::new(icon),
+                        image,
+                    });
+                    (label, image.map(|image| (image, hotspot)))
                 })
                 .unwrap_or_default();
-            // Hand the drag to the compositor so other applications can accept it.
-            // When that works, a drop back onto skwir arrives as ExternalPaths and
-            // `drop_paths_into` recognizes it as our own selection.
-            let external = !paths.is_empty() && window.start_external_drag(paths, icon);
-            if !external {
-                tracing::debug!("external drag unsupported here; in-window drag only");
-            }
             cx.new(|_| DragPreview {
                 count,
                 label,
                 position,
-                hidden: external,
+                icon,
             })
         },
     )
+    // Out of the window, the drag is the compositor's (gpui hands it over
+    // as it leaves), under the same icon: other applications take the
+    // files, and brought back it is this drag again.
+    .external_drag_payload(move |p: &DragPayload, _, cx| {
+        let shell = files.upgrade()?;
+        let shell = shell.read(cx);
+        let files = shell.drag_files(p.pane);
+        let files = gpui::FileDragPaths::new(files);
+        let files = match &shell.files_icon {
+            Some(icon) => files.with_icon(icon.icon.clone()),
+            None => files,
+        };
+        (!files.entries().is_empty()).then_some(gpui::ExternalDragPayload::Files(files))
+    })
 }
 
 /// Make an element a drop target into `dir`, for in-window drags and for

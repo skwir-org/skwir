@@ -522,7 +522,14 @@ impl Element for TerminalGrid {
             }
             let line_height = geometry.cell.height;
             for (origin, line) in &frame.text {
-                let _ = line.paint(*origin, line_height, window, cx);
+                let _ = line.paint(
+                    *origin,
+                    line_height,
+                    gpui::TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                );
             }
             if let Some((bounds, color, filled)) = frame.cursor {
                 if filled {
@@ -532,14 +539,28 @@ impl Element for TerminalGrid {
                 }
             }
             if let Some((origin, line)) = &frame.under_cursor {
-                let _ = line.paint(*origin, line_height, window, cx);
+                let _ = line.paint(
+                    *origin,
+                    line_height,
+                    gpui::TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                );
             }
             for bar in frame.underlines.drain(..) {
                 window.paint_quad(gpui::fill(bar, self.colors.link));
             }
             for (bounds, label) in &frame.labels {
                 window.paint_quad(gpui::fill(*bounds, self.colors.link).corner_radii(px(2.)));
-                let _ = label.paint(bounds.origin, line_height, window, cx);
+                let _ = label.paint(
+                    bounds.origin,
+                    line_height,
+                    gpui::TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                );
             }
         });
         if self.state.armed.get().is_some() {
@@ -577,12 +598,12 @@ impl TerminalGrid {
                             .link_under(&screen, event.position)
                             .and_then(|index| screen.links.get(index)) =>
                 {
-                    window.focus(&focus);
+                    window.focus(&focus, cx);
                     *state.pressed.borrow_mut() = Some(link.target.clone());
                     cx.stop_propagation();
                 }
                 MouseButton::Left => {
-                    window.focus(&focus);
+                    window.focus(&focus, cx);
                     let at = geometry.at(event.position);
                     session.send(if event.modifiers.shift {
                         Input::Extend(at)
@@ -602,7 +623,7 @@ impl TerminalGrid {
                 // The desktop's primary selection: Linux's alone.
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 MouseButton::Middle => {
-                    window.focus(&focus);
+                    window.focus(&focus, cx);
                     let text = cx.read_from_primary().and_then(|item| item.text());
                     if let Some(text) = text.filter(|text| !text.is_empty()) {
                         session.send(Input::Paste(text));
@@ -611,7 +632,7 @@ impl TerminalGrid {
                 }
                 // The selection stays: the menu copies it.
                 MouseButton::Right => {
-                    window.focus(&focus);
+                    window.focus(&focus, cx);
                     let link = geometry
                         .link_under(&screen, event.position)
                         .and_then(|index| screen.links.get(index));

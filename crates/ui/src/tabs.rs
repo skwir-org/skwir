@@ -249,7 +249,7 @@ impl Shell {
             // The window's shape is now the tab shown's, split included.
             self.remember_session();
             if had_focus {
-                window.focus(&self.ui().focus);
+                window.focus(&self.ui().focus, cx);
             }
         }
         cx.notify();

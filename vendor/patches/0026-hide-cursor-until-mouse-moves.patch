@@ -1,0 +1,20 @@
+0026 hide-cursor-until-mouse-moves: App::hide_cursor_until_mouse_moves public
+
+diff --git a/crates/gpui/src/app.rs b/crates/gpui/src/app.rs
+index 3945c76..65d73a5 100644
+--- a/crates/gpui/src/app.rs
++++ b/crates/gpui/src/app.rs
+@@ -1341,6 +1341,13 @@ impl App {
+         self.cursor_hide_mode = mode;
+     }
+ 
++    /// Hides the cursor until the mouse next moves, as typing does under
++    /// [`CursorHideMode::OnTyping`]: for a view that hides what floats over
++    /// it (a fullscreen picture's controls) and the pointer with it.
++    pub fn hide_cursor_until_mouse_moves(&self) {
++        self.platform.hide_cursor_until_mouse_moves();
++    }
++
+     /// Returns whether the cursor is currently visible according to the
+     /// platform. This will report `false` after a keyboard input has hidden
+     /// the cursor and the user has not yet moved the mouse to restore it.

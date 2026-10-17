@@ -129,7 +129,7 @@ impl Shell {
             );
             inputs.push(input);
         }
-        inputs[0].update(cx, |i, _| i.focus(window));
+        inputs[0].update(cx, |i, cx| i.focus(window, cx));
         self.bulk = Some(BulkState {
             inputs,
             case: 0,
@@ -156,7 +156,7 @@ impl Shell {
             if let Some(pending) = &bulk.pending {
                 pending.cancel();
             }
-            bulk.back.restore(window, &self.ui().focus);
+            bulk.back.restore(window, &self.ui().focus, cx);
         }
         cx.notify();
     }
@@ -168,9 +168,9 @@ impl Shell {
         let Some(b) = &mut self.bulk else { return };
         let walk = b.walk(cx);
         if !walk.iter().any(|h| h.is_focused(window)) {
-            b.inputs[b.focused].update(cx, |i, _| i.focus(window));
+            b.inputs[b.focused].update(cx, |i, cx| i.focus(window, cx));
         }
-        modal::tab_among(&walk.iter().collect::<Vec<_>>(), delta, window);
+        modal::tab_among(&walk.iter().collect::<Vec<_>>(), delta, window, cx);
         if let Some(at) = b.inputs.iter().position(|i| i.read(cx).is_focused(window)) {
             b.focused = at;
             b.inputs[at].update(cx, TextInput::select_all_now);

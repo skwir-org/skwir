@@ -163,7 +163,7 @@ impl Shell {
             })
             .flatten();
         let key = wanted.map(chip_key).unwrap_or_default();
-        if self.toggle_popup(&key, args, window)
+        if self.toggle_popup(&key, args, window, cx)
             && let Some((pane, target)) = wanted
         {
             self.search_menu = Some(ChipMenu {
@@ -177,9 +177,9 @@ impl Shell {
 
     /// Close the open chip's choices, giving the focus back; what its
     /// toggle names them.
-    pub fn close_search_chip(&mut self, window: &mut Window) -> Option<String> {
+    pub fn close_search_chip(&mut self, window: &mut Window, cx: &mut gpui::App) -> Option<String> {
         let menu = self.search_menu.take()?;
-        menu.popup.restore(window);
+        menu.popup.restore(window, cx);
         Some(chip_key((menu.pane, menu.target)))
     }
 }
@@ -187,7 +187,7 @@ impl Shell {
 /// Read the chips of the search the pane being rendered shows, when it
 /// shows another one than they were read for or the sidebar's names
 /// changed since; none for a folder.
-pub fn sync(shell: &mut Shell, window: &mut Window) {
+pub fn sync(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
     let pane = shell.pane;
     let location = shell
         .app
@@ -225,7 +225,7 @@ pub fn sync(shell: &mut Shell, window: &mut Window) {
     };
     // A menu belongs to the search it was opened on.
     if shell.search_menu.as_ref().is_some_and(|m| m.pane == pane) {
-        shell.close_search_chip(window);
+        shell.close_search_chip(window, cx);
     }
 }
 

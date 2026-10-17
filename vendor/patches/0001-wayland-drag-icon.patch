@@ -1,0 +1,268 @@
+0001 wayland-drag-icon: a file drag handed to the compositor shows the caller's icon
+
+diff --git a/crates/gpui/src/interactive.rs b/crates/gpui/src/interactive.rs
+index 913cf1b..4ed62b2 100644
+--- a/crates/gpui/src/interactive.rs
++++ b/crates/gpui/src/interactive.rs
+@@ -3,7 +3,7 @@ use crate::{
+     Point, Render, TouchDragEvent, Window, point, seal::Sealed,
+ };
+ use smallvec::SmallVec;
+-use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
++use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf, sync::Arc};
+ 
+ /// An event from a platform input source.
+ pub trait InputEvent: Sealed + 'static {
+@@ -711,18 +711,61 @@ pub enum ExternalDragPayload {
+ /// Paths handed to the platform for a native file drag. Directory metadata is
+ /// provided by the caller to avoid querying it when the platform drag starts.
+ #[derive(Debug, Clone, Default, Eq, PartialEq)]
+-pub struct FileDragPaths(SmallVec<[(PathBuf, bool); 2]>);
++pub struct FileDragPaths(
++    SmallVec<[(PathBuf, bool); 2]>,
++    Option<Arc<ExternalDragIcon>>,
++);
+ 
+ impl FileDragPaths {
+     /// Creates a native file-drag payload from paths paired with whether each path is a directory.
+     pub fn new(entries: impl IntoIterator<Item = (PathBuf, bool)>) -> Self {
+-        Self(entries.into_iter().collect())
++        Self(entries.into_iter().collect(), None)
+     }
+ 
+     /// The dragged paths, each paired with whether it is a directory.
+     pub fn entries(&self) -> &[(PathBuf, bool)] {
+         &self.0
+     }
++
++    /// The same paths, shown under the pointer by `icon` where the platform
++    /// draws a drag's image (Wayland).
++    pub fn with_icon(mut self, icon: Arc<ExternalDragIcon>) -> Self {
++        self.1 = Some(icon);
++        self
++    }
++
++    /// The image shown under the pointer, if the caller gave one.
++    pub fn icon(&self) -> Option<&ExternalDragIcon> {
++        self.1.as_deref()
++    }
++}
++
++/// The image under the pointer during a native drag: RGBA8 with straight
++/// (not premultiplied) alpha, `width * height * 4` bytes, and the pixel that
++/// sits under the pointer.
++#[derive(Clone, Eq, PartialEq)]
++pub struct ExternalDragIcon {
++    /// Width in pixels.
++    pub width: u32,
++    /// Height in pixels.
++    pub height: u32,
++    /// RGBA8 pixels, straight alpha, row-major, no padding.
++    pub rgba: Vec<u8>,
++    /// X of the pixel under the pointer.
++    pub hotspot_x: u32,
++    /// Y of the pixel under the pointer.
++    pub hotspot_y: u32,
++}
++
++impl Debug for ExternalDragIcon {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("ExternalDragIcon")
++            .field("width", &self.width)
++            .field("height", &self.height)
++            .field("hotspot_x", &self.hotspot_x)
++            .field("hotspot_y", &self.hotspot_y)
++            .finish_non_exhaustive()
++    }
+ }
+ 
+ impl Render for ExternalPaths {
+diff --git a/crates/gpui_linux/src/linux/wayland/client.rs b/crates/gpui_linux/src/linux/wayland/client.rs
+index 84f4d0f..98b41fb 100644
+--- a/crates/gpui_linux/src/linux/wayland/client.rs
++++ b/crates/gpui_linux/src/linux/wayland/client.rs
+@@ -5,7 +5,7 @@ use std::{
+         fd::{AsRawFd, BorrowedFd, FromRawFd as _, RawFd},
+         unix::net::UnixStream,
+     },
+-    path::PathBuf,
++    path::{Path, PathBuf},
+     rc::{Rc, Weak},
+     time::{Duration, Instant},
+ };
+@@ -99,13 +99,13 @@ use crate::linux::{
+     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
+ };
+ use gpui::{
+-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, ExternalDragPayload,
+-    FileDragPaths, FileDropEvent, ForegroundExecutor, GraphicalEnvironment, KeyDownEvent,
+-    KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+-    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
+-    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta,
+-    ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams,
+-    point, px, size,
++    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, ExternalDragIcon,
++    ExternalDragPayload, FileDragPaths, FileDropEvent, ForegroundExecutor, GraphicalEnvironment,
++    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
++    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
++    PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow,
++    Point, ScrollDelta, ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout,
++    WindowKind, WindowParams, point, px, size,
+ };
+ use gpui_wgpu::{CompositorGpuHint, GpuContext};
+ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
+@@ -517,6 +517,113 @@ pub(crate) struct ExternalDrag {
+     source: wl_data_source::WlDataSource,
+     bytes: Vec<u8>,
+     window: WaylandWindowStatePtr,
++    // SKWIR: the image under the pointer, kept until the drag ends.
++    icon: Option<DragIcon>,
++}
++
++/// SKWIR: a drag's image: a surface showing one wl_shm buffer.
++struct DragIcon {
++    surface: wl_surface::WlSurface,
++    buffer: wl_buffer::WlBuffer,
++    pool: wl_shm_pool::WlShmPool,
++    _file: std::fs::File,
++}
++
++impl DragIcon {
++    /// `icon` in a buffer of its own on a new surface, as wl_shm takes it:
++    /// ARGB8888, premultiplied.
++    fn new(globals: &Globals, icon: &ExternalDragIcon) -> Option<Self> {
++        use std::os::fd::AsFd;
++        use std::os::unix::fs::FileExt;
++        let (width, height) = (icon.width, icon.height);
++        let size = (width as usize)
++            .checked_mul(height as usize)?
++            .checked_mul(4)?;
++        if size == 0 || icon.rgba.len() != size || size > i32::MAX as usize {
++            return None;
++        }
++        let mut pixels = Vec::with_capacity(size);
++        for px in icon.rgba.chunks_exact(4) {
++            let alpha = u32::from(px[3]);
++            let premultiply = |c: u8| ((u32::from(c) * alpha + 127) / 255) as u8;
++            pixels.extend_from_slice(&[
++                premultiply(px[2]),
++                premultiply(px[1]),
++                premultiply(px[0]),
++                px[3],
++            ]);
++        }
++        let file = shm_file(size)?;
++        file.write_all_at(&pixels, 0).ok()?;
++        let pool = globals
++            .shm
++            .create_pool(file.as_fd(), size as i32, &globals.qh, ());
++        let buffer = pool.create_buffer(
++            0,
++            width as i32,
++            height as i32,
++            (width * 4) as i32,
++            wl_shm::Format::Argb8888,
++            &globals.qh,
++            (),
++        );
++        let surface = globals.compositor.create_surface(&globals.qh, ());
++        Some(Self {
++            surface,
++            buffer,
++            pool,
++            _file: file,
++        })
++    }
++
++    /// Gives the surface its pixels once `start_drag` made it the drag's
++    /// icon, its hotspot under the pointer.
++    fn show(&self, icon: &ExternalDragIcon) {
++        let (x, y) = (-(icon.hotspot_x as i32), -(icon.hotspot_y as i32));
++        if self.surface.version() >= wl_surface::REQ_OFFSET_SINCE {
++            self.surface.attach(Some(&self.buffer), 0, 0);
++            self.surface.offset(x, y);
++        } else {
++            self.surface.attach(Some(&self.buffer), x, y);
++        }
++        self.surface
++            .damage_buffer(0, 0, icon.width as i32, icon.height as i32);
++        self.surface.commit();
++    }
++
++    fn destroy(self) {
++        self.buffer.destroy();
++        self.pool.destroy();
++        self.surface.destroy();
++    }
++}
++
++/// SKWIR: an anonymous file of `size` bytes for a wl_shm pool, under
++/// /dev/shm where there is one, unlinked at once so it never outlives its
++/// descriptor.
++fn shm_file(size: usize) -> Option<std::fs::File> {
++    use std::sync::atomic::{AtomicU32, Ordering};
++    static COUNTER: AtomicU32 = AtomicU32::new(0);
++    let dir = Path::new("/dev/shm");
++    let dir = if dir.is_dir() {
++        dir.to_path_buf()
++    } else {
++        std::env::temp_dir()
++    };
++    let path = dir.join(format!(
++        "gpui-drag-icon-{}-{}",
++        std::process::id(),
++        COUNTER.fetch_add(1, Ordering::Relaxed)
++    ));
++    let file = std::fs::File::options()
++        .read(true)
++        .write(true)
++        .create_new(true)
++        .open(&path)
++        .ok()?;
++    let _ = std::fs::remove_file(&path);
++    file.set_len(size as u64).ok()?;
++    Some(file)
+ }
+ 
+ fn file_uri_list(paths: &FileDragPaths) -> String {
+@@ -687,13 +794,28 @@ impl WaylandClientStatePtr {
+             data_device_manager.create_data_source(&state.globals.qh, DataSourceKind::Drag);
+         source.offer(FILE_LIST_MIME_TYPE.to_string());
+         source.set_actions(DndAction::Copy | DndAction::Move);
+-        data_device.start_drag(Some(&source), surface, None, serial.as_raw());
++        let icon = paths
++            .icon()
++            .and_then(|image| Some((DragIcon::new(&state.globals, image)?, image)));
++        data_device.start_drag(
++            Some(&source),
++            surface,
++            icon.as_ref().map(|(icon, _)| &icon.surface),
++            serial.as_raw(),
++        );
++        if let Some((icon, image)) = &icon {
++            icon.show(image);
++        }
+ 
+-        state.external_drag = Some(ExternalDrag {
++        let previous = state.external_drag.replace(ExternalDrag {
+             source,
+             bytes: uri_list.into_bytes(),
+             window,
++            icon: icon.map(|(icon, _)| icon),
+         });
++        if let Some(icon) = previous.and_then(|drag| drag.icon) {
++            icon.destroy();
++        }
+         true
+     }
+ 
+@@ -3065,6 +3187,9 @@ impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientSta
+                     return;
+                 };
+                 external_drag.source.destroy();
++                if let Some(icon) = external_drag.icon {
++                    icon.destroy();
++                }
+ 
+                 let input = PlatformInput::FileDrop(FileDropEvent::Ended);
+                 drop(state);

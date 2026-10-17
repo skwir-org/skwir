@@ -221,7 +221,7 @@ impl Shell {
             return;
         } else {
             self.terminal.open = true;
-            window.focus(&self.terminal.focus);
+            window.focus(&self.terminal.focus, cx);
             self.start_terminal(window, cx);
         }
         self.remember_session();
@@ -449,7 +449,7 @@ impl Shell {
                     self.terminal.open = true;
                     self.remember_session();
                 }
-                window.focus(&self.terminal.focus);
+                window.focus(&self.terminal.focus, cx);
             }
             Err(error) => self.set_status(format!("{error:#}"), true, cx),
         }

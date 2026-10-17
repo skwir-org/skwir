@@ -233,7 +233,7 @@ fn column(
             })
         }),
     )
-    .track_scroll(scroll.clone())
+    .track_scroll(&scroll)
     .size_full();
     let count = c.ids.len();
     let tone = c.color.map(|color| theme.tag(color));

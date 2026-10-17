@@ -1649,7 +1649,7 @@ fn row_element(
                     // the width it is given, links or not.
                     d.child(
                         div()
-                            .flex_grow()
+                            .flex_grow_1()
                             .min_w_0()
                             .children(said)
                             .when_some(row.source, |d, source| {

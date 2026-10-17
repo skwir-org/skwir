@@ -32,7 +32,7 @@ impl PopoverAnchor {
         hang(
             std::slice::from_ref(self),
             3,
-            gpui::Corner::TopRight,
+            gpui::Anchor::TopRight,
             move || panel.take(),
         )
     }
@@ -65,7 +65,7 @@ impl PopoverAnchor {
         hang(
             std::slice::from_ref(self),
             3,
-            gpui::Corner::BottomRight,
+            gpui::Anchor::BottomRight,
             move || {
                 let last = panels.len().checked_sub(1)?;
                 Some(panels.swap_remove(chosen.get().unwrap_or(last).min(last)))
@@ -93,7 +93,7 @@ impl PopoverAnchor {
         panel: AnyElement,
     ) -> AnyElement {
         let mut panel = Some(panel);
-        hang(anchors, priority, gpui::Corner::BottomLeft, move || {
+        hang(anchors, priority, gpui::Anchor::BottomLeft, move || {
             panel.take()
         })
     }
@@ -115,7 +115,7 @@ fn below(
     priority: usize,
     panel: impl FnMut() -> Option<AnyElement> + 'static,
 ) -> AnyElement {
-    hang(anchors, priority, gpui::Corner::TopLeft, panel)
+    hang(anchors, priority, gpui::Anchor::TopLeft, panel)
 }
 
 /// `below`, the panel's `corner` at the anchor's opposite edge: a top
@@ -124,7 +124,7 @@ fn below(
 fn hang(
     anchors: &[PopoverAnchor],
     priority: usize,
-    corner: gpui::Corner,
+    corner: gpui::Anchor,
     mut panel: impl FnMut() -> Option<AnyElement> + 'static,
 ) -> AnyElement {
     let anchors: Vec<_> = anchors.iter().map(|a| a.0.clone()).collect();
@@ -133,21 +133,22 @@ fn hang(
             move |_, window, cx| {
                 let bounds = anchors.iter().find_map(|a| a.get())?;
                 let (gap, margin) = (px(6.), px(8.));
+                let below = window.viewport_size().height - bounds.bottom() - gap - margin;
+                let above = bounds.top() - gap - margin;
+                let center = bounds.center().x;
+                // Popups hang by a corner or a side's middle; one anchored at a
+                // side's middle (never asked here) hangs below it.
                 let (at, room, offset) = match corner {
-                    gpui::Corner::TopLeft => (
-                        bounds.bottom_left(),
-                        window.viewport_size().height - bounds.bottom() - gap - margin,
-                        gap,
-                    ),
-                    gpui::Corner::TopRight => (
-                        bounds.bottom_right(),
-                        window.viewport_size().height - bounds.bottom() - gap - margin,
-                        gap,
-                    ),
-                    gpui::Corner::BottomLeft => (bounds.origin, bounds.top() - gap - margin, -gap),
-                    gpui::Corner::BottomRight => {
-                        (bounds.top_right(), bounds.top() - gap - margin, -gap)
+                    gpui::Anchor::TopLeft | gpui::Anchor::LeftCenter => {
+                        (bounds.bottom_left(), below, gap)
                     }
+                    gpui::Anchor::TopRight | gpui::Anchor::RightCenter => {
+                        (bounds.bottom_right(), below, gap)
+                    }
+                    gpui::Anchor::TopCenter => (gpui::point(center, bounds.bottom()), below, gap),
+                    gpui::Anchor::BottomLeft => (bounds.origin, above, -gap),
+                    gpui::Anchor::BottomRight => (bounds.top_right(), above, -gap),
+                    gpui::Anchor::BottomCenter => (gpui::point(center, bounds.top()), above, -gap),
                 };
                 let mut popup = gpui::anchored()
                     .anchor(corner)

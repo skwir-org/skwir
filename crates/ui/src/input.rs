@@ -290,8 +290,8 @@ impl TextInput {
         cx.notify();
     }
 
-    pub fn focus(&self, window: &mut Window) {
-        window.focus(&self.focus_handle);
+    pub fn focus(&self, window: &mut Window, cx: &mut gpui::App) {
+        window.focus(&self.focus_handle, cx);
     }
 
     pub fn is_focused(&self, window: &Window) -> bool {
@@ -928,8 +928,15 @@ impl Element for TextElement {
                 window.paint_quad(selection);
             }
             let origin = point(bounds.left() - scroll_x, bounds.top());
-            line.paint(origin, window.line_height(), window, cx)
-                .unwrap();
+            line.paint(
+                origin,
+                window.line_height(),
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            )
+            .unwrap();
             if focus_handle.is_focused(window)
                 && let Some(cursor) = prepaint.cursor.take()
             {

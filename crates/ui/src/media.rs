@@ -568,8 +568,8 @@ impl Shell {
                     .as_ref()
                     .filter(|_| self.preview.peek)
                 {
-                    Some(peek) => window.focus(peek),
-                    None => window.focus(&self.ui().focus),
+                    Some(peek) => window.focus(peek, cx),
+                    None => window.focus(&self.ui().focus, cx),
                 }
             }
             if !self.preview.media.poster_awaited() {
@@ -1404,7 +1404,7 @@ pub(crate) fn halo_square(
         .w_full()
         .max_w(px(420.))
         .min_h_0()
-        .flex_shrink()
+        .flex_shrink_1()
         .map(|mut d| {
             d.style().aspect_ratio = Some(1.);
             d

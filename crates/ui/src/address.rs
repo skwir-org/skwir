@@ -34,7 +34,7 @@ impl Shell {
             Some(crate::dock::MENU) => crate::dock::MENU,
             _ => MORE,
         };
-        if self.toggle_popup(kind, args, window) {
+        if self.toggle_popup(kind, args, window, cx) {
             self.toolbar_menu = Some(toolbar::Popup::new(kind, window, cx));
         }
         cx.notify();

@@ -755,7 +755,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.activate_pane(pane, cx);
-        window.focus(&self.ui().focus);
+        window.focus(&self.ui().focus, cx);
         self.press_collapse = None;
         // Gone since it was drawn: the press is on nothing.
         if self.ui().list.index_of(id).is_none() {
@@ -879,7 +879,7 @@ impl Shell {
                 let (address, text) = (self.ui().address.clone(), ch.to_owned());
                 address.update(cx, |input, cx| {
                     input.set_text(text, cx);
-                    input.focus(window);
+                    input.focus(window, cx);
                 });
                 cx.notify();
                 return;
@@ -1008,7 +1008,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.activate_pane(pane, cx);
-        window.focus(&self.ui().focus);
+        window.focus(&self.ui().focus, cx);
         let kept = if keep {
             let ws = self.app.workspace.read();
             ws.pane(pane)
@@ -1085,7 +1085,7 @@ impl Shell {
                 MouseButton::Right,
                 cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                     this.activate_pane(pane, cx);
-                    window.focus(&this.ui().focus);
+                    window.focus(&this.ui().focus, cx);
                     // A row already opened its menu for this click. On the
                     // background the menu is the folder's: drop the selection
                     // so the menu, and the commands it runs, are about the

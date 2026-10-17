@@ -31,15 +31,15 @@ impl FocusReturn {
     }
 
     /// Focus what had it, if anything did.
-    pub fn restore_if_any(self, window: &mut Window) {
+    pub fn restore_if_any(self, window: &mut Window, cx: &mut gpui::App) {
         if let Some(previous) = self.0 {
-            window.focus(&previous);
+            window.focus(&previous, cx);
         }
     }
 
     /// Focus what had it, or `fallback` when nothing did.
-    pub fn restore(self, window: &mut Window, fallback: &FocusHandle) {
-        window.focus(self.0.as_ref().unwrap_or(fallback));
+    pub fn restore(self, window: &mut Window, fallback: &FocusHandle, cx: &mut gpui::App) {
+        window.focus(self.0.as_ref().unwrap_or(fallback), cx);
     }
 }
 
@@ -48,7 +48,7 @@ impl FocusReturn {
 /// first or the last. A dialog one reads (About, F1's overview) takes them
 /// in its panel, before the shell, which would close it for a key meant
 /// for the window behind; one that asks, through `Shell::walk_dialog`.
-pub fn tab_among(buttons: &[&FocusHandle], delta: isize, window: &mut Window) {
+pub fn tab_among(buttons: &[&FocusHandle], delta: isize, window: &mut Window, cx: &mut gpui::App) {
     let len = buttons.len().cast_signed();
     if len == 0 {
         return;
@@ -58,7 +58,7 @@ pub fn tab_among(buttons: &[&FocusHandle], delta: isize, window: &mut Window) {
         None if delta > 0 => 0,
         None => len - 1,
     };
-    window.focus(buttons[next.cast_unsigned()]);
+    window.focus(buttons[next.cast_unsigned()], cx);
 }
 
 /// What Tab walks in one dialog: its fields, then Cancel and its answer;
@@ -84,7 +84,7 @@ impl Shell {
     /// window behind it, whose toolbars' buttons `window.focus_next` would
     /// reach. The dialog is the one that has the keyboard, else the one on
     /// top. False, with no dialog open: Tab walks the window.
-    pub(crate) fn walk_dialog(&self, forward: bool, window: &mut Window, cx: &App) -> bool {
+    pub(crate) fn walk_dialog(&self, forward: bool, window: &mut Window, cx: &mut App) -> bool {
         let walks = self.dialog_walks(cx);
         let Some(walk) = walks
             .iter()
@@ -94,7 +94,7 @@ impl Shell {
             return false;
         };
         let stops: Vec<&FocusHandle> = walk.stops.iter().collect();
-        tab_among(&stops, if forward { 1 } else { -1 }, window);
+        tab_among(&stops, if forward { 1 } else { -1 }, window, cx);
         true
     }
 

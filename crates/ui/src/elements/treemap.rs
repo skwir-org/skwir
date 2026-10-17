@@ -188,10 +188,15 @@ impl Labels<'_> {
         if text.is_empty() || width < FONT {
             return None;
         }
-        let mut runs = vec![self.run(text.len(), color)];
-        let cut = self
-            .wrapper
-            .truncate_line_middle(text.clone(), px(width), "…", &mut runs);
+        let runs = vec![self.run(text.len(), color)];
+        let (cut, runs) = self.wrapper.truncate_line(
+            text.clone(),
+            px(width),
+            "…",
+            &runs,
+            gpui::TruncateFrom::Middle,
+        );
+        let runs = runs.into_owned();
         Some(
             self.window
                 .text_system()
@@ -472,12 +477,21 @@ impl Element for Treemap {
                     let line_height = px(LINE as f32);
                     if let Some(name) = &b.name {
                         let origin = bounds.origin + point(px(INSET as f32), px(1.));
-                        if let Err(error) = name.paint(origin, line_height, window, cx) {
+                        if let Err(error) =
+                            name.paint(origin, line_height, gpui::TextAlign::Left, None, window, cx)
+                        {
                             tracing::debug!(%error, "treemap label");
                         }
                     }
                     if let Some((detail, origin)) = &b.detail
-                        && let Err(error) = detail.paint(*origin, line_height, window, cx)
+                        && let Err(error) = detail.paint(
+                            *origin,
+                            line_height,
+                            gpui::TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        )
                     {
                         tracing::debug!(%error, "treemap label");
                     }

@@ -193,7 +193,12 @@
           pname = "skwir";
           version = "0.1.0";
           src = self;
-          cargoLock.lockFile = ./Cargo.lock;
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+            # The git sources Zed pins (ADR-064), fetched at the commit the
+            # lock file names: no hash to keep beside each.
+            allowBuiltinFetchGit = true;
+          };
           # The programs shipped, as every package lists them.
           cargoBuildFlags =
             map (p: "--package=${p}")

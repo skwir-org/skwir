@@ -299,7 +299,7 @@ impl MenuState {
     ) -> Self {
         let back = FocusReturn::capture(window, cx);
         let focus = cx.focus_handle();
-        window.focus(&focus);
+        window.focus(&focus, cx);
         // GPUI focuses the focusable element under a mouse-down after our
         // handler ran (the pane, here) unless the event is marked handled;
         // without this the menu opens unfocused and keys reach the pane.
@@ -417,7 +417,7 @@ impl Shell {
         // A row and its pane both see the right-click, and the pane's handler
         // focuses the pane first: keep the one menu and give it focus back.
         if let Some(menu) = self.menu.as_ref().filter(|menu| menu.position == position) {
-            window.focus(&menu.focus);
+            window.focus(&menu.focus, cx);
             window.prevent_default();
             return;
         }
@@ -954,7 +954,7 @@ impl Shell {
 
     pub fn close_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(menu) = self.menu.take() {
-            menu.back.restore(window, &self.ui().focus);
+            menu.back.restore(window, &self.ui().focus, cx);
             cx.notify();
         }
     }

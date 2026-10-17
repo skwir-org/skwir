@@ -87,7 +87,7 @@ impl Scrolls {
             Scrolls::Items(_) if axis == Axis::Horizontal => Metrics::NONE,
             Scrolls::Items(list) => Metrics {
                 offset: -f32::from(list.scroll_px_offset_for_scrollbar().y),
-                max: f32::from(list.max_offset_for_scrollbar().height),
+                max: f32::from(list.max_offset_for_scrollbar().y),
                 viewport: f32::from(list.viewport_bounds().size.height),
             },
             Scrolls::Rows(scroll) => {

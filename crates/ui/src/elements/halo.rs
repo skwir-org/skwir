@@ -388,7 +388,14 @@ impl Element for Halo {
             let (wide, high) = (pixels.width.0.max(1) as f32, pixels.height.0.max(1) as f32);
             if (wide / high - 1.).abs() < 0.04 {
                 // A square cover fills the disc.
-                let _ = window.paint_image(frame, Corners::all(px(disc)), cover.clone(), 0, false);
+                let _ = window.paint_image(
+                    frame,
+                    frame,
+                    Corners::all(px(disc)),
+                    cover.clone(),
+                    0,
+                    false,
+                );
             } else {
                 // Any other shape is shown whole, inside the disc.
                 let side = disc * std::f32::consts::SQRT_2;
@@ -396,7 +403,14 @@ impl Element for Halo {
                 let (w, h) = (wide * scale, high * scale);
                 let inside =
                     Bounds::new(point(px(cx - w / 2.), px(cy - h / 2.)), size(px(w), px(h)));
-                let _ = window.paint_image(inside, Corners::all(px(4.)), cover.clone(), 0, false);
+                let _ = window.paint_image(
+                    inside,
+                    inside,
+                    Corners::all(px(4.)),
+                    cover.clone(),
+                    0,
+                    false,
+                );
             }
         }
     }

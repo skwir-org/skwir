@@ -318,8 +318,8 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         let clicked = focus.clone();
         dock =
             dock.track_focus(focus)
-                .on_mouse_down(gpui::MouseButton::Left, move |_, window, _| {
-                    window.focus(&clicked);
+                .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                    window.focus(&clicked, cx);
                 });
     }
     Some(

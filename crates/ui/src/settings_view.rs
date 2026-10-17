@@ -212,7 +212,7 @@ impl SettingsView {
                         )
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        window.focus(&this.nav);
+                        window.focus(&this.nav, cx);
                         this.go(target.clone(), cx);
                     })),
             );
@@ -372,7 +372,7 @@ impl SettingsView {
                     if numeric || kind == SettingKind::Number {
                         d.flex_none()
                     } else {
-                        d.w(px(width)).min_w(px(FIELD_MIN)).flex_shrink()
+                        d.w(px(width)).min_w(px(FIELD_MIN)).flex_shrink_1()
                     }
                 });
                 if numeric {
@@ -487,7 +487,7 @@ impl SettingsView {
                     theme,
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    window.focus(&focus);
+                    window.focus(&focus, cx);
                     this.change(&key, choice.clone(), cx);
                 })),
             );
@@ -784,7 +784,7 @@ impl SettingsView {
                     theme,
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    window.focus(&this.nav);
+                    window.focus(&this.nav, cx);
                     this.go(Page::Plugin(id.to_owned()), cx);
                 })),
             );

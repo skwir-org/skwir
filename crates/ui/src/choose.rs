@@ -120,7 +120,7 @@ impl Shell {
                 InputEvent::Changed => cx.notify(),
             },
         );
-        input.update(cx, |i, _| i.focus(window));
+        input.update(cx, |i, cx| i.focus(window, cx));
         let request = REQUESTS.fetch_add(1, Ordering::Relaxed);
         let option = args
             .get("option")
@@ -191,7 +191,7 @@ impl Shell {
 
     pub fn close_choose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(choose) = self.choose.take() {
-            choose.back.restore(window, &self.ui().focus);
+            choose.back.restore(window, &self.ui().focus, cx);
         }
         cx.notify();
     }
@@ -210,7 +210,7 @@ impl Shell {
             && c.option.is_some()
         {
             c.option_on = !c.option_on;
-            c.input.update(cx, |i, _| i.focus(window));
+            c.input.update(cx, |i, cx| i.focus(window, cx));
             cx.notify();
         }
     }

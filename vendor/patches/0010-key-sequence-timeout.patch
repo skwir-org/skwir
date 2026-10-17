@@ -1,27 +1,29 @@
+0010 key-sequence-timeout: configurable (or no) key sequence timeout
+
 diff --git a/crates/gpui/src/app.rs b/crates/gpui/src/app.rs
-index d4bd779..c149037 100644
+index 722a44b..6af8965 100644
 --- a/crates/gpui/src/app.rs
 +++ b/crates/gpui/src/app.rs
-@@ -588,6 +588,9 @@ pub struct App {
-     pub(crate) inspector_element_registry: InspectorElementRegistry,
-     #[cfg(any(test, feature = "test-support", debug_assertions))]
-     pub(crate) name: Option<&'static str>,
+@@ -914,6 +914,9 @@ pub struct App {
+     pub(crate) accessibility_force_disabled: bool,
+     pending_updates: usize,
+     quit_mode: QuitMode,
 +    /// How long a keystroke that begins a multi-stroke binding waits for
 +    /// the next one; `None` waits until it comes.
 +    pub(crate) key_sequence_timeout: Option<Duration>,
      quitting: bool,
- }
  
-@@ -663,6 +666,7 @@ impl App {
- 
-                 #[cfg(any(test, feature = "test-support", debug_assertions))]
-                 name: None,
-+                key_sequence_timeout: Some(Duration::from_secs(1)),
-             }),
-         });
- 
-@@ -1388,6 +1392,13 @@ impl App {
-         .context("window not found")
+     // We need to ensure the leak detector drops last, after all tasks, callbacks and things have been dropped.
+@@ -1013,6 +1016,7 @@ impl App {
+                 #[cfg(any(feature = "inspector", debug_assertions))]
+                 inspector_element_registry: InspectorElementRegistry::default(),
+                 quit_mode: QuitMode::default(),
++                key_sequence_timeout: Some(crate::PENDING_INPUT_TIMEOUT),
+                 quitting: false,
+                 cursor_hide_mode: CursorHideMode::default(),
+                 reduce_motion: false,
+@@ -2297,6 +2301,13 @@ impl App {
+         result.context("window not found")
      }
  
 +    /// How long a keystroke that begins a multi-stroke binding (`g g`)
@@ -35,18 +37,42 @@ index d4bd779..c149037 100644
      /// so it can be held across `await` points.
      pub fn to_async(&self) -> AsyncApp {
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index 4ef474c..386e8a5 100644
+index 9d86115..817782d 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -3835,8 +3835,9 @@ impl Window {
-         if !match_result.pending.is_empty() {
-             currently_pending.keystrokes = match_result.pending;
-             currently_pending.focus = self.focus;
--            currently_pending.timer = Some(self.spawn(cx, async move |cx| {
--                cx.background_executor.timer(Duration::from_secs(1)).await;
-+            let timeout = cx.key_sequence_timeout;
-+            currently_pending.timer = timeout.map(|timeout| self.spawn(cx, async move |cx| {
-+                cx.background_executor.timer(timeout).await;
-                 cx.update(move |window, cx| {
-                     let Some(currently_pending) = window
-                         .pending_input
+@@ -6166,20 +6166,22 @@ impl Window {
+             let needs_timeout = previous_timeout.is_some()
+                 || match_result.pending_has_binding
+                 || text_input_requires_timeout;
+-            currently_pending.timeout = if needs_timeout {
+-                match previous_timeout {
+-                    Some(mut timeout) if timeout.is_paused() => {
+-                        timeout.reset_duration(PENDING_INPUT_TIMEOUT);
+-                        Some(timeout)
+-                    }
+-                    previous_timeout => {
+-                        drop(previous_timeout);
+-                        Some(self.new_pending_input_timeout(PENDING_INPUT_TIMEOUT, cx))
++            // The app's timeout, or none: the sequence waits for its next key.
++            currently_pending.timeout =
++                if let Some(duration) = cx.key_sequence_timeout.filter(|_| needs_timeout) {
++                    match previous_timeout {
++                        Some(mut timeout) if timeout.is_paused() => {
++                            timeout.reset_duration(duration);
++                            Some(timeout)
++                        }
++                        previous_timeout => {
++                            drop(previous_timeout);
++                            Some(self.new_pending_input_timeout(duration, cx))
++                        }
+                     }
+-                }
+-            } else {
+-                None
+-            };
++                } else {
++                    None
++                };
+             self.pending_input = Some(currently_pending);
+             self.pending_input_changed(cx);
+             cx.propagate_event = false;

@@ -857,7 +857,7 @@ impl PaneView for ListView {
                 })
             }),
         )
-        .track_scroll(self.scroll.clone())
+        .track_scroll(&self.scroll)
         .size_full();
         let marquee = crate::elements::marquee::Marquee {
             pane,

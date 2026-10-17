@@ -324,7 +324,7 @@ impl SettingsView {
                     theme,
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    window.focus(&focus);
+                    window.focus(&focus, cx);
                     this.keys.show = choice;
                     this.keys.as_records = false;
                     this.keys.new = None;
@@ -521,7 +521,7 @@ impl SettingsView {
                     .collect::<Vec<_>>()
             }),
         )
-        .track_scroll(self.keys.list.clone())
+        .track_scroll(&self.keys.list)
         .with_decoration(sticky)
         .size_full();
         div()
@@ -534,7 +534,7 @@ impl SettingsView {
             .flex()
             .flex_col()
             .on_click(cx.listener(|this, _, window, cx| {
-                window.focus(&this.keys.focus);
+                window.focus(&this.keys.focus, cx);
                 cx.notify();
             }))
             .child(list)
@@ -612,7 +612,7 @@ impl SettingsView {
         // short first (whole in its tooltip).
         let mut keys = div()
             .flex()
-            .flex_shrink()
+            .flex_shrink_1()
             .min_w_0()
             .justify_end()
             .items_center()
@@ -702,7 +702,7 @@ impl SettingsView {
             .gap_2()
             .child(
                 div()
-                    .flex_shrink()
+                    .flex_shrink_1()
                     .min_w_0()
                     .truncate()
                     .child(action.title.clone()),
@@ -710,7 +710,7 @@ impl SettingsView {
         if let Some(shared) = shared {
             texts = texts.child(
                 div()
-                    .flex_shrink()
+                    .flex_shrink_1()
                     .min_w_0()
                     .truncate()
                     .text_xs()
@@ -735,7 +735,7 @@ impl SettingsView {
                     .filter(|(at, _)| *at == id_click)
                     .map_or(0, |(_, at)| *at);
                 this.keys.cursor = Some((id_click.clone(), at));
-                window.focus(&this.keys.focus);
+                window.focus(&this.keys.focus, cx);
                 cx.notify();
             }))
             .child(texts)
@@ -783,7 +783,7 @@ impl SettingsView {
         div()
             .id(SharedString::from(format!("key-{index}-{n}")))
             .flex()
-            .flex_shrink()
+            .flex_shrink_1()
             .min_w_0()
             .items_center()
             .gap_1()
@@ -806,7 +806,7 @@ impl SettingsView {
             .when(conditions && !chip.conditions.is_empty(), |d| {
                 d.child(
                     div()
-                        .flex_shrink()
+                        .flex_shrink_1()
                         .min_w(px(24.))
                         .max_w(px(150.))
                         .truncate()
@@ -912,7 +912,7 @@ impl SettingsView {
             subscriptions: Vec::new(),
             judged: RefCell::default(),
         });
-        window.focus(&first);
+        window.focus(&first, cx);
         self.listen_for_keys(cx);
         cx.notify();
     }
@@ -948,7 +948,7 @@ impl SettingsView {
             self.keys.find = Some(keys);
             self.keys.editor = None;
             self.keys.list.scroll_to_item(0, ScrollStrategy::Top);
-            window.focus(&self.keys.focus);
+            window.focus(&self.keys.focus, cx);
         } else {
             // Enter then saves: the form's button for a new shortcut, the
             // bar's for the rest.
@@ -958,7 +958,7 @@ impl SettingsView {
                 "keys-save"
             };
             let save = self.handle(save, cx);
-            window.focus(&save);
+            window.focus(&save, cx);
         }
         cx.notify();
     }
@@ -974,7 +974,7 @@ impl SettingsView {
         editor.typed = None;
         editor.recording = true;
         editor.error = None;
-        window.focus(&editor.focus.clone());
+        window.focus(&editor.focus.clone(), cx);
         self.listen_for_keys(cx);
         cx.notify();
     }
@@ -1012,7 +1012,7 @@ impl SettingsView {
         editor.recording = false;
         editor.intercept = None;
         editor.subscriptions.push(subscription);
-        input.update(cx, |input, _| input.focus(window));
+        input.update(cx, |input, cx| input.focus(window, cx));
         editor.typed = Some(input);
         cx.notify();
     }
@@ -1027,7 +1027,7 @@ impl SettingsView {
         if new {
             self.focus_new_shortcut(window, cx);
         } else {
-            window.focus(&self.keys.focus);
+            window.focus(&self.keys.focus, cx);
         }
         cx.notify();
     }

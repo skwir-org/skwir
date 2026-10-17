@@ -1,9 +1,11 @@
+0019 font-id-without-fallback: TextSystem::font_id public
+
 diff --git a/crates/gpui/src/text_system.rs b/crates/gpui/src/text_system.rs
-index 40692e2..8e7cd9e 100644
+index e76b90f..81af262 100644
 --- a/crates/gpui/src/text_system.rs
 +++ b/crates/gpui/src/text_system.rs
-@@ -105,8 +105,11 @@ impl TextSystem {
-         self.platform_text_system.add_fonts(fonts)
+@@ -325,8 +325,11 @@ impl TextSystem {
+         self.missing_glyph_reporter.report(missing_glyphs);
      }
  
 -    /// Get the FontId for the configure font family and style.

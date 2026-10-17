@@ -164,7 +164,7 @@ impl Shell {
             .peek_focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
-        window.focus(&self.shown_focus().unwrap_or(canvas));
+        window.focus(&self.shown_focus().unwrap_or(canvas), cx);
         self.preview.menu = None;
         self.arm_fullscreen_hide(window, cx);
         self.read_ahead_next(window, cx);
@@ -184,7 +184,7 @@ impl Shell {
         if !self.preview.peek {
             // Gone from the window by then (another file is shown), the
             // focus-lost listener gives it to the pane.
-            window.focus(restore.before.as_ref().unwrap_or(&self.ui().focus));
+            window.focus(restore.before.as_ref().unwrap_or(&self.ui().focus), cx);
         }
         cx.notify();
     }
@@ -199,7 +199,7 @@ impl Shell {
         if canvas.is_some_and(|canvas| canvas.is_focused(window))
             && let Some(focus) = self.shown_focus()
         {
-            window.focus(&focus);
+            window.focus(&focus, cx);
         }
         self.arm_slideshow(window, cx);
         self.read_ahead_next(window, cx);
@@ -234,9 +234,13 @@ impl Shell {
         if let Some(fullscreen) = &mut self.preview.fullscreen {
             fullscreen.controls_hidden = !fullscreen.controls_hidden;
             fullscreen.hide_task = None;
+            let hidden = fullscreen.controls_hidden;
+            if hidden && self.fullscreen_bar_floats() {
+                cx.hide_cursor_until_mouse_moves();
+            }
             self.preview.menu = None;
             if let Some(focus) = self.shown_focus() {
-                window.focus(&focus);
+                window.focus(&focus, cx);
             }
             cx.notify();
         }
@@ -297,6 +301,9 @@ impl Shell {
                 );
                 if !fullscreen.controls_hovered && !busy && !focus.contains_focused(window, cx) {
                     fullscreen.controls_hidden = true;
+                    if this.fullscreen_bar_floats() {
+                        cx.hide_cursor_until_mouse_moves();
+                    }
                     cx.notify();
                 }
             });
@@ -332,7 +339,7 @@ impl Shell {
             && fullscreen.controls_focus.contains_focused(window, cx)
             && let Some(focus) = &shown
         {
-            window.focus(focus);
+            window.focus(focus, cx);
         }
         if fullscreen.controls_hidden {
             fullscreen.controls_hidden = false;
@@ -357,7 +364,7 @@ impl Shell {
                 && fullscreen.controls_focus.contains_focused(window, cx)
                 && let Some(focus) = &shown
             {
-                window.focus(focus);
+                window.focus(focus, cx);
             }
         }
         self.arm_fullscreen_hide(window, cx);
@@ -456,7 +463,7 @@ impl Shell {
             .menu
             .take_if(|popup| popup.kind == SLIDESHOW_POPUP)
         {
-            popup.restore(window);
+            popup.restore(window, cx);
         }
         cx.notify();
     }
@@ -580,13 +587,9 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     if let Some(focus) = shell.preview.peek_focus.as_ref() {
         canvas = canvas.track_focus(focus);
     }
-    // A floating bar hidden takes the pointer with it, over this window
-    // only (a cursor style is the window's): on top of whatever asks for
-    // another (a zoomed picture's hand), taking no click, wheel or drag
-    // from what is under it. The pointer moving brings both back.
-    if fullscreen.controls_hidden && floats {
-        canvas = canvas.child(div().absolute().inset_0().cursor(gpui::CursorStyle::None));
-    }
+    // A floating bar hidden takes the pointer with it where it hides
+    // (`App::hide_cursor_until_mouse_moves`); the pointer moving brings both
+    // back.
     Some(canvas.into_any_element())
 }
 

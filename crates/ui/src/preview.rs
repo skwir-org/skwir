@@ -1473,7 +1473,7 @@ impl Shell {
             Some(crate::fullscreen::SLIDESHOW_POPUP) => crate::fullscreen::SLIDESHOW_POPUP,
             _ => "preview",
         };
-        if self.toggle_popup(&format!("preview {kind}"), args, window) {
+        if self.toggle_popup(&format!("preview {kind}"), args, window, cx) {
             // Whose bar it is: the side that has the keyboard, which the
             // press on its button gave it.
             self.preview.menu_parked = self.container_has_keyboard(window, cx);
@@ -2098,7 +2098,7 @@ impl Shell {
                 .as_ref()
                 .is_some_and(|f| f.contains_focused(window, cx))
         {
-            window.focus(&focus);
+            window.focus(&focus, cx);
         }
         self.preview.media.focus = Some(focus);
         if play {
@@ -2964,7 +2964,7 @@ impl Shell {
         }
         // A note belongs to the text it was opened from, as the link the
         // pointer rested on does.
-        self.preview.inspection.notes.close(window);
+        self.preview.inspection.notes.close(window, cx);
         self.links.hover = None;
         // Pictures decoded as they came into view belong to the page they
         // were of, whatever replaces it.
@@ -3203,8 +3203,8 @@ impl Shell {
                 .as_ref()
                 .filter(|_| self.preview.peek)
             {
-                Some(peek) => window.focus(peek),
-                None => window.focus(&self.ui().focus),
+                Some(peek) => window.focus(peek, cx),
+                None => window.focus(&self.ui().focus, cx),
             }
         }
         self.preview.key = None;
@@ -3555,7 +3555,7 @@ impl Shell {
         self.clear_document_pages(window, cx);
         self.preview.reader = crate::reader::ReaderState::default();
         if let Some(popup) = self.preview.menu.take() {
-            popup.restore(window);
+            popup.restore(window, cx);
         }
         self.replace_preview_content(None, window, cx);
         self.preview.autoplay = None;
@@ -3564,7 +3564,7 @@ impl Shell {
         self.preview.content = Some(PreviewContent::Inspection(display));
         self.preview.phase = PreviewPhase::Idle;
         if keyboard && let Some(focus) = &self.preview.inspection.focus {
-            window.focus(focus);
+            window.focus(focus, cx);
         }
         cx.notify();
     }
@@ -4053,7 +4053,7 @@ impl Shell {
         self.preview.open = !self.preview.open;
         if !self.preview.open && !self.preview.peek {
             self.preview.menu = None;
-            window.focus(&self.ui().focus);
+            window.focus(&self.ui().focus, cx);
         }
         self.remember_session();
         cx.notify();
@@ -4066,7 +4066,7 @@ impl Shell {
         }
         self.preview.menu = None;
         let focus = cx.focus_handle();
-        window.focus(self.preview.media.focus.as_ref().unwrap_or(&focus));
+        window.focus(self.preview.media.focus.as_ref().unwrap_or(&focus), cx);
         self.preview.peek_focus = Some(focus);
         self.preview.peek = true;
         cx.notify();
@@ -4080,7 +4080,7 @@ impl Shell {
         self.preview.menu = None;
         self.preview.peek = false;
         self.preview.peek_focus = None;
-        window.focus(&self.ui().focus);
+        window.focus(&self.ui().focus, cx);
         cx.notify();
     }
 
@@ -4113,7 +4113,7 @@ impl Shell {
         } else {
             self.preview.open = false;
             self.preview.menu = None;
-            window.focus(&self.ui().focus);
+            window.focus(&self.ui().focus, cx);
             self.remember_session();
             cx.notify();
         }
@@ -4286,7 +4286,7 @@ fn discard_parked(parked: crate::members::Parked, window: &mut Window, cx: &mut 
     for picture in display.images.iter().flatten() {
         cx.drop_image(Arc::clone(&picture.image), Some(window));
     }
-    state.notes.close(window);
+    state.notes.close(window, cx);
     for image in state.pictures.clear() {
         cx.drop_image(image, Some(window));
     }
@@ -4403,7 +4403,9 @@ pub(crate) fn content_area(
             shell.preview.media.focus.as_ref().filter(|_| interactive),
             |d, focus| {
                 let focus = focus.clone();
-                d.on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&focus))
+                d.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    window.focus(&focus, cx);
+                })
             },
         )
         // Measured where it is used: the panel, peek or the whole screen,
@@ -4663,8 +4665,8 @@ pub(crate) fn content(
                         let clicked = focus.clone();
                         d.track_focus(focus)
                             .key_context(keymap::IMAGE)
-                            .on_mouse_down(MouseButton::Left, move |_, window, _| {
-                                window.focus(&clicked);
+                            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                                window.focus(&clicked, cx);
                             })
                     },
                 )
@@ -4758,7 +4760,7 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
             name(name_at, depth).into_any_element()
         } else if parked.is_some() {
             name(name_at, depth)
-                .flex_shrink()
+                .flex_shrink_1()
                 .text_color(theme.text_muted)
                 .into_any_element()
         } else {
@@ -4767,7 +4769,7 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
                 .id(("preview-trail", depth))
                 .optional_tooltip(clip.tooltip(None, shell.font.clone()))
                 .min_w_0()
-                .flex_shrink()
+                .flex_shrink_1()
                 .truncate()
                 .text_color(theme.text_muted)
                 .cursor_pointer()
@@ -5059,10 +5061,9 @@ fn arrowed(offset: f32, most: f32, view: f32, toward: i32) -> Option<f32> {
 pub(crate) fn arrow(handle: &gpui::ScrollHandle, dx: i32, dy: i32) -> bool {
     let (mut offset, most, view) = (handle.offset(), handle.max_offset(), handle.bounds().size);
     let moved = if dx == 0 {
-        arrowed(offset.y.into(), most.height.into(), view.height.into(), dy)
-            .map(|y| offset.y = px(y))
+        arrowed(offset.y.into(), most.y.into(), view.height.into(), dy).map(|y| offset.y = px(y))
     } else {
-        arrowed(offset.x.into(), most.width.into(), view.width.into(), dx).map(|x| offset.x = px(x))
+        arrowed(offset.x.into(), most.x.into(), view.width.into(), dx).map(|x| offset.x = px(x))
     };
     if moved.is_some() {
         handle.set_offset(offset);
@@ -5159,7 +5160,7 @@ pub(crate) fn picture(
         // starts at the left instead, as wide as the picture or the panel.
         scrolling(
             div()
-                .flex_grow()
+                .flex_grow_1()
                 .flex_shrink_0()
                 .min_w_full()
                 .map(|mut d| {

@@ -1,4 +1,4 @@
-//! The image that follows the pointer during an external drag: the first
+//! The image that follows the pointer while files are dragged: the first
 //! item's thumbnail when the thumbnail service has it, otherwise a drawn
 //! file or folder glyph, plus a count badge for multi-item drags.
 //!

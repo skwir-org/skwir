@@ -757,7 +757,7 @@ impl SettingsView {
         view.probe_requirements();
         list_icon_themes(&view.app);
         list_code_themes(&view.app);
-        window.focus(&view.nav);
+        window.focus(&view.nav, cx);
         view.open_target(target, window, cx);
         view
     }
@@ -1295,7 +1295,7 @@ impl SettingsView {
         } else if let Some(page) = text("page") {
             self.go(Page::parse(page), cx);
         }
-        window.focus(&self.nav);
+        window.focus(&self.nav, cx);
     }
 
     /// The row to scroll to once it has been laid out, consumed by render.
@@ -1333,7 +1333,7 @@ impl SettingsView {
         if let Some(item) = stop.item {
             self.scroll.scroll_to_item(item);
         }
-        window.focus(&stop.focus);
+        window.focus(&stop.focus, cx);
         cx.notify();
     }
 
@@ -1356,7 +1356,7 @@ impl SettingsView {
                 } else if self.keys.editor.is_some() {
                     self.close_key_editor(window, cx);
                 } else if self.keys.new.take().is_some() {
-                    window.focus(&self.keys.focus);
+                    window.focus(&self.keys.focus, cx);
                     cx.notify();
                 } else {
                     cx.emit(SettingsEvent::Close);
@@ -1367,13 +1367,13 @@ impl SettingsView {
             "settings_search" => {
                 self.search.update(cx, |input, cx| {
                     input.select_all_now(cx);
-                    input.focus(window);
+                    input.focus(window, cx);
                 });
             }
             "settings_page" => self.step_page(isize::try_from(delta).unwrap_or(1), cx),
             "settings_enter" => {
                 // From the category list into the page: the stop after it.
-                window.focus(&self.nav);
+                window.focus(&self.nav, cx);
                 self.step_focus(1, window, cx);
             }
             "settings_adjust" => self.adjust(delta, window, cx),
@@ -1413,7 +1413,7 @@ impl crate::shell::Shell {
         self.palette = None;
         self.menu = None;
         if let Some(popup) = self.toolbar_menu.take() {
-            popup.restore(window);
+            popup.restore(window, cx);
         }
         let (app, font, bound) = (Arc::clone(&self.app), self.font.clone(), self.keys.bound());
         // What had the keyboard gets it back when the dialog closes, as a
@@ -1428,7 +1428,9 @@ impl crate::shell::Shell {
                     this.settings = None;
                     this.settings_subscription = None;
                     let fallback = this.ui().focus.clone();
-                    back.take().unwrap_or_default().restore(window, &fallback);
+                    back.take()
+                        .unwrap_or_default()
+                        .restore(window, &fallback, cx);
                     cx.notify();
                 }
             },

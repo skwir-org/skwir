@@ -71,3 +71,19 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# Zed pins these at commits: in vendor/zed/Cargo.toml (wgpu for fixes not yet
+# released, its own forks for the rest) and, for the crates gpui reaches, in
+# its root manifest's patches, which Skwir's repeats. Skwir takes gpui with
+# Zed's pins rather than rewritten ones (ADR-064). No other git source: one
+# more is a decision, named here. (Zed's scap and wasm_thread are in the lock
+# file but in no build checked: screen capture is off, and no target is wasm.)
+allow-git = [
+    "https://github.com/gfx-rs/wgpu",
+    "https://github.com/zed-industries/async-process.git",
+    "https://github.com/zed-industries/async-task.git",
+    "https://github.com/zed-industries/calloop",
+    "https://github.com/zed-industries/font-kit",
+    "https://github.com/zed-industries/khronos-egl",
+    "https://github.com/zed-industries/xim-rs.git",
+]
+required-git-spec = "rev"

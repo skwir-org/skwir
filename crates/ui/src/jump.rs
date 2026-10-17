@@ -54,7 +54,7 @@ impl Shell {
                 InputEvent::Changed => this.jump_refresh(window, cx),
             },
         );
-        input.update(cx, |i, _| i.focus(window));
+        input.update(cx, |i, cx| i.focus(window, cx));
         self.jump = Some(JumpState {
             input,
             candidates: Vec::new(),
@@ -71,7 +71,7 @@ impl Shell {
 
     pub fn close_jump(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(jump) = self.jump.take() {
-            jump.back.restore(window, &self.ui().focus);
+            jump.back.restore(window, &self.ui().focus, cx);
         }
         cx.notify();
     }

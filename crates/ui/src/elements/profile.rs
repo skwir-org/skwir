@@ -356,7 +356,7 @@ impl Element for Chart {
             }
         }
         for (at, text) in &prepaint.labels {
-            let _ = text.paint(*at, px(14.), window, cx);
+            let _ = text.paint(*at, px(14.), gpui::TextAlign::Left, None, window, cx);
         }
         if let Some((at, text_at, text)) = &prepaint.readout {
             window.paint_quad(gpui::fill(
@@ -382,7 +382,7 @@ impl Element for Chart {
                 gpui::transparent_black(),
                 gpui::BorderStyle::default(),
             ));
-            let _ = text.paint(*text_at, px(14.), window, cx);
+            let _ = text.paint(*text_at, px(14.), gpui::TextAlign::Left, None, window, cx);
         }
 
         let (hitbox, profile) = (

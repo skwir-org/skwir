@@ -438,7 +438,7 @@ impl Shell {
         let offset = scroll.single.offset();
         let maximum = scroll.single.max_offset();
         let at_edge = if delta.y < px(0.) {
-            -offset.y >= maximum.height
+            -offset.y >= maximum.y
         } else {
             offset.y >= px(0.)
         };
@@ -452,8 +452,8 @@ impl Shell {
         {
             scroll.wheel.accumulated = 0.;
             scroll.single.set_offset(point(
-                (offset.x + delta.x).clamp(-maximum.width, px(0.)),
-                (offset.y + delta.y).clamp(-maximum.height, px(0.)),
+                (offset.x + delta.x).clamp(-maximum.x, px(0.)),
+                (offset.y + delta.y).clamp(-maximum.y, px(0.)),
             ));
             cx.notify();
             cx.stop_propagation();
@@ -516,7 +516,7 @@ impl Shell {
             return true;
         }
         let (offset, most) = (scroll.single.offset(), scroll.single.max_offset());
-        if !at_page_edge(offset.y.into(), most.height.into(), dy) {
+        if !at_page_edge(offset.y.into(), most.y.into(), dy) {
             crate::preview::arrow(&scroll.single, 0, dy);
             return true;
         }

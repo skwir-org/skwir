@@ -35,7 +35,7 @@ ego-tree = "0.10"
 roxmltree.workspace = true
 # SVG pictures in documents, and fixed-layout pages drawn as SVG with the
 # book's fonts; the version and features gpui already links.
-resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+resvg = { version = "0.46", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 # Font metrics for laying out a fixed page's text: skrifa (fontations,
 # maintained), the version gpui's glyph rasterizer (swash) already brings.
 skrifa = "0.44"
@@ -58,7 +58,7 @@ mime.workspace = true
 
 # The desktop's keyring (`secrets`): the client and features gpui already links.
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-oo7 = { version = "0.5", default-features = false, features = ["async-std", "native_crypto"] }
+oo7 = { version = "0.6", default-features = false, features = ["async-std", "native_crypto"] }
 
 # Windows' own calls (ADR-035): the drives, the user's SID, the types
 # the registry knows (ADR-037).

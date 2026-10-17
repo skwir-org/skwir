@@ -147,9 +147,13 @@ fn width_of(rows: &[NavRow], font: &SharedString, window: &mut Window) -> Pixels
 
 impl Shell {
     /// Close the menu of places, if one is open; what it listed.
-    pub(crate) fn close_nav_menu(&mut self, window: &mut Window) -> Option<NavWhat> {
+    pub(crate) fn close_nav_menu(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) -> Option<NavWhat> {
         let menu = self.nav_menu.take()?;
-        menu.popup.restore(window);
+        menu.popup.restore(window, cx);
         Some(menu.what)
     }
 
@@ -165,7 +169,7 @@ impl Shell {
         let forward = args.get("forward").and_then(serde_json::Value::as_bool) == Some(true);
         let what = NavWhat::History { forward };
         cx.notify();
-        if !self.toggle_popup(&what.key(), args, window) {
+        if !self.toggle_popup(&what.key(), args, window, cx) {
             return;
         }
         let pane = self.pane;
@@ -239,7 +243,7 @@ impl Shell {
         // A later request, or a close, makes an answer on its way unwanted
         // (`toggle_popup` counts it in `nav_asked`).
         let key = what.as_ref().map(NavWhat::key).unwrap_or_default();
-        let (Some(of), true) = (of, self.toggle_popup(&key, args, window)) else {
+        let (Some(of), true) = (of, self.toggle_popup(&key, args, window, cx)) else {
             return;
         };
         let asked = self.nav_asked;
@@ -268,7 +272,7 @@ impl Shell {
                     }
                 };
                 let rows = inside_rows(&shell.app, &of, inside, current.as_ref());
-                shell.close_nav_menu(window);
+                shell.close_nav_menu(window, cx);
                 let font = shell.font.clone();
                 shell.nav_menu = Some(NavMenu::new(
                     pane,
@@ -311,7 +315,7 @@ impl Shell {
             .clone()
             .map(|of| NavWhat::Parents { of }.key())
             .unwrap_or_default();
-        let (Some(of), true) = (of, self.toggle_popup(&key, args, window)) else {
+        let (Some(of), true) = (of, self.toggle_popup(&key, args, window, cx)) else {
             return;
         };
         let rows = match of.path() {
@@ -495,7 +499,7 @@ pub fn panel(shell: &Shell, pane: PaneId, cx: &mut Context<Shell>) -> Option<Any
             },
         ),
     )
-    .track_scroll(menu.scroll.clone())
+    .track_scroll(&menu.scroll)
     .flex_1()
     .min_h_0();
     // As tall as its rows, shrunk to the room the popover has below its
@@ -601,7 +605,7 @@ impl Shell {
         };
         let row = stops[to];
         menu.scroll.scroll_to_item(row, strategy);
-        window.focus(&menu.focus[row]);
+        window.focus(&menu.focus[row], cx);
         cx.notify();
         true
     }
