@@ -19,8 +19,9 @@ terminal panel, the player. Binding, like `AGENTS.md`. Views are in
   read from layout when the tooltip is asked for, never in `render`.
 - Pane actions capture their target pane while rendering and use
   pane-specific element IDs.
-- gpui clicks on Enter/Space key-up, and only on the element the key went
-  down on (vendored patch 0007): never dispatch again on key-down.
+- gpui clicks on Enter/Space key-up, and only if focus has not moved since
+  the key went down (its focus generation): never dispatch again on
+  key-down.
 - Previews share one frame (`preview.rs`) and one toolbar
   (`preview_bar.rs`): a kind lists tools in slots, never builds a row
   ([previews.md](previews.md), "The preview frame"). Preview menus close

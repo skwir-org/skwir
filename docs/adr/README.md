@@ -13,7 +13,7 @@ them by topic.
 | ADR | Decision | State |
 | --- | --- | --- |
 | [000](000-principles-and-budgets.md) | Principles and performance budgets | binding; revised by 002, 033, 049 |
-| [001](001-ui-toolkit.md) | gpui is the UI toolkit | built (vendored, patched) |
+| [001](001-ui-toolkit.md) | gpui is the UI toolkit | built (vendored, patched); pin revised by 064 |
 | [002](002-ui-budgets-revisited.md) | UI budgets revisited after Phase 2 | in force; amended by 033 |
 | [003](003-fulltext-engine.md) | An embedded full-text search engine | not built (Phase 7); amended by 050 |
 | [003](003-preview-providers.md) | Preview providers and external document renderers | built; PDF engine superseded by 004, 005 |
@@ -77,3 +77,4 @@ them by topic.
 | [061](061-djvu-read-by-djvulibre-or-djvu-rs.md) | DjVu read by DjVuLibre or djvu-rs, Automatic preferring DjVuLibre | built; DjVuLibre's helper on Linux, djvu-rs's compiled only on macOS and Windows |
 | [062](062-files-on-the-system-clipboard.md) | Files on the system clipboard, as both families of Linux file managers put them | built on Linux (X11, Wayland); macOS and Windows keep Skwir's own |
 | [063](063-the-notices-are-kept-with-the-source.md) | The packages' third-party notices made once and kept with the source; no package build runs cargo-about | built for the Linux packages |
+| [064](064-gpui-from-zeds-main-branch-drawn-by-wgpu.md) | gpui from a commit of Zed's main branch, drawn by wgpu, with Zed's pins; Vulkan alone where it has a GPU | built on Linux; Windows compiled, macOS not compiled |

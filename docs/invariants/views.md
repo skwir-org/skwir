@@ -183,7 +183,7 @@ around the views is in [shell.md](shell.md).
   delta (`elements/rows.rs`, `Shell::reader_wheel`): the platform has
   already turned Shift's turn sideways.
 - A `gpui::list` measures only what it renders: give it a height estimate
-  (`ListState::reset_with_uniform_height`, vendored patch 0004), or the bar
+  (`ListState::reset_with_uniform_height`), or the bar
   describes only the rows on screen.
 - The gutter takes the pointer only while it holds a bar.
 - Wrapping a scrolling element to overlay a bar must keep its flex

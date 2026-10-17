@@ -156,13 +156,17 @@ unchanged.
 
 ## Rapid selection (atlas regression)
 
+Measured on gpui 0.2.2's Blade renderer; since ADR-064, gpui draws with
+wgpu, whose atlas does the same (`docs/invariants/media.md`).
+
 Rapid changes can replace a UI scene before Wayland presents it. The Blade
 atlas patch cancels pending initialization and uploads before recycling
 texture indices, and frees retired textures after earlier GPU work
 completes. This fixed the `flush_initializations` vacant-slot panic and
 stopped old uploads from targeting a smaller replacement texture.
 
-- `just atlas-check` runs the two GPU regression cases.
+- `just atlas-check` ran the two GPU regression cases (now `just gpui-check`
+  runs the wgpu atlas's).
 - Patched release app: 320 alternating video selections at 35–550 ms
   intervals, then preview close and worker cleanup, without a panic.
   Unpatched: crashed after 49 changes with the same clips.

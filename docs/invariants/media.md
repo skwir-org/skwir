@@ -2,7 +2,7 @@
 
 Read this before touching `crates/media-worker`, `crates/platform/src/media.rs`,
 `crates/ui/src/media.rs`, the player (`player.rs`, `dock.rs`,
-`elements/halo.rs`), the `mpris` plugin or the vendored Blade atlas. It is
+`elements/halo.rs`), the `mpris` plugin or gpui's atlas (vendored). It is
 binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 
 ## Process and plugin
@@ -116,14 +116,15 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - Keep appsink, transfer storage and UI delivery bounded. A frame slot is
   never overwritten before it is acknowledged. Release replaced atlas
   entries; never write per-frame image files.
-- Atlas eviction cancels pending uploads before recycling texture indices,
-  and destroys textures only after in-flight GPU work finishes: GPUI can draw
-  several scenes before Wayland presents one, so keeping only the latest
-  preview is not enough. See `vendor/patches/0003-blade-atlas-retirement.patch`
-  and its GPU tests (`just atlas-check`).
-- Call `drop_image` in update or render code, never in prepaint or paint: the
-  patch waits only for the previous submission before freeing
-  (`vendor/gpui/README.skwir.md`).
+- Atlas eviction drops pending uploads before recycling texture slots, and
+  a texture is destroyed only after in-flight GPU work finishes: GPUI can
+  draw several scenes before Wayland presents one, so keeping only the
+  latest preview is not enough. gpui's wgpu atlas does both (wgpu keeps a
+  texture until the GPU is done with it); its tests, an upload to a removed
+  texture among them, run in `just gpui-check`.
+- Call `drop_image` in update or render code, never in prepaint or paint:
+  the scene being drawn may already use the texture, whose sprites then
+  draw nothing, or another image that took its slot.
 
 ## Track changes and subtitles
 

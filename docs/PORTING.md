@@ -373,9 +373,11 @@ Left:
   (`CF_HDROP` and "Preferred DropEffect"; gpui's `CF_HDROP` read joins the
   names with no separator) Skwir's own clipboard stays apart from the
   system's, and a paste with nothing in it says there is nothing to paste.
-- **Drag and drop**: `ui/dnd.rs` outgoing drag is gpui patch 0001,
-  Wayland's. A drag's copy modifier is Ctrl; a Mac's is Option (step J, not
-  done).
+- **Drag and drop**: a drag leaves the window as gpui hands it to the
+  platform, on Wayland and macOS; on Wayland under Skwir's icon (gpui
+  patch 0001), on macOS under the icons of the files' types. X11 and
+  Windows hand no drag out yet. A drag's copy modifier is Ctrl; a Mac's
+  is Option (step J, not done).
 - **Agents and scripts** (ADR-043): on Windows the window listens on a named
   pipe in the user's name (`plugins/control/src/channel.rs`), tried under
   Wine (`tests/pipe.rs`), which keeps no accounts apart. Left for Phase 5b's

@@ -43,9 +43,11 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   (`docs/HELP-WANTED.md`). The user reports hosted CI is too slow;
   routine CI is now reduced to essentials, with full checks and package
   builds retained as manual fallbacks. Remote runs were not inspected.
-- **Budgets:** idle own share 95.1 MiB of 100 and first frame median
-  140.0 ms of 150 (session display, 2026-10-12); `just bench-check`
-  meets all 44 budgets (2026-10-11, load average 3 to 5.5).
+- **Budgets:** idle own share 94.1 MiB of 100 on Zed's gpui (session
+  display, 2026-10-18; 93.4 for gpui 0.2.2 that day, ADR-064). First
+  frame median 140.0 ms of 150 on 0.2.2 (2026-10-12): not measured again
+  on Zed's gpui, as the machine was busy. `just bench-check` meets all
+  44 budgets (2026-10-11, load average 3 to 5.5).
 - **Latest work (2026-10-13):** Release 0.1.0; before it, Properties
   (ADR-058), archives made (ADR-059), keys changed where they are listed
   (ADR-024), the tarball, and a review before tagging. Before (2026-10-11
@@ -1141,6 +1143,30 @@ is. Tried on Xvfb with Thunar 4.20.7 and Dolphin 26.08 both ways (a cut
 moves in each; Thunar cannot paste Dolphin's files nor Dolphin move
 Thunar's cut, which Skwir does) and on a headless sway with
 wl-clipboard. macOS and Windows keep Skwir's own clipboard (not yet).
+
+### 2026-10-17
+
+**gpui from Zed's main branch (ADR-064).** gpui 0.2.2 drew with Blade
+and had no AccessKit; its release is still the latest. Skwir now takes
+gpui from a commit of Zed's main branch: wgpu on Linux, Direct3D 11 on
+Windows, Metal on macOS, and AccessKit in the window. It is vendored
+with Zed's pins, git ones included (`deny.toml` names each), and the
+patches Skwir still needs.
+
+- **The patches.** Twelve of the 24 were ported. Ten are gone, because
+  Zed's main branch has its own answer, and 0014 is left out.
+- **Five patches are new:**
+  - 0001 now carries the drag's icon;
+  - 0025 takes Vulkan alone where it has a GPU;
+  - 0026 hides the pointer with the fullscreen controls;
+  - 0027 lets Windows be checked from Linux;
+  - 0028 marks gpui unpublished.
+- **Tooling.** `tools/gpui/vendor.py` makes the vendored tree from a Zed
+  checkout and writes the patches back, and `just gpui-check` runs their
+  tests.
+- **What it prepares:**
+  - accessibility: roles and labels on Skwir's elements, not yet;
+  - a 3D model preview drawn by the GPU on every system.
 
 ---
 

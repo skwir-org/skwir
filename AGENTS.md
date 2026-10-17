@@ -82,12 +82,14 @@ working in an area, also read that area's rules (see
 - **Toolkit isolation.** gpui appears only in `skwir-ui` and the binary.
   Views implement `PaneView` in `skwir-ui`; a toolkit-independent
   `ui-api` crate waits until a third-party view exists.
-- **Vendored gpui.** `vendor/gpui` is gpui 0.2.2 from crates.io plus our
-  patches (`[patch.crates-io]`), each a diff in `vendor/patches/` in
-  Zed's layout, ready to upstream. Read `vendor/gpui/README.skwir.md`
-  before touching it. gpui's API moves between releases: read the
-  vendored source, not memory. Always set an explicit font family (a
-  default stack that fails to resolve costs 35–50 ms per frame).
+- **Vendored gpui.** `vendor/zed` is gpui's crates from a commit of
+  Zed's main branch plus our patches, each a diff in `vendor/patches/`
+  in Zed's layout, ready to upstream; `tools/gpui/vendor.py` makes and
+  updates it, with Zed's pins as Zed has them (ADR-064). Read
+  `vendor/zed/README.skwir.md` before touching it. gpui's API moves
+  between commits: read the vendored source, not memory. Always set an
+  explicit font family (a default stack that fails to resolve costs
+  35–50 ms per frame).
 - **Plugins are independent.** A plugin depends only on `skwir-core` (and
   `skwir-platform`), never on another plugin; plugins talk through
   core-owned data (entries, metadata fields, selection, locations). Every
@@ -304,9 +306,8 @@ working in an area, also read that area's rules (see
   window to be looked at. `render` syncs too, for what the user did
   since; a sync that finds nothing is cheap.
 - A window draws only when something asks for a frame (a notify, a
-  refresh, `on_next_frame`; vendored patch 0012 on Wayland, where an idle
-  window otherwise woke at the display's rate). X11 still polls at that
-  rate. Each wake costs a draw: a source that wakes the core with nothing
+  refresh, `on_next_frame`), on Wayland where gpui asks the compositor
+  for a frame only then. X11 still polls at the display's rate. Each wake costs a draw: a source that wakes the core with nothing
   new is an idle redraw loop.
 - **Watchers act on changes, never access.** notify reports a file
   opened (`IN_OPEN`), so a watcher that rescans on any event rescans
@@ -380,7 +381,7 @@ Binding. Read the file for the area before working in it.
 | [settings.md](docs/invariants/settings.md) | declaring settings, the dialog, plugin requirements, helpers' `--probe` and `--build` |
 | [previews.md](docs/invariants/previews.md) | structured previews: inspections, archives, HTML reading mode, EPUB and email, code folds, the preview frame |
 | [reader.md](docs/invariants/reader.md) | PDF readers: PDFium, Poppler and MuPDF workers, continuous scrolling, page coordinates, atlas eviction |
-| [media.md](docs/invariants/media.md) | audio and video: GStreamer worker, frame slots, generations, fullscreen controls, Blade atlas retirement |
+| [media.md](docs/invariants/media.md) | audio and video: GStreamer worker, frame slots, generations, fullscreen controls, the atlas |
 
 ## Layout
 
@@ -401,7 +402,7 @@ crates/extend      the host of plugins from outside: programs and WebAssembly mo
 crates/plugins-outside/*  plugins from outside built here: the template, the hex
                    view as a module, a Netpbm thumbnailer
 crates/bench       synthetic trees and the performance regression check
-vendor/gpui        patched gpui 0.2.2 (vendor/gpui/README.skwir.md)
+vendor/zed         gpui from Zed's main branch, patched (vendor/zed/README.skwir.md)
 vendor/xdg-mime    xdg-mime 0.4.0, built on every system (ADR-037)
 vendor/shared-mime-info  the type database the macOS and Windows packages compile
 spikes/            the Phase 0 toolkit spikes, kept runnable

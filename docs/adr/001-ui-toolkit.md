@@ -1,7 +1,9 @@
 # ADR-001: UI toolkit
 
-Status: accepted, 2026-09-18. Built on gpui 0.2.2, now vendored with patches
-(`vendor/gpui`). Amended 2026-10-11 (accessibility waits for gpui).
+Status: accepted, 2026-09-18. Built on gpui 0.2.2, vendored with patches,
+until ADR-064 (2026-10-17) moved it to a commit of Zed's main branch
+(`vendor/zed`). Amended 2026-10-11 (accessibility waits for gpui) and
+2026-10-17 (gpui has AccessKit).
 
 ## Context
 
@@ -91,3 +93,9 @@ Not verified by the spike:
 The revisit no longer has a date of Skwir's own ("if still absent by
 Phase 5, evaluate contributing it upstream or an adapter in `skwir-ui`"):
 it depends on gpui supporting accessibility, checked at each gpui update.
+
+### 2026-10-17: gpui has AccessKit
+
+ADR-064 vendors gpui from Zed's main branch, which integrates AccessKit:
+the window starts with it. The gap now is Skwir's own: its elements
+declare no roles or labels yet. The pin of 0.2.2 is revised there too.
