@@ -5,10 +5,12 @@
 # player's libraries left optional (skwir says the engine is not installed
 # without them);
 # Mermaid and MuPDF are packages of their own. The files are those of the
-# Debian and RPM packages (crates/skwir/Cargo.toml). `just package-aur`
-# writes .SRCINFO beside this file. `just aur-prepare <tag>` fills the
-# source checksum in a separate checkout; `just aur-publish <tag>` pushes
-# its reviewed PKGBUILD and .SRCINFO to the AUR (docs/RELEASING.md).
+# Debian and RPM packages (crates/skwir/Cargo.toml). skwir-git/ builds
+# the same packages from main, skwir-bin/ installs the release's portable
+# tarball. `just package-aur` writes each .SRCINFO beside its PKGBUILD.
+# `just aur-prepare <tag>` fills the source checksums in separate
+# checkouts; `just aur-publish <tag>` pushes their reviewed PKGBUILD and
+# .SRCINFO to the AUR (docs/RELEASING.md).
 # Maintainer: venator <venator at tutamail dot com>
 
 pkgbase=skwir
@@ -96,12 +98,14 @@ package_skwir() {
     esac
   done < tools/package/programs
   install -Dm755 "$srcdir/lib/libpdfium.so" -t "$pkgdir/usr/lib/skwir/"
-  install -Dm644 "$srcdir/LICENSE" "$srcdir"/licenses/* -t "$pkgdir/usr/share/licenses/$pkgbase/pdfium/"
+  # skwir's folders, which it looks in for its licences
+  # (crates/platform/src/about.rs) whichever package holds it.
+  install -Dm644 "$srcdir/LICENSE" "$srcdir"/licenses/* -t "$pkgdir/usr/share/licenses/skwir/pdfium/"
   install -Dm644 tools/package/linux/org.skwir.skwir.desktop -t "$pkgdir/usr/share/applications/"
   install -Dm644 tools/package/linux/org.skwir.skwir.metainfo.xml -t "$pkgdir/usr/share/metainfo/"
   install -Dm644 crates/ui/assets/org.skwir.skwir.svg -t "$pkgdir/usr/share/icons/hicolor/scalable/apps/"
-  install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgbase/"
-  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgbase/"
+  install -Dm644 README.md -t "$pkgdir/usr/share/doc/skwir/"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/skwir/"
   # The notices of what its programs link, the source's (ADR-063): Arch's
   # skwir holds helpers Debian's ships apart.
   install -Dm644 tools/package/notices/arch/skwir/THIRD-PARTY-NOTICES -t "$pkgdir/usr/share/licenses/skwir/"

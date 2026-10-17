@@ -103,6 +103,11 @@ Arch's `skwir` holds the player and the Poppler and DjVuLibre readers;
 install `gst-plugins-base`, `poppler-glib` and `djvulibre` to use them. `skwir-mermaid` and
 `skwir-mupdf` are packages of their own.
 
+Two other packages stand in for those: `skwir-bin` installs the release's
+own build, the tarball below, in `/opt/skwir`, every reader and the player
+with it; `skwir-git` builds the latest commit, in the same packages as
+`skwir` (`skwir-mermaid-git`, `skwir-mupdf-git`).
+
 ### Any other distribution: AppImage or tarball
 
 Both hold the same files, the optional readers and the player among them, and

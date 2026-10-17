@@ -9,7 +9,8 @@ workers, check performance or build packages.
 ## Prepare the source
 
 1. Set the workspace version in `Cargo.toml`, `pkgver` in
-   `tools/package/aur/PKGBUILD`, the AppStream release version and date
+   `tools/package/aur/PKGBUILD` and `tools/package/aur/skwir-bin/PKGBUILD`
+   (`skwir-git` names its own), the AppStream release version and date
    in `tools/package/linux/org.skwir.skwir.metainfo.xml`, and the file
    names in `README.md`'s install commands.
 2. Date that version's `CHANGELOG.md` heading, for example
@@ -127,36 +128,50 @@ The shell sets `MAKEPKG_CONF` to Nix's installed configuration, since
 Nixpkgs' makepkg otherwise looks in `/etc`.
 
 Create an AUR account and register your SSH public key in its settings.
-The account must own or co-maintain an existing `skwir` package base;
-pushing to an unused package base creates it. Configure SSH for
-`aur@aur.archlinux.org` and verify the server's host key normally.
-The split packages share one `skwir.git` repository on the AUR.
+The account must own or co-maintain the `skwir`, `skwir-bin` and
+`skwir-git` package bases; pushing to an unused package base creates it.
+Configure SSH for `aur@aur.archlinux.org` and verify the server's host
+key normally. Split packages share their base's repository on the AUR:
+`skwir.git` holds `skwir`, `skwir-mermaid` and `skwir-mupdf`, `skwir-git.git`
+their `-git` twins.
 
-After building the release bundle and pushing its exact source tag:
+Each base has its PKGBUILD in `tools/package/aur`: `skwir` builds the
+release's source, `skwir-bin` installs its portable tarball in `/opt/skwir`
+(ADR-052), and `skwir-git` builds `main`. After building the release bundle,
+pushing its exact source tag and publishing the GitHub release:
 
 ```sh
 just aur-prepare v0.1.0
 git -C target/aur-publish/skwir diff --cached
+git -C target/aur-publish/skwir-bin diff --cached
+git -C target/aur-publish/skwir-git diff --cached
 just aur-publish v0.1.0
 ```
 
-Preparation verifies the local release bundle and GitHub's tag, downloads
-the PKGBUILD's source archive over HTTPS, fills its SHA256 checksum and
-generates `.SRCINFO` with `makepkg`. It clones or fast-forwards a separate
-AUR checkout at `target/aur-publish/skwir` and stages only `PKGBUILD` and
-`.SRCINFO`. The source repository's template keeps its release placeholder
-checksum, so the tagged source stays clean. `just package-aur` remains
-available to generate `.SRCINFO` beside that template for inspection.
+Preparation verifies the local release bundle and GitHub's tag, then
+makes each base's files: `skwir`'s source archive is downloaded over HTTPS
+and its SHA256 checksum filled; `skwir-bin`'s tarball is downloaded too and
+must be the bundle's own (so the GitHub release must be published);
+`skwir-git` is named after the release's commit (`0.1.0.r0.g34a7b9b`) and
+its Git source stays unsummed. `.SRCINFO` comes from `makepkg`. Only when
+all three are made does it write them, each in a separate AUR checkout it
+clones or fast-forwards (`target/aur-publish/<base>`), staging only
+`PKGBUILD` and `.SRCINFO`. The source repository's templates keep their
+placeholders, so the tagged source stays clean. `just package-aur` writes
+each `.SRCINFO` beside its template; `release-tools-check` checks they are
+current and that `skwir-git`'s build and package functions are the release
+PKGBUILD's.
 
-Review the staged diff, including the source URL, checksum, dependencies
-and split packages. The checkout uses your normal Git author settings;
-configure `user.name` and `user.email` there if they are not set globally.
-Publishing rechecks the release bundle, the prepared files and checkout
-history, commits them and pushes `master` over SSH. It refuses altered
-files, unrelated changes and a redirected origin. It never force-pushes.
-If authentication or the network fails, rerun `aur-publish` to retry the
-same commit. Concurrent AUR updates reject the push; reconcile them in the
-checkout before preparing again. A dirty checkout is never overwritten.
+Review the staged diffs, including the source URLs, checksums,
+dependencies and split packages. The checkouts use your normal Git author
+settings; configure `user.name` and `user.email` in each if the global ones
+are not the maintainer's. Publishing rechecks the release bundle, the
+prepared files and each checkout's history, commits them all, then pushes
+each `master` over SSH. It refuses altered files, unrelated changes and a
+redirected origin. It never force-pushes. If authentication or the network
+fails, rerun `aur-publish` to push what is left. Concurrent AUR updates
+reject the push; reconcile them in the checkout before preparing again. A
+dirty checkout is never overwritten.
 
 ## GitHub fallback
 

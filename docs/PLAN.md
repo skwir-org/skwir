@@ -1988,6 +1988,25 @@ Phase 7.
     the page each relative link as its file at the tag, the changelog and
     the bundle's `notes.md` keeping them relative, and `release-metadata`
     refuses a link to no file of the source.
+    **The AUR after 0.1.0** (2026-10-17): 0.1.0-2 fetches every
+    platform's crates in `prepare()`, which 0.1.0's cargo-about needed
+    (ADR-063). `skwir-bin` and `skwir-git` are package bases of their own
+    (ADR-040 decision 7), and `aur-prepare` and `aur-publish` handle all
+    three. `skwir-bin` 0.1.0-1, made from the published tarball, was
+    installed by pacman in a fresh Arch root and passed 0.1.0's own
+    portable check there (573 ELFs, every helper's probe, the three PDF
+    engines, playback, the window's commands through `/usr/bin/skwir`,
+    the sandboxed archive helper); it needed `fontconfig`, whose
+    configuration the tarball's library reads. That library, Ubuntu
+    22.04's, warns on every start about constants in Arch's newer
+    configuration files, as the AppImage would on any newer system.
+    `skwir-bin` 0.1.0-1 is on the AUR. `skwir-git`, built in the Arch root
+    from this repository's `main` (0.1.0.r51.g17cf86d, an empty cargo
+    home, 41 min on 8 jobs under load), passed `linux/check.sh` in a
+    fresh root as `skwir` does: alone, then with its `-git` twins and the
+    optional libraries, all 11 programs working and its licences in
+    `skwir`'s folders. It was published once GitHub's `main` held the
+    notices (ADR-063), at that version.
 
 **Done when:** every step above is done or says why not, the packages
 built by the local gate (or manual CI) install and run on Debian, Ubuntu,

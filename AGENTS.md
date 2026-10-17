@@ -475,9 +475,10 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
 - A new helper program is listed in `tools/package/programs` (and
   `tools/package/optional` when a package of its own holds it), in the
   packages' file lists (`crates/skwir/Cargo.toml`'s metadata, the
-  PKGBUILD) and in the macOS and Windows scripts where it ships, and its
-  notices are made (`just notices`). It answers `--probe` (ADR-040,
-  ADR-041) and `--build` (its `build.rs` includes
+  PKGBUILDs: `skwir-git`'s functions stay the release's, which
+  `release-tools-check` compares) and in the macOS and Windows scripts
+  where it ships, and its notices are made (`just notices`). It answers
+  `--probe` (ADR-040, ADR-041) and `--build` (its `build.rs` includes
   `tools/build/identity.rs`; see `docs/invariants/settings.md`).
 
 ### Tests

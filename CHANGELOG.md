@@ -7,6 +7,9 @@
   quit. Code is now colored by Ferroni, and the grammars are released a
   minute after code was last shown. PowerShell, Sass, LiveScript, Salt,
   ARM assembly and Babel's JavaScript are colored too.
+- **Two more ways to install Skwir on Arch.** `skwir-bin` installs the
+  release's own build, without compiling, every reader and the player
+  with it. `skwir-git` builds the latest commit.
 
 ## 0.1.0 (2026-10-13)
 

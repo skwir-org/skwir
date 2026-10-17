@@ -58,9 +58,11 @@ def metadata(tag):
         package = tomllib.loads(manifest.read_text()).get("package", {})
         require(package.get("version") in (version, {"workspace": True}),
                 f"{manifest.relative_to(ROOT)} does not share the release version")
-    pkgbuild = (ROOT / "tools/package/aur/PKGBUILD").read_text()
-    require(re.search(rf"^pkgver={re.escape(version)}$", pkgbuild, re.M),
-            "The PKGBUILD version disagrees")
+    # skwir-git's is the commit it builds (aur.py names it at publication).
+    for path in ("tools/package/aur/PKGBUILD", "tools/package/aur/skwir-bin/PKGBUILD"):
+        pkgbuild = (ROOT / path).read_text()
+        require(re.search(rf"^pkgver={re.escape(version)}$", pkgbuild, re.M),
+                f"{path}'s version disagrees")
     changelog = (ROOT / "CHANGELOG.md").read_text()
     section = re.search(rf"^## {re.escape(version)} \((\d{{4}}-\d{{2}}-\d{{2}})\)\n"
                         r"(.*?)(?=^## |\Z)", changelog, re.M | re.S)

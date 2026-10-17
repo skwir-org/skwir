@@ -175,13 +175,16 @@ package-deb:
 package-rpm:
     tools/package/rpm.sh
 
-# The AUR package (ADR-040): its .SRCINFO beside the PKGBUILD, which the
-# AUR wants with it (makepkg, from pacman in the Linux Nix shell).
+# The AUR packages (ADR-040): skwir, skwir-bin and skwir-git, each .SRCINFO
+# beside its PKGBUILD, which the AUR wants with it (makepkg, from pacman in
+# the Linux Nix shell).
 package-aur:
     cd tools/package/aur && makepkg --printsrcinfo > .SRCINFO
+    cd tools/package/aur/skwir-bin && makepkg --printsrcinfo > .SRCINFO
+    cd tools/package/aur/skwir-git && makepkg --printsrcinfo > .SRCINFO
 
-# Prepare a verified release's PKGBUILD and .SRCINFO in a separate AUR checkout
-# (cloned over SSH: requires the AUR SSH key already).
+# Prepare a verified release's PKGBUILDs and .SRCINFOs in separate AUR checkouts,
+# one per package base (cloned over SSH: requires the AUR SSH key already).
 aur-prepare tag:
     python3 tools/release/aur.py prepare {{quote(tag)}}
 

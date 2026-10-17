@@ -8,7 +8,8 @@ Amended 2026-10-11 by ADR-052: a conventional AppImage built in an
 Ubuntu root, including from a Nix host, supplements these formats; since
 2026-10-13, its tree as a tarball too.
 Amended 2026-10-11 by ADR-053: local release builds and draft uploads;
-hosted package builds are a manual fallback.
+hosted package builds are a manual fallback. Decision 7, `skwir-bin` and
+`skwir-git` on the AUR, added 2026-10-17.
 
 ## Context
 
@@ -57,6 +58,17 @@ and the folders it manages unless all are granted, and bubblewrap
    installs it into a fresh copy with the distribution's package
    manager, and checks every program finds its libraries. The host is
    untouched; any Linux with bubblewrap runs it.
+7. **Two more packages on the AUR** (2026-10-17, the user asked for
+   them), each a package base of its own under `tools/package/aur`:
+   `skwir-bin` installs the release's portable tarball (ADR-052) as it
+   is, in `/opt/skwir` with `skwir` linked into `/usr/bin`: one package,
+   every helper and the libraries it carries with it, standing for the
+   three `skwir` makes (it provides and conflicts with them), x86-64
+   only. `skwir-git` builds `main` into the same three packages, named
+   `-git`, each providing its release twin; its build and package
+   functions are the release PKGBUILD's word for word
+   (`release-tools-check` compares them). `aur-prepare` publishes all
+   three bases at each release.
 
 ## Consequences
 
