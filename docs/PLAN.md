@@ -400,6 +400,14 @@ dates, measurements and what is left.
   (`Shell::shows_player`). In a window on Xvfb: the halo with the
   thumbnail at about 270 ms, the cover in the same place at 500 ms,
   0.7 % of the disc's pixels changing.
+- **A clip with one keyframe** (2026-10-17): a film with no keyframe
+  from its tenth on (a short clip whose one keyframe is its first) had
+  no poster: `ffmpeg` fails when it has no frame to write, and the
+  failure ended the picture. With GStreamer the player's frame came
+  instead, later; with Still frames, no preview. What `ffmpeg` printed
+  now tells, and the frame at the tenth is decoded exactly. Found by an
+  opt-in test of a 2 s phone film; in a window, such a clip got its
+  poster.
 - **More formats** (2026-09-28):
   - SVG by resvg; OpenEXR and DDS decoded in process; HEIC, AVIF, JPEG
     XL and raw by the desktop's thumbnailer at 1024 px. Code highlighted

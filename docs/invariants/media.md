@@ -78,12 +78,17 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   on (at most 30 s in), only keyframes decoded (`ffmpeg_keyframe`), and
   its time is the keyframe's: a picture always says the time of the frame
   it shows. Not the keyframe before: in a short clip with keyframes far
-  apart it was the first frame, black where a film fades in. A moment
-  asked for (a still's step) is decoded exactly. Timestamps stay the
-  file's, from its start (`-copyts -start_at_zero`). The time is read in
-  the filter graph, before the output: a frame the output drops (one
-  with a negative timestamp, as `-noaccurate_seek` left the keyframe
-  before the seek) leaves the time of another. The opt-in test
+  apart it was the first frame, black where a film fades in. With none
+  from there to the end (a short clip whose one keyframe is its first),
+  the frame at the tenth, decoded exactly: `ffmpeg` fails with no frame
+  to write, so what it printed tells, not how it ended (taken for a
+  failure, such a clip waited for its player's frame, and with Still
+  frames had no preview). A moment asked for (a still's step) is decoded
+  exactly. Timestamps stay the file's, from its start (`-copyts
+  -start_at_zero`). The time is read in the filter graph, before the
+  output: a frame the output drops (one with a negative timestamp, as
+  `-noaccurate_seek` left the keyframe before the seek) leaves the time
+  of another. The opt-in test
   `a_film_s_own_moment_is_a_keyframe_shown_at_its_time` compares the
   picture with the frame at the time it says.
 - Play and Seek cancel extraction and reject late posters; poster work

@@ -780,6 +780,9 @@ fn ffmpeg_keyframe(
     scratch: &Path,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<(Vec<u8>, f64)>> {
+    // With no frame to write, `ffmpeg` fails ("Could not open encoder
+    // before EOF"): what it printed says whether one came. Any other
+    // failure is met again by the exact frame read instead.
     let picture = ffmpeg_frame(
         ffmpeg,
         path,
@@ -787,7 +790,7 @@ fn ffmpeg_keyframe(
         side,
         scratch,
         cancel,
-    )?;
+    );
     // `frame:0    pts:128000  pts_time:8.333333`, empty when no frame was
     // decoded.
     let printed = read_artifact(&scratch.join("frame.txt")).unwrap_or_default();
@@ -803,7 +806,7 @@ fn ffmpeg_keyframe(
     else {
         return Ok(None);
     };
-    Ok(Some((read_artifact(&picture)?, time.max(0.0))))
+    Ok(Some((read_artifact(&picture?)?, time.max(0.0))))
 }
 
 /// Which frame `ffmpeg_frame` asks `ffmpeg` for.
@@ -1559,6 +1562,26 @@ mod tests {
                 path.display()
             );
         }
+        // A clip whose one keyframe is its first: none from its tenth on,
+        // so the frame there, decoded exactly.
+        let clip = tmp.path().join("Synthetic one keyframe.mp4");
+        process::run(
+            Command::new(&ffmpeg)
+                .args(["-nostdin", "-v", "error", "-f", "lavfi", "-i"])
+                .args(["testsrc2=size=160x90:rate=10", "-t", "3"])
+                .args(["-c:v", "mpeg4", "-g", "100"])
+                .arg(&clip),
+            &token,
+            RENDER_TIMEOUT,
+        )
+        .unwrap();
+        let mut req = request(&clip);
+        req.mime = Some("video/mp4".into());
+        let shown = backend.render(&req, &token).unwrap();
+        let PreviewInfo::Video { seconds, .. } = shown.info else {
+            panic!("not a film's picture: {:?}", shown.info);
+        };
+        assert!((seconds - 0.3).abs() < 0.001, "its tenth, said {seconds}");
     }
 
     #[test]
