@@ -184,16 +184,18 @@ impl Shell {
                 .is_some_and(|m| m.starts_with("audio/"))
     }
 
-    /// The kind of media the panel shows, as the start of its type:
-    /// `audio/` or `video/`. Stepping and a shuffle keep to that kind.
     /// Whether a player shows the file, or may still: its picture came
-    /// first (`MediaState::awaiting_player`). What is drawn of it is the
+    /// first (`MediaState::awaiting_player`), or a track's thumbnail stands
+    /// in for its cover (`preview::placeholder`). What is drawn of it is the
     /// player's from the picture on, so nothing changes when it opens.
     pub(crate) fn shows_player(&self) -> bool {
         self.preview.media.session.is_some()
             || (self.preview.media.awaiting_player()
                 && matches!(
-                    &self.preview.content,
+                    self.preview
+                        .content
+                        .as_ref()
+                        .or_else(|| crate::preview::placeholder(self)),
                     Some(PreviewContent::Image {
                         detail: Some(skwir_core::preview::PreviewInfo::Video { .. }),
                         ..
@@ -201,6 +203,8 @@ impl Shell {
                 ))
     }
 
+    /// The kind of media the panel shows, as the start of its type:
+    /// `audio/` or `video/`. Stepping and a shuffle keep to that kind.
     pub(crate) fn media_kind(&self) -> Option<&'static str> {
         let mime = self.preview.info.mime.as_deref()?;
         ["audio/", "video/"]
@@ -1464,7 +1468,12 @@ pub fn audio_content(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let p = &shell.preview;
-    let cover = match &p.content {
+    // The track's cover, or its thumbnail standing in for it meanwhile.
+    let cover = match p
+        .content
+        .as_ref()
+        .or_else(|| crate::preview::placeholder(shell))
+    {
         Some(PreviewContent::Image { image, .. }) => Some(image.clone()),
         _ => None,
     };

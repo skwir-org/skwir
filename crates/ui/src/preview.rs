@@ -2420,11 +2420,24 @@ impl Shell {
                                 };
                                 (side(image.width), side(image.height))
                             });
+                        // A track's thumbnail is its cover: it stands in
+                        // as the track's picture, in the figure its player
+                        // draws (`Shell::shows_player`), not as a picture
+                        // the figure then replaces.
+                        let track = request
+                            .mime
+                            .as_deref()
+                            .is_some_and(|mime| mime.starts_with("audio/"))
+                            && previews.media(&request);
                         let content = PreviewContent::Image {
                             image: render,
                             width: own.0,
                             height: own.1,
-                            detail: None,
+                            detail: track.then_some(PreviewInfo::Video {
+                                seconds: 0.,
+                                duration: None,
+                                size: None,
+                            }),
                             document: None,
                             facts: Vec::new(),
                             pixels: Pixels::Own,
@@ -4486,8 +4499,9 @@ pub(crate) fn on_paper(shell: &Shell) -> bool {
 /// The thumbnail standing in for the preview, once the wait has lasted
 /// (`BUSY_AFTER`) and while nothing else is shown. Never a film's: it is
 /// the frame its thumbnailer chose, not the one the panel will show, so
-/// the wait ends on another picture.
-fn placeholder(shell: &Shell) -> Option<&PreviewContent> {
+/// the wait ends on another picture. A track's is its cover, drawn in its
+/// player's figure.
+pub(crate) fn placeholder(shell: &Shell) -> Option<&PreviewContent> {
     let preview = &shell.preview;
     preview.placeholder.as_ref().filter(|_| {
         preview.content.is_none() && shell.preview_busy() && shell.media_kind() != Some("video/")

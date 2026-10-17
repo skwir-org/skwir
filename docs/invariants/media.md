@@ -66,7 +66,14 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   panel is loading; the frame or the poster ends the wait
   (`Shell::film_waited`).
 - A track's cover is its thumbnail at once, then the poster's: the same
-  picture, sharper, glowing in the same colour.
+  picture, sharper, glowing in the same colour. The thumbnail is drawn in
+  the player's figure, with the player's bar (`Shell::shows_player`),
+  from the player's opening (`sync_media`) or, standing in once the wait
+  has lasted, before it: the worker marks a track's stand-in as its
+  picture when the provider shows the file as media
+  (`preview::placeholder`). Drawn as a plain picture under "Loading…",
+  it was replaced by the figure (the first track a window opens waits
+  that long: GStreamer reads its registry).
 - Unasked, a film's own moment is the first keyframe from a tenth of it
   on (at most 30 s in), only keyframes decoded (`ffmpeg_keyframe`), and
   its time is the keyframe's: a picture always says the time of the frame

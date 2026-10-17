@@ -391,6 +391,15 @@ dates, measurements and what is left.
   are 140° and 149°. In a window on Xvfb, an uncached track's glow kept
   its colour from the thumbnail to the cover (the ring's mean moved by
   0.1 of 255), the disc 0.4 % of its pixels sharper.
+- **A track's thumbnail in its figure** (2026-10-17): a track whose
+  cover and player both came after the wait (the first track a window
+  opens, while GStreamer reads its registry) showed its thumbnail as a
+  plain picture under "Loading…", then the halo. The thumbnail standing
+  in for a track, the provider saying the file is media, is now its
+  picture in the player's figure, with the player's bar
+  (`Shell::shows_player`). In a window on Xvfb: the halo with the
+  thumbnail at about 270 ms, the cover in the same place at 500 ms,
+  0.7 % of the disc's pixels changing.
 - **More formats** (2026-09-28):
   - SVG by resvg; OpenEXR and DDS decoded in process; HEIC, AVIF, JPEG
     XL and raw by the desktop's thumbnailer at 1024 px. Code highlighted
