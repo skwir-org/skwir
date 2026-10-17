@@ -14,7 +14,7 @@ serde.workspace = true
 tracing.workspace = true
 # Zip packages (`package`): Word and OpenDocument files, EPUB, 3MF, KMZ,
 # workbooks; the version and inflater already in the tree.
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 open.workspace = true
 md5.workspace = true

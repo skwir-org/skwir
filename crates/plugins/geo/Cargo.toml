@@ -26,7 +26,7 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std", "si
 skwir-core = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 # The tests write KMZ files.
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 tempfile.workspace = true
 
 [lints]

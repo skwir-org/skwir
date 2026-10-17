@@ -50,7 +50,10 @@ impl Package {
         let mut members = HashMap::new();
         for index in 0..archive.len() {
             inspection::check(cancel)?;
-            if let Some(name) = normalize(archive.by_index_raw(index)?.name()) {
+            // A name its archive calls UTF-8 that is not can never be asked
+            // for: that member is left out, not the package.
+            let member = archive.by_index_raw(index)?;
+            if let Some(name) = member.name().ok().and_then(|name| normalize(&name)) {
                 let name = if folded { name.to_lowercase() } else { name };
                 members.entry(name).or_insert(index);
             }

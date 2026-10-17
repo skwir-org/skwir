@@ -24,7 +24,7 @@ indexmap = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 # The tests write workbooks.
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 tempfile.workspace = true
 
 [lints]

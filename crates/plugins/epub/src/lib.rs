@@ -1065,9 +1065,14 @@ mod tests {
             100,
             "the lie is in place"
         );
-        let error = inspect(&path, &InspectRequest::default()).unwrap_err();
+        // zip 9 refuses a member past its declared size; were it to trust the
+        // lie further, the bound on what is read would stop it.
+        let error = inspect(&path, &InspectRequest::default())
+            .unwrap_err()
+            .to_string();
         assert!(
-            error.to_string().contains("EPUB container exceeds 16 MiB"),
+            error.contains("larger than its declared uncompressed size")
+                || error.contains("EPUB container exceeds 16 MiB"),
             "{error}"
         );
     }

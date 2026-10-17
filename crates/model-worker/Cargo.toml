@@ -18,13 +18,13 @@ tobj = { version = "4", default-features = false }
 gltf = { version = "1.4", default-features = false, features = ["utils"] }
 base64 = "0.22"
 # 3MF packages: the zip and XML readers already in the tree.
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 quick-xml = "0.42"
 
 [dev-dependencies]
 tempfile.workspace = true
 # Test files built as the helper reads them.
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [lints]
 workspace = true
