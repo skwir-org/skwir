@@ -1568,6 +1568,29 @@ impl Shell {
         self.run(&a.name, a.args.clone(), window, cx);
     }
 
+    /// A key's command, before any part of the window takes it (ADR-066):
+    /// a key held down runs again only what steps (`CommandSpec::repeats`),
+    /// so a switch bound to a key is not flipped over and over; its repeats
+    /// tell peek that the key which opened it is held.
+    fn capture_run_command(&mut self, a: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(key) = window.key_down_event() else {
+            return;
+        };
+        if key.is_held {
+            if let Some(press) = &mut self.preview.peek_press {
+                press.repeated(&key.keystroke.key);
+            }
+            if !self.app.commands.repeats(&a.name, &a.args) {
+                cx.stop_propagation();
+            }
+        } else if a.name != "ui.cursor"
+            && let Some(press) = &mut self.preview.peek_press
+        {
+            // Peek used while its key is held, beyond walking the files.
+            press.used();
+        }
+    }
+
     /// Route a command: `ui.*` to the shell, everything else to the core.
     pub fn run(
         &mut self,
@@ -2221,7 +2244,7 @@ impl Shell {
                 cx,
             ),
             "cursor_toggle" => self.toggle_cursor(window, cx),
-            "peek" => self.toggle_peek(window, cx),
+            "peek" => self.peek_command(window, cx),
             "peek_close" => self.close_peek(window, cx),
             "quit" => self.quit(window, cx),
             // Declared (`commands.rs`) but carried out nowhere: a mistake
@@ -2840,7 +2863,11 @@ impl Render for Shell {
 
         let root = div()
             .key_context(keymap::ROOT)
+            .capture_action(cx.listener(Self::capture_run_command))
             .on_action(cx.listener(Self::on_run_command))
+            .capture_key_up(cx.listener(|this, event: &gpui::KeyUpEvent, window, cx| {
+                this.peek_key_released(&event.keystroke.key, window, cx);
+            }))
             // Ctrl (Cmd) held over a link found in text makes it one.
             .on_modifiers_changed(cx.listener(Self::on_modifiers))
             // Before anything under the pointer: a popup closed by this

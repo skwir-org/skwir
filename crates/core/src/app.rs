@@ -1970,30 +1970,35 @@ mod builtin {
                 true,
             ),
         ] {
-            c.register::<HistoryArgs, _>("core", name, title, description, move |a, app| {
-                let pane = app.pane_or_active(a.pane);
-                let steps = a.steps.unwrap_or(1).max(1);
-                let target = {
-                    let ws = app.workspace.read();
-                    let p = ws
-                        .pane(pane)
-                        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-                    let pos = if forward {
-                        p.history_pos.checked_add(steps)
-                    } else {
-                        p.history_pos.checked_sub(steps)
+            let step =
+                c.register::<HistoryArgs, _>("core", name, title, description, move |a, app| {
+                    let pane = app.pane_or_active(a.pane);
+                    let steps = a.steps.unwrap_or(1).max(1);
+                    let target = {
+                        let ws = app.workspace.read();
+                        let p = ws
+                            .pane(pane)
+                            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                        let pos = if forward {
+                            p.history_pos.checked_add(steps)
+                        } else {
+                            p.history_pos.checked_sub(steps)
+                        };
+                        pos.and_then(|pos| {
+                            Some((pos, p.history.get(pos)?.clone(), p.selection.cursor))
+                        })
                     };
-                    pos.and_then(|pos| Some((pos, p.history.get(pos)?.clone(), p.selection.cursor)))
-                };
-                if let Some((pos, loc, left)) = target {
-                    app.show(pane, &loc, |p| p.go_to(pos, left))?;
-                }
-                Ok(Outcome::Done)
-            })
-            .shows();
+                    if let Some((pos, loc, left)) = target {
+                        app.show(pane, &loc, |p| p.go_to(pos, left))?;
+                    }
+                    Ok(Outcome::Done)
+                });
+            // Steps through the history: a key held down goes on.
+            step.repeats(crate::command::always);
+            step.shows();
         }
 
-        c.register::<PaneArg, _>(
+        let up = c.register::<PaneArg, _>(
             "core",
             "up",
             "Parent directory",
@@ -2014,8 +2019,9 @@ mod builtin {
                 }
                 Ok(Outcome::Done)
             },
-        )
-        .shows();
+        );
+        up.repeats(crate::command::always);
+        up.shows();
 
         c.register::<TargetsArgs, _>(
             "core",

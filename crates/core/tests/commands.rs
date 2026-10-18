@@ -126,3 +126,38 @@ fn a_command_is_called_by_the_form_of_its_arguments() {
         "Sort (key name)"
     );
 }
+
+/// A key held down runs a command again only where its declaration says,
+/// by its arguments (ADR-066): never by default, nor for a command that is
+/// not there.
+#[test]
+fn a_held_key_repeats_only_what_its_command_declares() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    for name in ["player.volume", "player.play"] {
+        app.commands
+            .register::<serde_json::Value, _>("player", name, "", "", |_, _| Ok(Outcome::Done));
+    }
+    app.commands
+        .register::<serde_json::Value, _>("player", "player.step", "", "", |_, _| Ok(Outcome::Done))
+        .repeats(skwir_core::command::always);
+    app.commands
+        .register::<serde_json::Value, _>("player", "player.volume_by", "", "", |_, _| {
+            Ok(Outcome::Done)
+        })
+        .repeats(|args| args.get("by").is_some());
+    let none = serde_json::json!({});
+    assert!(app.commands.repeats("player.step", &none));
+    assert!(!app.commands.repeats("player.play", &none), "once a press");
+    assert!(
+        app.commands
+            .repeats("player.volume_by", &serde_json::json!({"by": 0.1}))
+    );
+    assert!(!app.commands.repeats("player.volume_by", &none));
+    assert!(!app.commands.repeats("player.gone", &none));
+    let spec = app.commands.get("player.step").unwrap();
+    assert!(spec.repeats_with(&none));
+    // Only keys repeat: agents are not told.
+    let said = serde_json::to_value(&spec).unwrap();
+    assert!(said.get("repeats").is_none(), "{said}");
+}

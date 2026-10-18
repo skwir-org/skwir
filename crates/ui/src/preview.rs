@@ -510,6 +510,8 @@ pub struct PreviewState {
     rx: flume::Receiver<PreviewResult>,
     /// Peek's keyboard, and the whole screen's where what it shows has none.
     pub peek_focus: Option<FocusHandle>,
+    /// The key that opened peek, until it is let go (ADR-066).
+    pub(crate) peek_press: Option<PeekPress>,
     /// The preview on the whole screen (`fullscreen.rs`): kept while the
     /// file shown changes, so a step or a slideshow stays there.
     pub fullscreen: Option<crate::fullscreen::Fullscreen>,
@@ -791,6 +793,7 @@ impl Default for PreviewState {
             tx,
             rx,
             peek_focus: None,
+            peek_press: None,
             fullscreen: None,
             ahead: None,
             neighbours: (None, None),
@@ -4060,6 +4063,7 @@ impl Shell {
     }
 
     pub fn open_peek(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.preview.peek_press = None;
         if self.cursor_id().is_none() {
             self.set_status("nothing to peek at", false, cx);
             return;
@@ -4080,8 +4084,33 @@ impl Shell {
         self.preview.menu = None;
         self.preview.peek = false;
         self.preview.peek_focus = None;
+        self.preview.peek_press = None;
         window.focus(&self.ui().focus, cx);
         cx.notify();
+    }
+
+    /// `ui.peek` run: peek opened by a key's press keeps the key, so that
+    /// let go after it was held, the key closes peek again (ADR-066).
+    pub fn peek_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_peek(window, cx);
+        if self.preview.peek
+            && let Some(key) = window.key_down_event().filter(|key| !key.is_held)
+        {
+            self.preview.peek_press = Some(PeekPress::new(&key.keystroke.key));
+        }
+    }
+
+    /// A key let go: the one that opened peek closes it if it was held and
+    /// peek was not put to use meanwhile.
+    pub fn peek_key_released(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let closes = self
+            .preview
+            .peek_press
+            .take_if(|press| press.key == key)
+            .is_some_and(|press| press.closes());
+        if closes && self.preview.peek {
+            self.close_peek(window, cx);
+        }
     }
 
     /// The desktop's thumbnail of the track playing: its cover, until the
@@ -5464,6 +5493,48 @@ pub fn render_panel(
     )
 }
 
+/// The key that opened peek, until it is let go: a tap leaves peek open,
+/// as before; held until the system repeats it, by the user's own delay,
+/// it shows peek only while it is held, unless peek was put to use
+/// meanwhile (ADR-066).
+#[derive(Debug, PartialEq)]
+pub(crate) struct PeekPress {
+    /// The key, as its release names it (`Keystroke::key`).
+    key: String,
+    /// The platform repeated it: it is held.
+    held: bool,
+    /// Something other than walking the files was done in peek while it
+    /// was held (a command, a click): its release leaves peek open.
+    used: bool,
+}
+
+impl PeekPress {
+    pub fn new(key: &str) -> Self {
+        PeekPress {
+            key: key.to_owned(),
+            held: false,
+            used: false,
+        }
+    }
+
+    /// The platform repeated `key`, a key held down.
+    pub fn repeated(&mut self, key: &str) {
+        if key == self.key {
+            self.held = true;
+        }
+    }
+
+    /// Peek was put to use: it stays when the key is let go.
+    pub fn used(&mut self) {
+        self.used = true;
+    }
+
+    /// Whether letting go of the key closes peek.
+    pub fn closes(&self) -> bool {
+        self.held && !self.used
+    }
+}
+
 /// The centered peek overlay, or `None`.
 pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     if !shell.preview.peek {
@@ -5507,6 +5578,13 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                     })
                     .track_focus(&focus)
                     .key_context(keymap::PEEK)
+                    // A click while the key that opened it is held: peek is
+                    // in use, and stays when the key is let go.
+                    .capture_any_mouse_down(cx.listener(|this, _, _, _| {
+                        if let Some(press) = &mut this.preview.peek_press {
+                            press.used();
+                        }
+                    }))
                     .w(gpui::relative(0.8))
                     .h(gpui::relative(0.8))
                     .flex()
@@ -5537,10 +5615,30 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
 #[cfg(test)]
 mod tests {
     use super::{
-        Counted, Lay, SHARPEN_STEP, SourceTypes, Version, arrowed, count_waits, max_width,
-        picture_written, selection_stamp, sharper, still_counts, zoomed_offset,
+        Counted, Lay, PeekPress, SHARPEN_STEP, SourceTypes, Version, arrowed, count_waits,
+        max_width, picture_written, selection_stamp, sharper, still_counts, zoomed_offset,
     };
     use skwir_core::workspace::{PaneId, Selection};
+
+    /// Space tapped leaves peek open; held until the system repeats it, its
+    /// release closes peek, unless peek was put to use meanwhile; another
+    /// key's repeats hold nothing (ADR-066).
+    #[test]
+    fn peek_closes_when_the_key_held_to_open_it_is_let_go() {
+        let tapped = PeekPress::new("space");
+        assert!(!tapped.closes());
+
+        let mut held = PeekPress::new("space");
+        held.repeated("right");
+        assert!(!held.closes(), "another key repeated");
+        held.repeated("space");
+        assert!(held.closes());
+
+        let mut used = PeekPress::new("space");
+        used.repeated("space");
+        used.used();
+        assert!(!used.closes());
+    }
 
     #[test]
     fn a_zoom_keeps_what_is_under_the_pointer_there() {

@@ -27,6 +27,12 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   and that no place lists two actions under one title. Only a title
   naming what an argument names elsewhere (a folder, a view, a choice's
   own title) is worked out instead.
+- **Repeats (ADR-066).** A command runs once for each press of its key
+  unless it declares when a key held down runs it again, by its
+  arguments (`Declared::repeats`; `command::always` for one that only
+  steps): a step along something, never an act or a switch. The rule is
+  not said to agents: only keys repeat. A plugin from outside cannot
+  declare one yet.
 - A new `ui.*` command is declared in `commands.rs`; the test of the
   declarations covers its keys, forms and palette entries. The palette
   offers the shell's commands as `UI_COMMANDS` lists them, each with the

@@ -2021,6 +2021,65 @@ mod tests {
         assert!(!kept.contains(&"q".to_owned()), "freed, it runs nothing");
     }
 
+    /// A key held down runs again only what steps (ADR-066): every key of
+    /// the shell's that moves (an arrow, a page, Home, End) runs a command
+    /// that repeats, but for the few that act, and no switch repeats, so a
+    /// key left down neither flips one over and over nor stops a walk.
+    #[test]
+    fn held_keys_repeat_only_steps() {
+        use serde_json::json;
+        const MOVING: [&str; 8] = [
+            "up", "down", "left", "right", "pageup", "pagedown", "home", "end",
+        ];
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::commands::declare_all(&app);
+        // Moving keys that act once a press: a menu's group opened or
+        // closed, a settings page entered, another track.
+        let acts = |name: &str, args: &serde_json::Value| match name {
+            "ui.menu_expand" | "ui.menu_collapse" | "ui.settings_enter" => true,
+            "ui.player" => matches!(args["request"].as_str(), Some("previous" | "next")),
+            _ => false,
+        };
+        let mut moving = 0;
+        for bound in super::bindings(&app, &[]) {
+            let Some((name, args)) = &bound.command else {
+                continue;
+            };
+            let last = bound.keys.rsplit(' ').next().unwrap_or_default();
+            let key = last.rsplit('-').next().unwrap_or_default();
+            if MOVING.contains(&key) && !acts(name, args) {
+                moving += 1;
+                assert!(
+                    app.commands.repeats(name, args),
+                    "{} runs {name} {args} once a press",
+                    bound.keys
+                );
+            }
+        }
+        assert!(moving > 50, "{moving}");
+        for (name, args) in [
+            ("ui.peek", json!({})),
+            ("ui.peek_close", json!({})),
+            ("ui.preview_fullscreen", json!({})),
+            ("ui.toggle_preview", json!({})),
+            ("ui.toggle_sidebar", json!({})),
+            ("ui.split", json!({})),
+            ("ui.cursor_toggle", json!({})),
+            ("ui.slideshow", json!({})),
+            ("ui.media_control", json!({"action": "play"})),
+            ("ui.media_control", json!({"action": "mute"})),
+            ("ui.player", json!({"request": "play_pause"})),
+            ("ui.sidebar_key", json!({"key": "rename"})),
+            ("ui.sidebar_key", json!({"key": "open"})),
+            ("ui.cursor_pick", json!({"advance": false})),
+        ] {
+            assert!(!app.commands.repeats(name, &args), "{name} {args} repeats");
+        }
+        // Picked, then the next: held, a run of files is picked.
+        assert!(app.commands.repeats("ui.cursor_pick", &json!({})));
+    }
+
     /// In the terminal its own keys run, even where a later layer binds the
     /// same keys to the window, and the window's other keys go on to the
     /// program but F4 and the palette: unbound, Ctrl+Shift+C reached the

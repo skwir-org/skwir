@@ -262,7 +262,7 @@ and the comment.
 ## Previews
 
 `Space` peeks at a file (the arrows walk the files, `Space` or `Escape`
-closes). `F11` (or `Ctrl+Shift+Space`) opens the preview panel, which
+closes); held, it peeks until let go. `F11` (or `Ctrl+Shift+Space`) opens the preview panel, which
 follows the selection. Each kind of file has its tools in the panel's
 bar. Skwir previews text and code, Markdown, tables, structured data,
 PDFs and office documents, books, comics, e-mail, notebooks, pictures,

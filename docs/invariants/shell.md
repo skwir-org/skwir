@@ -377,6 +377,21 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   (`keymap::typed_in_fields`, after the bindings it shadows), as the
   terminal keeps its keys: `.` bound anywhere still types in the address
   bar, a search, a rename.
+- **A key held down runs again only a step (ADR-066).** The system's
+  repeats of a key reach the window's root first
+  (`Shell::capture_run_command`), which drops a command that does not
+  repeat by its declaration (`CommandSpec::repeats`); a command that
+  steps (the cursor, a page, the volume) declares it where it is
+  declared (the shell's in `commands::repeats_of`). A switch never
+  repeats: a held key would flip it over and over. Whether a key is held
+  is gpui's `Window::key_down_event().is_held` (patch 0032), never a
+  timer of ours. `keymap::tests::held_keys_repeat_only_steps` holds that
+  every built-in key that moves repeats.
+- **Peek's key, held, peeks until let go.** `ui.peek` run by a key's
+  press keeps the key (`preview::PeekPress`): a tap leaves peek open; a
+  press the system repeated closes it when let go (the root's key-up),
+  unless peek was used meanwhile (a command other than `ui.cursor`, a
+  click in it). Opening or closing peek any other way forgets the press.
 - **Titles.** An action is called by `keymap::title`: its command's form
   for its arguments (`Declared::forms`), never by its command's title
   alone. A key bound with arguments gets a form where its command is

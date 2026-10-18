@@ -289,6 +289,16 @@ pub fn with_args(title: &str, args: &serde_json::Value) -> String {
     }
 }
 
+/// When a key held down runs a command again, by the arguments it runs
+/// with (`CommandSpec::repeats`).
+pub type Repeats = fn(&serde_json::Value) -> bool;
+
+/// Again with every repeat of its key: a command that only steps (the
+/// cursor, a page, the next tab).
+pub fn always(_: &serde_json::Value) -> bool {
+    true
+}
+
 /// Declared metadata of a command, including the JSON schema of its arguments.
 #[derive(Clone, Debug, Serialize)]
 pub struct CommandSpec {
@@ -317,9 +327,21 @@ pub struct CommandSpec {
     /// outside's answer) is `Effect::Reads` without being data.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub data: bool,
+    /// When a key held down runs it again (ADR-066): a step along
+    /// something (the cursor, a page, the volume, the next tab), never an
+    /// act or a switch, which the key's repeats would run over and over.
+    /// `None`, the default: once a press. Only keys repeat, so it is not
+    /// said to agents.
+    #[serde(skip)]
+    pub repeats: Option<Repeats>,
 }
 
 impl CommandSpec {
+    /// Whether a key held down runs it again with `args`.
+    pub fn repeats_with(&self, args: &serde_json::Value) -> bool {
+        self.repeats.is_some_and(|rule| rule(args))
+    }
+
     /// Whether it takes the argument `name`, as its schema declares.
     pub fn takes(&self, name: &str) -> bool {
         self.args_schema
@@ -393,6 +415,13 @@ impl Declared<'_> {
     /// Its keys may change, never all go (see `CommandSpec::keeps_a_key`).
     pub fn keeps_a_key(&self) {
         self.update(|spec| spec.keeps_a_key = true);
+    }
+
+    /// A key held down runs it again where `rule` says, by its arguments
+    /// (see `CommandSpec::repeats`); [`always`] for a command that only
+    /// steps.
+    pub fn repeats(&self, rule: Repeats) {
+        self.update(|spec| spec.repeats = Some(rule));
     }
 
     /// Say what it does.
@@ -623,6 +652,7 @@ impl CommandRegistry {
             forms: Vec::new(),
             keeps_a_key: false,
             data: false,
+            repeats: None,
         };
         let mut commands = self.commands.write();
         let stack = commands.entry(name).or_default();
@@ -672,6 +702,16 @@ impl CommandRegistry {
             .get(name)
             .and_then(|stack| stack.last())
             .map(|(spec, _, _)| spec.title_for(args))
+    }
+
+    /// Whether a key held down runs `name` again with `args`
+    /// (`CommandSpec::repeats`), read in place: never for no such command.
+    pub fn repeats(&self, name: &str, args: &serde_json::Value) -> bool {
+        self.commands
+            .read()
+            .get(name)
+            .and_then(|stack| stack.last())
+            .is_some_and(|(spec, _, _)| spec.repeats_with(args))
     }
 
     pub fn list(&self) -> Vec<CommandSpec> {

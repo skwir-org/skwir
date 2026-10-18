@@ -1241,6 +1241,31 @@ and the place ringed, read as a list and said as each is reached; in the
 Map view the place's file is selected, so Enter opens it.
 - Not yet: the previews, the terminal, search pills and the footer.
 
+### 2026-10-19
+
+**A key held down runs again only a step (ADR-066).** Space held made
+peek flash open and closed at the repeat rate: gpui runs a binding for
+every repeat, and Space both opened and closed peek. Every switch on a
+key did the same.
+
+- A command says when a key held down runs it again, by its arguments
+  (`CommandSpec::repeats`): the cursor, lists and menus, pages,
+  scrolling, seeking, the volume, zoom, the map, tabs by steps, Back,
+  Forward and Up. Everything else runs once a press: switches, Enter,
+  Delete, Undo.
+- Space tapped opens peek as before; held until the system repeats it,
+  peek shows until Space is let go, unless it was used meanwhile (a
+  click, a key other than the arrows' walk). The system's repeat delay
+  decides, not a constant: QuickLook for Windows does the same with a
+  fixed 750 ms.
+- Other file managers, measured and read: GNOME Files with Sushi flashes
+  on X11 (once every 0.6 s) and opens once on Wayland, by accident of
+  focus; QuickLook for Windows and Files ignore repeats on purpose.
+- Vendored gpui patch 0032: an action sees the key event it came from;
+  X11 reports a held key, which it never did.
+- Checked on Wayland and X11 (Xwayland) on a headless sway; Windows
+  compiled, macOS's window not compiled.
+
 ---
 
 ## Maps

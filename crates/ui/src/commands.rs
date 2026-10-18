@@ -10,7 +10,7 @@
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use skwir_core::app::App;
-use skwir_core::command::{Effect, Form, Invocation, NoArgs, Outcome};
+use skwir_core::command::{Effect, Form, Invocation, NoArgs, Outcome, Repeats, always};
 
 /// Who declares them.
 pub const OWNER: &str = "ui";
@@ -905,6 +905,100 @@ const KEEP_A_KEY: &[&str] = &[
     "ui.menu_close",
 ];
 
+/// When a key held down runs the shell's command `name` again (ADR-066),
+/// by its arguments: a step along something (the cursor, a list, a page,
+/// the volume, the map), never an act or a switch, which the key's
+/// repeats would run over and over (peek, the whole screen, a panel,
+/// Enter on a folder). `None`: once a press.
+fn repeats_of(name: &str) -> Option<Repeats> {
+    /// Whether `args[field]` is one of `steps`.
+    fn among(args: &serde_json::Value, field: &str, steps: &[&str]) -> bool {
+        args.get(field)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| steps.contains(&value))
+    }
+    let rule: Repeats = match name {
+        "ui.cursor"
+        | "ui.find_next"
+        | "ui.zoom"
+        | "ui.list_move"
+        | "ui.review_choose"
+        | "ui.rename_bulk_next"
+        | "ui.rename_bulk_prev"
+        | "ui.toolbar_next"
+        | "ui.toolbar_prev"
+        | "ui.toolbar_first"
+        | "ui.toolbar_last"
+        | "ui.menu_up"
+        | "ui.menu_down"
+        | "ui.menu_first"
+        | "ui.menu_last"
+        | "ui.settings_next"
+        | "ui.settings_prev"
+        | "ui.settings_page"
+        | "ui.settings_adjust"
+        | "ui.settings_move"
+        | "ui.terminal_page"
+        | "ui.preview_page"
+        | "ui.preview_scroll"
+        | "ui.preview_seek"
+        | "ui.preview_zoom"
+        | "ui.preview_match"
+        | "ui.media_step"
+        | "ui.fullscreen_step"
+        | "ui.player_volume"
+        | "ui.map_pan"
+        | "ui.map_point" => always,
+        // Pick, then the next: held, it picks a run of files.
+        "ui.cursor_pick" => {
+            |args| args.get("advance").and_then(serde_json::Value::as_bool) != Some(false)
+        }
+        "ui.sidebar_key" => |args| {
+            among(
+                args,
+                "key",
+                &[
+                    "up",
+                    "down",
+                    "first",
+                    "last",
+                    "left",
+                    "right",
+                    "move_up",
+                    "move_down",
+                ],
+            )
+        },
+        "ui.settings_key" => |args| {
+            among(
+                args,
+                "key",
+                &[
+                    "up",
+                    "down",
+                    "first",
+                    "last",
+                    "page_up",
+                    "page_down",
+                    "left",
+                    "right",
+                ],
+            )
+        },
+        "ui.inspect" => |args| {
+            among(
+                args,
+                "action",
+                &["step", "fold", "scroll", "larger", "smaller"],
+            )
+        },
+        "ui.media_control" => |args| among(args, "action", &["volume_by"]),
+        "ui.player" => |args| args["request"].get("seek_by").is_some(),
+        _ => return None,
+    };
+    Some(rule)
+}
+
 /// The cursor's moves (`ui.cursor`), each where it goes and what the
 /// selection does, in words: Select up, Extend the selection a page down.
 fn cursor_forms() -> impl Iterator<Item = Form> {
@@ -992,6 +1086,9 @@ fn declare<A: DeserializeOwned + JsonSchema + 'static>(
     if KEEP_A_KEY.contains(&name) {
         declared.keeps_a_key();
     }
+    if let Some(rule) = repeats_of(name) {
+        declared.repeats(rule);
+    }
     declared.effect(effect_of(name));
 }
 
@@ -1070,7 +1167,7 @@ pub fn declare_all(app: &App) {
     none(
         "ui.peek",
         "Peek",
-        "Look at the file under the cursor in a large preview",
+        "Look at the file under the cursor in a large preview; run again, or its key held and let go, it closes",
     );
     none("ui.peek_close", "Close peek", "Close the large preview");
     none(

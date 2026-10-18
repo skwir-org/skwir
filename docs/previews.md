@@ -8,7 +8,9 @@ contributors). The rules for working on preview code are in
 
 ## Using the preview
 
-- `Space` peeks at a file. `F11` (or `Ctrl+Shift+Space`) opens the
+- `Space` peeks at a file: tapped, peek stays open; held, it shows the
+  file until `Space` is let go, unless you click in it or press another
+  key than the arrows meanwhile. `F11` (or `Ctrl+Shift+Space`) opens the
   preview panel, which follows the selection; `F11` or the Preview button
   closes it.
 - **The header** shows the file's icon, name, type, size and date. Click
@@ -74,6 +76,7 @@ contributors). The rules for working on preview code are in
 | --- | --- | --- |
 | Arrows | Peek | Previous or next file |
 | `Space`, `Escape` | Peek | Close |
+| `Space` held | File list | Peek until let go |
 | `Ctrl+I`, `Alt+Enter` | Anywhere | Properties |
 | `Ctrl+F`; `F3`, `Shift+F3` | Preview | Find; next or previous match |
 | `Ctrl+C`, `Ctrl+A` | Preview | Copy; select all |

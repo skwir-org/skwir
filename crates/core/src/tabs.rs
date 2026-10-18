@@ -785,6 +785,8 @@ pub(crate) fn register(app: &App) {
         }))
         .map(|(args, title)| Form::new(args, title)),
     );
+    // A key held down goes on from tab to tab, as browsers do.
+    select.repeats(|args| args.get("delta").is_some());
     select.shows();
 
     let moving = c.register::<MoveTabArgs, _>(
@@ -818,6 +820,7 @@ pub(crate) fn register(app: &App) {
         Form::new(serde_json::json!({ "delta": -1 }), "Move the tab left"),
         Form::new(serde_json::json!({ "delta": 1 }), "Move the tab right"),
     ]);
+    moving.repeats(|args| args.get("delta").is_some());
     moving.shows();
 
     c.register::<crate::command::NoArgs, _>(
