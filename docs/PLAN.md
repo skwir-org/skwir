@@ -1209,6 +1209,12 @@ cursor, and Down started again from the top, for the eye as for the ear.
 The cursor now goes to the next entry, selected, as in Dolphin and
 Nautilus, so Delete pressed again takes the next file; a folder closed in
 place takes the cursor that was inside it (`docs/invariants/views.md`).
+
+The path in the pane's row read from the folder shown back to the first,
+as the row lays it out from the right; it now reads as every file
+manager's and the web's breadcrumbs do, the first folder first, a "Path"
+landmark. Only the tree's order changed, rebuilt only while a screen
+reader listens.
 - Not yet: the previews, the terminal, search pills and the footer.
 
 ---

@@ -313,6 +313,19 @@ def reads(w, expected, seconds=20):
     return ok
 
 
+def children_of(w, role, name):
+    """The children of the node `role` `name`, wherever it is."""
+    stack = [w.frame()]
+    while stack:
+        node = stack.pop()
+        if node is None:
+            continue
+        if node.get_role_name() == role and node.get_name() == name:
+            return [node.get_child_at_index(i) for i in range(node.get_child_count())]
+        stack.extend(node.get_child_at_index(i) for i in range(node.get_child_count()))
+    return []
+
+
 def options_of(w, name):
     """The names of the options of list box `name`, wherever it is."""
     stack = [w.frame()]
@@ -368,6 +381,15 @@ def run(w):
     w.keys()
     check("the file list has the focus, named by its folder",
           hears(w, "list box 'files' focused"))
+
+    def path():
+        parts = children_of(w, "landmark", "Path")
+        links = [p.get_name() for p in parts if p.get_role_name() == "link"]
+        lefts = [p.get_extents(Atspi.CoordType.WINDOW).x for p in parts]
+        return links, lefts == sorted(lefts) and len(lefts) > 1
+
+    check("the path reads from its first folder to the one shown, as on screen",
+          until(lambda: path() == (["Home", "files"], True)) or print("  read:", path()))
 
     w.keys("Down")
     check("Down: the entry under the cursor, its place and that it is selected",

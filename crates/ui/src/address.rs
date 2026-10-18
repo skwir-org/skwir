@@ -1227,6 +1227,9 @@ fn breadcrumbs(
                 .count();
             laid_out.set(bounds.len() - shown);
         })
+        .id(("trail", pane.0 as usize))
+        .role(gpui::Role::Navigation)
+        .aria_label("Path")
         .h(px(24.))
         .flex_1()
         .min_w_0()
@@ -1342,6 +1345,9 @@ fn breadcrumbs(
         )
     };
     // The folders above the first, when the trail leaves them out.
+    // How many nodes each segment's group gives the tree, in the row's
+    // order: its chevron before it, itself, the one after the last.
+    let mut groups = Vec::with_capacity(crumbs.len());
     let above = crumbs.first().and_then(|first| {
         let path = first.location.path()?;
         path.parent().is_some().then(|| (first.label.clone(), path))
@@ -1454,6 +1460,7 @@ fn breadcrumbs(
             }),
         };
         let after = (index == last && holds).then(|| inside(index + 1, crumb, None, cx));
+        groups.push(usize::from(before.is_some()) + 1 + usize::from(after.is_some()));
         trail = trail.child(
             div()
                 .flex()
@@ -1463,6 +1470,27 @@ fn breadcrumbs(
                 .child(segment)
                 .children(after),
         );
+    }
+    // To assistive technology, the path as it reads: the row is given its
+    // segments from the last, laid out from the right; the tree takes them
+    // back in reading order, the first folder first, each with its
+    // chevrons. Left as they came should the count not match.
+    if shell.a11y {
+        trail = trail.a11y_synthetic_children(move |builder| {
+            let path = builder.parent_node();
+            let given = path.children().to_vec();
+            if groups.iter().sum::<usize>() != given.len() {
+                return;
+            }
+            let mut reading = Vec::with_capacity(given.len());
+            let mut end = given.len();
+            // The last given is the first read.
+            for size in groups.iter().rev() {
+                reading.extend_from_slice(&given[end - size..end]);
+                end -= size;
+            }
+            path.set_children(reading);
+        });
     }
     trail.into_any_element()
 }

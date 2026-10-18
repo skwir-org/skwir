@@ -20,6 +20,11 @@ like `AGENTS.md`.
   otherwise: a frame without a screen reader costs what it did.
 - Nodes are the same node across frames when their global element ids
   are: an id that changes says a node went and another came.
+- **The tree reads as the screen does.** Where the layout gives children
+  in another order than they read (the trail, laid out from the right so
+  that its first folders wrap out of sight), the container puts its
+  node's children back in reading order (`a11y_synthetic_children`, after
+  they are laid out), never the layout's.
 
 ## Focus
 
@@ -95,7 +100,7 @@ like `AGENTS.md`.
 | an empty or failed pane | group, described by its placeholder | the location |
 | sidebar | tree: groups, then their places (selected: the one shown) | "Sidebar"; a place described by its space or state |
 | address field, prompts, settings fields | entry (password text for a secret) | its label, else its placeholder |
-| the trail | links, the last selected; buttons for its menus | each place; a menu by its tooltip |
+| the trail | navigation of links in reading order, the last selected; buttons for its menus | "Path"; each place; a menu by its tooltip |
 | palette, Jump, Choose, tag editor | dialog: field, list box beside it | the dialog's; "Commands", "Places", "Choices", "Tags" |
 | context menu, toolbar popups, history menus | menu of menu items | "Context menu"; each item its title |
 | dialogs, confirmations | dialog, alert dialog | its title or question |
@@ -125,8 +130,3 @@ search pills and the footer.
 - libatspi refuses the signature of AccessKit's `RemoveAccessible`
   ("dbind-WARNING … Unknown signature so"): a client keeps a removed
   node until it reads its parent's children again.
-
-## Known gaps (Skwir)
-
-- The trail's places are in the tree from the last to the first: the row
-  lays them out from the right so that the first wraps out of sight.
