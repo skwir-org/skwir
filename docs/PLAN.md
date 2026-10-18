@@ -1203,6 +1203,12 @@ The places around the files, the same day:
 - Toasts are announced as they appear, a failure at once (patch 0031:
   live regions and the states gpui's builder lacked).
 - `just a11y-check` follows it all, 29 steps.
+
+Found while listening: trashing the file under the cursor left no
+cursor, and Down started again from the top, for the eye as for the ear.
+The cursor now goes to the next entry, selected, as in Dolphin and
+Nautilus, so Delete pressed again takes the next file; a folder closed in
+place takes the cursor that was inside it (`docs/invariants/views.md`).
 - Not yet: the previews, the terminal, search pills and the footer.
 
 ---

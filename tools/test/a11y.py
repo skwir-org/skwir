@@ -338,7 +338,8 @@ def until(holds, seconds=20):
         try:
             if holds():
                 return True
-        except GLib.Error:
+        # A node gone while read, or no focus yet while a popup opens.
+        except (GLib.Error, AttributeError, IndexError):
             pass
         time.sleep(0.2)
     return False
@@ -386,16 +387,17 @@ def run(w):
     check("Escape: back to the files", hears(w, f"list item {second!r} 2 of 4 selected focused"))
 
     # Into the Trash of the window's own data folder, and back.
-    third = "café list.md"
+    third, fourth = "café list.md", "report 2026.txt"
     announced = Announcements()
     w.keys("Down", "Delete")
     check("a file trashed is announced", announced.hears(f"Moved “{third}” to Trash"))
+    check("the cursor goes to the file after it, selected, as in Dolphin and Nautilus",
+          hears(w, f"list item {fourth!r} 3 of 3 selected focused"))
     w.keys("ctrl+z")
-    check("and so is its undoing", announced.hears("Undid: move to trash")
+    check("an undoing is announced too", announced.hears("Undid: move to trash")
           and until(lambda: (w.files / third).exists()))
-    # The cursor went with the file: Down starts from the first entry.
-    w.keys("Down")
-    check("Down: the first entry again", hears(w, f"list item {first!r} 1 of 4 selected focused"))
+    w.keys("Home")
+    check("Home: the first entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
 
     w.keys("shift+F10")
     check("Shift+F10: the context menu, its first item said as focused",
@@ -455,6 +457,13 @@ def run(w):
     check("the tree says it as an item of the folder's tree",
           hears(w, f"tree item {first!r} selected focused")
           and w.focused().get_parent().get_role_name() == "tree")
+    w.keys("Down", "Right", "Down")
+    check("Right opens a folder in place: its file is said",
+          hears(w, "tree item \"it's a draft.txt\" selected focused"))
+    w.cmd("expand", {"mode": "collapse_all"})
+    check("closed with the cursor inside, the folder takes the cursor",
+          hears(w, f"tree item {second!r} selected focused"))
+    w.keys("Up")
 
     w.cmd("ui.view", {"id": "board"})
     check("the board's columns are list boxes named by their folders",

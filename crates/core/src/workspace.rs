@@ -330,6 +330,37 @@ impl Selection {
         }
         self.picked &= !self.items.is_empty();
     }
+
+    /// Drop the ids `holds` no longer knows, as `retain` does; a cursor
+    /// whose entry went goes to its neighbour in `order`, what was shown
+    /// before: the first entry after it still shown, else the last before
+    /// it (`back`: before it first, as a folder closed in place takes the
+    /// cursor that was inside it). A selection the change emptied selects
+    /// the neighbour, as an arrow reaching it would: Delete pressed again
+    /// takes the next file, as in Dolphin and Nautilus. A cursor `order`
+    /// does not hold falls back as `retain` has it.
+    pub fn retain_near(&mut self, holds: impl Fn(EntryId) -> bool, order: &[EntryId], back: bool) {
+        let lost = self.cursor.filter(|cursor| !holds(*cursor));
+        let had = !self.items.is_empty();
+        self.retain(&holds);
+        let Some(at) = lost.and_then(|lost| order.iter().position(|id| *id == lost)) else {
+            return;
+        };
+        let after = || order[at + 1..].iter().copied().find(|id| holds(*id));
+        let before = || order[..at].iter().rev().copied().find(|id| holds(*id));
+        let near = if back {
+            before().or_else(after)
+        } else {
+            after().or_else(before)
+        };
+        let Some(near) = near else { return };
+        self.cursor = Some(near);
+        if had && self.items.is_empty() {
+            self.touch();
+            self.items.insert(near);
+            self.anchor = Some(near);
+        }
+    }
 }
 
 /// A location a pane keeps open beside the one it shows, with its listing
@@ -490,6 +521,9 @@ pub struct Pane {
     /// set, or one of their listings.
     tree_version: u64,
     order_cache: parking_lot::Mutex<Option<OrderCache>>,
+    /// The order `order` last gave, what is shown: where a cursor whose
+    /// entry leaves the view goes from (`Selection::retain_near`).
+    shown: parking_lot::Mutex<Option<Arc<[EntryId]>>>,
     /// Only the entries whose name holds this are shown (`Pane::order`):
     /// what is typed in the address field before Enter searches. The
     /// pane's like its sort; showing another location clears it.
@@ -629,6 +663,7 @@ impl Pane {
             expanded_version: 0,
             tree_version: 0,
             order_cache: parking_lot::Mutex::new(None),
+            shown: parking_lot::Mutex::new(None),
             filter: None,
             filter_version: 0,
             narrowed: None,
@@ -809,6 +844,7 @@ impl Pane {
             self.restore = Some(selection);
         }
         self.listing = Listing::default();
+        self.shown.lock().take();
         self.reveal = None;
         // Each closes as it drops.
         self.kept.clear();
@@ -1090,6 +1126,13 @@ impl Pane {
     /// filter or the narrowing leaves out, a file the narrowing cannot tell
     /// yet included: it waits hidden, and nothing acts on what is hidden.
     fn retain_shown(&mut self) {
+        self.keep_shown(false);
+    }
+
+    /// `retain_shown`, the cursor going back to what is before it when its
+    /// entry leaves the view (`Selection::retain_near`).
+    fn keep_shown(&mut self, back: bool) {
+        let shown = self.shown.lock().clone();
         let (listing, kept, expanded) = (&self.listing, &self.kept, &self.expanded);
         let filter = self.filter.as_deref().map(NameFilter::new);
         let (narrowed, sort) = (self.narrowed.as_ref(), self.sort);
@@ -1097,7 +1140,7 @@ impl Pane {
         let opened: Vec<_> = opened(kept, expanded)
             .map(|(_, k)| (&k.listing, k.listing.shows(sort)))
             .collect();
-        self.selection.retain(|id| {
+        let holds = |id| {
             let found = std::iter::once((listing, &top))
                 .chain(opened.iter().map(|(l, shows)| (*l, shows)))
                 .find_map(|(l, shows)| l.get(id).map(|e| (e, shows(id))));
@@ -1108,7 +1151,11 @@ impl Pane {
                 }
                 _ => false,
             }
-        });
+        };
+        match shown {
+            Some(shown) => self.selection.retain_near(holds, &shown, back),
+            None => self.selection.retain(holds),
+        }
     }
 
     fn expanded_changed(&mut self) {
@@ -1209,7 +1256,8 @@ impl Pane {
         }
         self.expanded.retain(|o| !gone.contains(&o.location));
         self.expanded_changed();
-        self.retain_shown();
+        // A cursor inside goes back to the folder that held it.
+        self.keep_shown(true);
         true
     }
 
@@ -1255,7 +1303,9 @@ impl Pane {
         }
         self.expanded.clear();
         self.expanded_changed();
-        self.retain_shown();
+        // A cursor inside goes back to the folder of the shown listing
+        // that held it.
+        self.keep_shown(true);
         true
     }
 
@@ -1405,6 +1455,12 @@ impl Pane {
     /// the filter and the narrowing keep. What range selection, select
     /// all and the views follow.
     pub fn order(&self) -> Arc<[EntryId]> {
+        let order = self.filtered_order();
+        *self.shown.lock() = Some(Arc::clone(&order));
+        order
+    }
+
+    fn filtered_order(&self) -> Arc<[EntryId]> {
         let all = self.unfiltered_order();
         if !self.is_filtered() {
             return all;
@@ -1898,6 +1954,85 @@ mod tests {
         sel.remove(id(1));
         sel.remove(id(3));
         assert_eq!((sel.anchor, sel.cursor), (Some(id(2)), Some(id(2))));
+    }
+
+    /// A cursor whose entry leaves the view goes to the entry after it, or
+    /// before it at the end (or before it first, `back`, as a folder closed
+    /// in place takes it); an emptied selection follows it there, a picked
+    /// one stays.
+    #[test]
+    fn a_cursor_whose_entry_goes_takes_its_neighbour() {
+        let id = |ino| EntryId {
+            file: crate::FileId { dev: 1, ino },
+            at: 0,
+        };
+        let order: Vec<EntryId> = (1..=5).map(id).collect();
+        let without = |gone: &'static [u64]| move |e: EntryId| !gone.contains(&e.file.ino);
+        let mut sel = Selection::default();
+
+        sel.set([id(3)]);
+        sel.retain_near(without(&[3]), &order, false);
+        assert_eq!((sel.cursor, items(&sel)), (Some(id(4)), vec![4]));
+        // The last one: the one before it.
+        sel.set([id(5)]);
+        sel.retain_near(without(&[5]), &order, false);
+        assert_eq!((sel.cursor, items(&sel)), (Some(id(4)), vec![4]));
+        // Several in a row, the cursor on the last: what follows them.
+        sel.set([id(2), id(3), id(4)]);
+        sel.retain_near(without(&[2, 3, 4]), &order, false);
+        assert_eq!((sel.cursor, items(&sel)), (Some(id(5)), vec![5]));
+        // A pick that keeps some: the cursor moves, the pick stays.
+        sel.set([id(2), id(4)]);
+        sel.retain_near(without(&[4]), &order, false);
+        assert_eq!((sel.cursor, items(&sel)), (Some(id(5)), vec![2]));
+        // Back: before it first.
+        sel.set([id(3)]);
+        sel.retain_near(without(&[3]), &order, true);
+        assert_eq!((sel.cursor, items(&sel)), (Some(id(2)), vec![2]));
+        // A cursor with nothing selected moves and selects nothing.
+        sel.set([id(3)]);
+        sel.clear();
+        sel.retain_near(without(&[3]), &order, false);
+        assert_eq!((sel.cursor, items(&sel)), (Some(id(4)), vec![]));
+        // Nothing left: no cursor.
+        sel.set([id(3)]);
+        sel.retain_near(|_| false, &order, false);
+        assert_eq!((sel.cursor, items(&sel)), (None, vec![]));
+    }
+
+    /// The pane moves the cursor along the order it last showed: a file
+    /// trashed under the cursor gives it to the next one.
+    #[test]
+    fn a_file_gone_under_the_cursor_gives_it_to_the_next() {
+        use crate::entry::EntryKind;
+        use crate::location::ListingEvent;
+        let id = |ino| EntryId {
+            file: crate::FileId { dev: 1, ino },
+            at: 0,
+        };
+        let mut p = Pane::new(PaneId(1));
+        p.listing.apply(ListingEvent::Added(
+            [(1, "a.txt"), (2, "b.txt"), (3, "c.txt")]
+                .into_iter()
+                .map(|(ino, name)| Entry::new(id(ino), name, EntryKind::File))
+                .collect(),
+        ));
+        // What a view shows, read as it draws.
+        assert_eq!(p.order().len(), 3);
+        p.selection.set([id(2)]);
+        p.listing.apply(ListingEvent::Removed(vec![id(2)]));
+        p.retain_shown();
+        assert_eq!(
+            (p.selection.cursor, items(&p.selection)),
+            (Some(id(3)), vec![3])
+        );
+        p.order();
+        p.listing.apply(ListingEvent::Removed(vec![id(3)]));
+        p.retain_shown();
+        assert_eq!(
+            (p.selection.cursor, items(&p.selection)),
+            (Some(id(1)), vec![1])
+        );
     }
 
     /// What the pane stops showing leaves the selection: a dot file once

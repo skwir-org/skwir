@@ -33,6 +33,13 @@ around the views is in [shell.md](shell.md).
 - An arrow or a click selects the item reached, and the selection then
   follows the cursor. Toggles, ranges and select all *pick*: the selection
   stays put.
+- **The cursor's entry leaving the view** (trashed, deleted, moved away,
+  hidden, filtered out) gives the cursor to the entry after it in the
+  order last shown, or the one before at the end, as Dolphin and Nautilus
+  do; a selection that emptied selects it, so Delete pressed again takes
+  the next file. A folder closed in place takes the cursor that was
+  inside it. One place does it, `Selection::retain_near`, from the order
+  `Pane::order` last gave.
 - Scheme moves say `follow` (`ui.cursor`, `step: follow`): they move a
   following selection and leave a picked one. `pick` is yazi's mark. A
   sweep (`select_sweep`) holds a range while the cursor moves (`sweep` in
