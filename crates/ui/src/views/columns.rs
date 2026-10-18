@@ -239,11 +239,14 @@ struct SideRow {
     place: Option<(Location, Option<usize>)>,
 }
 
+/// A column beside the pane's, a list box named `title` for assistive
+/// technology (`None` while it does not listen).
 fn side_column(
     view: &ColumnsView,
     side: Side,
     ids: Arc<[EntryId]>,
     pane: skwir_core::workspace::PaneId,
+    title: Option<gpui::SharedString>,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -269,6 +272,7 @@ fn side_column(
     let ids_of = |name: &'static str| (name, k);
     // What the rows read their listing by, in the closure that draws them.
     let at = location.clone();
+    let count = ids.len();
     let list = uniform_list(
         ids_of(if next { "column-next" } else { "column" }),
         ids.len(),
@@ -305,6 +309,7 @@ fn side_column(
                     })
                     .collect()
             };
+            let a11y = this.a11y;
             let mut out = Vec::with_capacity(rows.len());
             for (ix, row) in range.zip(rows) {
                 let target = path.as_ref().map(|dir| dir.join(&row.name));
@@ -337,8 +342,16 @@ fn side_column(
                     }
                     .map(|leads| serde_json::json!({ "location": leads, "pane": pane }))
                 };
+                // The folder the pane went into from here is this column's
+                // selected option.
                 let mut el = div()
                     .id(ix)
+                    .role(gpui::Role::ListBoxOption)
+                    .when(a11y, |d| {
+                        d.aria_label(row.label.clone())
+                            .aria_selected(is_on_path)
+                            .aria_position_in_set(ix)
+                    })
                     .h(px(height))
                     .w_full()
                     .flex()
@@ -414,6 +427,10 @@ fn side_column(
     .size_full();
     let mut col = div()
         .id(ids_of(if next { "colwrap-next" } else { "colwrap" }))
+        .role(gpui::Role::ListBox)
+        .when_some(title, |d, title| {
+            d.aria_label(title).aria_size_of_set(count)
+        })
         .relative()
         .w(px(COLUMN_W))
         .h_full()
@@ -543,8 +560,24 @@ impl PaneView for ColumnsView {
             .flex_row()
             .overflow_x_scroll()
             .track_scroll(&self.row);
+        // Each column a list box named by its folder, for assistive
+        // technology alone.
+        let title = |location: &Location| {
+            shell
+                .a11y
+                .then(|| gpui::SharedString::from(shell.app.location_title(location)))
+        };
         for (k, ids) in orders.into_iter().enumerate() {
-            columns = columns.child(side_column(self, Side::Above(k), ids, pane, &theme, cx));
+            let named = title(&self.ancestors[k].location);
+            columns = columns.child(side_column(
+                self,
+                Side::Above(k),
+                ids,
+                pane,
+                named,
+                &theme,
+                cx,
+            ));
         }
         let count = shell.ui().list.sorted.len();
         let last = uniform_list(
@@ -565,6 +598,11 @@ impl PaneView for ColumnsView {
         .size_full();
         let mut last_col = div()
             .id("column-last-wrap")
+            .role(gpui::Role::ListBox)
+            .when(shell.a11y, |d| {
+                d.aria_label(shell.ui().place.title.clone())
+                    .aria_size_of_set(count)
+            })
             .relative()
             .w(px(COLUMN_W * 1.25))
             .h_full()
@@ -590,7 +628,10 @@ impl PaneView for ColumnsView {
         // Always there, empty on a file or while the cursor moves on, so the
         // columns never shift as it goes.
         columns = columns.child(match next {
-            Some((next, ids)) => side_column(self, Side::Next(next), ids, pane, &theme, cx),
+            Some((next, ids)) => {
+                let named = title(&next);
+                side_column(self, Side::Next(next), ids, pane, named, &theme, cx)
+            }
             None => div()
                 .w(px(COLUMN_W))
                 .h_full()

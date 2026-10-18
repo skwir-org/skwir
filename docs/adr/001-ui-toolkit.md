@@ -99,3 +99,9 @@ it depends on gpui supporting accessibility, checked at each gpui update.
 ADR-064 vendors gpui from Zed's main branch, which integrates AccessKit:
 the window starts with it. The gap now is Skwir's own: its elements
 declare no roles or labels yet. The pin of 0.2.2 is revised there too.
+
+### 2026-10-18: the window and the files are exposed
+
+ADR-065: the window is named by its location and the file views are list
+boxes whose cursor a screen reader follows; the other places follow
+(`docs/invariants/accessibility.md`).

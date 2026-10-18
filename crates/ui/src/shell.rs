@@ -192,6 +192,9 @@ impl Installed {
     }
 }
 
+// Flags of independent parts of the window (the first frame logged, a
+// screen reader listening…), not the states of one machine.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Shell {
     pub app: Arc<App>,
     /// The pane commands act on: the workspace's active pane, or the pane
@@ -385,6 +388,14 @@ pub struct Shell {
     pub sidebar_keys: crate::sidebar::Keys,
     started: Instant,
     first_frame_logged: bool,
+    /// Whether assistive technology listens this frame
+    /// (`Window::is_a11y_active`): what only it reads (a row's label, its
+    /// place in the list) is built only then
+    /// (`docs/invariants/accessibility.md`).
+    pub(crate) a11y: bool,
+    /// What the window's title was last set from: the active pane's
+    /// location's title.
+    title: gpui::SharedString,
     /// What of Skwir's the system's clipboard may hold (ADR-062).
     pub(crate) clipboard_holds: crate::clipboard::Held,
     _subscriptions: Vec<Subscription>,
@@ -637,6 +648,8 @@ impl Shell {
             sidebar_keys: crate::sidebar::Keys::new(cx.focus_handle()),
             started,
             first_frame_logged: false,
+            a11y: false,
+            title: gpui::SharedString::default(),
             clipboard_holds: crate::clipboard::Held::Nothing,
             _subscriptions: subs,
         };
@@ -2472,6 +2485,22 @@ impl Shell {
         self.sync_terminal(window, cx);
     }
 
+    /// The window says where it is, as a file manager's does: the
+    /// system's list of windows and a screen reader name it by its active
+    /// pane's location. Set when that changed, after the panes read it.
+    fn sync_title(&mut self, window: &mut Window) {
+        let place = self.ui().place.title.clone();
+        if place == self.title {
+            return;
+        }
+        self.title = place.clone();
+        if place.is_empty() {
+            window.set_window_title("skwir");
+        } else {
+            window.set_window_title(&format!("{place} — skwir"));
+        }
+    }
+
     /// What plugins count for the footer (`App::tallies`: the shelf's
     /// items); read when that moved, never by asking them each frame.
     fn sync_tallies(&mut self, cx: &mut Context<Self>) {
@@ -2517,6 +2546,15 @@ impl Shell {
         let placeholder = (!draws_empty)
             .then(|| crate::placeholder::of(self, id))
             .flatten();
+        // What it says in place of the entries, said to assistive
+        // technology as the pane's description.
+        let said = placeholder
+            .as_ref()
+            .filter(|_| self.a11y)
+            .map(|p| match p.detail.as_str() {
+                "" => p.title.clone(),
+                detail => format!("{}. {detail}", p.title),
+            });
         let body = if let Some(placeholder) = placeholder {
             let focus = self.ui().placeholder_focus.clone();
             crate::placeholder::render(placeholder, &focus, cx)
@@ -2538,7 +2576,7 @@ impl Shell {
         self.sync_selection_hydration();
         self.sync_narrow(cx);
         let narrow = crate::narrow::render(self, cx);
-        let file_area = self.pane_container(body, cx);
+        let file_area = self.pane_container(body, said, cx);
         let strip = if active {
             timeline::render(self, cx)
         } else {
@@ -2665,6 +2703,7 @@ impl Render for Shell {
                 self.started.elapsed().as_secs_f64() * 1000.0
             );
         }
+        self.a11y = window.is_a11y_active();
         self.sync(window, cx);
         // One frame of map tiles per window frame, whatever maps it draws:
         // what the last frame's maps asked for is kept, the rest cancelled
@@ -2719,6 +2758,7 @@ impl Render for Shell {
             };
             columns.push(self.render_pane(id, share, index > 0, window, cx));
         }
+        self.sync_title(window);
         let limit = if bottom {
             self.preview_height_limit(window)
         } else {

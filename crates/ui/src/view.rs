@@ -112,6 +112,12 @@ pub trait PaneView {
     fn draws_empty(&self) -> bool {
         false
     }
+    /// What assistive technology calls the pane's container, which holds
+    /// the keyboard focus: a list box of the entries, a tree of them, or a
+    /// group of parts of its own (the columns, each a list box).
+    fn role(&self) -> gpui::Role {
+        gpui::Role::Group
+    }
     /// What the zoom keys, Ctrl and the wheel, and the View menu's Zoom
     /// group size here; a view that sizes nothing has none of them.
     fn zooms(&self) -> Zooms {

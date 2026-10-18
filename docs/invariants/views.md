@@ -10,11 +10,13 @@ around the views is in [shell.md](shell.md).
   draws of it is read once under the lock (`Shell::look`): picture
   (`Look::picture`), highlight, name and tag chips. What it answers
   (press, click, drag of the selection, cut dimming, a dropped tag or
-  files) is `behave`.
+  files) is `behave`, with what a screen reader hears of it (its name,
+  selection and `Seat`; [accessibility.md](accessibility.md)).
 - A row, a tile or a card draws its own shape around these, never its
   own copy of them. The columns view's parent folders and the folder
   under its cursor are not the pane's entries: they take only the
-  picture (`icons::entry_picture`) and the cut dimming.
+  picture (`icons::entry_picture`), the cut dimming and an option's
+  name and place in its column's list box.
 - Every view marks a link, and a tag's place, with `icons::Mark`.
 - A thumbnail is drawn by `backdrop::Picture::img`, sized and fitted by
   the view. One that lets its background through, whose ink (its

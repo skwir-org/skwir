@@ -25,7 +25,7 @@ with open('target/just-calls', 'a') as stream:
 if args == ['release-check']:
     sys.exit(1 if os.getenv('FAIL_CHECK') else 0)
 if len(args) == 1 and args[0] in ['lint-all', 'deny', 'notices-check', 'test-all', 'smoke',
-                                 'poppler-check', 'mupdf-check', 'djvu-check',
+                                 'a11y-check', 'poppler-check', 'mupdf-check', 'djvu-check',
                                  'bench-check', 'release-tools-check']:
     sys.exit(1 if os.getenv('FAIL_RECIPE') == args[0] else 0)
 out = pathlib.Path(os.environ['SKWIR_PACKAGE_OUT'])
@@ -438,7 +438,7 @@ sys.exit(subprocess.call([service, os.path.join(os.environ['AUR_TEST_REMOTES'], 
         self.cli("check", tag=None)
         self.assertEqual(self.calls("just"), [[r] for r in
                          ["lint-all", "deny", "notices-check", "test-all", "smoke",
-                          "poppler-check", "mupdf-check", "djvu-check", "bench-check",
+                          "a11y-check", "poppler-check", "mupdf-check", "djvu-check", "bench-check",
                           "release-tools-check"]])
 
     def test_extra_missing_assets_and_source_changes_leave_no_bundle(self):

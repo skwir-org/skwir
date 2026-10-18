@@ -304,7 +304,11 @@ fn cell(
         look.name.clone(),
         shell.font.clone(),
     ));
-    crate::views::entry::behave(el, &look, shell, cx).into_any_element()
+    let seat = crate::views::entry::Seat {
+        index: ix,
+        tree: None,
+    };
+    crate::views::entry::behave(el, &look, seat, shell, cx).into_any_element()
 }
 
 /// A thumbnail's size on its tile: its own, shrunk until its longer side
@@ -419,6 +423,10 @@ fn mosaic(
 impl PaneView for GridView {
     fn zooms(&self) -> crate::view::Zooms {
         crate::view::Zooms::Tiles
+    }
+
+    fn role(&self) -> gpui::Role {
+        gpui::Role::ListBox
     }
 
     fn id(&self) -> &'static str {

@@ -36,10 +36,11 @@ jobs:
           - name: window
             # The release window on an X display of its own with software
             # Vulkan (Xvfb and Mesa from the flake's nixpkgs), driven by a
-            # script and checked on disk; then the performance budgets,
-            # which carry a 3x margin for hosted runners, slower and noisier
-            # than the reference machine.
-            run: just smoke && just bench-check
+            # script and checked on disk; what a screen reader hears of it,
+            # read over AT-SPI; then the performance budgets, which carry a
+            # 3x margin for hosted runners, slower and noisier than the
+            # reference machine.
+            run: just smoke && just a11y-check && just bench-check
           - name: readers
             # The native Poppler and MuPDF readers (their first build
             # compiles MuPDF) on synthetic PDFs, and both DjVu readers on

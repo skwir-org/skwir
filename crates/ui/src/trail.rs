@@ -19,6 +19,10 @@ use crate::shell::Shell;
 pub struct Shown {
     /// The location they were read for, as text.
     location: String,
+    /// What it is called, as its tab says it (`App::location_title`):
+    /// the window's title and the name assistive technology gives the
+    /// pane's entries.
+    pub title: gpui::SharedString,
     pub trail: Option<Trail>,
     pub verbs: Verbs,
     /// The glyph that stands for it (`LocationProvider::icon`).
@@ -96,10 +100,16 @@ pub fn sync(shell: &mut Shell) {
     let search = location
         .as_ref()
         .is_some_and(|location| shell.app.is_search(location));
+    let title = location
+        .as_ref()
+        .map(|location| shell.app.location_title(location))
+        .unwrap_or_default()
+        .into();
     shell.ui_mut().place = Shown {
         folder: location.as_ref().is_none_or(Location::is_path),
         search,
         location: text,
+        title,
         trail,
         verbs,
         icon,

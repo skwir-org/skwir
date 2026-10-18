@@ -72,6 +72,25 @@ smoke:
         --xvfb "$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#xorg.xorgserver)/bin/Xvfb" \
         --icd "$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#mesa)/share/vulkan/icd.d/lvp_icd.x86_64.json"
 
+# What a screen reader hears of the real window (tools/test/a11y.py): a
+# display, a session bus and the AT-SPI registry of its own, keys pressed,
+# the window's accessibility tree read back. Every tool from the flake's
+# nixpkgs. `just a11y-check --skwir target/debug/skwir` checks a debug build.
+a11y-check *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    nixpkgs() { nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' "nixpkgs#$1"; }
+    case " {{args}} " in *" --skwir "*) ;; *) cargo build --release -p skwir ;; esac
+    atspi=$(nixpkgs at-spi2-core)
+    python=$(python3 -c 'import sys; print(f"python{sys.version_info[0]}.{sys.version_info[1]}")')
+    export PYTHONPATH="$(nixpkgs python3Packages.pygobject3)/lib/$python/site-packages"
+    export GI_TYPELIB_PATH="$atspi/lib/girepository-1.0:$(nixpkgs glib.out)/lib/girepository-1.0:$(nixpkgs gobject-introspection.out)/lib/girepository-1.0"
+    tools/test/a11y.py \
+        --xvfb "$(nixpkgs xorg.xorgserver)/bin/Xvfb" \
+        --icd "$(nixpkgs mesa)/share/vulkan/icd.d/lvp_icd.x86_64.json" \
+        --atspi "$atspi" --dbus "$(nixpkgs dbus.out)" \
+        --xdotool "$(nixpkgs xdotool)/bin/xdotool" {{args}}
+
 # Run after the window changes, and look at docs/images/ before committing
 # (tools/screenshots/readme.py: an X display of its own, synthetic files).
 # Make the README's screenshots again, light and dark.

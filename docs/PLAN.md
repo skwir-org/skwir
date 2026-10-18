@@ -214,7 +214,8 @@ weeks of improvements from it (recorded 2026-10-04). Budgets:
 
 **Deviations:**
 - AccessKit: gpui 0.2.2 has none (ADR-001). Accessibility waits for
-  gpui's support, checked at every gpui update.
+  gpui's support, checked at every gpui update. Zed's main branch has it
+  (ADR-064); exposing Skwir's places started with ADR-065.
 
 ---
 
@@ -1166,8 +1167,30 @@ patches Skwir still needs.
   checkout and writes the patches back, and `just gpui-check` runs their
   tests.
 - **What it prepares:**
-  - accessibility: roles and labels on Skwir's elements, not yet;
+  - accessibility: roles and labels on Skwir's elements (started
+    2026-10-18, ADR-065);
   - a 3D model preview drawn by the GPU on every system.
+
+### 2026-10-18
+
+**What a screen reader hears (ADR-065).** The first step of
+accessibility, Phase 8's audit made possible by ADR-064:
+
+- The window is named by the active pane's location ("Documents —
+  skwir").
+- The file views are list boxes (the tree view a tree), named by their
+  location and counting their entries. The pane keeps the keyboard focus;
+  the entry under the cursor is its active descendant, so a screen reader
+  says it as the keys move: its name, that it is selected, "3 of 120". An
+  empty or failed pane says its placeholder.
+- Nothing is built while no screen reader listens.
+- `just a11y-check` reads it back as Orca would, over AT-SPI, on a
+  display and session bus of its own (`tools/test/a11y.py`).
+- Gaps of AccessKit 0.24 on Linux: a tree item's level and whether it is
+  expanded are not passed (`docs/invariants/accessibility.md`).
+- Not yet: the sidebar, the address field, the palette and the other
+  popups, menus, dialogs, toolbars and tabs, toasts and the footer, the
+  previews, the terminal.
 
 ---
 
@@ -2131,7 +2154,8 @@ needs exists (Phase 6, ADR-044).
 
 **Scope** (ongoing):
 - Accessibility audit (a screen reader on each system) once gpui
-  supports accessibility (ADR-001); IME, high-DPI, themes.
+  supports accessibility (ADR-001; it does since ADR-064, and ADR-065
+  started exposing Skwir's places on 2026-10-18); IME, high-DPI, themes.
 - Docs, a plugin gallery, a public release with an opinionated default
   plugin set.
 

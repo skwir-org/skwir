@@ -382,6 +382,7 @@ Binding. Read the file for the area before working in it.
 | [previews.md](docs/invariants/previews.md) | structured previews: inspections, archives, HTML reading mode, EPUB and email, code folds, the preview frame |
 | [reader.md](docs/invariants/reader.md) | PDF readers: PDFium, Poppler and MuPDF workers, continuous scrolling, page coordinates, atlas eviction |
 | [media.md](docs/invariants/media.md) | audio and video: GStreamer worker, frame slots, generations, fullscreen controls, the atlas |
+| [accessibility.md](docs/invariants/accessibility.md) | what a screen reader hears: roles and names, built only while one listens, focus and the active descendant, lists, what is exposed, `just a11y-check` |
 
 ## Layout
 
@@ -448,6 +449,7 @@ just test-windows          the Windows build's tests under Wine (args go to next
 just bench-check           generate bench-data/ on demand and enforce budgets
 just idle-pss              idle memory and first frame on this display (ADR-033)
 just smoke                 the release window on an X display of its own (CI)
+just a11y-check            what a screen reader hears of it, read over AT-SPI
 just screenshots           the README's screenshots, made again (docs/images)
 just deny / notices        dependency licences and advisories; the packages' notices
 just plugins               build the plugins from outside as modules (target/plugins)
@@ -459,8 +461,9 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
 ```
 
 - **Done means the full checks are green:** `just release-check` runs
-  `lint-all`, `deny`, `notices-check`, `test-all`, `smoke`, `poppler-check`,
-  `mupdf-check`, `djvu-check`, `bench-check` and `release-tools-check`.
+  `lint-all`, `deny`, `notices-check`, `test-all`, `smoke`, `a11y-check`,
+  `poppler-check`, `mupdf-check`, `djvu-check`, `bench-check` and
+  `release-tools-check`.
   Routine GitHub CI runs only `ci-check`; the full suite and Linux
   packaging are also manual workflows (ADR-053). A green routine CI alone
   is not the full gate. The native workers are outside `default-members`,

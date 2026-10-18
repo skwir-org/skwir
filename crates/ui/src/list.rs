@@ -1060,13 +1060,37 @@ impl Shell {
     }
 
     /// Wrap a view's element in the pane container: focus, key context,
-    /// type-ahead, empty-area context menu, external drops.
-    pub fn pane_container(&mut self, content: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+    /// type-ahead, empty-area context menu, external drops. It holds the
+    /// keyboard focus, so it is what assistive technology hears first: the
+    /// view's role (`PaneView::role`), named by the location, described
+    /// by what the pane says in place of entries (`said`) when it lists
+    /// none.
+    pub fn pane_container(
+        &mut self,
+        content: AnyElement,
+        said: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let tint = cx.global::<Theme>().drop_target;
         let key_context = self.pane_key_context();
         let pane = self.pane;
+        let role = match &said {
+            Some(_) => gpui::Role::Group,
+            None => self
+                .ui()
+                .views
+                .get(self.ui().view_id)
+                .map_or(gpui::Role::Group, |view| view.role()),
+        };
+        // A list box says how many entries it holds; a tree's are counted
+        // by level.
+        let count = (self.a11y && role == gpui::Role::ListBox).then(|| self.ui().list.sorted.len());
         div()
             .id(("pane", pane.0 as usize))
+            .role(role)
+            .when(self.a11y, |d| d.aria_label(self.ui().place.title.clone()))
+            .when_some(count, StatefulInteractiveElement::aria_size_of_set)
+            .when_some(said, StatefulInteractiveElement::aria_description)
             .relative()
             .flex_1()
             .min_h_0()

@@ -78,3 +78,4 @@ them by topic.
 | [062](062-files-on-the-system-clipboard.md) | Files on the system clipboard, as both families of Linux file managers put them | built on Linux (X11, Wayland); macOS and Windows keep Skwir's own |
 | [063](063-the-notices-are-kept-with-the-source.md) | The packages' third-party notices made once and kept with the source; no package build runs cargo-about | built for the Linux packages |
 | [064](064-gpui-from-zeds-main-branch-drawn-by-wgpu.md) | gpui from a commit of Zed's main branch, drawn by wgpu, with Zed's pins; Vulkan alone where it has a GPU | built on Linux; Windows compiled, macOS not compiled |
+| [065](065-what-a-screen-reader-hears.md) | What a screen reader hears: AccessKit through gpui, the window named by its location, the files as list boxes with the cursor's entry as the active descendant | the window and the file views, checked over AT-SPI on Linux; the other places not yet |

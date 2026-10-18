@@ -205,6 +205,8 @@ impl BoardView {
 /// pane's order (`Pane::order`), which the tree and the board share.
 struct Card {
     ix: Option<usize>,
+    /// Its place among the ids it was read from.
+    at: usize,
     look: crate::views::entry::Look,
 }
 
@@ -225,10 +227,17 @@ fn column(
         cx.processor(move |this: &mut Shell, range: Range<usize>, _, cx| {
             this.with_pane(pane, |this| {
                 let theme = cx.global::<Theme>().clone();
-                let cards = cards(this, &ids[range]);
+                let cards = cards(this, &ids[range.clone()]);
                 cards
                     .into_iter()
-                    .map(|card| card_element(this, &card, &theme, cx))
+                    .map(|card| {
+                        // A card stands among its column's.
+                        let seat = crate::views::entry::Seat {
+                            index: range.start + card.at,
+                            tree: None,
+                        };
+                        card_element(this, &card, seat, &theme, cx)
+                    })
                     .collect::<Vec<_>>()
             })
         }),
@@ -256,6 +265,10 @@ fn column(
         );
     let mut col = div()
         .id(("board-col", k))
+        .role(gpui::Role::ListBox)
+        .when(shell.a11y, |d| {
+            d.aria_label(c.title.clone()).aria_size_of_set(c.ids.len())
+        })
         .relative()
         .w(px(COLUMN_W))
         .h_full()
@@ -302,9 +315,11 @@ fn cards(shell: &mut Shell, ids: &[EntryId]) -> Vec<Card> {
     };
     let out: Vec<Card> = ids
         .iter()
-        .filter_map(|&id| {
+        .enumerate()
+        .filter_map(|(at, &id)| {
             Some(Card {
                 ix: index.get(&id).copied(),
+                at,
                 look: shell.look(pane, id, PICTURE as u16)?,
             })
         })
@@ -322,6 +337,7 @@ fn cards(shell: &mut Shell, ids: &[EntryId]) -> Vec<Card> {
 fn card_element(
     shell: &mut Shell,
     card: &Card,
+    seat: crate::views::entry::Seat,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -409,9 +425,13 @@ fn card_element(
                 }),
         );
     let el = if card.ix.is_some() {
-        crate::views::entry::behave(el, look, shell, cx)
+        crate::views::entry::behave(el, look, seat, shell, cx)
     } else {
-        el
+        // Not one of the pane's entries: said by its name and place alone.
+        el.role(gpui::Role::ListBoxOption).when(shell.a11y, |d| {
+            d.aria_label(look.name.clone())
+                .aria_position_in_set(seat.index)
+        })
     };
     // A gutter around each card, the card as wide as its column.
     div()

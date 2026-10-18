@@ -630,7 +630,11 @@ pub fn row(
             line = line.child(detail(shell, r, column.detail, cell, theme));
         }
     }
-    crate::views::entry::behave(el.child(line), look, shell, cx)
+    let seat = crate::views::entry::Seat {
+        index: ix,
+        tree: tree.then_some((r.depth, look.is_dir.then_some(r.expanded))),
+    };
+    crate::views::entry::behave(el.child(line), look, seat, shell, cx)
 }
 
 /// The name and the detail columns of a row, or of the header. A wrapping
@@ -811,6 +815,14 @@ pub(crate) fn rows_nav(nav: Nav, shell: &Shell) -> Option<isize> {
 impl PaneView for ListView {
     fn zooms(&self) -> crate::view::Zooms {
         crate::view::Zooms::Rows
+    }
+
+    fn role(&self) -> gpui::Role {
+        if self.tree {
+            gpui::Role::Tree
+        } else {
+            gpui::Role::ListBox
+        }
     }
 
     fn id(&self) -> &'static str {
