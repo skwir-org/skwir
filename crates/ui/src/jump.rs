@@ -153,13 +153,22 @@ impl Shell {
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let j = shell.jump.as_ref()?;
     let theme = cx.global::<Theme>().clone();
-    let mut list = div().flex().flex_col().py_1().overflow_hidden();
+    let a11y = shell.a11y;
+    let typing = gpui::Focusable::focus_handle(j.input.read(cx), cx);
+    let mut list = modal::options("jump-results", "Places", j.candidates.len(), a11y)
+        .flex()
+        .flex_col()
+        .py_1()
+        .overflow_hidden();
     for ix in j.picker.shown(j.candidates.len()) {
         let c = &j.candidates[ix];
         let hl = ix == j.picker.highlighted;
+        let named = a11y.then(|| c.path.to_string_lossy().into_owned().into());
         list = list.child(
-            div()
-                .id(("jump", ix))
+            modal::option(div().id(("jump", ix)), named, ix, hl, &typing)
+                .when(a11y, |d| {
+                    d.aria_description(format!("{} · {}", c.kind, c.source))
+                })
                 .h(px(26.))
                 .px_3()
                 .flex()
@@ -208,7 +217,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 .child("No candidates"),
         );
     }
-    let panel = modal::panel(640., &theme)
+    let panel = modal::panel("jump", 640., &theme)
+        .aria_label("Jump")
         .key_context(keymap::JUMP)
         .child(
             div()

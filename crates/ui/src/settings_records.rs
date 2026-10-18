@@ -843,6 +843,7 @@ impl SettingsView {
                             controls::icon_button(
                                 format!("pair-remove-{key}-{index}-{pair}"),
                                 "close",
+                                "Remove",
                                 &focus,
                                 theme,
                             )

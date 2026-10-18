@@ -1,0 +1,124 @@
+0030 active-descendant-for: an element reports itself focused while a focus handle beside it holds the focus
+
+diff --git a/crates/gpui/src/elements/div.rs b/crates/gpui/src/elements/div.rs
+index 691a9a0..6afd58d 100644
+--- a/crates/gpui/src/elements/div.rs
++++ b/crates/gpui/src/elements/div.rs
+@@ -1393,6 +1393,23 @@ pub trait StatefulInteractiveElement: InteractiveElement {
+         self
+     }
+ 
++    /// Report this element as the focused node in the accessibility tree
++    /// while `focus` holds the keyboard focus, wherever the element that
++    /// tracks `focus` is.
++    ///
++    /// [`aria_active_descendant`][Self::aria_active_descendant] holds only
++    /// under the focused element. This is the combobox pattern instead: a
++    /// text field keeps the focus while the option highlighted in a list
++    /// beside it (not under it) is what assistive technology announces, as
++    /// the web's `aria-activedescendant` on the field names it.
++    ///
++    /// The element must also have a [`role`][Self::role] and an id. Set it on
++    /// the highlighted option alone: two claims in one frame are a bug.
++    fn aria_active_descendant_for(mut self, focus: &FocusHandle) -> Self {
++        self.interactivity().active_descendant_for = Some(focus.clone());
++        self
++    }
++
+     /// Contribute synthetic accessibility nodes — nodes that don't correspond
+     /// to any element — as children of this element's a11y node. For example,
+     /// text runs describing an editor's text content.
+@@ -2228,6 +2245,7 @@ pub struct Interactivity {
+         Vec<(accesskit::Action, crate::window::a11y::A11yActionListener)>,
+     pub(crate) a11y_synthetic_children: Option<Box<dyn FnOnce(&mut crate::A11ySubtreeBuilder)>>,
+     pub(crate) report_active_descendant_focus: bool,
++    pub(crate) active_descendant_for: Option<FocusHandle>,
+     pub(crate) override_role: Option<accesskit::Role>,
+     pub(crate) aria: AriaProperties,
+ 
+@@ -2385,6 +2403,16 @@ impl Interactivity {
+                     .set_active_descendant(global_id.accesskit_node_id());
+             }
+         }
++
++        if let Some(focus) = self.active_descendant_for.as_ref()
++            && window.a11y.is_active()
++            && focus.is_focused(window)
++            && let Some(global_id) = global_id
++        {
++            window
++                .a11y
++                .set_active_descendant_for(global_id.accesskit_node_id());
++        }
+         window.with_optional_element_state::<InteractiveElementState, _>(
+             global_id,
+             |element_state, window| {
+diff --git a/crates/gpui/src/window/a11y.rs b/crates/gpui/src/window/a11y.rs
+index 5b63821..7f117df 100644
+--- a/crates/gpui/src/window/a11y.rs
++++ b/crates/gpui/src/window/a11y.rs
+@@ -271,6 +271,15 @@ impl A11y {
+         }
+     }
+ 
++    /// Report `node_id` as focused in place of the focused element, which is
++    /// not its ancestor: an option of a list beside a focused text field.
++    /// Called only while the focus handle it was set for holds the focus.
++    pub(crate) fn set_active_descendant_for(&mut self, node_id: NodeId) {
++        if self.nodes.has_node(node_id) && !self.nodes.node_is_focused(node_id) {
++            self.nodes.set_active_descendant(node_id);
++        }
++    }
++
+     /// Clear per-frame state and push the root node to start a new frame.
+     pub(crate) fn begin_frame(&mut self) {
+         self.focus_ids.clear();
+@@ -879,6 +888,48 @@ mod tests {
+         a11y.nodes.pop(); // container
+     }
+ 
++    // A focused text field and, beside it, a list whose highlighted option
++    // claims the focus for the field (the combobox pattern): the option is
++    // reported as focused although the field is not its ancestor.
++    #[test]
++    fn active_descendant_for_a_focus_beside_it() {
++        let mut a11y = new_a11y();
++        let field = NodeId(1);
++        let list = NodeId(2);
++        let option = NodeId(3);
++
++        assert!(a11y.nodes.push(field, test_node()));
++        a11y.set_focusable(field, FocusId::default());
++        a11y.set_focus(field);
++        a11y.nodes.pop(); // field
++
++        assert!(a11y.nodes.push(list, test_node()));
++        assert!(a11y.nodes.push(option, test_node()));
++        assert!(!a11y.nodes.focus_is_ancestor_of_current());
++        a11y.set_active_descendant_for(option);
++        a11y.nodes.pop(); // option
++        a11y.nodes.pop(); // list
++
++        let update = a11y.end_frame(Default::default());
++        assert_eq!(update.focus, option);
++    }
++
++    // The focused node itself never claims to be its own active descendant.
++    #[test]
++    fn active_descendant_for_ignores_the_focused_node() {
++        let mut a11y = new_a11y();
++        let field = NodeId(1);
++
++        assert!(a11y.nodes.push(field, test_node()));
++        a11y.set_focusable(field, FocusId::default());
++        a11y.set_focus(field);
++        a11y.set_active_descendant_for(field);
++        a11y.nodes.pop(); // field
++
++        let update = a11y.end_frame(Default::default());
++        assert_eq!(update.focus, field);
++    }
++
+     // Node A is focused; node C (a child of the unfocused node B) claims the
+     // active descendant. The final tree must still report A as focused.
+     #[test]

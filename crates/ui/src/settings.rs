@@ -641,6 +641,9 @@ pub(crate) struct Stop {
     pub key: Option<String>,
 }
 
+// Flags of independent parts of the dialog (a screen reader listening…),
+// not the states of one machine.
+#[allow(clippy::struct_excessive_bools)]
 pub struct SettingsView {
     pub(crate) app: Arc<App>,
     pub(crate) font: SharedString,
@@ -654,6 +657,9 @@ pub struct SettingsView {
     pub(crate) requirements: Option<Vec<RequirementStatus>>,
     probe: Arc<Mutex<Option<Vec<RequirementStatus>>>>,
     pub(crate) root: FocusHandle,
+    /// Whether assistive technology listens this frame: a setting's
+    /// title names its control only then.
+    pub(crate) a11y: bool,
     pub(crate) nav: FocusHandle,
     handles: HashMap<String, FocusHandle>,
     pub(crate) stops: Vec<Stop>,
@@ -735,6 +741,7 @@ impl SettingsView {
             record_stops: Vec::new(),
             keyring: Arc::default(),
             root: cx.focus_handle(),
+            a11y: false,
             nav: cx.focus_handle(),
             handles: HashMap::new(),
             stops: Vec::new(),
@@ -888,7 +895,10 @@ impl SettingsView {
                 ""
             };
             let input = cx.new(|cx| TextInput::new(placeholder, cx));
-            input.update(cx, |input, cx| input.set_text(value.clone(), cx));
+            input.update(cx, |input, cx| {
+                input.set_text(value.clone(), cx);
+                input.set_label(spec.title.clone());
+            });
             let key = spec.key.clone();
             subscriptions.push(cx.subscribe_in(
                 &input,

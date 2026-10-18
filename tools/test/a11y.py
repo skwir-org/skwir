@@ -216,6 +216,12 @@ class Window:
                 continue
         return found
 
+    def type(self, text):
+        """Text typed in the window."""
+        subprocess.run([self.args.xdotool, "type", "--delay", "60", text],
+                       env=self.env(), check=True)
+        time.sleep(0.3)
+
     def stop(self):
         for proc in reversed(self.procs):
             if proc.poll() is None:
@@ -239,6 +245,72 @@ def said(node):
     where = f" {attrs['posinset']} of {attrs['setsize']}" if "posinset" in attrs else ""
     states = [s for s in ("selected", "focused") if has(node, s)]
     return f"{node.get_role_name()} {node.get_name()!r}{where} {' '.join(states)}".strip()
+
+
+def text_of(node):
+    """A text field's text and where its caret is."""
+    count = Atspi.Text.get_character_count(node)
+    return Atspi.Text.get_text(node, 0, count), Atspi.Text.get_caret_offset(node)
+
+
+class Announcements:
+    """What the window announces (`object:announcement`, a live region's
+    name), as a screen reader hears it."""
+
+    def __init__(self):
+        self.said = []
+        self.listener = Atspi.EventListener.new(self.heard)
+        self.listener.register("object:announcement")
+
+    def heard(self, event):
+        try:
+            self.said.append(event.source.get_name())
+        except GLib.Error:
+            pass
+
+    def hears(self, text, seconds=20):
+        context = GLib.MainContext.default()
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            while context.iteration(False):
+                pass
+            if text in self.said:
+                return True
+            time.sleep(0.1)
+        print(f"  announced: {self.said}")
+        return False
+
+
+def within(node):
+    """The names of a node's ancestors, nearest first."""
+    names = []
+    node = node.get_parent() if node else None
+    while node is not None and node.get_role_name() != "application":
+        names.append(node.get_name())
+        node = node.get_parent()
+    return names
+
+
+def selected_in(node):
+    """What a text field has selected, as offsets."""
+    if Atspi.Text.get_n_selections(node) == 0:
+        return None
+    selected = Atspi.Text.get_selection(node, 0)
+    return selected.start_offset, selected.end_offset
+
+
+def reads(w, expected, seconds=20):
+    """Whether the focused field's text and caret are `expected` in time."""
+    read = []
+
+    def holds():
+        read[:] = [text_of(w.focused())]
+        return read[0] == expected
+
+    ok = until(holds, seconds)
+    if not ok:
+        print(f"  read: {read[0] if read else 'nothing'}")
+    return ok
 
 
 def options_of(w, name):
@@ -302,17 +374,86 @@ def run(w):
     w.keys("Down")
     check("Down again: the next one", hears(w, f"list item {second!r} 2 of 4 selected focused"))
 
+    w.keys("ctrl+l")
+    check("Ctrl+L: the address, a text field named so", hears(w, "entry 'Address' focused"))
+    shown = str(w.files)
+    check("it holds the folder's path, all of it selected",
+          reads(w, (shown, len(shown))) and selected_in(w.focused()) == (0, len(shown)))
+    w.keys("End", "BackSpace", "Left")
+    check("what is typed and where the caret goes are read back",
+          reads(w, (shown[:-1], len(shown) - 2)))
+    w.keys("Escape")
+    check("Escape: back to the files", hears(w, f"list item {second!r} 2 of 4 selected focused"))
+
+    # Into the Trash of the window's own data folder, and back.
+    third = "café list.md"
+    announced = Announcements()
+    w.keys("Down", "Delete")
+    check("a file trashed is announced", announced.hears(f"Moved “{third}” to Trash"))
+    w.keys("ctrl+z")
+    check("and so is its undoing", announced.hears("Undid: move to trash")
+          and until(lambda: (w.files / third).exists()))
+    # The cursor went with the file: Down starts from the first entry.
+    w.keys("Down")
+    check("Down: the first entry again", hears(w, f"list item {first!r} 1 of 4 selected focused"))
+
+    w.keys("shift+F10")
+    check("Shift+F10: the context menu, its first item said as focused",
+          until(lambda: w.focused().get_role_name() == "menu item"
+                and within(w.focused())[0] == "Context menu"))
+    w.keys("Escape")
+    check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
+
+    w.keys("ctrl+shift+p")
+    check("Ctrl+Shift+P: the palette's highlighted command, in its dialog",
+          until(lambda: w.focused().get_role_name() == "list item"
+                and within(w.focused())[:2] == ["Commands", "Command palette"]))
+    w.type("grid view")
+    check("what is typed finds a command, said as focused",
+          until(lambda: said(w.focused()).startswith("list item 'Grid view' 1 of")
+                and has(w.focused(), "selected")))
+    w.keys("Escape")
+
+    w.cmd("ui.tags_prompt")
+    check("the tag editor's field, in its dialog",
+          until(lambda: w.focused().get_role_name() == "entry"
+                and within(w.focused())[0] == "Tag editor"))
+    w.type("draft")
+    check("a tag typed is offered to add, said as focused",
+          hears(w, "list item 'Add draft' 1 of 1 selected focused")
+          and within(w.focused())[:2] == ["Tags", "Tag editor"])
+    w.keys("Escape")
+
+    w.cmd("ui.jump")
+    check("Jump: its field, in its dialog",
+          until(lambda: w.focused().get_role_name() == "entry"
+                and within(w.focused())[0] == "Jump"))
+    w.keys("Escape")
+    check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
+
+    w.keys("F2")
+    check("F2: the rename prompt's field, named by its question",
+          hears(w, "entry 'Rename' focused") and within(w.focused())[0] == "Rename")
+    w.keys("Escape")
+
+    w.keys("ctrl+comma")
+    check("Ctrl+,: the settings, their page said as the selected tab",
+          hears(w, "page tab 'General' selected focused")
+          and within(w.focused())[:2] == ["Pages", "Settings"])
+    w.keys("Escape")
+    check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
+
     w.keys("ctrl+2")
-    check("the grid says the same entry", hears(w, f"list item {second!r} 2 of 4 selected focused"))
+    check("the grid says the same entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
 
     w.keys("ctrl+3")
     check("the columns say it in its folder's list",
-          hears(w, f"list item {second!r} 2 of 4 selected focused")
+          hears(w, f"list item {first!r} 1 of 4 selected focused")
           and w.focused().get_parent().get_name() == "files")
 
     w.cmd("ui.view", {"id": "tree"})
     check("the tree says it as an item of the folder's tree",
-          hears(w, f"tree item {second!r} selected focused")
+          hears(w, f"tree item {first!r} selected focused")
           and w.focused().get_parent().get_role_name() == "tree")
 
     w.cmd("ui.view", {"id": "board"})
@@ -324,6 +465,13 @@ def run(w):
         lambda: (lambda f: f is not None and f.get_role_name() == "panel"
                  and f.get_name() == "empty"
                  and "empty" in (f.get_description() or "").lower())(w.focused())))
+
+    w.keys("F6")
+    check("F6: the sidebar's first group, in the sidebar's tree",
+          hears(w, "tree item 'Places' focused")
+          and w.focused().get_parent().get_name() == "Sidebar")
+    w.keys("Down")
+    check("Down: its first place", hears(w, "tree item 'Home' focused"))
 
 
 def main():

@@ -54,6 +54,8 @@ at the vendored commit.
 | `0027-manifest-built-on-windows` | The Windows manifest embedded only when built on Windows | — |
 | `0028-gpui-not-published` | gpui unpublished, as Skwir's path dependency | Skwir's only |
 | `0029-gpu-context-on-a-thread` | Vulkan starts on a thread of its own while the platform sets up (0014, on wgpu) | — |
+| `0030-active-descendant-for` | An element is said as focused while a focus handle beside it holds the focus (the combobox pattern) | — |
+| `0031-aria-states` | Live regions, modal dialogs, lists of many selected, disabled and read-only elements | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -338,6 +340,24 @@ Ten starts of each build, alternated back to back on a quiet machine
 
 The device, made and tested on the window's surface, stays on the window's
 path (ADR-064).
+
+### 0030: Active descendant for a focus handle
+
+Upstream's `aria_active_descendant` holds only under the focused element.
+A picker keeps the keyboard in its text field while the highlighted option
+is in a list beside it, not under it: the web's combobox, where
+`aria-activedescendant` on the field names the option.
+`aria_active_descendant_for(&FocusHandle)` says the element is focused
+while that handle holds the focus, wherever its element is (ADR-065). Two
+tests beside upstream's in `window/a11y.rs`.
+
+### 0031: ARIA states
+
+AccessKit nodes have states gpui's builder does not set:
+`aria_live` (a node announced when it appears or its name changes; a
+notification), `aria_modal`, `aria_multiselectable`, `aria_disabled` and
+`aria_read_only`. `Live` is re-exported beside `Role`. A test beside
+upstream's in `elements/div.rs`.
 
 ## Adding or changing a patch
 

@@ -484,6 +484,9 @@ fn row(
     let theme = cx.global::<Theme>().clone();
     let mut strip = div()
         .id("tab-strip")
+        .role(gpui::Role::TabList)
+        .aria_label("Tabs")
+        .when(shell.a11y, |d| d.aria_size_of_set(labels.len()))
         .flex_1()
         .h_full()
         .min_w_0()
@@ -595,8 +598,11 @@ fn tab(
     let font = shell.font.clone();
     let tip = label.tip.clone();
     let hover = theme.hover;
+    let a11y = shell.a11y;
     let close = div()
         .id(("tab-close", id.0 as usize))
+        .role(gpui::Role::Button)
+        .aria_label("Close tab")
         .flex_none()
         .size(px(18.))
         .flex()
@@ -612,8 +618,16 @@ fn tab(
         .child(crate::controls::glyph("close", theme.text_muted, 12.));
     let drag = TabDrag { tab: id, index };
     let title = label.title.clone();
+    // The tab shown is the selected one; its full location describes it.
     let mut el = div()
         .id(("tab", id.0 as usize))
+        .role(gpui::Role::Tab)
+        .when(a11y, |d| {
+            d.aria_label(label.title.clone())
+                .aria_description(label.tip.clone())
+                .aria_selected(shown)
+                .aria_position_in_set(index)
+        })
         .relative()
         .flex_1()
         .min_w(px(if widest { TAB_MAX } else { 56. }))

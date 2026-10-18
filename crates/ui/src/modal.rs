@@ -177,7 +177,7 @@ impl Shell {
 /// of its buttons focused, Escape still cancels. The panel keeps its
 /// presses. `priority` orders deferred overlays (menus above dialogs).
 pub fn modal(
-    panel: Div,
+    panel: Stateful<Div>,
     top: f32,
     priority: usize,
     dismiss: impl Fn(&mut Shell, &mut Window, &mut Context<Shell>) + 'static,
@@ -213,9 +213,14 @@ pub fn modal(
     .into_any_element()
 }
 
-/// The frame of a modal panel, `width` px wide.
-pub fn panel(width: f32, theme: &Theme) -> Div {
+/// The frame of a modal panel, `width` px wide: a modal dialog to
+/// assistive technology, which the caller names (`aria_label`); `id`
+/// tells it from the other dialogs drawn in the same frame.
+pub fn panel(id: &'static str, width: f32, theme: &Theme) -> Stateful<Div> {
     div()
+        .id(id)
+        .role(gpui::Role::Dialog)
+        .aria_modal()
         .w(px(width))
         .flex()
         .flex_col()
@@ -265,6 +270,34 @@ pub fn footer(
 
 /// Rows a picker (the palette, Jump) shows at once.
 pub const PICKER_ROWS: usize = 14;
+
+/// A picker's list as assistive technology hears it: a list box named
+/// `name`, of `count` options, beside the field that keeps the keyboard.
+pub fn options(id: &'static str, name: &'static str, count: usize, a11y: bool) -> Stateful<Div> {
+    div()
+        .id(id)
+        .role(gpui::Role::ListBox)
+        .when(a11y, |d| d.aria_label(name).aria_size_of_set(count))
+}
+
+/// Row `row` of a picker's list, an option named `named` (`None` while no
+/// screen reader listens). The highlighted one is said as focused while
+/// `field` has the keyboard: the combobox's active descendant.
+pub fn option(
+    el: Stateful<Div>,
+    named: Option<gpui::SharedString>,
+    row: usize,
+    highlighted: bool,
+    field: &FocusHandle,
+) -> Stateful<Div> {
+    el.role(gpui::Role::ListBoxOption)
+        .when_some(named, |d, named| {
+            d.aria_label(named)
+                .aria_selected(highlighted)
+                .aria_position_in_set(row)
+                .when(highlighted, |d| d.aria_active_descendant_for(field))
+        })
+}
 
 /// A picker's list: which rows are on screen and which one Enter runs. The
 /// highlight never leaves the rows shown: moving past an edge scrolls.

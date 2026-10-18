@@ -270,6 +270,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                             controls::icon_button(
                                 "shortcuts-close",
                                 "close",
+                                "Close",
                                 &overview.close,
                                 &theme,
                             )

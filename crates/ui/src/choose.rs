@@ -280,7 +280,13 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     };
     let option_keys = shell.keys_for("ui.choose_option", &serde_json::json!({}));
     let c = shell.choose.as_ref()?;
-    let mut list = div().flex().flex_col().py_1().overflow_hidden();
+    let a11y = shell.a11y;
+    let typing = gpui::Focusable::focus_handle(c.input.read(cx), cx);
+    let mut list = modal::options("choose-results", "Choices", c.filtered.len(), a11y)
+        .flex()
+        .flex_col()
+        .py_1()
+        .overflow_hidden();
     let mut previous: Option<&str> = None;
     for (row, icon) in c.picker.shown(c.filtered.len()).zip(icons) {
         let choice = &c.choices[c.filtered[row]];
@@ -303,9 +309,9 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         } else {
             theme.text_muted
         };
+        let named = a11y.then(|| choice.title.clone().into());
         list = list.child(
-            div()
-                .id(("choice", row))
+            modal::option(div().id(("choice", row)), named, row, hl, &typing)
                 .h(px(28.))
                 .px_3()
                 .flex()
@@ -386,7 +392,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             ))
             .children(option_keys.map(|keys| crate::controls::keycap(keys, &theme)))
     });
-    let panel = modal::panel(520., &theme)
+    let panel = modal::panel("choose", 520., &theme)
+        .when(shell.a11y, |d| d.aria_label(c.title.clone()))
         .key_context(keymap::CHOOSE)
         .child(
             div()

@@ -2,6 +2,10 @@
 //! field, stepper parts and key caps. They are presentational: the caller
 //! owns the focus handle, attaches the click listener and decides the order
 //! of keyboard traversal, so a control never knows which view it lives in.
+//! Each says what it is to assistive technology (a switch and whether it is
+//! on, a radio button and whether it is chosen); a control that draws no
+//! words of its name (a switch, a choice, a dropdown) is named by its caller
+//! (`aria_label`), from the label drawn beside it.
 
 use gpui::{Div, Entity, FocusHandle, SharedString, Stateful, div, prelude::*, px, svg};
 
@@ -29,6 +33,8 @@ pub fn switch(
     let accent = theme.accent;
     div()
         .id(id.into())
+        .role(gpui::Role::Switch)
+        .aria_toggled(toggled(on))
         .track_focus(focus)
         .flex_none()
         .p(px(2.))
@@ -61,6 +67,7 @@ pub fn segmented(id: impl Into<SharedString>, focus: &FocusHandle, theme: &Theme
     let accent = theme.accent;
     div()
         .id(id.into())
+        .role(gpui::Role::RadioGroup)
         .track_focus(focus)
         .flex_none()
         .flex()
@@ -82,8 +89,12 @@ pub fn segment(
     theme: &Theme,
 ) -> Stateful<Div> {
     let hover = theme.hover;
+    let label = label.into();
     div()
         .id(id.into())
+        .role(gpui::Role::RadioButton)
+        .aria_label(label.clone())
+        .aria_toggled(toggled(selected))
         .h_full()
         .px_3()
         .flex()
@@ -98,7 +109,15 @@ pub fn segment(
         .when(!selected, |d| {
             d.text_color(theme.text_muted).hover(move |s| s.bg(hover))
         })
-        .child(label.into())
+        .child(label)
+}
+
+fn toggled(on: bool) -> gpui::Toggled {
+    if on {
+        gpui::Toggled::True
+    } else {
+        gpui::Toggled::False
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -121,8 +140,11 @@ pub fn button(
     } else {
         theme.text
     };
+    let label = label.into();
     div()
         .id(id.into())
+        .role(gpui::Role::Button)
+        .aria_label(label.clone())
         .track_focus(focus)
         .flex_none()
         .h(px(HEIGHT))
@@ -141,19 +163,23 @@ pub fn button(
         .hover(move |s| s.bg(hover))
         .focus(move |s| s.border_color(accent))
         .children(leading.map(|name| icon(name, color, 14.)))
-        .child(label.into())
+        .child(label)
 }
 
-/// A borderless square button holding one symbolic icon.
+/// A borderless square button holding one symbolic icon, `label` its name
+/// for assistive technology (the icon says nothing to it).
 pub fn icon_button(
     id: impl Into<SharedString>,
     name: &str,
+    label: &'static str,
     focus: &FocusHandle,
     theme: &Theme,
 ) -> Stateful<Div> {
     let (accent, hover) = (theme.accent, theme.hover);
     div()
         .id(id.into())
+        .role(gpui::Role::Button)
+        .aria_label(label)
         .track_focus(focus)
         .flex_none()
         .size(px(HEIGHT))
@@ -208,7 +234,8 @@ pub fn field(
         )
 }
 
-/// The closed state of a dropdown: current label and a chevron.
+/// The closed state of a dropdown: current label and a chevron. Its
+/// current label is its value to assistive technology.
 pub fn dropdown(
     id: impl Into<SharedString>,
     label: impl Into<SharedString>,
@@ -216,8 +243,11 @@ pub fn dropdown(
     theme: &Theme,
 ) -> Stateful<Div> {
     let (accent, hover) = (theme.accent, theme.hover);
+    let label = label.into();
     div()
         .id(id.into())
+        .role(gpui::Role::ComboBox)
+        .aria_value(label.clone())
         .track_focus(focus)
         .relative()
         .flex_none()
@@ -237,7 +267,7 @@ pub fn dropdown(
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
         .focus(move |s| s.border_color(accent))
-        .child(label.into())
+        .child(label)
         .child(icon("chevron", theme.text_muted, 14.))
 }
 

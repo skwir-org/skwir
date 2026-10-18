@@ -273,10 +273,23 @@ impl Button {
         let menu = self.shape == Shape::MenuRow;
         // The shortcut comes from the keymap, never from the title: it
         // follows what is bound, and goes when its plugin does.
-        let title: SharedString = match shell.keys_for(&command, &args) {
+        let keys = shell.keys_for(&command, &args);
+        // To assistive technology: named by the words it shows, else by its
+        // title, which then describes it.
+        let said = shell.a11y.then(|| {
+            let described = self.label.is_some().then(|| self.title.clone());
+            let named = self.label.clone().unwrap_or_else(|| self.title.clone());
+            (named, described, keys.clone())
+        });
+        let title: SharedString = match keys {
             Some(keys) => format!("{} · {keys}", self.title).into(),
             None => self.title,
         };
+        let (active, dropdown, open) = (
+            self.active,
+            self.shape == Shape::Dropdown,
+            self.anchor.is_some(),
+        );
         // A label cut short says itself in the tooltip, before the title.
         let (label, clip) = self
             .label
@@ -299,6 +312,27 @@ impl Button {
             .is_some_and(|reveal| reveal.row.as_ref() == Some(&id));
         div()
             .id(self.id)
+            .role(if menu {
+                gpui::Role::MenuItem
+            } else {
+                gpui::Role::Button
+            })
+            .when_some(said, |d, (named, described, keys)| {
+                d.aria_label(named)
+                    .when_some(described, StatefulInteractiveElement::aria_description)
+                    .when_some(keys, StatefulInteractiveElement::aria_keyshortcuts)
+                    .aria_disabled(!enabled)
+                    // What it stands for is on: the view shown, the
+                    // history's place, a narrowing applied.
+                    .when(active, |d| {
+                        if menu {
+                            d.aria_selected(true)
+                        } else {
+                            d.aria_toggled(gpui::Toggled::True)
+                        }
+                    })
+                    .when(dropdown, |d| d.aria_expanded(open))
+            })
             .relative()
             .h(px(30.))
             .min_w(px(30.))
@@ -674,6 +708,7 @@ pub fn popup_panel(
     }
     div()
         .id("toolbar-popup")
+        .role(gpui::Role::Menu)
         .tab_group()
         .tab_index(1)
         .w(px(264.))

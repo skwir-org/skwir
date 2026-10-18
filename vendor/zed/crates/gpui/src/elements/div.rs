@@ -1393,6 +1393,23 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Report this element as the focused node in the accessibility tree
+    /// while `focus` holds the keyboard focus, wherever the element that
+    /// tracks `focus` is.
+    ///
+    /// [`aria_active_descendant`][Self::aria_active_descendant] holds only
+    /// under the focused element. This is the combobox pattern instead: a
+    /// text field keeps the focus while the option highlighted in a list
+    /// beside it (not under it) is what assistive technology announces, as
+    /// the web's `aria-activedescendant` on the field names it.
+    ///
+    /// The element must also have a [`role`][Self::role] and an id. Set it on
+    /// the highlighted option alone: two claims in one frame are a bug.
+    fn aria_active_descendant_for(mut self, focus: &FocusHandle) -> Self {
+        self.interactivity().active_descendant_for = Some(focus.clone());
+        self
+    }
+
     /// Contribute synthetic accessibility nodes — nodes that don't correspond
     /// to any element — as children of this element's a11y node. For example,
     /// text runs describing an editor's text content.
@@ -1512,6 +1529,41 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set the column count for this element.
     fn aria_column_count(mut self, count: usize) -> Self {
         self.interactivity().aria.column_count = Some(count);
+        self
+    }
+
+    /// Announce this element's name when it appears or its name changes:
+    /// [`Live::Polite`][accesskit::Live::Polite] after what is being said,
+    /// [`Live::Assertive`][accesskit::Live::Assertive] at once. For what
+    /// tells the user something happened (a notification, a status).
+    fn aria_live(mut self, live: accesskit::Live) -> Self {
+        self.interactivity().aria.live = Some(live);
+        self
+    }
+
+    /// Mark this element, a dialog, as modal: what is outside it cannot be
+    /// reached while it is shown.
+    fn aria_modal(mut self) -> Self {
+        self.interactivity().aria.modal = true;
+        self
+    }
+
+    /// Mark this element, a list or a tree, as one where more than one
+    /// option may be selected at once.
+    fn aria_multiselectable(mut self) -> Self {
+        self.interactivity().aria.multiselectable = true;
+        self
+    }
+
+    /// Mark this element as shown but not usable now (a dimmed button).
+    fn aria_disabled(mut self, disabled: bool) -> Self {
+        self.interactivity().aria.disabled = disabled;
+        self
+    }
+
+    /// Mark this element's value as one that can be read and not changed.
+    fn aria_read_only(mut self) -> Self {
+        self.interactivity().aria.read_only = true;
         self
     }
 
@@ -2159,6 +2211,11 @@ pub(crate) struct AriaProperties {
     pub(crate) column_index: Option<usize>,
     pub(crate) row_count: Option<usize>,
     pub(crate) column_count: Option<usize>,
+    pub(crate) live: Option<accesskit::Live>,
+    pub(crate) modal: bool,
+    pub(crate) multiselectable: bool,
+    pub(crate) disabled: bool,
+    pub(crate) read_only: bool,
 }
 
 /// The interactivity struct. Powers all of the general-purpose
@@ -2228,6 +2285,7 @@ pub struct Interactivity {
         Vec<(accesskit::Action, crate::window::a11y::A11yActionListener)>,
     pub(crate) a11y_synthetic_children: Option<Box<dyn FnOnce(&mut crate::A11ySubtreeBuilder)>>,
     pub(crate) report_active_descendant_focus: bool,
+    pub(crate) active_descendant_for: Option<FocusHandle>,
     pub(crate) override_role: Option<accesskit::Role>,
     pub(crate) aria: AriaProperties,
 
@@ -2384,6 +2442,16 @@ impl Interactivity {
                     .a11y
                     .set_active_descendant(global_id.accesskit_node_id());
             }
+        }
+
+        if let Some(focus) = self.active_descendant_for.as_ref()
+            && window.a11y.is_active()
+            && focus.is_focused(window)
+            && let Some(global_id) = global_id
+        {
+            window
+                .a11y
+                .set_active_descendant_for(global_id.accesskit_node_id());
         }
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
@@ -3624,6 +3692,21 @@ impl Interactivity {
         }
         if let Some(count) = self.aria.column_count {
             node.set_column_count(count);
+        }
+        if let Some(live) = self.aria.live {
+            node.set_live(live);
+        }
+        if self.aria.modal {
+            node.set_modal();
+        }
+        if self.aria.multiselectable {
+            node.set_multiselectable();
+        }
+        if self.aria.disabled {
+            node.set_disabled();
+        }
+        if self.aria.read_only {
+            node.set_read_only();
         }
         if !self.click_listeners.is_empty() {
             node.add_action(accesskit::Action::Click);
@@ -5413,6 +5496,27 @@ mod tests {
         assert_eq!(node.min_numeric_value(), Some(6.0));
         assert_eq!(node.max_numeric_value(), Some(72.0));
         assert_eq!(node.numeric_value_step(), Some(1.0));
+    }
+
+    #[test]
+    fn test_write_a11y_info_states_and_live() {
+        let mut interactivity = Interactivity::default();
+        let mut node = accesskit::Node::new(accesskit::Role::ListBox);
+        interactivity.write_a11y_info(&mut node);
+        assert_eq!(node.live(), None);
+        assert!(!node.is_modal() && !node.is_multiselectable());
+        assert!(!node.is_disabled() && !node.is_read_only());
+
+        interactivity.aria.live = Some(accesskit::Live::Polite);
+        interactivity.aria.modal = true;
+        interactivity.aria.multiselectable = true;
+        interactivity.aria.disabled = true;
+        interactivity.aria.read_only = true;
+        let mut node = accesskit::Node::new(accesskit::Role::ListBox);
+        interactivity.write_a11y_info(&mut node);
+        assert_eq!(node.live(), Some(accesskit::Live::Polite));
+        assert!(node.is_modal() && node.is_multiselectable());
+        assert!(node.is_disabled() && node.is_read_only());
     }
 
     /// Two focusable, clickable elements ("a" and "b") used to exercise the

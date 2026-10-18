@@ -85,3 +85,24 @@ window and its file views are exposed; the other places follow
   Skwir builds none of the strings. While one listens, every frame
   rebuilds the nodes of what is on screen (the rows drawn, not the
   listing).
+
+## Amendments
+
+### 2026-10-18: the places around the files
+
+- **A picker is the web's combobox**: the palette, Jump, Choose and the tag
+  editor keep the keyboard in their field, and the option the keys reach
+  is said as focused, from a list beside the field rather than under it.
+  gpui held an active descendant only under the focused element; patch
+  0030 adds one for a focus handle (`aria_active_descendant_for`). A
+  reader hears the option, and echoes what is typed.
+- **What happens is announced**: a toast is a live region (patch 0031
+  adds `aria_live` and the states gpui's builder lacked: modal,
+  multiselectable, disabled, read-only), said politely, a failure at
+  once. A running plan is a progress indicator, never announced at each
+  step.
+- The sidebar is a tree of its groups and places; the trail links to its
+  places; text fields carry their text, caret and selection; dialogs are
+  modal and named, a confirmation an alert; toolbars, popups, menus, tabs
+  and the settings say what each control is and its state.
+- Still to come: the previews, the terminal, search pills and the footer.

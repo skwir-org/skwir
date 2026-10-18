@@ -174,6 +174,9 @@ pub struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
     placeholder: SharedString,
+    /// What assistive technology calls it, when the placeholder does not
+    /// name it (`set_label`).
+    label: Option<SharedString>,
     /// Show a bullet per character, and keep the text off the clipboard.
     masked: bool,
     selected_range: Range<usize>,
@@ -197,6 +200,7 @@ impl TextInput {
             focus_handle: cx.focus_handle(),
             content: "".into(),
             placeholder: placeholder.into(),
+            label: None,
             masked: false,
             selected_range: 0..0,
             selection_reversed: false,
@@ -207,6 +211,12 @@ impl TextInput {
             is_selecting: false,
             history: History::default(),
         }
+    }
+
+    /// Its name for assistive technology, where its placeholder is a hint
+    /// rather than a name ("Address" for "Path, query:… or location").
+    pub fn set_label(&mut self, label: impl Into<SharedString>) {
+        self.label = Some(label.into());
     }
 
     /// For secrets: bullets on screen, no copy or cut.
@@ -951,9 +961,95 @@ impl Element for TextElement {
     }
 }
 
+impl TextInput {
+    /// The field as assistive technology reads it: named, its text one run
+    /// it can walk unit by unit, the caret and selection in those units. A
+    /// secret says bullets, as the screen shows it.
+    fn expose(&self, el: gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div> {
+        let shown: String = if self.masked {
+            std::iter::repeat_n(BULLET, self.content.chars().count()).collect()
+        } else {
+            self.content.to_string()
+        };
+        let lengths = units(&shown);
+        let (anchor, focus) = if self.selection_reversed {
+            (self.selected_range.end, self.selected_range.start)
+        } else {
+            (self.selected_range.start, self.selected_range.end)
+        };
+        let anchor = unit_at(&lengths, self.shown_offset(anchor));
+        let focus = unit_at(&lengths, self.shown_offset(focus));
+        let named = self.label.is_some();
+        el.aria_label(
+            self.label
+                .clone()
+                .unwrap_or_else(|| self.placeholder.clone()),
+        )
+        .when(named && !self.placeholder.is_empty(), |d| {
+            d.aria_placeholder(self.placeholder.clone())
+        })
+        .aria_value(SharedString::from(shown.clone()))
+        .a11y_synthetic_children(move |builder| {
+            let run_id = builder.synthetic_node_id(0);
+            let mut run = gpui::accesskit::Node::new(gpui::Role::TextRun);
+            run.set_value(shown);
+            run.set_character_lengths(lengths);
+            builder.push_child(run_id, run);
+            let at = |character_index| gpui::accesskit::TextPosition {
+                node: run_id,
+                character_index,
+            };
+            builder
+                .parent_node()
+                .set_text_selection(gpui::accesskit::TextSelection {
+                    anchor: at(anchor),
+                    focus: at(focus),
+                });
+        })
+    }
+}
+
+/// The smallest units the caret moves by in `text` (its graphemes), each's
+/// length in bytes, as AccessKit counts a text's characters. A unit longer
+/// than a byte can count is split into its chars.
+fn units(text: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for grapheme in text.graphemes(true) {
+        match u8::try_from(grapheme.len()) {
+            Ok(len) => out.push(len),
+            Err(_) => out.extend(
+                grapheme
+                    .chars()
+                    .map(|c| u8::try_from(c.len_utf8()).unwrap_or(4)),
+            ),
+        }
+    }
+    out
+}
+
+/// The unit that byte `offset` starts, or the end.
+fn unit_at(lengths: &[u8], offset: usize) -> usize {
+    let mut at = 0;
+    for (index, len) in lengths.iter().enumerate() {
+        if at >= offset {
+            return index;
+        }
+        at += usize::from(*len);
+    }
+    lengths.len()
+}
+
 impl Render for TextInput {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let a11y = window.is_a11y_active();
         div()
+            .id(("text-input", cx.entity_id().as_u64() as usize))
+            .role(if self.masked {
+                gpui::Role::PasswordInput
+            } else {
+                gpui::Role::TextInput
+            })
+            .when(a11y, |d| self.expose(d))
             .flex()
             .w_full()
             .key_context(KEY_CONTEXT)
@@ -1008,7 +1104,28 @@ fn snapped(text: &str, offset: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{History, scrolled, snapped, typed_at, utf16_to_utf8};
+    use super::{History, scrolled, snapped, typed_at, unit_at, units, utf16_to_utf8};
+
+    #[test]
+    fn a_screen_reader_counts_the_units_the_caret_moves_by() {
+        // `é` is two bytes; a thumb with its skin tone is one grapheme of
+        // eight.
+        let lengths = units("aé👍🏽");
+        assert_eq!(lengths, [1, 2, 8]);
+        assert_eq!(unit_at(&lengths, 0), 0);
+        assert_eq!(unit_at(&lengths, 1), 1);
+        assert_eq!(unit_at(&lengths, 3), 2);
+        assert_eq!(unit_at(&lengths, 11), 3);
+        // A grapheme longer than a byte counts is split into its chars:
+        // `e` and 130 combining accents, 261 bytes.
+        let long = format!("e{}", "\u{301}".repeat(130));
+        let lengths = units(&long);
+        assert_eq!(lengths.len(), 131);
+        assert_eq!(
+            lengths.iter().map(|&len| usize::from(len)).sum::<usize>(),
+            long.len()
+        );
+    }
 
     #[test]
     fn an_offset_given_from_outside_never_splits_a_character() {

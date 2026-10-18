@@ -341,12 +341,11 @@ impl SettingsView {
                 .gap_1()
                 .child(caps(keys, false, theme))
                 .child(
-                    controls::icon_button("keys-find-clear", "close", &find, theme).on_click(
-                        cx.listener(|this, _, _, cx| {
+                    controls::icon_button("keys-find-clear", "close", "Clear", &find, theme)
+                        .on_click(cx.listener(|this, _, _, cx| {
                             this.keys.find = None;
                             cx.notify();
-                        }),
-                    ),
+                        })),
                 )
                 .into_any_element(),
             None => controls::button(

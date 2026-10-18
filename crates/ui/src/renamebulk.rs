@@ -369,7 +369,8 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             .text_color(theme.text_muted)
             .child(format!("… {} more", b.renamed - b.preview.len()))
     });
-    let panel = modal::panel(720., &theme)
+    let panel = modal::panel("bulk-rename", 720., &theme)
+        .aria_label("Bulk rename")
         .p_3()
         .gap_2()
         .key_context(keymap::BULK)

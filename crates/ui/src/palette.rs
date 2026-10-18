@@ -437,7 +437,11 @@ impl Shell {
 
     pub fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let back = FocusReturn::capture(window, cx);
-        let input = cx.new(|cx| TextInput::new("Type a command", cx));
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new("Type a command", cx);
+            input.set_label("Command");
+            input
+        });
         let sub = cx.subscribe_in(
             &input,
             window,
@@ -489,7 +493,11 @@ impl Shell {
             args.values.insert(key, serde_json::Value::String(value));
             args.index += 1;
             if args.index < args.required.len() {
-                p.input.update(cx, |i, cx| i.set_text("", cx));
+                let asked = format!("{} · {}", args.name, args.required[args.index]);
+                p.input.update(cx, |i, cx| {
+                    i.set_text("", cx);
+                    i.set_label(asked);
+                });
                 cx.notify();
                 return;
             }
@@ -507,13 +515,18 @@ impl Shell {
             self.close_palette(window, cx);
             self.run(&item.name, item.args, window, cx);
         } else {
+            // The field is named by what it asks for, as its label says.
+            let asked = format!("{} · {}", item.name, item.required[0]);
             p.args = Some(ArgPrompt {
                 name: item.name,
                 required: item.required,
                 values: serde_json::Map::new(),
                 index: 0,
             });
-            p.input.update(cx, |i, cx| i.set_text("", cx));
+            p.input.update(cx, |i, cx| {
+                i.set_text("", cx);
+                i.set_label(asked);
+            });
             cx.notify();
         }
     }
@@ -542,7 +555,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         Some(a) => format!("{} · {}", a.name, a.required[a.index]),
         None => "Command".to_owned(),
     };
-    let mut panel = modal::panel(560., &theme)
+    let mut panel = modal::panel("palette", 560., &theme)
+        .aria_label("Command palette")
         .max_h(px(420.))
         .key_context(keymap::PALETTE)
         .child(
@@ -557,7 +571,16 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .child(div().flex_1().child(p.input.clone())),
         );
     if p.args.is_none() {
-        let mut list = div().flex().flex_col().py_1().overflow_hidden();
+        // The commands found, a list box beside the field that keeps the
+        // keyboard: the highlighted one is said as focused while the field
+        // has the focus.
+        let a11y = shell.a11y;
+        let typing = gpui::Focusable::focus_handle(p.input.read(cx), cx);
+        let mut list = modal::options("palette-results", "Commands", p.filtered.len(), a11y)
+            .flex()
+            .flex_col()
+            .py_1()
+            .overflow_hidden();
         for row_ix in p.picker.shown(p.filtered.len()) {
             let item = &p.items[p.filtered[row_ix]];
             let hl = row_ix == p.picker.highlighted;
@@ -567,9 +590,21 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 theme.text_muted
             };
             let name = item.name.clone();
+            let option = modal::option(
+                div().id(("cmd", row_ix)),
+                a11y.then(|| item.title.clone().into()),
+                row_ix,
+                hl,
+                &typing,
+            )
+            .when(a11y, |d| {
+                d.aria_description(name.clone()).when_some(
+                    item.keys.clone(),
+                    StatefulInteractiveElement::aria_keyshortcuts,
+                )
+            });
             list = list.child(
-                div()
-                    .id(("cmd", row_ix))
+                option
                     .h(px(26.))
                     .px_3()
                     .flex()

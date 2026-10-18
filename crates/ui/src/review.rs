@@ -329,7 +329,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             )
         }
     };
-    let panel = modal::panel(720., &theme)
+    let panel = modal::panel("review", 720., &theme)
+        .when(shell.a11y, |d| d.aria_label(title.clone()))
         .p_3()
         .gap_2()
         .track_focus(&focus)

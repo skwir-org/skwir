@@ -1088,6 +1088,11 @@ impl Shell {
         div()
             .id(("pane", pane.0 as usize))
             .role(role)
+            // Entries are picked with Ctrl and Shift as with the pointer.
+            .when(
+                matches!(role, gpui::Role::ListBox | gpui::Role::Tree),
+                StatefulInteractiveElement::aria_multiselectable,
+            )
             .when(self.a11y, |d| d.aria_label(self.ui().place.title.clone()))
             .when_some(count, StatefulInteractiveElement::aria_size_of_set)
             .when_some(said, StatefulInteractiveElement::aria_description)

@@ -1188,9 +1188,22 @@ accessibility, Phase 8's audit made possible by ADR-064:
   display and session bus of its own (`tools/test/a11y.py`).
 - Gaps of AccessKit 0.24 on Linux: a tree item's level and whether it is
   expanded are not passed (`docs/invariants/accessibility.md`).
-- Not yet: the sidebar, the address field, the palette and the other
-  popups, menus, dialogs, toolbars and tabs, toasts and the footer, the
-  previews, the terminal.
+
+The places around the files, the same day:
+
+- The sidebar is a tree of groups and places; the trail links to its
+  places.
+- Text fields carry their text, caret and selection; a secret says
+  bullets.
+- The palette, Jump, Choose and the tag editor: the option the keys
+  reach is said as focused while the field keeps the keyboard (vendored
+  gpui patch 0030).
+- Dialogs are modal and named, a confirmation an alert; menus, toolbars,
+  popups, tabs and the settings say each control and its state.
+- Toasts are announced as they appear, a failure at once (patch 0031:
+  live regions and the states gpui's builder lacked).
+- `just a11y-check` follows it all, 29 steps.
+- Not yet: the previews, the terminal, search pills and the footer.
 
 ---
 

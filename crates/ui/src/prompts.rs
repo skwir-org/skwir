@@ -329,6 +329,8 @@ impl Shell {
         let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
         input.update(cx, |i, cx| {
+            // The field is named by what is asked.
+            i.set_label(title.to_owned());
             i.set_masked(kind.secret());
             i.set_text(initial.to_owned(), cx);
             match select {
@@ -518,7 +520,8 @@ impl Shell {
 pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let p = shell.prompt.as_ref()?;
     let theme = cx.global::<Theme>().clone();
-    let panel = modal::panel(560., &theme)
+    let panel = modal::panel("prompt", 560., &theme)
+        .when(shell.a11y, |d| d.aria_label(p.title.clone()))
         .p_3()
         .gap_2()
         .child(div().text_color(theme.text_muted).child(p.title.clone()))
@@ -580,7 +583,10 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
         Confirmed::Apply(_) => ("Delete", Some("trash")),
         Confirmed::Quit => ("Quit", None),
     };
-    let panel = modal::panel(560., &theme)
+    // A question that asks before something is done says itself at once.
+    let panel = modal::panel("confirm", 560., &theme)
+        .role(gpui::Role::AlertDialog)
+        .when(shell.a11y, |d| d.aria_label(c.message.clone()))
         .p_3()
         .gap_2()
         .track_focus(&c.focus)

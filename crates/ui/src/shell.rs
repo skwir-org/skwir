@@ -768,7 +768,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> PaneUi {
-        let address = cx.new(|cx| TextInput::new("Path, query:… or location", cx));
+        let address = cx.new(|cx| {
+            let mut input = TextInput::new("Path, query:… or location", cx);
+            input.set_label("Address");
+            input
+        });
         let sub = cx.subscribe_in(
             &address,
             window,

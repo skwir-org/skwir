@@ -472,7 +472,8 @@ pub fn render(
                 )),
         );
     }
-    let panel = modal::panel(720., &theme)
+    let panel = modal::panel("clashes", 720., &theme)
+        .aria_label("Names already taken")
         .p_3()
         .gap_2()
         .track_focus(&handles.focus)

@@ -271,6 +271,15 @@ impl A11y {
         }
     }
 
+    /// Report `node_id` as focused in place of the focused element, which is
+    /// not its ancestor: an option of a list beside a focused text field.
+    /// Called only while the focus handle it was set for holds the focus.
+    pub(crate) fn set_active_descendant_for(&mut self, node_id: NodeId) {
+        if self.nodes.has_node(node_id) && !self.nodes.node_is_focused(node_id) {
+            self.nodes.set_active_descendant(node_id);
+        }
+    }
+
     /// Clear per-frame state and push the root node to start a new frame.
     pub(crate) fn begin_frame(&mut self) {
         self.focus_ids.clear();
@@ -877,6 +886,48 @@ mod tests {
         a11y.nodes.pop(); // second
 
         a11y.nodes.pop(); // container
+    }
+
+    // A focused text field and, beside it, a list whose highlighted option
+    // claims the focus for the field (the combobox pattern): the option is
+    // reported as focused although the field is not its ancestor.
+    #[test]
+    fn active_descendant_for_a_focus_beside_it() {
+        let mut a11y = new_a11y();
+        let field = NodeId(1);
+        let list = NodeId(2);
+        let option = NodeId(3);
+
+        assert!(a11y.nodes.push(field, test_node()));
+        a11y.set_focusable(field, FocusId::default());
+        a11y.set_focus(field);
+        a11y.nodes.pop(); // field
+
+        assert!(a11y.nodes.push(list, test_node()));
+        assert!(a11y.nodes.push(option, test_node()));
+        assert!(!a11y.nodes.focus_is_ancestor_of_current());
+        a11y.set_active_descendant_for(option);
+        a11y.nodes.pop(); // option
+        a11y.nodes.pop(); // list
+
+        let update = a11y.end_frame(Default::default());
+        assert_eq!(update.focus, option);
+    }
+
+    // The focused node itself never claims to be its own active descendant.
+    #[test]
+    fn active_descendant_for_ignores_the_focused_node() {
+        let mut a11y = new_a11y();
+        let field = NodeId(1);
+
+        assert!(a11y.nodes.push(field, test_node()));
+        a11y.set_focusable(field, FocusId::default());
+        a11y.set_focus(field);
+        a11y.set_active_descendant_for(field);
+        a11y.nodes.pop(); // field
+
+        let update = a11y.end_frame(Default::default());
+        assert_eq!(update.focus, field);
     }
 
     // Node A is focused; node C (a child of the unfocused node B) claims the

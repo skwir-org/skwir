@@ -33,6 +33,9 @@ RUNS = [
         "elements::list", "elements::div::scroll_axis_tests",
         "text_system::line_wrapper", "text_system::line_layout", "style::tests",
         "key_dispatch",
+        # The accessibility tree (0030) and what an element writes into it
+        # (0031).
+        "window::a11y", "elements::div::tests::test_write_a11y_info",
     ]),
     # All of them: the atlas (an upload to a removed texture), the context
     # and the renderer.

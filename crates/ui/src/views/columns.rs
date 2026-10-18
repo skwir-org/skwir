@@ -599,6 +599,7 @@ impl PaneView for ColumnsView {
         let mut last_col = div()
             .id("column-last-wrap")
             .role(gpui::Role::ListBox)
+            .aria_multiselectable()
             .when(shell.a11y, |d| {
                 d.aria_label(shell.ui().place.title.clone())
                     .aria_size_of_set(count)

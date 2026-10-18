@@ -405,8 +405,11 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         .close
         .get_or_insert_with(|| cx.focus_handle())
         .clone();
+    let generation = shell.toasts.generation;
+    let a11y = shell.a11y;
     let card = |tone: Tone| {
         div()
+            .id(("toast-card", generation))
             .max_w(px(560.))
             .min_w(px(260.))
             .pl_3()
@@ -457,7 +460,16 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             .pause_focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
+        // What runs, said by its title; how far, as a value, said when
+        // asked, never at each step.
         card(Tone::Info)
+            .role(gpui::Role::ProgressIndicator)
+            .when(a11y, |d| {
+                d.aria_label(capitalized(&running.title))
+                    .aria_numeric_value(f64::from(fraction) * 100.)
+                    .aria_min_numeric_value(0.)
+                    .aria_max_numeric_value(100.)
+            })
             .py_2()
             .child(
                 div()
@@ -535,7 +547,21 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             )
     } else {
         let toast = shell.toasts.current.clone()?;
+        // Said as it appears: a failure at once, the rest after what is
+        // being said.
+        let error = matches!(toast.tone, Tone::Error);
         let mut card = card(toast.tone)
+            .role(if error {
+                gpui::Role::Alert
+            } else {
+                gpui::Role::Status
+            })
+            .aria_live(if error {
+                gpui::Live::Assertive
+            } else {
+                gpui::Live::Polite
+            })
+            .when(a11y, |d| d.aria_label(toast.text.clone()))
             .child(glyph(toast.tone))
             .child(div().flex_1().min_w_0().py_1().child(toast.text.clone()));
         if let Some(action) = toast.action {
@@ -554,6 +580,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     &focus,
                     &theme,
                 )
+                // Its buttons are not part of what is announced.
+                .aria_live(gpui::Live::Off)
                 .text_color(theme.accent)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.dismiss_toast(cx);
@@ -562,11 +590,11 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             );
         }
         card.child(
-            controls::icon_button("toast-close", "close", &close, &theme)
+            controls::icon_button("toast-close", "close", "Close", &close, &theme)
+                .aria_live(gpui::Live::Off)
                 .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx))),
         )
     };
-    let generation = shell.toasts.generation;
     Some(
         div()
             .absolute()

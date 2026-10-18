@@ -629,8 +629,13 @@ pub fn render(
     let no_order: std::sync::Arc<[serde_json::Value]> = std::sync::Arc::new([]);
 
     let drop_tint = theme.drop_target;
+    let a11y = shell.a11y;
+    // A tree for assistive technology: each group an item of the first
+    // level, its places under it, the keys' cursor the active descendant.
     let mut column = div()
         .id("sidebar")
+        .role(gpui::Role::Tree)
+        .when(a11y, |d| d.aria_label("Sidebar"))
         .size_full()
         .flex()
         .flex_col()
@@ -697,6 +702,16 @@ pub fn render(
             let menu_here = marked.as_ref() == Some(&item);
             column = column.child(
                 group_header(&place.group, folded, &groups, at_cursor, cx)
+                    .role(gpui::Role::TreeItem)
+                    .when(a11y, |d| {
+                        d.aria_label(group_title(&place.group))
+                            .aria_level(1)
+                            .aria_expanded(!folded)
+                    })
+                    .when(
+                        at_cursor,
+                        StatefulInteractiveElement::aria_active_descendant,
+                    )
                     .children(shell.host_marker(MenuHost::Sidebar, menu_here)),
             );
             drawn.push((item, children));
@@ -739,6 +754,16 @@ pub fn render(
             .unwrap_or(&no_order);
         if let Some(color) = color {
             let mut pill = pill(i, place, color, is_current, at_cursor, &font, cx)
+                .role(gpui::Role::TreeItem)
+                .when(a11y, |d| {
+                    d.aria_label(place.title.clone())
+                        .aria_level(2)
+                        .aria_selected(is_current)
+                })
+                .when(
+                    at_cursor,
+                    StatefulInteractiveElement::aria_active_descendant,
+                )
                 .children(shell.host_marker(MenuHost::Sidebar, menu_here));
             pill = takes_drops(pill, &place.location, gives.is_some(), cx);
             if drag.reorder.is_some() || drag.gives.is_some() {
@@ -906,12 +931,28 @@ pub fn render(
         if let Some(busy) = &busy {
             tip = Some(busy.clone().into());
         }
+        // What the tooltip says of it (its space, why it waits, what its
+        // owner does) is what a screen reader says after its name.
+        row = row
+            .role(gpui::Role::TreeItem)
+            .when(a11y, |d| {
+                d.aria_label(place.title.clone())
+                    .aria_level(2)
+                    .aria_selected(is_current)
+                    .when_some(tip.clone(), StatefulInteractiveElement::aria_description)
+            })
+            .when(
+                at_cursor,
+                StatefulInteractiveElement::aria_active_descendant,
+            );
         row = row.optional_tooltip(clip.tooltip(tip, font.clone()));
         if let Some(eject) = place.eject.clone().filter(|_| busy.is_none()) {
             let hover = theme.selection_bg;
             row = row.child(
                 div()
                     .id(("eject", i))
+                    .role(gpui::Role::Button)
+                    .when(a11y, |d| d.aria_label(format!("Eject {}", place.title)))
                     .flex_none()
                     .size(px(20.))
                     .flex()

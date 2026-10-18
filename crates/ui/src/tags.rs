@@ -771,12 +771,36 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     let colors = shell.tag_colors.clone();
     let apply_keys = shell.keys_for("ui.tag_editor_apply", &serde_json::json!({}));
     let e = shell.tag_editor.as_ref()?;
-    let mut list = div().flex().flex_col().py_1().overflow_hidden();
+    let a11y = shell.a11y;
+    let typing = gpui::Focusable::focus_handle(e.input.read(cx), cx);
+    let mut list = modal::options("tag-rows", "Tags", e.shown.len(), a11y)
+        .flex()
+        .flex_col()
+        .py_1()
+        .overflow_hidden();
     for row in e.picker.shown(e.shown.len()) {
         let hl = row == e.picker.highlighted;
         let shown = e.shown[row].clone();
-        let line = div()
-            .id(("tag-row", row))
+        // A tag says whether the files have it: all, some, none.
+        let (named, marked) = match &shown {
+            Shown::New(tags) => (
+                a11y.then(|| format!("Add {}", tags.join(", ")).into()),
+                None,
+            ),
+            Shown::Row(i) => (
+                a11y.then(|| e.rows[*i].name.clone().into()),
+                Some(match e.rows[*i].mark {
+                    Mark::All => gpui::Toggled::True,
+                    Mark::Some => gpui::Toggled::Mixed,
+                    Mark::None => gpui::Toggled::False,
+                }),
+            ),
+        };
+        let line = modal::option(div().id(("tag-row", row)), named, row, hl, &typing)
+            .when_some(
+                marked.filter(|_| a11y),
+                StatefulInteractiveElement::aria_toggled,
+            )
             .h(px(28.))
             .px_3()
             .flex()
@@ -924,7 +948,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     .py_2()
     .border_t_1()
     .border_color(theme.border);
-    let panel = modal::panel(440., &theme)
+    let panel = modal::panel("tag-editor", 440., &theme)
+        .aria_label("Tag editor")
         .key_context(keymap::TAG_EDITOR)
         .child(
             div()

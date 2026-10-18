@@ -1264,6 +1264,9 @@ fn breadcrumbs(
         let hidden_at_click = hidden.clone();
         div()
             .id(("crumb-folders", index))
+            // What it lists, as its tooltip says.
+            .role(gpui::Role::Button)
+            .when(shell.a11y, |d| d.aria_label(tip.clone()))
             .relative()
             .flex_none()
             .h(px(24.))
@@ -1354,8 +1357,14 @@ fn breadcrumbs(
             theme.text_muted
         };
         let icon = glyph.filter(|(at, _)| *at == index).map(|(_, icon)| icon);
+        // A link to the place it names; the last is where the pane is.
         let segment = div()
             .id(("crumb", index))
+            .role(gpui::Role::Link)
+            .when(shell.a11y, |d| {
+                d.aria_label(crumb.label.clone())
+                    .when(index == last, |d| d.aria_selected(true))
+            })
             .optional_tooltip(clip.tooltip(None, shell.font.clone()))
             .max_w(px(260.))
             .px(px(6.))

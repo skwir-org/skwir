@@ -1024,7 +1024,13 @@ impl Shell {
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let menu = shell.menu.as_ref()?;
     let theme = cx.global::<Theme>().clone();
+    let a11y = shell.a11y;
+    // A menu to assistive technology, its highlighted row said as focused
+    // while the menu keeps the keyboard.
     let mut panel = div()
+        .id("context-menu")
+        .role(gpui::Role::Menu)
+        .aria_label("Context menu")
         .min_w(px(220.))
         .py_1()
         .rounded_lg()
@@ -1081,6 +1087,16 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         panel = panel.child(
             div()
                 .id(("menu", i))
+                .role(gpui::Role::MenuItem)
+                .when(a11y, |d| {
+                    d.aria_label(title.clone())
+                        .when_some(keys.clone(), StatefulInteractiveElement::aria_keyshortcuts)
+                        .when(is_parent, |d| d.aria_expanded(expanded))
+                })
+                .when(
+                    highlighted,
+                    StatefulInteractiveElement::aria_active_descendant,
+                )
                 .mx_1()
                 .px_2()
                 .py_1()

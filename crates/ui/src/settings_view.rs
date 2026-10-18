@@ -126,8 +126,12 @@ impl SettingsView {
     ) -> AnyElement {
         let search_focused = self.search.read(cx).is_focused(window);
         let searching = !self.query(cx).is_empty();
+        // Its pages, tabs of the dialog: the page shown is the one the
+        // keys move, said as focused while the list has the keyboard.
         let mut list = div()
             .id("settings-nav")
+            .role(gpui::Role::TabList)
+            .aria_label("Pages")
             .track_focus(&self.nav)
             .key_context("SettingsNav")
             .flex_1()
@@ -165,6 +169,11 @@ impl SettingsView {
             list = list.child(
                 div()
                     .id(SharedString::from(format!("settings-page-{title}")))
+                    .role(gpui::Role::Tab)
+                    .when(self.a11y, |d| {
+                        d.aria_label(title.clone()).aria_selected(selected)
+                    })
+                    .when(selected, StatefulInteractiveElement::aria_active_descendant)
                     .h(px(30.))
                     .px_2()
                     .flex()
@@ -294,6 +303,21 @@ impl SettingsView {
             })
     }
 
+    /// A setting's control as assistive technology hears it: named by the
+    /// setting's title, described by its description, as the texts beside
+    /// it say them.
+    fn named<E: StatefulInteractiveElement>(&self, el: E, row: &Snapshot) -> E {
+        if !self.a11y {
+            return el;
+        }
+        let el = el.aria_label(row.spec.title.clone());
+        if row.spec.description.is_empty() {
+            el
+        } else {
+            el.aria_description(row.spec.description.clone())
+        }
+    }
+
     #[allow(clippy::too_many_lines)] // one arm per control kind
     fn control(
         &mut self,
@@ -310,12 +334,15 @@ impl SettingsView {
                 let on = row.value == "true";
                 let focus = self.handle(&format!("control:{key}"), cx);
                 self.stop(&focus, Some(item), Some(&key));
-                controls::switch(format!("switch-{key}"), on, &focus, theme)
-                    .key_context("SettingControl")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.change(&key, (!on).to_string(), cx);
-                    }))
-                    .into_any_element()
+                self.named(
+                    controls::switch(format!("switch-{key}"), on, &focus, theme),
+                    row,
+                )
+                .key_context("SettingControl")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.change(&key, (!on).to_string(), cx);
+                }))
+                .into_any_element()
             }
             SettingKind::Choice => {
                 let focus = self.handle(&format!("control:{key}"), cx);
@@ -387,6 +414,7 @@ impl SettingsView {
                             controls::icon_button(
                                 format!("less-{key}"),
                                 "minus",
+                                "Less",
                                 &less_focus,
                                 theme,
                             )
@@ -408,6 +436,7 @@ impl SettingsView {
                             controls::icon_button(
                                 format!("more-{key}"),
                                 "plus",
+                                "More",
                                 &more_focus,
                                 theme,
                             )
@@ -444,6 +473,8 @@ impl SettingsView {
                             &browse,
                             theme,
                         )
+                        // Which setting it browses for, as the row says.
+                        .when(self.a11y, |d| d.aria_description(row.spec.title.clone()))
                         .on_click(cx.listener(move |this, _, _, cx| this.browse(&key, cx))),
                     );
                 }
@@ -465,7 +496,11 @@ impl SettingsView {
         let current = choices.iter().position(|choice| *choice == row.value);
         let cycle_key = key.clone();
         let cycle = choices.clone();
-        let mut frame = controls::segmented(format!("choice-{key}"), focus, theme)
+        let mut frame = self
+            .named(
+                controls::segmented(format!("choice-{key}"), focus, theme),
+                row,
+            )
             .key_context("SettingControl")
             // Space and Enter reach the focused frame as a keyboard
             // click; mouse clicks belong to the segments.
@@ -507,12 +542,16 @@ impl SettingsView {
         let open = self.dropdown.as_deref() == Some(key.as_str());
         let toggle = key.clone();
         let mut element = div().child(
-            controls::dropdown(
-                format!("choice-{key}"),
-                row.spec.choice_label(&row.value).to_owned(),
-                focus,
-                theme,
+            self.named(
+                controls::dropdown(
+                    format!("choice-{key}"),
+                    row.spec.choice_label(&row.value).to_owned(),
+                    focus,
+                    theme,
+                ),
+                row,
             )
+            .aria_expanded(open)
             .key_context("SettingControl")
             .child(row.anchor.marker())
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -624,7 +663,7 @@ impl SettingsView {
                 .into()
             };
             let key = key.clone();
-            controls::icon_button(format!("revert-{key}"), "revert", &focus, theme)
+            controls::icon_button(format!("revert-{key}"), "revert", "Revert", &focus, theme)
                 .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
                 .on_click(cx.listener(move |this, _, _, cx| this.reset(&key, cx)))
                 .into_any_element()
@@ -793,6 +832,7 @@ impl SettingsView {
         self.stop(&focus, Some(item), None);
         row = row.child(
             controls::switch(format!("plugin-{id}"), shown, &focus, theme)
+                .when(self.a11y, |d| d.aria_label(plugin.title.clone()))
                 .when(pending, |d| d.opacity(0.5))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if !this.toggling.contains_key(id) {
@@ -848,6 +888,7 @@ impl SettingsView {
                     &open,
                     theme,
                 )
+                .aria_description("Edit as text")
                 .on_click(cx.listener(|this, _, _, _| this.open_file())),
             )
             .into_any_element(),
@@ -987,6 +1028,7 @@ impl SettingsView {
 
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.a11y = window.is_a11y_active();
         let theme = cx.global::<Theme>().clone();
         self.stops.clear();
         self.row_items.clear();
@@ -1133,7 +1175,7 @@ impl Render for SettingsView {
                     .child(text)
             }))
             .child(
-                controls::icon_button("settings-close", "close", &close, &theme)
+                controls::icon_button("settings-close", "close", "Close", &close, &theme)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Close))),
             );
         // The read-only warning stays above a page that is not its items.
@@ -1173,6 +1215,10 @@ impl Render for SettingsView {
                 .into_any_element()
         });
         let panel = div()
+            .id("settings")
+            .role(gpui::Role::Dialog)
+            .aria_modal()
+            .aria_label("Settings")
             .w(relative(0.94))
             .max_w(px(920.))
             .h(relative(0.9))

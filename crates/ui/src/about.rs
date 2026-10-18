@@ -277,7 +277,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .on_click(cx.listener(|this, _, window, cx| this.show_licences(window, cx))),
         );
     }
-    let panel = modal::panel(520., &theme)
+    let panel = modal::panel("about", 520., &theme)
+        .aria_label("About skwir")
         .p_5()
         .gap_4()
         .line_height(px(20.))
@@ -316,7 +317,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                         ),
                 )
                 .child(
-                    controls::icon_button("about-close", "close", &about.close, &theme)
+                    controls::icon_button("about-close", "close", "Close", &about.close, &theme)
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_about(window, cx))),
                 ),
         )
