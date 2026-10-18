@@ -951,12 +951,7 @@ pub fn continuous_element(
             });
         }),
     };
-    div()
-        .id("reader-pages")
-        .role(gpui::Role::Document)
-        .when_some(crate::reader::said(shell), |d, (name, page)| {
-            d.aria_label(name).aria_description(page)
-        })
+    crate::reader::expose(div().id("reader-pages"), shell)
         .flex_1()
         .min_h_0()
         .w_full()

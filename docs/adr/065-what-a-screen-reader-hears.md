@@ -123,3 +123,12 @@ window and its file views are exposed; the other places follow
 - F6 goes round the sidebar, the files and the preview, forward only
   (Shift+F6 is the split's), so every part takes the keyboard without
   the pointer; the terminal, whose programs have F6, is F4's.
+
+### 2026-10-18: what was missing
+
+- A document in the reader carries the text of the page shown, a run a
+  line, read out as the pages turn (a scan has none).
+- A map is a figure saying what it holds (lines, places, areas) and its
+  keys; the Map view's figure says what is placed.
+- The hex view's rows are lines: offset, bytes, characters.
+- Still: a map's places one by one.

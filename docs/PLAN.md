@@ -1230,6 +1230,13 @@ applications): the sidebar, the files, the preview, a part not shown
 passed; until now F6 went to the sidebar and back, and the preview's
 content was reached with the pointer alone. The terminal keeps F6 for
 its programs; F4 goes in and out of it.
+
+**What was missing:** a document in the reader carries the text of the
+page shown, a line a run; a map is a figure saying what it holds and its
+keys, the Map view's what is placed; the hex view's rows are lines.
+Checked by hand on a synthetic PDF, GPX and binary file (a PDF needs a
+reader engine `a11y-check` cannot count on). Still: a map's places one by
+one.
 - Not yet: the previews, the terminal, search pills and the footer.
 
 ---

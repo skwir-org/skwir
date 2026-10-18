@@ -414,11 +414,17 @@ impl PaneView for MapView {
             return crate::placeholder::render(placeholder, &focus, cx);
         }
 
+        // What the map holds, as its header says it: the figure's
+        // description and a line of its own, for assistive technology.
+        let said = shell.a11y.then(|| self.status());
         let mut header = toolbar::row(&theme)
             .id(("map-view-tools", pane.0 as usize))
+            .role(gpui::Role::Toolbar)
             .child(crate::elements::clip::clipped(
                 div()
                     .id("map-status")
+                    .role(gpui::Role::Label)
+                    .when_some(said.clone(), StatefulInteractiveElement::aria_value)
                     .flex_1()
                     .min_w_0()
                     .text_xs()
@@ -593,7 +599,16 @@ impl PaneView for MapView {
             .flex()
             .flex_col()
             .child(header)
-            .child(div().flex_1().min_h_0().child(element))
+            .child(
+                div()
+                    .id(("map-view-figure", pane.0 as usize))
+                    .role(gpui::Role::Figure)
+                    .aria_label("Map")
+                    .when_some(said, StatefulInteractiveElement::aria_description)
+                    .flex_1()
+                    .min_h_0()
+                    .child(element),
+            )
             .children(popup)
             .into_any_element()
     }

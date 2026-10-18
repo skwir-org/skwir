@@ -2621,6 +2621,7 @@ pub fn content(
             selected,
             pane,
             entity.clone(),
+            shell.a11y,
         )
     });
     let wrap = shell.prefs.wrap_lines;
@@ -2712,14 +2713,20 @@ pub fn content(
         if data.kind == InspectionKind::Hex {
             let ri = visible[i - data.blocks.len()];
             let index = data.blocks.len() + ri;
-            return hex_row(
+            let chosen = selected == Some(index);
+            return said_hex(
+                hex_row(
+                    &data.rows[ri],
+                    index,
+                    chosen,
+                    &hex_font,
+                    theme,
+                    pane,
+                    entity.clone(),
+                ),
                 &data.rows[ri],
-                index,
-                selected == Some(index),
-                &hex_font,
-                theme,
-                pane,
-                entity.clone(),
+                chosen,
+                a11y,
             );
         }
         {
@@ -3161,7 +3168,7 @@ pub(crate) fn hex_row(
     theme: &Theme,
     pane: skwir_core::workspace::PaneId,
     entity: gpui::WeakEntity<Shell>,
-) -> AnyElement {
+) -> gpui::Stateful<gpui::Div> {
     let mut line = div()
         .id(("inspect-row", index))
         .p_2()
@@ -3187,18 +3194,38 @@ pub(crate) fn hex_row(
                 .child(hex_cell(cell, column, theme)),
         );
     }
-    line.cursor_pointer()
-        .on_click(move |_, window, cx| {
-            let _ = entity.update(cx, |s, cx| {
-                s.with_pane(pane, |s| {
-                    s.run(
-                        "ui.inspect",
-                        serde_json::json!({"action":"select","index":index}),
-                        window,
-                        cx,
-                    );
-                });
+    line.cursor_pointer().on_click(move |_, window, cx| {
+        let _ = entity.update(cx, |s, cx| {
+            s.with_pane(pane, |s| {
+                s.run(
+                    "ui.inspect",
+                    serde_json::json!({"action":"select","index":index}),
+                    window,
+                    cx,
+                );
             });
+        });
+    })
+}
+
+/// A row of bytes as assistive technology reads it: a line of its offset,
+/// its bytes and what they read as (`a11y`: while a screen reader listens).
+pub(crate) fn said_hex(
+    line: gpui::Stateful<gpui::Div>,
+    row: &skwir_core::inspection::Row,
+    selected: bool,
+    a11y: bool,
+) -> AnyElement {
+    line.role(gpui::Role::Label)
+        .when(a11y, |d| {
+            let cells: Vec<&str> = row
+                .cells
+                .iter()
+                .map(String::as_str)
+                .filter(|cell| !cell.is_empty())
+                .collect();
+            // A label's words are its value, as gpui's text gives them.
+            d.aria_value(cells.join(", ")).aria_selected(selected)
         })
         .into_any_element()
 }

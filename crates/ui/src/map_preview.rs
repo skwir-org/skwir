@@ -81,10 +81,45 @@ pub fn element(
     map::map(id, shapes, handles, colors(theme), Some(tiles))
 }
 
+/// What a map holds, in words: its lines, places and areas.
+fn holds(shapes: &Shapes) -> String {
+    let counted = [
+        (shapes.lines.len(), "line"),
+        (shapes.markers.len(), "place"),
+        (shapes.areas.len(), "area"),
+    ];
+    let words: Vec<String> = counted
+        .into_iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, what)| crate::format::count(count, what))
+        .collect();
+    if words.is_empty() {
+        "Nothing with a position".to_owned()
+    } else {
+        words.join(", ")
+    }
+}
+
 pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
     let shapes = display.map.clone().unwrap_or_default();
     let focus = shell.preview.inspection.focus.clone();
+    // A figure to assistive technology, named by the file, saying what it
+    // holds and what its keys do.
+    let said = crate::preview::said(shell).map(|(name, _)| {
+        (
+            format!("Map: {name}"),
+            format!(
+                "{}. Arrows move it, the zoom keys zoom it, Ctrl+0 fits it again",
+                holds(&shapes)
+            ),
+        )
+    });
     div()
+        .id("preview-map-frame")
+        .role(gpui::Role::Figure)
+        .when_some(said, |d, (name, holds)| {
+            d.aria_label(name).aria_description(holds)
+        })
         .flex_1()
         .min_h_0()
         .flex()

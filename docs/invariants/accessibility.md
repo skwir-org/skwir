@@ -81,8 +81,12 @@ like `AGENTS.md`.
   the whole screen's, the picture, the player, a document and the
   inspector take it from there. Peek is named by the file it shows, so a
   reader says the next one as the arrows move to it.
-- A document in the reader says its page (`reader::said`); the reader's
-  view is the document, the picture place around it says nothing more.
+- A document in the reader says its page (`reader::said`) and carries
+  the page's text, a run a line as its engine broke them
+  (`reader::expose`); the reader's view is the document, the picture
+  place around it says nothing more.
+- A label's words are its value (`aria_value`), as gpui's text gives
+  them; a name set on a label is not said.
 - **A terminal is read as text**: each row of the screen a text run, the
   blank cells between its runs as spaces, the cursor as the caret, built
   in the panel's `a11y_synthetic_children` from the screen it draws
@@ -128,7 +132,10 @@ like `AGENTS.md`.
 | preview panel | landmark (complementary) | "Preview", described by the file and its facts |
 | Peek, the whole screen | modal dialog | the file; its facts and keys |
 | a picture, a film | image (its size), video | the file |
-| a document in the reader | document | the file; the page shown |
+| a document in the reader | document of the page's text, a run a line | the file; the page shown |
+| a map (a track, places) | figure | "Map: ‹file›"; what it holds and its keys |
+| the Map view | figure; its status a line | "Map"; what is placed |
+| the hex view | document of lines | the file; each line its offset, bytes and characters |
 | text, Markdown, structured previews | document of its lines | the file |
 | an archive's members, a message's parts, a table's rows | tree, list box; the row the arrows reach said as focused | the file; each row its first cell, the others after their columns' names ("Size: 6 B") |
 | the media player | group; its seek bar a slider of seconds | "Player: ‹file›"; "Position", "0:02 of 0:03" |
@@ -136,8 +143,8 @@ like `AGENTS.md`.
 | footer | status line, never announced | what it shows: the count, the selection |
 | search chips | buttons; a tag's category a link | their titles |
 
-Not yet: a document's text in the reader (its pages are pictures), the
-map, the hex view's rows.
+Not yet: a map's places one by one (a picture placed, a track's
+points); a scanned page's text (no engine reads it).
 
 ## Checking
 

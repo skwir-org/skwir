@@ -562,12 +562,7 @@ pub fn page_element(
         .flex()
         .flex_col()
         .child(
-            div()
-                .id("reader-canvas")
-                .role(gpui::Role::Document)
-                .when_some(said(shell), |d, (name, page)| {
-                    d.aria_label(name).aria_description(page)
-                })
+            expose(div().id("reader-canvas"), shell)
                 .flex_1()
                 .min_h_0()
                 .w_full()
@@ -776,6 +771,46 @@ pub(crate) fn said(shell: &Shell) -> Option<(gpui::SharedString, String)> {
         let page = format!("Page {} of {}", shell.preview.page, document_pages(shell));
         (name, page)
     })
+}
+
+/// The reader as assistive technology reads it: named and placed
+/// (`said`), and the text of the page shown, a run a line, read out as the
+/// pages turn. A page that is a picture alone (a scan) has none.
+pub(crate) fn expose(el: gpui::Stateful<gpui::Div>, shell: &Shell) -> gpui::Stateful<gpui::Div> {
+    let el = el.role(gpui::Role::Document);
+    let Some((name, place)) = said(shell) else {
+        return el;
+    };
+    let text = page(shell).filter(|page| !page.chars.is_empty()).cloned();
+    el.aria_label(name)
+        .aria_description(place)
+        .when_some(text, |d, page| {
+            d.a11y_synthetic_children(move |builder| read_page(&page, builder))
+        })
+}
+
+/// A page's text in lines, as its engine broke them: each ending with its
+/// line break but the last.
+fn page_lines(page: &PageContent) -> Vec<String> {
+    let text: String = page.chars.iter().map(|ch| ch.text.as_str()).collect();
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    text.trim_end_matches('\n')
+        .split_inclusive('\n')
+        .map(str::to_owned)
+        .collect()
+}
+
+fn read_page(page: &PageContent, builder: &mut gpui::A11ySubtreeBuilder) {
+    for (index, line) in page_lines(page).into_iter().enumerate() {
+        let lengths: Vec<u8> = line
+            .chars()
+            .map(|c| u8::try_from(c.len_utf8()).unwrap_or(4))
+            .collect();
+        let mut run = gpui::accesskit::Node::new(gpui::Role::TextRun);
+        run.set_value(line);
+        run.set_character_lengths(lengths);
+        builder.push_child(builder.synthetic_node_id(index), run);
+    }
 }
 
 fn document_pages(shell: &Shell) -> u32 {
@@ -990,6 +1025,30 @@ pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> 
 mod tests {
     use super::*;
     use skwir_core::document::TextChar;
+
+    /// A page read out: in lines as the engine broke them, whatever it
+    /// breaks them with, the last without its break.
+    #[test]
+    fn a_page_reads_in_its_lines() {
+        let page = |texts: &[&str]| PageContent {
+            page: 1,
+            width: 100.,
+            height: 100.,
+            links: vec![],
+            chars: texts
+                .iter()
+                .map(|s| TextChar {
+                    text: (*s).to_owned(),
+                    bounds: Rect::default(),
+                })
+                .collect(),
+        };
+        assert_eq!(
+            page_lines(&page(&["H", "i", "\n", "猫", "\r\n", "fin", "\n"])),
+            ["Hi\n", "猫\n", "fin"]
+        );
+        assert!(page_lines(&page(&[])).is_empty());
+    }
     #[test]
     fn reverse_selection_copies_unicode_in_document_order() {
         let page = PageContent {

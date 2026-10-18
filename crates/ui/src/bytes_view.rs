@@ -214,6 +214,7 @@ pub(crate) fn element(
     selected: Option<usize>,
     pane: skwir_core::workspace::PaneId,
     entity: gpui::WeakEntity<Shell>,
+    a11y: bool,
 ) -> gpui::AnyElement {
     use gpui::IntoElement;
     let (chunks, per) = (view.chunks.clone(), view.per);
@@ -238,14 +239,20 @@ pub(crate) fn element(
                 &waiting
             };
             let index = row as usize;
-            crate::inspector::hex_row(
+            let chosen = selected == Some(index);
+            crate::inspector::said_hex(
+                crate::inspector::hex_row(
+                    shown,
+                    index,
+                    chosen,
+                    &font,
+                    &theme,
+                    pane,
+                    entity.clone(),
+                ),
                 shown,
-                index,
-                selected == Some(index),
-                &font,
-                &theme,
-                pane,
-                entity.clone(),
+                chosen,
+                a11y,
             )
         },
     )
