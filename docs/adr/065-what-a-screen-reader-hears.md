@@ -119,5 +119,7 @@ window and its file views are exposed; the other places follow
   caret.
 - The footer is a status line, read when asked, never announced.
 - Still to come: a document's text in the reader, the map, the hex
-  view's rows; and the keys reaching the preview panel's content, which
-  Peek and the whole screen reach.
+  view's rows.
+- F6 goes round the sidebar, the files and the preview, forward only
+  (Shift+F6 is the split's), so every part takes the keyboard without
+  the pointer; the terminal, whose programs have F6, is F4's.

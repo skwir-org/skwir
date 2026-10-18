@@ -1202,6 +1202,38 @@ impl Shell {
         }
     }
 
+    /// `ui.focus_next_part` (F6): the keyboard goes round the parts of the
+    /// window shown, as F6 does in other applications: the sidebar, the
+    /// files, the preview (what it shows takes the keys, `shown_focus`). A
+    /// part not shown is passed; the files, the address field theirs, are
+    /// always there. The terminal is not one of them: its programs have F6
+    /// (Midnight Commander's Move), and F4 takes the keyboard in and out.
+    fn focus_next_part(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let sidebar = self
+            .sidebar_shown(window)
+            .then(|| self.sidebar_keys.focus.clone());
+        let preview = self.preview.open.then(|| self.shown_focus()).flatten();
+        let parts = [sidebar, Some(self.ui().focus.clone()), preview];
+        let here = parts
+            .iter()
+            .position(|part| {
+                part.as_ref()
+                    .is_some_and(|f| f.contains_focused(window, cx))
+            })
+            .unwrap_or(1);
+        let next = (1..=parts.len())
+            .map(|step| (here + step) % parts.len())
+            .find(|at| parts[*at].is_some())
+            .unwrap_or(1);
+        if next == 0 {
+            self.sidebar_keys.arrive();
+        }
+        if let Some(focus) = &parts[next] {
+            window.focus(focus, cx);
+        }
+        cx.notify();
+    }
+
     /// Directory shown by the other pane, for Shift+F5/F6 and the shelf buttons.
     /// Shift+F5 and Shift+F6: the selection given to the other pane, as a
     /// drag onto it would be (`give_to_pane`), copied or moved as the key
@@ -1979,6 +2011,7 @@ impl Shell {
             "sidebar_section" => self.sidebar_section(args, cx),
             "sidebar_place" => self.sidebar_place(args, cx),
             "focus_sidebar" => self.focus_sidebar(window, cx),
+            "focus_next_part" => self.focus_next_part(window, cx),
             "sidebar_key" => {
                 if let Some(key) = arg("key") {
                     self.sidebar_key(&key, window, cx);

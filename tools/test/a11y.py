@@ -491,7 +491,16 @@ def run(w):
                 and "Escape to close" in (w.focused().get_description() or "")))
     check("and the file's text, in a document named by it",
           until(lambda: "a report" in [n.get_name() for n in children_of(w, "document frame", fourth)]))
-    w.keys("Escape", "Home")
+    w.keys("Escape")
+    w.keys("F11")
+    w.keys("F6")
+    check("F6 with the preview open: the keyboard goes to what it shows, a document",
+          hears(w, f"document frame {fourth!r} focused"))
+    w.keys("F6")
+    check("F6 again: the sidebar", until(lambda: within(w.focused())[:1] == ["Sidebar"]))
+    w.keys("F6")
+    check("and again: back to the files", hears(w, f"list item {fourth!r} 4 of 4 selected focused"))
+    w.keys("F11", "Home")
     check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
 
     w.keys("ctrl+2")

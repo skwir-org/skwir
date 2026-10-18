@@ -12,8 +12,8 @@ that work where the keyboard is.
   sidebar's menu shows or hides each group. A place can be renamed
   (`F2`), moved or hidden; renaming a place never renames its folder.
   Drop a folder beside the rows to bookmark it.
-- **Sidebar keys.** `F6` gives the sidebar the keyboard: the arrows walk
-  it, `Enter` opens a place, `Ctrl+Enter` opens it in a tab,
+- **Sidebar keys.** `F6` goes round the sidebar, the files and the
+  preview. In the sidebar the arrows walk it, `Enter` opens a place, `Ctrl+Enter` opens it in a tab,
   `Alt+Up`/`Alt+Down` move it, `Delete` removes or hides it, `Escape`
   goes back to the files.
 - **Panes.** Each pane has its own row: Back, Forward, the address, and

@@ -145,7 +145,7 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("alt-.", "toggle_hidden", None),
     ("f9", "ui.toggle_sidebar", None),
     // The keyboard into the sidebar, and back to the files.
-    ("f6", "ui.focus_sidebar", None),
+    ("f6", "ui.focus_next_part", None),
     ("escape", "ui.focus_pane", Some("sidebar")),
     ("tab", "ui.toolbar_next", None),
     ("shift-tab", "ui.toolbar_prev", None),

@@ -480,6 +480,7 @@ const SHOWS: &[&str] = &[
     "ui.focus_pane",
     "ui.focus_other_pane",
     "ui.focus_sidebar",
+    "ui.focus_next_part",
     "ui.toggle_sidebar",
     "ui.toolbar_menu",
     "ui.toolbar_close",
@@ -1274,6 +1275,11 @@ pub fn declare_all(app: &App) {
         "ui.focus_sidebar",
         "Focus sidebar",
         "Give the keyboard to the sidebar",
+    );
+    none(
+        "ui.focus_next_part",
+        "Focus next part of the window",
+        "Give the keyboard to the next part of the window shown: the sidebar, the files, the preview",
     );
     none(
         "ui.toggle_sidebar",

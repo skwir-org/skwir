@@ -42,6 +42,9 @@ like `AGENTS.md`.
   and `modal::option`. A field typed in and a list beside it are the
   web's combobox: a reader hears the option the keys reach, and echoes
   what is typed.
+- **Every part takes the keyboard** without the pointer: F6 goes round
+  the sidebar, the files and the preview (`ui.focus_next_part`,
+  shell.md), F4 in and out of the terminal, Tab along the toolbars.
 - The window is named by the active pane's location ("‹location› —
   skwir", `Shell::sync_title`).
 
@@ -155,10 +158,3 @@ map, the hex view's rows.
 - libatspi refuses the signature of AccessKit's `RemoveAccessible`
   ("dbind-WARNING … Unknown signature so"): a client keeps a removed
   node until it reads its parent's children again.
-
-## Known gaps (Skwir)
-
-- The keys do not reach the preview panel's content: Tab walks the
-  toolbars, and Peek (Space) and the whole screen (F) take the keyboard
-  to what is shown, but a text or a document in the panel is reached with
-  the pointer alone.

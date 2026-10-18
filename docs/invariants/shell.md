@@ -319,10 +319,16 @@ of bars, split or not.
   them; places offered hidden (`Place::hidden`) appear there unchecked.
 - Rename… (`Place::rename`, F2) and Remove From Sidebar
   (`Place::forget`) are the sidebar's own items, never the owner's.
-- F6 (`ui.focus_sidebar`, `Sidebar` context, `ui.sidebar_key`) gives it
-  the keyboard: arrows walk, Enter opens and returns the keyboard, Menu,
-  Alt+arrows move, F2, Delete. A click never takes the keyboard
-  (`prevent_default`).
+- F6 (`ui.focus_next_part`) goes round the parts of the window shown,
+  as in other applications: the sidebar, the files, the preview (what it
+  shows takes the keys, `Shell::shown_focus`), a part not shown passed.
+  Forward only: Shift+F6 is the split's. The terminal is not one of them:
+  its programs have F6, and F4 takes the keyboard in and out of it.
+  `ui.focus_sidebar` (the palette's) brings a sidebar put away back.
+- In the sidebar (`Sidebar` context, `ui.sidebar_key`): arrows walk,
+  Enter opens and returns the keyboard, Menu, Alt+arrows move, F2,
+  Delete, Escape goes back to the files. A click never takes the
+  keyboard (`prevent_default`).
 - Volumes: [operations.md](operations.md).
 
 ## Asking the user

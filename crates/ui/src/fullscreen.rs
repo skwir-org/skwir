@@ -118,7 +118,7 @@ impl Shell {
 
     /// The keyboard of what is shown: the player's, the picture's, the
     /// reader's or the inspection's own.
-    fn shown_focus(&self) -> Option<FocusHandle> {
+    pub(crate) fn shown_focus(&self) -> Option<FocusHandle> {
         match self.fullscreen_shows()? {
             Shows::Film | Shows::Music => self.preview.media.focus.clone(),
             Shows::Picture => self.preview.image_focus.clone(),

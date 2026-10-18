@@ -62,6 +62,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.find_next", r#"{"delta":-1}"#, "Find the previous name"),
     ("ui.toggle_sidebar", "{}", "Toggle sidebar"),
     ("ui.focus_sidebar", "{}", "Focus sidebar"),
+    ("ui.focus_next_part", "{}", "Focus next part of the window"),
     (
         "ui.sidebar_section",
         r#"{"reset":true}"#,

@@ -1223,9 +1223,13 @@ size, a document with its page, text and Markdown as documents of their
 lines, an archive as a tree of its members, the player's seek bar a
 slider of seconds. The terminal reads as text, the cursor as the caret;
 the footer is a status line read when asked. `just a11y-check`: 39 steps.
-Not yet: a document's text in the reader, the map, the hex view's rows;
-the keys reach the panel's content only through Peek and the whole
-screen.
+Not yet: a document's text in the reader, the map, the hex view's rows.
+
+**F6 goes round the window** (the user's choice, as in other
+applications): the sidebar, the files, the preview, a part not shown
+passed; until now F6 went to the sidebar and back, and the preview's
+content was reached with the pointer alone. The terminal keeps F6 for
+its programs; F4 goes in and out of it.
 - Not yet: the previews, the terminal, search pills and the footer.
 
 ---

@@ -167,7 +167,7 @@ impl Item {
     }
 }
 
-/// The sidebar's keyboard (F6, `ui.focus_sidebar`): its focus, the
+/// The sidebar's keyboard (F6, `ui.focus_next_part`; `ui.focus_sidebar`): its focus, the
 /// cursor, and what the last frame drew, in order, which the keys move
 /// along.
 pub struct Keys {
@@ -188,6 +188,13 @@ impl Keys {
             drawn: Vec::new(),
             reveal: false,
         }
+    }
+
+    /// The keyboard comes here: the cursor goes where the pane is, as the
+    /// next frame finds it, in view.
+    pub fn arrive(&mut self) {
+        self.cursor = None;
+        self.reveal = true;
     }
 }
 
@@ -1658,9 +1665,10 @@ impl Shell {
         cx.notify();
     }
 
-    /// `ui.focus_sidebar` (F6): the keyboard goes to the sidebar, its
-    /// cursor on the place shown, or back to the files from there. A
-    /// sidebar put away comes back for it.
+    /// `ui.focus_sidebar`: the keyboard goes to the sidebar, its cursor on
+    /// the place shown, or back to the files from there. A sidebar put
+    /// away comes back for it. F6 goes round the parts of the window
+    /// instead (`Shell::focus_next_part`).
     pub fn focus_sidebar(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
         if self.sidebar_keys.focus.is_focused(window) {
             window.focus(&self.ui().focus, cx);
@@ -1675,9 +1683,7 @@ impl Shell {
             self.sidebar_hidden = false;
             self.remember_session();
         }
-        // The cursor goes where the pane is, as the frame finds it.
-        self.sidebar_keys.cursor = None;
-        self.sidebar_keys.reveal = true;
+        self.sidebar_keys.arrive();
         window.focus(&self.sidebar_keys.focus, cx);
         cx.notify();
     }
