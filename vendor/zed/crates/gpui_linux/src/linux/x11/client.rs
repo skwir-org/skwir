@@ -212,6 +212,9 @@ pub struct X11ClientState {
     pub(crate) keyboard_focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
     keyboard_layout: LinuxKeyboardLayout,
+    /// The key last pressed and not released since. The server repeats only
+    /// that one, so another press of it is a repeat (`KeyDownEvent::is_held`).
+    key_down: Option<xproto::Keycode>,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
     pub modifiers: Modifiers,
@@ -457,6 +460,21 @@ impl X11Connection {
                 &xkb::SelectEventsAux::new(),
             ),
         )?;
+        // A key held down repeats as presses alone, without the release the
+        // server otherwise sends before each, as GTK and Qt ask. A server that
+        // refuses is left to the pairing in `process_x11_events`.
+        get_reply(
+            || "Failed to ask for detectable auto-repeat",
+            xcb_connection.xkb_per_client_flags(
+                xkb::ID::USE_CORE_KBD.into(),
+                xkb::PerClientFlag::DETECTABLE_AUTO_REPEAT,
+                xkb::PerClientFlag::DETECTABLE_AUTO_REPEAT,
+                xkb::BoolCtrl::default(),
+                xkb::BoolCtrl::default(),
+                xkb::BoolCtrl::default(),
+            ),
+        )
+        .log_err();
 
         let xkb_context = new_xkb_context()?;
         let xkb_device_id = xkbc::x11::get_core_keyboard_device_id(&xcb_connection);
@@ -535,6 +553,7 @@ impl X11Connection {
                 keyboard_focused_window: None,
                 xkb: xkb_state,
                 keyboard_layout,
+                key_down: None,
                 ximc,
                 xim_handler,
 
@@ -1101,6 +1120,7 @@ impl X11Client {
                 // Set last scroll values to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
                 reset_all_pointer_device_scroll_positions(&mut state.pointer_device_states);
                 state.keyboard_focused_window = None;
+                state.key_down = None;
                 if let Some(compose_state) = state.compose_state.as_mut() {
                     compose_state.reset();
                 }
@@ -1225,16 +1245,20 @@ impl X11Client {
                     }
                     keystroke
                 };
+                let is_held = state.key_down.replace(event.detail) == Some(event.detail);
                 drop(state);
                 window.handle_input(PlatformInput::KeyDown(gpui::KeyDownEvent {
                     keystroke,
-                    is_held: false,
+                    is_held,
                     prefer_character_input: false,
                 }));
             }
             Event::KeyRelease(event) => {
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
+                if state.key_down == Some(event.detail) {
+                    state.key_down = None;
+                }
 
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;

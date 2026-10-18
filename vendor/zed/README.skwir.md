@@ -56,6 +56,7 @@ at the vendored commit.
 | `0029-gpu-context-on-a-thread` | Vulkan starts on a thread of its own while the platform sets up (0014, on wgpu) | — |
 | `0030-active-descendant-for` | An element is said as focused while a focus handle beside it holds the focus (the combobox pattern) | — |
 | `0031-aria-states` | Live regions, modal dialogs, lists of many selected, disabled and read-only elements | — |
+| `0032-held-keys` | An action sees the key event it came from, held or not; X11 tells a held key from a press | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -358,6 +359,19 @@ AccessKit nodes have states gpui's builder does not set:
 notification), `aria_modal`, `aria_multiselectable`, `aria_disabled` and
 `aria_read_only`. `Live` is re-exported beside `Role`. A test beside
 upstream's in `elements/div.rs`.
+
+### 0032: Held keys
+
+A key held down repeats as key-down events marked `is_held`, but an action
+never saw the event it came from, and the X11 client marked none.
+`Window::key_down_event` is the key-down event being dispatched, while the
+actions it resolves to and its listeners run (`None` for any other event),
+so an action tells a press from a repeat (ADR-066: a switch bound to a key
+is not flipped over and over). The X11 client reports a press of the key
+last pressed, not released since, as held, the one key the server repeats,
+and asks for XKB's detectable auto-repeat, as GTK and Qt do, so no release
+comes before each repeat. A test beside upstream's in `key_dispatch.rs`;
+X11 checked by hand on Xwayland.
 
 ## Adding or changing a patch
 

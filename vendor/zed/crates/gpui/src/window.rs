@@ -1270,6 +1270,7 @@ pub struct Window {
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
     capslock: Capslock,
+    key_down_event: Option<KeyDownEvent>,
     scale_factor: f32,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
@@ -2176,6 +2177,7 @@ impl Window {
             mouse_hit_test: HitTest::default(),
             modifiers,
             capslock,
+            key_down_event: None,
             scale_factor,
             bounds_observers: SubscriberSet::new(),
             appearance,
@@ -3445,6 +3447,15 @@ impl Window {
     /// The current state of the keyboard's capslock
     pub fn capslock(&self) -> Capslock {
         self.capslock
+    }
+
+    /// The key-down event being dispatched, while the actions its bindings
+    /// resolve to and its key listeners run; `None` during any other event,
+    /// and for keystrokes replayed after a pending sequence times out. An
+    /// action can tell a fresh press from the platform's repeats of a key
+    /// held down ([`KeyDownEvent::is_held`]), and which key it was.
+    pub fn key_down_event(&self) -> Option<&KeyDownEvent> {
+        self.key_down_event.as_ref()
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
@@ -5779,7 +5790,14 @@ impl Window {
         if let Some(any_mouse_event) = event.mouse_event() {
             self.dispatch_mouse_event(any_mouse_event, cx);
         } else if let Some(any_key_event) = event.keyboard_event() {
+            // Restored after, as `dispatch_keystroke` may dispatch from an action.
+            let key_down_event = match &event {
+                PlatformInput::KeyDown(key_down) => Some(key_down.clone()),
+                _ => None,
+            };
+            let outer = mem::replace(&mut self.key_down_event, key_down_event);
             self.dispatch_key_event(any_key_event, cx);
+            self.key_down_event = outer;
         } else if let Some(touch_event) = event.touch_event() {
             self.dispatch_touch_event(touch_event, cx);
         }

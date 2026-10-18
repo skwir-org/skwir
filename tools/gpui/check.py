@@ -32,6 +32,7 @@ RUNS = [
     ("gpui", ["--no-default-features", "--features", "wayland,x11"], [
         "elements::list", "elements::div::scroll_axis_tests",
         "text_system::line_wrapper", "text_system::line_layout", "style::tests",
+        # Upstream's, and what an action sees of a key held down (0032).
         "key_dispatch",
         # The accessibility tree (0030) and what an element writes into it
         # (0031).

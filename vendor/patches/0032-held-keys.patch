@@ -1,0 +1,198 @@
+0032 held-keys: an action sees the key event it came from, held or not; X11 tells a held key from a press
+
+diff --git a/crates/gpui/src/key_dispatch.rs b/crates/gpui/src/key_dispatch.rs
+index bc0cf6f..cfb4259 100644
+--- a/crates/gpui/src/key_dispatch.rs
++++ b/crates/gpui/src/key_dispatch.rs
+@@ -2213,4 +2213,66 @@ mod tests {
+         cx.simulate_keystrokes("ctrl-b [");
+         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
+     }
++
++    struct HeldKeyTestView {
++        focus_handle: FocusHandle,
++        seen: Rc<RefCell<Vec<Option<(String, bool)>>>>,
++    }
++
++    impl Render for HeldKeyTestView {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            use crate::{InteractiveElement as _, Styled as _};
++            let seen = self.seen.clone();
++            crate::div()
++                .key_context("Terminal")
++                .track_focus(&self.focus_handle)
++                .size_full()
++                .on_action(move |_: &TestAction, window, _| {
++                    seen.borrow_mut().push(
++                        window
++                            .key_down_event()
++                            .map(|event| (event.keystroke.key.clone(), event.is_held)),
++                    );
++                })
++        }
++    }
++
++    #[crate::test]
++    fn test_action_sees_whether_its_key_is_held(cx: &mut TestAppContext) {
++        cx.update(|cx| cx.bind_keys([KeyBinding::new("space", TestAction, Some("Terminal"))]));
++        let seen = Rc::new(RefCell::new(Vec::new()));
++        let (view, cx) = cx.add_window_view(|_, cx| HeldKeyTestView {
++            focus_handle: cx.focus_handle(),
++            seen: seen.clone(),
++        });
++        let focus_handle = cx.update(|_, cx| view.read(cx).focus_handle.clone());
++        cx.update(|window, cx| {
++            window.focus(&focus_handle, cx);
++            window.activate_window();
++        });
++        let space = |is_held| {
++            PlatformInput::KeyDown(KeyDownEvent {
++                keystroke: Keystroke::parse("space").expect("valid keystroke"),
++                is_held,
++                prefer_character_input: false,
++            })
++        };
++
++        // A press, then the platform's repeats of the key held down.
++        cx.update(|window, cx| window.dispatch_event(space(false), cx));
++        cx.update(|window, cx| window.dispatch_event(space(true), cx));
++        // Not a key: an action dispatched by name knows of none.
++        cx.update(|window, cx| window.dispatch_action(TestAction.boxed_clone(), cx));
++        cx.run_until_parked();
++        assert_eq!(
++            seen.borrow().as_slice(),
++            &[
++                Some(("space".into(), false)),
++                Some(("space".into(), true)),
++                None
++            ]
++        );
++        // Nor does anything after the key's dispatch.
++        cx.update(|window, _| assert!(window.key_down_event().is_none()));
++    }
+ }
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index e7777a6..63bc242 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -1270,6 +1270,7 @@ pub struct Window {
+     mouse_hit_test: HitTest,
+     modifiers: Modifiers,
+     capslock: Capslock,
++    key_down_event: Option<KeyDownEvent>,
+     scale_factor: f32,
+     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
+     appearance: WindowAppearance,
+@@ -2176,6 +2177,7 @@ impl Window {
+             mouse_hit_test: HitTest::default(),
+             modifiers,
+             capslock,
++            key_down_event: None,
+             scale_factor,
+             bounds_observers: SubscriberSet::new(),
+             appearance,
+@@ -3447,6 +3449,15 @@ impl Window {
+         self.capslock
+     }
+ 
++    /// The key-down event being dispatched, while the actions its bindings
++    /// resolve to and its key listeners run; `None` during any other event,
++    /// and for keystrokes replayed after a pending sequence times out. An
++    /// action can tell a fresh press from the platform's repeats of a key
++    /// held down ([`KeyDownEvent::is_held`]), and which key it was.
++    pub fn key_down_event(&self) -> Option<&KeyDownEvent> {
++        self.key_down_event.as_ref()
++    }
++
+     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
+     /// the contents of the new [`Scene`], use [`Self::present`].
+     #[profiling::function]
+@@ -5779,7 +5790,14 @@ impl Window {
+         if let Some(any_mouse_event) = event.mouse_event() {
+             self.dispatch_mouse_event(any_mouse_event, cx);
+         } else if let Some(any_key_event) = event.keyboard_event() {
++            // Restored after, as `dispatch_keystroke` may dispatch from an action.
++            let key_down_event = match &event {
++                PlatformInput::KeyDown(key_down) => Some(key_down.clone()),
++                _ => None,
++            };
++            let outer = mem::replace(&mut self.key_down_event, key_down_event);
+             self.dispatch_key_event(any_key_event, cx);
++            self.key_down_event = outer;
+         } else if let Some(touch_event) = event.touch_event() {
+             self.dispatch_touch_event(touch_event, cx);
+         }
+diff --git a/crates/gpui_linux/src/linux/x11/client.rs b/crates/gpui_linux/src/linux/x11/client.rs
+index 66bb8fe..5335c1f 100644
+--- a/crates/gpui_linux/src/linux/x11/client.rs
++++ b/crates/gpui_linux/src/linux/x11/client.rs
+@@ -212,6 +212,9 @@ pub struct X11ClientState {
+     pub(crate) keyboard_focused_window: Option<xproto::Window>,
+     pub(crate) xkb: xkbc::State,
+     keyboard_layout: LinuxKeyboardLayout,
++    /// The key last pressed and not released since. The server repeats only
++    /// that one, so another press of it is a repeat (`KeyDownEvent::is_held`).
++    key_down: Option<xproto::Keycode>,
+     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
+     pub(crate) xim_handler: Option<XimHandler>,
+     pub modifiers: Modifiers,
+@@ -457,6 +460,21 @@ impl X11Connection {
+                 &xkb::SelectEventsAux::new(),
+             ),
+         )?;
++        // A key held down repeats as presses alone, without the release the
++        // server otherwise sends before each, as GTK and Qt ask. A server that
++        // refuses is left to the pairing in `process_x11_events`.
++        get_reply(
++            || "Failed to ask for detectable auto-repeat",
++            xcb_connection.xkb_per_client_flags(
++                xkb::ID::USE_CORE_KBD.into(),
++                xkb::PerClientFlag::DETECTABLE_AUTO_REPEAT,
++                xkb::PerClientFlag::DETECTABLE_AUTO_REPEAT,
++                xkb::BoolCtrl::default(),
++                xkb::BoolCtrl::default(),
++                xkb::BoolCtrl::default(),
++            ),
++        )
++        .log_err();
+ 
+         let xkb_context = new_xkb_context()?;
+         let xkb_device_id = xkbc::x11::get_core_keyboard_device_id(&xcb_connection);
+@@ -535,6 +553,7 @@ impl X11Connection {
+                 keyboard_focused_window: None,
+                 xkb: xkb_state,
+                 keyboard_layout,
++                key_down: None,
+                 ximc,
+                 xim_handler,
+ 
+@@ -1101,6 +1120,7 @@ impl X11Client {
+                 // Set last scroll values to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
+                 reset_all_pointer_device_scroll_positions(&mut state.pointer_device_states);
+                 state.keyboard_focused_window = None;
++                state.key_down = None;
+                 if let Some(compose_state) = state.compose_state.as_mut() {
+                     compose_state.reset();
+                 }
+@@ -1225,16 +1245,20 @@ impl X11Client {
+                     }
+                     keystroke
+                 };
++                let is_held = state.key_down.replace(event.detail) == Some(event.detail);
+                 drop(state);
+                 window.handle_input(PlatformInput::KeyDown(gpui::KeyDownEvent {
+                     keystroke,
+-                    is_held: false,
++                    is_held,
+                     prefer_character_input: false,
+                 }));
+             }
+             Event::KeyRelease(event) => {
+                 let window = self.get_window(event.event)?;
+                 let mut state = self.0.borrow_mut();
++                if state.key_down == Some(event.detail) {
++                    state.key_down = None;
++                }
+ 
+                 let modifiers = modifiers_from_state(event.state);
+                 state.modifiers = modifiers;

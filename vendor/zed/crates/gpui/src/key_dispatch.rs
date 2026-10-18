@@ -2213,4 +2213,66 @@ mod tests {
         cx.simulate_keystrokes("ctrl-b [");
         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
     }
+
+    struct HeldKeyTestView {
+        focus_handle: FocusHandle,
+        seen: Rc<RefCell<Vec<Option<(String, bool)>>>>,
+    }
+
+    impl Render for HeldKeyTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            use crate::{InteractiveElement as _, Styled as _};
+            let seen = self.seen.clone();
+            crate::div()
+                .key_context("Terminal")
+                .track_focus(&self.focus_handle)
+                .size_full()
+                .on_action(move |_: &TestAction, window, _| {
+                    seen.borrow_mut().push(
+                        window
+                            .key_down_event()
+                            .map(|event| (event.keystroke.key.clone(), event.is_held)),
+                    );
+                })
+        }
+    }
+
+    #[crate::test]
+    fn test_action_sees_whether_its_key_is_held(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.bind_keys([KeyBinding::new("space", TestAction, Some("Terminal"))]));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view(|_, cx| HeldKeyTestView {
+            focus_handle: cx.focus_handle(),
+            seen: seen.clone(),
+        });
+        let focus_handle = cx.update(|_, cx| view.read(cx).focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+        let space = |is_held| {
+            PlatformInput::KeyDown(KeyDownEvent {
+                keystroke: Keystroke::parse("space").expect("valid keystroke"),
+                is_held,
+                prefer_character_input: false,
+            })
+        };
+
+        // A press, then the platform's repeats of the key held down.
+        cx.update(|window, cx| window.dispatch_event(space(false), cx));
+        cx.update(|window, cx| window.dispatch_event(space(true), cx));
+        // Not a key: an action dispatched by name knows of none.
+        cx.update(|window, cx| window.dispatch_action(TestAction.boxed_clone(), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            seen.borrow().as_slice(),
+            &[
+                Some(("space".into(), false)),
+                Some(("space".into(), true)),
+                None
+            ]
+        );
+        // Nor does anything after the key's dispatch.
+        cx.update(|window, _| assert!(window.key_down_event().is_none()));
+    }
 }
