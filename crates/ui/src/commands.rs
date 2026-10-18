@@ -546,6 +546,7 @@ const SHOWS: &[&str] = &[
     "ui.player",
     "ui.player_volume",
     "ui.map_pan",
+    "ui.map_point",
     "ui.map_view_fit",
     "ui.map_view_spread",
     "ui.map_view_search_area",
@@ -813,6 +814,8 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
     ("ui.map_pan", r#"{"dx":1,"dy":0}"#, "Map: move right"),
     ("ui.map_pan", r#"{"dx":0,"dy":-1}"#, "Map: move up"),
     ("ui.map_pan", r#"{"dx":0,"dy":1}"#, "Map: move down"),
+    ("ui.map_point", r#"{"delta":1}"#, "Map: next place"),
+    ("ui.map_point", r#"{"delta":-1}"#, "Map: previous place"),
     (
         "ui.terminal_paste",
         r#"{"from":"primary"}"#,
@@ -1715,6 +1718,12 @@ pub fn declare_all(app: &App) {
     );
     // The map.
     declare::<Pan>(app, "ui.map_pan", "Map: pan", "Move the map");
+    declare::<Delta>(
+        app,
+        "ui.map_point",
+        "Map: next place",
+        "Go to the next place on the map (or the previous one), the map centred on it",
+    );
     none(
         "ui.map_open",
         "Map: open in Maps",

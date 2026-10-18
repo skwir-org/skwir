@@ -881,9 +881,16 @@ is still to come are in `docs/preview-frame.md`.
   way out of a container are the frame's. Its places are projected once
   on the worker (`Display::map`), never while painting.
 - The pointer drags it; the wheel (no Ctrl: nothing scrolls) and a
-  double click zoom around the pointer. Once clicked, the arrows move it
-  and the zoom keys zoom it (`MapPreview`). Ctrl+0 and Fit fit it to its
-  places at whatever size it is drawn.
+  double click zoom around the pointer. Once clicked (or reached with
+  F6), the arrows move it and the zoom keys zoom it (`MapPreview`).
+  Ctrl+0 and Fit fit it to its places at whatever size it is drawn.
+- PageDown and PageUp go from place to place round the ends
+  (`ui.map_point`, `Handles::point`, `Shapes::step`), the map centred on
+  each at its zoom and the place ringed; a screen reader reads the
+  places as a list and hears each as it is reached
+  (`Shapes::read_points`). The Map view goes the same way through its
+  files' places (`PaneView::nav`), selecting the file as a click on it
+  does: Enter opens it, Space peeks at it.
 - The view belongs to the file: kept when it is read again, fitted for
   another. Colours are the `map_*` tokens, on paper. No Find.
 - Tiles from the registered tile source (`map_tiles.rs`) are asked for

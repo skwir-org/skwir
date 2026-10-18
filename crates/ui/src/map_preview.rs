@@ -25,6 +25,9 @@ use crate::toolbar::Button;
 
 /// A key moves the map by this many pixels.
 const PAN_STEP: f64 = 120.;
+/// A place gone to on a map not drawn yet is shown at this zoom: a few
+/// streets around it.
+const POINT_ZOOM: f64 = 15.;
 /// Zoomed in this far on a background without streets, the map says,
 /// once, where streets can be had.
 const DETAIL_ZOOM: f64 = 10.;
@@ -109,16 +112,23 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
         (
             format!("Map: {name}"),
             format!(
-                "{}. Arrows move it, the zoom keys zoom it, Ctrl+0 fits it again",
+                "{}. PageDown and PageUp go from place to place, arrows move the map, the zoom keys zoom it, Ctrl+0 fits it again",
                 holds(&shapes)
             ),
         )
     });
+    // Its places one by one, read as a list.
+    let points = shell
+        .a11y
+        .then(|| (Arc::clone(&shapes), shell.preview.map.point.get()));
     div()
         .id("preview-map-frame")
         .role(gpui::Role::Figure)
         .when_some(said, |d, (name, holds)| {
             d.aria_label(name).aria_description(holds)
+        })
+        .when_some(points, |d, (shapes, point)| {
+            d.a11y_synthetic_children(move |builder| shapes.read_points(point, builder))
         })
         .flex_1()
         .min_h_0()
@@ -414,6 +424,23 @@ impl Shell {
                 .set(Some(view.pan(-dx * PAN_STEP, -dy * PAN_STEP)));
             cx.notify();
         }
+    }
+
+    /// `ui.map_point` (Page Down, Page Up): the next place on the map, or the
+    /// previous one, round the ends, the map centred on it at the zoom it
+    /// has; a screen reader says it (`Shapes::read_points`).
+    pub(crate) fn map_point(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let Some(shapes) = self.map_shown().cloned() else {
+            return;
+        };
+        let zoom = self.map_view().map_or(POINT_ZOOM, |view| view.zoom);
+        let handles = &self.preview.map;
+        let Some(next) = shapes.step(handles.point.get(), delta) else {
+            return;
+        };
+        handles.point.set(Some(next));
+        handles.view.set(shapes.view_on(next, zoom));
+        cx.notify();
     }
 
     /// `ui.map_open`: the place the map shows, in the desktop's maps

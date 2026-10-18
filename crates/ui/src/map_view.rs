@@ -262,8 +262,35 @@ impl PaneView for MapView {
         None
     }
 
-    /// The arrows move the map; Home fits it to its files again.
-    fn nav(&mut self, nav: Nav, _: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> bool {
+    /// The arrows move the map; Home fits it to its files again; Page Down
+    /// and Page Up go from place to place, the map centred on each, its file
+    /// selected as a click on it selects it, so Enter opens it and Space
+    /// peeks at it.
+    fn nav(
+        &mut self,
+        nav: Nav,
+        shell: &mut Shell,
+        window: &mut Window,
+        cx: &mut Context<Shell>,
+    ) -> bool {
+        if let Nav::PageDown | Nav::PageUp = nav {
+            let delta = if nav == Nav::PageDown { 1 } else { -1 };
+            if let Some(next) = self.shapes.step(self.handles.point.get(), delta) {
+                let zoom = self
+                    .handles
+                    .view
+                    .get()
+                    .or_else(|| self.handles.shown.get())
+                    .map_or(FOCUS_ZOOM, |view| view.zoom);
+                self.handles.point.set(Some(next));
+                self.handles.view.set(self.shapes.view_on(next, zoom));
+                if let Some(entry) = self.shapes.markers[next].entry {
+                    shell.select_ids(vec![entry], "replace", window, cx);
+                }
+                cx.notify();
+            }
+            return true;
+        }
         let (dx, dy) = match nav {
             Nav::Left => (-1., 0.),
             Nav::Right => (1., 0.),
@@ -604,7 +631,18 @@ impl PaneView for MapView {
                     .id(("map-view-figure", pane.0 as usize))
                     .role(gpui::Role::Figure)
                     .aria_label("Map")
-                    .when_some(said, StatefulInteractiveElement::aria_description)
+                    .when_some(said, |d, said| {
+                        d.aria_description(format!(
+                            "{said}. PageDown and PageUp go from place to place"
+                        ))
+                    })
+                    // Its places one by one, read as a list.
+                    .when(shell.a11y, |d| {
+                        let (shapes, point) = (Arc::clone(&self.shapes), self.handles.point.get());
+                        d.a11y_synthetic_children(move |builder| {
+                            shapes.read_points(point, builder);
+                        })
+                    })
                     .flex_1()
                     .min_h_0()
                     .child(element),

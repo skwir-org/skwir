@@ -1235,8 +1235,10 @@ its programs; F4 goes in and out of it.
 page shown, a line a run; a map is a figure saying what it holds and its
 keys, the Map view's what is placed; the hex view's rows are lines.
 Checked by hand on a synthetic PDF, GPX and binary file (a PDF needs a
-reader engine `a11y-check` cannot count on). Still: a map's places one by
-one.
+reader engine `a11y-check` cannot count on). Then a map's places one by
+one: PageDown and PageUp go from place to place, the map centred on each
+and the place ringed, read as a list and said as each is reached; in the
+Map view the place's file is selected, so Enter opens it.
 - Not yet: the previews, the terminal, search pills and the footer.
 
 ---

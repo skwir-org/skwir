@@ -2152,6 +2152,10 @@ impl Shell {
                 };
                 self.map_pan(step("dx"), step("dy"), cx);
             }
+            "map_point" => {
+                let delta = args.get("delta").and_then(serde_json::Value::as_i64);
+                self.map_point(delta.map_or(1, |d| d.clamp(-1, 1) as isize), cx);
+            }
             "map_open" => self.map_open_external(cx),
             "map_view_fit" => self.map_view_fit(cx),
             "map_view_spread" => self.map_view_spread(cx),

@@ -477,6 +477,94 @@ fn beside(x: f64, near: f64) -> f64 {
     x + (near - x).round()
 }
 
+/// The points of a map, one by one (`Handles::point`): Page Down and
+/// Page Up go from one to the next round their ends, the map centred on
+/// it, and assistive technology reads them as a list, the one reached
+/// said as it is reached.
+impl Shapes {
+    /// The point `delta` along from `from`, round the ends; from none, the
+    /// first going forward and the last going back.
+    pub fn step(&self, from: Option<usize>, delta: isize) -> Option<usize> {
+        let count = self.markers.len().cast_signed();
+        if count == 0 {
+            return None;
+        }
+        let next = match from {
+            Some(at) => (at.cast_signed() + delta).rem_euclid(count),
+            None if delta >= 0 => 0,
+            None => count - 1,
+        };
+        Some(next.cast_unsigned())
+    }
+
+    /// Point `index` in words: its name, else what it is, then where it is.
+    pub fn point_words(&self, index: usize) -> Option<(String, String)> {
+        let marker = self.markers.get(index)?;
+        let name = if marker.label.is_empty() {
+            match marker.kind {
+                MarkerKind::Place => "Place",
+                MarkerKind::Stop => "Stop",
+                MarkerKind::Start => "Start",
+                MarkerKind::End => "End",
+                MarkerKind::Picture => "Picture",
+                MarkerKind::Track => "Track",
+            }
+            .to_owned()
+        } else {
+            marker.label.to_string()
+        };
+        let (lat, lon) = math::unproject(marker.at.0, marker.at.1);
+        let lon = math::wrap_lon(lon);
+        let at = format!(
+            "{:.4}° {}, {:.4}° {}",
+            lat.abs(),
+            if lat < 0. { "S" } else { "N" },
+            lon.abs(),
+            if lon < 0. { "W" } else { "E" }
+        );
+        Some((name, at))
+    }
+
+    /// The points as assistive technology reads them, under the map's own
+    /// node: each a list item named and placed, `point` the one reached,
+    /// selected and said by a line that announces itself as it changes.
+    pub fn read_points(&self, point: Option<usize>, builder: &mut gpui::A11ySubtreeBuilder) {
+        let count = self.markers.len();
+        // The count is the container's, as AccessKit reads it.
+        builder.parent_node().set_size_of_set(count);
+        for index in 0..count {
+            let Some((name, at)) = self.point_words(index) else {
+                continue;
+            };
+            let mut item = gpui::accesskit::Node::new(gpui::Role::ListItem);
+            item.set_label(name);
+            item.set_description(at);
+            item.set_position_in_set(index);
+            item.set_selected(point == Some(index));
+            builder.push_child(builder.synthetic_node_id(index), item);
+        }
+        if let Some((name, at)) = point.and_then(|index| {
+            let (name, at) = self.point_words(index)?;
+            Some((format!("{name}, {} of {count}", index + 1), at))
+        }) {
+            let mut said = gpui::accesskit::Node::new(gpui::Role::Status);
+            said.set_label(format!("{name}, {at}"));
+            said.set_live(gpui::Live::Polite);
+            builder.push_child(builder.synthetic_node_id("point"), said);
+        }
+    }
+
+    /// The view centred on point `index`, at `zoom`.
+    pub fn view_on(&self, index: usize, zoom: f64) -> Option<View> {
+        let marker = self.markers.get(index)?;
+        Some(View {
+            x: marker.at.0,
+            y: marker.at.1,
+            zoom,
+        })
+    }
+}
+
 impl Shapes {
     pub fn new(doc: &GeoDoc) -> Shapes {
         let Some(bounds) = doc.bounds else {
@@ -728,6 +816,12 @@ const THUMBS: usize = 60;
 const THUMB: f32 = 40.;
 /// A press that moved less than this is a click, not a drag.
 const CLICK_SLOP: f32 = 4.;
+/// The ring around the point the keys reached, wider than a picture.
+const RING: f32 = THUMB + 12.;
+
+fn point_offset() -> gpui::Point<Pixels> {
+    point(px(RING / 2.), px(RING / 2.))
+}
 
 /// The colours a map is drawn in, from the theme's tokens.
 #[derive(Clone, Copy)]
@@ -768,6 +862,9 @@ pub struct Handles {
     pub profile_hover: Rc<Cell<Option<usize>>>,
     /// The file markers grouped at the zoom drawn last (`Clustered`).
     clusters: Rc<RefCell<Option<Clustered>>>,
+    /// The point the keys reached, an index of `Shapes::markers`
+    /// (`Shapes::step`), ringed where it is.
+    pub point: Rc<Cell<Option<usize>>>,
 }
 
 /// File markers grouped as map libraries group them, each joining the
@@ -1134,6 +1231,8 @@ pub struct Prepaint {
     placed: Vec<Placed>,
     /// `Handles::mark`, on screen.
     mark: Option<gpui::Point<Pixels>>,
+    /// `Handles::point`, on screen.
+    point: Option<gpui::Point<Pixels>>,
     scale: (f64, Option<ShapedLine>),
 }
 
@@ -1735,6 +1834,12 @@ impl Element for Map {
             let (x, y) = math::project(place);
             at((beside(x, view.x), y))
         });
+        let point = self
+            .handles
+            .point
+            .get()
+            .and_then(|index| self.shapes.markers.get(index))
+            .map(|marker| at((beside(marker.at.0, view.x), marker.at.1)));
         let (lat, _) = math::unproject(view.x, view.y);
         let (length, words) = math::scale_bar(lat, view.zoom, 100.);
         let scale = (length, Some(shape(words.into(), self.colors.text, window)));
@@ -1767,6 +1872,7 @@ impl Element for Map {
             hits,
             placed,
             mark,
+            point,
             scale,
         }
     }
@@ -1954,6 +2060,17 @@ impl Element for Map {
                     fill,
                     px(2.),
                     ring,
+                    BorderStyle::Solid,
+                ));
+            }
+            // The point the keys reached, ringed over what is there.
+            if let Some(point) = prepaint.point {
+                window.paint_quad(quad(
+                    Bounds::new(point - point_offset(), size(px(RING), px(RING))),
+                    px(RING / 2.),
+                    gpui::transparent_black(),
+                    px(3.),
+                    colors.track,
                     BorderStyle::Solid,
                 ));
             }
@@ -2286,6 +2403,45 @@ fn stroke(
 mod tests {
     use super::math::*;
     use super::*;
+
+    /// The places one by one: round the ends either way, from none the
+    /// first or the last; each named, else said as what it is, with where
+    /// it is, south and west said so.
+    #[test]
+    fn a_map_goes_from_place_to_place_and_says_each() {
+        let marker = |lat: f64, lon: f64, label: &str, kind| Marker {
+            at: project(LatLon { lat, lon }),
+            label: label.to_owned().into(),
+            kind,
+            entry: None,
+            clock: None,
+        };
+        let shapes = Shapes {
+            markers: vec![
+                marker(45., 5., "Hut", MarkerKind::Place),
+                marker(-33.5, -70.25, "", MarkerKind::Start),
+            ],
+            ..Shapes::default()
+        };
+        assert_eq!(shapes.step(None, 1), Some(0));
+        assert_eq!(shapes.step(None, -1), Some(1));
+        assert_eq!(shapes.step(Some(1), 1), Some(0));
+        assert_eq!(shapes.step(Some(0), -1), Some(1));
+        assert_eq!(Shapes::default().step(None, 1), None);
+        assert_eq!(
+            shapes.point_words(0),
+            Some(("Hut".to_owned(), "45.0000° N, 5.0000° E".to_owned()))
+        );
+        assert_eq!(
+            shapes.point_words(1),
+            Some(("Start".to_owned(), "33.5000° S, 70.2500° W".to_owned()))
+        );
+        let view = shapes.view_on(0, 12.).unwrap();
+        assert_eq!(
+            (view.x, view.y, view.zoom),
+            (shapes.markers[0].at.0, shapes.markers[0].at.1, 12.)
+        );
+    }
     use skwir_core::geo::{BoundsBuilder, Line, Point as GeoPoint};
 
     fn place(n: u64, lat: f64, lon: f64) -> Place {

@@ -133,8 +133,8 @@ like `AGENTS.md`.
 | Peek, the whole screen | modal dialog | the file; its facts and keys |
 | a picture, a film | image (its size), video | the file |
 | a document in the reader | document of the page's text, a run a line | the file; the page shown |
-| a map (a track, places) | figure | "Map: ‹file›"; what it holds and its keys |
-| the Map view | figure; its status a line | "Map"; what is placed |
+| a map (a track, places) | figure; its places a list, the one PageDown reached said as it is reached | "Map: ‹file›"; what it holds and its keys; each place its name and where it is |
+| the Map view | figure; its status a line; its files' places as a map's | "Map"; what is placed |
 | the hex view | document of lines | the file; each line its offset, bytes and characters |
 | text, Markdown, structured previews | document of its lines | the file |
 | an archive's members, a message's parts, a table's rows | tree, list box; the row the arrows reach said as focused | the file; each row its first cell, the others after their columns' names ("Size: 6 B") |
@@ -143,8 +143,7 @@ like `AGENTS.md`.
 | footer | status line, never announced | what it shows: the count, the selection |
 | search chips | buttons; a tag's category a link | their titles |
 
-Not yet: a map's places one by one (a picture placed, a track's
-points); a scanned page's text (no engine reads it).
+Not yet: a scanned page's text (no engine reads it).
 
 ## Checking
 

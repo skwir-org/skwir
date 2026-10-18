@@ -704,6 +704,9 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     ("right", "ui.map_pan", r#"{"dx":1,"dy":0}"#, Some("map")),
     ("up", "ui.map_pan", r#"{"dx":0,"dy":-1}"#, Some("map")),
     ("down", "ui.map_pan", r#"{"dx":0,"dy":1}"#, Some("map")),
+    // Its places one by one, as the Map view's go (`PaneView::nav`).
+    ("pagedown", "ui.map_point", r#"{"delta":1}"#, Some("map")),
+    ("pageup", "ui.map_point", r#"{"delta":-1}"#, Some("map")),
     // A text read where it is shown goes row by row; Alt+Z wraps its lines
     // or not. Every structured preview goes a screen at a time, or to
     // either end.

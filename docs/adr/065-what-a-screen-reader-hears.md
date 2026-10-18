@@ -132,3 +132,12 @@ window and its file views are exposed; the other places follow
   keys; the Map view's figure says what is placed.
 - The hex view's rows are lines: offset, bytes, characters.
 - Still: a map's places one by one.
+
+### 2026-10-18: a map's places one by one
+
+PageDown and PageUp go from place to place on a map, round the ends, the
+map centred on each and the place ringed; a screen reader reads the
+places as a list (each its name and where it is) and hears each as it is
+reached. In the Map view the place reached is its file, selected as a
+click selects it. Tab was not taken: in a pane it walks the toolbars, or
+goes to the split's other pane.
