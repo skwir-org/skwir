@@ -419,20 +419,21 @@ impl App {
             .section(title),
         );
         self.notes.declared(owner, read);
-        // A name is written by a rename of its own, never by an edit.
-        if store.kept() == Kept::Name {
-            self.notes.register(owner, store);
-            self.apply_notes_settings();
-            return;
-        }
         let mut choices: Vec<(&str, &str)> = vec![
             ("off", Write::Off.title()),
             ("update", Write::Update.title()),
         ];
-        if store.kept() == Kept::Beside {
-            choices.push(("fallback", Write::Fallback.title()));
-        }
-        choices.push(("create", Write::Create.title()));
+        // A name is written by a rename of its own, where it holds tags
+        // already: never started.
+        let said = if store.kept() == Kept::Name {
+            "Never; or, where a file's name already holds tags, rename the file as an edit changes them."
+        } else {
+            if store.kept() == Kept::Beside {
+                choices.push(("fallback", Write::Fallback.title()));
+            }
+            choices.push(("create", Write::Create.title()));
+            "Never; only where a file already has notes here; also where a file's volume keeps no attributes; or for every file edited."
+        };
         let default = match store.default_write() {
             Write::Off => "off",
             Write::Update => "update",
@@ -441,14 +442,8 @@ impl App {
         };
         let write = crate::notes::write_key(id);
         self.settings.declare(
-            crate::settings::SettingSpec::choice(
-                &write,
-                "Write",
-                "Never; only where a file already has notes here; also where a file's volume keeps no attributes; or for every file edited.",
-                default,
-                &choices,
-            )
-            .section(title),
+            crate::settings::SettingSpec::choice(&write, "Write", said, default, &choices)
+                .section(title),
         );
         self.notes.declared(owner, write);
         self.notes.register(owner, store);

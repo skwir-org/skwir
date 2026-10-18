@@ -14,6 +14,14 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 - A step that changes metadata states its words (`op::Words`: what it
   will do, for the review; what it did, for the toast). What a plan left
   out goes in its note (`Plan::with_note`), never in its title.
+- **Unfolding.** A step whose steps depend on what it reads says them
+  (`Operation::unfolds`: a notes edit and the rename of a name holding
+  the file's tags). They replace it before anything is settled or
+  checked, on the plan's thread, and in the review's dry run
+  (`op::unfold`, `Plan::diff`, `Plan::review`): what is reviewed is what
+  is applied, each step with its own inverse. A step it returns never
+  unfolds again. The plan's items stay the steps it was asked as
+  (`Plan::items`), which the toast counts.
 - A step Undo cannot reverse (`Operation::undoable`: deleting for good)
   makes its plan ask before any gesture applies it
   (`Shell::apply_user_plan`).

@@ -547,6 +547,37 @@ pub trait Operation: Send + Sync + fmt::Debug {
         let _ = name;
         None
     }
+    /// The steps it is once what it reads is read ([`unfold`]): a notes
+    /// edit, and the rename of a name that holds the file's tags. `None`
+    /// for a step that stays itself, as every step it returns does. May
+    /// read: on the plan's thread, or the review's worker.
+    fn unfolds(&self, ctx: &StepContext) -> Option<Vec<Box<dyn Operation>>> {
+        let _ = ctx;
+        None
+    }
+}
+
+/// `steps` as each says it is once what it reads is read
+/// ([`Operation::unfolds`]), before anything checks them: what the dry run
+/// and the review show is what is applied, and Undo takes back each step
+/// with its own inverse. `None` when none unfolds. A step that panics
+/// stays itself, for its check to fail.
+pub(crate) fn unfold(
+    steps: &[Box<dyn Operation>],
+    ctx: &StepContext,
+) -> Option<Vec<Box<dyn Operation>>> {
+    let mut out: Option<Vec<Box<dyn Operation>>> = None;
+    for (i, step) in steps.iter().enumerate() {
+        match guarded(|| Ok(step.unfolds(ctx))).ok().flatten() {
+            Some(more) => out.get_or_insert_with(|| steps[..i].to_vec()).extend(more),
+            None => {
+                if let Some(out) = &mut out {
+                    out.push(step.clone());
+                }
+            }
+        }
+    }
+    out
 }
 
 /// What a step makes, new, under a name of its own in a folder
@@ -836,9 +867,10 @@ impl Plan {
     /// taken settled as it says (ADR-054); saying nothing, those are its
     /// conflicts.
     pub fn diff(&self, companions: &Arc<crate::companions::Companions>) -> PlanDiff {
+        let steps = self.unfolded(companions);
         let settled = self.on_conflict.map(|policy| {
             clash::settle(
-                &self.steps,
+                &steps,
                 &clash::Answer::all(policy),
                 &StepContext::detached().with_companions(Arc::clone(companions)),
             )
@@ -847,12 +879,39 @@ impl Plan {
             title: self.title.clone(),
             note: self.note.clone(),
             steps: dry_run(
-                settled
-                    .as_ref()
-                    .map_or(&self.steps, |settled| &settled.steps),
+                settled.as_ref().map_or(&steps, |settled| &settled.steps),
                 companions,
             )
             .collect(),
+        }
+    }
+
+    /// Its steps unfolded ([`unfold`]), as they will be applied.
+    fn unfolded(
+        &self,
+        companions: &Arc<crate::companions::Companions>,
+    ) -> std::borrow::Cow<'_, [Box<dyn Operation>]> {
+        let ctx = StepContext::detached().with_companions(Arc::clone(companions));
+        unfold(&self.steps, &ctx).map_or(std::borrow::Cow::Borrowed(&self.steps[..]), Into::into)
+    }
+
+    /// The same plan with its steps unfolded ([`unfold`]), when one is:
+    /// then its items are the steps it was asked as, which the toast
+    /// counts, unless settling names its own.
+    pub(crate) fn unfold(self, ctx: &StepContext) -> Plan {
+        let Some(steps) = unfold(&self.steps, ctx) else {
+            return self;
+        };
+        let items = self.items.or_else(|| {
+            Some(Box::new(Items {
+                first: self.steps.first()?.describe(),
+                count: self.steps.len(),
+            }))
+        });
+        Plan {
+            steps,
+            items,
+            ..self
         }
     }
 
@@ -862,7 +921,7 @@ impl Plan {
     /// many of those the user is asked about as it is applied.
     pub fn review(&self, companions: &Arc<crate::companions::Companions>) -> (PlanDiff, usize) {
         let settled = clash::settle(
-            &self.steps,
+            &self.unfolded(companions),
             &clash::Answer::all(self.on_conflict.unwrap_or_default()),
             &StepContext::detached().with_companions(Arc::clone(companions)),
         );
@@ -885,7 +944,7 @@ impl Plan {
 
     /// Whether every step is pending or already done (no conflicts).
     pub fn is_applicable(&self, companions: &Arc<crate::companions::Companions>) -> bool {
-        dry_run(&self.steps, companions)
+        dry_run(&self.unfolded(companions), companions)
             .all(|(_, status)| !matches!(status, StepStatus::Conflict { .. }))
     }
 

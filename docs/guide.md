@@ -236,6 +236,12 @@ and the comment.
   filetags' `name -- a b.ext` once turned on). Settings › Notes says
   which to read and which to write. When two disagree, the latest change
   wins and Properties says so.
+- **Tags in names.** Notes › Tags into Name and Tags out of Name, in the
+  menu of a selection, rename files to hold their tags or to drop them.
+  With a name's Write set to Update existing, adding or taking a tag
+  also renames a file whose name already holds tags (`IMG[vacation].jpg`
+  becomes `IMG[vacation alps].jpg`), and Undo takes back both. A name
+  holds no spaces or categories; those stay in the other stores.
 - **Categories.** A tag named `Places/France/Paris` is within
   `Places/France` and `Places`: a search for `Places` finds it. A
   category can hold one tag at a time (Status: Draft, Done).

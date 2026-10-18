@@ -174,3 +174,76 @@ fn one_edit_reaches_every_store_that_keeps_the_files_notes() {
             .is_none()
     );
 }
+
+/// A name holding its tags, as `TagSpaces` writes them, set to follow them
+/// (Notes page): the tags plugin's edit renames the file beside the
+/// desktop's attributes, the pane keeps it selected under its new name,
+/// and Undo takes back both.
+#[test]
+fn tags_added_reach_a_name_holding_tags_once_it_is_set_to_follow_them() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("Été d'or");
+    std::fs::create_dir_all(dir.join(".ts")).unwrap();
+    let photo = dir.join("it's a photo[trip].jpg");
+    std::fs::write(&photo, b"x").unwrap();
+    let app = app(tmp.path());
+    app.plugins
+        .add(Arc::new(skwir_plugin_name_tags::NameTagsPlugin), &app);
+    app.settings.set(
+        "notes.tagspaces-names.write",
+        toml::Value::String("update".into()),
+    );
+    app.apply_notes_settings();
+
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&dir)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    app.dispatch(&Invocation::with_args(
+        "select",
+        &serde_json::json!({ "names": ["it's a photo[trip].jpg"] }),
+    ))
+    .unwrap();
+    let Outcome::Plan(plan) = app
+        .dispatch(&Invocation::with_args(
+            "tags.add",
+            &serde_json::json!({ "tags": ["Alps", "Places/France"] }),
+        ))
+        .unwrap()
+    else {
+        panic!("a plan")
+    };
+    let r = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    let renamed = dir.join("it's a photo[trip Alps].jpg");
+    assert!(renamed.exists() && !photo.exists());
+    assert_eq!(
+        skwir_core::fs::xattr::get(&renamed, "user.xdg.tags")
+            .unwrap()
+            .as_deref(),
+        Some(b"trip,Alps,Places/France".as_slice()),
+        "a category stays in the attributes"
+    );
+
+    // The pane follows the rename, the file still selected.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        app.pump();
+        let selected: Vec<_> = app
+            .selected_refs(pane)
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
+        if selected == [renamed.clone()] {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{selected:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(photo.exists() && !renamed.exists());
+    assert_eq!(
+        skwir_core::fs::xattr::get(&photo, "user.xdg.tags").unwrap(),
+        None
+    );
+}

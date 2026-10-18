@@ -1436,6 +1436,11 @@ every store it knows by default and writes the ones the user chooses.
   *Built:* the `.ts` condition matters because yt-dlp names downloads
   `title [id].ext`; filetags is off until turned on
   (`NotesStore::default_read`); `names.tag` and `names.untag`.
+  Deviation, found 2026-10-18: ADR-027 made a name's writing opt-in, but
+  the Notes page had no Write setting for one, so an edit never reached
+  a name. Amended that day: Write is Off or Update for a name, and
+  Update has an edit rename a file whose name holds tags, a `Rename`
+  step unfolded beside it on the plan's thread (`Operation::unfolds`).
 
 Tests use synthetic files built from each format's specification (not
 our own encoders) and, where an application runs headless, its output.

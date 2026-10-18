@@ -19,6 +19,7 @@ skwir-core = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 tempfile.workspace = true
 dirs.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

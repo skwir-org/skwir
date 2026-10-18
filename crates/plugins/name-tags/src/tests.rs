@@ -141,13 +141,6 @@ fn tagspaces_names_are_read_where_it_is_used_and_moved_in_and_out_of_names() {
     let read = |p: &Path| app.notes.read_path(p, &app.notes.policy()).tag_names();
     assert_eq!(read(&tagged), ["vacation", "alps"]);
     assert!(read(&video).is_empty(), "no TagSpaces location here");
-    assert!(
-        !app.settings
-            .schema()
-            .iter()
-            .any(|s| s.key == "notes.tagspaces-names.write"),
-        "a name is written by renaming"
-    );
 
     // Out of the name: the tags stay, in the attributes.
     let pane = app.workspace.read().active_id();
@@ -212,4 +205,246 @@ fn tags_out_of_names_refuse_two_files_one_name() {
         .expect_err("refused");
     assert!(refused.to_string().contains("“a.jpg”"), "{refused}");
     assert!(first.exists() && second.exists());
+}
+
+#[test]
+fn a_name_holding_tags_follows_them_in_its_order() {
+    let tags = |t: &[&str]| t.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>();
+    let t = Convention::Tagspaces;
+    assert_eq!(
+        t.retagged(
+            "IMG[vacation alps].jpg",
+            &tags(&["alps", "vacation", "new"])
+        ),
+        Some("IMG[vacation alps new].jpg".into()),
+        "its own first, as they were"
+    );
+    assert_eq!(
+        t.retagged("IMG[vacation alps].jpg", &tags(&["vacation"])),
+        Some("IMG[vacation].jpg".into())
+    );
+    assert_eq!(
+        t.retagged("IMG[vacation].jpg", &[]),
+        Some("IMG.jpg".into()),
+        "the last tag taken leaves the plain name"
+    );
+    assert_eq!(
+        t.retagged("IMG[Vacation alps].jpg", &tags(&["alps", "vacation"])),
+        None,
+        "case aside, it says them already"
+    );
+    assert_eq!(
+        t.retagged("IMG[a  a b].jpg", &tags(&["b", "a"])),
+        None,
+        "a name is renamed for its tags, never its spelling"
+    );
+    assert_eq!(
+        t.retagged(
+            "IMG[a].jpg",
+            &tags(&["a", "two words", "Places/France", "[x]"])
+        ),
+        None,
+        "what a name cannot hold stays in the other stores"
+    );
+    assert_eq!(
+        t.retagged("IMG.jpg", &tags(&["a"])),
+        None,
+        "a name is never started"
+    );
+    let f = Convention::Filetags;
+    assert_eq!(
+        f.retagged("notes -- work.txt", &tags(&["work", "[draft]"])),
+        Some("notes -- work [draft].txt".into())
+    );
+}
+
+/// An edit's plan, applied all or nothing as a gesture applies it, and
+/// how it ended.
+fn apply_whole(app: &App, plan: Plan) -> skwir_core::op::ExecEvent {
+    // What an undo before said is not this plan's.
+    while app.executor.events().try_recv().is_ok() {}
+    app.apply_whole(plan);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let event = app
+            .executor
+            .events()
+            .recv_deadline(deadline)
+            .expect("the plan finishes");
+        if matches!(event, skwir_core::op::ExecEvent::Finished { .. }) {
+            return event;
+        }
+    }
+}
+
+fn edit_plan(app: &App, files: &[&Path], add: &[&str], remove: &[&str]) -> Plan {
+    let change = skwir_core::notes::TagChange {
+        add: add.iter().map(|t| (*t).to_owned()).collect(),
+        remove: remove.iter().map(|t| (*t).to_owned()).collect(),
+        ..Default::default()
+    };
+    let mut plan = Plan::new("change tags");
+    for f in files {
+        plan.push(
+            app.notes
+                .edit(EntryRef::from_path(f).unwrap())
+                .change_tags(change.clone()),
+        );
+    }
+    plan
+}
+
+fn attribute(path: &Path) -> Option<String> {
+    let v = skwir_core::fs::xattr::get(path, "user.test.tags").unwrap()?;
+    Some(String::from_utf8(v).unwrap())
+}
+
+fn finished_with(event: &skwir_core::op::ExecEvent) -> (usize, Option<String>) {
+    match event {
+        skwir_core::op::ExecEvent::Finished { applied, error, .. } => (*applied, error.clone()),
+        _ => unreachable!(),
+    }
+}
+
+// Extended attributes: Unix's.
+#[cfg(unix)]
+#[test]
+fn an_edit_renames_a_name_holding_tags_once_set_to_update_it() {
+    let tmp = home_tempdir();
+    let used = tmp.path().join("it's a location");
+    let other = tmp.path().join("downloads");
+    std::fs::create_dir_all(used.join(".ts")).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let tagged = used.join("IMG[vacation alps].jpg");
+    let untagged = used.join("untagged.jpg");
+    let video = other.join("A talk [dQw4w9WgXcQ].mp4");
+    for f in [&tagged, &untagged, &video] {
+        std::fs::write(f, b"x").unwrap();
+    }
+    let app = app(tmp.path());
+    app.register_notes_store("test", Arc::new(Attributes));
+    assert!(
+        app.settings
+            .schema()
+            .iter()
+            .any(|s| s.key == "notes.tagspaces-names.write"),
+        "a name is written as an edit changes it, when asked"
+    );
+
+    // Off, as by default: the name stays, the attributes keep the tags.
+    let r = apply_whole(&app, edit_plan(&app, &[&tagged], &["new"], &[]));
+    assert_eq!(finished_with(&r), (1, None));
+    assert!(tagged.exists());
+    assert_eq!(attribute(&tagged).as_deref(), Some("vacation,alps,new"));
+    app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert_eq!(attribute(&tagged), None);
+
+    app.settings.set(
+        "notes.tagspaces-names.write",
+        toml::Value::String("update".into()),
+    );
+    app.apply_notes_settings();
+
+    // The review shows the rename beside the edit, before anything is done.
+    let plan = edit_plan(&app, &[&tagged], &["new"], &[]);
+    let diff = plan.diff(&app.companions);
+    let renamed = used.join("IMG[vacation alps new].jpg");
+    assert!(
+        matches!(
+            &diff.steps[..],
+            [
+                (skwir_core::op::Change::Metadata { .. }, _),
+                (skwir_core::op::Change::Rename { from, to }, _),
+            ] if *from == tagged && *to == renamed
+        ),
+        "{:?}",
+        diff.steps
+    );
+    assert!(tagged.exists(), "a review changes nothing");
+
+    let r = apply_whole(&app, plan.clone());
+    assert_eq!(finished_with(&r), (2, None));
+    assert!(renamed.exists() && !tagged.exists());
+    assert_eq!(attribute(&renamed).as_deref(), Some("vacation,alps,new"));
+    // Applied again, nothing changes.
+    let r = apply_whole(&app, plan);
+    assert_eq!(finished_with(&r), (0, None));
+    assert!(renamed.exists());
+
+    // Undo takes back the name and the attributes, Redo makes both again.
+    app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(tagged.exists() && !renamed.exists());
+    assert_eq!(attribute(&tagged), None);
+    let r = app.executor.redo_blocking(app.lifetime()).unwrap();
+    assert!(r.error.is_none(), "{:?}", r.error);
+    assert!(renamed.exists() && !tagged.exists());
+    assert_eq!(attribute(&renamed).as_deref(), Some("vacation,alps,new"));
+
+    // Taking a tag takes it from the name; one a name cannot hold leaves
+    // the name as it is.
+    let r = apply_whole(&app, edit_plan(&app, &[&renamed], &[], &["alps"]));
+    assert_eq!(finished_with(&r), (2, None));
+    let fewer = used.join("IMG[vacation new].jpg");
+    assert!(fewer.exists());
+    let r = apply_whole(&app, edit_plan(&app, &[&fewer], &["Places/France"], &[]));
+    assert_eq!(finished_with(&r), (1, None));
+    assert!(fewer.exists());
+    assert_eq!(
+        app.notes.read_path(&fewer, &app.notes.policy()).tag_names(),
+        ["vacation", "new", "Places/France"]
+    );
+
+    // A name holding no tags, or one where TagSpaces is not used, is never
+    // renamed.
+    let r = apply_whole(&app, edit_plan(&app, &[&untagged, &video], &["x"], &[]));
+    assert_eq!(finished_with(&r), (2, None));
+    assert!(untagged.exists() && video.exists());
+    assert_eq!(attribute(&video).as_deref(), Some("x"));
+}
+
+/// A name taken, before or by the plan itself: nothing is done, never
+/// half the plan.
+#[cfg(unix)]
+#[test]
+fn an_edit_renaming_onto_a_name_taken_does_nothing() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("location");
+    std::fs::create_dir_all(dir.join(".ts")).unwrap();
+    let app = app(tmp.path());
+    app.register_notes_store("test", Arc::new(Attributes));
+    app.settings.set(
+        "notes.tagspaces-names.write",
+        toml::Value::String("update".into()),
+    );
+    app.apply_notes_settings();
+    let names = ["a[x].jpg", "a[x y].jpg", "b[x].jpg", "b[y].jpg"];
+    for n in names {
+        std::fs::write(dir.join(n), n).unwrap();
+    }
+    let path = |n: &str| dir.join(n);
+
+    // `a[x].jpg` given `y` would be `a[x y].jpg`, which is there.
+    let r = apply_whole(&app, edit_plan(&app, &[&path("a[x].jpg")], &["y"], &[]));
+    let (applied, error) = finished_with(&r);
+    assert_eq!(applied, 0);
+    assert!(error.unwrap().contains("“a[x y].jpg”"));
+    assert_eq!(attribute(&path("a[x].jpg")), None);
+
+    // Both left with no tag would both be `b.jpg`.
+    let r = apply_whole(
+        &app,
+        edit_plan(
+            &app,
+            &[&path("b[x].jpg"), &path("b[y].jpg")],
+            &[],
+            &["x", "y"],
+        ),
+    );
+    let (applied, error) = finished_with(&r);
+    assert_eq!(applied, 0);
+    assert!(error.unwrap().contains("“b.jpg”"));
+    for n in names {
+        assert_eq!(std::fs::read_to_string(path(n)).unwrap(), n);
+        assert_eq!(attribute(&path(n)), None);
+    }
 }

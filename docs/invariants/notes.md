@@ -19,10 +19,15 @@ registered in `App::notes` by its plugin); all share one model,
 | `tagspaces` | `.ts/x.json`, a folder's `.ts/tsm.json` (exact color kept, read as the palette's nearest), `.ts/tsi.json` as a search hint |
 | `name-tags` | `name[a b].ext` (TagSpaces, read only where a `.ts` folder exists); `name -- a b.ext` (filetags, off until asked) |
 
-- A store in names is never written by an edit, never reported as
-  differing, and holds no tag in a category. Writing a name is a rename
-  plan (`names.tag`; `names.untag` first has the other stores keep the
-  tags).
+- A store in names is never reported as differing, never made to agree,
+  never started, and holds no tag in a category. Writing a name is a
+  rename: a plan of its own (`names.tag`; `names.untag` first has the
+  other stores keep the tags), or, with its Write set to Update (Off by
+  default), a `Rename` beside an edit of a file whose name is read as
+  holding tags (ADR-027's 2026-10-18 amendment). The edit unfolds into
+  both on the plan's thread (`SetNotes::unfolds`, from
+  `NotesStore::renamed`), never when it is made; the name keeps its tags'
+  order.
 
 ## Reading
 

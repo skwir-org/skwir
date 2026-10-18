@@ -244,7 +244,9 @@ pub trait NotesStore: Send + Sync {
     fn kept(&self) -> Kept;
     fn holds(&self) -> Holds;
     /// How it is written unless the user chose otherwise. A store in names
-    /// is never written by an edit: its writing is a rename of its own.
+    /// is written only by a rename of its own: `Update` puts a step
+    /// renaming the file beside an edit ([`Self::renamed`]); it is never
+    /// started.
     fn default_write(&self) -> Write;
     /// Whether it is read unless the user chose otherwise.
     fn default_read(&self) -> bool {
@@ -306,6 +308,14 @@ pub trait NotesStore: Send + Sync {
     /// # Errors
     /// When it keeps the file's notes and cannot write them.
     fn write(&self, file: &Probe<'_>, notes: &Notes, create: bool) -> std::io::Result<Wrote>;
+    /// A store in names: the name `name` takes to hold what it can of
+    /// `notes`, where that changes it. `None` where the name holds the
+    /// same tags already, where it holds none (a name is never started),
+    /// and for every other store. From the name alone: nothing is read.
+    fn renamed(&self, name: &OsStr, notes: &Notes) -> Option<std::ffi::OsString> {
+        let _ = (name, notes);
+        None
+    }
 }
 
 /// How each store is read and written, captured when a plan is made so
@@ -654,8 +664,8 @@ impl NoteStores {
         for (_, notes) in &each {
             union.merge(notes.clone());
         }
-        // A name is not made to agree by an edit (its writing is a rename
-        // of its own): it is never said to differ.
+        // A name is never said to differ: it changes only by a rename
+        // (`SetNotes::unfolds`), never to make the stores agree.
         let differ_from = |notes: &Notes| -> Vec<&'static str> {
             each.iter()
                 .filter(|(store, now)| {

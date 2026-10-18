@@ -231,6 +231,11 @@ impl super::Effect for Rename {
         let target = self.target();
         match self.entry.resolve() {
             Ok(src) if src == target => StepStatus::AlreadyDone,
+            // An earlier step of the plan puts something there (two files
+            // given one name).
+            Ok(_) if ctx.made(&target) => {
+                conflict(format!("“{}” is already there", display_name(&target)))
+            }
             Ok(src) => match self.classify(&src, &target) {
                 RenameTarget::Free | RenameTarget::Respelled => {
                     along_conflict(ctx, &along(ctx, &src, &target)).unwrap_or(pending(true))

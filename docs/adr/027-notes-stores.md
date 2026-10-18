@@ -3,7 +3,8 @@
 Status: accepted, 2026-09-30. Built the same day in seven steps
 (`docs/PLAN.md`, "Notes everywhere"). Not checked: a round trip through
 exFAT read by a real Mac (checked on a FUSE mount refusing attributes).
-Windows's and macOS's own stores wait for Phase 5.
+Windows's and macOS's own stores wait for Phase 5. Amended 2026-10-18
+(see Amendments: a name follows an edit, when asked).
 
 ## Context
 
@@ -72,8 +73,8 @@ attributes).
 | XMP sidecar | `x.ext.xmp` or `x.xmp` | yes | updates; creation opt-in |
 | XMP in the file | content | on demand | no (it changes the content) |
 | TagSpaces sidecar | `.ts/x.json` | yes | updates; creation opt-in |
-| TagSpaces name | `x[a b].ext` | where a `.ts` folder shows TagSpaces is used | opt-in, as a rename |
-| filetags name | `x -- a b.ext` | opt-in | opt-in, as a rename |
+| TagSpaces name | `x[a b].ext` | where a `.ts` folder shows TagSpaces is used | opt-in, as a rename (Update since 2026-10-18) |
+| filetags name | `x -- a b.ext` | opt-in | opt-in, as a rename (Update since 2026-10-18) |
 
 The core declares the stores' settings under `notes.*` (Notes page),
 since several plugins share them: each read or not, written Off, Update
@@ -115,7 +116,8 @@ one using skwir yet).
 ### Names that hold tags
 
 Writing a name is a rename plan of its own (`Change::Rename`), never
-part of a notes edit. yt-dlp names downloads `title [id].ext` and
+part of a notes edit (amended 2026-10-18: a rename step beside the
+edit, when asked). yt-dlp names downloads `title [id].ext` and
 `[1080p]` ends release names, so TagSpaces names are read only under a
 `.ts` folder; filetags names only on request.
 
@@ -140,3 +142,49 @@ needed, will be an XMP profile with a Skwir namespace for the rest.
   survive); Windows shows `._` files as clutter and may delete them;
   Google Drive and OneDrive keep no attributes; deleting the cache can
   bring a removed tag back once.
+
+## Amendments
+
+### 2026-10-18: a name that holds tags follows an edit, when asked
+
+The table above made a name's writing "opt-in, as a rename", but the
+first build left the Notes page without a Write setting for a name:
+only "Tags into Name" and "Tags out of Name" wrote one, and a tag added
+to `IMG[vacation].jpg` reached every store but its name. Three reasons
+kept it so on 2026-09-30, and what became of each:
+
+- **A rename moves the file under whatever knew its path.** Since
+  ADR-049 a listing pairs a name gone with the name come by the file
+  and the pane follows (`ListingEvent::Renamed`, `Selection::rekey`);
+  the shelf, the clipboard and a search's results follow
+  `Change::Rename`. Other applications still lose the path: that is the
+  user's choice when they turn it on, as it is in TagSpaces.
+- **A name never disagrees.** Kept: a store in names is never said to
+  differ, and "Make notes agree" leaves it alone.
+- **A name holds less.** Kept: what a name cannot hold (spaces,
+  brackets for TagSpaces, categories, a rating, a comment) stays in the
+  other stores, as for any store with limits.
+
+Decided:
+
+- **Write: Off or Update, for a name.** Update has an edit of a file
+  whose name holds tags (read so: under a `.ts` folder for TagSpaces,
+  once read for filetags) rename the file to hold what its name can of
+  the notes the edit leaves (`NotesStore::renamed`). Its own tags stay
+  in their order and new ones follow; a name already saying the tags,
+  case aside, is left as it is. A name that holds none is never started
+  (no Create). Off stays the default.
+- **A step of its own, decided before anything runs.** The edit reads
+  nothing when it is made (it is made on the window's thread). On the
+  plan's thread, before names are settled and the plan checked, and in
+  the review's dry run, a step may unfold into the steps it is once
+  what it reads is read (`Operation::unfolds`, `op::unfold`): the edit,
+  with the name left out of its policy, then a `Rename`. So the review
+  lists the rename, a name taken (before, or by an earlier step of the
+  plan: `Rename::check` asks `StepContext::made`) refuses the whole plan
+  before anything is done, Undo puts back the name then the notes'
+  bytes, and whatever follows paths sees `Change::Rename`. The toast
+  counts the plan's items as asked (`Plan::items`), not its steps.
+- The tags index learns an edited file where the plan left it
+  (`op::Follow`): a rename after an edit, here or in "Tags out of
+  Name", left it reading the name gone.

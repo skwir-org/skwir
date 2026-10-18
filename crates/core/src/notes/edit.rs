@@ -8,10 +8,12 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use super::raw::{self, Raw, RawKey};
-use super::{NoteStores, Notes, Policy, Probe, Tag, Write, Wrote, stars};
+use super::{Kept, NoteStores, Notes, Policy, Probe, Tag, Write, Wrote, stars};
 use crate::entry::keys;
 use crate::metadata::same_tag;
-use crate::op::{Change, EntryRef, Operation, ResolveError, StepContext, StepStatus, Words};
+use crate::op::{
+    Change, EntryRef, Operation, Rename, ResolveError, StepContext, StepStatus, Words,
+};
 
 fn name_of(path: &Path) -> String {
     path.file_name().map_or_else(
@@ -362,6 +364,44 @@ impl Operation for SetNotes {
             field: field.into(),
             words: Some(Words { will, did }),
         }
+    }
+    /// Where the policy updates a store in names and the file's name holds
+    /// tags there (read so), this edit of the other stores, then the
+    /// rename of the file to hold what its name can of the notes the edit
+    /// leaves (`NotesStore::renamed`): a rename of its own, which Undo,
+    /// the review and whoever follows paths see as one. Nothing is read
+    /// for an edit no name is set to follow, nor for one making the stores
+    /// agree (a name is never said to differ).
+    fn unfolds(&self, _ctx: &StepContext) -> Option<Vec<Box<dyn Operation>>> {
+        let stores = self.stores().ok()?;
+        let names: Vec<_> = stores
+            .stores()
+            .into_iter()
+            .filter(|s| s.kept() == Kept::Name && self.policy.write_of(s.id()) != Write::Off)
+            .collect();
+        if names.is_empty() || self.sync {
+            return None;
+        }
+        let path = self.entry.resolve().ok()?;
+        let name = path.file_name()?;
+        let read = stores.read_one(&path, &self.policy);
+        let target = self.applied_to(&read.notes);
+        let new_name = names
+            .iter()
+            .filter(|s| read.each.iter().any(|(id, _)| *id == s.id()))
+            .find_map(|s| s.renamed(name, &target))?;
+        // The name is the rename's: the edit leaves it, and is never
+        // unfolded again.
+        let mut edit = self.clone();
+        for s in &names {
+            edit.policy.write.retain(|(id, _)| id != s.id());
+            edit.policy.write.push((s.id().to_owned(), Write::Off));
+        }
+        let rename = Rename {
+            entry: EntryRef::new(self.entry.id, path).with_only_name(self.entry.only_name),
+            new_name,
+        };
+        Some(vec![Box::new(edit), Box::new(rename)])
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
         if self.rating.is_some_and(|r| r > super::RATING_MAX) {

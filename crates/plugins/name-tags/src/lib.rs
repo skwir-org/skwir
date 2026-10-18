@@ -1,9 +1,11 @@
 //! skwir plugin: tags in file names (ADR-027). Two conventions are known:
 //! `TagSpaces`' (`IMG-2653[vacation alps].jpg`, tags in brackets before the
 //! extension) and filetags' (`2021-01-01 notes -- work draft.txt`, after
-//! ` -- `). Each is a store read with the others; neither is written by
-//! an edit, since writing a name is renaming the file: "Tags into Name"
-//! and "Tags out of Name" are plans of renames of their own.
+//! ` -- `). Each is a store read with the others. Writing a name is
+//! renaming the file: "Tags into Name" and "Tags out of Name" are plans
+//! of renames of their own, and a store set to Update has an edit of a
+//! file whose name holds tags rename it beside (`NotesStore::renamed`,
+//! ADR-027's amendment of 2026-10-18), the name's tags kept in their order.
 //!
 //! A name says what its author meant only where the convention is used:
 //! `title [id].ext` is how yt-dlp names every download and `[1080p]` ends
@@ -105,6 +107,37 @@ impl Convention {
             && !tag.contains('/')
             && (self == Convention::Filetags || !tag.contains(['[', ']']))
     }
+
+    /// `name` holding those of `tags` it can, where it holds tags and they
+    /// differ (case aside): its own kept in their order, the others after
+    /// them. `None` for a name that holds none, which is never started,
+    /// and for one already saying them.
+    pub fn retagged(self, name: &str, tags: &[String]) -> Option<String> {
+        let (base, held, ext) = self.split(name);
+        if held.is_empty() {
+            return None;
+        }
+        let mut wanted: Vec<&String> = Vec::new();
+        for t in tags.iter().filter(|t| self.holds(t)) {
+            if !wanted.iter().any(|w| same_tag(w, t)) {
+                wanted.push(t);
+            }
+        }
+        if held.len() == wanted.len() && held.iter().all(|h| wanted.iter().any(|t| same_tag(t, h)))
+        {
+            return None;
+        }
+        let mut kept: Vec<String> = held
+            .into_iter()
+            .filter(|h| wanted.iter().any(|t| same_tag(t, h)))
+            .collect();
+        for t in wanted {
+            if !kept.iter().any(|k| same_tag(k, t)) {
+                kept.push(t.clone());
+            }
+        }
+        Some(self.join(&base, &kept, ext.as_deref()))
+    }
 }
 
 /// Tags in names, one convention, as a store.
@@ -197,6 +230,11 @@ impl NotesStore for NameStore {
     }
     fn write(&self, _file: &Probe<'_>, _notes: &Notes, _create: bool) -> std::io::Result<Wrote> {
         Ok(Wrote::NotHere)
+    }
+    fn renamed(&self, name: &OsStr, notes: &Notes) -> Option<std::ffi::OsString> {
+        self.convention
+            .retagged(name.to_str()?, &notes.tag_names())
+            .map(Into::into)
     }
 }
 
@@ -312,6 +350,7 @@ fn untag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
                 ..Default::default()
             });
         keep.policy.read.retain(|s| s != name_store);
+        keep.policy.write.retain(|(s, _)| s != name_store);
         plan.push(keep);
         renames.push(RenameRequest {
             entry: r,
@@ -371,7 +410,7 @@ impl Plugin for NameTagsPlugin {
         "Tags in names"
     }
     fn description(&self) -> &'static str {
-        "Tags written in file names, as TagSpaces (name[a b].ext) and filetags (name -- a b.ext) do: read with the other notes, written by renaming"
+        "Tags written in file names, as TagSpaces (name[a b].ext) and filetags (name -- a b.ext) do: read with the other notes, written by renaming, on request or as an edit changes them (Notes page)"
     }
     fn category(&self) -> Category {
         Category::Files

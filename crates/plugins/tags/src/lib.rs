@@ -666,6 +666,12 @@ impl Plugin for TagsPlugin {
                             _ => {}
                         }
                     }
+                    // Read where each is now: a file whose name holds its
+                    // tags was renamed after its edit.
+                    if !moves.is_empty() {
+                        let follow = skwir_core::op::Follow::new(changes);
+                        paths = paths.iter().filter_map(|p| follow.through(p).at).collect();
+                    }
                     places.changed(
                         &paths
                             .iter()

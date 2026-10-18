@@ -832,6 +832,16 @@ impl Executor {
                 Work::Execute { plan, whole } => {
                     let whole = whole && !job.cancel.is_cancelled();
                     let companions = Arc::clone(&self.companions.lock());
+                    // Each step as it will be done, before anything is
+                    // settled or checked.
+                    let plan = if job.cancel.is_cancelled() {
+                        plan
+                    } else {
+                        plan.unfold(
+                            &StepContext::with_cancel(job.cancel.clone())
+                                .with_companions(Arc::clone(&companions)),
+                        )
+                    };
                     // Names taken are settled first: what the dry run
                     // checks is what will be done.
                     let settled = if whole
