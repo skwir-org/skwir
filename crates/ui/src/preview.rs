@@ -4310,7 +4310,7 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
 /// screen's alike: what can be found in and copied from takes the same
 /// keys, one command each (`ui.preview_find`…), whichever shows it; a
 /// player takes its own.
-pub(crate) fn frame(shell: &Shell, interactive: bool) -> gpui::Div {
+pub(crate) fn frame(shell: &Shell, interactive: bool) -> gpui::Stateful<gpui::Div> {
     let document = matches!(
         &shell.preview.content,
         Some(PreviewContent::Image {
@@ -4319,7 +4319,16 @@ pub(crate) fn frame(shell: &Shell, interactive: bool) -> gpui::Div {
         })
     );
     let inspection = matches!(&shell.preview.content, Some(PreviewContent::Inspection(_)));
+    let player = shell.preview.media.focus.is_some() && interactive;
     div()
+        .id("preview-frame")
+        // A player holds the keys here: a group named by what it plays.
+        .when(player, |d| {
+            d.role(gpui::Role::Group)
+                .when_some(said(shell), |d, (name, _)| {
+                    d.aria_label(format!("Player: {name}"))
+                })
+        })
         .flex()
         .flex_col()
         .when(document && interactive, |d| {
@@ -4648,8 +4657,22 @@ pub(crate) fn content(
             } else {
                 picture
             };
+            // A picture with its size, a film; a document's pages are its
+            // reader's (`reader::said`).
+            let (role, size) = match (document.is_some(), shell.shows_player()) {
+                (true, _) => (None, None),
+                (false, true) => (Some(gpui::Role::Video), None),
+                (false, false) => (Some(gpui::Role::Image), Some((*width, *height))),
+            };
             div()
                 .id("preview-picture")
+                .when_some(role, |d, role| {
+                    d.role(role).when_some(said(shell), |d, (name, _)| {
+                        d.aria_label(name).when_some(size, |d, (width, height)| {
+                            d.aria_description(format!("{width} × {height} pixels"))
+                        })
+                    })
+                })
                 .flex_1()
                 .min_h_0()
                 .flex()
@@ -4915,6 +4938,25 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
 const ICON: f32 = 36.;
 
 /// "PDF document" rather than `application/pdf`; the raw type is the tooltip.
+/// What is previewed as assistive technology hears it: its name, and the
+/// facts the header shows (type, size, date); `None` while no screen reader
+/// listens, or with nothing previewed.
+pub(crate) fn said(shell: &Shell) -> Option<(gpui::SharedString, String)> {
+    let info = &shell.preview.info;
+    if !shell.a11y || info.name.is_empty() {
+        return None;
+    }
+    let facts: Vec<String> = [
+        type_label(shell, info),
+        info.size.clone(),
+        info.modified.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    Some((info.name.clone().into(), facts.join(" · ")))
+}
+
 fn type_label(shell: &Shell, info: &Info) -> Option<String> {
     if info.is_dir {
         return Some("Folder".into());
@@ -5387,8 +5429,14 @@ pub fn render_panel(
                 chosen: None,
             })
     });
+    // A landmark beside the files, described by what it shows.
     let panel = div()
         .id("preview-panel")
+        .role(gpui::Role::Complementary)
+        .aria_label("Preview")
+        .when_some(said(shell), |d, (name, facts)| {
+            d.aria_description(format!("{name}, {facts}"))
+        })
         .relative()
         .flex_none()
         .flex()
@@ -5426,6 +5474,13 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
     }
     let theme = cx.global::<Theme>().clone();
     let focus = shell.preview.peek_focus.clone()?;
+    let hint = if shell.shows_player() {
+        "Space play/pause · arrows seek · M mute · F fullscreen · Escape exit"
+    } else if shell.fullscreen_shows().is_some() {
+        "Space or Escape to close · arrows to move · F fullscreen"
+    } else {
+        "Space or Escape to close · arrows to move"
+    };
     Some(
         div()
             .absolute()
@@ -5440,8 +5495,16 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                 cx.listener(|this, _, window, cx| this.close_peek(window, cx)),
             )
             .child(
+                // A dialog named by the file it shows: as the arrows move to
+                // another, the name a screen reader says changes with it.
                 div()
                     .id("preview-peek")
+                    .role(gpui::Role::Dialog)
+                    .aria_modal()
+                    .when_some(said(shell), |d, (name, facts)| {
+                        d.aria_label(name)
+                            .aria_description(format!("{facts}. {hint}"))
+                    })
                     .track_focus(&focus)
                     .key_context(keymap::PEEK)
                     .w(gpui::relative(0.8))
@@ -5464,13 +5527,7 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                             .text_color(theme.text_muted)
                             .border_t_1()
                             .border_color(theme.border)
-                            .child(if shell.shows_player() {
-                                "Space play/pause · arrows seek · M mute · F fullscreen · Escape exit"
-                            } else if shell.fullscreen_shows().is_some() {
-                                "Space or Escape to close · arrows to move · F fullscreen"
-                            } else {
-                                "Space or Escape to close · arrows to move"
-                            }),
+                            .child(hint),
                     ),
             )
             .into_any_element(),

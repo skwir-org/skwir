@@ -106,3 +106,18 @@ window and its file views are exposed; the other places follow
   modal and named, a confirmation an alert; toolbars, popups, menus, tabs
   and the settings say what each control is and its state.
 - Still to come: the previews, the terminal, search pills and the footer.
+
+### 2026-10-18: the previews and the terminal
+
+- What is previewed is named once and said wherever it shows: the panel
+  is a landmark, Peek and the whole screen modal dialogs named by the
+  file (Peek follows the arrows from file to file), a picture an image
+  with its size, a document its page, text and structured previews
+  documents of their lines, an archive a tree of its members, the player
+  a group whose seek bar is a slider of seconds.
+- The terminal is read as text: its screen a run a row, the cursor as the
+  caret.
+- The footer is a status line, read when asked, never announced.
+- Still to come: a document's text in the reader, the map, the hex
+  view's rows; and the keys reaching the preview panel's content, which
+  Peek and the whole screen reach.

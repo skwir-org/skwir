@@ -687,9 +687,19 @@ impl Shell {
             cx,
         );
         let (tint, ring) = (theme.drop_target, theme.accent);
+        // To assistive technology, a terminal: its screen as text, the
+        // cursor as the caret, read out only while a screen reader listens.
+        let shown = self.a11y.then(|| Arc::clone(&self.terminal.screen));
         Some(
             div()
                 .id("terminal-panel")
+                .role(gpui::Role::Terminal)
+                .aria_label("Terminal")
+                .when_some(shown, |d, screen| {
+                    let titled = (!screen.title.is_empty()).then(|| screen.title.clone());
+                    d.when_some(titled, StatefulInteractiveElement::aria_description)
+                        .a11y_synthetic_children(move |builder| read_out(&screen, builder))
+                })
                 // Files dropped here are typed at the prompt, quoted: a
                 // drop asks nothing here, as nothing is copied or moved.
                 .drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(ring))
@@ -730,8 +740,105 @@ impl Shell {
     }
 }
 
+/// A row of the screen as text: its runs at their columns, the blank
+/// cells between them as spaces, and the column each character starts at.
+fn row_text(runs: &[skwir_core::terminal::Run]) -> (String, Vec<u16>) {
+    let (mut text, mut starts, mut col) = (String::new(), Vec::new(), 0u16);
+    for run in runs {
+        while col < run.col {
+            text.push(' ');
+            starts.push(col);
+            col += 1;
+        }
+        // A wide character takes two cells: the run's cells over its chars.
+        let chars = run.text.chars().count().max(1);
+        for (i, c) in run.text.chars().enumerate() {
+            let offset = i * usize::from(run.cells) / chars;
+            starts.push(run.col + u16::try_from(offset).unwrap_or(u16::MAX));
+            text.push(c);
+        }
+        col = run.col + run.cells;
+    }
+    (text, starts)
+}
+
+/// The screen as assistive technology reads a terminal: a text run a row,
+/// each ending with its line break but the last, and the cursor as the
+/// caret, the blank cells before it said as spaces.
+fn read_out(screen: &Screen, builder: &mut gpui::A11ySubtreeBuilder) {
+    let mut caret = None;
+    let last = screen.lines.len().saturating_sub(1);
+    for (row, runs) in screen.lines.iter().enumerate() {
+        let (mut text, mut starts) = row_text(runs);
+        let cursor = screen
+            .cursor
+            .filter(|cursor| usize::from(cursor.row) == row)
+            .map(|cursor| cursor.col);
+        if let Some(col) = cursor {
+            let mut end = starts.last().map_or(0, |start| start + 1);
+            while end < col {
+                text.push(' ');
+                starts.push(end);
+                end += 1;
+            }
+        }
+        let at = cursor.map(|col| starts.iter().take_while(|start| **start < col).count());
+        if row < last {
+            text.push('\n');
+        }
+        let lengths: Vec<u8> = text
+            .chars()
+            .map(|c| u8::try_from(c.len_utf8()).unwrap_or(4))
+            .collect();
+        let id = builder.synthetic_node_id(row);
+        let mut node = gpui::accesskit::Node::new(gpui::Role::TextRun);
+        node.set_value(text);
+        node.set_character_lengths(lengths);
+        builder.push_child(id, node);
+        if let Some(character_index) = at {
+            caret = Some(gpui::accesskit::TextPosition {
+                node: id,
+                character_index,
+            });
+        }
+    }
+    if let Some(at) = caret {
+        builder
+            .parent_node()
+            .set_text_selection(gpui::accesskit::TextSelection {
+                anchor: at,
+                focus: at,
+            });
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use skwir_core::terminal::{Attrs, Color, Run, Style};
+
+    fn run(col: u16, cells: u16, text: &str) -> Run {
+        Run {
+            col,
+            cells,
+            text: text.to_owned(),
+            style: Style {
+                fg: Color::Foreground,
+                bg: Color::Background,
+                attrs: Attrs::default(),
+            },
+        }
+    }
+
+    /// A row read out: blank cells between runs as spaces, each character
+    /// at the column it starts at, a wide one taking two.
+    #[test]
+    fn a_row_reads_with_its_blanks_and_wide_characters() {
+        let (text, starts) = super::row_text(&[run(0, 2, "$>"), run(4, 4, "日本")]);
+        assert_eq!(text, "$>  日本");
+        assert_eq!(starts, [0, 1, 2, 3, 4, 6]);
+        assert_eq!(super::row_text(&[]), (String::new(), vec![]));
+    }
+
     use super::*;
 
     fn stroke(text: &str) -> gpui::Keystroke {

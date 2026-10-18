@@ -564,6 +564,10 @@ pub fn page_element(
         .child(
             div()
                 .id("reader-canvas")
+                .role(gpui::Role::Document)
+                .when_some(said(shell), |d, (name, page)| {
+                    d.aria_label(name).aria_description(page)
+                })
                 .flex_1()
                 .min_h_0()
                 .w_full()
@@ -762,6 +766,16 @@ pub(crate) fn pages(shell: &Shell) -> Option<u32> {
             })
         );
     document.then(|| document_pages(shell))
+}
+
+/// The document as assistive technology hears its reader: named by the
+/// file, described by the page shown; `None` while no screen reader
+/// listens.
+pub(crate) fn said(shell: &Shell) -> Option<(gpui::SharedString, String)> {
+    crate::preview::said(shell).map(|(name, _)| {
+        let page = format!("Page {} of {}", shell.preview.page, document_pages(shell));
+        (name, page)
+    })
 }
 
 fn document_pages(shell: &Shell) -> u32 {

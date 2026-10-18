@@ -1215,6 +1215,17 @@ as the row lays it out from the right; it now reads as every file
 manager's and the web's breadcrumbs do, the first folder first, a "Path"
 landmark. Only the tree's order changed, rebuilt only while a screen
 reader listens.
+
+**The previews and the terminal.** What is previewed is named once and
+said wherever it shows: the panel a landmark, Peek and the whole screen
+dialogs named by the file (Peek follows the arrows), a picture with its
+size, a document with its page, text and Markdown as documents of their
+lines, an archive as a tree of its members, the player's seek bar a
+slider of seconds. The terminal reads as text, the cursor as the caret;
+the footer is a status line read when asked. `just a11y-check`: 39 steps.
+Not yet: a document's text in the reader, the map, the hex view's rows;
+the keys reach the panel's content only through Peek and the whole
+screen.
 - Not yet: the previews, the terminal, search pills and the footer.
 
 ---

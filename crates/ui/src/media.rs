@@ -978,9 +978,13 @@ pub type Scrub = Rc<dyn Fn(&mut Shell, &str, f32, &mut Window, &mut Context<Shel
 
 /// A seek bar drawn at `fraction`, reporting presses, moves and releases
 /// through `scrub`. The same bar serves the panel's player and the dock's.
+/// To assistive technology it is a slider of the position in seconds,
+/// said as its time of the whole (`at`: position and duration, while a
+/// screen reader listens).
 pub(crate) fn seek_bar_of(
     id: &'static str,
     fraction: f32,
+    at: Option<(f64, f64)>,
     theme: &Theme,
     scrub: Scrub,
     cx: &mut Context<Shell>,
@@ -999,6 +1003,14 @@ pub(crate) fn seek_bar_of(
     let (down, moved, up, up_out) = (phase("down"), phase("move"), phase("up"), phase("up"));
     div()
         .id(id)
+        .role(gpui::Role::Slider)
+        .aria_label("Position")
+        .when_some(at, |d, (position, duration)| {
+            d.aria_numeric_value(position)
+                .aria_min_numeric_value(0.)
+                .aria_max_numeric_value(duration)
+                .aria_value(format!("{} of {}", time(position), time(duration)))
+        })
         .relative()
         .flex_1()
         .min_w(px(40.))
@@ -1077,7 +1089,8 @@ fn seek_bar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement
             );
         });
     });
-    seek_bar_of("video-seek", fraction, theme, scrub, cx)
+    let at = shell.a11y.then_some((position, duration));
+    seek_bar_of("video-seek", fraction, at, theme, scrub, cx)
 }
 
 pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {

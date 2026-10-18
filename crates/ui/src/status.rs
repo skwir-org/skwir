@@ -132,8 +132,12 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         Some(bytes) => format!("{items} · {}", format::size(bytes)),
         None => items,
     };
+    // What it says is the status line a screen reader reads when asked,
+    // never announced: it changes with every key.
+    let mut said = shell.a11y.then(|| items.clone());
     let mut bar = div()
         .id(("pane-footer", shell.pane.0 as usize))
+        .role(gpui::Role::Status)
         .flex_none()
         .h(px(HEIGHT))
         .w_full()
@@ -158,6 +162,10 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         if bytes > 0 {
             text = format!("{text} · {}", format::size(bytes));
         }
+        if let Some(said) = &mut said {
+            said.push_str(", ");
+            said.push_str(&text);
+        }
         bar = bar.child(div().text_color(theme.text).child(text));
     }
     // A sweep is a mode: the keys act differently while it lasts.
@@ -170,6 +178,10 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
             Some(keys) => format!("{mode} as the cursor moves · {keys} to stop"),
             None => format!("{mode} as the cursor moves"),
         };
+        if let Some(said) = &mut said {
+            said.push_str(", ");
+            said.push_str(&text);
+        }
         bar = bar.child(
             div()
                 .flex_none()
@@ -188,7 +200,9 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
             shell.font.clone(),
         ));
     }
-    bar = bar.child(div().flex_1());
+    bar = bar
+        .when_some(said, StatefulInteractiveElement::aria_label)
+        .child(div().flex_1());
     if !window {
         return bar.into_any_element();
     }
@@ -246,6 +260,10 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         bar = bar.child(
             div()
                 .id(("tally", i))
+                .role(gpui::Role::Button)
+                .when(shell.a11y, |d| {
+                    d.aria_label(format!("{}: {}", tally.label, tally.count))
+                })
                 .px_2()
                 .rounded_md()
                 .when(open.is_some(), gpui::Styled::cursor_pointer)
@@ -269,6 +287,8 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         bar = bar.child(
             div()
                 .id("status-undo")
+                .role(gpui::Role::Button)
+                .aria_label(tip.clone())
                 .flex()
                 .flex_none()
                 .items_center()

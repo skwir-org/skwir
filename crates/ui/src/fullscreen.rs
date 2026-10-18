@@ -548,6 +548,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .map(|controls| {
             div()
                 .id("preview-fullscreen-controls")
+                .role(gpui::Role::Toolbar)
+                .aria_label("Controls")
                 .flex_none()
                 .when(floats, |bar| bar.absolute().top_0().left_0().right_0())
                 // What is under the bar answers clicks too (a film plays):
@@ -562,8 +564,14 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 .border_color(theme.border)
                 .child(controls)
         });
+    // A dialog on the whole window, named by what it shows.
     let mut canvas = div()
         .id("preview-fullscreen")
+        .role(gpui::Role::Dialog)
+        .aria_modal()
+        .when_some(crate::preview::said(shell), |d, (name, facts)| {
+            d.aria_label(name).aria_description(facts)
+        })
         .absolute()
         .inset_0()
         .flex()

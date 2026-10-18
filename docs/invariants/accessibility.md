@@ -68,7 +68,22 @@ like `AGENTS.md`.
   toast, polite, or assertive for a failure, named by its message. Its
   buttons are `Live::Off`, or they are announced with it. A running
   plan's toast is a progress indicator, never live: it would speak at
-  every step.
+  every step. A status that changes with every key (the footer) is a
+  status line read when asked, never live.
+
+## Previews and the terminal
+
+- **What is previewed is named once** (`preview::said`: the file's name
+  and the facts the header shows): the panel's landmark, Peek's dialog,
+  the whole screen's, the picture, the player, a document and the
+  inspector take it from there. Peek is named by the file it shows, so a
+  reader says the next one as the arrows move to it.
+- A document in the reader says its page (`reader::said`); the reader's
+  view is the document, the picture place around it says nothing more.
+- **A terminal is read as text**: each row of the screen a text run, the
+  blank cells between its runs as spaces, the cursor as the caret, built
+  in the panel's `a11y_synthetic_children` from the screen it draws
+  (`terminal::read_out`).
 
 ## Lists
 
@@ -107,9 +122,19 @@ like `AGENTS.md`.
 | settings | dialog; its pages a tab list; its controls | "Settings"; each control its setting's title |
 | toolbars, tabs | buttons; a tab list of tabs | their titles; each tab its location |
 | toasts | status (alert for a failure), live; progress indicator | the message; what runs |
+| preview panel | landmark (complementary) | "Preview", described by the file and its facts |
+| Peek, the whole screen | modal dialog | the file; its facts and keys |
+| a picture, a film | image (its size), video | the file |
+| a document in the reader | document | the file; the page shown |
+| text, Markdown, structured previews | document of its lines | the file |
+| an archive's members, a message's parts, a table's rows | tree, list box; the row the arrows reach said as focused | the file; each row its first cell, the others after their columns' names ("Size: 6 B") |
+| the media player | group; its seek bar a slider of seconds | "Player: ‹file›"; "Position", "0:02 of 0:03" |
+| terminal | terminal: its screen as text, the cursor as the caret | "Terminal"; the program's title |
+| footer | status line, never announced | what it shows: the count, the selection |
+| search chips | buttons; a tag's category a link | their titles |
 
-Not yet: the previews (text, documents, pictures, media), the terminal,
-search pills and the footer.
+Not yet: a document's text in the reader (its pages are pictures), the
+map, the hex view's rows.
 
 ## Checking
 
@@ -130,3 +155,10 @@ search pills and the footer.
 - libatspi refuses the signature of AccessKit's `RemoveAccessible`
   ("dbind-WARNING … Unknown signature so"): a client keeps a removed
   node until it reads its parent's children again.
+
+## Known gaps (Skwir)
+
+- The keys do not reach the preview panel's content: Tab walks the
+  toolbars, and Peek (Space) and the whole screen (F) take the keyboard
+  to what is shown, but a text or a document in the panel is reached with
+  the pointer alone.

@@ -429,6 +429,8 @@ fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>
     // edits a path.
     let rest = div()
         .id(("chip-rest", pane.0 as usize))
+        .role(gpui::Role::Button)
+        .aria_label("Edit the search as text")
         .flex_1()
         .min_w(px(if fit == Fit::Tight { 8. } else { 24. }))
         .h_full()
@@ -462,6 +464,8 @@ fn tag_segments(
                 pill.child(
                     div()
                         .id(SharedString::from(format!("chip-{chip}-up-{j}")))
+                        .role(gpui::Role::Link)
+                        .aria_label(tip.clone())
                         .flex_none()
                         .text_color(muted)
                         .cursor_pointer()

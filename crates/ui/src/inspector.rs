@@ -339,6 +339,57 @@ pub(crate) fn listed(data: &Inspection) -> &[skwir_core::inspection::Row] {
 
 /// Whether a container's rows stay beside the member opened from them
 /// (`members.rs`): the files it holds, an archive's or a message's.
+/// A row of an inspection as assistive technology hears it: an archive's
+/// member an item of its tree, its level and whether a folder is open; any
+/// other an option, its place among those shown. Named by its first cell,
+/// described by the others, each after its column's name ("Size: 6 B");
+/// the row the arrows reached is said as focused while the inspection
+/// holds the keyboard.
+fn said_row(
+    row: gpui::Stateful<gpui::Div>,
+    r: &skwir_core::inspection::Row,
+    columns: &[String],
+    kind: InspectionKind,
+    position: usize,
+    chosen: bool,
+    folded: bool,
+    a11y: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let tree = kind == InspectionKind::Archive;
+    row.role(if tree {
+        gpui::Role::TreeItem
+    } else {
+        gpui::Role::ListBoxOption
+    })
+    .when(a11y, |d| {
+        let name = r.cells.first().cloned().unwrap_or_default();
+        let rest: Vec<String> = r
+            .cells
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter(|(_, cell)| !cell.is_empty())
+            .map(
+                |(i, cell)| match columns.get(i).filter(|column| !column.is_empty()) {
+                    Some(column) => format!("{column}: {cell}"),
+                    None => cell.clone(),
+                },
+            )
+            .collect();
+        let d = d
+            .aria_label(name)
+            .aria_selected(chosen)
+            .when(!rest.is_empty(), |d| d.aria_description(rest.join(" · ")));
+        if tree {
+            d.aria_level(r.depth + 1)
+                .when(r.branch, |d| d.aria_expanded(!folded))
+        } else {
+            d.aria_position_in_set(position)
+        }
+    })
+    .when(chosen, StatefulInteractiveElement::aria_active_descendant)
+}
+
 pub(crate) fn kept_rows(kind: InspectionKind) -> bool {
     matches!(kind, InspectionKind::Archive | InspectionKind::Mail)
 }
@@ -2590,6 +2641,7 @@ pub fn content(
             },
         )
     });
+    let a11y = shell.a11y;
     let list = gpui::list(state.list.clone(), move |index, _, _| {
         let theme = &list_theme;
         if index == 0 {
@@ -2764,7 +2816,18 @@ pub fn content(
                     });
                 });
             });
-            if selected == Some(data.blocks.len() + ri) {
+            let chosen = selected == Some(data.blocks.len() + ri);
+            row = said_row(
+                row,
+                r,
+                &data.columns,
+                data.kind,
+                position,
+                chosen,
+                collapsed.contains(&ri),
+                a11y,
+            );
+            if chosen {
                 row = row.bg(theme.selection_bg);
             }
             row.into_any_element()
@@ -2782,7 +2845,22 @@ pub fn content(
         (_, Some(view)) => crate::elements::scrollbar::Scrolls::Rows(view.scroll.clone()),
         _ => crate::elements::scrollbar::Scrolls::Items(state.list.clone()),
     };
+    // To assistive technology: an archive a tree of its members, a
+    // message's parts and a table's rows a list, anything else a
+    // document, named by the file shown.
+    let role = match display.data.kind {
+        InspectionKind::Archive => gpui::Role::Tree,
+        InspectionKind::Mail | InspectionKind::Table => gpui::Role::ListBox,
+        _ => gpui::Role::Document,
+    };
     let mut body = div()
+        .id("inspector")
+        .role(role)
+        .when_some(crate::preview::said(shell), |d, (name, _)| {
+            d.aria_label(name).when(role == gpui::Role::ListBox, |d| {
+                d.aria_size_of_set(display.data.rows.len())
+            })
+        })
         .flex_1()
         .min_h_0()
         .flex()

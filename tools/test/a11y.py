@@ -58,9 +58,11 @@ class Window:
         self.app = None
 
     def env(self):
-        drop = {"WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "AT_SPI_BUS_ADDRESS"}
+        drop = {"WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "AT_SPI_BUS_ADDRESS", "PS1"}
         env = {k: v for k, v in os.environ.items() if k not in drop}
         env.update(
+            # The terminal's shell: a plain one, with nothing of the user's.
+            SHELL="/bin/sh",
             DISPLAY=self.display,
             DBUS_SESSION_BUS_ADDRESS=self.bus,
             HOME=str(self.home),
@@ -397,6 +399,21 @@ def run(w):
     w.keys("Down")
     check("Down again: the next one", hears(w, f"list item {second!r} 2 of 4 selected focused"))
 
+    def status():
+        stack, found = [w.frame()], []
+        while stack:
+            node = stack.pop()
+            if node is None:
+                continue
+            if node.get_role_name() == "status bar":
+                found.append(node.get_name())
+            stack.extend(node.get_child_at_index(i) for i in range(node.get_child_count()))
+        return found
+
+    check("the footer is a status line saying the count and the selection",
+          until(lambda: any(s.startswith("4 items") and "1 selected" in s for s in status()))
+          or print("  read:", status()))
+
     w.keys("ctrl+l")
     check("Ctrl+L: the address, a text field named so", hears(w, "entry 'Address' focused"))
     shown = str(w.files)
@@ -467,6 +484,16 @@ def run(w):
     w.keys("Escape")
     check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
 
+    w.keys("End", "space")
+    check("Space: Peek, a dialog named by the file, saying what it is and its keys",
+          until(lambda: w.focused().get_role_name() == "dialog"
+                and w.focused().get_name() == fourth
+                and "Escape to close" in (w.focused().get_description() or "")))
+    check("and the file's text, in a document named by it",
+          until(lambda: "a report" in [n.get_name() for n in children_of(w, "document frame", fourth)]))
+    w.keys("Escape", "Home")
+    check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
+
     w.keys("ctrl+2")
     check("the grid says the same entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
 
@@ -496,6 +523,15 @@ def run(w):
         lambda: (lambda f: f is not None and f.get_role_name() == "panel"
                  and f.get_name() == "empty"
                  and "empty" in (f.get_description() or "").lower())(w.focused())))
+
+    w.keys("F4")
+    check("F4: the terminal, named so", hears(w, "terminal 'Terminal' focused"))
+    w.type("echo hello-a11y")
+    w.keys("Return")
+    check("what it shows is read as text: the command and what it printed",
+          until(lambda: text_of(w.focused())[0].count("hello-a11y") == 2, 30)
+          or print("  read:", text_of(w.focused())))
+    w.keys("F4")
 
     w.keys("F6")
     check("F6: the sidebar's first group, in the sidebar's tree",
