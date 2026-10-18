@@ -43,11 +43,11 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   (`docs/HELP-WANTED.md`). The user reports hosted CI is too slow;
   routine CI is now reduced to essentials, with full checks and package
   builds retained as manual fallbacks. Remote runs were not inspected.
-- **Budgets:** idle own share 94.1 MiB of 100 on Zed's gpui (session
-  display, 2026-10-18; 93.4 for gpui 0.2.2 that day, ADR-064). First
-  frame median 140.0 ms of 150 on 0.2.2 (2026-10-12): not measured again
-  on Zed's gpui, as the machine was busy. `just bench-check` meets all
-  44 budgets (2026-10-11, load average 3 to 5.5).
+- **Budgets:** idle own share 92.5 MiB of 100 on Zed's gpui (session
+  display, quiet, 2026-10-18; 92.3 for gpui 0.2.2, ADR-064). First frame
+  of 150 ms: a median of 119 ms on Zed's gpui and 109 on 0.2.2, the least
+  110 and 100 (ten starts each, alternated). `just bench-check` meets all
+  44 budgets (2026-10-18, quiet).
 - **Latest work (2026-10-13):** Release 0.1.0; before it, Properties
   (ADR-058), archives made (ADR-059), keys changed where they are listed
   (ADR-024), the tarball, and a review before tagging. Before (2026-10-11
@@ -1154,7 +1154,8 @@ with Zed's pins, git ones included (`deny.toml` names each), and the
 patches Skwir still needs.
 
 - **The patches.** Twelve of the 24 were ported. Ten are gone, because
-  Zed's main branch has its own answer, and 0014 is left out.
+  Zed's main branch has its own answer. 0014 returns as 0029
+  (2026-10-18): Vulkan starts on a thread while the platform sets up.
 - **Five patches are new:**
   - 0001 now carries the drag's icon;
   - 0025 takes Vulkan alone where it has a GPU;

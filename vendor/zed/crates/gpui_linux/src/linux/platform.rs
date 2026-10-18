@@ -334,6 +334,12 @@ impl LinuxPlatform {
             #[cfg(feature = "wayland")]
             wayland_socket: crate::linux::take_wayland_socket_from_environment(),
         };
+        // SKWIR: Vulkan starts while the rest is set up, where a window may
+        // follow (patch 0029).
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        if select_backend(allowed_modes, &GraphicalEnvironment::detect()).is_some() {
+            gpui_wgpu::WgpuContext::start_vulkan();
+        }
         let event_loop = EventLoop::try_new().expect("failed to create Linux event loop");
         let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
         let common = Rc::new(RefCell::new(common));
@@ -386,11 +392,16 @@ impl LinuxPlatform {
                     .unwrap_or_else(|error| panic!("{error:#}"));
                 self.replace_connection(connection);
             }
-            None => assert!(
-                self.allowed_modes.contains(WindowingModes::HEADLESS),
-                "{:?} does not allow starting headless, and no allowed display server was given",
-                self.allowed_modes
-            ),
+            None => {
+                assert!(
+                    self.allowed_modes.contains(WindowingModes::HEADLESS),
+                    "{:?} does not allow starting headless, and no allowed display server was given",
+                    self.allowed_modes
+                );
+                // SKWIR: no window follows.
+                #[cfg(any(feature = "wayland", feature = "x11"))]
+                gpui_wgpu::WgpuContext::forget_started_vulkan();
+            }
         }
     }
 

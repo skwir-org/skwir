@@ -83,7 +83,8 @@ elements are yet to use it.
   main branch has its own answer to each (`vendor/zed/README.skwir.md`).
   - 0003's invariant changes reason (`docs/invariants/media.md`): wgpu keeps a
     texture until the GPU is done with it.
-  - 0014, a few milliseconds of the first frame, is not ported.
+- **0014 returns as 0029:** Vulkan starts on a thread of its own while the
+  fonts, the connection to the display server and Skwir's setup go on.
 - **What stays as it was:**
   - X11 and Windows hand no drag out of the window.
   - X11 polls at the display's rate.
@@ -104,34 +105,49 @@ elements are yet to use it.
 
 ## Measurements
 
-Reference machine (ADR-000), Hyprland on its NVIDIA GPU. Release builds of
-main (4e846d7, gpui 0.2.2) and of this change, measured with
-`tools/measure/idle-pss.py`: three starts each, alternated over three rounds
-on 2026-10-18. The table gives the medians.
+Reference machine (ADR-000), Hyprland on its NVIDIA GPU, on a quiet machine
+(load average about 1). Release builds of main (c0d330d, gpui 0.2.2) and of
+this change, measured with `tools/measure/idle-pss.py`: three starts each,
+alternated over three rounds on 2026-10-18. The table gives the medians of
+the nine.
 
 | PSS, MiB                  | gpui 0.2.2 | Zed's gpui |
 | ------------------------- | ---------: | ---------: |
-| anonymous (heap, stacks)  |       25.5 |       28.5 |
-| Skwir's binary            |       41.9 |       47.2 |
-| GPU buffers               |       19.5 |       11.6 |
-| other files and libraries |        6.6 |        6.7 |
-| **own share**             |   **93.4** |   **94.1** |
-| GPU driver code           |       33.1 |       43.6 |
-| total                     |      126.6 |      137.7 |
+| anonymous (heap, stacks)  |       25.4 |       28.5 |
+| Skwir's binary            |       42.2 |       47.3 |
+| GPU buffers               |       19.6 |       11.6 |
+| other files and libraries |        5.3 |        5.4 |
+| **own share**             |   **92.3** |   **92.5** |
+| GPU driver code           |       18.0 |       28.5 |
+| total                     |      110.3 |      121.1 |
 
-- **The own share** (ADR-033's budget) grows 0.7 MiB and stays within 100 MiB.
-  wgpu holds 8 MiB fewer GPU buffers than Blade did, while the heap and the
-  code grow.
-- **NVIDIA's driver** maps 10.5 MiB more of its code for wgpu than for Blade.
-  That is outside the budget, and every GPU client on the machine shares
-  those pages.
-- **The first frame** could not be compared on 2026-10-18. Other programs
-  kept the load average between 4 and 17, and starts of the two builds
-  ranged from 136 to 802 ms. On 2026-10-17, quiet and alternated, the medians
-  were about 118 ms on 0.2.2 and 126 ms on Zed's gpui, then built with wgpu
-  30.0.1. The 150 ms budget is to be checked again on a quiet machine.
+- **The own share** (ADR-033's budget) is the same within 0.2 MiB. wgpu holds
+  8 MiB fewer GPU buffers than Blade did, and the heap and the code grow by
+  as much.
+- **NVIDIA's driver** maps 10.5 MiB more of its code for wgpu than for Blade:
+  its ray-tracing core (`libnvidia-rtcore`), which loads when wgpu-hal reads
+  an adapter's properties, as any wgpu program does. That is outside the
+  budget, and every GPU client on the machine shares those pages.
+- **The first frame** stays within the 150 ms budget, about 10 ms later than
+  on gpui 0.2.2. Ten starts of each build, alternated back to back, timed by
+  the shell's log line:
+
+  | First frame, ms         | least | median |
+  | ----------------------- | ----: | -----: |
+  | gpui 0.2.2 (with 0014)  |   100 |    109 |
+  | Zed's gpui without 0029 |   121 |    125 |
+  | Zed's gpui with 0029    |   110 |    119 |
+
+  - With 0029, Vulkan's adapters are found 51 ms after the start instead of
+    59.
+  - What remains is on wgpu's path, after the adapters. Making the device and
+    testing it on the window's surface takes 46 ms (median), on the main
+    thread, as upstream chooses the adapter by that test. The pipelines and
+    the frame take 22 ms more.
+  - idle-pss's starts, each after 15 s of idle, spread more (111 to 184 ms):
+    medians of 143, 157 and 158 ms, least 111, 152 and 128.
 - **Without a GPU** (lavapipe on a headless sway, 2026-10-17), the own share
   went from 91.2 to 106.7 MiB: lavapipe's swapchain images are Skwir's own
   memory there, and wgpu keeps three. The first frame went 8 ms later.
   0013 halved the pipeline phase (66 to 35 ms).
-- **The stripped binary** went from 67.7 to 75.7 MB.
+- **The stripped binary** went from 67.7 to 75.8 MB.

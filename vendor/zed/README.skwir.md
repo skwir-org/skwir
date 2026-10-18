@@ -53,6 +53,7 @@ at the vendored commit.
 | `0026-hide-cursor-until-mouse-moves` | `App::hide_cursor_until_mouse_moves` public | — |
 | `0027-manifest-built-on-windows` | The Windows manifest embedded only when built on Windows | — |
 | `0028-gpui-not-published` | gpui unpublished, as Skwir's path dependency | Skwir's only |
+| `0029-gpu-context-on-a-thread` | Vulkan starts on a thread of its own while the platform sets up (0014, on wgpu) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -79,9 +80,9 @@ Zed's main branch has its own answer to each of these patches:
 - **0018** (an ellipsis is no place to break): `…` is closing punctuation in
   `is_word_char`.
 
-Not ported:
+Under another number:
 
-- **0014** (GPU context on a thread): a few milliseconds of the first frame.
+- **0014** (GPU context on a thread): now 0029, on wgpu.
 - **0021**: now part of 0024.
 
 ### 0001: Wayland drag icon
@@ -310,6 +311,33 @@ tests build from Linux without it.
 
 `publish = false`: `cargo deny` allows a path dependency without a version
 only from an unpublished crate.
+
+### 0029: GPU context on a thread
+
+0014 on wgpu. Upstream makes the GPU context when the first window opens,
+after the fonts, the connection to the display server and the app's own
+setup. Loading the driver takes longer than any of them. On NVIDIA that is
+the Vulkan loader, every ICD, NVIDIA's GL core, its shader compiler and its
+ray-tracing core, which wgpu-hal's adapter query loads.
+
+- `LinuxPlatform::new` starts Vulkan's instance and the enumeration of its
+  adapters on a thread of its own (`WgpuContext::start_vulkan`). It does so
+  where the environment names a display server the platform may connect to.
+- `WgpuContext::vulkan_alone` takes that answer for the first window. It
+  makes one in place where no thread could be made, and when a lost device
+  is recovered.
+- A platform that starts headless after all lets it go.
+- Vulkan's instance takes no display: `create_surface` gives a surface its
+  window's.
+
+Ten starts of each build, alternated back to back on a quiet machine
+(2026-10-18):
+- the adapters were found 51 ms after the start instead of 59;
+- the first frame came at 119 ms instead of 125 (medians); on gpui 0.2.2 it
+  came at 109.
+
+The device, made and tested on the window's surface, stays on the window's
+path (ADR-064).
 
 ## Adding or changing a patch
 

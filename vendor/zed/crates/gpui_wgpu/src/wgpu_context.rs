@@ -7,6 +7,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wgpu::TextureFormat;
 
+/// SKWIR: what [`WgpuContext::start_vulkan`] started, until the first window
+/// takes it.
+#[cfg(not(target_family = "wasm"))]
+static STARTED_VULKAN: std::sync::Mutex<Option<std::thread::JoinHandle<(wgpu::Instance, bool)>>> =
+    std::sync::Mutex::new(None);
+
 #[derive(Clone)]
 pub struct WgpuContext {
     pub instance: wgpu::Instance,
@@ -477,11 +483,55 @@ impl WgpuContext {
     /// Vulkan offers no GPU (no driver, or lavapipe alone beside a GPU that
     /// only GL drives: an old one, a virtual machine's), the caller takes
     /// [`Self::instance`], whose adapters are ranked GPU first.
+    ///
+    /// The answer [`Self::start_vulkan`] started, or one made here. Vulkan's
+    /// instance takes no display: a surface is given its window's.
     #[cfg(not(target_family = "wasm"))]
-    pub fn vulkan_alone(
-        display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>,
-    ) -> (wgpu::Instance, bool) {
-        let vulkan = Self::instance_with(wgpu::Backends::VULKAN, display);
+    pub fn vulkan_alone() -> (wgpu::Instance, bool) {
+        let started = STARTED_VULKAN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        match started.map(std::thread::JoinHandle::join) {
+            Some(Ok(vulkan)) => vulkan,
+            Some(Err(_)) => {
+                log::warn!("starting Vulkan on its own thread panicked; trying here");
+                Self::make_vulkan_alone()
+            }
+            None => Self::make_vulkan_alone(),
+        }
+    }
+
+    /// SKWIR: starts [`Self::vulkan_alone`]'s work on a thread of its own.
+    /// Loading the GPU driver takes longer than anything else before the
+    /// first window (the fonts, the connection to the display server, the
+    /// app's own setup), which goes on meanwhile; the first window's context
+    /// takes it. Where no thread can be made, that window makes it.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn start_vulkan() {
+        if let Ok(thread) = std::thread::Builder::new()
+            .name("gpu-init".into())
+            .spawn(Self::make_vulkan_alone)
+        {
+            *STARTED_VULKAN
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(thread);
+        }
+    }
+
+    /// SKWIR: lets go of what [`Self::start_vulkan`] started, for a platform
+    /// that will open no window after all.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn forget_started_vulkan() {
+        STARTED_VULKAN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn make_vulkan_alone() -> (wgpu::Instance, bool) {
+        let vulkan = Self::instance_with(wgpu::Backends::VULKAN, None);
         let has_a_gpu = gpui::block_on(vulkan.enumerate_adapters(wgpu::Backends::VULKAN))
             .iter()
             .any(|adapter| adapter.get_info().device_type != wgpu::DeviceType::Cpu);
