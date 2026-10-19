@@ -2,6 +2,8 @@
 //! between them, in one frame of reference with Z up, and how many objects
 //! it was made of. Bounded as it is read: past the triangles allowed, the
 //! read stops with a reason rather than draw a part of the model.
+use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::path::Path;
 
 pub type Point = [f32; 3];
@@ -14,7 +16,90 @@ pub struct Mesh {
     pub objects: usize,
     /// The unit the file states its lengths in.
     pub unit: Option<&'static str>,
+    /// Whether no two positions are the same: an STL's are made one as
+    /// they are read, and need not be again to tell whether it is closed.
+    welded: bool,
     most: usize,
+}
+
+/// A position as its bits, which make two positions one when they are
+/// the same.
+#[derive(PartialEq, Eq)]
+struct Key([u32; 3]);
+
+impl Hash for Key {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let [x, y, z] = self.0;
+        state.write_u64(
+            (u64::from(x) << 32 | u64::from(y))
+                ^ u64::from(z)
+                    .rotate_left(23)
+                    .wrapping_mul(0x9e37_79b9_7f4a_7c15),
+        );
+    }
+}
+
+/// What `Key` writes, mixed (`SplitMix64`'s finalizer): std's `SipHash`
+/// guards against chosen collisions, which only slow a model down, at a
+/// third of the read's time.
+#[derive(Default)]
+struct Mix(u64);
+
+impl Hasher for Mix {
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.write_u64(u64::from(*byte));
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = self.0.rotate_left(5) ^ value;
+    }
+
+    fn finish(&self) -> u64 {
+        let mut x = self.0;
+        x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        x ^ (x >> 31)
+    }
+}
+
+/// Positions made one where their bits are the same, numbered in the order
+/// first seen.
+struct Welder {
+    ids: HashMap<Key, u32, BuildHasherDefault<Mix>>,
+    points: Vec<Point>,
+}
+
+impl Key {
+    fn of(p: Point) -> Self {
+        Key(p.map(|v| (v + 0.).to_bits()))
+    }
+
+    fn hash(&self) -> u64 {
+        let mut mix = Mix::default();
+        Hash::hash(self, &mut mix);
+        mix.finish()
+    }
+}
+
+impl Welder {
+    fn with_capacity(points: usize) -> Self {
+        Welder {
+            ids: HashMap::with_capacity_and_hasher(points, BuildHasherDefault::default()),
+            points: Vec::with_capacity(points),
+        }
+    }
+
+    /// `p`'s number, a new one if it was not seen.
+    fn id(&mut self, p: Point) -> u32 {
+        let next = u32::try_from(self.points.len()).unwrap_or(u32::MAX);
+        let id = *self.ids.entry(Key::of(p)).or_insert(next);
+        if id == next {
+            self.points.push(p);
+        }
+        id
+    }
 }
 
 /// A 4 × 3 affine transform, as 3MF writes one (rows: the images of X, Y
@@ -170,43 +255,73 @@ impl Mesh {
     /// Whether every edge joins exactly two triangles, the points welded
     /// where they are the same, and if so the volume enclosed.
     pub fn closed_volume(&self) -> Option<f64> {
-        use std::collections::HashMap;
-        let mut ids: HashMap<[u32; 3], u32> = HashMap::with_capacity(self.positions.len());
-        let welded: Vec<u32> = self
-            .positions
-            .iter()
-            .map(|p| {
-                let key = p.map(|v| (v + 0.).to_bits());
-                let next = u32::try_from(ids.len()).unwrap_or(u32::MAX);
-                *ids.entry(key).or_insert(next)
-            })
-            .collect();
-        let mut edges: Vec<(u32, u32)> = Vec::with_capacity(self.triangles.len() * 3);
-        for t in &self.triangles {
-            let [a, b, c] = t.map(|i| welded[i as usize]);
-            if a == b || b == c || a == c {
-                continue;
-            }
-            for (from, to) in [(a, b), (b, c), (c, a)] {
-                edges.push((from.min(to), from.max(to)));
-            }
+        let welded: Option<Vec<u32>> = (!self.welded).then(|| {
+            let mut welder = Welder::with_capacity(self.positions.len());
+            self.positions.iter().map(|p| welder.id(*p)).collect()
+        });
+        let id = |i: u32| welded.as_ref().map_or(i, |welded| welded[i as usize]);
+        // Each triangle's edges, an edge as one number, its smaller end
+        // first, skipping triangles that are a line or a point.
+        let edges_of = |t: &[u32; 3]| {
+            let [a, b, c] = t.map(id);
+            let flat = a == b || b == c || a == c;
+            [(a, b), (b, c), (c, a)]
+                .map(|(from, to)| u64::from(from.min(to)) << 32 | u64::from(from.max(to)))
+                .into_iter()
+                .filter(move |_| !flat)
+        };
+        // Grouped by their smaller end, so an edge's copies share a group,
+        // and each group sorted and counted on a thread of its own.
+        let points = welded
+            .as_ref()
+            .map_or(self.positions.len(), Vec::len)
+            .max(1) as u64;
+        let groups = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZero::get)
+            .clamp(1, 16);
+        let group = |edge: u64| ((edge >> 32) * groups as u64 / points) as usize;
+        let mut counts = vec![0usize; groups];
+        for edge in self.triangles.iter().flat_map(edges_of) {
+            counts[group(edge)] += 1;
         }
-        if edges.is_empty() {
+        if counts.iter().all(|n| *n == 0) {
             return None;
         }
-        edges.sort_unstable();
-        let mut run = 1;
-        for pair in edges.windows(2) {
-            if pair[0] == pair[1] {
-                run += 1;
-            } else {
-                if run != 2 {
-                    return None;
-                }
-                run = 1;
-            }
+        let mut starts: Vec<usize> = counts
+            .iter()
+            .scan(0, |at, n| {
+                let start = *at;
+                *at += n;
+                Some(start)
+            })
+            .collect();
+        let mut edges = vec![0u64; counts.iter().sum()];
+        for edge in self.triangles.iter().flat_map(edges_of) {
+            let at = &mut starts[group(edge)];
+            edges[*at] = edge;
+            *at += 1;
         }
-        if run != 2 {
+        // Each edge in exactly two triangles.
+        let paired = |group: &mut [u64]| {
+            group.sort_unstable();
+            group
+                .chunk_by(|a, b| a == b)
+                .all(|copies| copies.len() == 2)
+        };
+        let mut rest = edges.as_mut_slice();
+        let closed = std::thread::scope(|scope| {
+            let mut running = Vec::with_capacity(groups);
+            for n in counts {
+                let (group, after) = rest.split_at_mut(n);
+                rest = after;
+                running.push(scope.spawn(move || paired(group)));
+            }
+            running
+                .into_iter()
+                .all(|thread| thread.join().unwrap_or(false))
+        });
+        drop(edges);
+        if !closed {
             return None;
         }
         let volume: f64 = self
@@ -227,7 +342,10 @@ impl Mesh {
 pub fn read_bounded(path: &Path, most: u64) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let file = std::fs::File::open(path).map_err(|e| format!("opening the file: {e}"))?;
-    let mut bytes = Vec::new();
+    // As long as it says, so it is read in one go; what it says is only a
+    // start, the read stops past `most` all the same.
+    let said = file.metadata().map_or(0, |m| m.len()).min(most + 1);
+    let mut bytes = Vec::with_capacity(usize::try_from(said).unwrap_or(0));
     file.take(most + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| format!("reading the file: {e}"))?;
@@ -237,12 +355,19 @@ pub fn read_bounded(path: &Path, most: u64) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-/// STL, ASCII or binary; a binary file says its triangles first.
+/// STL, ASCII or binary. A binary file says its triangles after a header of
+/// 80 bytes, then is 50 bytes a triangle: one that is that long is binary,
+/// whatever its header says (some begin it `solid`, as ASCII ones do).
 pub fn stl(bytes: &[u8], mesh: &mut Mesh) -> Result<(), String> {
-    if bytes.len() >= 84 && !bytes.starts_with(b"solid") {
-        let count = u32::from_le_bytes([bytes[80], bytes[81], bytes[82], bytes[83]]) as usize;
-        if count > mesh.most {
-            return Err(format!("the model has more than {} triangles", mesh.most));
+    if let Some(count) = bytes.get(80..84) {
+        let count = u32::from_le_bytes([count[0], count[1], count[2], count[3]]) as usize;
+        let binary = !bytes.starts_with(b"solid")
+            || count.checked_mul(50).and_then(|n| n.checked_add(84)) == Some(bytes.len());
+        if binary {
+            if count > mesh.most {
+                return Err(mesh.too_many());
+            }
+            return binary_stl(&bytes[84..], count, mesh);
         }
     }
     let read = stl_io::read_stl(&mut std::io::Cursor::new(bytes))
@@ -253,7 +378,102 @@ pub fn stl(bytes: &[u8], mesh: &mut Mesh) -> Result<(), String> {
         .iter()
         .map(|f| f.vertices.map(|i| u32::try_from(i).unwrap_or(u32::MAX)));
     mesh.objects = 1;
-    mesh.add(&points, triangles, &IDENTITY)
+    mesh.add(&points, triangles, &IDENTITY)?;
+    // stl_io made the same positions one.
+    mesh.welded = true;
+    Ok(())
+}
+
+/// A binary STL's `count` triangles, from `body`: each a normal (not read),
+/// three corners and two bytes of attributes, little-endian. Corners that
+/// are the same are made one as they are read.
+fn binary_stl(body: &[u8], count: usize, mesh: &mut Mesh) -> Result<(), String> {
+    let faces = body
+        .get(..count * 50)
+        .ok_or("the STL model ends early")?
+        .as_chunks::<50>()
+        .0;
+    let corner = |c: usize| {
+        let face = &faces[c / 3];
+        let at = |i: usize| f32::from_le_bytes([face[i], face[i + 1], face[i + 2], face[i + 3]]);
+        let start = 12 + c % 3 * 12;
+        [at(start), at(start + 4), at(start + 8)]
+    };
+    let (positions, ids) = weld(count * 3, corner);
+    mesh.objects = 1;
+    mesh.positions = positions;
+    mesh.triangles = ids.as_chunks::<3>().0.to_vec();
+    mesh.welded = true;
+    Ok(())
+}
+
+/// `corners` points (`corner` gives each) made one where they are the same:
+/// the points, and each corner's number among them. Shared out between
+/// threads by each point's hash, so the same point always goes to the same
+/// thread, which numbers its own; the numbers are in no particular order
+/// (`Mesh::compacted` puts them in the order first used).
+fn weld(corners: usize, corner: impl Fn(usize) -> Point + Sync) -> (Vec<Point>, Vec<u32>) {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    let threads = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZero::get)
+        .clamp(1, 16);
+    // Small meshes, or one thread: in one go, in order.
+    if threads == 1 || corners < 300_000 {
+        let mut welder = Welder::with_capacity(corners / 6 + 3);
+        let ids = (0..corners).map(|c| welder.id(corner(c))).collect();
+        return (welder.points, ids);
+    }
+    // Which thread welds each corner, found once.
+    let mut shard = vec![0u8; corners];
+    let span = corners.div_ceil(threads);
+    std::thread::scope(|scope| {
+        for (part, slice) in shard.chunks_mut(span).enumerate() {
+            let corner = &corner;
+            scope.spawn(move || {
+                for (i, to) in slice.iter_mut().enumerate() {
+                    let key = Key::of(corner(part * span + i));
+                    *to = (key.hash() % threads as u64) as u8;
+                }
+            });
+        }
+    });
+    // Each thread's own points, and every corner's number among them.
+    let local: Vec<AtomicU32> = (0..corners).map(|_| AtomicU32::new(0)).collect();
+    let welded: Vec<Vec<Point>> = std::thread::scope(|scope| {
+        let running: Vec<_> = (0..threads)
+            .map(|me| {
+                let (shard, local, corner) = (&shard, &local, &corner);
+                scope.spawn(move || {
+                    let mut welder = Welder::with_capacity(corners / 6 / threads + 3);
+                    for (c, owner) in shard.iter().enumerate() {
+                        if usize::from(*owner) == me {
+                            local[c].store(welder.id(corner(c)), Ordering::Relaxed);
+                        }
+                    }
+                    welder.points
+                })
+            })
+            .collect();
+        running
+            .into_iter()
+            .map(|thread| thread.join().unwrap_or_default())
+            .collect()
+    });
+    // A thread's points follow the threads' before it.
+    let firsts: Vec<u32> = welded
+        .iter()
+        .scan(0u32, |at, points| {
+            let first = *at;
+            *at += u32::try_from(points.len()).unwrap_or(u32::MAX);
+            Some(first)
+        })
+        .collect();
+    let ids = shard
+        .iter()
+        .zip(&local)
+        .map(|(owner, id)| firsts[usize::from(*owner)] + id.load(Ordering::Relaxed))
+        .collect();
+    (welded.concat(), ids)
 }
 
 /// OBJ, its faces cut into triangles; the materials it names are not read.

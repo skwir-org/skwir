@@ -389,3 +389,84 @@ fn a_mesh_asked_for_is_written_whole_up_to_the_triangles_asked() {
     // OBJ stands on Y: turned to stand on Z.
     assert_eq!(positions, [[0., 0., 0.], [1., 0., 0.], [0., 0., 1.]]);
 }
+
+/// A cube of side `n`, each face cut into `n` × `n` squares of two
+/// triangles, wound outward: its corners are whole numbers, so the same
+/// corner is the same bits wherever it is written.
+fn fine_cube(n: u32) -> Vec<[[f32; 3]; 3]> {
+    let mut faces = Vec::new();
+    for axis in 0..3 {
+        let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+        for side in [0, n] {
+            for i in 0..n {
+                for j in 0..n {
+                    let p = |a: u32, b: u32| {
+                        let mut point = [0.; 3];
+                        point[axis] = side as f32;
+                        point[u] = a as f32;
+                        point[v] = b as f32;
+                        point
+                    };
+                    let quad = [p(i, j), p(i + 1, j), p(i + 1, j + 1), p(i, j + 1)];
+                    let mut two = [[quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]]];
+                    if side == 0 {
+                        for t in &mut two {
+                            t.swap(1, 2);
+                        }
+                    }
+                    faces.extend(two);
+                }
+            }
+        }
+    }
+    faces
+}
+
+/// Past 100,000 triangles a binary STL's corners are made one on several
+/// threads: the same points, each triangle's corners where they were.
+#[test]
+fn a_large_stl_is_welded_on_threads_as_in_one() {
+    let n = 110;
+    let faces = fine_cube(n);
+    let mut stl = vec![b' '; 80];
+    stl.extend(u32::try_from(faces.len()).unwrap().to_le_bytes());
+    for face in &faces {
+        stl.extend([0u8; 12]);
+        stl.extend(face.iter().flatten().flat_map(|v| v.to_le_bytes()));
+        stl.extend([0, 0]);
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "fine cube.stl", &stl);
+    let output = Command::new(env!("CARGO_BIN_EXE_skwir-model-worker"))
+        .arg(&path)
+        .args(["--format", "stl", "--mesh", "1000000"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let line = output.stdout.iter().position(|b| *b == b'\n').unwrap();
+    let said: serde_json::Value = serde_json::from_slice(&output.stdout[..line]).unwrap();
+    assert_eq!(said["closed"], true);
+    let volume = f64::from(n).powi(3);
+    assert!((said["volume"].as_f64().unwrap() - volume).abs() < volume * 1e-9);
+    let (positions, triangles) = mesh_after(&output.stdout[line + 1..]);
+    // Six faces of n × n squares share their edges and corners.
+    assert_eq!(positions.len() as u32, 6 * n * n + 2);
+    assert_eq!(triangles.len(), faces.len());
+    for (read, written) in triangles.iter().zip(&faces) {
+        assert_eq!(read.map(|i| positions[i as usize]), *written);
+    }
+}
+
+/// Some exporters begin a binary STL's header `solid`, as an ASCII one
+/// begins: as long as a binary file of its triangles, it is binary.
+#[test]
+fn a_binary_stl_that_begins_solid_is_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let (points, faces) = cuboid(2., 3., 4.);
+    let mut stl = binary_stl(&points, &faces);
+    stl[..12].copy_from_slice(b"solid Export");
+    let path = write(dir.path(), "exported.stl", &stl);
+    let answer = run(&path, "stl", &[]).unwrap();
+    assert_eq!(answer.facts["triangles"], 12);
+    assert_eq!(size(&answer), [2., 3., 4.]);
+}

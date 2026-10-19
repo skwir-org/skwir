@@ -1295,6 +1295,9 @@ mesh's preview was one still the helper drew on the CPU.
     and 1.47 s), and costs the window its copy of the mesh (5, 19 and
     72 MB). Turning the largest drew a frame per pointer move, 4.7 ms
     each (median), at 23% of a core; at rest, nothing.
+- The helper then read faster: four million triangles in 0.48 s instead
+  of 2.26 s (a binary STL read from its bytes, its corners made one on
+  every core through a cheap hash, the closed check grouped by thread).
 - Checked on Wayland and on X11 (Xwayland), a headless sway rendering on
   the Intel GPU; on lavapipe, the still. Not checked: the window on
   NVIDIA (the user's session), a screen reader; macOS and Windows

@@ -112,6 +112,17 @@ Windows show the still, as before.
   - turning the largest for three seconds drew a frame for each of the
     101 pointer moves, gpui's frame time 4.7 ms (median), 8.6 ms (90th
     percentile), at 23% of a core; at rest, not a tick in five seconds.
+- **The helper reads faster** (measured alone, release, the same tori):
+  2.26 s for four million triangles became 0.48 s, a million 0.6 s
+  became 0.13 s. Most of it was hashing: `stl_io` makes an STL's same
+  corners one through std's `SipHash`, and the check that a mesh is
+  closed made them one again and sorted twelve million edges on one
+  thread. A binary STL is now read from its bytes, its corners made one
+  through a cheap hash on as many threads as there are cores, each corner
+  going to the thread its hash names; the check trusts a reader that made
+  them one already, and sorts the edges in groups, a thread each. Taking
+  the helper's output back and checking it costs the window about 0.1 s
+  at four million triangles.
 - **The window keeps the mesh while it shows it,** besides the GPU's
   copy, so a device lost and found again uploads it anew. Giving it back
   once uploaded would halve a large model's cost to the window.
@@ -125,5 +136,4 @@ Windows show the still, as before.
     still there for good;
   - perspective as a choice; smooth shading for scans; a model's own
     colours and textures (glTF, 3MF, PLY);
-  - turning a 3MF that stores a picture, which today shows the picture;
-  - reading faster in the helper, which most of a large model's wait is.
+  - turning a 3MF that stores a picture, which today shows the picture.
