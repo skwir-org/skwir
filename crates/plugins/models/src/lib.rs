@@ -145,12 +145,14 @@ impl Format {
     }
 
     /// What the file says of itself, its picture at most `side` pixels on
-    /// its longer side.
+    /// its longer side, or its mesh when it is asked to be turned; a model
+    /// that stores a picture shows it while `picture_first`.
     fn read(
         self,
         path: &Path,
         side: u32,
         asked: Asked,
+        picture_first: bool,
         cancel: &CancelToken,
     ) -> anyhow::Result<Found> {
         skwir_platform::thumb_providers::ensure_file(path)?;
@@ -158,7 +160,7 @@ impl Format {
             Format::Blend => blend::read(path, side, cancel),
             Format::Gcode => gcode::text(path, side, cancel),
             Format::Bgcode => gcode::binary(path, side, cancel),
-            Format::ThreeMf => package::three_mf(path, side, asked, cancel),
+            Format::ThreeMf => package::three_mf(path, side, asked, picture_first, cancel),
             Format::FreeCad => package::freecad(path, side, cancel),
             Format::Dwg => cad::dwg(path, side, cancel),
             Format::Dxf => cad::dxf(path, side, cancel),
@@ -178,6 +180,8 @@ struct Found {
     picture: Option<Image>,
     /// The mesh itself, read for a window that turns it (`Asked::Turned`).
     mesh: Option<Arc<skwir_core::inspection::Mesh>>,
+    /// Whether its mesh can be turned in 3D, whichever was shown.
+    mesh_available: bool,
     /// Facts in the order they are shown.
     details: Vec<(String, String)>,
     /// What was left out, and why.
@@ -251,13 +255,15 @@ impl PreviewProvider for Provider {
             Format::Mesh(_) | Format::ThreeMf => MESH_SIDE,
             _ => limits::IMAGE_DISPLAY_SIDE,
         };
-        // A window that draws meshes turns them.
-        let asked = if view.meshes {
-            Asked::Turned
+        // A window that draws meshes turns a model, unless the user chose
+        // its picture; one that stores a picture shows it, unless the user
+        // chose 3D. Past `model::VIEW_TRIANGLES`, only when asked whole.
+        let asked = if view.meshes && view.turned != Some(false) {
+            Asked::Turned { whole: view.whole }
         } else {
             Asked::Preview
         };
-        let found = format.read(&path, side, asked, cancel)?;
+        let found = format.read(&path, side, asked, view.turned != Some(true), cancel)?;
         let notice = found.notice.unwrap_or_default();
         let details = found
             .details
@@ -269,6 +275,7 @@ impl PreviewProvider for Provider {
                 kind: InspectionKind::Model,
                 title: found.title,
                 mesh: Some(mesh),
+                mesh_available: true,
                 details,
                 notice,
                 ..Inspection::default()
@@ -281,6 +288,7 @@ impl PreviewProvider for Provider {
                 image: Some(picture),
                 details,
                 source_available: format.is_text(),
+                mesh_available: found.mesh_available,
                 notice,
                 ..Inspection::default()
             },
@@ -350,7 +358,7 @@ impl ThumbnailProvider for Pictures {
             return Ok(None);
         }
         Ok(format
-            .read(&path, req.size.pixels(), Asked::Thumbnail, cancel)?
+            .read(&path, req.size.pixels(), Asked::Thumbnail, true, cancel)?
             .picture)
     }
 }
@@ -627,6 +635,64 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(data.mesh.is_none() && data.image.is_some());
+    }
+
+    /// A 3MF of a tetrahedron, with the picture its slicer stored.
+    fn pictured_3mf(path: &Path) {
+        let model = r#"<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="0"/><vertex x="0" y="0" z="10"/></vertices><triangles><triangle v1="0" v2="2" v3="1"/><triangle v1="0" v2="1" v3="3"/><triangle v1="1" v2="2" v3="3"/><triangle v1="2" v2="0" v3="3"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>"#;
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(6, 4, image::Rgba([9, 8, 7, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        for (name, bytes) in [
+            ("3D/3dmodel.model", model.as_bytes()),
+            ("Metadata/thumbnail.png", png.as_slice()),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            std::io::Write::write_all(&mut zip, bytes).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    /// A model that stores a picture shows it unless 3D is chosen; a mesh
+    /// is turned unless its picture is chosen; both say they can turn.
+    #[test]
+    fn a_model_is_turned_or_pictured_as_chosen() {
+        if !with_model_worker() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let ask = |path: &Path, turned: Option<bool>| {
+            let view = InspectRequest {
+                meshes: true,
+                turned,
+                ..InspectRequest::default()
+            };
+            Provider
+                .inspect(&request(path), &view, &CancelToken::new())
+                .unwrap()
+                .unwrap()
+        };
+        let package = dir.path().join("a slicer’s plate.3mf");
+        pictured_3mf(&package);
+        let data = ask(&package, None);
+        assert_eq!(data.kind, InspectionKind::Text);
+        let picture = data.image.as_ref().expect("the stored picture");
+        assert_eq!((picture.width, picture.height), (6, 4));
+        assert!(data.mesh_available);
+        let data = ask(&package, Some(true));
+        assert_eq!(data.kind, InspectionKind::Model);
+        assert_eq!(data.mesh.expect("the mesh").triangles(), 4);
+        assert!(data.mesh_available);
+        // An STL: turned unless its picture is chosen.
+        let stl = dir.path().join("cube.stl");
+        std::fs::write(&stl, cube_stl()).unwrap();
+        assert_eq!(ask(&stl, None).kind, InspectionKind::Model);
+        let data = ask(&stl, Some(false));
+        assert!(data.image.is_some() && data.mesh.is_none());
+        assert!(data.mesh_available);
     }
 
     #[test]

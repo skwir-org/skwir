@@ -1811,6 +1811,25 @@ impl Shell {
                     remembered = true;
                 }
             }
+            "turn" => {
+                // The other way from what is shown, and so for every file of
+                // its type from now on (`TurnedTypes`).
+                let (turned, typed) = match &self.preview.content {
+                    Some(PreviewContent::Inspection(display)) => (
+                        display.data.kind != InspectionKind::Model,
+                        display.typed.as_ref(),
+                    ),
+                    _ => return,
+                };
+                state.request.turned = Some(turned);
+                // Asked for this file: past the size a model is turned at
+                // unasked, which is never remembered.
+                state.request.whole = turned;
+                if let Some(typed) = typed {
+                    self.preview.turned_types.set(typed, turned);
+                    remembered = true;
+                }
+            }
             "page" => {
                 state.request.offset = args["offset"].as_u64().unwrap_or(0);
                 state.request.target = None;
@@ -2309,6 +2328,22 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             Slot::View,
             1,
             button("inspect-auto", "back", "Default presentation", "auto"),
+        ));
+    }
+    // A model turned in 3D, or shown by its picture: one button, lit while
+    // it turns.
+    if data.mesh_available && shell.draws_meshes {
+        bar.push(Item::button(
+            Slot::View,
+            2,
+            button(
+                "inspect-turn",
+                "cube",
+                "The model turned in 3D, or its picture",
+                "turn",
+            )
+            .label(label::TURN)
+            .active(data.kind == InspectionKind::Model),
         ));
     }
     if data.source_available {

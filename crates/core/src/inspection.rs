@@ -12,10 +12,21 @@ pub struct InspectRequest {
     pub target: Option<String>,
     pub query: Option<String>,
     /// Whether the asker draws a 3D mesh itself (a window whose GPU has a
-    /// pass for it, ADR-067): a provider then hands over the mesh it read
-    /// (`Inspection::mesh`) rather than a picture of it.
+    /// pass for it, ADR-067): a provider may then hand over the mesh it
+    /// read (`Inspection::mesh`) rather than a picture of it.
     #[serde(default)]
     pub meshes: bool,
+    /// Whether the user wants a model turned in 3D (`Some(true)`) or shown
+    /// by its picture (`Some(false)`), when the asker draws meshes; `None`
+    /// is the provider's way: a mesh turned, a model that stores a picture
+    /// shown by it.
+    #[serde(default)]
+    pub turned: Option<bool>,
+    /// Whether the user asked to see all of this file, past the size at
+    /// which a preview shows less to stay quick (a mesh too large to turn
+    /// unasked). Never past a bound that keeps hostile input out.
+    #[serde(default)]
+    pub whole: bool,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InspectionKind {
@@ -75,6 +86,9 @@ pub struct Inspection {
     pub text: Option<TextFile>,
     /// What an [`InspectionKind::Model`] shows.
     pub mesh: Option<std::sync::Arc<Mesh>>,
+    /// Whether the file is a model whose mesh can be turned in 3D, asked
+    /// with `InspectRequest::meshes` and `turned`.
+    pub mesh_available: bool,
 }
 
 /// A 3D mesh as a provider read it (ADR-067): positions, in the file's

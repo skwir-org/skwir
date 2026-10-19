@@ -68,6 +68,10 @@ pub const READING_WIDTH_KEY: &str = "reading.width";
 pub const PRINTED_PAGES_KEY: &str = "reading.printed_pages";
 /// Whether a text's long lines wrap to the panel (`ui.wrap_lines`).
 pub const WRAP_LINES_KEY: &str = "reading.wrap_lines";
+/// Whether a 3D model is drawn in perspective (`ui.model_perspective`).
+pub const MODEL_PERSPECTIVE_KEY: &str = "reading.model_perspective";
+/// Whether a 3D model is shaded smoothly (`ui.model_smooth`).
+pub const MODEL_SMOOTH_KEY: &str = "reading.model_smooth";
 /// How long a slideshow shows each picture, in seconds
 /// (`fullscreen.rs`), chosen here or from its bar.
 pub const SLIDESHOW_KEY: &str = "reading.slideshow";
@@ -356,6 +360,24 @@ pub fn declare(app: &App) {
             &SLIDESHOW_PACES,
         )
         .section("Pictures"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            MODEL_PERSPECTIVE_KEY,
+            "Perspective",
+            "Draw 3D models in perspective, nearer parts larger, as a camera sees them. Off, every part keeps its size at any depth, as in the model's picture and in a drawing.",
+            false,
+        )
+        .section("3D models"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            MODEL_SMOOTH_KEY,
+            "Smooth shading",
+            "Shade 3D models smoothly across their faces, as a scanned or sculpted surface reads best. Off, each face is shaded flat, so a printed part's facets and edges show.",
+            false,
+        )
+        .section("3D models"),
     );
     app.settings.declare(SettingSpec::state(
         crate::shortcuts::HINTS_KEY,
@@ -1561,7 +1583,7 @@ mod tests {
         assert_eq!(columns, standing);
         assert_eq!(
             sections(&specs, READING_OWNER),
-            ["Pages", "Text", "Code", "Pictures"]
+            ["Pages", "Text", "Code", "Pictures", "3D models"]
         );
         assert_eq!(
             page(&specs, READING_OWNER)

@@ -79,17 +79,19 @@ pub fn read(
             title: title(format).into(),
             mesh: Some(Arc::new(mesh)),
             details,
+            mesh_available: true,
             ..Found::default()
         },
         Shown::Picture(picture) => Found {
             title: title(format).into(),
             picture: Some(picture),
             details,
-            // Asked whole, and too large to turn.
-            notice: (asked == Asked::Turned).then(|| {
+            mesh_available: true,
+            // Asked to be turned, and too large to be unasked.
+            notice: matches!(asked, Asked::Turned { whole: false }).then(|| {
                 format!(
-                    "Shown as a picture: a model turned has at most {} million triangles",
-                    model::VIEW_TRIANGLES / 1_000_000
+                    "Shown as a picture: it has {:.1} million triangles. 3D turns it all the same",
+                    drawn.measures.triangles as f64 / 1e6
                 )
             }),
             ..Found::default()

@@ -124,8 +124,9 @@ pub enum Asked {
     /// The preview of the file looked at: it waits.
     Preview,
     /// The preview, for a window that draws the mesh itself: it waits, and
-    /// a mesh of up to `VIEW_TRIANGLES` comes whole, not as a picture.
-    Turned,
+    /// a mesh of up to `VIEW_TRIANGLES` comes whole, not as a picture; up to
+    /// `TRIANGLES` when the user asked for all of it (`whole`).
+    Turned { whole: bool },
     /// A thumbnail: with no turn free it answers
     /// [`skwir_core::thumbs::Busy`], and its worker goes on with other
     /// files until one is.
@@ -143,7 +144,7 @@ pub fn draw(
 ) -> anyhow::Result<Drawn> {
     let worker = WORKER.require("draw 3D models")?;
     let turn = match asked {
-        Asked::Preview | Asked::Turned => TURNS.take(cancel),
+        Asked::Preview | Asked::Turned { .. } => TURNS.take(cancel),
         Asked::Thumbnail => Some(
             TURNS
                 .try_take()
@@ -153,7 +154,11 @@ pub fn draw(
     let Some(_turn) = turn else {
         anyhow::bail!("cancelled");
     };
-    let whole = (asked == Asked::Turned).then_some(VIEW_TRIANGLES);
+    let whole = match asked {
+        Asked::Turned { whole: true } => Some(TRIANGLES),
+        Asked::Turned { whole: false } => Some(VIEW_TRIANGLES),
+        Asked::Preview | Asked::Thumbnail => None,
+    };
     draw_with(&worker, path, format, side, whole, cancel)
         .map_err(|error| crate::process::explain(&worker, cancel, error))
 }

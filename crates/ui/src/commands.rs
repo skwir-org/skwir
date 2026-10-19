@@ -517,6 +517,8 @@ const SHOWS: &[&str] = &[
     "ui.inspect",
     "ui.printed_pages",
     "ui.wrap_lines",
+    "ui.model_perspective",
+    "ui.model_smooth",
     "ui.full_width",
     "ui.note",
     "ui.reader_continuous",
@@ -1828,6 +1830,18 @@ pub fn declare_all(app: &App) {
     // The map.
     declare::<Pan>(app, "ui.map_pan", "Map: pan", "Move the map");
     // A 3D model (ADR-067).
+    declare::<On>(
+        app,
+        "ui.model_perspective",
+        "Model: perspective",
+        "Draw 3D models in perspective, nearer parts larger, or not",
+    );
+    declare::<On>(
+        app,
+        "ui.model_smooth",
+        "Model: smooth shading",
+        "Shade 3D models smoothly across their faces, or each face flat",
+    );
     declare::<Pan>(
         app,
         "ui.model_turn",

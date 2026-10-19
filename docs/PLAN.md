@@ -1298,6 +1298,12 @@ mesh's preview was one still the helper drew on the CPU.
 - The helper then read faster: four million triangles in 0.48 s instead
   of 2.26 s (a binary STL read from its bytes, its corners made one on
   every core through a cheap hash, the closed check grouped by thread).
+- Then the user's choices: the bar's 3D button switches between the model
+  turned and its picture, remembered by type (a slicer's 3MF shows its
+  stored picture until chosen); a mesh over four million triangles shows
+  its picture and 3D turns that file alone. Perspective and Smooth shading
+  are settings with bar buttons; gpui makes the normals on its upload
+  thread only once smooth shading asks, drawing flat meanwhile.
 - Checked on Wayland and on X11 (Xwayland), a headless sway rendering on
   the Intel GPU; on lavapipe, the still. Not checked: the window on
   NVIDIA (the user's session), a screen reader; macOS and Windows

@@ -36,6 +36,8 @@ pub mod label {
     pub const CONTENTS: &str = "Contents";
     pub const FIND: &str = "Find";
     pub const SOURCE: &str = "Source";
+    /// A model turned in 3D (ADR-067).
+    pub const TURN: &str = "3D";
     pub const HEX: &str = "View as hex";
     pub const ZOOM: &str = "Zoom and fit";
     pub const FULLSCREEN: &str = "Fullscreen";

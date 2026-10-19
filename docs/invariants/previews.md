@@ -139,7 +139,15 @@ A name that says nothing is not a binary file.
   `InspectRequest::meshes`). Thumbnails, an agent's preview, a window
   without a 3D pass and one drawn by lavapipe get the still.
   - The helper writes the mesh itself (`--mesh`, `Asked::Turned`) up to
-    `model::VIEW_TRIANGLES`, else its still, with a notice saying why.
+    `model::VIEW_TRIANGLES`, else its still, with a notice saying why; up
+    to `model::TRIANGLES` when the user asked for this file
+    (`InspectRequest::whole`).
+  - Whether a model is turned is the user's, by type (`TurnedTypes`,
+    `InspectRequest::turned`, the bar's 3D button): unchosen, a mesh is
+    turned and a model that stores a picture shows it. A model that can be
+    turned says so whichever is shown (`Inspection::mesh_available`), so
+    the button is offered both ways. Past `VIEW_TRIANGLES` the type's
+    choice does not apply; the button turns that file, unremembered.
   - What it wrote is taken only as long and as large as it says
     (`model::mesh_from`), every index naming a position and every
     coordinate finite (`inspection::Mesh::new`), checked again on the way
@@ -938,6 +946,12 @@ is still to come are in `docs/preview-frame.md`.
   opened.
 - The view belongs to the file: kept when it is read again, as it opened
   for another.
+- How it is drawn is the user's, for every model: Perspective and Smooth
+  shading (`reading.model_*`, `ui.model_perspective`, `ui.model_smooth`,
+  the bar's last buttons). Perspective draws the plane through the
+  model's middle at the scale it has without, so switching keeps its size.
+  Smooth shading asks gpui for normals, made once a frame asks for them;
+  it draws flat meanwhile.
 
 ### Rows
 

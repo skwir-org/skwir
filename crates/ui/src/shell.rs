@@ -151,6 +151,9 @@ pub struct Preferences {
     /// `ui.wrap_lines`: a text's long lines wrap to the panel, else go on
     /// sideways (`text_view`).
     pub wrap_lines: bool,
+    /// `ui.model_perspective` and `ui.model_smooth`: how a 3D model is
+    /// drawn.
+    pub model_look: crate::elements::model::Look,
     /// `core.close_split`: which pane closing the split takes away.
     pub close_split: crate::layout::CloseSplit,
     /// How audio and video play.
@@ -167,6 +170,7 @@ impl Default for Preferences {
             full_path: false,
             printed_pages: false,
             wrap_lines: true,
+            model_look: crate::elements::model::Look::default(),
             close_split: crate::layout::CloseSplit::Other,
             player: crate::player::PlayerPrefs::default(),
         }
@@ -736,6 +740,7 @@ impl Shell {
         }
         self.preview.properties_folds = session.properties_folds;
         self.preview.source_types = session.source_types;
+        self.preview.turned_types = session.turned_types;
         self.layout.split = session.split_panes;
         if session.player_height > 0. {
             self.player.height = session.player_height;
@@ -1453,6 +1458,24 @@ impl Shell {
         }
     }
 
+    /// `ui.model_perspective`, `ui.model_smooth`: how a 3D model is drawn.
+    /// Preferences, through `settings.apply` like the dialog's switches.
+    fn set_model_look(&mut self, look: crate::elements::model::Look, cx: &mut Context<Self>) {
+        self.prefs.model_look = look;
+        cx.notify();
+        if let Err(error) = self.app.dispatch(&Invocation::with_args(
+            "settings.apply",
+            &serde_json::json!({
+                "changes": {
+                    crate::settings::MODEL_PERSPECTIVE_KEY: look.perspective.to_string(),
+                    crate::settings::MODEL_SMOOTH_KEY: look.smooth.to_string(),
+                }
+            }),
+        )) {
+            self.set_status(format!("{error:#}"), true, cx);
+        }
+    }
+
     /// `ui.full_width`: the reading column takes the whole panel, or goes
     /// back to the width it had. The Reading width preference, so it goes
     /// through `settings.apply` like the choice in the dialog.
@@ -2084,6 +2107,19 @@ impl Shell {
                     .unwrap_or(!self.prefs.wrap_lines);
                 self.set_wrap_lines(on, cx);
             }
+            "model_perspective" | "model_smooth" => {
+                let mut look = self.prefs.model_look;
+                let switch = if name == "model_perspective" {
+                    &mut look.perspective
+                } else {
+                    &mut look.smooth
+                };
+                *switch = args
+                    .get("on")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(!*switch);
+                self.set_model_look(look, cx);
+            }
             "zoom" => {
                 let dir = arg("dir").unwrap_or_else(|| "reset".into());
                 self.zoom_step(&dir, cx);
@@ -2422,6 +2458,18 @@ impl Shell {
                 .settings
                 .get::<bool>(crate::settings::WRAP_LINES_KEY)
                 .unwrap_or(true);
+            self.prefs.model_look = crate::elements::model::Look {
+                perspective: self
+                    .app
+                    .settings
+                    .get::<bool>(crate::settings::MODEL_PERSPECTIVE_KEY)
+                    .unwrap_or(false),
+                smooth: self
+                    .app
+                    .settings
+                    .get::<bool>(crate::settings::MODEL_SMOOTH_KEY)
+                    .unwrap_or(false),
+            };
             self.read_player_prefs();
             self.columns = crate::views::list::PerColumn(
                 crate::views::list::COLUMNS.each_ref().map(|column| {

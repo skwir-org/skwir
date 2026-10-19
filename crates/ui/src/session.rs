@@ -68,6 +68,8 @@ pub struct Session {
     pub properties_folds: crate::properties::Folds,
     /// The types whose files open on their source.
     pub source_types: crate::preview::SourceTypes,
+    /// The types whose models open turned in 3D, or by their picture.
+    pub turned_types: crate::preview::TurnedTypes,
     pub timeline: bool,
     /// How tall the pinned player's dock was dragged.
     pub player_height: f32,
@@ -108,6 +110,7 @@ impl Shell {
             properties_width_share: self.preview.properties_share.beside,
             properties_folds: self.preview.properties_folds.clone(),
             source_types: self.preview.source_types.clone(),
+            turned_types: self.preview.turned_types.clone(),
             timeline: self.timeline.open,
             player_height: self.player.height,
             terminal: self.terminal.open,

@@ -67,11 +67,14 @@ fn thumbnail_target(archive: &mut Archive) -> Option<String> {
 }
 
 /// A 3MF package: its picture, the plates its slicer stored, and what its
-/// model and its slicer say.
+/// model and its slicer say. The picture it stores comes first, unless
+/// `picture_first` is false and the mesh is asked to be turned
+/// (`Asked::Turned`).
 pub fn three_mf(
     path: &Path,
     side: u32,
     asked: Asked,
+    picture_first: bool,
     cancel: &CancelToken,
 ) -> anyhow::Result<Found> {
     let mut archive = open(path, cancel)?;
@@ -107,18 +110,22 @@ pub fn three_mf(
     if let Some(info) = member(&mut archive, "Metadata/slice_info.config", bound) {
         details.extend(slice_info(&info));
     }
-    if picture.is_some() {
+    let worker = skwir_platform::model::worker_path().is_some();
+    let turned = matches!(asked, Asked::Turned { .. }) && !picture_first;
+    if picture.is_some() && !turned {
         return Ok(Found {
             title: "3MF".into(),
             picture,
             details,
+            mesh_available: worker,
             ..Found::default()
         });
     }
-    // No picture stored: the model drawn, and measured, by the helper.
+    // No picture stored, or the mesh asked for: drawn or read whole, and
+    // measured, by the helper.
     drop(archive);
     let format = skwir_platform::model::MeshFormat::ThreeMf;
-    if skwir_platform::model::worker_path().is_none() {
+    if !worker {
         return Ok(Found {
             title: "3MF".into(),
             picture: None,
@@ -353,7 +360,7 @@ mod tests {
                 ("Metadata/slice_info.config", SLICE_INFO.as_bytes()),
             ],
         );
-        let found = three_mf(&path, 256, Asked::Preview, &CancelToken::new()).unwrap();
+        let found = three_mf(&path, 256, Asked::Preview, true, &CancelToken::new()).unwrap();
         let picture = found.picture.as_ref().expect("the package thumbnail");
         assert_eq!((picture.width, picture.height), (30, 20));
         assert_eq!(detail(&found, "Made with"), Some("PrusaSlicer-2.8.1"));
@@ -376,14 +383,14 @@ mod tests {
                 ("Metadata/plate_1.png", &plate),
             ],
         );
-        let found = three_mf(&path, 256, Asked::Preview, &CancelToken::new()).unwrap();
+        let found = three_mf(&path, 256, Asked::Preview, true, &CancelToken::new()).unwrap();
         let picture = found.picture.as_ref().expect("the first plate");
         assert_eq!((picture.width, picture.height), (12, 8));
         assert_eq!(detail(&found, "Plates"), None, "one plate is not a count");
         let bare = dir.path().join("bare.3mf");
         zip(&bare, &[("3D/3dmodel.model", MODEL.as_bytes())]);
         assert!(
-            three_mf(&bare, 256, Asked::Preview, &CancelToken::new())
+            three_mf(&bare, 256, Asked::Preview, true, &CancelToken::new())
                 .unwrap()
                 .picture
                 .is_none()

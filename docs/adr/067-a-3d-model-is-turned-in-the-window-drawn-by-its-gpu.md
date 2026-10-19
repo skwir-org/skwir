@@ -36,6 +36,11 @@ Windows show the still, as before.
    - Faces are shaded flat from the screen-space derivatives of their
      position, so no normals are sent, and lit on either side: a mesh's
      winding is not always kept.
+   - Smooth shading (`MeshView::smooth`) asks for normals, which the
+     renderer makes on its upload thread when a frame first asks for them
+     (each position's faces' normals, weighted by their areas): the mesh is
+     drawn flat meanwhile (`MeshPreparation::Flat`), then again. Flat
+     shading makes none.
    - A mesh's buffers are made and filled on a thread of the renderer's
      own, never the window's: `Window::paint_mesh` draws a mesh once it is
      there, starts its upload otherwise, and draws the window again when it
@@ -54,6 +59,15 @@ Windows show the still, as before.
 3. **The preview asks for what the window can draw.** Where it draws
    meshes on a GPU, the preview asks for the mesh
    (`InspectRequest::meshes`); elsewhere for the still, as before.
+   - The user chooses with the bar's 3D button (`ui.inspect` `turn`),
+     remembered for the file's type with the window's state
+     (`TurnedTypes`), as Source is. Unchosen, a mesh is turned and a model
+     that stores a picture (a slicer's 3MF) shows it.
+   - A mesh over `model::VIEW_TRIANGLES` (four million) shows its still,
+     whatever its type's choice, and says why. The 3D button turns that
+     file, up to `model::TRIANGLES` (`InspectRequest::whole`), and that is
+     never remembered: the user asked for this file, not for every large
+     one.
    - A window drawn by a software rasterizer (lavapipe, where there is no
      GPU) gets the still: its frame grows with the mesh, and the window's
      thread waits for it. Decided by what the adapter is
@@ -63,14 +77,18 @@ Windows show the still, as before.
 4. **The view opens as the still is drawn:** the same angle, no
    perspective, the same framing. The thumbnail that stands in while the
    mesh is read gives way to it without a jump.
+   - Two settings change the look (Reading, 3D models; bar buttons, the
+     first to go to More): Perspective (`reading.model_perspective`), the
+     camera five times the model's radius from its middle, drawn at the
+     still's scale there; Smooth shading (`reading.model_smooth`). Both
+     off by default, as the still is drawn.
    - Drag turns the model around its up axis and tilts it; Shift+drag or
      the middle button moves it; the wheel zooms at the pointer.
    - Once clicked, the arrows turn it, Shift and the arrows move it, the
      zoom keys zoom, Ctrl+0 (Fit) shows it as it opened.
    - Nothing is drawn unless asked: each input asks for one frame.
 5. **Bounds.** A mesh of up to `model::VIEW_TRIANGLES` triangles is
-   turned. A larger one, up to `model::TRIANGLES`, shows its still and
-   says why.
+   turned unasked; up to `model::TRIANGLES` when asked (3).
 
 ## Alternatives
 
@@ -134,6 +152,4 @@ Windows show the still, as before.
 - **To decide before going further:**
   - Metal and Direct3D 11 passes (the same shader, translated), or the
     still there for good;
-  - perspective as a choice; smooth shading for scans; a model's own
-    colours and textures (glTF, 3MF, PLY);
-  - turning a 3MF that stores a picture, which today shows the picture.
+  - a model's own colours and textures (glTF, 3MF, PLY).

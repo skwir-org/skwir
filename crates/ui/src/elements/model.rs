@@ -35,6 +35,20 @@ const FILL: ([f32; 3], f32) = ([0.7, -0.2, 0.5], 0.28);
 const TURN_PER_PIXEL: f32 = 0.4;
 /// The most it is zoomed in or out from how it opened.
 const ZOOM_RANGE: (f32, f32) = (0.05, 200.);
+/// With perspective, the camera stands this many times the model's radius
+/// from its middle: the nearest of it a quarter larger than its middle, as
+/// a camera's normal lens shows it (about 25° high).
+const DISTANCE: f32 = 5.;
+
+/// How the model is drawn, as the user chose (`reading.model_*`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Look {
+    /// Nearer parts larger, as a camera sees them; else sizes kept at any
+    /// depth, as the still is drawn.
+    pub perspective: bool,
+    /// Faces shaded smoothly across; else each flat.
+    pub smooth: bool,
+}
 
 type Vec3 = [f32; 3];
 
@@ -184,12 +198,22 @@ impl Model {
         self.fit(size) * camera.zoom
     }
 
-    /// The matrices and lights `camera` sees it with in `size`.
-    pub fn view(&self, camera: &Camera, size: Size<Pixels>) -> MeshView {
+    /// The matrices and lights `camera` sees it with in `size`, drawn as
+    /// `look` says. Either way the plane through its middle facing the
+    /// camera is drawn at the same scale, so perspective changes nothing
+    /// there.
+    pub fn view(&self, camera: &Camera, size: Size<Pixels>, look: Look) -> MeshView {
         let [right, up, toward] = axes(camera.azimuth, camera.elevation);
         let scale = self.scale(camera, size);
         let (width, height) = (f32::from(size.width), f32::from(size.height));
-        let middle = self.middle;
+        let (middle, radius) = (self.middle, self.radius);
+        // With perspective the camera stands back from the middle, at the
+        // origin of its coordinates, looking down -z.
+        let distance = if look.perspective {
+            DISTANCE * radius
+        } else {
+            0.
+        };
         // Columns: the model's axes in the camera's, then where its origin
         // goes, the middle of the view showing `pan`.
         let model_view = [
@@ -199,19 +223,31 @@ impl Model {
             [
                 -dot(right, middle) - camera.pan[0],
                 -dot(up, middle) - camera.pan[1],
-                -dot(toward, middle),
+                -dot(toward, middle) - distance,
                 1.,
             ],
         ];
-        // Without perspective; depth from the near side of its sphere (0) to
-        // the far side (1).
-        let radius = self.radius;
-        let projection = [
-            [2. * scale / width.max(1.), 0., 0., 0.],
-            [0., 2. * scale / height.max(1.), 0., 0.],
-            [0., 0., -0.5 / radius, 0.],
-            [0., 0., 0.5, 1.],
-        ];
+        // Depth from the near side of its sphere (0) to the far side (1).
+        let (x, y) = (2. * scale / width.max(1.), 2. * scale / height.max(1.));
+        let projection = if look.perspective {
+            // x and y divided by how far a point is, `distance` at the
+            // middle; depth 0 to 1 from `near` to `far`.
+            let (near, far) = (distance - radius, distance + radius);
+            let a = far / (far - near);
+            [
+                [x * distance, 0., 0., 0.],
+                [0., y * distance, 0., 0.],
+                [0., 0., -a, -1.],
+                [0., 0., -near * a, 0.],
+            ]
+        } else {
+            [
+                [x, 0., 0., 0.],
+                [0., y, 0., 0.],
+                [0., 0., -0.5 / radius, 0.],
+                [0., 0., 0.5, 1.],
+            ]
+        };
         let light = |(direction, strength): (Vec3, f32)| MeshLight {
             direction: normalized(direction),
             strength,
@@ -219,7 +255,8 @@ impl Model {
         MeshView {
             model_view,
             projection,
-            perspective: false,
+            perspective: look.perspective,
+            smooth: look.smooth,
             color: ALBEDO,
             ambient: AMBIENT,
             lights: [light(KEY), light(FILL)],
@@ -284,22 +321,25 @@ pub struct ModelView {
     id: ElementId,
     model: Arc<Model>,
     handles: Handles,
+    look: Look,
     /// What it says while it loads is written in.
     muted: Hsla,
 }
 
-/// `model` drawn in the space it is given, seen and moved through
-/// `handles`; until it can be, "Loading…" in `muted`.
+/// `model` drawn in the space it is given as `look` says, seen and moved
+/// through `handles`; until it can be, "Loading…" in `muted`.
 pub fn model(
     id: impl Into<ElementId>,
     model: Arc<Model>,
     handles: Handles,
+    look: Look,
     muted: Hsla,
 ) -> ModelView {
     ModelView {
         id: id.into(),
         model,
         handles,
+        look,
         muted,
     }
 }
@@ -364,7 +404,7 @@ impl Element for ModelView {
         let size = bounds.size;
         handles.shown.set(Some(size));
         let camera = handles.camera.get().unwrap_or_else(|| model.opening());
-        let view = model.view(&camera, size);
+        let view = model.view(&camera, size, self.look);
         if !window.paint_mesh(bounds, Arc::clone(&model.mesh), view, cx) {
             let words = crate::elements::map::shape("Loading…".into(), self.muted, window);
             let at = bounds.center() - point(words.width / 2., px(7.));
@@ -507,7 +547,7 @@ mod tests {
         };
         let camera = model.opening();
         assert_eq!((camera.azimuth, camera.elevation), (35., 28.));
-        let view = model.view(&camera, size);
+        let view = model.view(&camera, size, Look::default());
         let corners: Vec<[f32; 2]> = model
             .mesh
             .positions()
@@ -555,22 +595,72 @@ mod tests {
         };
         let camera = model.opening();
         let corner = [20., 10., 5.];
-        let before = pixel(&model.view(&camera, size), corner, size);
+        let before = pixel(&model.view(&camera, size, Look::default()), corner, size);
         let at = [before[0] - 300., before[1] - 150.];
         let zoomed = model.zoomed_at(camera, 2., at, size);
         assert_eq!(zoomed.zoom, 2.);
         assert!(near(
-            pixel(&model.view(&zoomed, size), corner, size),
+            pixel(&model.view(&zoomed, size, Look::default()), corner, size),
             before
         ));
         // A drag moves what is under the pointer with it.
         let dragged = model.dragged(zoomed, [30., -12.], size);
-        let after = pixel(&model.view(&dragged, size), corner, size);
+        let after = pixel(&model.view(&dragged, size, Look::default()), corner, size);
         assert!(near(after, [before[0] + 30., before[1] - 12.]));
         // A key moves the view: what is shown goes the other way.
         let stepped = model.stepped(zoomed, [30., -12.], size);
-        let after = pixel(&model.view(&stepped, size), corner, size);
+        let after = pixel(&model.view(&stepped, size, Look::default()), corner, size);
         assert!(near(after, [before[0] - 30., before[1] + 12.]));
+    }
+
+    /// With perspective, the plane through the middle is drawn as without;
+    /// a corner nearer the camera lands further from the middle of the view,
+    /// a farther one nearer; depth spans the model's sphere.
+    #[test]
+    fn perspective_keeps_the_middle_s_scale() {
+        let model = boxed();
+        let size = Size {
+            width: px(400.),
+            height: px(300.),
+        };
+        let camera = model.opening();
+        let flat = model.view(&camera, size, Look::default());
+        let deep = model.view(
+            &camera,
+            size,
+            Look {
+                perspective: true,
+                smooth: false,
+            },
+        );
+        assert!(deep.perspective && !deep.smooth);
+        // Where `p` lands: the clip coordinates divided by w.
+        let projected = |view: &MeshView, p: Vec3| {
+            let (m, q) = (view.model_view, view.projection);
+            let eye: Vec<f32> = (0..3)
+                .map(|row| m[0][row] * p[0] + m[1][row] * p[1] + m[2][row] * p[2] + m[3][row])
+                .collect();
+            let clip: Vec<f32> = (0..4)
+                .map(|row| q[0][row] * eye[0] + q[1][row] * eye[1] + q[2][row] * eye[2] + q[3][row])
+                .collect();
+            [clip[0] / clip[3], clip[1] / clip[3], clip[2] / clip[3]]
+        };
+        let [right, up, toward] = axes(35., 28.);
+        let middle = [10., 5., 2.5];
+        // On the middle's plane: where it is without perspective.
+        let beside = [0, 1, 2].map(|i| middle[i] + 3. * right[i] + 2. * up[i]);
+        let (a, b) = (projected(&deep, beside), projected(&flat, beside));
+        assert!((a[0] - b[0]).abs() < 1e-5 && (a[1] - b[1]).abs() < 1e-5);
+        // Nearer, further out; farther, further in.
+        let nearer = [0, 1, 2].map(|i| beside[i] + toward[i] * 4.);
+        let farther = [0, 1, 2].map(|i| beside[i] - toward[i] * 4.);
+        assert!(projected(&deep, nearer)[0] > projected(&flat, nearer)[0]);
+        assert!(projected(&deep, farther)[0] < projected(&flat, farther)[0]);
+        // Depth: the sphere's near side 0, its far side 1.
+        let front = [0, 1, 2].map(|i| middle[i] + toward[i] * model.radius);
+        let back = [0, 1, 2].map(|i| middle[i] - toward[i] * model.radius);
+        assert!(projected(&deep, front)[2].abs() < 1e-4);
+        assert!((projected(&deep, back)[2] - 1.).abs() < 1e-4);
     }
 
     #[test]

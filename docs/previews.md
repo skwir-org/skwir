@@ -342,8 +342,14 @@ The player, in the panel or pinned at its foot:
   - On Linux the panel turns them in 3D, drawn by the graphics card: drag
     to turn, `Shift`+drag or the middle button to move, the wheel to
     zoom. Once clicked, the arrows turn it, `Shift` and the arrows move
-    it, `Ctrl`+`+`/`-` zoom and `Ctrl+0` (Fit) shows it as it opened. A
-    mesh of over four million triangles is shown as a picture.
+    it, `Ctrl`+`+`/`-` zoom and `Ctrl+0` (Fit) shows it as it opened.
+  - **3D** in the bar switches between the model turned and its picture,
+    and remembers it for that kind of file. A 3MF that stores a picture
+    shows it until 3D is chosen. A mesh of over four million triangles is
+    shown as a picture; 3D turns that one, and only that one.
+  - **Perspective** and **Smooth shading** (in the bar, or Settings ›
+    Reading › 3D models) draw nearer parts larger, and shade across faces
+    rather than each flat.
   - Elsewhere (macOS, Windows, a machine without a graphics card), and in
     the grid, they are drawn from the front, right and above.
 - **G-code** that stores no picture is drawn from its moves:

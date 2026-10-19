@@ -635,6 +635,8 @@ pub struct PreviewState {
     /// The types whose files open on their source; part of the window's
     /// shape.
     pub source_types: SourceTypes,
+    /// The types turned in 3D or shown by their picture (`TurnedTypes`).
+    pub turned_types: TurnedTypes,
     pub properties_scroll: gpui::ScrollHandle,
     /// Focus of a picture, so the zoom keys reach it once it is clicked.
     pub image_focus: Option<FocusHandle>,
@@ -847,6 +849,7 @@ impl Default for PreviewState {
             properties_share: crate::elements::edge::Share::even(crate::properties::SHARE),
             properties_folds: crate::properties::Folds::default(),
             source_types: SourceTypes::default(),
+            turned_types: TurnedTypes::default(),
             properties_scroll: gpui::ScrollHandle::new(),
             image_focus: None,
             map: crate::map_preview::MapState::default(),
@@ -1145,6 +1148,26 @@ impl SourceTypes {
         } else {
             self.0.remove(key);
         }
+    }
+}
+
+/// The types whose models are turned in 3D, or shown by their picture, as
+/// the user last chose for a file of the type (ADR-067): a mesh is turned
+/// unless chosen otherwise, a model that stores a picture shows it. Part
+/// of the window's shape (`session.rs`), as `SourceTypes`, and kept by the
+/// same names.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct TurnedTypes(std::collections::BTreeMap<String, bool>);
+
+impl TurnedTypes {
+    /// The choice made for the type kept as `key` (`SourceTypes::key`).
+    pub fn choice(&self, key: &str) -> Option<bool> {
+        self.0.get(key).copied()
+    }
+
+    pub fn set(&mut self, key: &str, turned: bool) {
+        self.0.insert(key.to_owned(), turned);
     }
 }
 
@@ -2211,6 +2234,7 @@ impl Shell {
         // A window that draws meshes turns a model (ADR-067).
         inspection.meshes = self.draws_meshes;
         let source_types = self.preview.source_types.clone();
+        let turned_types = self.preview.turned_types.clone();
         let tx = self.preview.tx.clone();
         let nested = self.preview.nested.last().cloned();
         let descend = self.preview.descend.clone();
@@ -2344,6 +2368,13 @@ impl Shell {
                     .is_some_and(|typed| source_types.shown(typed));
                 if typed.is_some() {
                     inspection.source = remembered;
+                }
+                // A model is turned or shown by its picture as its type was
+                // last (`TurnedTypes`), unless chosen for this file.
+                if inspection.turned.is_none() {
+                    inspection.turned = typed
+                        .as_deref()
+                        .and_then(|typed| turned_types.choice(typed));
                 }
                 // The file's own: what its source and its bytes are read
                 // from, whatever a plugin from outside converts it to.

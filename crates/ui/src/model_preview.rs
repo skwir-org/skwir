@@ -77,13 +77,14 @@ pub fn content(shell: &Shell, display: &Display, theme: &Theme) -> AnyElement {
             "preview-model",
             shown,
             shell.preview.model.clone(),
+            shell.prefs.model_look,
             theme.text_muted,
         )))
         .into_any_element()
 }
 
 /// The model's tools, in the bar's View slot: zoom out, in, and as it
-/// opened.
+/// opened; then how it is drawn, the first to go to More.
 pub fn tools(bar: &mut Bar, shell: &Shell) {
     let opened = shell.preview.model.camera.get().is_none();
     let step = |id, icon, title, dir| {
@@ -103,6 +104,31 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
         Slot::View,
         2,
         step("model-fit", "fit", label::FIT, "reset").active(opened),
+    ));
+    let look = shell.prefs.model_look;
+    bar.push(Item::button(
+        Slot::View,
+        0,
+        Button::new(
+            "model-perspective",
+            "perspective",
+            "Perspective",
+            "ui.model_perspective",
+        )
+        .label("Perspective")
+        .active(look.perspective),
+    ));
+    bar.push(Item::button(
+        Slot::View,
+        0,
+        Button::new(
+            "model-smooth",
+            "smooth",
+            "Smooth shading",
+            "ui.model_smooth",
+        )
+        .label("Smooth shading")
+        .active(look.smooth),
     ));
 }
 
