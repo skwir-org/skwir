@@ -29,16 +29,19 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-10-14)
+## Current status (2026-10-20)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.1.0, [released](#release-01-linux) 2026-10-13 on GitHub and
-  the AUR. Phases 0 to
+  version 0.2.0; 0.1.0 was [released](#release-01-linux) 2026-10-13 on
+  GitHub and the AUR. Phases 0 to
   4, 5a and 6 pass their gates. Maps and Notes everywhere are built, as
   is much that no phase planned
   ([Built beyond the plan](#built-beyond-the-plan)).
-- **Next:** skwird's steps (ADR-050) and Phase 7, which the user put
-  after the release (2026-10-07).
+- **Next:** finish 0.2.0, a minor version for the features since 0.1.0
+  (the user's choice, 2026-10-20): commit and tag, build locally
+  (`just release-build`), review and publish the GitHub draft, then the
+  AUR's three bases. Then skwird's steps (ADR-050) and Phase 7, which
+  the user put after the release (2026-10-07).
 - **Blocked:** Phase 5b needs a Mac and a Windows machine
   (`docs/HELP-WANTED.md`). The user reports hosted CI is too slow;
   routine CI is now reduced to essentials, with full checks and package
@@ -48,7 +51,16 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   of 150 ms: a median of 119 ms on Zed's gpui and 109 on 0.2.2, the least
   110 and 100 (ten starts each, alternated). `just bench-check` meets all
   44 budgets (2026-10-18, quiet).
-- **Latest work (2026-10-13):** Release 0.1.0; before it, Properties
+- **Latest work (2026-10-14 to 10-20), in 0.2.0:** fonts by role and
+  the desktop's colors and fonts (ADR-071, ADR-073); settings by subject
+  (ADR-072); address completion (ADR-070); 3D models turned on the GPU,
+  STEP, IGES and Rhino meshes (ADR-067, ADR-069); Full preview
+  (ADR-068); a held key's repeats (ADR-066); screen readers (ADR-065);
+  gpui from Zed's main branch on wgpu (ADR-064); the desktop's file
+  clipboard (ADR-062); DjVu (ADR-061); code colored by Ferroni (ADR-060);
+  the preview's fullscreen and slideshow, links found in text, the
+  terminal's menu and keys, the AUR's `skwir-bin` and `skwir-git`.
+  Before (2026-10-13): Release 0.1.0; before it, Properties
   (ADR-058), archives made (ADR-059), keys changed where they are listed
   (ADR-024), the tarball, and a review before tagging. Before (2026-10-11
   to 10-12): names already taken asked

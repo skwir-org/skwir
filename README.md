@@ -24,7 +24,7 @@
   </picture>
 </p>
 
-Skwir is written in Rust on gpui, Zed's GPU-accelerated toolkit. Version 0.1 is
+Skwir is written in Rust on gpui, Zed's GPU-accelerated toolkit. Version 0.2 is
 for Linux (Wayland or X11, with Vulkan). The macOS and Windows code compiles but
 has never run on either system: see [how to help](docs/HELP-WANTED.md).
 
@@ -79,15 +79,15 @@ Download the `.deb` files for your system from the release: Debian's end in
 holding them:
 
 ```sh
-sudo apt install ./skwir_0.1.0-1_amd64.deb             # Ubuntu: ./skwir_0.1.0-1ubuntu24.04_amd64.deb
-sudo apt install ./skwir-media_0.1.0-1_amd64.deb       # optional, and so on
+sudo apt install ./skwir_0.2.0-1_amd64.deb             # Ubuntu: ./skwir_0.2.0-1ubuntu24.04_amd64.deb
+sudo apt install ./skwir-media_0.2.0-1_amd64.deb       # optional, and so on
 ```
 
 ### Fedora 44
 
 ```sh
-sudo dnf install ./skwir-0.1.0-1.x86_64.rpm
-sudo dnf install ./skwir-media-0.1.0-1.x86_64.rpm      # optional, and so on
+sudo dnf install ./skwir-0.2.0-1.x86_64.rpm
+sudo dnf install ./skwir-media-0.2.0-1.x86_64.rpm      # optional, and so on
 ```
 
 ### Arch Linux
@@ -115,22 +115,22 @@ need x86-64 Linux with glibc 2.35 or later. They were tried on Ubuntu 22.04 and
 24.04 and on Fedora 44. The AppImage runs as it is:
 
 ```sh
-chmod +x skwir-0.1.0-x86_64.AppImage
-./skwir-0.1.0-x86_64.AppImage
+chmod +x skwir-0.2.0-x86_64.AppImage
+./skwir-0.2.0-x86_64.AppImage
 ```
 
 The tarball needs no FUSE and goes where you like, here `~/.local/opt`:
 
 ```sh
 mkdir -p ~/.local/opt ~/.local/bin
-tar -xzf skwir-0.1.0-linux-x86_64.tar.gz -C ~/.local/opt
-ln -sfn ~/.local/opt/skwir-0.1.0-linux-x86_64/skwir ~/.local/bin/skwir
+tar -xzf skwir-0.2.0-linux-x86_64.tar.gz -C ~/.local/opt
+ln -sfn ~/.local/opt/skwir-0.2.0-linux-x86_64/skwir ~/.local/bin/skwir
 ```
 
 To list it among your applications, add its desktop entry and icon:
 
 ```sh
-cd ~/.local/opt/skwir-0.1.0-linux-x86_64/usr/share
+cd ~/.local/opt/skwir-0.2.0-linux-x86_64/usr/share
 mkdir -p ~/.local/share/applications ~/.local/share/icons/hicolor/scalable/apps
 sed "s|^Exec=skwir|Exec=\"$HOME/.local/bin/skwir\"|" applications/org.skwir.skwir.desktop \
   > ~/.local/share/applications/org.skwir.skwir.desktop
@@ -226,7 +226,7 @@ A plugin can be a folder with a `plugin.toml` and either a WebAssembly module or
 a program speaking JSON lines. It can provide fields, thumbnails, previews and
 commands, stays off until you turn it on in Settings › Plugins (which shows what
 it may do), and gets nothing it did not declare. The protocol is experimental in
-0.1: [writing a plugin](docs/plugins/README.md).
+0.2: [writing a plugin](docs/plugins/README.md).
 
 ## Documentation
 

@@ -1,6 +1,6 @@
 pkgbase = skwir-bin
 	pkgdesc = An augmented file manager, for humans and agents (the release build)
-	pkgver = 0.1.0
+	pkgver = 0.2.0
 	pkgrel = 1
 	url = https://skwir.org
 	arch = x86_64
@@ -28,15 +28,15 @@ pkgbase = skwir-bin
 	optdepends = perl-image-exiftool: writing and removing pictures locations
 	optdepends = plocate: instant name searches over whole disks
 	optdepends = udisks2: unmounting volumes from the sidebar
-	provides = skwir=0.1.0
-	provides = skwir-mermaid=0.1.0
-	provides = skwir-mupdf=0.1.0
+	provides = skwir=0.2.0
+	provides = skwir-mermaid=0.2.0
+	provides = skwir-mupdf=0.2.0
 	conflicts = skwir
 	conflicts = skwir-mermaid
 	conflicts = skwir-mupdf
 	options = !strip
 	options = !debug
-	source = skwir-0.1.0-linux-x86_64.tar.gz::https://github.com/skwir-org/skwir/releases/download/v0.1.0/skwir-0.1.0-linux-x86_64.tar.gz
+	source = skwir-0.2.0-linux-x86_64.tar.gz::https://github.com/skwir-org/skwir/releases/download/v0.2.0/skwir-0.2.0-linux-x86_64.tar.gz
 	sha256sums = SKIP
 
 pkgname = skwir-bin

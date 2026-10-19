@@ -1,6 +1,6 @@
 # Using Skwir
 
-This guide is for Skwir 0.1 on Linux. Every action is also a command in
+This guide is for Skwir 0.2 on Linux. Every action is also a command in
 the palette (`Ctrl+Shift+P`), which shows its keys. `F1` lists the keys
 that work where the keyboard is.
 
