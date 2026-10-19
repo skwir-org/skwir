@@ -742,7 +742,7 @@ pub fn draggable(el: Stateful<Div>, pane: PaneId, cx: &mut Context<Shell>) -> St
                         .take()
                         .and_then(|(at, id)| (at == pane).then_some(id));
                     let label = shell.drag_label(pane);
-                    let look = shell.drag_look(pane, grabbed, tint);
+                    let mut look = shell.drag_look(pane, grabbed, tint);
                     let icon = shell.show_files_icon(look.drawn(), window, cx);
                     let waits = look.cards.iter().any(|card| card.coming.is_some());
                     (label, icon, waits.then_some(look))

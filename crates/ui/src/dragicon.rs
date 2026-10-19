@@ -33,8 +33,10 @@ const CARD_PX: u32 = 56;
 /// The white frame of a thumbnail on a card, as a print has.
 const FRAME: u32 = 2;
 
-/// Room around a card for its shadow.
+/// Room around a card for its shadow, and how dark the shadow is where
+/// it is darkest, against the card's edge.
 const SHADOW: u32 = 3;
+const SHADOW_ALPHA: f32 = 70.;
 
 /// The mosaic's side, and the side of each of its quarters.
 const MOSAIC_PX: u32 = 64;
@@ -125,19 +127,10 @@ impl<'a> Bitmap<'a> {
         let len = u64::from(self.width) * u64::from(self.height) * 4;
         (len > 0 && self.bytes.len() as u64 >= len).then_some(self)
     }
-
-    /// The pixel at `(x, y)`, RGBA.
-    fn at(&self, x: usize, y: usize) -> [u8; 4] {
-        let i = (y * self.width as usize + x) * 4;
-        let p = &self.bytes[i..i + 4];
-        match self.order {
-            PixelOrder::Rgba => [p[0], p[1], p[2], p[3]],
-            PixelOrder::Bgra => [p[2], p[1], p[0], p[3]],
-        }
-    }
 }
 
 /// A small RGBA canvas.
+#[derive(Clone)]
 pub struct Canvas {
     pub width: u32,
     pub height: u32,
@@ -163,6 +156,7 @@ impl Canvas {
     }
 
     /// The pixel at `(x, y)`, transparent outside.
+    #[cfg(test)]
     fn pixel(&self, x: i32, y: i32) -> [u8; 4] {
         if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
             return [0; 4];
@@ -185,6 +179,11 @@ impl Canvas {
         if sa == 0 {
             return;
         }
+        // Over nothing, or covering what is there: the color as it is.
+        if sa == 255 || self.rgba[i + 3] == 0 {
+            self.rgba[i..i + 4].copy_from_slice(&color);
+            return;
+        }
         let da = u32::from(self.rgba[i + 3]);
         let oa = sa + da * (255 - sa) / 255;
         let dst = &mut self.rgba[i..i + 3];
@@ -193,6 +192,51 @@ impl Canvas {
             *d = blended.checked_div(oa).unwrap_or(0).min(255) as u8;
         }
         self.rgba[i + 3] = oa.min(255) as u8;
+    }
+
+    /// `(x, y, w, h)` filled with `color`, what was there replaced.
+    fn fill(&mut self, x: i32, y: i32, w: i32, h: i32, color: [u8; 4]) {
+        let (x0, x1) = (x.max(0), (x + w).min(self.width as i32));
+        if x0 >= x1 {
+            return;
+        }
+        for py in y.max(0)..(y + h).min(self.height as i32) {
+            let row = (py as u32 * self.width) as usize;
+            let line = &mut self.rgba[(row + x0 as usize) * 4..(row + x1 as usize) * 4];
+            for pixel in line.as_chunks_mut::<4>().0 {
+                *pixel = color;
+            }
+        }
+    }
+
+    /// A soft shadow under the rectangle `(x, y, w, h)`, a pixel lower, on
+    /// a canvas with nothing drawn there yet: each pixel darker the nearer
+    /// it lies, out to `SHADOW`. What the rectangle covers is left alone,
+    /// for it to be drawn there.
+    fn shadow(&mut self, x: i32, y: i32, w: i32, h: i32) {
+        let reach = SHADOW as f32 + 0.5;
+        let (left, right) = (x as f32, (x + w) as f32);
+        let (top, bottom) = ((y + 1) as f32, (y + 1 + h) as f32);
+        for py in
+            (y + 1 - SHADOW as i32).max(0)..(y + 1 + h + SHADOW as i32).min(self.height as i32)
+        {
+            let my = py as f32 + 0.5;
+            let dy = (top - my).max(my - bottom).max(0.);
+            let covered_row = py >= y && py < y + h;
+            for px in (x - SHADOW as i32).max(0)..(x + w + SHADOW as i32).min(self.width as i32) {
+                if covered_row && px >= x && px < x + w {
+                    continue;
+                }
+                let mx = px as f32 + 0.5;
+                let distance = (left - mx).max(mx - right).max(0.).hypot(dy);
+                if distance < reach {
+                    let near = 1. - distance / reach;
+                    let alpha = (SHADOW_ALPHA * near * near).round() as u8;
+                    let i = ((py as u32 * self.width + px as u32) * 4) as usize;
+                    self.rgba[i..i + 4].copy_from_slice(&[0, 0, 0, alpha]);
+                }
+            }
+        }
     }
 
     /// `color` blended at `(x, y)` by `coverage`, how much of the pixel
@@ -270,39 +314,69 @@ impl Canvas {
     /// `crop` of `src` (x, y, width, height) drawn `width` x `height`: each
     /// pixel the average of those it covers, by their opacity, so a
     /// picture shrinks without its edges breaking up; one enlarged keeps
-    /// its pixels whole.
+    /// its pixels whole. Summed across each row first, then down the rows
+    /// summed: each pixel of the source is read once.
     fn resampled(src: &Bitmap, crop: [u32; 4], width: u32, height: u32) -> Canvas {
-        let [cx, cy, cw, ch] = crop;
-        let mut out = Canvas::new(width.max(1), height.max(1));
-        let span = |i: u32, of: u32, from: u32, length: u32| {
-            let start = from + i * length / of;
-            let end = (from + ((i + 1) * length).div_ceil(of)).clamp(start + 1, from + length);
-            start..end
+        let [cx, cy, cw, ch] = crop.map(|v| v as usize);
+        let (width, height) = (width.max(1) as usize, height.max(1) as usize);
+        // The source's columns (rows) each of the output's covers.
+        let spans = |of: usize, from: usize, length: usize| -> Vec<(usize, usize)> {
+            (0..of)
+                .map(|i| {
+                    let start = from + i * length / of;
+                    let end =
+                        (from + ((i + 1) * length).div_ceil(of)).clamp(start + 1, from + length);
+                    (start, end)
+                })
+                .collect()
         };
-        for y in 0..out.height {
-            let rows = span(y, out.height, cy, ch);
-            for x in 0..out.width {
+        let columns = spans(width, cx, cw);
+        let rows = spans(height, 0, ch);
+        let (red, blue) = match src.order {
+            PixelOrder::Rgba => (0, 2),
+            PixelOrder::Bgra => (2, 0),
+        };
+        let bytes = src.bytes;
+        let stride = src.width as usize * 4;
+        let mut across = vec![[0u32; 4]; ch * width];
+        for row in 0..ch {
+            let line = (cy + row) * stride;
+            for (column, &(start, end)) in columns.iter().enumerate() {
+                let mut sum = [0u32; 4];
+                let (mut i, stop) = (line + start * 4, line + end * 4);
+                while i < stop {
+                    let alpha = u32::from(bytes[i + 3]);
+                    sum[0] += u32::from(bytes[i + red]) * alpha;
+                    sum[1] += u32::from(bytes[i + 1]) * alpha;
+                    sum[2] += u32::from(bytes[i + blue]) * alpha;
+                    sum[3] += alpha;
+                    i += 4;
+                }
+                across[row * width + column] = sum;
+            }
+        }
+        let mut out = Canvas::new(width as u32, height as u32);
+        for (y, &(start, end)) in rows.iter().enumerate() {
+            for (x, &(left, right)) in columns.iter().enumerate() {
                 let mut sum = [0u64; 4];
-                let mut n = 0u64;
-                for sy in rows.clone() {
-                    for sx in span(x, out.width, cx, cw) {
-                        let [r, g, b, a] = src.at(sx as usize, sy as usize);
-                        let a = u64::from(a);
-                        sum[0] += u64::from(r) * a;
-                        sum[1] += u64::from(g) * a;
-                        sum[2] += u64::from(b) * a;
-                        sum[3] += a;
-                        n += 1;
-                    }
+                let mut row = start;
+                while row < end {
+                    let part = across[row * width + x];
+                    sum[0] += u64::from(part[0]);
+                    sum[1] += u64::from(part[1]);
+                    sum[2] += u64::from(part[2]);
+                    sum[3] += u64::from(part[3]);
+                    row += 1;
                 }
                 if sum[3] == 0 {
                     continue;
                 }
-                let i = ((y * out.width + x) * 4) as usize;
-                for c in 0..3 {
-                    out.rgba[i + c] = (sum[c] / sum[3]).min(255) as u8;
-                }
-                out.rgba[i + 3] = (sum[3] / n).min(255) as u8;
+                let covered = ((end - start) * (right - left)) as u64;
+                let i = (y * width + x) * 4;
+                out.rgba[i] = (sum[0] / sum[3]).min(255) as u8;
+                out.rgba[i + 1] = (sum[1] / sum[3]).min(255) as u8;
+                out.rgba[i + 2] = (sum[2] / sum[3]).min(255) as u8;
+                out.rgba[i + 3] = (sum[3] / covered).min(255) as u8;
             }
         }
         out
@@ -317,9 +391,19 @@ impl Canvas {
 
     /// `src` drawn over this, its top-left at `(x, y)`.
     fn blit(&mut self, src: &Canvas, x: i32, y: i32) {
-        for sy in 0..src.height as i32 {
-            for sx in 0..src.width as i32 {
-                self.blend(x + sx, y + sy, src.pixel(sx, sy));
+        let (sx0, sx1) = ((-x).max(0), (self.width as i32 - x).min(src.width as i32));
+        let (sy0, sy1) = ((-y).max(0), (self.height as i32 - y).min(src.height as i32));
+        for sy in sy0..sy1 {
+            let row = (sy as u32 * src.width) as usize;
+            for sx in sx0..sx1 {
+                let i = (row + sx as usize) * 4;
+                let color = [
+                    src.rgba[i],
+                    src.rgba[i + 1],
+                    src.rgba[i + 2],
+                    src.rgba[i + 3],
+                ];
+                self.blend(x + sx, y + sy, color);
             }
         }
     }
@@ -344,13 +428,17 @@ impl Canvas {
         let y0 = (low(|c| c.1).floor() as i32).max(0);
         let x1 = (high(|c| c.0).ceil() as i32).min(self.width as i32);
         let y1 = (high(|c| c.1).ceil() as i32).min(self.height as i32);
+        let (w, h) = (src.width as f32 + 1., src.height as f32 + 1.);
         for y in y0..y1 {
             for x in x0..x1 {
-                // Back to where this pixel's middle comes from.
+                // Back to where this pixel's middle comes from; the corners
+                // of the box around it lie off the canvas.
                 let (dx, dy) = (x as f32 + 0.5 - at.0, y as f32 + 0.5 - at.1);
                 let u = pivot.0 + dx * cos + dy * sin;
                 let v = pivot.1 - dx * sin + dy * cos;
-                self.blend(x, y, src.sample(u, v));
+                if u > -1. && v > -1. && u < w && v < h {
+                    self.blend(x, y, src.sample(u, v));
+                }
             }
         }
     }
@@ -361,31 +449,41 @@ impl Canvas {
     fn sample(&self, u: f32, v: f32) -> [u8; 4] {
         let (x, y) = (u - 0.5, v - 0.5);
         let (x0, y0) = (x.floor(), y.floor());
-        let (fx, fy) = (x - x0, y - y0);
+        // The weights in 256ths: of what lies right of and below the point.
+        let fx = ((x - x0) * 256.).round() as u32;
+        let fy = ((y - y0) * 256.).round() as u32;
         let (x0, y0) = (x0 as i32, y0 as i32);
-        let mut sum = [0f32; 4];
-        for (dx, dy, weight) in [
-            (0, 0, (1. - fx) * (1. - fy)),
-            (1, 0, fx * (1. - fy)),
-            (0, 1, (1. - fx) * fy),
-            (1, 1, fx * fy),
-        ] {
-            let [r, g, b, a] = self.pixel(x0 + dx, y0 + dy);
-            let a = f32::from(a) * weight;
-            sum[0] += f32::from(r) * a;
-            sum[1] += f32::from(g) * a;
-            sum[2] += f32::from(b) * a;
+        let mut sum = [0u32; 4];
+        let mut add = |px: i32, py: i32, weight: u32| {
+            if weight == 0
+                || px < 0
+                || py < 0
+                || px >= self.width as i32
+                || py >= self.height as i32
+            {
+                return;
+            }
+            let i = ((py as u32 * self.width + px as u32) * 4) as usize;
+            // Its alpha in 65536ths, times each channel, in 256ths.
+            let a = u32::from(self.rgba[i + 3]) * weight;
+            sum[0] += (u32::from(self.rgba[i]) * a) >> 8;
+            sum[1] += (u32::from(self.rgba[i + 1]) * a) >> 8;
+            sum[2] += (u32::from(self.rgba[i + 2]) * a) >> 8;
             sum[3] += a;
-        }
-        if sum[3] <= 0. {
+        };
+        add(x0, y0, (256 - fx) * (256 - fy));
+        add(x0 + 1, y0, fx * (256 - fy));
+        add(x0, y0 + 1, (256 - fx) * fy);
+        add(x0 + 1, y0 + 1, fx * fy);
+        if sum[3] == 0 {
             return [0; 4];
         }
-        let channel = |c: f32| (c / sum[3]).round().clamp(0., 255.) as u8;
+        let total = u64::from(sum[3]);
         [
-            channel(sum[0]),
-            channel(sum[1]),
-            channel(sum[2]),
-            sum[3].round().clamp(0., 255.) as u8,
+            ((u64::from(sum[0]) << 8) / total).min(255) as u8,
+            ((u64::from(sum[1]) << 8) / total).min(255) as u8,
+            ((u64::from(sum[2]) << 8) / total).min(255) as u8,
+            ((sum[3] + 32768) >> 16).min(255) as u8,
         ]
     }
 
@@ -506,6 +604,33 @@ enum Face<'a> {
 }
 
 impl Face<'_> {
+    /// What `layout` lays out of it, kept until it changes: the whole
+    /// image of `Single`, a card of the fan and the pile, a quarter of the
+    /// mosaic.
+    fn piece(&self, layout: Layout) -> Canvas {
+        match layout {
+            Layout::Single => self.alone(),
+            Layout::Fan | Layout::Pile => self.card(),
+            Layout::Mosaic => self.cell(CELL_PX),
+        }
+    }
+
+    /// The image of it alone, `ICON_PX` square: its picture fitted in the
+    /// margin, else a glyph.
+    fn alone(&self) -> Canvas {
+        let mut c = Canvas::new(ICON_PX, ICON_PX);
+        let side = PICTURE_PX as i32;
+        let margin = (ICON_PX - PICTURE_PX) as i32 / 2;
+        match self {
+            Face::Thumb(picture) | Face::Icon(picture) => {
+                c.blit_fit(picture, margin, margin, side, side);
+            }
+            Face::Glyph(true) => folder_glyph(&mut c),
+            Face::Glyph(false) => file_glyph(&mut c),
+        }
+        c
+    }
+
     /// Drawn on a card of the fan or the pile, in the room around it for
     /// its shadow (`SHADOW`): a thumbnail as a print, in a white frame on
     /// a soft shadow; an icon or a glyph as it is.
@@ -515,19 +640,10 @@ impl Face<'_> {
             Face::Thumb(picture) => {
                 let inner = CARD_PX - 2 * FRAME;
                 let (w, h) = fit(picture.width, picture.height, inner, inner);
-                let (fw, fh) = (w + 2 * FRAME, h + 2 * FRAME);
-                let mut c = Canvas::new(fw + 2 * SHADOW, fh + 2 * SHADOW);
-                for (spread, alpha) in [(3, 12), (2, 20), (1, 34)] {
-                    c.round_rect(
-                        s - spread,
-                        s - spread + 1,
-                        fw as i32 + 2 * spread,
-                        fh as i32 + 2 * spread,
-                        spread + 1,
-                        [0, 0, 0, alpha],
-                    );
-                }
-                c.round_rect(s, s, fw as i32, fh as i32, 1, WHITE);
+                let (fw, fh) = ((w + 2 * FRAME) as i32, (h + 2 * FRAME) as i32);
+                let mut c = Canvas::new(fw as u32 + 2 * SHADOW, fh as u32 + 2 * SHADOW);
+                c.shadow(s, s, fw, fh);
+                c.fill(s, s, fw, fh, WHITE);
                 let print = Canvas::resampled(picture, [0, 0, picture.width, picture.height], w, h);
                 c.blit(&print, s + FRAME as i32, s + FRAME as i32);
                 c
@@ -574,13 +690,13 @@ impl Face<'_> {
 /// A card of the fan or the pile where it lies: the middle of its card,
 /// before it turns, and how far it turns about the point `FAN_PIVOT`
 /// below that.
-struct Placed {
-    card: Canvas,
+struct Placed<'a> {
+    card: &'a Canvas,
     middle: (f32, f32),
     angle: f32,
 }
 
-impl Placed {
+impl Placed<'_> {
     /// Its point that lands at its middle, on its canvas, and where its
     /// pivot is, there and on the drag's image laid around `(0, 0)`.
     fn pivot(&self) -> ((f32, f32), (f32, f32)) {
@@ -603,35 +719,27 @@ impl Placed {
     }
 }
 
-/// The image of one entry, or of several as `Single` draws them: the
-/// picture fitted, else a glyph; a badge when `count` is more than one.
-fn single(face: &Face, count: usize) -> ExternalDragIcon {
-    let mut c = Canvas::new(ICON_PX, ICON_PX);
-    let side = PICTURE_PX as i32;
-    let margin = (ICON_PX - PICTURE_PX) as i32 / 2;
-    match face {
-        Face::Thumb(picture) | Face::Icon(picture) => {
-            c.blit_fit(picture, margin, margin, side, side);
-        }
-        Face::Glyph(true) => folder_glyph(&mut c),
-        Face::Glyph(false) => file_glyph(&mut c),
-    }
+/// The image of one entry, or of several as `Single` draws them: its
+/// image alone (`Face::alone`), a badge when `count` is more than one.
+fn single(alone: &Canvas, count: usize) -> ExternalDragIcon {
+    let mut c = alone.clone();
     if count > 1 {
         badge(&mut c, count);
     }
-    c.into_icon(ICON_PX / 2, ICON_PX / 2)
+    let (x, y) = (c.width / 2, c.height / 2);
+    c.into_icon(x, y)
 }
 
-/// The first face in front, those after it behind: fanned out to either
+/// The first card in front, those after it behind: fanned out to either
 /// side (`fan`) or each a step down and right (else), the badge on the
 /// front card's corner. The pointer holds the front card's middle.
-fn deck(faces: &[Face], count: usize, fan: bool) -> ExternalDragIcon {
+fn deck(cards: &[&Canvas], count: usize, fan: bool) -> ExternalDragIcon {
     let lean = FAN_DEGREES.to_radians();
-    let mut placed: Vec<Placed> = faces
+    let mut placed: Vec<Placed> = cards
         .iter()
         .enumerate()
-        .map(|(i, face)| {
-            let (middle, angle) = match (fan, i, faces.len()) {
+        .map(|(i, card)| {
+            let (middle, angle) = match (fan, i, cards.len()) {
                 (_, 0, _) => ((0., 0.), 0.),
                 (true, _, 2) => ((0., 0.), lean),
                 (true, 1, _) => ((0., 0.), -lean),
@@ -642,7 +750,7 @@ fn deck(faces: &[Face], count: usize, fan: bool) -> ExternalDragIcon {
                 }
             };
             Placed {
-                card: face.card(),
+                card,
                 middle,
                 angle,
             }
@@ -677,9 +785,9 @@ fn deck(faces: &[Face], count: usize, fan: bool) -> ExternalDragIcon {
         if p.angle == 0. {
             let left = to.0 - from.0;
             let top = to.1 - from.1;
-            c.blit(&p.card, left.round() as i32, top.round() as i32);
+            c.blit(p.card, left.round() as i32, top.round() as i32);
         } else {
-            c.blit_turned(&p.card, from, to, p.angle);
+            c.blit_turned(p.card, from, to, p.angle);
         }
     }
     let at = |v: f32, o: f32| (v + o).round() as i32;
@@ -692,10 +800,9 @@ fn deck(faces: &[Face], count: usize, fan: bool) -> ExternalDragIcon {
     c.into_icon(origin.0 as u32, origin.1 as u32)
 }
 
-/// Up to four faces in quarters; with more entries than that, three and
-/// a last quarter saying how many more. Two lie side by side, three as a
-/// pyramid.
-fn mosaic(faces: &[Face], count: usize) -> ExternalDragIcon {
+/// Up to four quarters; with more entries than that, three and a last
+/// quarter saying how many more. Two lie side by side, three as a pyramid.
+fn mosaic(cells: &[&Canvas], count: usize) -> ExternalDragIcon {
     let mut c = Canvas::new(MOSAIC_PX, MOSAIC_PX);
     let (near, far, mid) = (
         1,
@@ -703,20 +810,19 @@ fn mosaic(faces: &[Face], count: usize) -> ExternalDragIcon {
         ((MOSAIC_PX - CELL_PX) / 2) as i32,
     );
     let quarters = [(near, near), (far, near), (near, far), (far, far)];
-    let more = count > faces.len();
-    let cells = faces.len() + usize::from(more);
-    let places: &[(i32, i32)] = match cells {
+    let more = count > cells.len();
+    let places: &[(i32, i32)] = match cells.len() + usize::from(more) {
         2 => &[(near, mid), (far, mid)],
         3 => &[(near, near), (far, near), (mid, far)],
         _ => &quarters,
     };
-    for (face, &(x, y)) in faces.iter().zip(places) {
-        c.blit(&face.cell(CELL_PX), x, y);
+    for (cell, &(x, y)) in cells.iter().zip(places) {
+        c.blit(cell, x, y);
     }
-    if more && let Some(&(x, y)) = places.get(faces.len()) {
+    if more && let Some(&(x, y)) = places.get(cells.len()) {
         let side = CELL_PX as i32;
         c.round_rect(x, y, side, side, 4, MORE);
-        let text = format!("+{}", count - faces.len());
+        let text = format!("+{}", count - cells.len());
         let room = side - 4;
         if let Some(scale) = [2, 1]
             .into_iter()
@@ -761,6 +867,9 @@ pub struct Card {
     pub coming: Option<IconPixels>,
     /// Its icon, drawn.
     pub icon: Option<Image>,
+    /// What the layout lays out of it, once drawn (`Face::piece`): drawn
+    /// again only when its icon arrives.
+    piece: Option<Canvas>,
 }
 
 impl Card {
@@ -777,15 +886,37 @@ impl Card {
 
 impl DragLook {
     /// The image as it can be drawn now: each entry's thumbnail, else its
-    /// icon once drawn, else a glyph.
-    pub fn drawn(&self) -> ExternalDragIcon {
-        let faces: Vec<Face> = self.cards.iter().map(Card::face).collect();
-        match (self.layout, faces.as_slice()) {
-            (_, []) => single(&Face::Glyph(false), self.count),
-            (Layout::Single, [face, ..]) | (_, [face]) => single(face, self.count),
-            (Layout::Fan, faces) => deck(faces, self.count, true),
-            (Layout::Pile, faces) => deck(faces, self.count, false),
-            (Layout::Mosaic, faces) => mosaic(faces, self.count),
+    /// icon once drawn, else a glyph. What an entry gives the layout is
+    /// drawn once and kept, until its icon arrives.
+    pub fn drawn(&mut self) -> ExternalDragIcon {
+        let layout = if self.cards.len() > 1 {
+            self.layout
+        } else {
+            Layout::Single
+        };
+        let shown = if layout == Layout::Single {
+            1
+        } else {
+            self.cards.len()
+        };
+        for card in self.cards.iter_mut().take(shown) {
+            if card.piece.is_none() {
+                let piece = card.face().piece(layout);
+                card.piece = Some(piece);
+            }
+        }
+        let pieces: Vec<&Canvas> = self
+            .cards
+            .iter()
+            .take(shown)
+            .filter_map(|c| c.piece.as_ref())
+            .collect();
+        match (layout, pieces.as_slice()) {
+            (_, []) => single(&Face::Glyph(false).alone(), self.count),
+            (Layout::Single, [alone, ..]) => single(alone, self.count),
+            (Layout::Fan, cards) => deck(cards, self.count, true),
+            (Layout::Pile, cards) => deck(cards, self.count, false),
+            (Layout::Mosaic, cells) => mosaic(cells, self.count),
         }
     }
 
@@ -800,8 +931,11 @@ impl DragLook {
             };
             if let Some(icon) = crate::icons::pixels(coming, window, cx) {
                 card.coming = None;
-                arrived |= icon.is_some();
-                card.icon = icon;
+                if icon.is_some() {
+                    arrived = true;
+                    card.icon = icon;
+                    card.piece = None;
+                }
             }
         }
         arrived
@@ -885,6 +1019,7 @@ impl Shell {
                     thumb,
                     coming,
                     icon: None,
+                    piece: None,
                 })
             })
             .collect();
@@ -1029,7 +1164,7 @@ mod tests {
             bytes: &bgra,
             order: PixelOrder::Bgra,
         };
-        let icon = single(&Face::Thumb(kept), 1);
+        let icon = single(&Face::Thumb(kept).alone(), 1);
         let centre = ((ICON_PX / 2 * ICON_PX + ICON_PX / 2) * 4) as usize;
         assert_eq!(&icon.rgba[centre..centre + 4], &[10, 20, 30, 255]);
         assert_eq!(&icon.rgba[..4], &[0, 0, 0, 0], "its margin shows through");
