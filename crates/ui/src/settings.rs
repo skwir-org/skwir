@@ -349,7 +349,7 @@ pub fn declare(app: &App) {
         SettingSpec::choice(
             READING_WIDTH_KEY,
             "Reading width",
-            "How long the lines of a book, a Markdown or HTML file may grow before the text stops widening and sits in the middle of the preview: about 65 characters for Narrow, 85 for Comfortable, 110 for Wide. Full width uses the whole panel, with small margins.",
+            "How long the lines of a book, a Markdown or HTML file may grow before the text stops widening and sits in the middle of the preview. Narrow is about 65 characters, Comfortable 85, Wide 110; Full width uses the whole panel, with small margins.",
             "comfortable",
             &[
                 ("narrow", "Narrow"),
@@ -365,7 +365,7 @@ pub fn declare(app: &App) {
         SettingSpec::toggle(
             PRINTED_PAGES_KEY,
             "Printed page numbers",
-            "Count where you are in a book by the page numbers of its printed edition, when it lists them: page 47 of 312 rather than chapter 3 of 12, and in a PDF by the numbers its pages are printed with. A book without them counts chapters.",
+            "Count where you are by the page numbers a book's printed edition lists, or a PDF's pages are printed with. That is page 47 of 312 rather than chapter 3 of 12; a book without them counts chapters.",
             false,
         )
         .section("Pages"),
@@ -560,7 +560,7 @@ pub fn slideshow_seconds(shell: &crate::shell::Shell) -> u64 {
 /// order, then the others where their first setting was declared; in a
 /// section, the settings in the order they were declared
 /// (`SettingSpec::order`).
-fn page_order(specs: &mut [SettingSpec]) {
+pub fn page_order(specs: &mut [SettingSpec]) {
     let mut sections: HashMap<(Page, String), u64> = HashMap::new();
     for spec in specs.iter() {
         sections
@@ -604,6 +604,84 @@ pub enum Page {
     Keyboard,
     Changed,
     Plugin(String),
+}
+
+/// How a page draws its settings (ADR-072): each section under its
+/// caption, or consecutive sections made of the same settings (titles and
+/// kinds, in order) as one table, a line a section, a column a setting.
+/// Indices into the settings given, which stand in their page's order.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Block {
+    Section {
+        title: String,
+        rows: Vec<usize>,
+    },
+    Table {
+        columns: Vec<(String, SettingKind)>,
+        lines: Vec<(String, Vec<usize>)>,
+    },
+}
+
+/// The blocks of a page's settings, as `Block` says.
+pub fn blocks(specs: &[&SettingSpec]) -> Vec<Block> {
+    let mut runs: Vec<(String, Vec<usize>)> = Vec::new();
+    for (at, spec) in specs.iter().enumerate() {
+        match runs.last_mut() {
+            Some((section, rows)) if *section == spec.section => rows.push(at),
+            _ => runs.push((spec.section.clone(), vec![at])),
+        }
+    }
+    // What a line is made of; nothing for what a table cannot hold: a
+    // section without a title, a list of records (its records are rows of
+    // their own), a setting under a switch.
+    let shape = |(section, rows): &(String, Vec<usize>)| -> Option<Vec<(String, SettingKind)>> {
+        if section.is_empty() {
+            return None;
+        }
+        rows.iter()
+            .map(|&at| {
+                let spec = specs[at];
+                (spec.kind != SettingKind::Records && spec.under.is_empty())
+                    .then(|| (spec.title.clone(), spec.kind))
+            })
+            .collect()
+    };
+    let mut blocks = Vec::new();
+    let mut at = 0;
+    while at < runs.len() {
+        let first = shape(&runs[at]);
+        let mut end = at + 1;
+        while first.is_some() && end < runs.len() && shape(&runs[end]) == first {
+            end += 1;
+        }
+        match first {
+            Some(columns) if end - at >= 2 => blocks.push(Block::Table {
+                columns,
+                lines: runs[at..end].to_vec(),
+            }),
+            _ => {
+                let (title, rows) = runs[at].clone();
+                blocks.push(Block::Section { title, rows });
+            }
+        }
+        at = end;
+    }
+    blocks
+}
+
+/// The first sentence of a description, which its row shows, and whether
+/// more follows: the whole description is the row's tooltip and what a
+/// screen reader hears (ADR-072).
+pub fn first_sentence(text: &str) -> (&str, bool) {
+    for (at, _) in text.match_indices(". ") {
+        let next = &text[at + 2..];
+        if next.starts_with(|c: char| c.is_uppercase() || c.is_ascii_digit())
+            || next.starts_with("skwir")
+        {
+            return (&text[..=at], true);
+        }
+    }
+    (text, false)
 }
 
 /// One of the dialog's own pages: the word `ui.settings` and a setting
@@ -706,7 +784,7 @@ static BUILTIN: [Builtin; 11] = [
         page: Page::Terminal,
         name: page::TERMINAL,
         owner: None,
-        title: "Terminal and commands",
+        title: "Terminal",
         icon: "terminal",
         intro: "The terminal panel, and the shell that runs a command on the selection.",
         when_used: true,
@@ -1957,6 +2035,86 @@ mod tests {
             Some(&[][..]),
         ));
         assert_eq!(page(&pages(), &Page::Reading), page(&specs, &Page::Reading));
+    }
+
+    /// Sections made of the same settings are one table, a line each;
+    /// another section between them, a section of records or one setting
+    /// under a switch keeps them apart.
+    #[test]
+    fn sections_alike_are_a_table() {
+        use super::{Block, blocks};
+        use skwir_core::settings::SettingKind;
+        let spec = |key: &str, title: &str, section: &str| {
+            SettingSpec::toggle(key, title, "Does.", true).section(section)
+        };
+        let specs = [
+            spec("a.x", "Alone", ""),
+            spec("a.one_read", "Read", "One"),
+            spec("a.one_write", "Write", "One"),
+            spec("a.two_read", "Read", "Two"),
+            spec("a.two_write", "Write", "Two"),
+            spec("a.three", "Other", "Three"),
+            spec("a.four_read", "Read", "Four"),
+            spec("a.four_write", "Write", "Four"),
+        ];
+        let refs: Vec<&SettingSpec> = specs.iter().collect();
+        assert_eq!(
+            blocks(&refs),
+            [
+                Block::Section {
+                    title: String::new(),
+                    rows: vec![0]
+                },
+                Block::Table {
+                    columns: vec![
+                        ("Read".into(), SettingKind::Toggle),
+                        ("Write".into(), SettingKind::Toggle)
+                    ],
+                    lines: vec![("One".into(), vec![1, 2]), ("Two".into(), vec![3, 4])],
+                },
+                Block::Section {
+                    title: "Three".into(),
+                    rows: vec![5]
+                },
+                Block::Section {
+                    title: "Four".into(),
+                    rows: vec![6, 7]
+                },
+            ]
+        );
+        // A setting under a switch is no column.
+        let under = [
+            spec("a.one", "On", "One"),
+            spec("a.one_more", "More", "One").under("a.one"),
+            spec("a.two", "On", "Two"),
+            spec("a.two_more", "More", "Two").under("a.two"),
+        ];
+        let refs: Vec<&SettingSpec> = under.iter().collect();
+        assert!(
+            blocks(&refs)
+                .iter()
+                .all(|block| matches!(block, Block::Section { .. }))
+        );
+    }
+
+    #[test]
+    fn a_row_says_its_first_sentence() {
+        use super::first_sentence;
+        assert_eq!(first_sentence("One. Two."), ("One.", true));
+        assert_eq!(first_sentence("Alone."), ("Alone.", false));
+        // Not every full stop ends one: a name, a file's extension.
+        assert_eq!(
+            first_sentence("A Mac's ._ files, .ts folders. Then more."),
+            ("A Mac's ._ files, .ts folders.", true)
+        );
+        assert_eq!(
+            first_sentence("Friendly dates read as 12 Mar. ISO shows 2026-03-12."),
+            ("Friendly dates read as 12 Mar.", true)
+        );
+        assert_eq!(
+            first_sentence("Pandoc reads them. skwir reads Word."),
+            ("Pandoc reads them.", true)
+        );
     }
 
     /// Every page a setting may name is one of the dialog's.

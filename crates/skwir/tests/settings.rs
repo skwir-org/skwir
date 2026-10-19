@@ -138,6 +138,14 @@ fn every_setting_has_a_title_and_a_description_in_sentences() {
         if !spec.description.ends_with('.') {
             problems.push(format!("{key}: its description does not end a sentence"));
         }
+        // A row says its first sentence (ADR-072): it stands alone.
+        let (first, _) = skwir_ui::settings::first_sentence(&spec.description);
+        let words = first.split_whitespace().count();
+        if words > 30 {
+            problems.push(format!(
+                "{key}: its first sentence has {words} words, more than 30: {first}"
+            ));
+        }
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
@@ -185,11 +193,13 @@ fn every_setting_is_on_the_page_of_its_subject() {
 }
 
 /// The short view stays short (ADR-072): a folded page shows its
-/// essentials, at most four a page and twenty in all, with every plugin
-/// on. A setting is folded unless its owner argues it in.
+/// essentials, at most four lines a page and twenty in all, with every
+/// plugin on; a table counts as one (the stores of notes), its lines
+/// essential or folded together. A setting is folded unless its owner
+/// argues it in.
 #[test]
 fn few_settings_are_essential() {
-    use skwir_ui::settings::Page;
+    use skwir_ui::settings::{Block, Page, blocks, page_order};
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
     for plugin in skwir::plugins() {
@@ -200,24 +210,62 @@ fn few_settings_are_essential() {
         }
     }
     skwir_ui::settings::declare(&app);
-    let mut pages: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for spec in app
+    let mut schema: Vec<SettingSpec> = app
         .settings
         .schema()
         .into_iter()
-        .filter(|spec| spec.editable() && spec.essential)
-    {
-        pages
-            .entry(format!("{:?}", Page::of_spec(&spec)))
-            .or_default()
-            .push(spec.key);
+        .filter(SettingSpec::editable)
+        .collect();
+    page_order(&mut schema);
+    let mut pages: Vec<Page> = schema.iter().map(Page::of_spec).collect();
+    pages.dedup();
+    let mut lines: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for page in pages {
+        let on: Vec<&SettingSpec> = schema
+            .iter()
+            .filter(|spec| Page::of_spec(spec) == page)
+            .collect();
+        for block in blocks(&on) {
+            match block {
+                Block::Section { rows, .. } => {
+                    for row in rows.into_iter().filter(|row| on[*row].essential) {
+                        lines
+                            .entry(format!("{page:?}"))
+                            .or_default()
+                            .push(on[row].key.clone());
+                    }
+                }
+                Block::Table { lines: table, .. } => {
+                    let essential: Vec<bool> = table
+                        .iter()
+                        .flat_map(|(_, rows)| rows.iter().map(|row| on[*row].essential))
+                        .collect();
+                    assert!(
+                        essential.iter().all(|e| *e == essential[0]),
+                        "{page:?}: a table's lines are essential or folded together"
+                    );
+                    if essential[0] {
+                        lines
+                            .entry(format!("{page:?}"))
+                            .or_default()
+                            .push(format!("a table of {}", table.len()));
+                    }
+                }
+            }
+        }
     }
-    let crowded: Vec<String> = pages
+    let crowded: Vec<String> = lines
         .iter()
         .filter(|(_, keys)| keys.len() > 4)
         .map(|(page, keys)| format!("{page}: {keys:?}"))
         .collect();
     assert!(crowded.is_empty(), "more than four: {crowded:?}");
-    let all: usize = pages.values().map(Vec::len).sum();
-    assert!(all <= 20, "{all} essential settings: {pages:?}");
+    let all: usize = lines.values().map(Vec::len).sum();
+    assert!(all <= 20, "{all} essential lines: {lines:?}");
+    // The stores of notes are one of them.
+    assert!(
+        lines["Notes"]
+            .iter()
+            .any(|line| line.starts_with("a table"))
+    );
 }

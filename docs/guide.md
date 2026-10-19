@@ -385,7 +385,7 @@ Settings are grouped by subject, whichever plugin brings them:
 | Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |
 | Reading | How documents, books, comics, Markdown, text and code read, and the engine that reads each kind |
 | Pictures and media | The slideshow, audio and video playback, 3D models, the maps' background |
-| Terminal and commands | The terminal's shell and history, and the shell commands on the selection run in |
+| Terminal | The terminal's shell and history, and the shell commands on the selection run in |
 | Privacy | Folders that never leave the machine |
 | Plugins | Every plugin, on or off, what it may do and what it needs |
 | Keyboard | Every action and its keys, changed where they are listed |

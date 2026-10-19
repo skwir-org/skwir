@@ -1,7 +1,7 @@
 # ADR-072: Settings shown by subject, the few that matter first
 
-Status: accepted, 2026-10-19. Amends ADR-010 (its 2026-09-25 amendment:
-a page per namespace).
+Status: accepted, 2026-10-19, and built the same day. Amends ADR-010 (its
+2026-09-25 amendment: a page per namespace).
 
 ## Context
 
@@ -38,7 +38,7 @@ new user is not met with all of them.
   list's columns, thumbnails), Tags and notes (tags, then where notes are
   kept), Reading (pages, documents and their engines, books, text, code,
   spreadsheets), Pictures and media (pictures, playback, audio, video, 3D
-  models, maps), Terminal and commands, Privacy, Plugins, Keyboard, then
+  models, maps), Terminal (with the program commands run in), Privacy, Plugins, Keyboard, then
   Changed by you: eleven entries in the sidebar instead of seventeen,
   none a page of a single setting. A page lists the order of its sections; a section it
   does not list follows, where its first setting was declared.

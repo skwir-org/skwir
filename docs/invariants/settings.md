@@ -42,6 +42,10 @@ the reasoning.
   and twenty in all: a new essential takes another's place.
 - Titles are sentence case, without the plugin's name. Descriptions say
   what changes for the user, not what the key is called, in sentences.
+  **The first sentence stands alone**, in at most 30 words: a row shows
+  it, and the whole description is its tooltip and what a screen reader
+  hears (`settings::first_sentence`, ADR-072). Put what each choice does,
+  examples and exceptions after it.
   Choice labels are a word or two; the description explains them.
   `crates/skwir/tests/settings.rs` checks the titles and the sentences
   of every plugin's settings.
@@ -142,6 +146,13 @@ The key is the owner's; the page is the subject's (ADR-072).
   settings reached from its Settings button. The search finds every
   setting, folded or not. Never hide a setting a mode or a link would
   then not find.
+- **Sections alike are a table** (`settings::blocks`): consecutive
+  sections of a page made of the same settings (titles and kinds, in
+  order) draw as one, a line a section (its title and its first
+  setting's first sentence), a column a setting, its controls named
+  "section: title" to a screen reader. A choice there is a dropdown. A
+  section of records or a setting under a switch is never a column. Its
+  lines are essential or folded together.
 - **Changed by you** lists what differed from its default when it was
   reached, settings and plugins (`PluginInfo::enabled_by_default`), each
   with its way back, then Restore all; its count in the sidebar is live.

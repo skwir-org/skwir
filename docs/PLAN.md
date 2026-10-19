@@ -1453,6 +1453,44 @@ when it was reached, about a quarter of a second each.
   sharper picture after a step, a slow disk, Windows and macOS
   (compiled only).
 
+**Settings by subject, the few first (ADR-072).** The user asked to
+group related settings (tags and notes) and for a short view by
+default, the current one kept as Advanced. The dialog had 71 settings on
+17 pages, a page per namespace: tags on four of them, two shells on two,
+the engines away from Reading, four pages of one setting.
+
+- A setting names the page of its subject (`SettingSpec::page`); the key
+  stays its owner's. Ten pages of settings, then Plugins, Keyboard and
+  Changed by you: eleven entries in the sidebar instead of seventeen.
+- A page shows its essentials (`SettingSpec::essential`: 18 lines with
+  every plugin on, a test holding them to four a page and twenty in all)
+  and folds the rest under More settings (N), which stays open once
+  opened (window state). The user chose the fold over a global
+  Simple/Advanced switch, which would hide what links, toasts and the
+  guide name. The search finds every setting; what differs from its
+  default, a linked setting and a plugin's settings reached from its
+  button show whether folded or not, until the page is left.
+- Changed by you lists settings and plugins differing from how skwir
+  comes, with Restore all. Sections made of the same settings are one
+  table: the seven stores of notes are seven lines of Read and Write. A
+  row says its description's first sentence (at most 30 words, tested;
+  three rewritten), the whole as its tooltip and its screen reader
+  description.
+- Checked: the settings, palette, plugin and notes tests (82), new ones
+  for the page order, tables, first sentences, subject pages and the
+  budget; clippy -D warnings; in a window (debug build on Xvfb, a
+  synthetic home, three values changed): every page folded and
+  unfolded, the fold remembered in `state.toml`, a revert on Changed by
+  you moving nothing, the search reaching folded settings, a plugin's
+  Settings button revealing its settings on a folded page, a tooltip,
+  the stores' table (titles wrapping, dropdowns aligned after a first
+  look showed otherwise). Not checked: a screen reader on the new
+  controls (`just a11y-check` not run), Windows and macOS (not
+  compiled: `check-cross` not run), release-check.
+- Not done: a menu item for the terminal's Follow the folder shown (the
+  shell would name a plugin's key); the 3D model's bar already had its
+  two switches.
+
 ---
 
 ## Maps

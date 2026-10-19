@@ -403,20 +403,24 @@ impl App {
         use crate::notes::{Kept, Write};
         let (id, title) = (store.id(), store.title());
         let holds = store.holds();
-        let limits = if holds.limits.is_empty() {
-            String::new()
+        // First what sets it apart: the line of its table says it.
+        let holds = if holds.limits.is_empty() {
+            "It holds all of a file's notes.".to_owned()
         } else {
-            format!(" What it cannot hold: {}.", holds.limits)
+            format!("What it cannot hold: {}.", holds.limits)
         };
         let read = crate::notes::read_key(id);
         self.settings.declare(
             crate::settings::SettingSpec::toggle(
                 &read,
                 "Read",
-                &format!("Show the notes it keeps, merged with the others'.{limits}"),
+                &format!(
+                    "{holds} Read, what it keeps is shown merged with the other places' notes."
+                ),
                 store.default_read(),
             )
-            .section(title),
+            .section(title)
+            .essential(),
         );
         self.notes.declared(owner, read);
         let mut choices: Vec<(&str, &str)> = vec![
@@ -443,7 +447,8 @@ impl App {
         let write = crate::notes::write_key(id);
         self.settings.declare(
             crate::settings::SettingSpec::choice(&write, "Write", said, default, &choices)
-                .section(title),
+                .section(title)
+                .essential(),
         );
         self.notes.declared(owner, write);
         self.notes.register(owner, store);

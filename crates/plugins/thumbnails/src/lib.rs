@@ -369,7 +369,7 @@ impl Plugin for ThumbnailsPlugin {
             SettingSpec::toggle(
                 IMAGEMAGICK,
                 "Use ImageMagick",
-                "Draw the thumbnails and previews of the pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images…) with ImageMagick when it is installed, isolated from your files and the network.",
+                "Draw with ImageMagick, when it is installed, the thumbnails and previews of the pictures no thumbnailer draws. It reads HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images and more, isolated from your files and the network.",
                 true,
             )
             .page(skwir_core::settings::page::VIEWS)

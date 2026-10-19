@@ -14,7 +14,7 @@ use skwir_core::settings::{SettingKind, SettingSpec};
 use crate::controls::{self, ButtonStyle};
 use crate::elements::popover::PopoverAnchor;
 use crate::input::TextInput;
-use crate::settings::{Page, Row, SettingsEvent, SettingsView, Stop};
+use crate::settings::{Block, Page, Row, SettingsEvent, SettingsView, Stop};
 use crate::theme::Theme;
 
 /// Segmented controls hold at most this many choices, and only while their
@@ -27,6 +27,22 @@ const FIELD_MIN: f32 = 160.;
 /// A row's title and description keep this much width whatever the
 /// control beside them: the control shrinks, or picks a narrower form.
 const TEXTS_MIN: f32 = 240.;
+
+/// How wide a choice is on a table's line, where it is a dropdown: its
+/// column's dropdowns line up.
+const TABLE_CHOICE: f32 = 210.;
+
+/// The width of a table's column of a kind of control, its way back
+/// included.
+fn column_width(kind: SettingKind) -> f32 {
+    controls::HEIGHT
+        + 8.
+        + match kind {
+            SettingKind::Toggle => 44.,
+            SettingKind::Integer | SettingKind::Number => 140.,
+            _ => TABLE_CHOICE,
+        }
+}
 
 /// Where a row sits in its card.
 #[derive(Clone, Copy)]
@@ -61,8 +77,12 @@ pub(crate) fn revert_slot(size: f32, button: Option<AnyElement>) -> gpui::Div {
 }
 
 /// What a setting row needs, detached from `self` so controls can borrow it.
+#[derive(Clone)]
 struct Snapshot {
     spec: SettingSpec,
+    /// What its control is named: its title, after its section's on a
+    /// table's line.
+    label: SharedString,
     value: String,
     input: Option<Entity<TextInput>>,
     anchor: PopoverAnchor,
@@ -76,6 +96,7 @@ struct Snapshot {
 impl Snapshot {
     fn of(row: &Row, view: &SettingsView) -> Self {
         Snapshot {
+            label: row.spec.title.clone().into(),
             spec: row.spec.clone(),
             value: row.value.clone(),
             input: row.input.clone(),
@@ -304,7 +325,9 @@ impl SettingsView {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().child(title.into())),
+                    // A long title (a store of notes on a table's line)
+                    // wraps rather than runs under the controls.
+                    .child(div().min_w_0().child(title.into())),
             )
             .when(!description.is_empty(), |d| {
                 d.child(
@@ -324,7 +347,7 @@ impl SettingsView {
             return el;
         }
         let el = el
-            .aria_label(row.spec.title.clone())
+            .aria_label(row.label.clone())
             .aria_disabled(!row.available);
         if row.spec.description.is_empty() {
             el
@@ -333,11 +356,14 @@ impl SettingsView {
         }
     }
 
+    /// A setting's control; a choice on a table's line is always a
+    /// dropdown, which keeps its column's width.
     #[allow(clippy::too_many_lines)] // one arm per control kind
     fn control(
         &mut self,
         row: &Snapshot,
         item: usize,
+        in_table: bool,
         theme: &Theme,
         window: &Window,
         cx: &mut Context<Self>,
@@ -362,8 +388,8 @@ impl SettingsView {
             SettingKind::Choice => {
                 let focus = self.handle(&format!("control:{key}"), cx);
                 self.stop(&focus, Some(item), Some(&key));
-                let dropdown = self.choice_dropdown(row, &focus, theme, cx);
-                if row.spec.constraints.choices.len() > SEGMENTED_MAX {
+                let dropdown = self.choice_dropdown(row, in_table, &focus, theme, cx);
+                if in_table || row.spec.constraints.choices.len() > SEGMENTED_MAX {
                     return dropdown;
                 }
                 // Buttons where their labels fit beside the texts, else the
@@ -546,9 +572,12 @@ impl SettingsView {
     }
 
     /// A choice as a dropdown of its values.
+    /// A choice as a dropdown of its values; on a table's line, as wide as
+    /// its column, so the column's dropdowns line up.
     fn choice_dropdown(
         &self,
         row: &Snapshot,
+        in_table: bool,
         focus: &gpui::FocusHandle,
         theme: &Theme,
         cx: &mut Context<Self>,
@@ -563,7 +592,8 @@ impl SettingsView {
                     row.spec.choice_label(&row.value).to_owned(),
                     focus,
                     theme,
-                ),
+                )
+                .when(in_table, |d| d.min_w(px(TABLE_CHOICE))),
                 row,
             )
             .aria_expanded(open)
@@ -642,7 +672,8 @@ impl SettingsView {
         let key = row.spec.key.clone();
         self.row_items.insert(key.clone(), item);
         let error = self.errors.get(&key).cloned();
-        let mut texts = Self::texts(row.spec.title.clone(), row.spec.description.clone(), theme)
+        let mut texts = self
+            .described(row.spec.title.clone(), &row.spec.description, &key, theme)
             // Beneath the switch it is under.
             .when(!row.spec.under.is_empty(), |d| d.pl(px(24.)));
         if row.spec.restart_required {
@@ -653,43 +684,16 @@ impl SettingsView {
             )));
         }
         if let Some(error) = error {
-            texts = texts.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .text_xs()
-                    .text_color(theme.error)
-                    .child(controls::glyph("warning", theme.error, 13.))
-                    .child(div().flex_1().min_w_0().child(error)),
-            );
+            texts = texts.child(Self::error_line(error, theme));
         }
         // Left of the control, so controls stay aligned on the right edge,
         // in a slot every row keeps (`revert_slot`).
-        let revert = row.modified.then(|| {
-            let focus = self.handle(&format!("revert:{key}"), cx);
-            self.stop(&focus, Some(item), None);
-            let font = self.font.clone();
-            let tip: SharedString = if row.default_text.is_empty() {
-                "Restore the default (not set)".into()
-            } else {
-                format!(
-                    "Restore the default: {}",
-                    row.spec.choice_label(&row.default_text)
-                )
-                .into()
-            };
-            let key = key.clone();
-            controls::icon_button(format!("revert-{key}"), "revert", "Revert", &focus, theme)
-                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
-                .on_click(cx.listener(move |this, _, _, cx| this.reset(&key, cx)))
-                .into_any_element()
-        });
+        let revert = self.revert_button(row, item, theme, cx);
         // Built after the revert button: traversal follows the visual order.
         let control = div()
             .flex_none()
             .when(!row.available, |d| d.opacity(0.5))
-            .child(self.control(row, item, theme, window, cx));
+            .child(self.control(row, item, false, theme, window, cx));
         let highlighted = self.highlight.as_deref() == Some(key.as_str());
         // A list's records are rows of the same card, under its own.
         let records = row.spec.kind == SettingKind::Records;
@@ -713,6 +717,161 @@ impl SettingsView {
         if records {
             self.record_rows(&key, &row.value, edge.last, item, items, theme, window, cx);
         }
+    }
+
+    /// A setting's title and the first sentence of its description: the
+    /// whole description is the sentence's tooltip, and what the control's
+    /// description says to a screen reader (ADR-072).
+    fn described(
+        &self,
+        title: impl Into<SharedString>,
+        description: &str,
+        key: &str,
+        theme: &Theme,
+    ) -> gpui::Div {
+        let (shown, more) = crate::settings::first_sentence(description);
+        let full: SharedString = description.to_owned().into();
+        let font = self.font.clone();
+        Self::texts(title, "", theme).when(!shown.is_empty(), |d| {
+            d.child(
+                div()
+                    .id(SharedString::from(format!("description-{key}")))
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(shown.to_owned())
+                    .when(more, |d| {
+                        d.tooltip(move |_, cx| {
+                            crate::toolbar::tooltip(full.clone(), font.clone(), cx)
+                        })
+                    }),
+            )
+        })
+    }
+
+    /// Why a change was refused, under the texts of its row.
+    fn error_line(error: String, theme: &Theme) -> gpui::Div {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .text_xs()
+            .text_color(theme.error)
+            .child(controls::glyph("warning", theme.error, 13.))
+            .child(div().flex_1().min_w_0().child(error))
+    }
+
+    /// The button restoring a setting's default, while it differs from it.
+    fn revert_button(
+        &mut self,
+        row: &Snapshot,
+        item: usize,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !row.modified {
+            return None;
+        }
+        let key = row.spec.key.clone();
+        let focus = self.handle(&format!("revert:{key}"), cx);
+        self.stop(&focus, Some(item), None);
+        let font = self.font.clone();
+        let tip: SharedString = if row.default_text.is_empty() {
+            "Restore the default (not set)".into()
+        } else {
+            format!(
+                "Restore the default: {}",
+                row.spec.choice_label(&row.default_text)
+            )
+            .into()
+        };
+        Some(
+            controls::icon_button(format!("revert-{key}"), "revert", "Revert", &focus, theme)
+                .when(self.a11y, |d| d.aria_description(row.label.clone()))
+                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
+                .on_click(cx.listener(move |this, _, _, cx| this.reset(&key, cx)))
+                .into_any_element(),
+        )
+    }
+
+    /// The header of a table: its columns' titles over their controls.
+    fn table_header(columns: &[(String, SettingKind)], items: &mut Vec<AnyElement>, theme: &Theme) {
+        let mut header = div()
+            .flex_none()
+            .pt_5()
+            .pb_2()
+            .px_4()
+            .flex()
+            .gap_4()
+            .text_xs()
+            .text_color(theme.text_muted)
+            .child(div().flex_1().min_w(px(TEXTS_MIN)));
+        for (title, kind) in columns {
+            header = header.child(
+                div()
+                    .flex_none()
+                    .w(px(column_width(*kind)))
+                    .flex()
+                    .justify_end()
+                    .child(title.clone()),
+            );
+        }
+        items.push(header.into_any_element());
+    }
+
+    /// A line of a table: its section's title and its first setting's
+    /// description, then a cell a setting, each with its way back.
+    #[allow(clippy::too_many_arguments)] // a row's, with its cells
+    fn table_line(
+        &mut self,
+        title: &str,
+        cells: &[Snapshot],
+        edge: Edge,
+        items: &mut Vec<AnyElement>,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let item = items.len();
+        let Some(first) = cells.first() else { return };
+        for cell in cells {
+            self.row_items.insert(cell.spec.key.clone(), item);
+        }
+        let mut texts = self.described(
+            title.to_owned(),
+            &first.spec.description,
+            &first.spec.key,
+            theme,
+        );
+        for cell in cells {
+            if let Some(error) = self.errors.get(&cell.spec.key).cloned() {
+                texts = texts.child(Self::error_line(error, theme));
+            }
+        }
+        let highlighted = cells
+            .iter()
+            .any(|cell| self.highlight.as_deref() == Some(cell.spec.key.as_str()));
+        let mut line = card_row(theme, edge)
+            .when(highlighted, |d| d.bg(theme.highlight))
+            .child(texts);
+        for cell in cells {
+            let revert = self.revert_button(cell, item, theme, cx);
+            let control = div()
+                .flex_none()
+                .when(!cell.available, |d| d.opacity(0.5))
+                .child(self.control(cell, item, true, theme, window, cx));
+            line = line.child(
+                div()
+                    .flex_none()
+                    .w(px(column_width(cell.spec.kind)))
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap_2()
+                    .child(revert_slot(controls::HEIGHT, revert))
+                    .child(control),
+            );
+        }
+        items.push(line.into_any_element());
     }
 
     /// The editable settings shown on a page, grouped by section: while
@@ -793,7 +952,7 @@ impl SettingsView {
     }
 
     /// Settings grouped under their sections' captions, as a page shows
-    /// them.
+    /// them, sections alike as a table (`settings::blocks`).
     fn section_rows(
         &mut self,
         rows: &[Snapshot],
@@ -802,32 +961,47 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        let mut start = 0;
-        while start < rows.len() {
-            let section = rows[start].spec.section.clone();
-            let end = rows[start..]
-                .iter()
-                .position(|row| row.spec.section != section)
-                .map_or(rows.len(), |offset| start + offset);
-            if section.is_empty() {
-                items.push(
-                    div()
-                        .flex_none()
-                        .h(px(if start == 0 { 0. } else { 16. }))
-                        .into_any_element(),
-                );
-            } else {
-                Self::caption(items, section, theme);
+        let specs: Vec<&SettingSpec> = rows.iter().map(|row| &row.spec).collect();
+        for (n, block) in crate::settings::blocks(&specs).into_iter().enumerate() {
+            match block {
+                Block::Section { title, rows: at } => {
+                    if title.is_empty() {
+                        items.push(
+                            div()
+                                .flex_none()
+                                .h(px(if n == 0 { 0. } else { 16. }))
+                                .into_any_element(),
+                        );
+                    } else {
+                        Self::caption(items, title, theme);
+                    }
+                    for (index, row) in at.iter().enumerate() {
+                        let edge = Edge {
+                            first: index == 0,
+                            last: index + 1 == at.len(),
+                        };
+                        self.setting_row(&rows[*row], edge, items, theme, window, cx);
+                    }
+                }
+                Block::Table { columns, lines } => {
+                    Self::table_header(&columns, items, theme);
+                    for (index, (title, at)) in lines.iter().enumerate() {
+                        let edge = Edge {
+                            first: index == 0,
+                            last: index + 1 == lines.len(),
+                        };
+                        let cells: Vec<Snapshot> = at
+                            .iter()
+                            .map(|row| {
+                                let mut cell = rows[*row].clone();
+                                cell.label = format!("{title}: {}", cell.spec.title).into();
+                                cell
+                            })
+                            .collect();
+                        self.table_line(title, &cells, edge, items, theme, window, cx);
+                    }
+                }
             }
-            let group = &rows[start..end];
-            for (index, row) in group.iter().enumerate() {
-                let edge = Edge {
-                    first: index == 0,
-                    last: index + 1 == group.len(),
-                };
-                self.setting_row(row, edge, items, theme, window, cx);
-            }
-            start = end;
         }
     }
 
