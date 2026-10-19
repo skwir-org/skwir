@@ -73,7 +73,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
 | [Names indexed by skwird](#names-indexed-by-skwird) | planned (ADR-050) | — |
-| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A built 2026-10-19; B to E planned (ADR-071) | — |
+| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A and B built 2026-10-19; C to E planned (ADR-071) | — |
 | [Phase 7: AI](#phase-7-ai) | planned, after Release 0.1 | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
 
@@ -2327,7 +2327,8 @@ after Release 0.1 and after skwird's phase 1.
 
 ## Colors and font from the desktop
 
-ADR-071. Step A built 2026-10-19; the desktop is not read yet (B to E).
+ADR-071. Steps A and B built 2026-10-19: Linux's portal is read; Plasma's
+scheme, GTK3 themes, macOS and Windows not yet (C to E).
 
 **Goal:** Skwir wears what the user chose on their desktop (the accent,
 more contrast, a color scheme, the font's family) on controls that stay
@@ -2362,6 +2363,29 @@ its own, every color readable on what it is drawn on.
   cache for the first frame; the `ui.desktop_style` switch. Checked on
   the session and on headless sway with a portal answering; `just
   idle-pss` and the first frame measured before and after.
+  **Built 2026-10-19**, with deviations recorded in ADR-071's amendment:
+  zbus's blocking API on a thread of its own rather than ashpd; two
+  switches, `ui.desktop_colors` and `ui.desktop_font` under it (the
+  user's choice; `SettingSpec::under`), the font chosen when the window
+  opens. `skwir_platform::desktop_style` reads and follows,
+  `desktop_settings` is shared with the icon theme,
+  `skwir_ui::desktop_style` keeps what was said (the cache) and lends it
+  to `Theme::of`. Tests: a portal of the tests' own over a socket pair
+  (`ReadOne`, `Read` before version 2, an accent out of range, no bus, a
+  change followed and one that changes nothing ignored); Pango's and
+  Qt's font names; the switches. In windows (debug build, Xvfb): with a
+  fake portal on a private bus, its teal on the selection, then orange
+  and the stricter contrast (muted text 108 to 79) when it said so, in
+  the same process; a portal taking 5 s per answer left the first frame
+  at 307 ms (317 without) and its accent came once it answered; on the
+  session's bus, its accent and its font (Noto Sans) from the first
+  start. Release builds on headless sway (pixman, lavapipe), HEAD and
+  this alternated, three runs each: own share 110.6–110.7 MiB against
+  110.9–111.3 (about +0.5, zbus's code now touched at start), first
+  frame 78 ms against 77, idle CPU 0. The session's own NVIDIA reading
+  (92.5 MiB) was not taken again. Not checked: Xfce, Cinnamon, MATE and
+  Plasma reading the font (their tests read the files and programs
+  alone), the dialog's switch under the other in a window.
 - **C. Plasma's color scheme** from `kdeglobals`, watched; tested on
   synthetic schemes.
 - **D. GTK3 themes**, found as the icon theme is; `@define-color`s,

@@ -28,6 +28,7 @@ pub mod commands;
 mod complete;
 pub mod controls;
 mod deleting;
+mod desktop_style;
 pub mod dnd;
 pub mod dock;
 mod dragicon;
@@ -147,13 +148,13 @@ const MONO_CANDIDATES: &[&str] = &["JetBrains Mono", "Cascadia Mono", "Consolas"
 /// family that is missing falls back to gpui's own stack and panics when
 /// none of it is installed either (a minimal system with only Liberation
 /// or Inter), before the window opens.
-fn pick_font(cx: &gpui::App, candidates: &[&'static str], label: &str) -> SharedString {
+fn pick_font(cx: &gpui::App, candidates: &[&str], label: &str) -> SharedString {
     let ts = cx.text_system();
     let loads = |family: &str| ts.font_id(&font(family.to_owned())).is_ok();
     for c in candidates {
         if loads(c) {
             tracing::info!(family = c, label, "font");
-            return (*c).into();
+            return SharedString::from((*c).to_owned());
         }
     }
     let any = ts
@@ -161,7 +162,7 @@ fn pick_font(cx: &gpui::App, candidates: &[&'static str], label: &str) -> Shared
         .into_iter()
         .find(|family| !family.starts_with('.') && loads(family));
     tracing::warn!(?any, "none of {candidates:?} is installed for {label}");
-    any.map_or_else(|| candidates[0].into(), SharedString::from)
+    any.map_or_else(|| candidates[0].to_owned().into(), SharedString::from)
 }
 
 /// Dev-only PNG/JPEG decoder used to exercise the views before the platform
@@ -232,6 +233,9 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
     }
     // The shell's own commands, known to every surface as the others are.
     commands::declare_all(&app);
+    // What the desktop said when skwir last ran, then what it says
+    // (ADR-071): its font is chosen below, its colors with the theme.
+    desktop_style::start(&app);
 
     // The system's backend, with AccessKit (ADR-064).
     gpui_platform::application()
@@ -241,7 +245,13 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
                 ms = started.elapsed().as_millis() as u64,
                 "gpui run callback"
             );
-            let font = pick_font(cx, FONT_CANDIDATES, "ui");
+            let desktop_font = desktop_style::font(&app.settings);
+            let fonts: Vec<&str> = desktop_font
+                .as_deref()
+                .into_iter()
+                .chain(FONT_CANDIDATES.iter().copied())
+                .collect();
+            let font = pick_font(cx, &fonts, "ui");
             let mono_font = pick_font(cx, MONO_CANDIDATES, "mono");
             tracing::debug!(ms = started.elapsed().as_millis() as u64, "font picked");
             let keymap =

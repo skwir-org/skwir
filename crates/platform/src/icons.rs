@@ -178,69 +178,12 @@ pub fn folder(size: u16) -> Option<PathBuf> {
 mod imp {
     use std::path::PathBuf;
 
-    use std::path::Path;
-    use std::process::Command;
-    use std::time::Duration;
-
-    fn gtk_setting(file: &str) -> Option<String> {
-        let path = crate::xdg::config_home()?.join(file);
-        let text = crate::file::read_regular_text(&path, crate::file::DESKTOP_FILE).ok()?;
-        crate::keyfile::entries(&text)
-            .find(|(group, key, _)| *group == "Settings" && *key == "gtk-icon-theme-name")
-            .map(|(_, _, value)| value.trim().to_owned())
-            .filter(|s| !s.is_empty())
-    }
-
-    /// Where a desktop keeps the icon theme its user chose. GNOME and the
-    /// desktops built on it keep it in `GSettings` and write no
-    /// `settings.ini`, KDE in `kdeglobals`, Xfce in xfconf.
-    #[derive(Debug, PartialEq, Eq)]
-    pub(super) enum Chosen {
-        /// `gsettings get <schema> icon-theme`.
-        GSettings(&'static str),
-        Kde,
-        Xfce,
-    }
-
-    /// The setting of the first desktop `XDG_CURRENT_DESKTOP` names that
-    /// keeps one (`ubuntu:GNOME`, `Budgie:GNOME`, `X-Cinnamon`).
-    pub(super) fn chosen_in(desktops: &str) -> Option<Chosen> {
-        desktops
-            .split(':')
-            .find_map(|desktop| match desktop.to_ascii_lowercase().as_str() {
-                "gnome" | "gnome-classic" | "gnome-flashback" | "unity" | "budgie"
-                | "budgie-desktop" | "pantheon" => {
-                    Some(Chosen::GSettings("org.gnome.desktop.interface"))
-                }
-                "x-cinnamon" | "cinnamon" => {
-                    Some(Chosen::GSettings("org.cinnamon.desktop.interface"))
-                }
-                "mate" => Some(Chosen::GSettings("org.mate.interface")),
-                "kde" => Some(Chosen::Kde),
-                "xfce" => Some(Chosen::Xfce),
-                _ => None,
-            })
-    }
-
-    /// A string as `gsettings get` prints it (`'Papirus'`).
-    pub(super) fn gsettings_string(printed: &str) -> Option<String> {
-        let printed = printed.trim();
-        let inner = printed
-            .strip_prefix('\'')
-            .and_then(|s| s.strip_suffix('\''))
-            .unwrap_or(printed);
-        (!inner.is_empty()).then(|| inner.to_owned())
-    }
+    use crate::desktop_settings::{self as desktop, Chosen};
 
     /// The theme in `kdeglobals`; Plasma's own, Breeze, when it names none.
     pub(super) fn kde_theme(kdeglobals: Option<&str>) -> String {
         kdeglobals
-            .and_then(|text| {
-                crate::keyfile::entries(text)
-                    .find(|(group, key, _)| *group == "Icons" && *key == "Theme")
-                    .map(|(_, _, value)| value.trim().to_owned())
-            })
-            .filter(|theme| !theme.is_empty())
+            .and_then(|text| desktop::keyfile_value(text, "Icons", "Theme"))
             .unwrap_or_else(|| "breeze".to_owned())
     }
 
@@ -327,44 +270,12 @@ mod imp {
                 .any(|folder| folder.join(name).join("index.theme").is_file())
     }
 
-    /// What `program` prints, run with `args`: a desktop's setting, read in
-    /// a moment or not at all.
-    pub(super) fn printed(program: &Path, args: &[&str]) -> Option<String> {
-        let finished = crate::process::run_capped(
-            Command::new(program).args(args),
-            None,
-            &skwir_core::CancelToken::new(),
-            Duration::from_secs(2),
-            4096,
-        )
-        .ok()?;
-        finished
-            .status
-            .success()
-            .then(|| String::from_utf8_lossy(&finished.stdout).into_owned())
-    }
-
     /// The theme the user chose in their desktop's own settings.
     fn desktop_setting() -> Option<String> {
-        let desktops = std::env::var("XDG_CURRENT_DESKTOP").ok()?;
-        match chosen_in(&desktops)? {
-            Chosen::GSettings(schema) => gsettings_string(&printed(
-                Path::new("gsettings"),
-                &["get", schema, "icon-theme"],
-            )?),
-            Chosen::Kde => {
-                let text = crate::file::read_regular_text(
-                    &crate::xdg::config_home()?.join("kdeglobals"),
-                    crate::file::DESKTOP_FILE,
-                );
-                Some(kde_theme(text.ok().as_deref()))
-            }
-            Chosen::Xfce => printed(
-                Path::new("xfconf-query"),
-                &["-c", "xsettings", "-p", "/Net/IconThemeName"],
-            )
-            .map(|s| s.trim().to_owned())
-            .filter(|s| !s.is_empty()),
+        match desktop::chosen()? {
+            Chosen::GSettings(schema) => desktop::gsettings(schema, "icon-theme"),
+            Chosen::Kde => Some(kde_theme(desktop::kdeglobals().as_deref())),
+            Chosen::Xfce => desktop::xfconf("/Net/IconThemeName"),
         }
     }
 
@@ -375,8 +286,7 @@ mod imp {
         let folders = theme_folders();
         let configured = desktop_setting()
             .into_iter()
-            .chain(gtk_setting("gtk-4.0/settings.ini"))
-            .chain(gtk_setting("gtk-3.0/settings.ini"))
+            .chain(desktop::gtk_settings("gtk-icon-theme-name"))
             .collect::<Vec<_>>();
         for candidate in configured
             .iter()
@@ -522,32 +432,8 @@ mod tests {
     }
 
     #[test]
-    fn the_theme_is_read_where_each_desktop_keeps_it() {
-        use imp::{Chosen, chosen_in, gsettings_string, kde_theme};
-        let gnome = Some(Chosen::GSettings("org.gnome.desktop.interface"));
-        assert_eq!(chosen_in("GNOME"), gnome);
-        assert_eq!(chosen_in("ubuntu:GNOME"), gnome);
-        assert_eq!(chosen_in("Budgie:GNOME"), gnome);
-        assert_eq!(
-            chosen_in("X-Cinnamon"),
-            Some(Chosen::GSettings("org.cinnamon.desktop.interface"))
-        );
-        assert_eq!(
-            chosen_in("MATE"),
-            Some(Chosen::GSettings("org.mate.interface"))
-        );
-        assert_eq!(chosen_in("KDE"), Some(Chosen::Kde));
-        assert_eq!(chosen_in("XFCE"), Some(Chosen::Xfce));
-        // GTK's settings.ini decides for the others.
-        assert_eq!(chosen_in("Hyprland"), None);
-        assert_eq!(chosen_in(""), None);
-
-        assert_eq!(
-            gsettings_string("'Papirus-Dark'\n").as_deref(),
-            Some("Papirus-Dark")
-        );
-        assert_eq!(gsettings_string("''\n"), None);
-
+    fn plasma_s_theme_is_breeze_unless_kdeglobals_names_another() {
+        use imp::kde_theme;
         let kdeglobals = "[General]\nColorScheme=BreezeDark\n\n[Icons]\nTheme=Papirus\n";
         assert_eq!(kde_theme(Some(kdeglobals)), "Papirus");
         assert_eq!(
@@ -654,30 +540,6 @@ mod tests {
         assert!(!imp::installed(&folders, "Papirus"));
         assert!(!imp::installed(&folders, ""));
         assert!(!imp::installed(&folders, "../icons/breeze"));
-    }
-
-    #[test]
-    fn gsettings_is_asked_as_a_program() {
-        use std::os::unix::fs::PermissionsExt as _;
-        let dir = tempfile::tempdir().unwrap();
-        let fake = dir.path().join("gsettings");
-        std::fs::write(
-            &fake,
-            "#!/bin/sh\n[ \"$*\" = 'get org.gnome.desktop.interface icon-theme' ] && echo \"'Papirus'\"\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let printed = imp::printed(&fake, &["get", "org.gnome.desktop.interface", "icon-theme"]);
-        assert_eq!(
-            printed
-                .as_deref()
-                .and_then(imp::gsettings_string)
-                .as_deref(),
-            Some("Papirus")
-        );
-        // A program that fails, or is not there, says nothing.
-        assert_eq!(imp::printed(&fake, &["get", "nothing", "here"]), None);
-        assert_eq!(imp::printed(&dir.path().join("absent"), &[]), None);
     }
 
     #[test]

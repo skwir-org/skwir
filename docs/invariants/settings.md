@@ -21,6 +21,12 @@ the reasoning.
 - The owner states the title, description, unit, step, choice labels and
   section, so the dialog, the palette and agents need no key-specific
   branches.
+- A setting that applies only while a switch is on (the desktop's font
+  under the desktop's colors) says so with `SettingSpec::under(switch)`
+  and is declared right after it, in its section: the dialog draws it
+  indented beneath the switch and unavailable (dimmed, announced as
+  disabled, its changes refused) while the switch is off. Its owner
+  still reads both: `under` is how it is shown, not what it means.
 - The owner states the order too, by declaring in it: a page shows its
   settings as they were first declared (`SettingSpec::order`), what has
   no section first, then each section where its first setting was.

@@ -184,6 +184,10 @@ pub struct SettingSpec {
     /// Optional group heading within the owner's page. Sections stand in
     /// the order their first setting was declared, after what has none.
     pub section: String,
+    /// The switch this setting is shown under (its key), which it applies
+    /// only while that is on; empty for none. The dialog draws it indented
+    /// beneath the switch, unavailable while the switch is off.
+    pub under: String,
     /// Unit shown after a numeric value ("MB").
     pub unit: String,
     pub default: toml::Value,
@@ -264,6 +268,7 @@ impl SettingSpec {
             title: title.into(),
             description: description.into(),
             section: String::new(),
+            under: String::new(),
             unit: String::new(),
             default,
             kind,
@@ -407,6 +412,15 @@ impl SettingSpec {
     #[must_use]
     pub fn section(mut self, section: &str) -> Self {
         section.clone_into(&mut self.section);
+        self
+    }
+
+    /// Shown under the switch `parent`, applying only while it is on (the
+    /// desktop's font under the desktop's colors). Declare it right after
+    /// the switch, in the same section.
+    #[must_use]
+    pub fn under(mut self, parent: &str) -> Self {
+        parent.clone_into(&mut self.under);
         self
     }
 

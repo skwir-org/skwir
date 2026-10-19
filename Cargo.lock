@@ -7778,6 +7778,7 @@ dependencies = [
  "windows 0.61.3",
  "windows-sys 0.61.2",
  "xdg-mime",
+ "zbus",
  "zip 9.0.5",
 ]
 

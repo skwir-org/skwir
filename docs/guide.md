@@ -373,7 +373,7 @@ a hint shows what can follow.
 | Page | What it sets |
 | --- | --- |
 | General | What Skwir does: at startup, with files (copies, drops, companion files), with the split and tabs |
-| Appearance | How it looks: theme, icons, dates, tabs, the path, the Narrow by bar, the grid, the list's columns, dragged files |
+| Appearance | How it looks: theme, your desktop's colors and font, icons, dates, tabs, the path, the Narrow by bar, the grid, the list's columns, dragged files |
 | Reading | The reader shared by documents, books, comics, Markdown and code: pages, line length, code's colors |
 | Notes | Where tags, ratings and comments are read and written |
 | Privacy | Folders that never leave the machine |
@@ -382,6 +382,14 @@ a hint shows what can follow.
 
 A plugin with options of its own (an engine, the terminal's shell) has a
 page of its own, listed under the others.
+
+On Linux, Skwir wears the accent color your desktop's settings name
+(GNOME's, or any desktop whose settings portal says one), and follows it
+when you change it there; Appearance › **Desktop colors** turns that off.
+**Desktop font**, beneath it, writes in your desktop's interface font
+from the next start. When your desktop asks for more contrast, Skwir's
+colors give it, whatever these say. Skwir's own controls stay as they
+are: it takes your colors, not another toolkit's look (ADR-071).
 
 If the settings file cannot be read (edited by hand into something that
 is no longer TOML), Skwir starts with its defaults, keeps the file aside

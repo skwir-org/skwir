@@ -44,8 +44,9 @@
 //!   (a pane's row, the sidebar's header, the tab strip: their edges meet).
 //!
 //! A look is derived (`Theme::derive`, ADR-071) from a few colors, its
-//! `Base`: skwir's own (`Base::own`), or later what a desktop's scheme
-//! names. The other grounds and lines (`zebra`, `code_bg`, `hover`,
+//! `Base`: skwir's own (`Base::own`), wearing the accent and the contrast
+//! the desktop lends it (`Desktop`, `Theme::of`, `desktop_style`), or
+//! later what a desktop's scheme names. The other grounds and lines (`zebra`, `code_bg`, `hover`,
 //! `border`, a derived selection) are `Steps` in Oklab from `bg` towards
 //! `text`, tinted by the accent; the marks of the accent (`band`,
 //! `handle`, `chart`…) are it, fainter. Then the contrast is guarded:
@@ -152,6 +153,9 @@ pub struct Theme {
     /// whose backgrounds are close to ours.
     pub terminal: [Hsla; 16],
     pub is_dark: bool,
+    /// What this look took from the desktop, which the other look takes
+    /// too (`in_look`).
+    pub desktop: Desktop,
     /// The colors code is drawn in and their look: skwir's own colors and
     /// look unless the Reading page chooses (`code_preview::CodeTheme`).
     pub code: crate::code_preview::CodeTheme,
@@ -184,6 +188,14 @@ impl Contrast {
             Contrast::More => (7., 4.5),
         }
     }
+}
+
+/// What a look takes from the desktop (ADR-071, `desktop_style::colors`):
+/// its accent, and the contrast it asks for.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Desktop {
+    pub accent: Option<Hsla>,
+    pub contrast: Contrast,
 }
 
 /// The colors a look is made of: skwir's own (`Base::own`), or what a
@@ -505,6 +517,10 @@ impl Theme {
             map_border: kept.map_border,
             terminal: kept.terminal,
             is_dark: base.dark,
+            desktop: Desktop {
+                accent: None,
+                contrast,
+            },
             code: crate::code_preview::CodeTheme::own(base.dark),
         }
     }
@@ -591,31 +607,60 @@ impl Theme {
         if dark == self.is_dark {
             return std::borrow::Cow::Borrowed(self);
         }
-        let mut other = if dark { Theme::dark() } else { Theme::light() };
+        let mut other = Theme::of(dark, self.desktop);
         other.code = self.code.clone();
         std::borrow::Cow::Owned(other)
     }
 
-    /// The `ui.theme` preference, falling back to the desktop's appearance.
+    /// The look `dark` names, wearing what it takes from the desktop:
+    /// skwir's own when that is nothing, else derived once and kept while
+    /// the desktop says the same (`in_look` asks as it draws).
+    pub fn of(dark: bool, desktop: Desktop) -> Self {
+        static MADE: std::sync::Mutex<Vec<Theme>> = std::sync::Mutex::new(Vec::new());
+        if desktop == Desktop::default() {
+            return if dark { Theme::dark() } else { Theme::light() };
+        }
+        let mut made = MADE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(theme) = made
+            .iter()
+            .find(|theme| theme.is_dark == dark && theme.desktop == desktop)
+        {
+            return theme.clone();
+        }
+        let base = Base {
+            accent: desktop.accent.unwrap_or(Base::own(dark).accent),
+            ..Base::own(dark)
+        };
+        let mut theme = Theme::derive(&base, desktop.contrast);
+        theme.desktop = desktop;
+        // The two looks of what the desktop says now.
+        if made.len() == 2 {
+            made.remove(0);
+        }
+        made.push(theme.clone());
+        theme
+    }
+
+    /// The `ui.theme` preference, falling back to the desktop's appearance,
+    /// in what the desktop's style lends it (`desktop_style::colors`).
     pub fn resolve(app: &skwir_core::App, appearance: WindowAppearance) -> Self {
-        let mut theme = match app
+        let dark = match app
             .settings
             .get::<String>(crate::settings::THEME_KEY)
             .as_deref()
         {
-            Some("light") => Theme::light(),
-            Some("dark") => Theme::dark(),
-            _ => Theme::for_appearance(appearance),
+            Some("light") => false,
+            Some("dark") => true,
+            _ => matches!(
+                appearance,
+                WindowAppearance::Dark | WindowAppearance::VibrantDark
+            ),
         };
+        let mut theme = Theme::of(dark, crate::desktop_style::colors(&app.settings));
         theme.code = crate::code_preview::CodeTheme::chosen(app, theme.is_dark);
         theme
-    }
-
-    pub fn for_appearance(appearance: WindowAppearance) -> Self {
-        match appearance {
-            WindowAppearance::Light | WindowAppearance::VibrantLight => Theme::light(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => Theme::dark(),
-        }
     }
 }
 

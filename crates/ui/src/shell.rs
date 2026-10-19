@@ -2406,7 +2406,9 @@ impl Shell {
         }
         self.pending = self.app.pending.get();
         self.sync_clipboard_files(cx);
-        let revision = self.app.settings.revision();
+        // What the theme is made of: the settings and the desktop's style,
+        // both counted up, never down (ADR-071).
+        let revision = self.app.settings.revision() + crate::desktop_style::revision();
         if revision != self.theme_revision {
             self.theme_revision = revision;
             cx.set_global(Theme::resolve(&self.app, window.appearance()));

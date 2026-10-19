@@ -266,7 +266,9 @@ class Window:
             (self.home / "Projects").as_uri() + " Projects\n"
         )
         (config / "skwir" / "settings.toml").write_text(
-            f'[ui]\ntheme = "{self.theme}"\nicon_theme = "Papirus"\n'
+            # Skwir's own colors and font, whatever the desktop running
+            # this chose (ADR-071).
+            f'[ui]\ntheme = "{self.theme}"\nicon_theme = "Papirus"\ndesktop_colors = false\n'
         )
         # The window as it was left is state, not a setting (ADR-056).
         (self.root / "state" / "skwir").mkdir(parents=True, exist_ok=True)

@@ -44,6 +44,12 @@ pub const NOTES_OWNER: &str = skwir_core::notes::SETTINGS;
 pub const PRIVACY_OWNER: &str = skwir_core::permissions::SETTINGS;
 
 pub const THEME_KEY: &str = "ui.theme";
+/// Whether skwir wears the accent the desktop's settings name (ADR-071,
+/// `desktop_style`).
+pub const DESKTOP_COLORS_KEY: &str = "ui.desktop_colors";
+/// Whether the window opens in the desktop's interface font, under
+/// `ui.desktop_colors`.
+pub const DESKTOP_FONT_KEY: &str = "ui.desktop_font";
 /// The icon theme skwir draws with, by its folder's name; Automatic is the
 /// desktop's (`icons::IconCache::set_theme`). The free desktops' only:
 /// macOS and Windows draw the system's own icons.
@@ -239,6 +245,24 @@ pub fn declare(app: &App) {
         "auto",
         &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
     ));
+    if skwir_platform::desktop_style::READ {
+        app.settings.declare(SettingSpec::toggle(
+            DESKTOP_COLORS_KEY,
+            "Desktop colors",
+            "Draw with the accent color chosen in your desktop's settings. Off, skwir keeps its own blue. More contrast, when your desktop asks for it, is followed either way.",
+            true,
+        ));
+        app.settings.declare(
+            SettingSpec::toggle(
+                DESKTOP_FONT_KEY,
+                "Desktop font",
+                "Write in the font your desktop's settings name, while Desktop colors is on. Off, skwir writes in its own.",
+                true,
+            )
+            .under(DESKTOP_COLORS_KEY)
+            .restart_required(),
+        );
+    }
     if !skwir_platform::system_icons::AVAILABLE {
         let chosen = app
             .settings
@@ -1060,6 +1084,16 @@ impl SettingsView {
         .detach();
     }
 
+    /// Whether `spec` can be changed: it is under no switch that is off.
+    pub(crate) fn available(&self, spec: &SettingSpec) -> bool {
+        spec.under.is_empty()
+            || self
+                .rows
+                .iter()
+                .find(|row| row.spec.key == spec.under)
+                .is_none_or(|row| row.value == "true")
+    }
+
     pub(crate) fn saving(&self) -> bool {
         self.inflight.is_some() || !self.queue.is_empty()
     }
@@ -1071,6 +1105,15 @@ impl SettingsView {
     pub(crate) fn change(&mut self, key: &str, text: String, cx: &mut Context<Self>) {
         self.highlight = None;
         self.reset_armed = false;
+        // A setting under a switch that is off waits for the switch.
+        if !self
+            .rows
+            .iter()
+            .find(|row| row.spec.key == key)
+            .is_some_and(|row| self.available(&row.spec))
+        {
+            return;
+        }
         let stored = self.app.settings.get::<toml::Value>(key);
         let Some(row) = self.rows.iter_mut().find(|row| row.spec.key == key) else {
             return;

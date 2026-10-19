@@ -86,11 +86,18 @@ block2 = "0.6"
 security-framework = "3"
 libc = "0.2"
 
+# The settings portal's accent, contrast and font (ADR-071): the zbus the
+# media controls' plugin and gpui's portal (through ashpd) already link.
 [target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5"
 
 # The user's folders as the system names them, off Linux (ADR-035).
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 dirs.workspace = true
+
+# A settings portal of the tests' own, over a pair of sockets.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { version = "5", features = ["p2p"] }
 
 [dev-dependencies]
 dirs.workspace = true

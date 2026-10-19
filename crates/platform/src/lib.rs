@@ -28,6 +28,9 @@ pub mod access;
 mod any_input;
 pub mod bat;
 pub mod calendar;
+#[cfg(target_os = "linux")]
+mod desktop_settings;
+pub mod desktop_style;
 pub mod diagram;
 pub mod document;
 pub mod exif;

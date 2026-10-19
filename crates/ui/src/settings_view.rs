@@ -71,10 +71,13 @@ struct Snapshot {
     anchor: PopoverAnchor,
     modified: bool,
     default_text: String,
+    /// It can be changed: it is under no switch that is off
+    /// (`SettingSpec::under`).
+    available: bool,
 }
 
 impl Snapshot {
-    fn of(row: &Row) -> Self {
+    fn of(row: &Row, view: &SettingsView) -> Self {
         Snapshot {
             spec: row.spec.clone(),
             value: row.value.clone(),
@@ -82,6 +85,7 @@ impl Snapshot {
             anchor: row.anchor.clone(),
             modified: row.modified(),
             default_text: row.default_text(),
+            available: view.available(&row.spec),
         }
     }
 }
@@ -317,7 +321,9 @@ impl SettingsView {
         if !self.a11y {
             return el;
         }
-        let el = el.aria_label(row.spec.title.clone());
+        let el = el
+            .aria_label(row.spec.title.clone())
+            .aria_disabled(!row.available);
         if row.spec.description.is_empty() {
             el
         } else {
@@ -634,7 +640,9 @@ impl SettingsView {
         let key = row.spec.key.clone();
         self.row_items.insert(key.clone(), item);
         let error = self.errors.get(&key).cloned();
-        let mut texts = Self::texts(row.spec.title.clone(), row.spec.description.clone(), theme);
+        let mut texts = Self::texts(row.spec.title.clone(), row.spec.description.clone(), theme)
+            // Beneath the switch it is under.
+            .when(!row.spec.under.is_empty(), |d| d.pl(px(24.)));
         if row.spec.restart_required {
             texts = texts.child(div().flex().child(controls::badge(
                 "Applies after restart",
@@ -676,7 +684,10 @@ impl SettingsView {
                 .into_any_element()
         });
         // Built after the revert button: traversal follows the visual order.
-        let control = self.control(row, item, theme, window, cx);
+        let control = div()
+            .flex_none()
+            .when(!row.available, |d| d.opacity(0.5))
+            .child(self.control(row, item, theme, window, cx));
         let highlighted = self.highlight.as_deref() == Some(key.as_str());
         // A list's records are rows of the same card, under its own.
         let records = row.spec.kind == SettingKind::Records;
@@ -715,7 +726,7 @@ impl SettingsView {
             .rows
             .iter()
             .filter(|row| row.spec.owner() == owner)
-            .map(Snapshot::of)
+            .map(|row| Snapshot::of(row, self))
             .collect();
         let mut start = 0;
         while start < rows.len() {
@@ -994,7 +1005,7 @@ impl SettingsView {
                 .rows
                 .iter()
                 .filter(|row| row.spec.owner() == owner && spec_matches(query, &row.spec, &title))
-                .map(Snapshot::of)
+                .map(|row| Snapshot::of(row, self))
                 .collect();
             if rows.is_empty() {
                 continue;

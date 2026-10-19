@@ -1,8 +1,10 @@
 # ADR-071: The desktop's colors and font, Skwir's own controls
 
-Status: accepted, 2026-10-19. Step 1 built 2026-10-19 (the derivation
-and the guard, Skwir's palettes through them); the desktop is not read
-yet.
+Status: accepted, 2026-10-19. Steps 1 and 2 built 2026-10-19: the
+derivation and the guard, Skwir's palettes through them; Linux's portal
+read and followed (the accent, more contrast, the font). Plasma's scheme,
+GTK3 themes, macOS and Windows are not read yet. Amended 2026-10-19 (two
+switches, the font at the window's opening).
 
 ## Context
 
@@ -135,23 +137,31 @@ yet.
    of the accent, and `border` on `bg` reaches 3:1. A Windows contrast
    theme is a palette the user chose: its colors fill the scheme of
    point 4, under the same stricter guard.
-7. **One switch, `ui.desktop_style`, on by default:** "Desktop colors
-   and font". Off, Skwir's own palette, accent and font. `ui.theme`
-   (Automatic, Light, Dark) chooses the look either way. A scheme is one
-   look's: when `ui.theme` forces the other look, that look is Skwir's
-   palette with the desktop's accent.
+7. **Two switches, on by default** (amended 2026-10-19, see below):
+   `ui.desktop_colors`, "Desktop colors", and under it
+   `ui.desktop_font`, "Desktop font", which applies only while the
+   first is on (`SettingSpec::under`: drawn indented beneath it,
+   unavailable while it is off). Off, Skwir's own palette and accent, or
+   its own font. `ui.theme` (Automatic, Light, Dark) chooses the look
+   either way. A scheme is one look's: when `ui.theme` forces the other
+   look, that look is Skwir's palette with the desktop's accent.
 8. **Read off the UI thread; the first frame draws what was read last.**
-   The desktop's answers are read on a worker at start (the portal's
-   through the ashpd gpui already links, in `skwir-platform`) and kept in
+   The desktop's answers are read on a thread of `skwir-platform`'s own
+   (`desktop_style::follow`: the portal through zbus's blocking API, the
+   zbus the media controls and gpui's portal already link) and kept in
    the cache (`skwir_core::cache`), from which the next start draws its
    first frame. An answer that differs from what is drawn replaces it
    and wakes the window. With the cache deleted, the first frames are
-   Skwir's own until the answer arrives. The font family is resolved
-   once against the text system, and Skwir's candidates take over when
-   it does not resolve (`AGENTS.md`: always an explicit family). Only
-   the family is the desktop's: sizes follow Skwir's scales and zoom.
-9. **Followed while Skwir runs.** Linux: the portal's `SettingChanged`,
-   and a watch on `kdeglobals`' folder for the file Plasma replaces
+   Skwir's own until the answer arrives. The font family is chosen once,
+   when the window opens: what was read last, resolved against the text
+   system, Skwir's candidates taking over when it does not resolve
+   (`AGENTS.md`: always an explicit family). A window keeps copies of
+   its font (its toolbar, its dialogs), so a change of the desktop's
+   font shows at the next start, and the font's switch says so. Only the
+   family is the desktop's: sizes follow Skwir's scales and zoom.
+9. **Followed while Skwir runs.** Linux: the portal's `SettingChanged`
+   (the accent, the contrast, the font for the next start), and a watch
+   on `kdeglobals`' folder for the file Plasma replaces
    (access events dropped, as `fs/watch.rs` does); a GTK theme is read
    again when another is named, not watched. macOS and Windows: read
    again on each appearance change gpui reports and when the window is
@@ -173,10 +183,12 @@ yet.
   that is not Plasma, which keeps Skwir's colors. Xfce, Cinnamon and
   MATE are read as their icon themes are, untried on those desktops
   until built.
-- Dependencies: `skwir-platform` takes ashpd on Linux (already in
-  `Cargo.lock` through gpui), objc2-app-kit's `NSColor` features on
-  macOS, the `windows` crate's `UI_ViewManagement` on Windows; `just
-  deny` and `just notices` are run again.
+- Dependencies: `skwir-platform` takes zbus on Linux (already in
+  `Cargo.lock`, through the media controls and gpui's ashpd; its tests
+  take zbus's `p2p` for a portal of their own, whose `uuid` is in the
+  lock too), objc2-app-kit's `NSColor` features on macOS, the `windows`
+  crate's `UI_ViewManagement` on Windows; `just deny` and `just notices`
+  are run again.
 - Budgets: nothing is read on the UI thread; `just idle-pss` and the
   first frame are measured before and after.
 - Tests: `kdeglobals` and GTK CSS read from synthetic fixtures (colors
@@ -186,9 +198,9 @@ yet.
   under Wine for what it answers, the rest compiled only and said so;
   macOS compiled only.
 - Once built, `theme.rs`'s header and `docs/invariants/shell.md` state
-  the derivation and the guard, and the guide the switch.
-- **Nothing is built.** Order (`docs/PLAN.md`, "Colors and font from
-  the desktop"):
+  the derivation and the guard, and the guide the switches.
+- **Steps 1 and 2 are built.** Order (`docs/PLAN.md`, "Colors and font
+  from the desktop"):
   1. the derivation and the guard in `theme.rs`, Skwir's palettes
      through them, the stricter contrast;
   2. the portal on Linux: accent, contrast, font, followed; the cache;
@@ -196,3 +208,16 @@ yet.
   3. Plasma's color scheme;
   4. GTK3 themes;
   5. macOS's and Windows' accent and contrast, Windows' contrast themes.
+
+## Amendments
+
+- 2026-10-19, step 2: the font is a choice of its own. The user, asked
+  whether the desktop's font should come with its colors: "make the font
+  a separate choice under the same switch". So two switches (point 7),
+  the font's under the colors', and `SettingSpec::under` for a setting
+  that applies only while a switch is on. The font is chosen when the
+  window opens (point 8), the colors and contrast follow live. The
+  portal is read through zbus, not ashpd: a blocking connection on a
+  thread of its own, as the media controls do, with no async runtime to
+  drive. The README's screenshots turn the desktop's colors off, so they
+  never wear the accent of the machine that makes them.
