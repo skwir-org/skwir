@@ -195,7 +195,8 @@ pub struct DragPayload {
 /// The icon of the files a drag carries (`dragicon.rs`): drawn under the
 /// pointer in the window, and handed to the compositor when the drag leaves
 /// it, so crossing the window's edge changes nothing. Kept until the next
-/// drag of files, which lets go of its texture.
+/// drag of files, or the icon that replaces it, which lets go of its
+/// texture.
 pub struct FilesIcon {
     icon: Arc<gpui::ExternalDragIcon>,
     image: Arc<RenderImage>,
@@ -209,6 +210,10 @@ pub struct DragPreview {
     position: Point<Pixels>,
     /// The files' icon and the point of it under the pointer.
     icon: Option<(Arc<RenderImage>, Point<Pixels>)>,
+    /// The entry's icon, while it is drawn for the drag, and whether it is
+    /// a folder's: it replaces the glyph once it arrives.
+    coming: Option<(crate::icons::IconPixels, bool)>,
+    shell: Option<gpui::WeakEntity<Shell>>,
 }
 
 impl DragPreview {
@@ -219,12 +224,39 @@ impl DragPreview {
             label,
             position,
             icon: None,
+            coming: None,
+            shell: None,
+        }
+    }
+
+    /// The entry's icon, once drawn: the files' icon from now on, in the
+    /// window and for the compositor. Asked while drawing, so that the
+    /// preview is drawn again when it arrives.
+    fn take_coming(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((icon, is_dir)) = &self.coming else {
+            return;
+        };
+        let Some(pixels) = crate::icons::pixels(icon, window, cx) else {
+            return;
+        };
+        let is_dir = *is_dir;
+        self.coming = None;
+        let (Some(pixels), Some(shell)) = (pixels, self.shell.as_ref()) else {
+            return;
+        };
+        let bitmap = crate::dragicon::Bitmap::of_image(&pixels);
+        let drawn = crate::dragicon::drawn(Some(&bitmap), is_dir, self.count);
+        if let Ok(Some(icon)) =
+            shell.update(cx, |shell, cx| shell.show_files_icon(drawn, window, cx))
+        {
+            self.icon = Some(icon);
         }
     }
 }
 
 impl Render for DragPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.take_coming(window, cx);
         let theme = cx.global::<Theme>().clone();
         let text = if self.count == 1 {
             self.label.clone()
@@ -319,6 +351,27 @@ impl Shell {
                 .unwrap_or_default();
             (pane.selection.len(), label)
         })
+    }
+
+    /// `icon` as the files' icon: drawn under the pointer (the image and
+    /// its point under it, returned) and handed to the compositor if the
+    /// drag leaves the window. The icon before it is drawn no more.
+    fn show_files_icon(
+        &mut self,
+        icon: gpui::ExternalDragIcon,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(Arc<RenderImage>, Point<Pixels>)> {
+        if let Some(last) = self.files_icon.take() {
+            cx.drop_image(last.image, Some(window));
+        }
+        let hotspot = point(px(icon.hotspot_x as f32), px(icon.hotspot_y as f32));
+        let image = crate::thumbs::owned_render_image(icon.width, icon.height, icon.rgba.clone())?;
+        self.files_icon = Some(FilesIcon {
+            icon: Arc::new(icon),
+            image: image.clone(),
+        });
+        Some((image, hotspot))
     }
 
     /// Whether `paths` are exactly this pane's current selection: a drag that
@@ -685,27 +738,19 @@ pub fn draggable(el: Stateful<Div>, pane: PaneId, cx: &mut Context<Shell>) -> St
         DragPayload { pane },
         move |p: &DragPayload, position, window, cx| {
             let pane = p.pane;
-            let ((count, label), icon) = shell
+            let tint = cx.global::<Theme>().text_muted;
+            let ((count, label), icon, coming) = shell
                 .update(cx, |shell, cx| {
-                    // A drag is not the click that collapses a multi-selection.
-                    shell.press_collapse = None;
-                    let (label, icon) =
-                        shell.with_pane(pane, |shell| (shell.drag_label(pane), shell.drag_icon()));
-                    // The last drag's icon is drawn no more.
-                    if let Some(last) = shell.files_icon.take() {
-                        cx.drop_image(last.image, Some(window));
-                    }
-                    let hotspot = point(px(icon.hotspot_x as f32), px(icon.hotspot_y as f32));
-                    let image = crate::thumbs::owned_render_image(
-                        icon.width,
-                        icon.height,
-                        icon.rgba.clone(),
-                    );
-                    shell.files_icon = image.clone().map(|image| FilesIcon {
-                        icon: Arc::new(icon),
-                        image,
-                    });
-                    (label, image.map(|image| (image, hotspot)))
+                    // A drag is not the click that collapses a
+                    // multi-selection: the row pressed is the one it took.
+                    let grabbed = shell
+                        .press_collapse
+                        .take()
+                        .and_then(|(at, id)| (at == pane).then_some(id));
+                    let label = shell.drag_label(pane);
+                    let look = shell.drag_look(pane, grabbed, tint);
+                    let icon = shell.show_files_icon(look.drawn(), window, cx);
+                    (label, icon, look.icon.map(|icon| (icon, look.is_dir)))
                 })
                 .unwrap_or_default();
             cx.new(|_| DragPreview {
@@ -713,6 +758,8 @@ pub fn draggable(el: Stateful<Div>, pane: PaneId, cx: &mut Context<Shell>) -> St
                 label,
                 position,
                 icon,
+                coming,
+                shell: Some(shell.clone()),
             })
         },
     )

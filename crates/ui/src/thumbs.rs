@@ -7,11 +7,11 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use gpui::RenderImage;
-use skwir_core::EntryId;
 use skwir_core::entry::keys;
 use skwir_core::lru::ByteLru;
 use skwir_core::scheduler::Priority;
 use skwir_core::thumbs::{Image, ThumbRequest, ThumbSize, ThumbState};
+use skwir_core::{Entry, EntryId};
 use smallvec::SmallVec;
 
 use crate::backdrop::Picture;
@@ -125,6 +125,37 @@ fn bgra_render_image(width: u32, height: u32, buf: Vec<u8>) -> Option<Arc<Render
     ]))))
 }
 
+/// The key of `e`'s picture at `size`, of what is shown (a link's target,
+/// the entry's own file else) as the type its name says (`typed`), with
+/// the modification time it is of.
+fn shown_key(
+    e: &Entry,
+    typed: Option<&skwir_platform::mime::Mime>,
+    size: ThumbSize,
+) -> (Key, Option<SystemTime>) {
+    let mtime = e
+        .metadata
+        .value(keys::MODIFIED)
+        .and_then(skwir_core::Value::as_time);
+    let shown = e.target.as_ref().map_or(e.file(), |t| t.id);
+    let typed = typed.map(skwir_platform::mime::Mime::as_str);
+    (skwir_core::thumbs::key(shown, typed, size, mtime), mtime)
+}
+
+impl ThumbCache {
+    /// The picture of `e` this window keeps, at the first of `sizes` it
+    /// has one: what a view drew of it. Nothing is asked for.
+    pub fn kept(&mut self, e: &Entry, sizes: &[ThumbSize]) -> Option<Picture> {
+        if e.is_dir() {
+            return None;
+        }
+        let typed = skwir_platform::mime::of_entry(e);
+        sizes
+            .iter()
+            .find_map(|&size| self.get(&shown_key(e, typed.as_ref(), size).0))
+    }
+}
+
 impl Shell {
     /// The thumbnail for `id`, requesting it at visible priority if needed.
     /// Entries without metadata are asked for once they have it (mtime is
@@ -144,20 +175,8 @@ impl Shell {
             if e.is_dir() {
                 return ThumbView::Unavailable;
             }
-            let mtime = e
-                .metadata
-                .value(keys::MODIFIED)
-                .and_then(skwir_core::Value::as_time);
-            // What is shown: a link's target, the entry's own file else,
-            // as the type its name says.
-            let shown = e.target.as_ref().map_or(e.file(), |t| t.id);
             let typed = skwir_platform::mime::of_entry(e);
-            let key = skwir_core::thumbs::key(
-                shown,
-                typed.as_ref().map(skwir_platform::mime::Mime::as_str),
-                size,
-                mtime,
-            );
+            let (key, mtime) = shown_key(e, typed.as_ref(), size);
             if let Some(img) = self.thumbs.get(&key) {
                 return ThumbView::Ready(img);
             }
@@ -296,6 +315,28 @@ mod tests {
         retired += c.begin_frame(3 * 64).len();
         assert_eq!(c.bytes(), 192);
         assert_eq!(retired, 8, "what was evicted goes back to the atlas");
+    }
+
+    /// A drag shows what its view drew of a file, whatever size it drew.
+    #[test]
+    fn a_kept_picture_is_found_at_the_size_its_view_drew() {
+        let mut c = ThumbCache::default();
+        c.begin_frame(1 << 20);
+        let id = skwir_core::EntryId {
+            file: FileId { dev: 1, ino: 3 },
+            at: 0,
+        };
+        let file = Entry::new(id, "Synthetic sky.png", skwir_core::EntryKind::File);
+        let typed = skwir_platform::mime::of_entry(&file);
+        let drawn = shown_key(&file, typed.as_ref(), ThumbSize::Large).0;
+        c.insert(drawn, img(4), 64);
+        assert!(c.kept(&file, &[ThumbSize::Normal]).is_none());
+        assert!(
+            c.kept(&file, &[ThumbSize::Normal, ThumbSize::Large])
+                .is_some()
+        );
+        let folder = Entry::new(id, "Synthetic sky.png", skwir_core::EntryKind::Directory);
+        assert!(c.kept(&folder, &[ThumbSize::Large]).is_none());
     }
 
     /// What a frame draws is never evicted while it does, the budget held

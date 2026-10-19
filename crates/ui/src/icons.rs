@@ -24,6 +24,7 @@ use gpui::{
     AnyElement, Asset, AssetSource, Hsla, ImageCacheError, ImageSource, RenderImage, SharedString,
     Window, div, img, prelude::*, px, svg,
 };
+use skwir_core::thumbs::Image;
 use skwir_core::{App, Entry};
 use skwir_platform::system_icons::{self, SystemIcon};
 use skwir_platform::{icons, mime};
@@ -160,6 +161,25 @@ enum Want {
 }
 
 impl Want {
+    /// What an entry's icon is looked up by: the folder or the type it is
+    /// shown as (`mime::of_entry`: a link's is what it leads to's); on a
+    /// system that draws its own, its extension's, or its own (an
+    /// application, a shortcut), read from the file at `path`, which is
+    /// asked for only then.
+    fn of_entry(e: &Entry, path: impl FnOnce() -> Option<PathBuf>) -> Want {
+        if system_icons::AVAILABLE {
+            return Want::System(match path() {
+                Some(path) => system_icons::for_file(&path, e.type_name(), e.is_dir()),
+                None if e.is_dir() => SystemIcon::Folder,
+                None => system_icons::by_extension(e.type_name()),
+            });
+        }
+        if e.is_dir() {
+            return Want::Folder;
+        }
+        Want::Mime(mime::of_entry(e).map_or_else(String::new, |m| m.0))
+    }
+
     /// A file known only by its name: its type's icon, or on a system
     /// that draws its own, its extension's.
     fn for_name(name: &std::ffi::OsStr) -> Want {
@@ -281,29 +301,34 @@ impl IconCache {
         self.lookup(Want::Named(name.to_owned()), size)
     }
 
-    /// The icon for an entry: the folder icon or the icon of the type it
-    /// is shown as (`mime::of_entry`: a link's is what it leads to's); on
-    /// a system that draws its own, its extension's, or its own (an
-    /// application, a shortcut), read from the file at `path`, which is
-    /// asked for only then.
+    /// The icon for an entry (`Want::of_entry`), its file at `path` asked
+    /// for only where the system draws its own.
     pub fn for_entry(
         &mut self,
         e: &Entry,
         path: impl FnOnce() -> Option<PathBuf>,
         size: u16,
     ) -> Option<Pic> {
-        if system_icons::AVAILABLE {
-            let icon = match path() {
-                Some(path) => system_icons::for_file(&path, e.type_name(), e.is_dir()),
-                None if e.is_dir() => SystemIcon::Folder,
-                None => system_icons::by_extension(e.type_name()),
-            };
-            return self.lookup(Want::System(icon), size);
+        self.lookup(Want::of_entry(e, path), size)
+    }
+
+    /// The icon `for_entry` gives, as pixels `side` wide, a shape in
+    /// `tint`: what `pixels` draws, for a picture that leaves the window.
+    pub fn pixels_for_entry(
+        &self,
+        e: &Entry,
+        path: impl FnOnce() -> Option<PathBuf>,
+        side: u32,
+        tint: Hsla,
+    ) -> IconPixels {
+        let rgba = tint.to_rgb();
+        let byte = |c: f32| (c.clamp(0., 1.) * 255.).round() as u8;
+        IconPixels {
+            want: Want::of_entry(e, path),
+            side,
+            tint: [byte(rgba.r), byte(rgba.g), byte(rgba.b), byte(rgba.a)],
+            theme: self.theme.clone(),
         }
-        if e.is_dir() {
-            return self.folder(size);
-        }
-        self.for_mime(mime::of_entry(e).as_ref(), size)
     }
 
     pub fn folder(&mut self, size: u16) -> Option<Pic> {
@@ -315,12 +340,6 @@ impl IconCache {
     /// its own.
     pub fn for_name(&mut self, name: &std::ffi::OsStr, size: u16) -> Option<Pic> {
         self.lookup(Want::for_name(name), size)
-    }
-
-    /// The icon of a MIME type already known; `None` is the unknown file.
-    fn for_mime(&mut self, mime: Option<&mime::Mime>, size: u16) -> Option<Pic> {
-        let key = mime.map_or_else(String::new, |m| m.0.clone());
-        self.lookup(Want::Mime(key), size)
     }
 
     /// Resolve what this frame missed, in one job, handing over what it
@@ -539,6 +558,82 @@ impl Asset for SystemPicture {
     }
 }
 
+/// An entry's icon as straight RGBA pixels, for a picture that leaves the
+/// window and must be pixels of its own (a drag's, which the compositor
+/// shows once it leaves): what it is looked up by, the side it is drawn
+/// within, the color a shape is drawn in, and the theme it was asked of.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct IconPixels {
+    want: Want,
+    side: u32,
+    tint: [u8; 4],
+    theme: Option<String>,
+}
+
+impl IconPixels {
+    /// Looked up and drawn: blocks on the theme and the icon's file.
+    fn draw(&self) -> Option<Image> {
+        let decoded = |drawn: skwir_platform::inspection::Decoded| Image {
+            width: drawn.width,
+            height: drawn.height,
+            rgba: drawn.rgba.into(),
+        };
+        match resolve(&self.want, u16::try_from(self.side).unwrap_or(u16::MAX))? {
+            Pic::Theme(path) => icon_file(&path, self.side).map(decoded),
+            Pic::Shape(path) => icon_file(&path, self.side).map(|mut drawn| {
+                tint(&mut drawn.rgba, self.tint);
+                decoded(drawn)
+            }),
+            Pic::System(icon) => system_icons::picture(&icon, self.side).ok()?,
+        }
+    }
+}
+
+/// A shape's pixels (straight RGBA) in `color`, as `svg()` draws one: its
+/// coverage, in one color.
+fn tint(rgba: &mut [u8], color: [u8; 4]) {
+    let [r, g, b, a] = color;
+    for p in rgba.as_chunks_mut::<4>().0 {
+        *p = [r, g, b, (u16::from(p[3]) * u16::from(a) / 255) as u8];
+    }
+}
+
+/// A theme's icon file drawn within `side` pixels: an SVG fitted to it, a
+/// picture shrunk to it.
+fn icon_file(path: &Path, side: u32) -> Option<skwir_platform::inspection::Decoded> {
+    use skwir_platform::inspection;
+    if is_svg(path) {
+        return icons::rasterize(path, side).ok();
+    }
+    let cancel = skwir_core::CancelToken::new();
+    let bytes =
+        inspection::read_file(path, inspection::limits::Bounds::QUICK, "Icon", &cancel).ok()?;
+    inspection::picture(&bytes, side).ok()
+}
+
+/// `icon`'s pixels once looked up and drawn on GPUI's background executor,
+/// and kept by its asset cache; until then `None`, and the view drawing
+/// is drawn again when they arrive. `Some(None)`: no icon to draw.
+pub fn pixels(icon: &IconPixels, window: &mut Window, cx: &mut gpui::App) -> Option<Option<Image>> {
+    window.use_asset::<EntryPixels>(icon, cx)
+}
+
+enum EntryPixels {}
+
+impl Asset for EntryPixels {
+    type Source = IconPixels;
+    type Output = Option<Image>;
+
+    // As `SizedSvg::load`: the work stays in the future.
+    #[allow(clippy::manual_async_fn)]
+    fn load(
+        icon: IconPixels,
+        _cx: &mut gpui::App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        async move { icon.draw() }
+    }
+}
+
 /// What an entry's picture says of a link: nothing, that it is one, or
 /// that it leads nowhere.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -659,7 +754,9 @@ pub fn themed(pic: &Pic, size: f32, color: Hsla) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{APP_ICON, IconCache, Pic, Want, is_svg, is_symbolic, preloaded, raster_side};
+    use super::{
+        APP_ICON, IconCache, Pic, Want, is_svg, is_symbolic, preloaded, raster_side, tint,
+    };
     use std::path::Path;
     use std::sync::Arc;
 
@@ -670,6 +767,19 @@ mod tests {
         let pixel = |x: usize, y: usize| &drawn.rgba[(y * 64 + x) * 4..][..4];
         assert_eq!(pixel(0, 0)[3], 0, "a rounded corner shows what is behind");
         assert_eq!(pixel(32, 3), [0x20, 0x30, 0x42, 0xff], "the ink tile");
+    }
+
+    #[test]
+    fn a_shape_drawn_for_a_drag_takes_its_tint_by_its_coverage() {
+        let mut rgba = vec![46, 52, 54, 255, 46, 52, 54, 128, 0, 0, 0, 0];
+        tint(&mut rgba, [200, 210, 220, 255]);
+        assert_eq!(
+            rgba,
+            [200, 210, 220, 255, 200, 210, 220, 128, 200, 210, 220, 0]
+        );
+        let mut half = vec![0, 0, 0, 255];
+        tint(&mut half, [10, 20, 30, 128]);
+        assert_eq!(half, [10, 20, 30, 128]);
     }
 
     #[test]
