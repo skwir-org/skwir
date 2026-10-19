@@ -53,6 +53,8 @@ pub const ICON_THEME_AUTO: &str = "auto";
 pub const DATES_KEY: &str = "ui.date_format";
 /// Whether the grid crops thumbnails to fill their box.
 pub const GRID_FILL_KEY: &str = "ui.grid_fill";
+/// How a drag of several files is drawn (`dragicon::Layout`).
+pub const DRAG_IMAGE_KEY: &str = "ui.drag_image";
 /// Whether a folder has the Narrow by bar above its files (`narrow.rs`).
 pub const NARROW_FOLDERS_KEY: &str = "ui.narrow_folders";
 /// Whether the tab strip shows for a window that has only one tab.
@@ -396,6 +398,21 @@ pub fn declare(app: &App) {
             .section("List columns"),
         );
     }
+    app.settings.declare(
+        SettingSpec::choice(
+            DRAG_IMAGE_KEY,
+            "Dragged files",
+            "How several files look while you drag them. Fan holds the one you took in front of two more leaning out behind it; Pile lays two more under it, each a little lower; Mosaic sets up to four side by side, the last square saying how many more; Single shows the one you took alone. A badge counts them, but in the mosaic. One file is always its own picture.",
+            "fan",
+            &[
+                ("fan", "Fan"),
+                ("pile", "Pile"),
+                ("mosaic", "Mosaic"),
+                ("single", "Single"),
+            ],
+        )
+        .section("Drag and drop"),
+    );
 }
 
 /// Save a preference changed where it is used (the reader's button, the
@@ -1569,7 +1586,14 @@ mod tests {
         assert_eq!(page(&specs, UI_OWNER)[0].1, THEME_KEY);
         assert_eq!(
             sections(&specs, UI_OWNER)[1..],
-            ["Tabs", "Address", "Folders", "Grid", "List columns"]
+            [
+                "Tabs",
+                "Address",
+                "Folders",
+                "Grid",
+                "List columns",
+                "Drag and drop"
+            ]
         );
         let columns: Vec<String> = page(&specs, UI_OWNER)
             .into_iter()

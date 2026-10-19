@@ -239,13 +239,17 @@ of bars, split or not.
 - A drop on a place uses its location's verb (`Verbs::drop`). A drag
   carrying places is not asked about.
 - **A drag of files shows what it took** as the views draw it
-  (`dragicon.rs`): the row pressed, else the selection's first; its
-  thumbnail as the window keeps it (`ThumbCache::kept`, whichever size a
-  view drew), else its icon, drawn for the drag on GPUI's executor
-  (`icons::pixels`) while a glyph stands in; a badge counts several. The
-  same image goes to the compositor if the drag leaves the window
-  (`dnd::FilesIcon`). It never asks the core's thumbnails: the window
-  takes what it draws out of them (`Thumbnails::take`).
+  (`dragicon.rs`): the row pressed, else the selection's first, and as
+  many more as `ui.drag_image` lays out (`dragicon::Layout`: a fan, the
+  default, a pile, a mosaic, or the one alone), one of each other type
+  first. Each is its thumbnail as the window keeps it
+  (`ThumbCache::kept`, whichever size a view drew), else its icon, drawn
+  for the drag on GPUI's executor (`icons::pixels`) while a glyph stands
+  in; a badge counts them, the mosaic's last quarter says how many more.
+  One file is its picture alone in every layout. The same image goes to
+  the compositor if the drag leaves the window (`dnd::FilesIcon`). It
+  never asks the core's thumbnails: the window takes what it draws out
+  of them (`Thumbnails::take`).
 - A drop on the terminal types the files' paths at its prompt and asks
   nothing: no file is copied or moved (see the terminal panel).
 

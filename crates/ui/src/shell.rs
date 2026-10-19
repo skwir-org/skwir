@@ -152,6 +152,8 @@ pub struct Preferences {
     /// `ui.wrap_lines`: a text's long lines wrap to the panel, else go on
     /// sideways (`text_view`).
     pub wrap_lines: bool,
+    /// `ui.drag_image`: how a drag of several files is drawn.
+    pub drag_image: crate::dragicon::Layout,
     /// `ui.model_perspective` and `ui.model_smooth`: how a 3D model is
     /// drawn.
     pub model_look: crate::elements::model::Look,
@@ -171,6 +173,7 @@ impl Default for Preferences {
             full_path: false,
             printed_pages: false,
             wrap_lines: true,
+            drag_image: crate::dragicon::Layout::Fan,
             model_look: crate::elements::model::Look::default(),
             close_split: crate::layout::CloseSplit::Other,
             player: crate::player::PlayerPrefs::default(),
@@ -2444,6 +2447,12 @@ impl Shell {
                 .settings
                 .get::<bool>(crate::settings::FULL_PATH_KEY)
                 .unwrap_or(false);
+            self.prefs.drag_image = crate::dragicon::Layout::read(
+                self.app
+                    .settings
+                    .get::<String>(crate::settings::DRAG_IMAGE_KEY)
+                    .as_deref(),
+            );
             self.prefs.close_split = crate::layout::CloseSplit::read(
                 self.app
                     .settings

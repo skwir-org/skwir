@@ -130,7 +130,9 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   dropped can be extracted instead. Files dropped on a sidebar place go
   where they would if dropped in that place: into a folder, into the
   Trash, onto a tag. On Wayland, files also drag into other
-  applications.
+  applications. Several files dragged show as a fan of their pictures;
+  Appearance › Dragged files lays them out as a pile, a mosaic or the
+  one you took alone instead.
 - **Copies.** A copy onto a USB drive runs at the drive's pace, so its
   progress is what is really written, and it ends once the files are on
   the drive. A copy that needs more room than its destination has asks
@@ -371,7 +373,7 @@ a hint shows what can follow.
 | Page | What it sets |
 | --- | --- |
 | General | What Skwir does: at startup, with files (copies, drops, companion files), with the split and tabs |
-| Appearance | How it looks: theme, icons, dates, tabs, the path, the Narrow by bar, the grid, the list's columns |
+| Appearance | How it looks: theme, icons, dates, tabs, the path, the Narrow by bar, the grid, the list's columns, dragged files |
 | Reading | The reader shared by documents, books, comics, Markdown and code: pages, line length, code's colors |
 | Notes | Where tags, ratings and comments are read and written |
 | Privacy | Folders that never leave the machine |

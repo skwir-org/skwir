@@ -1,13 +1,16 @@
-//! The image that follows the pointer while files are dragged: the picture
-//! of the entry the drag took as the views draw it, the thumbnail the
-//! window keeps of it or else its icon, plus a count badge for multi-item
-//! drags. A drawn file or folder glyph stands in while the icon is drawn,
+//! The image that follows the pointer while files are dragged: the entries
+//! the drag took as the views draw them, each the thumbnail the window
+//! keeps of it or else its icon. One file is its picture alone; several
+//! are drawn as `ui.drag_image` says (`Layout`): fanned out behind the one
+//! taken, piled under it, side by side in quarters, the last saying how
+//! many more, or the one taken alone, a badge counting them but in the
+//! mosaic. A drawn file or folder glyph stands in while an icon is drawn,
 //! or when there is none.
 //!
 //! Everything here is plain RGBA8 with straight alpha; no text system is
 //! involved, so digits come from a tiny built-in 3x5 font.
 
-use gpui::{ExternalDragIcon, Hsla};
+use gpui::{ExternalDragIcon, Hsla, Window};
 use skwir_core::EntryId;
 use skwir_core::document::PixelOrder;
 use skwir_core::thumbs::{Image, ThumbSize};
@@ -17,14 +20,78 @@ use crate::backdrop::Picture;
 use crate::icons::IconPixels;
 use crate::shell::Shell;
 
-/// Longest side of the icon.
+/// Longest side of a lone picture's icon.
 pub const ICON_PX: u32 = 64;
 
-/// The side of the picture on it, inside its margin.
+/// The side of a lone picture, inside its margin.
 const PICTURE_PX: u32 = ICON_PX - 4;
 
+/// Longest side of a card of the fan and the pile, a print's frame
+/// included.
+const CARD_PX: u32 = 56;
+
+/// The white frame of a thumbnail on a card, as a print has.
+const FRAME: u32 = 2;
+
+/// Room around a card for its shadow.
+const SHADOW: u32 = 3;
+
+/// The mosaic's side, and the side of each of its quarters.
+const MOSAIC_PX: u32 = 64;
+const CELL_PX: u32 = 30;
+const MOSAIC_CELLS: usize = 4;
+
+/// How far the fan's cards behind lean, and how far below a card's
+/// middle they turn about.
+const FAN_DEGREES: f32 = 16.;
+const FAN_PIVOT: f32 = 34.;
+
+/// How far down and right each card of the pile lies under the one above.
+const PILE_STEP: (f32, f32) = (7., 6.);
+
+/// How many of the selection's first entries are looked through for ones
+/// of another type, to show them beside the one taken.
+const VARIETY_SCAN: usize = 64;
+
+/// How a drag of several files is drawn (`ui.drag_image`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layout {
+    /// The one taken in front of two more, fanned out behind it.
+    #[default]
+    Fan,
+    /// The one taken on two more, each a little down and right.
+    Pile,
+    /// Up to four in quarters, the last saying how many more.
+    Mosaic,
+    /// The one taken alone.
+    Single,
+}
+
+impl Layout {
+    /// The setting's value; anything else is the default.
+    pub fn read(value: Option<&str>) -> Self {
+        match value {
+            Some("pile") => Self::Pile,
+            Some("mosaic") => Self::Mosaic,
+            Some("single") => Self::Single,
+            _ => Self::Fan,
+        }
+    }
+
+    /// How many entries of a drag of `count` it draws.
+    fn shows(self, count: usize) -> usize {
+        match self {
+            _ if count <= 1 => count,
+            Self::Fan | Self::Pile => count.min(3),
+            Self::Mosaic if count <= MOSAIC_CELLS => count,
+            Self::Mosaic => MOSAIC_CELLS - 1,
+            Self::Single => 1,
+        }
+    }
+}
+
 /// Pixels drawn on the icon: a thumbnail as the window keeps it (BGRA, the
-/// order it draws), an icon drawn for the drag (RGBA).
+/// order it draws), an icon drawn for the drag or a canvas (RGBA).
 pub struct Bitmap<'a> {
     pub width: u32,
     pub height: u32,
@@ -36,7 +103,7 @@ impl<'a> Bitmap<'a> {
     /// A picture the window keeps.
     pub fn of_picture(picture: &'a Picture) -> Option<Self> {
         let size = picture.image.size(0);
-        Some(Bitmap {
+        Self::checked(Bitmap {
             width: u32::try_from(size.width.0).ok()?,
             height: u32::try_from(size.height.0).ok()?,
             bytes: picture.image.as_bytes(0)?,
@@ -44,13 +111,19 @@ impl<'a> Bitmap<'a> {
         })
     }
 
-    pub fn of_image(image: &'a Image) -> Self {
-        Bitmap {
+    pub fn of_image(image: &'a Image) -> Option<Self> {
+        Self::checked(Bitmap {
             width: image.width,
             height: image.height,
             bytes: &image.rgba,
             order: PixelOrder::Rgba,
-        }
+        })
+    }
+
+    /// `self` when it has pixels, as many as its size says.
+    fn checked(self) -> Option<Self> {
+        let len = u64::from(self.width) * u64::from(self.height) * 4;
+        (len > 0 && self.bytes.len() as u64 >= len).then_some(self)
     }
 
     /// The pixel at `(x, y)`, RGBA.
@@ -80,6 +153,29 @@ impl Canvas {
         }
     }
 
+    fn bitmap(&self) -> Bitmap<'_> {
+        Bitmap {
+            width: self.width,
+            height: self.height,
+            bytes: &self.rgba,
+            order: PixelOrder::Rgba,
+        }
+    }
+
+    /// The pixel at `(x, y)`, transparent outside.
+    fn pixel(&self, x: i32, y: i32) -> [u8; 4] {
+        if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
+            return [0; 4];
+        }
+        let i = ((y as u32 * self.width + x as u32) * 4) as usize;
+        [
+            self.rgba[i],
+            self.rgba[i + 1],
+            self.rgba[i + 2],
+            self.rgba[i + 3],
+        ]
+    }
+
     fn blend(&mut self, x: i32, y: i32, color: [u8; 4]) {
         if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
             return;
@@ -99,43 +195,53 @@ impl Canvas {
         self.rgba[i + 3] = oa.min(255) as u8;
     }
 
-    /// Filled rounded rectangle.
+    /// `color` blended at `(x, y)` by `coverage`, how much of the pixel
+    /// (0 to 1) the shape drawn covers: its edges come out smooth.
+    fn cover(&mut self, x: i32, y: i32, color: [u8; 4], coverage: f32) {
+        if coverage <= 0. {
+            return;
+        }
+        let alpha = (f32::from(color[3]) * coverage.min(1.)).round() as u8;
+        self.blend(x, y, [color[0], color[1], color[2], alpha]);
+    }
+
+    /// Filled rounded rectangle, its corners smooth.
     pub fn round_rect(&mut self, x: i32, y: i32, w: i32, h: i32, r: i32, color: [u8; 4]) {
+        let radius = r as f32;
         for py in y..y + h {
             for px in x..x + w {
                 let dx = (px - x).min(x + w - 1 - px);
                 let dy = (py - y).min(y + h - 1 - py);
-                let inside = if dx < r && dy < r {
-                    let cx = r - 1 - dx;
-                    let cy = r - 1 - dy;
-                    cx * cx + cy * cy <= r * r
+                let coverage = if dx < r && dy < r {
+                    // From the middle of the corner's circle, `r` in from
+                    // both edges, to the pixel's.
+                    let (cx, cy) = (radius - dx as f32 - 0.5, radius - dy as f32 - 0.5);
+                    covered(cx.hypot(cy), radius)
                 } else {
-                    true
+                    1.
                 };
-                if inside {
-                    self.blend(px, py, color);
-                }
+                self.cover(px, py, color, coverage);
             }
         }
     }
 
-    /// Filled circle.
+    /// Filled circle about the pixel `(cx, cy)`, `r` pixels out from it,
+    /// its edge smooth.
     pub fn circle(&mut self, cx: i32, cy: i32, r: i32, color: [u8; 4]) {
-        for py in cy - r..=cy + r {
-            for px in cx - r..=cx + r {
-                if (px - cx) * (px - cx) + (py - cy) * (py - cy) <= r * r {
-                    self.blend(px, py, color);
-                }
+        let radius = r as f32 + 0.5;
+        for py in cy - r - 1..=cy + r + 1 {
+            for px in cx - r - 1..=cx + r + 1 {
+                let distance = ((px - cx) as f32).hypot((py - cy) as f32);
+                self.cover(px, py, color, covered(distance, radius));
             }
         }
     }
 
-    /// Draw `text` (digits only; other chars are skipped) with the 3x5 font at `scale`.
+    /// Draw `text` (digits and `+`; other chars are skipped) with the 3x5
+    /// font at `scale`.
     pub fn digits(&mut self, x: i32, y: i32, text: &str, scale: i32, color: [u8; 4]) {
         let mut cx = x;
-        for ch in text.chars() {
-            let Some(d) = ch.to_digit(10) else { continue };
-            let glyph = FONT_3X5[d as usize];
+        for glyph in text.chars().filter_map(glyph) {
             for (row, bits) in glyph.iter().enumerate() {
                 for col in 0..3 {
                     if bits & (1 << (2 - col)) != 0 {
@@ -157,28 +263,130 @@ impl Canvas {
 
     /// Width in pixels of `text` at `scale`.
     pub fn digits_width(text: &str, scale: i32) -> i32 {
-        let n = text.chars().filter(char::is_ascii_digit).count() as i32;
+        let n = text.chars().filter_map(glyph).count() as i32;
         if n == 0 { 0 } else { n * 4 * scale - scale }
     }
 
-    /// Nearest-neighbour blit of `src` scaled to fit `w`x`h`, centered.
-    pub fn blit_fit(&mut self, src: &Bitmap, x: i32, y: i32, w: i32, h: i32) {
-        let (src_w, src_h) = (src.width, src.height);
-        if src_w == 0 || src_h == 0 || src.bytes.len() < (src_w * src_h * 4) as usize {
-            return;
-        }
-        let scale = (f64::from(w) / f64::from(src_w)).min(f64::from(h) / f64::from(src_h));
-        let dw = (f64::from(src_w) * scale).round().max(1.0) as i32;
-        let dh = (f64::from(src_h) * scale).round().max(1.0) as i32;
-        let ox = x + (w - dw) / 2;
-        let oy = y + (h - dh) / 2;
-        for py in 0..dh {
-            for px in 0..dw {
-                let sx = (u64::from(px as u32) * u64::from(src_w) / u64::from(dw as u32)) as usize;
-                let sy = (u64::from(py as u32) * u64::from(src_h) / u64::from(dh as u32)) as usize;
-                self.blend(ox + px, oy + py, src.at(sx, sy));
+    /// `crop` of `src` (x, y, width, height) drawn `width` x `height`: each
+    /// pixel the average of those it covers, by their opacity, so a
+    /// picture shrinks without its edges breaking up; one enlarged keeps
+    /// its pixels whole.
+    fn resampled(src: &Bitmap, crop: [u32; 4], width: u32, height: u32) -> Canvas {
+        let [cx, cy, cw, ch] = crop;
+        let mut out = Canvas::new(width.max(1), height.max(1));
+        let span = |i: u32, of: u32, from: u32, length: u32| {
+            let start = from + i * length / of;
+            let end = (from + ((i + 1) * length).div_ceil(of)).clamp(start + 1, from + length);
+            start..end
+        };
+        for y in 0..out.height {
+            let rows = span(y, out.height, cy, ch);
+            for x in 0..out.width {
+                let mut sum = [0u64; 4];
+                let mut n = 0u64;
+                for sy in rows.clone() {
+                    for sx in span(x, out.width, cx, cw) {
+                        let [r, g, b, a] = src.at(sx as usize, sy as usize);
+                        let a = u64::from(a);
+                        sum[0] += u64::from(r) * a;
+                        sum[1] += u64::from(g) * a;
+                        sum[2] += u64::from(b) * a;
+                        sum[3] += a;
+                        n += 1;
+                    }
+                }
+                if sum[3] == 0 {
+                    continue;
+                }
+                let i = ((y * out.width + x) * 4) as usize;
+                for c in 0..3 {
+                    out.rgba[i + c] = (sum[c] / sum[3]).min(255) as u8;
+                }
+                out.rgba[i + 3] = (sum[3] / n).min(255) as u8;
             }
         }
+        out
+    }
+
+    /// `src` scaled to fit `w`x`h` keeping its shape, centered there.
+    pub fn blit_fit(&mut self, src: &Bitmap, x: i32, y: i32, w: i32, h: i32) {
+        let (dw, dh) = fit(src.width, src.height, w as u32, h as u32);
+        let fitted = Canvas::resampled(src, [0, 0, src.width, src.height], dw, dh);
+        self.blit(&fitted, x + (w - dw as i32) / 2, y + (h - dh as i32) / 2);
+    }
+
+    /// `src` drawn over this, its top-left at `(x, y)`.
+    fn blit(&mut self, src: &Canvas, x: i32, y: i32) {
+        for sy in 0..src.height as i32 {
+            for sx in 0..src.width as i32 {
+                self.blend(x + sx, y + sy, src.pixel(sx, sy));
+            }
+        }
+    }
+
+    /// `src` drawn over this turned by `angle` (radians, clockwise) about
+    /// its point `pivot`, which lands at `at`; its edges smoothed.
+    fn blit_turned(&mut self, src: &Canvas, pivot: (f32, f32), at: (f32, f32), angle: f32) {
+        let (sin, cos) = angle.sin_cos();
+        let corners = [
+            (0., 0.),
+            (src.width as f32, 0.),
+            (0., src.height as f32),
+            (src.width as f32, src.height as f32),
+        ]
+        .map(|(x, y)| {
+            let (dx, dy) = (x - pivot.0, y - pivot.1);
+            (at.0 + dx * cos - dy * sin, at.1 + dx * sin + dy * cos)
+        });
+        let low = |pick: fn(&(f32, f32)) -> f32| corners.iter().map(pick).fold(f32::MAX, f32::min);
+        let high = |pick: fn(&(f32, f32)) -> f32| corners.iter().map(pick).fold(f32::MIN, f32::max);
+        let x0 = (low(|c| c.0).floor() as i32).max(0);
+        let y0 = (low(|c| c.1).floor() as i32).max(0);
+        let x1 = (high(|c| c.0).ceil() as i32).min(self.width as i32);
+        let y1 = (high(|c| c.1).ceil() as i32).min(self.height as i32);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                // Back to where this pixel's middle comes from.
+                let (dx, dy) = (x as f32 + 0.5 - at.0, y as f32 + 0.5 - at.1);
+                let u = pivot.0 + dx * cos + dy * sin;
+                let v = pivot.1 - dx * sin + dy * cos;
+                self.blend(x, y, src.sample(u, v));
+            }
+        }
+    }
+
+    /// The color at `(u, v)`, pixels' middles at half units, between the
+    /// four nearest by their opacity; transparent beyond the edge, so an
+    /// edge drawn turned comes out smooth.
+    fn sample(&self, u: f32, v: f32) -> [u8; 4] {
+        let (x, y) = (u - 0.5, v - 0.5);
+        let (x0, y0) = (x.floor(), y.floor());
+        let (fx, fy) = (x - x0, y - y0);
+        let (x0, y0) = (x0 as i32, y0 as i32);
+        let mut sum = [0f32; 4];
+        for (dx, dy, weight) in [
+            (0, 0, (1. - fx) * (1. - fy)),
+            (1, 0, fx * (1. - fy)),
+            (0, 1, (1. - fx) * fy),
+            (1, 1, fx * fy),
+        ] {
+            let [r, g, b, a] = self.pixel(x0 + dx, y0 + dy);
+            let a = f32::from(a) * weight;
+            sum[0] += f32::from(r) * a;
+            sum[1] += f32::from(g) * a;
+            sum[2] += f32::from(b) * a;
+            sum[3] += a;
+        }
+        if sum[3] <= 0. {
+            return [0; 4];
+        }
+        let channel = |c: f32| (c / sum[3]).round().clamp(0., 255.) as u8;
+        [
+            channel(sum[0]),
+            channel(sum[1]),
+            channel(sum[2]),
+            sum[3].round().clamp(0., 255.) as u8,
+        ]
     }
 
     pub fn into_icon(self, hotspot_x: u32, hotspot_y: u32) -> ExternalDragIcon {
@@ -189,6 +397,28 @@ impl Canvas {
             hotspot_x,
             hotspot_y,
         }
+    }
+}
+
+/// How much of a pixel whose middle lies `distance` from a circle's lies
+/// within its `radius`, from 0 to 1, read across the pixel's width.
+fn covered(distance: f32, radius: f32) -> f32 {
+    (radius - distance + 0.5).clamp(0., 1.)
+}
+
+/// The size `width` x `height` takes to fit `w` x `h`, its shape kept.
+fn fit(width: u32, height: u32, w: u32, h: u32) -> (u32, u32) {
+    let scale =
+        (f64::from(w) / f64::from(width.max(1))).min(f64::from(h) / f64::from(height.max(1)));
+    let side = |length: u32| ((f64::from(length) * scale).round() as u32).max(1);
+    (side(width), side(height))
+}
+
+/// A character's glyph in the 3x5 font: a digit or `+`.
+fn glyph(ch: char) -> Option<[u8; 5]> {
+    match ch {
+        '+' => Some(PLUS_3X5),
+        _ => ch.to_digit(10).map(|d| FONT_3X5[d as usize]),
     }
 }
 
@@ -206,6 +436,8 @@ const FONT_3X5: [[u8; 5]; 10] = [
     [0b111, 0b101, 0b111, 0b001, 0b111],
 ];
 
+const PLUS_3X5: [u8; 5] = [0b000, 0b010, 0b111, 0b010, 0b000];
+
 const PAPER: [u8; 4] = [250, 250, 250, 255];
 const PAPER_EDGE: [u8; 4] = [160, 160, 160, 255];
 const FOLDER: [u8; 4] = [90, 150, 230, 255];
@@ -213,6 +445,8 @@ const FOLDER_TAB: [u8; 4] = [70, 125, 205, 255];
 const BADGE: [u8; 4] = [230, 70, 70, 255];
 const WHITE: [u8; 4] = [255, 255, 255, 255];
 const LINE: [u8; 4] = [200, 200, 200, 255];
+/// The mosaic's last quarter, saying how many more.
+const MORE: [u8; 4] = [95, 107, 122, 255];
 
 /// A generic file glyph: a sheet with a folded corner and text lines.
 pub fn file_glyph(c: &mut Canvas) {
@@ -229,27 +463,158 @@ pub fn folder_glyph(c: &mut Canvas) {
     c.round_rect(8, 18, 48, 34, 4, FOLDER);
 }
 
-/// The count badge in the bottom-right corner.
-pub fn badge(c: &mut Canvas, count: usize) {
+/// The glyph for a folder or a file, `ICON_PX` square.
+fn glyph_canvas(is_dir: bool) -> Canvas {
+    let mut c = Canvas::new(ICON_PX, ICON_PX);
+    if is_dir {
+        folder_glyph(&mut c);
+    } else {
+        file_glyph(&mut c);
+    }
+    c
+}
+
+/// The radius of the count badge for `count`, and its text.
+fn badge_size(count: usize) -> (i32, String) {
     let text = count.to_string();
+    let tw = Canvas::digits_width(&text, 2);
+    ((tw / 2 + 6).max(10), text)
+}
+
+/// The count badge centered at `(cx, cy)`.
+fn badge_at(c: &mut Canvas, cx: i32, cy: i32, count: usize) {
+    let (r, text) = badge_size(count);
     let scale = 2;
     let tw = Canvas::digits_width(&text, scale);
-    let r = (tw / 2 + 6).max(10);
-    let (cx, cy) = (c.width as i32 - r - 2, c.height as i32 - r - 2);
     c.circle(cx, cy, r, BADGE);
     c.digits(cx - tw / 2, cy - 5 * scale / 2, &text, scale, WHITE);
 }
 
-/// The icon of a drag of `count` files: `picture` fitted, else a glyph
-/// for a folder or a file; a badge when several.
-pub fn drawn(picture: Option<&Bitmap>, is_dir: bool, count: usize) -> ExternalDragIcon {
+/// The count badge in the bottom-right corner.
+pub fn badge(c: &mut Canvas, count: usize) {
+    let (r, _) = badge_size(count);
+    let (cx, cy) = (c.width as i32 - r - 2, c.height as i32 - r - 2);
+    badge_at(c, cx, cy, count);
+}
+
+/// What a drawn entry shows: the thumbnail the window keeps, its icon, or
+/// the glyph standing in for it.
+enum Face<'a> {
+    Thumb(Bitmap<'a>),
+    Icon(Bitmap<'a>),
+    Glyph(bool),
+}
+
+impl Face<'_> {
+    /// Drawn on a card of the fan or the pile, in the room around it for
+    /// its shadow (`SHADOW`): a thumbnail as a print, in a white frame on
+    /// a soft shadow; an icon or a glyph as it is.
+    fn card(&self) -> Canvas {
+        let s = SHADOW as i32;
+        match self {
+            Face::Thumb(picture) => {
+                let inner = CARD_PX - 2 * FRAME;
+                let (w, h) = fit(picture.width, picture.height, inner, inner);
+                let (fw, fh) = (w + 2 * FRAME, h + 2 * FRAME);
+                let mut c = Canvas::new(fw + 2 * SHADOW, fh + 2 * SHADOW);
+                for (spread, alpha) in [(3, 12), (2, 20), (1, 34)] {
+                    c.round_rect(
+                        s - spread,
+                        s - spread + 1,
+                        fw as i32 + 2 * spread,
+                        fh as i32 + 2 * spread,
+                        spread + 1,
+                        [0, 0, 0, alpha],
+                    );
+                }
+                c.round_rect(s, s, fw as i32, fh as i32, 1, WHITE);
+                let print = Canvas::resampled(picture, [0, 0, picture.width, picture.height], w, h);
+                c.blit(&print, s + FRAME as i32, s + FRAME as i32);
+                c
+            }
+            Face::Icon(icon) => Self::fitted(icon, CARD_PX),
+            Face::Glyph(is_dir) => Self::fitted(&glyph_canvas(*is_dir).bitmap(), CARD_PX),
+        }
+    }
+
+    /// `src` fitted within `side`, in the room for a shadow it does not
+    /// cast.
+    fn fitted(src: &Bitmap, side: u32) -> Canvas {
+        let (w, h) = fit(src.width, src.height, side, side);
+        let mut c = Canvas::new(w + 2 * SHADOW, h + 2 * SHADOW);
+        let drawn = Canvas::resampled(src, [0, 0, src.width, src.height], w, h);
+        c.blit(&drawn, SHADOW as i32, SHADOW as i32);
+        c
+    }
+
+    /// Drawn in a quarter of the mosaic, `side` square: a thumbnail
+    /// filling it, cropped to its middle; an icon or a glyph within it.
+    fn cell(&self, side: u32) -> Canvas {
+        let mut c = Canvas::new(side, side);
+        match self {
+            Face::Thumb(picture) => {
+                let (w, h) = (picture.width, picture.height);
+                let crop = if w > h {
+                    [(w - h) / 2, 0, h, h]
+                } else {
+                    [0, (h - w) / 2, w, w]
+                };
+                c.blit(&Canvas::resampled(picture, crop, side, side), 0, 0);
+            }
+            Face::Icon(icon) => c.blit_fit(icon, 0, 0, side as i32, side as i32),
+            Face::Glyph(is_dir) => {
+                let glyph = glyph_canvas(*is_dir);
+                c.blit_fit(&glyph.bitmap(), 0, 0, side as i32, side as i32);
+            }
+        }
+        c
+    }
+}
+
+/// A card of the fan or the pile where it lies: the middle of its card,
+/// before it turns, and how far it turns about the point `FAN_PIVOT`
+/// below that.
+struct Placed {
+    card: Canvas,
+    middle: (f32, f32),
+    angle: f32,
+}
+
+impl Placed {
+    /// Its point that lands at its middle, on its canvas, and where its
+    /// pivot is, there and on the drag's image laid around `(0, 0)`.
+    fn pivot(&self) -> ((f32, f32), (f32, f32)) {
+        let (w, h) = (self.card.width as f32, self.card.height as f32);
+        (
+            (w / 2., h / 2. + FAN_PIVOT),
+            (self.middle.0, self.middle.1 + FAN_PIVOT),
+        )
+    }
+
+    /// The corners of its canvas where it lands.
+    fn corners(&self) -> [(f32, f32); 4] {
+        let (from, to) = self.pivot();
+        let (sin, cos) = self.angle.sin_cos();
+        let (w, h) = (self.card.width as f32, self.card.height as f32);
+        [(0., 0.), (w, 0.), (0., h), (w, h)].map(|(x, y)| {
+            let (dx, dy) = (x - from.0, y - from.1);
+            (to.0 + dx * cos - dy * sin, to.1 + dx * sin + dy * cos)
+        })
+    }
+}
+
+/// The image of one entry, or of several as `Single` draws them: the
+/// picture fitted, else a glyph; a badge when `count` is more than one.
+fn single(face: &Face, count: usize) -> ExternalDragIcon {
     let mut c = Canvas::new(ICON_PX, ICON_PX);
     let side = PICTURE_PX as i32;
     let margin = (ICON_PX - PICTURE_PX) as i32 / 2;
-    match picture {
-        Some(picture) => c.blit_fit(picture, margin, margin, side, side),
-        None if is_dir => folder_glyph(&mut c),
-        None => file_glyph(&mut c),
+    match face {
+        Face::Thumb(picture) | Face::Icon(picture) => {
+            c.blit_fit(picture, margin, margin, side, side);
+        }
+        Face::Glyph(true) => folder_glyph(&mut c),
+        Face::Glyph(false) => file_glyph(&mut c),
     }
     if count > 1 {
         badge(&mut c, count);
@@ -257,58 +622,276 @@ pub fn drawn(picture: Option<&Bitmap>, is_dir: bool, count: usize) -> ExternalDr
     c.into_icon(ICON_PX / 2, ICON_PX / 2)
 }
 
-/// What a drag of files shows, read as it starts: the entry it took as the
-/// views draw it, and how many it carries.
+/// The first face in front, those after it behind: fanned out to either
+/// side (`fan`) or each a step down and right (else), the badge on the
+/// front card's corner. The pointer holds the front card's middle.
+fn deck(faces: &[Face], count: usize, fan: bool) -> ExternalDragIcon {
+    let lean = FAN_DEGREES.to_radians();
+    let mut placed: Vec<Placed> = faces
+        .iter()
+        .enumerate()
+        .map(|(i, face)| {
+            let (middle, angle) = match (fan, i, faces.len()) {
+                (_, 0, _) => ((0., 0.), 0.),
+                (true, _, 2) => ((0., 0.), lean),
+                (true, 1, _) => ((0., 0.), -lean),
+                (true, _, _) => ((0., 0.), lean),
+                (false, i, _) => {
+                    let step = i as f32;
+                    ((PILE_STEP.0 * step, PILE_STEP.1 * step), 0.)
+                }
+            };
+            Placed {
+                card: face.card(),
+                middle,
+                angle,
+            }
+        })
+        .collect();
+    // Drawn from the back.
+    placed.reverse();
+    let front = placed.last().map_or((0., 0.), |p| {
+        let s = SHADOW as f32;
+        (
+            (p.card.width as f32) / 2. - s,
+            (p.card.height as f32) / 2. - s,
+        )
+    });
+    let (radius, _) = badge_size(count);
+    let badge_middle = (front.0 - 3., front.1 - 3.);
+    let r = radius as f32 + 1.;
+    let mut low = (badge_middle.0 - r, badge_middle.1 - r);
+    let mut high = (badge_middle.0 + r, badge_middle.1 + r);
+    for corner in placed.iter().flat_map(Placed::corners) {
+        low = (low.0.min(corner.0), low.1.min(corner.1));
+        high = (high.0.max(corner.0), high.1.max(corner.1));
+    }
+    let origin = (-low.0.floor(), -low.1.floor());
+    let mut c = Canvas::new(
+        (high.0.ceil() + origin.0) as u32,
+        (high.1.ceil() + origin.1) as u32,
+    );
+    for p in &placed {
+        let (from, to) = p.pivot();
+        let to = (to.0 + origin.0, to.1 + origin.1);
+        if p.angle == 0. {
+            let left = to.0 - from.0;
+            let top = to.1 - from.1;
+            c.blit(&p.card, left.round() as i32, top.round() as i32);
+        } else {
+            c.blit_turned(&p.card, from, to, p.angle);
+        }
+    }
+    let at = |v: f32, o: f32| (v + o).round() as i32;
+    badge_at(
+        &mut c,
+        at(badge_middle.0, origin.0),
+        at(badge_middle.1, origin.1),
+        count,
+    );
+    c.into_icon(origin.0 as u32, origin.1 as u32)
+}
+
+/// Up to four faces in quarters; with more entries than that, three and
+/// a last quarter saying how many more. Two lie side by side, three as a
+/// pyramid.
+fn mosaic(faces: &[Face], count: usize) -> ExternalDragIcon {
+    let mut c = Canvas::new(MOSAIC_PX, MOSAIC_PX);
+    let (near, far, mid) = (
+        1,
+        (MOSAIC_PX - CELL_PX - 1) as i32,
+        ((MOSAIC_PX - CELL_PX) / 2) as i32,
+    );
+    let quarters = [(near, near), (far, near), (near, far), (far, far)];
+    let more = count > faces.len();
+    let cells = faces.len() + usize::from(more);
+    let places: &[(i32, i32)] = match cells {
+        2 => &[(near, mid), (far, mid)],
+        3 => &[(near, near), (far, near), (mid, far)],
+        _ => &quarters,
+    };
+    for (face, &(x, y)) in faces.iter().zip(places) {
+        c.blit(&face.cell(CELL_PX), x, y);
+    }
+    if more && let Some(&(x, y)) = places.get(faces.len()) {
+        let side = CELL_PX as i32;
+        c.round_rect(x, y, side, side, 4, MORE);
+        let text = format!("+{}", count - faces.len());
+        let room = side - 4;
+        if let Some(scale) = [2, 1]
+            .into_iter()
+            .find(|&s| Canvas::digits_width(&text, s) <= room)
+        {
+            let tw = Canvas::digits_width(&text, scale);
+            c.digits(
+                x + (side - tw) / 2,
+                y + (side - 5 * scale) / 2,
+                &text,
+                scale,
+                WHITE,
+            );
+        } else {
+            // Too many to say: an ellipsis.
+            for dot in -1..=1 {
+                c.circle(x + side / 2 + dot * 6, y + side / 2, 2, WHITE);
+            }
+        }
+    }
+    c.into_icon(MOSAIC_PX / 2, MOSAIC_PX / 2)
+}
+
+/// What a drag of files shows, read as it starts: the entries it took as
+/// the views draw them, how many it carries, and how they are laid out.
 #[derive(Default)]
 pub struct DragLook {
     pub count: usize,
+    pub layout: Layout,
+    /// What it draws, the entry taken first.
+    pub cards: Vec<Card>,
+}
+
+/// An entry a drag draws.
+#[derive(Default)]
+pub struct Card {
     pub is_dir: bool,
     /// The thumbnail the window keeps of it: what its view drew.
     pub thumb: Option<Picture>,
-    /// Without one, its icon, drawn for the drag on GPUI's executor
-    /// (`icons::pixels`): a glyph stands in until it arrives.
-    pub icon: Option<IconPixels>,
+    /// Without one, its icon while it is drawn for the drag on GPUI's
+    /// executor (`icons::pixels`): a glyph stands in until it arrives.
+    pub coming: Option<IconPixels>,
+    /// Its icon, drawn.
+    pub icon: Option<Image>,
+}
+
+impl Card {
+    fn face(&self) -> Face<'_> {
+        let thumb = self.thumb.as_ref().and_then(Bitmap::of_picture);
+        let icon = || self.icon.as_ref().and_then(Bitmap::of_image);
+        match (thumb, icon()) {
+            (Some(thumb), _) => Face::Thumb(thumb),
+            (None, Some(icon)) => Face::Icon(icon),
+            (None, None) => Face::Glyph(self.is_dir),
+        }
+    }
 }
 
 impl DragLook {
-    /// The icon as it can be drawn now: the thumbnail, else a glyph.
+    /// The image as it can be drawn now: each entry's thumbnail, else its
+    /// icon once drawn, else a glyph.
     pub fn drawn(&self) -> ExternalDragIcon {
-        let picture = self.thumb.as_ref().and_then(Bitmap::of_picture);
-        drawn(picture.as_ref(), self.is_dir, self.count)
+        let faces: Vec<Face> = self.cards.iter().map(Card::face).collect();
+        match (self.layout, faces.as_slice()) {
+            (_, []) => single(&Face::Glyph(false), self.count),
+            (Layout::Single, [face, ..]) | (_, [face]) => single(face, self.count),
+            (Layout::Fan, faces) => deck(faces, self.count, true),
+            (Layout::Pile, faces) => deck(faces, self.count, false),
+            (Layout::Mosaic, faces) => mosaic(faces, self.count),
+        }
+    }
+
+    /// Take the icons drawn since it was last asked: whether one arrived.
+    /// Asked while drawing, so that the view drawing is drawn again when
+    /// one does.
+    pub fn take_icons(&mut self, window: &mut Window, cx: &mut gpui::App) -> bool {
+        let mut arrived = false;
+        for card in &mut self.cards {
+            let Some(coming) = &card.coming else {
+                continue;
+            };
+            if let Some(icon) = crate::icons::pixels(coming, window, cx) {
+                card.coming = None;
+                arrived |= icon.is_some();
+                card.icon = icon;
+            }
+        }
+        arrived
     }
 }
 
 impl Shell {
-    /// What a drag of `pane`'s selection shows: the entry `grabbed` (a row
-    /// of a multi-selection pressed) or else the selection's first, its
-    /// thumbnail if the window keeps one, else its icon, a shape drawn in
-    /// `tint` as the views draw it.
+    /// What a drag of `pane`'s selection shows, laid out as `ui.drag_image`
+    /// says: the entry `grabbed` (a row of a multi-selection pressed) or
+    /// else the selection's first, and as many more as the layout draws,
+    /// one of each other type first. Each is its thumbnail if the window
+    /// keeps one, else its icon, a shape drawn in `tint` as the views draw
+    /// it.
     pub fn drag_look(&mut self, pane: PaneId, grabbed: Option<EntryId>, tint: Hsla) -> DragLook {
+        let layout = self.prefs.drag_image;
         let ws = self.app.workspace.read();
         let Some(pane) = ws.pane(pane) else {
             return DragLook::default();
         };
-        let id = grabbed
-            .filter(|id| pane.selection.contains(*id))
-            .or_else(|| pane.selection.iter().next());
         let count = pane.selection.len();
-        let Some((id, e)) = id.and_then(|id| Some((id, pane.entry(id)?))) else {
+        let Some(front) = grabbed
+            .filter(|id| pane.selection.contains(*id))
+            .or_else(|| pane.selection.iter().next())
+        else {
             return DragLook {
                 count,
-                ..DragLook::default()
+                layout,
+                cards: Vec::new(),
             };
         };
-        // Either size a view drew, the nearer the icon's side first.
-        let thumb = self.thumbs.kept(e, &[ThumbSize::Normal, ThumbSize::Large]);
-        let icon = thumb.is_none().then(|| {
-            self.icons
-                .pixels_for_entry(e, || pane.path_of(id), PICTURE_PX, tint)
-        });
+        let wanted = layout.shows(count);
+        let kind = |id: EntryId| {
+            pane.entry(id)
+                .map(|e| (e.is_dir(), skwir_platform::mime::of_entry(e).map(|m| m.0)))
+        };
+        let mut ids = vec![front];
+        let mut kinds = vec![kind(front)];
+        let mut alike = Vec::new();
+        for id in pane
+            .selection
+            .iter()
+            .filter(|id| *id != front)
+            .take(VARIETY_SCAN)
+        {
+            if ids.len() == wanted {
+                break;
+            }
+            let k = kind(id);
+            if kinds.contains(&k) {
+                alike.push(id);
+            } else {
+                kinds.push(k);
+                ids.push(id);
+            }
+        }
+        let missing = wanted.saturating_sub(ids.len());
+        ids.extend(alike.into_iter().take(missing));
+        // Fewer looked through than wanted: the next ones as they come.
+        let missing = wanted.saturating_sub(ids.len());
+        if missing > 0 {
+            let more: Vec<EntryId> = pane
+                .selection
+                .iter()
+                .filter(|id| !ids.contains(id))
+                .take(missing)
+                .collect();
+            ids.extend(more);
+        }
+        let cards = ids
+            .into_iter()
+            .filter_map(|id| {
+                let e = pane.entry(id)?;
+                // Either size a view drew, the nearer a card's side first.
+                let thumb = self.thumbs.kept(e, &[ThumbSize::Normal, ThumbSize::Large]);
+                let coming = thumb.is_none().then(|| {
+                    self.icons
+                        .pixels_for_entry(e, || pane.path_of(id), PICTURE_PX, tint)
+                });
+                Some(Card {
+                    is_dir: e.is_dir(),
+                    thumb,
+                    coming,
+                    icon: None,
+                })
+            })
+            .collect();
         DragLook {
             count,
-            is_dir: e.is_dir(),
-            thumb,
-            icon,
+            layout,
+            cards,
         }
     }
 }
@@ -316,6 +899,203 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A one-color picture, RGBA, `w` x `h`.
+    fn plain(w: u32, h: u32, rgba: [u8; 4]) -> Image {
+        Image {
+            width: w,
+            height: h,
+            rgba: rgba.repeat((w * h) as usize).into(),
+        }
+    }
+
+    /// A look of `count` entries, those drawn the icons given.
+    fn look(layout: Layout, count: usize, icons: &[Image]) -> DragLook {
+        DragLook {
+            count,
+            layout,
+            cards: icons
+                .iter()
+                .map(|icon| Card {
+                    icon: Some(icon.clone()),
+                    ..Card::default()
+                })
+                .collect(),
+        }
+    }
+
+    fn pixel(icon: &ExternalDragIcon, x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * icon.width + x) * 4) as usize;
+        [
+            icon.rgba[i],
+            icon.rgba[i + 1],
+            icon.rgba[i + 2],
+            icon.rgba[i + 3],
+        ]
+    }
+
+    fn has(icon: &ExternalDragIcon, color: [u8; 4]) -> bool {
+        icon.rgba.as_chunks::<4>().0.contains(&color)
+    }
+
+    const RED: [u8; 4] = [200, 0, 0, 255];
+    const GREEN: [u8; 4] = [0, 200, 0, 255];
+    const BLUE: [u8; 4] = [0, 0, 200, 255];
+
+    #[test]
+    fn the_setting_names_a_layout_and_says_how_many_it_draws() {
+        assert_eq!(Layout::read(None), Layout::Fan);
+        assert_eq!(Layout::read(Some("mosaic")), Layout::Mosaic);
+        assert_eq!(Layout::read(Some("nonsense")), Layout::Fan);
+        assert_eq!(Layout::Fan.shows(1), 1);
+        assert_eq!(Layout::Fan.shows(30), 3);
+        assert_eq!(Layout::Pile.shows(2), 2);
+        assert_eq!(Layout::Mosaic.shows(4), 4);
+        assert_eq!(
+            Layout::Mosaic.shows(5),
+            3,
+            "the last quarter says how many more"
+        );
+        assert_eq!(Layout::Single.shows(30), 1);
+    }
+
+    #[test]
+    fn one_file_is_its_picture_alone_whatever_the_layout() {
+        let red = plain(4, 4, RED);
+        let alone = look(Layout::Single, 1, std::slice::from_ref(&red)).drawn();
+        for layout in [Layout::Fan, Layout::Pile, Layout::Mosaic] {
+            let drawn = look(layout, 1, std::slice::from_ref(&red)).drawn();
+            assert_eq!(drawn.rgba, alone.rgba, "{layout:?}");
+        }
+        assert_eq!((alone.width, alone.height), (ICON_PX, ICON_PX));
+    }
+
+    #[test]
+    fn a_fan_holds_the_one_taken_with_the_others_leaning_out_behind() {
+        let icons = [plain(8, 8, RED), plain(8, 8, GREEN), plain(8, 8, BLUE)];
+        let fan = look(Layout::Fan, 30, &icons).drawn();
+        assert!(fan.width > CARD_PX && fan.height > CARD_PX);
+        // The pointer holds the front card's middle.
+        assert_eq!(pixel(&fan, fan.hotspot_x, fan.hotspot_y), RED);
+        // The cards behind show beside it, the left one top-left of it.
+        let (x, y) = (fan.hotspot_x as usize, fan.hotspot_y as usize);
+        let half = (CARD_PX / 2) as usize;
+        let left = (0..x - half).any(|px| pixel(&fan, px as u32, (y - half / 2) as u32) == GREEN);
+        let right = (x + half..fan.width as usize)
+            .any(|px| pixel(&fan, px as u32, (y - half / 2) as u32) == BLUE);
+        assert!(left && right, "both lean out");
+        assert!(has(&fan, BADGE), "the badge counts them");
+    }
+
+    #[test]
+    fn a_pile_lays_each_card_a_step_down_and_right() {
+        let icons = [plain(8, 8, RED), plain(8, 8, GREEN), plain(8, 8, BLUE)];
+        let pile = look(Layout::Pile, 3, &icons).drawn();
+        let (x, y) = (pile.hotspot_x, pile.hotspot_y);
+        let half = CARD_PX / 2;
+        assert_eq!(pixel(&pile, x, y), RED);
+        // Past the front card's left edge, nothing; past its right, the
+        // others.
+        assert_eq!(pixel(&pile, x - half - 2, y)[3], 0);
+        // Past the badge on its corner, and the second card's, the third.
+        let beyond = (x + half + 10, y + half + 10);
+        assert_eq!(pixel(&pile, beyond.0, beyond.1), BLUE);
+    }
+
+    #[test]
+    fn a_mosaic_says_how_many_more_in_its_last_quarter() {
+        let icons = [plain(8, 8, RED), plain(8, 8, GREEN), plain(8, 8, BLUE)];
+        let mosaic = look(Layout::Mosaic, 7, &icons).drawn();
+        assert_eq!((mosaic.width, mosaic.height), (MOSAIC_PX, MOSAIC_PX));
+        let middle = |(x, y): (u32, u32)| pixel(&mosaic, x + CELL_PX / 2, y + CELL_PX / 4);
+        let far = MOSAIC_PX - CELL_PX - 1;
+        assert_eq!(middle((1, 1)), RED);
+        assert_eq!(middle((far, 1)), GREEN);
+        assert_eq!(middle((1, far)), BLUE);
+        assert_eq!(middle((far, far)), MORE);
+        assert!(has(&mosaic, WHITE), "+4 written on it");
+        assert!(!has(&mosaic, BADGE), "no badge besides");
+        // Two side by side, nothing more to say.
+        let two = look(Layout::Mosaic, 2, &icons[..2]).drawn();
+        assert!(!has(&two, MORE));
+    }
+
+    #[test]
+    fn a_thumbnail_the_window_keeps_keeps_its_colors_on_the_icon() {
+        let bgra = [30u8, 20, 10, 255].repeat(4);
+        let kept = Bitmap {
+            width: 2,
+            height: 2,
+            bytes: &bgra,
+            order: PixelOrder::Bgra,
+        };
+        let icon = single(&Face::Thumb(kept), 1);
+        let centre = ((ICON_PX / 2 * ICON_PX + ICON_PX / 2) * 4) as usize;
+        assert_eq!(&icon.rgba[centre..centre + 4], &[10, 20, 30, 255]);
+        assert_eq!(&icon.rgba[..4], &[0, 0, 0, 0], "its margin shows through");
+    }
+
+    #[test]
+    fn a_picture_shrinks_by_averaging_what_shows() {
+        // Black and white columns, and a transparent pixel that must not
+        // darken what it is averaged with.
+        let rgba = [
+            [0, 0, 0, 255],
+            [255, 255, 255, 255],
+            [255, 255, 255, 255],
+            [9, 9, 9, 0],
+        ]
+        .concat();
+        let src = Bitmap {
+            width: 2,
+            height: 2,
+            bytes: &rgba,
+            order: PixelOrder::Rgba,
+        };
+        let one = Canvas::resampled(&src, [0, 0, 2, 2], 1, 1);
+        assert_eq!(one.pixel(0, 0), [170, 170, 170, 191]);
+        let right = Canvas::resampled(&src, [1, 0, 1, 2], 1, 1);
+        assert_eq!(right.pixel(0, 0), [255, 255, 255, 127]);
+    }
+
+    #[test]
+    fn a_canvas_turned_lands_about_its_pivot() {
+        let mut src = Canvas::new(4, 2);
+        src.round_rect(0, 0, 4, 2, 0, RED);
+        // Unturned, it lands where its pivot says.
+        let mut c = Canvas::new(10, 10);
+        c.blit_turned(&src, (0., 0.), (3., 3.), 0.);
+        assert_eq!(c.pixel(3, 3), RED);
+        assert_eq!(c.pixel(6, 4), RED);
+        assert_eq!(c.pixel(7, 3)[3], 0);
+        // A quarter turn clockwise about its top-left: down from there.
+        let mut c = Canvas::new(10, 10);
+        c.blit_turned(&src, (0., 0.), (5., 1.), std::f32::consts::FRAC_PI_2);
+        assert_eq!(c.pixel(3, 3), RED);
+        assert_eq!(c.pixel(4, 4), RED);
+        assert_eq!(c.pixel(5, 3)[3], 0);
+    }
+
+    #[test]
+    fn the_badge_has_a_smooth_edge() {
+        let mut c = Canvas::new(40, 40);
+        badge_at(&mut c, 20, 20, 3);
+        let alphas: Vec<u8> = c.rgba.as_chunks::<4>().0.iter().map(|p| p[3]).collect();
+        assert!(
+            alphas.iter().any(|a| (1..255).contains(a)),
+            "partly covered"
+        );
+        assert_eq!(c.pixel(20, 12), BADGE, "whole inside");
+        assert_eq!(c.pixel(20, 30)[3], 255);
+        assert_eq!(c.pixel(20, 32)[3], 0, "nothing past its edge");
+        // As round every way: a pixel its edge crosses, turned about its
+        // middle, is covered as much.
+        let edge = |x: i32, y: i32| c.pixel(20 + x, 20 + y)[3];
+        assert!((1..255).contains(&edge(7, 8)));
+        for (x, y) in [(-7, -8), (8, -7), (-8, 7), (7, -8)] {
+            assert_eq!(edge(x, y), edge(7, 8), "({x}, {y})");
+        }
+    }
 
     #[test]
     fn glyphs_and_badge_produce_opaque_pixels_within_bounds() {
@@ -336,26 +1116,12 @@ mod tests {
     }
 
     #[test]
-    fn a_thumbnail_the_window_keeps_keeps_its_colors_on_the_icon() {
-        let bgra = [30u8, 20, 10, 255].repeat(4);
-        let kept = Bitmap {
-            width: 2,
-            height: 2,
-            bytes: &bgra,
-            order: PixelOrder::Bgra,
-        };
-        let icon = drawn(Some(&kept), false, 1);
-        let centre = ((ICON_PX / 2 * ICON_PX + ICON_PX / 2) * 4) as usize;
-        assert_eq!(&icon.rgba[centre..centre + 4], &[10, 20, 30, 255]);
-        assert_eq!(&icon.rgba[..4], &[0, 0, 0, 0], "its margin shows through");
-    }
-
-    #[test]
     fn digits_render_every_glyph_and_out_of_bounds_is_clipped() {
         let mut c = Canvas::new(16, 8);
-        c.digits(-5, -3, "0123456789", 1, WHITE);
+        c.digits(-5, -3, "0123456789+", 1, WHITE);
         c.digits(100, 100, "42", 3, WHITE);
         assert_eq!(Canvas::digits_width("42", 2), 14);
+        assert_eq!(Canvas::digits_width("+42", 2), 22);
         let mut c2 = Canvas::new(8, 8);
         c2.digits(0, 0, "8", 1, WHITE);
         let lit = c2
