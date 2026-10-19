@@ -26,7 +26,7 @@ use crate::settings_keys::{
     effects, removal_refused, rows, verdict,
 };
 use crate::settings_records::{Record, records};
-use crate::settings_view::{Edge, card_row};
+use crate::settings_view::{Edge, card_row, revert_slot};
 use crate::theme::Theme;
 
 /// The height of every row of the list, a caption's too: the same for
@@ -692,6 +692,7 @@ impl SettingsView {
                     cx.stop_propagation();
                     this.reset_keys(&id, window, cx);
                 }))
+                .into_any_element()
         });
         let mut texts = div()
             .flex_1()
@@ -738,7 +739,7 @@ impl SettingsView {
                 cx.notify();
             }))
             .child(texts)
-            .children(reset)
+            .child(revert_slot(24., reset))
             .child(keys)
             .child(add)
     }

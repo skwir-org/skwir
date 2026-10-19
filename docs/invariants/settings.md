@@ -105,6 +105,11 @@ The namespace is the page, and a preference goes where its subject is:
   control. A choice is segmented buttons only while they fit beside that
   (`elements::adaptive::Fit` measures both forms; no character counts),
   else a dropdown. A text field narrows before the texts do.
+- A change moves nothing. The revert button has its place in every row,
+  empty while the value is the default (`settings_view::revert_slot`, the
+  Keyboard page's rows too), and the save's status follows the page's
+  title on its line: changing or restoring a value never reflows a
+  description or changes the form of a control.
 - Changes apply immediately, each through `settings.apply`: switches and
   choices on click, text and numbers on Enter or blur. The core accepts
   one save at a time, so the view queues later changes and sends them as

@@ -56,6 +56,13 @@ pub(crate) fn card_row(theme: &Theme, edge: Edge) -> gpui::Div {
         .when(edge.last, gpui::Styled::rounded_b_lg)
 }
 
+/// The place of a row's revert button, held whether or not the row is
+/// modified: changing a value or restoring it never moves the texts or the
+/// control beside it.
+pub(crate) fn revert_slot(size: f32, button: Option<AnyElement>) -> gpui::Div {
+    div().flex_none().size(px(size)).children(button)
+}
+
 /// What a setting row needs, detached from `self` so controls can borrow it.
 struct Snapshot {
     spec: SettingSpec,
@@ -647,8 +654,8 @@ impl SettingsView {
                     .child(div().flex_1().min_w_0().child(error)),
             );
         }
-        // Left of the control, so controls stay aligned on the right edge
-        // whether or not a row is modified.
+        // Left of the control, so controls stay aligned on the right edge,
+        // in a slot every row keeps (`revert_slot`).
         let revert = row.modified.then(|| {
             let focus = self.handle(&format!("revert:{key}"), cx);
             self.stop(&focus, Some(item), None);
@@ -686,7 +693,7 @@ impl SettingsView {
             )
             .when(highlighted, |d| d.bg(theme.highlight))
             .child(texts)
-            .children(revert)
+            .child(revert_slot(controls::HEIGHT, revert))
             .child(control)
             .into_any_element(),
         );
@@ -1135,13 +1142,26 @@ impl Render for SettingsView {
         let bar = self.key_editor_bar(&theme, window, cx);
         let close = self.handle("close", cx);
         self.stop(&close, None, None);
+        // The save's status follows the title, in the line it already
+        // takes: a save never narrows the subtitle.
         let status = if self.saving() {
             Some((None, "Saving…"))
         } else if self.saved_flash {
             Some((Some("check"), "Saved"))
         } else {
             None
-        };
+        }
+        .map(|(icon, text)| {
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(5.))
+                .text_xs()
+                .text_color(theme.text_muted)
+                .children(icon.map(|name| controls::glyph(name, theme.text_muted, 13.)))
+                .child(text)
+        });
         let header = div()
             .flex_none()
             .px_6()
@@ -1157,23 +1177,18 @@ impl Render for SettingsView {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(div().text_lg().child(title))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(div().text_lg().child(title))
+                            .children(status),
+                    )
                     .when(!subtitle.is_empty(), |d| {
                         d.child(div().text_xs().text_color(theme.text_muted).child(subtitle))
                     }),
             )
-            .children(status.map(|(icon, text)| {
-                div()
-                    .h(px(controls::HEIGHT))
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(5.))
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .children(icon.map(|name| controls::glyph(name, theme.text_muted, 13.)))
-                    .child(text)
-            }))
             .child(
                 controls::icon_button("settings-close", "close", "Close", &close, &theme)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Close))),
