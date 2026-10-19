@@ -398,7 +398,7 @@ impl App {
     }
 
     /// Register a place notes are kept (ADR-027) and its settings on the
-    /// Notes page: whether it is read, and how it is written.
+    /// Tags and notes page: whether it is read, and how it is written.
     pub fn register_notes_store(&self, owner: &str, store: Arc<dyn crate::notes::NotesStore>) {
         use crate::notes::{Kept, Write};
         let (id, title) = (store.id(), store.title());
@@ -450,7 +450,7 @@ impl App {
         self.apply_notes_settings();
     }
 
-    /// Bring the stores' policy in line with the Notes page.
+    /// Bring the stores' policy in line with the Tags and notes page.
     pub fn apply_notes_settings(&self) {
         use crate::notes::{Policy, Write};
         let mut policy = Policy::default();

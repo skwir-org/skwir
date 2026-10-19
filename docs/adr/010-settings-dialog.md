@@ -2,7 +2,8 @@
 
 Status: accepted, 2026-09-20. Amended 2026-09-25 (a page per subject),
 2026-09-27 (records, owners' checks, secrets), 2026-09-28 (the user's keys,
-ADR-024).
+ADR-024). The page of a setting is its subject's, not its namespace's,
+since ADR-072 (2026-10-19).
 
 ## Context
 

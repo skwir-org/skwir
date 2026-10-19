@@ -174,7 +174,7 @@ pub fn declare(settings: &Settings) {
             })
             .collect(),
     );
-    settings.declare(folders);
+    settings.declare(folders.essential());
     settings.declare(SettingSpec::toggle(
         MARKER_KEY,
         "Folders marked private",

@@ -32,7 +32,7 @@ contributors). The rules for working on preview code are in
   (other files are skipped), or turn the page.
   **Slideshow** (`Space` on the whole screen, or More › Slideshow in the
   panel) shows the pictures from the one shown to the last, each for the
-  time its bar's picker says (Reading › Pictures). The next picture is
+  time its bar's picker says (Pictures and media › Pictures). The next picture is
   read while you look at one, so it shows at once. The screen stays awake
   while a slideshow or a film plays.
 - **Files inside an archive or a message** open as what they are: a
@@ -135,7 +135,7 @@ The player, in the panel or pinned at its foot:
   source of a rendered file (Markdown, a table, a map) is read the same
   way.
 - Long lines wrap to the panel, the line's number on its first row; More
-  › Wrap lines (`Alt+Z`, Reading › Code) lets them go on sideways.
+  › Wrap lines (`Alt+Z`, Reading › Text) lets them go on sideways.
 - Code is highlighted with bat's grammars, in Skwir's theme or one of
   bat's, themes you added to bat included (Reading › Code), light or
   dark whatever Skwir is. Colors follow what is read: after a jump into
@@ -379,7 +379,7 @@ The player, in the panel or pinned at its foot:
     shows it until 3D is chosen. A mesh of over four million triangles is
     shown as a picture; 3D turns that one, and only that one.
   - **Perspective** and **Smooth shading** (in the bar, or Settings ›
-    Reading › 3D models) draw nearer parts larger, and shade across faces
+    Pictures and media › 3D models) draw nearer parts larger, and shade across faces
     rather than each flat.
   - A model's own colours are drawn, turned or still: PLY's and OBJ's
     point colours, glTF's materials and point colours, 3MF's materials
@@ -433,8 +433,8 @@ The player, in the panel or pinned at its foot:
   their distance, time and climb. Nothing a file links to is fetched.
 - Maps kept in files (PMTiles, MBTiles).
 - The background is the outline of the land, drawn offline, until you
-  choose OpenStreetMap or a tile server you add (Settings › Map
-  backgrounds). `map-tiles` is the only plugin that uses the network.
+  choose OpenStreetMap or a tile server you add (Settings › Pictures
+  and media › Maps). `map-tiles` is the only plugin that uses the network.
 
 ### Bytes (`hex`)
 

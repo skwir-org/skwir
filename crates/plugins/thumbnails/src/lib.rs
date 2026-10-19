@@ -342,12 +342,16 @@ impl Plugin for ThumbnailsPlugin {
         skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
     }
     fn register(&self, app: &App) {
-        app.settings.declare(SettingSpec::toggle(
-            WRITE_CACHE,
-            "Share generated thumbnails",
-            "Store new thumbnails in the desktop's thumbnail cache so other applications reuse them.",
-            true,
-        ));
+        app.settings.declare(
+            SettingSpec::toggle(
+                WRITE_CACHE,
+                "Share generated thumbnails",
+                "Store new thumbnails in the desktop's thumbnail cache so other applications reuse them.",
+                true,
+            )
+            .page(skwir_core::settings::page::VIEWS)
+            .section("Thumbnails"),
+        );
         app.settings.declare(
             SettingSpec::integer(
                 BUDGET_MB,
@@ -357,14 +361,20 @@ impl Plugin for ThumbnailsPlugin {
                 (4, 4096),
             )
             .unit("MB")
-            .step(16),
+            .step(16)
+            .page(skwir_core::settings::page::VIEWS)
+            .section("Thumbnails"),
         );
-        app.settings.declare(SettingSpec::toggle(
-            IMAGEMAGICK,
-            "Use ImageMagick",
-            "Draw the thumbnails and previews of the pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images…) with ImageMagick when it is installed, isolated from your files and the network.",
-            true,
-        ));
+        app.settings.declare(
+            SettingSpec::toggle(
+                IMAGEMAGICK,
+                "Use ImageMagick",
+                "Draw the thumbnails and previews of the pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images…) with ImageMagick when it is installed, isolated from your files and the network.",
+                true,
+            )
+            .page(skwir_core::settings::page::VIEWS)
+            .section("Thumbnails"),
+        );
         budget(app);
         self.providers(app);
         if !self.thumbnailers.started.swap(true, Ordering::AcqRel) {

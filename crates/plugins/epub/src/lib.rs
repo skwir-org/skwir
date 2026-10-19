@@ -60,7 +60,9 @@ impl Plugin for PreviewPlugin {
                 ("builtin", "Built-in"),
                 ("mupdf", "MuPDF"),
             ],
-        ));
+        )
+        .page(skwir_core::settings::page::READING)
+        .section("Books"));
         register_books(app);
         app.thumbnails.register(self.id(), Arc::new(Cover));
     }

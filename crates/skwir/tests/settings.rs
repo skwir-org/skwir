@@ -141,3 +141,45 @@ fn every_setting_has_a_title_and_a_description_in_sentences() {
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
+
+/// Settings are shown by subject (ADR-072): every setting of skwir's own
+/// plugins names one of the dialog's pages, so none keeps a page of its
+/// own, and the Tags plugin's settings stand with where notes are kept.
+#[test]
+fn every_setting_is_on_the_page_of_its_subject() {
+    use skwir_ui::settings::Page;
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+    for plugin in skwir::plugins() {
+        let id = plugin.id();
+        app.plugins.add(plugin, &app);
+        if !app.plugins.is_enabled(id) {
+            assert!(app.plugins.set_enabled(id, true, &app), "{id}: toggle on");
+        }
+    }
+    skwir_ui::settings::declare(&app);
+    let schema: Vec<SettingSpec> = app
+        .settings
+        .schema()
+        .into_iter()
+        .filter(SettingSpec::editable)
+        .collect();
+    let own: Vec<&str> = schema
+        .iter()
+        .filter(|spec| matches!(Page::of_spec(spec), Page::Plugin(_)))
+        .map(|spec| spec.key.as_str())
+        .collect();
+    assert!(own.is_empty(), "on a plugin's own page: {own:?}");
+    let page = |key: &str| {
+        Page::of_spec(
+            schema
+                .iter()
+                .find(|spec| spec.key == key)
+                .unwrap_or_else(|| panic!("{key} is not declared")),
+        )
+    };
+    assert_eq!(page("tags.sidebar"), page("notes.xdg.write"));
+    assert_eq!(page("core.preserve_attributes_on_copy"), Page::Notes);
+    assert_eq!(page("terminal.program"), page("shell.program"));
+    assert_eq!(page("documents.backend"), page("reading.continuous"));
+}

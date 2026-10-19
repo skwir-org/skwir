@@ -27,9 +27,8 @@ the reasoning.
   indented beneath the switch and unavailable (dimmed, announced as
   disabled, its changes refused) while the switch is off. Its owner
   still reads both: `under` is how it is shown, not what it means.
-- The owner states the order too, by declaring in it: a page shows its
-  settings as they were first declared (`SettingSpec::order`), what has
-  no section first, then each section where its first setting was.
+- The owner states the order too, by declaring in it: a section shows
+  its settings as they were first declared (`SettingSpec::order`).
   Declared again, or by a plugin turned on again, a setting keeps its
   place. Never sort a page by key or title.
 - Titles are sentence case, without the plugin's name. Descriptions say
@@ -48,17 +47,30 @@ the reasoning.
 
 ## Where a setting goes
 
-The namespace is the page, and a preference goes where its subject is:
+The key is the owner's; the page is the subject's (ADR-072).
 
-- One about a plugin's content (an engine, the audio and video player)
-  is that plugin's, on its page, even when the shell reads it.
-- One the shell applies to several plugins' content is a namespace of
-  the shell's own, with its own page: `reading.*` (the reader, reading
-  mode, the colors code is drawn in: shared by documents, books, comics,
-  Markdown and the code view); `notes.*` (Notes, the core's: each store's
-  Read and Write, declared by `App::register_notes_store`).
-- `ui.*` is only how Skwir looks (Appearance). `core.*` is what it does
-  (General): with files, at startup, with tabs and the split.
+- **The key.** One about a plugin's content (an engine, the player of
+  audio and video) is that plugin's, even when the shell reads it, so
+  turning the plugin off takes it away. One the shell applies to several
+  plugins' content is a namespace of the shell's own: `reading.*` (the
+  reader, reading mode, the colors code is drawn in: shared by
+  documents, books, comics, Markdown and the code view); `notes.*`
+  (each store's Read and Write, the core's, declared by
+  `App::register_notes_store`). `ui.*` is how Skwir looks, `core.*` what
+  it does.
+- **The page.** A setting names the page of its subject
+  (`SettingSpec::page`, one of `skwir_core::settings::page`), whoever
+  owns its key: the Tags plugin's settings stand on Tags and notes,
+  beside where notes are kept; an engine stands with how its documents
+  read, the terminal's shell with the program commands run in. One that
+  names none is on its owner's page (`core` on General, `ui` on
+  Appearance, `reading`, `notes`, `privacy`, `keyboard` on theirs), and
+  a plugin from outside skwir has a page of its own. None of skwir's own
+  plugins has one (`crates/skwir/tests/settings.rs`).
+- **The section.** A page lists the order of its sections
+  (`settings::BUILTIN`); a section it does not list follows, where its
+  first setting was declared, and what has no section comes first. A new
+  section of one of the dialog's pages goes in its list.
 
 ## The file is shared
 
@@ -129,7 +141,8 @@ The namespace is the page, and a preference goes where its subject is:
 - It is not a deferred draw (its dropdowns are, and gpui cannot nest
   them); it stays the last overlay child of the shell root.
 - `ui.settings` takes `{ "key": "plugin.option" }` or
-  `{ "page": "plugins" }`. Report a problem whose remedy is a setting with
+  `{ "page": "plugins" }`; a plugin's id as the page goes where its
+  settings are, as the Plugins page's Settings button does. Report a problem whose remedy is a setting with
   `App::notify_about_setting` (or `Shell::set_status_about`): its toast
   links to it.
 

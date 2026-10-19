@@ -651,7 +651,7 @@ impl PreviewProvider for DocumentPreviews {
         {
             anyhow::bail!(
                 "PDFium's library is not at “{}”, where the settings say it is \
-                 (Settings › Documents › PDFium library)",
+                 (Settings › Reading › Documents › PDFium library)",
                 library.display()
             );
         }

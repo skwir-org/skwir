@@ -560,7 +560,9 @@ impl Plugin for TagsPlugin {
                 index::LIMIT_DEFAULT,
                 (8, 4096),
             )
-            .unit("MB"),
+            .unit("MB")
+            .page(skwir_core::settings::page::NOTES)
+            .section("Tags"),
         );
         let index = index::TagIndex::new(Some(app.cache.namespace(ID)), app, lifetime.clone());
         app.metadata.register(
@@ -768,7 +770,9 @@ impl Plugin for TagsPlugin {
                 "Until a tag is pinned, how many the sidebar suggests, those on the most files first; 0 suggests none.",
                 sidebar::DEFAULT,
                 (0, 50),
-            ),
+            )
+            .page(skwir_core::settings::page::NOTES)
+            .section("Tags"),
         );
         app.settings.declare(SettingSpec::data(
             sidebar::PINNED,
@@ -1940,7 +1944,7 @@ mod tests {
                 .as_deref(),
             Some(b"ours,mac,new,more".as_slice())
         );
-        // Off with the plugin: no Notes page.
+        // Off with the plugin: no Tags and notes page.
         app.plugins.set_enabled("tags", false, &app);
         assert!(
             !app.settings

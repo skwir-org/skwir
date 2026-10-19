@@ -11,7 +11,7 @@
 //! `title [id].ext` is how yt-dlp names every download and `[1080p]` ends
 //! many a release's name. `TagSpaces`' names are read only in folders a
 //! `TagSpaces` location covers (a `.ts` folder there or above); filetags'
-//! only when turned on (Notes page).
+//! only when turned on (Tags and notes page).
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -410,7 +410,7 @@ impl Plugin for NameTagsPlugin {
         "Tags in names"
     }
     fn description(&self) -> &'static str {
-        "Tags written in file names, as TagSpaces (name[a b].ext) and filetags (name -- a b.ext) do: read with the other notes, written by renaming, on request or as an edit changes them (Notes page)"
+        "Tags written in file names, as TagSpaces (name[a b].ext) and filetags (name -- a b.ext) do: read with the other notes, written by renaming, on request or as an edit changes them (Tags and notes page)"
     }
     fn category(&self) -> Category {
         Category::Files

@@ -48,7 +48,9 @@ impl Plugin for PreviewPlugin {
             "Excel workbooks (.xlsx, .xlsm, .xlsb) show their cells as a table, a sheet after another. Pages shows them as LibreOffice prints them, when it is installed.",
             "table",
             &[("table", "Table"), ("pages", "Pages")],
-        ));
+        )
+        .page(skwir_core::settings::page::READING)
+        .section("Spreadsheets"));
         Self::provider(app);
     }
     fn on_settings_changed(&self, app: &App, keys: &[String]) {

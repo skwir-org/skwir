@@ -58,7 +58,9 @@ fn declare(app: &App) {
             "What you play goes on when you select another file, in a player at the foot of the preview. Off, it stops when the selection moves.",
             true,
         )
-        .section("Playback"),
+        .page(skwir_core::settings::page::MEDIA)
+        .section("Playback")
+        .essential(),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -67,7 +69,9 @@ fn declare(app: &App) {
             "Start audio and video files as soon as they are selected, instead of waiting for Play.",
             false,
         )
-        .section("Playback"),
+        .page(skwir_core::settings::page::MEDIA)
+        .section("Playback")
+        .essential(),
     );
     app.settings.declare(
         SettingSpec::choice(
@@ -77,7 +81,9 @@ fn declare(app: &App) {
             "off",
             &[("off", "Stop"), ("next", "Play next"), ("shuffle", "Shuffle")],
         )
-        .section("Playback"),
+        .page(skwir_core::settings::page::MEDIA)
+        .section("Playback")
+        .essential(),
     );
     app.settings.declare(
         SettingSpec::choice(
@@ -87,6 +93,7 @@ fn declare(app: &App) {
             "off",
             &[("off", "Off"), ("track", "Per track"), ("album", "Per album")],
         )
+        .page(skwir_core::settings::page::MEDIA)
         .section("Audio"),
     );
     app.settings.declare(
@@ -101,6 +108,7 @@ fn declare(app: &App) {
                 ("stills", "Still frames"),
             ],
         )
+        .page(skwir_core::settings::page::MEDIA)
         .section("Video"),
     );
 }

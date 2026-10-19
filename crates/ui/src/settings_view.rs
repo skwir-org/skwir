@@ -14,10 +14,7 @@ use skwir_core::settings::{SettingKind, SettingSpec};
 use crate::controls::{self, ButtonStyle};
 use crate::elements::popover::PopoverAnchor;
 use crate::input::TextInput;
-use crate::settings::{
-    CORE_OWNER, NOTES_OWNER, PRIVACY_OWNER, Page, READING_OWNER, Row, SettingsEvent, SettingsView,
-    Stop, UI_OWNER,
-};
+use crate::settings::{Page, Row, SettingsEvent, SettingsView, Stop};
 use crate::theme::Theme;
 
 /// Segmented controls hold at most this many choices, and only while their
@@ -96,7 +93,8 @@ fn matches(query: &str, haystack: &[&str]) -> bool {
         .any(|text| text.to_lowercase().contains(query))
 }
 
-fn spec_matches(query: &str, spec: &SettingSpec, owner_title: &str) -> bool {
+/// A setting found by its words, its page's title or its plugin's.
+fn spec_matches(query: &str, spec: &SettingSpec, titles: [&str; 2]) -> bool {
     matches(
         query,
         &[
@@ -104,7 +102,8 @@ fn spec_matches(query: &str, spec: &SettingSpec, owner_title: &str) -> bool {
             &spec.description,
             &spec.key,
             &spec.section,
-            owner_title,
+            titles[0],
+            titles[1],
         ],
     ) || spec
         .constraints
@@ -713,10 +712,10 @@ impl SettingsView {
         }
     }
 
-    /// The editable settings of one owner, grouped by section.
-    fn owner_rows(
+    /// The editable settings shown on a page, grouped by section.
+    fn page_rows(
         &mut self,
-        owner: &str,
+        page: &Page,
         items: &mut Vec<AnyElement>,
         theme: &Theme,
         window: &Window,
@@ -725,7 +724,7 @@ impl SettingsView {
         let rows: Vec<Snapshot> = self
             .rows
             .iter()
-            .filter(|row| row.spec.owner() == owner)
+            .filter(|row| row.page() == *page)
             .map(|row| Snapshot::of(row, self))
             .collect();
         let mut start = 0;
@@ -828,6 +827,7 @@ impl SettingsView {
             }
         }
         let mut row = card_row(theme, edge).child(texts);
+        // To where its settings are, by their subject.
         if link && plugin.enabled && self.rows.iter().any(|row| row.spec.owner() == id) {
             let focus = self.handle(&format!("plugin-settings:{id}"), cx);
             self.stop(&focus, Some(item), None);
@@ -842,7 +842,7 @@ impl SettingsView {
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     window.focus(&this.nav, cx);
-                    this.go(Page::Plugin(id.to_owned()), cx);
+                    this.go_to_plugin(id, cx);
                 })),
             );
         }
@@ -870,7 +870,7 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        self.owner_rows(CORE_OWNER, items, theme, window, cx);
+        self.page_rows(&Page::General, items, theme, window, cx);
         Self::caption(items, "Settings file", theme);
         let item = items.len();
         let location = self.app.settings.path().map_or_else(
@@ -981,7 +981,7 @@ impl SettingsView {
             return;
         }
         items.push(div().flex_none().h(px(16.)).into_any_element());
-        self.owner_rows(id, items, theme, window, cx);
+        self.page_rows(&Page::Plugin(id.to_owned()), items, theme, window, cx);
     }
 
     fn search_results(
@@ -993,25 +993,28 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) {
         let mut found = 0;
-        let mut owners: Vec<String> = self
-            .rows
-            .iter()
-            .map(|row| row.spec.owner().to_owned())
-            .collect();
-        owners.dedup();
-        for owner in owners {
-            let title = self.page_title(&Page::of_owner(&owner));
-            let rows: Vec<Snapshot> = self
-                .rows
-                .iter()
-                .filter(|row| row.spec.owner() == owner && spec_matches(query, &row.spec, &title))
-                .map(|row| Snapshot::of(row, self))
-                .collect();
-            if rows.is_empty() {
+        // Under their page and section, as the pages stand.
+        let mut groups: Vec<((Page, String), Vec<Snapshot>)> = Vec::new();
+        for row in &self.rows {
+            let page = row.page();
+            let titles = [self.page_title(&page), self.plugin_title(row.spec.owner())];
+            if !spec_matches(query, &row.spec, [&titles[0], &titles[1]]) {
                 continue;
             }
+            let at = (page, row.spec.section.clone());
+            let snapshot = Snapshot::of(row, self);
+            match groups.last_mut() {
+                Some((last, rows)) if *last == at => rows.push(snapshot),
+                _ => groups.push((at, vec![snapshot])),
+            }
+        }
+        for ((page, section), rows) in groups {
             found += rows.len();
-            Self::caption(items, title, theme);
+            let mut caption = self.page_title(&page);
+            if !section.is_empty() {
+                caption = format!("{caption} › {section}");
+            }
+            Self::caption(items, caption, theme);
             for (index, row) in rows.iter().enumerate() {
                 let edge = Edge {
                     first: index == 0,
@@ -1086,24 +1089,6 @@ impl Render for SettingsView {
             let subtitle = page.builtin().map_or("", |b| b.intro);
             match &page {
                 Page::General => self.page_general(&mut items, &theme, window, cx),
-                Page::Appearance => {
-                    if self.owner_rows(UI_OWNER, &mut items, &theme, window, cx) == 0 {
-                        Self::note(&mut items, "Nothing to adjust here yet.", &theme);
-                    }
-                }
-                Page::Reading => {
-                    if self.owner_rows(READING_OWNER, &mut items, &theme, window, cx) == 0 {
-                        Self::note(&mut items, "Nothing to adjust here yet.", &theme);
-                    }
-                }
-                Page::Notes => {
-                    if self.owner_rows(NOTES_OWNER, &mut items, &theme, window, cx) == 0 {
-                        Self::note(&mut items, "No plugin keeps notes now.", &theme);
-                    }
-                }
-                Page::Privacy => {
-                    self.owner_rows(PRIVACY_OWNER, &mut items, &theme, window, cx);
-                }
                 Page::Plugins => {
                     for category in Category::ALL {
                         let mut plugins: Vec<PluginInfo> = self
@@ -1131,12 +1116,17 @@ impl Render for SettingsView {
                     if self.keys.new.is_some() {
                         content = Some(self.new_shortcut_page(&theme, window, cx));
                     } else if self.keys.as_records {
-                        self.owner_rows(skwir_core::keymap::OWNER, &mut items, &theme, window, cx);
+                        self.page_rows(&Page::Keyboard, &mut items, &theme, window, cx);
                     } else {
                         content = Some(self.keys_list(window, cx));
                     }
                 }
                 Page::Plugin(id) => self.page_plugin(id, &mut items, &theme, window, cx),
+                page => {
+                    if self.page_rows(page, &mut items, &theme, window, cx) == 0 {
+                        Self::note(&mut items, "Nothing to adjust here now.", &theme);
+                    }
+                }
             }
             (self.page_title(&page), subtitle.to_owned())
         } else {

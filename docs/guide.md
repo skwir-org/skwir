@@ -55,7 +55,7 @@ that work where the keyboard is.
 - **The address** shows where you are as a trail. Click a segment to go
   there; each `›` lists the folders inside the segment before it. The
   trail starts at the deepest sidebar place that holds the folder, under
-  its sidebar name; Appearance › Show the full path starts it at `/`.
+  its sidebar name; General › Show the full path starts it at `/`.
   Click beside the trail, or press `Ctrl+L`, to type.
 - **Typing in the address.** Words filter the folder shown as you type,
   and stay after the trail as a pill with a funnel, as a Narrow by choice
@@ -105,7 +105,7 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   and flight plans, where they were taken or go. Its default background
   is drawn offline from data Skwir carries; a background that downloads
   tiles (OpenStreetMap, a server you add) is used only once you choose it
-  in Settings › Map backgrounds.
+  in Settings › Pictures and media › Maps.
 - **Timeline** (`Ctrl+Shift+L`) shows when files changed, one bar per
   period; click a bar to search it.
 
@@ -131,7 +131,7 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   where they would if dropped in that place: into a folder, into the
   Trash, onto a tag. On Wayland, files also drag into other
   applications. Several files dragged show as a fan of their pictures;
-  Appearance › Dragged files lays them out as a pile, a mosaic or the
+  General › Dragged files lays them out as a pile, a mosaic or the
   one you took alone instead.
 - **Copies.** A copy onto a USB drive runs at the drive's pace, so its
   progress is what is really written, and it ends once the files are on
@@ -235,7 +235,7 @@ and the comment.
   (`photo.jpg.xmp`, as darktable and Lightroom do), a Mac's tags and its
   `._` files on drives without attributes, TagSpaces' sidecars, and tags
   in names (TagSpaces' `name[a b].ext` where you use TagSpaces;
-  filetags' `name -- a b.ext` once turned on). Settings › Notes says
+  filetags' `name -- a b.ext` once turned on). Settings › Tags and notes says
   which to read and which to write. When two disagree, the latest change
   wins and Properties says so.
 - **Tags in names.** Notes › Tags into Name and Tags out of Name, in the
@@ -258,8 +258,8 @@ and the comment.
     narrow what is shown to files that have it; `Alt+click` to show its
     files in the folder shown.
 - **Copies keep them**: tags, rating, comment and where a download came
-  from, even onto a drive without attributes (Settings › General). A move
-  always keeps them.
+  from, even onto a drive without attributes (Settings › Tags and
+  notes). A move always keeps them.
 
 ## Previews
 
@@ -370,18 +370,23 @@ a hint shows what can follow.
 
 `Ctrl+,` opens them. A change applies at once; there is no Save button.
 
+Settings are grouped by subject, whichever plugin brings them:
+
 | Page | What it sets |
 | --- | --- |
-| General | What Skwir does: at startup, with files (copies, drops, companion files), with the split and tabs |
-| Appearance | How it looks: theme, your desktop's colors and font, icons, dates, tabs, the path, the Narrow by bar, the grid, the list's columns, dragged files |
-| Reading | The reader shared by documents, books, comics, Markdown and code: pages, line length, code's colors |
-| Notes | Where tags, ratings and comments are read and written |
+| General | What Skwir does at startup, with tabs, the split and the path above the files, and with what you drag and drop |
+| Appearance | How it looks: theme, your desktop's colors and font, icons, dates |
+| Folders and views | The Narrow by bar, the grid, the list's columns, thumbnails |
+| Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |
+| Reading | How documents, books, comics, Markdown, text and code read, and the engine that reads each kind |
+| Pictures and media | The slideshow, audio and video playback, 3D models, the maps' background |
+| Terminal and commands | The terminal's shell and history, and the shell commands on the selection run in |
 | Privacy | Folders that never leave the machine |
 | Plugins | Every plugin, on or off, what it may do and what it needs |
 | Keyboard | Every action and its keys, changed where they are listed |
 
-A plugin with options of its own (an engine, the terminal's shell) has a
-page of its own, listed under the others.
+A plugin from outside Skwir with options of its own has a page of its
+own, listed under the others.
 
 On Linux, Skwir wears the accent color your desktop's settings name
 (GNOME's, or any desktop whose settings portal says one), and follows it

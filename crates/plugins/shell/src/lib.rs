@@ -201,7 +201,9 @@ impl Plugin for ShellPlugin {
             "Program for commands",
             "The shell that runs a command on the selection: a POSIX shell or fish. Leave empty for yours ($SHELL) when it is one of them, else sh.",
             "",
-        ));
+        )
+        .page(skwir_core::settings::page::TERMINAL)
+        .section("Commands"));
         app.commands
             .register::<TargetsArgs, _>(
                 ID,

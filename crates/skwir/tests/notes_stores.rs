@@ -176,7 +176,7 @@ fn one_edit_reaches_every_store_that_keeps_the_files_notes() {
 }
 
 /// A name holding its tags, as `TagSpaces` writes them, set to follow them
-/// (Notes page): the tags plugin's edit renames the file beside the
+/// (Tags and notes page): the tags plugin's edit renames the file beside the
 /// desktop's attributes, the pane keeps it selected under its new name,
 /// and Undo takes back both.
 #[test]

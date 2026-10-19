@@ -3,7 +3,7 @@
 //! and a folder's own in the folder, `.ts/tsm.json`: plain JSON, a tag an
 //! object with its `title` and its `color` (hex). They are a notes store,
 //! read with the others and updated where present (created only when the
-//! user asks, on the Notes page), and companions of their files
+//! user asks, on the Tags and notes page), and companions of their files
 //! (ADR-028); the `.ts` folder is hidden like them. Everything else in a
 //! sidecar (its id, a thumbnail's, what a perspective keeps) stays as it
 //! was. `TagSpaces`' index of a location, `.ts/tsi.json`, is a search hint

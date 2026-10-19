@@ -29,6 +29,29 @@ pub const STARTUP_FOLDER: &str = "core.startup_folder";
 /// Application data: where the window was when it closed.
 pub const LAST_LOCATION: &str = "core.last_location";
 
+/// The Settings dialog's pages, by their subject (ADR-072): a setting
+/// names the one it is shown on (`SettingSpec::page`), whoever owns its
+/// key. The dialog draws each, and orders its sections.
+pub mod page {
+    /// What skwir does at startup, with tabs, the split, the address, and
+    /// what is dragged and dropped.
+    pub const GENERAL: &str = "general";
+    pub const APPEARANCE: &str = "appearance";
+    /// How folders show their files: the Narrow by bar, the grid, the
+    /// list's columns, thumbnails.
+    pub const VIEWS: &str = "views";
+    /// Tags, then where notes are kept.
+    pub const NOTES: &str = "notes";
+    /// How documents, books, text and code read, and their engines.
+    pub const READING: &str = "reading";
+    /// Pictures, audio and video, 3D models and maps.
+    pub const MEDIA: &str = "media";
+    /// The terminal and the program commands run in.
+    pub const TERMINAL: &str = "terminal";
+    pub const PRIVACY: &str = "privacy";
+    pub const KEYBOARD: &str = "keyboard";
+}
+
 /// The namespace of a dotted setting key: the owning plugin's id (or
 /// `core`/`ui`). The one place that says which keys a plugin owns.
 pub fn owner_of(key: &str) -> &str {
@@ -181,9 +204,17 @@ pub struct SettingSpec {
     /// Short human label ("Memory budget").
     pub title: String,
     pub description: String,
-    /// Optional group heading within the owner's page. Sections stand in
-    /// the order their first setting was declared, after what has none.
+    /// The dialog's page it is shown on (`page::*`), by its subject,
+    /// whoever owns the key (ADR-072); empty for its owner's own page.
+    pub page: String,
+    /// Optional group heading within its page. Sections stand in the
+    /// order the page lists them, then in the order their first setting
+    /// was declared, after what has none.
     pub section: String,
+    /// Shown while its page is folded: among the few settings most people
+    /// come to the page for (ADR-072). The others wait under the page's
+    /// More settings.
+    pub essential: bool,
     /// The switch this setting is shown under (its key), which it applies
     /// only while that is on; empty for none. The dialog draws it indented
     /// beneath the switch, unavailable while the switch is off.
@@ -267,7 +298,9 @@ impl SettingSpec {
             key: key.into(),
             title: title.into(),
             description: description.into(),
+            page: String::new(),
             section: String::new(),
+            essential: false,
             under: String::new(),
             unit: String::new(),
             default,
@@ -412,6 +445,24 @@ impl SettingSpec {
     #[must_use]
     pub fn section(mut self, section: &str) -> Self {
         section.clone_into(&mut self.section);
+        self
+    }
+
+    /// Shown on `page` (one of [`page`]), by its subject, rather than on
+    /// its owner's own page.
+    #[must_use]
+    pub fn page(mut self, page: &str) -> Self {
+        page.clone_into(&mut self.page);
+        self
+    }
+
+    /// Among the few settings shown while its page is folded (ADR-072):
+    /// people are divided on its value, it decides what other programs or
+    /// machines see, or it acts on files without asking. A budget keeps
+    /// them few (`crates/skwir/tests/settings.rs`).
+    #[must_use]
+    pub fn essential(mut self) -> Self {
+        self.essential = true;
         self
     }
 
@@ -728,7 +779,8 @@ pub(crate) fn register(app: &crate::App) {
                 ("last", "The folders and tabs left open"),
             ],
         )
-        .section("Startup"),
+        .section("Startup")
+        .essential(),
     );
     app.settings.declare(
         SettingSpec::path(
@@ -737,7 +789,8 @@ pub(crate) fn register(app: &crate::App) {
             "Used when a chosen folder opens at startup. Leave empty for your home folder.",
             "",
         )
-        .section("Startup"),
+        .section("Startup")
+        .essential(),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -746,7 +799,8 @@ pub(crate) fn register(app: &crate::App) {
             "Copies carry their source's tags, rating, comment and where it was downloaded from. Where the destination keeps no attributes they are kept beside the copy, as a Mac does; the copy fails only when nothing can keep them. Turn this off to copy without them.",
             true,
         )
-        .section("Files"),
+        .page(page::NOTES)
+        .section("Tags"),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -755,7 +809,8 @@ pub(crate) fn register(app: &crate::App) {
             "Files dropped in a folder with no key held open a menu: move, copy or link them there. Turn this off to move them within a drive and copy them to another. Shift moves, Ctrl copies and Ctrl+Shift links, either way.",
             true,
         )
-        .section("Files"),
+        .section("Drag and drop")
+        .essential(),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -764,7 +819,8 @@ pub(crate) fn register(app: &crate::App) {
             "With hidden files shown, also list the files that keep another file's notes beside it: a Mac's ._ files, XMP and TagSpaces sidecars. Properties lists a file's companions either way.",
             false,
         )
-        .section("Files"),
+        .page(page::NOTES)
+        .section("Tags"),
     );
     app.companions
         .set_shown(app.settings.get(crate::companions::SHOW).unwrap_or(false));

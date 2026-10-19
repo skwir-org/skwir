@@ -20,7 +20,7 @@ use gpui::{
 use skwir_core::App;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::plugin::{PluginInfo, RequirementStatus};
-use skwir_core::settings::{SaveState, SettingKind, SettingSpec};
+use skwir_core::settings::{SaveState, SettingKind, SettingSpec, page};
 use std::sync::Mutex;
 
 use crate::elements::popover::PopoverAnchor;
@@ -153,6 +153,7 @@ pub fn icon_theme_spec(
         &pairs,
     )
     .more_choices("the icon themes installed")
+    .essential()
 }
 
 /// A look's code theme setting: skwir's own colors, bat's themes of that
@@ -241,20 +242,24 @@ pub(crate) fn list_icon_themes(app: &Arc<App>) {
 /// (`ui`, `reading`) and exist only while a shell does, so headless tools
 /// never see them.
 pub fn declare(app: &App) {
-    app.settings.declare(SettingSpec::choice(
-        THEME_KEY,
-        "Theme",
-        "Follow the desktop's light or dark preference, or always use one.",
-        "auto",
-        &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
-    ));
+    app.settings.declare(
+        SettingSpec::choice(
+            THEME_KEY,
+            "Theme",
+            "Follow the desktop's light or dark preference, or always use one.",
+            "auto",
+            &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
+        )
+        .essential(),
+    );
     if skwir_platform::desktop_style::READ {
         app.settings.declare(SettingSpec::toggle(
             DESKTOP_COLORS_KEY,
             "Desktop colors",
             "Draw with the accent color chosen in your desktop's settings. Off, skwir keeps its own blue. More contrast, when your desktop asks for it, is followed either way.",
             true,
-        ));
+        )
+        .essential());
         app.settings.declare(
             SettingSpec::toggle(
                 DESKTOP_FONT_KEY,
@@ -283,7 +288,8 @@ pub fn declare(app: &App) {
         "Friendly dates read as Today 14:02, Tuesday 09:30 or 12 Mar, with the exact time in a tooltip. ISO shows 2026-03-12 14:02 everywhere.",
         "friendly",
         &[("friendly", "Friendly"), ("iso", "ISO 8601")],
-    ));
+    )
+    .essential());
     app.settings.declare(
         SettingSpec::toggle(
             SINGLE_TAB_KEY,
@@ -291,6 +297,7 @@ pub fn declare(app: &App) {
             "Show the tab strip even when the window has one tab, named like the place it shows. Off gives the lists that row; New tab stays in the More menu and on Ctrl+T.",
             false,
         )
+        .page(page::GENERAL)
         .section("Tabs"),
     );
     app.settings.declare(
@@ -300,6 +307,7 @@ pub fn declare(app: &App) {
             "Show a folder's whole path above its files, from the root, each folder under its own name: / › home › someone › Documents › 2026. Off starts it at the deepest folder of the sidebar that holds it, under the sidebar's name: Documents › 2026, a drive's name for a folder on a drive.",
             false,
         )
+        .page(page::GENERAL)
         .section("Address"),
     );
     app.settings.declare(
@@ -309,7 +317,9 @@ pub fn declare(app: &App) {
             "Show the Narrow by bar above a folder's files: their kinds, the years they were modified and their tags, each with how many files, to show only those. The choice stays while you browse the folders inside. A search and a tag's folder offer it whatever this says.",
             false,
         )
-        .section("Folders"),
+        .page(page::VIEWS)
+        .section("Folders")
+        .essential(),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -318,7 +328,9 @@ pub fn declare(app: &App) {
             "Crop each thumbnail in the grid to a square, so a folder of pictures reads as a gallery. Off shows every picture whole.",
             false,
         )
-        .section("Grid"),
+        .page(page::VIEWS)
+        .section("Grid")
+        .essential(),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -327,7 +339,8 @@ pub fn declare(app: &App) {
             "Read a document, a book laid out in pages or a comic as one scrolling column. Off shows one page at a time, and the reader's own button still changes it for the document in front of you.",
             true,
         )
-        .section("Pages"),
+        .section("Pages")
+        .essential(),
     );
     app.settings.declare(
         SettingSpec::choice(
@@ -342,7 +355,8 @@ pub fn declare(app: &App) {
                 ("full", "Full width"),
             ],
         )
-        .section("Text"),
+        .section("Text")
+        .essential(),
     );
     app.settings.declare(
         SettingSpec::toggle(
@@ -370,7 +384,8 @@ pub fn declare(app: &App) {
             "auto",
             &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
         )
-        .section("Code"),
+        .section("Code")
+        .essential(),
     );
     for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
         // Nothing stored and nothing declared yet: the default is chosen.
@@ -388,6 +403,7 @@ pub fn declare(app: &App) {
             "5",
             &SLIDESHOW_PACES,
         )
+        .page(page::MEDIA)
         .section("Pictures"),
     );
     app.settings.declare(
@@ -397,6 +413,7 @@ pub fn declare(app: &App) {
             "While you step through pictures, in the preview panel, in peek or on the whole screen, decode the next one before you reach it, so it shows at once. The preview reads ahead in the panel once two steps went the same way, and holds one more picture in memory meanwhile. Off, each picture is decoded when you reach it.",
             true,
         )
+        .page(page::MEDIA)
         .section("Pictures"),
     );
     app.settings.declare(
@@ -406,6 +423,7 @@ pub fn declare(app: &App) {
             "Draw 3D models in perspective, nearer parts larger, as a camera sees them. Off, every part keeps its size at any depth, as in the model's picture and in a drawing.",
             false,
         )
+        .page(page::MEDIA)
         .section("3D models"),
     );
     app.settings.declare(
@@ -415,6 +433,7 @@ pub fn declare(app: &App) {
             "Shade 3D models smoothly across their faces, as a scanned or sculpted surface reads best. Off, each face is shaded flat, so a printed part's facets and edges show.",
             false,
         )
+        .page(page::MEDIA)
         .section("3D models"),
     );
     app.settings.declare(SettingSpec::state(
@@ -431,6 +450,7 @@ pub fn declare(app: &App) {
                 column.description,
                 column.shown,
             )
+            .page(page::VIEWS)
             .section("List columns"),
         );
     }
@@ -447,6 +467,7 @@ pub fn declare(app: &App) {
                 ("single", "Single"),
             ],
         )
+        .page(page::GENERAL)
         .section("Drag and drop"),
     );
 }
@@ -526,40 +547,62 @@ pub fn slideshow_seconds(shell: &crate::shell::Shell) -> u64 {
         .unwrap_or(5)
 }
 
-/// Settings by page (their owner), each page in the order its settings
-/// were declared (`SettingSpec::order`): what has no section first, then
-/// each section where its first setting was.
+/// Settings by page (ADR-072), the pages in the sidebar's order; on each,
+/// what has no section first, then the sections the page lists, in its
+/// order, then the others where their first setting was declared; in a
+/// section, the settings in the order they were declared
+/// (`SettingSpec::order`).
 fn page_order(specs: &mut [SettingSpec]) {
-    let mut sections: HashMap<(String, String), u64> = HashMap::new();
+    let mut sections: HashMap<(Page, String), u64> = HashMap::new();
     for spec in specs.iter() {
         sections
-            .entry((spec.owner().to_owned(), spec.section.clone()))
+            .entry((Page::of_spec(spec), spec.section.clone()))
             .and_modify(|first| *first = (*first).min(spec.order))
             .or_insert(spec.order);
     }
     specs.sort_by_cached_key(|spec| {
-        let at = (spec.owner().to_owned(), spec.section.clone());
-        let section = sections[&at];
-        (at.0, !spec.section.is_empty(), section, spec.order)
+        let page = Page::of_spec(spec);
+        let (place, listed) = BUILTIN
+            .iter()
+            .position(|b| b.page == page)
+            .map_or((BUILTIN.len(), &[][..]), |at| (at, BUILTIN[at].sections));
+        // A plugin's own page, by its id.
+        let plugin = match &page {
+            Page::Plugin(id) => id.clone(),
+            _ => String::new(),
+        };
+        let section = listed
+            .iter()
+            .position(|section| *section == spec.section)
+            .map_or_else(
+                || (1, sections[&(page.clone(), spec.section.clone())]),
+                |at| (0, at as u64),
+            );
+        (place, plugin, !spec.section.is_empty(), section, spec.order)
     });
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Page {
     General,
     Appearance,
-    Reading,
+    Views,
     Notes,
+    Reading,
+    Media,
+    Terminal,
     Privacy,
     Plugins,
     Keyboard,
     Plugin(String),
 }
 
-/// One of the dialog's own pages: the word `ui.settings` names it by, the
-/// namespace whose settings it shows (none for Plugins), its title, glyph
-/// and introduction. Every reading of a page (by owner, by name, its
-/// title, glyph and words, the sidebar's order) is `BUILTIN`'s.
+/// One of the dialog's own pages: the word `ui.settings` and a setting
+/// name it by (`skwir_core::settings::page`), the namespace whose
+/// settings it shows when they name no page, its title, glyph and
+/// introduction, and the order of its sections. Every reading of a page
+/// (by setting, by owner, by name, its title, glyph and words, the
+/// sidebar's order) is `BUILTIN`'s.
 pub(crate) struct Builtin {
     page: Page,
     name: &'static str,
@@ -569,55 +612,106 @@ pub(crate) struct Builtin {
     pub(crate) intro: &'static str,
     /// Listed only while a setting is on it.
     when_used: bool,
+    /// Its sections in the order they stand, before any it does not list.
+    sections: &'static [&'static str],
 }
 
-/// The dialog's own pages, in the sidebar's order; plugins' follow.
-static BUILTIN: [Builtin; 7] = [
+/// The dialog's own pages, by subject, in the sidebar's order; plugins'
+/// follow.
+static BUILTIN: [Builtin; 10] = [
     Builtin {
         page: Page::General,
-        name: "general",
+        name: page::GENERAL,
         owner: Some(CORE_OWNER),
         title: "General",
         icon: "sliders",
-        intro: "What skwir does: with files, at startup, with tabs and the split. Changes apply as you make them.",
+        intro: "What skwir does at startup, with tabs, the split and the address, and with what you drag and drop. Changes apply as you make them.",
         when_used: false,
+        sections: &["Startup", "Tabs", "Split", "Address", "Drag and drop"],
     },
     Builtin {
         page: Page::Appearance,
-        name: "appearance",
+        name: page::APPEARANCE,
         owner: Some(UI_OWNER),
         title: "Appearance",
         icon: "appearance",
         intro: "How skwir looks.",
         when_used: false,
+        sections: &[],
     },
     Builtin {
-        page: Page::Reading,
-        name: "reading",
-        owner: Some(READING_OWNER),
-        title: "Reading",
-        icon: "reading",
-        intro: "How documents, books, comics, Markdown and code read in the preview, and how a slideshow shows pictures. Which engine reads each is on its plugin's page.",
-        when_used: false,
+        page: Page::Views,
+        name: page::VIEWS,
+        owner: None,
+        title: "Folders and views",
+        icon: "grid",
+        intro: "How a folder shows its files: the Narrow by bar above them, the grid, the list's columns, and the thumbnails drawn for them.",
+        when_used: true,
+        sections: &["Folders", "Grid", "List columns", "Thumbnails"],
     },
     Builtin {
         page: Page::Notes,
-        name: "notes",
+        name: page::NOTES,
         owner: Some(NOTES_OWNER),
-        title: "Notes",
+        title: "Tags and notes",
         icon: "tag",
-        intro: "Where tags, ratings and comments are kept, so the desktop, a Mac and other applications see them too. Every place is read and merged; each is written as you choose: never, where the file already has notes there, also where a file's volume keeps no attributes (one place is started there, the one its folder already uses first), or for every file edited.",
-        // Only while a plugin keeps notes somewhere.
+        intro: "Tags, ratings and comments: how tags are offered, and the places they are kept, so the desktop, a Mac and other applications see them too. Every place is read and merged; each is written as you choose: never, where the file already has notes there, also where a file's volume keeps no attributes (one place is started there, the one its folder already uses first), or for every file edited.",
         when_used: true,
+        sections: &["Tags"],
+    },
+    Builtin {
+        page: Page::Reading,
+        name: page::READING,
+        owner: Some(READING_OWNER),
+        title: "Reading",
+        icon: "reading",
+        intro: "How documents, books, comics, Markdown, text and code read in the preview, and which engine reads each kind.",
+        when_used: true,
+        sections: &[
+            "Pages",
+            "Documents",
+            "Books",
+            "Text",
+            "Code",
+            "Spreadsheets",
+        ],
+    },
+    Builtin {
+        page: Page::Media,
+        name: page::MEDIA,
+        owner: None,
+        title: "Pictures and media",
+        icon: "play",
+        intro: "How pictures follow one another, how audio and video play, how 3D models are drawn and what maps are drawn on.",
+        when_used: true,
+        sections: &[
+            "Pictures",
+            "Playback",
+            "Audio",
+            "Video",
+            "3D models",
+            "Maps",
+        ],
+    },
+    Builtin {
+        page: Page::Terminal,
+        name: page::TERMINAL,
+        owner: None,
+        title: "Terminal and commands",
+        icon: "terminal",
+        intro: "The terminal panel, and the shell that runs a command on the selection.",
+        when_used: true,
+        sections: &["Terminal", "Commands"],
     },
     Builtin {
         page: Page::Privacy,
-        name: "privacy",
+        name: page::PRIVACY,
         owner: Some(PRIVACY_OWNER),
         title: "Privacy",
         icon: "lock",
         intro: "What leaves this machine. An agent driving skwir, and a plugin from outside skwir, never see a private folder: not its names, not what its files hold. What each plugin may do is said on its line of the Plugins page.",
         when_used: false,
+        sections: &[],
     },
     Builtin {
         page: Page::Plugins,
@@ -627,19 +721,31 @@ static BUILTIN: [Builtin; 7] = [
         icon: "plugin",
         intro: "Everything beyond the core is a plugin. Turning one off removes its commands, views and settings until it is turned on again.",
         when_used: false,
+        sections: &[],
     },
     Builtin {
         page: Page::Keyboard,
-        name: "keyboard",
+        name: page::KEYBOARD,
         owner: Some(skwir_core::keymap::OWNER),
         title: "Keyboard",
         icon: "keyboard",
         intro: "Every action and its keys, grouped by where they work. Click a key to change it, or + to add one: yours replace skwir's on the same keys there.",
         when_used: false,
+        sections: &[],
     },
 ];
 
 impl Page {
+    /// The page a setting is shown on: the one it names, else its owner's.
+    pub fn of_spec(spec: &SettingSpec) -> Page {
+        BUILTIN
+            .iter()
+            .find(|b| !spec.page.is_empty() && b.name == spec.page)
+            .map_or_else(|| Page::of_owner(spec.owner()), |b| b.page.clone())
+    }
+
+    /// The page of a namespace's settings that name none: one of the
+    /// dialog's own (`core` is General), else the plugin's.
     pub fn of_owner(owner: &str) -> Page {
         BUILTIN
             .iter()
@@ -662,17 +768,17 @@ impl Page {
     }
 }
 
-/// What a settings namespace is called, as its page is: one of the
-/// dialog's own (`notes` is Notes), else its plugin's title, else its id.
-pub(crate) fn owner_title(owner: &str, plugins: &[PluginInfo]) -> String {
-    match Page::of_owner(owner) {
+/// What the page a setting is shown on is called: one of the dialog's
+/// own, else its plugin's title, else its namespace.
+pub(crate) fn page_title_of(spec: &SettingSpec, plugins: &[PluginInfo]) -> String {
+    match Page::of_spec(spec) {
         Page::Plugin(id) => plugins
             .iter()
             .find(|plugin| plugin.id == id)
             .map_or(id, |plugin| plugin.title.clone()),
         page => page
             .builtin()
-            .map_or_else(|| owner.to_owned(), |b| b.title.to_owned()),
+            .map_or_else(|| spec.owner().to_owned(), |b| b.title.to_owned()),
     }
 }
 
@@ -703,7 +809,7 @@ impl Row {
     }
 
     pub fn page(&self) -> Page {
-        Page::of_owner(self.spec.owner())
+        Page::of_spec(&self.spec)
     }
 }
 
@@ -1381,7 +1487,8 @@ impl SettingsView {
         cx.notify();
     }
 
-    /// `{ "key": "plugin.option" }` or `{ "page": "plugins" }`.
+    /// `{ "key": "plugin.option" }` or `{ "page": "plugins" }`; a plugin's
+    /// id as the page goes where its settings are.
     pub fn open_target(
         &mut self,
         target: &serde_json::Value,
@@ -1390,16 +1497,45 @@ impl SettingsView {
     ) {
         let text = |name: &str| target.get(name).and_then(serde_json::Value::as_str);
         if let Some(key) = text("key") {
-            let owner = key.split('.').next().unwrap_or_default();
-            self.go(Page::of_owner(owner), cx);
+            let page = self.row(key).map_or_else(
+                || Page::of_owner(skwir_core::settings::owner_of(key)),
+                Row::page,
+            );
+            self.go(page, cx);
             if self.row(key).is_some() {
                 self.highlight = Some(key.to_owned());
                 self.scroll_to = Some(key.to_owned());
             }
-        } else if let Some(page) = text("page") {
-            self.go(Page::parse(page), cx);
+        } else if let Some(name) = text("page") {
+            match Page::parse(name) {
+                Page::Plugin(id)
+                    if !self
+                        .rows
+                        .iter()
+                        .any(|row| row.page() == Page::Plugin(id.clone())) =>
+                {
+                    self.go_to_plugin(&id, cx);
+                }
+                page => self.go(page, cx),
+            }
         }
         window.focus(&self.nav, cx);
+    }
+
+    /// The page a plugin's settings are on, at the first of them: its own
+    /// page, or the one of their subject (ADR-072).
+    pub(crate) fn go_to_plugin(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some((page, key)) = self
+            .rows
+            .iter()
+            .find(|row| row.spec.owner() == id)
+            .map(|row| (row.page(), row.spec.key.clone()))
+        else {
+            self.go(Page::Plugin(id.to_owned()), cx);
+            return;
+        };
+        self.go(page, cx);
+        self.scroll_to = Some(key);
     }
 
     /// The row to scroll to once it has been laid out, consumed by render.
@@ -1558,8 +1694,8 @@ impl crate::shell::Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        App, CODE_APPEARANCE_KEY, CODE_DARK_KEY, CODE_LIGHT_KEY, CORE_OWNER, ICON_THEME_AUTO, Page,
-        READING_OWNER, SettingSpec, THEME_KEY, UI_OWNER, code_theme_spec, declare, icon_theme_spec,
+        App, BUILTIN, CODE_APPEARANCE_KEY, CODE_DARK_KEY, CODE_LIGHT_KEY, ICON_THEME_AUTO, Page,
+        SINGLE_TAB_KEY, SettingSpec, THEME_KEY, code_theme_spec, declare, icon_theme_spec,
         page_order,
     };
     use skwir_platform::icons::Theme;
@@ -1602,11 +1738,12 @@ mod tests {
         );
     }
 
-    /// A page shows its settings as they were declared, each section where
-    /// its first setting was: Theme first, the list's columns in the order
-    /// they stand. Declared again, a setting keeps its place.
+    /// A page shows its settings by subject (ADR-072), its sections in the
+    /// order it lists them, each section's settings as they were declared:
+    /// Theme first, the list's columns in the order they stand. Declared
+    /// again, a setting keeps its place.
     #[test]
-    fn a_page_shows_its_settings_as_declared() {
+    fn a_page_shows_its_settings_by_subject_as_declared() {
         let tmp = tempfile::tempdir().unwrap();
         let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         declare(&app);
@@ -1620,17 +1757,17 @@ mod tests {
             page_order(&mut specs);
             specs
         };
-        let page = |specs: &[SettingSpec], owner: &str| -> Vec<(String, String)> {
+        let page = |specs: &[SettingSpec], page: &Page| -> Vec<(String, String)> {
             specs
                 .iter()
-                .filter(|spec| spec.owner() == owner)
+                .filter(|spec| Page::of_spec(spec) == *page)
                 .map(|spec| (spec.section.clone(), spec.key.clone()))
                 .collect()
         };
         // Each section once, in the page's order.
-        let sections = |specs: &[SettingSpec], owner: &str| -> Vec<String> {
+        let sections = |specs: &[SettingSpec], at: &Page| -> Vec<String> {
             let mut seen: Vec<String> = Vec::new();
-            for (section, _) in page(specs, owner) {
+            for (section, _) in page(specs, at) {
                 if seen.last() != Some(&section) {
                     seen.push(section);
                 }
@@ -1638,19 +1775,31 @@ mod tests {
             seen
         };
         let specs = pages();
-        assert_eq!(page(&specs, UI_OWNER)[0].1, THEME_KEY);
+        // A page's settings stand together, in the sidebar's order.
+        let order: Vec<Page> = specs.iter().map(Page::of_spec).collect();
+        let mut seen: Vec<Page> = order.clone();
+        seen.dedup();
+        let mut once = seen.clone();
+        once.sort_by_key(|page| BUILTIN.iter().position(|b| b.page == *page));
+        once.dedup();
+        assert_eq!(seen, once);
+        assert_eq!(page(&specs, &Page::Appearance)[0].1, THEME_KEY);
+        assert_eq!(sections(&specs, &Page::Appearance), [""]);
         assert_eq!(
-            sections(&specs, UI_OWNER)[1..],
-            [
-                "Tabs",
-                "Address",
-                "Folders",
-                "Grid",
-                "List columns",
-                "Drag and drop"
-            ]
+            sections(&specs, &Page::General),
+            ["Startup", "Tabs", "Split", "Address", "Drag and drop"]
         );
-        let columns: Vec<String> = page(&specs, UI_OWNER)
+        // The core's and the shell's settings of a subject meet.
+        assert!(
+            page(&specs, &Page::General)
+                .iter()
+                .any(|(section, key)| section == "Tabs" && key == SINGLE_TAB_KEY)
+        );
+        assert_eq!(
+            sections(&specs, &Page::Views),
+            ["Folders", "Grid", "List columns"]
+        );
+        let columns: Vec<String> = page(&specs, &Page::Views)
             .into_iter()
             .filter(|(section, _)| section == "List columns")
             .map(|(_, key)| key)
@@ -1660,29 +1809,54 @@ mod tests {
             .map(|column| column.setting)
             .collect();
         assert_eq!(columns, standing);
+        assert_eq!(sections(&specs, &Page::Reading), ["Pages", "Text", "Code"]);
         assert_eq!(
-            sections(&specs, READING_OWNER),
-            ["Pages", "Text", "Code", "Pictures", "3D models"]
-        );
-        assert_eq!(
-            page(&specs, READING_OWNER)
+            page(&specs, &Page::Reading)
                 .into_iter()
                 .filter(|(section, _)| section == "Code")
                 .map(|(_, key)| key)
                 .collect::<Vec<_>>(),
             [CODE_APPEARANCE_KEY, CODE_LIGHT_KEY, CODE_DARK_KEY]
         );
-        assert_eq!(
-            sections(&specs, CORE_OWNER),
-            ["Startup", "Files", "Split", "Tabs"]
-        );
+        assert_eq!(sections(&specs, &Page::Media), ["Pictures", "3D models"]);
+        assert_eq!(sections(&specs, &Page::Notes), ["Tags"]);
         // The code themes are declared again once bat's are read.
         app.settings.declare(code_theme_spec(
             false,
             crate::code_preview::DEFAULT,
             Some(&[][..]),
         ));
-        assert_eq!(page(&pages(), READING_OWNER), page(&specs, READING_OWNER));
+        assert_eq!(page(&pages(), &Page::Reading), page(&specs, &Page::Reading));
+    }
+
+    /// Every page a setting may name is one of the dialog's.
+    #[test]
+    fn every_page_a_setting_names_is_drawn() {
+        use skwir_core::settings::page;
+        for name in [
+            page::GENERAL,
+            page::APPEARANCE,
+            page::VIEWS,
+            page::NOTES,
+            page::READING,
+            page::MEDIA,
+            page::TERMINAL,
+            page::PRIVACY,
+            page::KEYBOARD,
+        ] {
+            let spec = SettingSpec::toggle("plugin.option", "Option", "Does.", true).page(name);
+            assert!(
+                Page::of_spec(&spec)
+                    .builtin()
+                    .is_some_and(|b| b.name == name),
+                "{name}"
+            );
+        }
+        // One that names none is on its owner's page.
+        let spec = SettingSpec::toggle("plugin.option", "Option", "Does.", true);
+        assert_eq!(Page::of_spec(&spec), Page::Plugin("plugin".into()));
+        let spec = SettingSpec::toggle("core.option", "Option", "Does.", true);
+        assert_eq!(Page::of_spec(&spec), Page::General);
     }
 
     #[test]
@@ -1692,6 +1866,8 @@ mod tests {
         assert_eq!(Page::parse("ui"), Page::Appearance);
         assert_eq!(Page::parse("plugins"), Page::Plugins);
         assert_eq!(Page::parse("tags"), Page::Plugin("tags".into()));
+        assert_eq!(Page::parse("views"), Page::Views);
+        assert_eq!(Page::parse("terminal"), Page::Terminal);
         assert_eq!(Page::of_owner(skwir_core::keymap::OWNER), Page::Keyboard);
         assert!(Page::Plugin("tags".into()).builtin().is_none());
     }

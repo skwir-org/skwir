@@ -394,7 +394,7 @@ pub fn offered(
         if !spec.editable() {
             continue;
         }
-        let mut path = vec![crate::settings::owner_title(spec.owner(), &plugins)];
+        let mut path = vec![crate::settings::page_title_of(&spec, &plugins)];
         if !spec.section.is_empty() {
             path.push(spec.section.clone());
         }

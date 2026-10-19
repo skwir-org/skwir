@@ -132,13 +132,19 @@ impl Plugin for PreviewPlugin {
                 ("poppler", "Poppler"),
                 ("mupdf", "MuPDF"),
             ],
-        ));
-        app.settings.declare(SettingSpec::path(
-            PDFIUM_LIBRARY,
-            "PDFium library",
-            "Path to the PDFium shared library. Leave empty to search the usual locations.",
-            "",
-        ));
+        )
+        .page(skwir_core::settings::page::READING)
+        .section("Documents"));
+        app.settings.declare(
+            SettingSpec::path(
+                PDFIUM_LIBRARY,
+                "PDFium library",
+                "Path to the PDFium shared library. Leave empty to search the usual locations.",
+                "",
+            )
+            .page(skwir_core::settings::page::READING)
+            .section("Documents"),
+        );
         app.settings.declare(SettingSpec::choice(
             TEXT_DOCUMENTS,
             "Text documents",
@@ -149,7 +155,9 @@ impl Plugin for PreviewPlugin {
                 ("pages", "Pages"),
                 ("pandoc", "Pandoc"),
             ],
-        ));
+        )
+        .page(skwir_core::settings::page::READING)
+        .section("Documents"));
         register_reading(app);
         register_reader(app);
         *self.pdfium_library.write() = pdfium_library(app);

@@ -1,7 +1,7 @@
 //! skwir plugin: XMP (ISO 16684-1), the one standard for a file's metadata
 //! beside it or inside it (ADR-027). A sidecar is a notes store: read with
 //! the others, updated where it is, created only when the user asks
-//! (Notes page); it is a companion of its file (ADR-028), which it follows.
+//! (Tags and notes page); it is a companion of its file (ADR-028), which it follows.
 //! XMP inside a file (a picture's, a PDF's) is read on demand for Properties,
 //! never written: that would change the file's content.
 //!

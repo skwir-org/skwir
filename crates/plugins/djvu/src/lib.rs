@@ -62,7 +62,9 @@ impl Plugin for PreviewPlugin {
                 ("djvulibre", "DjVuLibre"),
                 ("djvu-rs", "djvu-rs"),
             ],
-        ));
+        )
+        .page(skwir_core::settings::page::READING)
+        .section("Documents"));
         register_reader(app);
         // A fallback stage: the desktop's cache and thumbnailers come first.
         app.thumbnails.register(ID, Arc::new(FirstPages));

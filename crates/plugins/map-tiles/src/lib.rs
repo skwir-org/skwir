@@ -80,7 +80,9 @@ fn declare_source(app: &App) {
         OUTLINE,
         &choices,
     )
-    .more_choices("the tile servers you add"));
+    .more_choices("the tile servers you add")
+    .page(skwir_core::settings::page::MEDIA)
+    .section("Maps"));
 }
 
 /// The chosen background was a server just removed: the outline again,
@@ -125,6 +127,9 @@ impl Plugin for MapTilesPlugin {
         skwir_core::permissions::Capabilities::of(&[Capability::Network])
     }
     fn register(&self, app: &App) {
+        // The choice first, so it stands above the servers it offers in
+        // their section; declared again below with them.
+        declare_source(app);
         app.settings.declare(
             SettingSpec::records(
                 SERVERS_KEY,
@@ -152,8 +157,8 @@ impl Plugin for MapTilesPlugin {
                 ],
             )
             .record_action("Test", "map-tiles.test_server")
-            // After the choice they add to: sections follow what has none.
-            .section("Other servers")
+            .page(skwir_core::settings::page::MEDIA)
+            .section("Maps")
             .validate_with(|value, _| server::check_servers(value)),
         );
         declare_source(app);

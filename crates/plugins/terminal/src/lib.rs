@@ -112,12 +112,16 @@ impl Plugin for TerminalPlugin {
         skwir_core::permissions::Capabilities::of(&[Capability::Programs])
     }
     fn register(&self, app: &App) {
-        app.settings.declare(SettingSpec::command(
-            PROGRAM_KEY,
-            "Shell",
-            "The program the terminal runs. Leave empty for your login shell.",
-            "",
-        ));
+        app.settings.declare(
+            SettingSpec::command(
+                PROGRAM_KEY,
+                "Shell",
+                "The program the terminal runs. Leave empty for your login shell.",
+                "",
+            )
+            .page(skwir_core::settings::page::TERMINAL)
+            .section("Terminal"),
+        );
         app.settings.declare(
             SettingSpec::integer(
                 SCROLLBACK_KEY,
@@ -127,14 +131,19 @@ impl Plugin for TerminalPlugin {
                 (0, SCROLLBACK_MOST),
             )
             .unit("lines")
-            .step(1000),
+            .step(1000)
+            .page(skwir_core::settings::page::TERMINAL)
+            .section("Terminal"),
         );
         app.settings.declare(SettingSpec::toggle(
             FOLLOW_KEY,
             "Follow the folder shown",
             "The terminal changes to the folder the pane shows, and the pane goes where you cd. Nothing is typed while a program runs in the terminal.",
             true,
-        ));
+        )
+        .page(skwir_core::settings::page::TERMINAL)
+        .section("Terminal")
+        .essential());
         app.registry.keymap.add(
             ID,
             KeyBinding {
