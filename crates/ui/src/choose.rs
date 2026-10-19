@@ -339,7 +339,6 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         .max_w(px(260.))
                         .truncate(),
                     choice.title.clone(),
-                    shell.font.clone(),
                 ))
                 .child(crate::elements::clip::clipped(
                     div()
@@ -350,7 +349,6 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         .text_xs()
                         .text_color(muted),
                     choice.detail.clone().unwrap_or_default(),
-                    shell.font.clone(),
                 )),
         );
     }
@@ -388,7 +386,6 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .min_w_0()
                     .truncate(),
                 option.title.clone(),
-                shell.font.clone(),
             ))
             .children(option_keys.map(|keys| crate::controls::keycap(keys, &theme)))
     });
@@ -415,7 +412,6 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         .text_xs()
                         .text_color(theme.text_muted),
                     c.title.clone(),
-                    shell.font.clone(),
                 ))
                 .child(c.input.clone()),
         )

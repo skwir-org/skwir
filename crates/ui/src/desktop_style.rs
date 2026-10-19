@@ -2,11 +2,10 @@
 //! `skwir_platform::desktop_style` reads, followed on a thread of its own
 //! from the start (`start`) and kept in the cache, so the next start draws
 //! its first frame with what was read last rather than flashing from
-//! skwir's colors to the desktop's. The theme asks `colors` each time it
-//! is resolved, and the shell resolves it again when `revision` moves. The
-//! font is chosen once, when the window opens (`font`): a window keeps
-//! copies of it (its toolbar, its dialogs), so a change of the desktop's
-//! font shows at the next start.
+//! skwir's colors to the desktop's. The theme asks `colors` and `fonts`
+//! each time it is resolved, and the shell resolves it again when
+//! `revision` moves: a change of the desktop's accent or of its fonts
+//! shows at once (ADR-073).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -16,7 +15,7 @@ use skwir_core::App;
 use skwir_core::settings::Settings;
 use skwir_platform::desktop_style::DesktopStyle;
 
-use crate::settings::{DESKTOP_COLORS_KEY, DESKTOP_FONT_KEY};
+use crate::settings::DESKTOP_COLORS_KEY;
 use crate::theme::{Contrast, Desktop};
 
 /// What the desktop said last, or when skwir last ran.
@@ -104,13 +103,26 @@ pub fn colors(settings: &Settings) -> Desktop {
     }
 }
 
-/// The family the window opens in, before skwir's own: the desktop's, as
-/// read last, while both `ui.desktop_colors` and `ui.desktop_font` are on.
-pub fn font(settings: &Settings) -> Option<String> {
-    (on(settings, DESKTOP_COLORS_KEY) && on(settings, DESKTOP_FONT_KEY))
+/// The families the desktop names for its fonts, as read last.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Fonts {
+    pub interface: Option<String>,
+    pub document: Option<String>,
+    pub monospace: Option<String>,
+}
+
+/// What a font that says Automatic takes from the desktop (`fonts.rs`):
+/// its fonts while `ui.desktop_colors` is on, else nothing.
+pub fn fonts(settings: &Settings) -> Fonts {
+    on(settings, DESKTOP_COLORS_KEY)
         .then(said)
         .flatten()
-        .and_then(|said| said.font)
+        .map(|said| Fonts {
+            interface: said.font,
+            document: said.document_font,
+            monospace: said.monospace_font,
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -181,26 +193,43 @@ mod tests {
     }
 
     #[test]
-    fn the_font_is_the_desktop_s_only_under_both_switches() {
+    fn the_desktop_s_fonts_are_lent_while_desktop_colors_is_on() {
         let (_tmp, app) = app();
-        assert_eq!(font(&app.settings), None, "nothing said yet");
+        assert_eq!(fonts(&app.settings), Fonts::default(), "nothing said yet");
         set(teal());
-        assert_eq!(font(&app.settings).as_deref(), Some("Noto Sans"));
-        app.settings
-            .set(DESKTOP_FONT_KEY, toml::Value::Boolean(false));
-        assert_eq!(font(&app.settings), None);
-        app.settings
-            .set(DESKTOP_FONT_KEY, toml::Value::Boolean(true));
+        assert_eq!(
+            fonts(&app.settings),
+            Fonts {
+                interface: Some("Noto Sans".into()),
+                document: Some("Noto Serif".into()),
+                monospace: None,
+            }
+        );
         app.settings
             .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(false));
-        assert_eq!(font(&app.settings), None, "under the colors' switch");
+        assert_eq!(fonts(&app.settings), Fonts::default(), "skwir's own");
     }
 
     #[test]
-    fn the_font_switch_is_shown_under_the_colors_switch() {
+    fn the_fonts_are_choices_of_their_own_not_under_the_colors_switch() {
         let (_tmp, app) = app();
-        let spec = app.settings.spec(DESKTOP_FONT_KEY).unwrap();
-        assert_eq!(spec.under, DESKTOP_COLORS_KEY);
-        assert!(spec.restart_required);
+        for key in [
+            crate::settings::FONT_KEY,
+            crate::settings::READING_FONT_KEY,
+            crate::settings::CODE_FONT_KEY,
+        ] {
+            let spec = app.settings.spec(key).unwrap();
+            assert_eq!(
+                spec.kind,
+                skwir_core::settings::SettingKind::Choice,
+                "{key}"
+            );
+            assert!(spec.under.is_empty(), "{key}");
+            assert!(!spec.restart_required, "{key}: a change shows at once");
+            assert_eq!(
+                spec.default,
+                toml::Value::String(crate::settings::FONT_AUTO.into())
+            );
+        }
     }
 }

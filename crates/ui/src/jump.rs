@@ -194,7 +194,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                         .whitespace_nowrap()
                         .text_ellipsis_middle(),
                     c.path.to_string_lossy().into_owned(),
-                    shell.font.clone(),
                 ))
                 .child(
                     div()

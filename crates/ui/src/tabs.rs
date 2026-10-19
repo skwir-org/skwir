@@ -595,7 +595,6 @@ fn tab(
             .text_color(color)
             .into_any_element(),
     };
-    let font = shell.font.clone();
     let tip = label.tip.clone();
     let hover = theme.hover;
     let a11y = shell.a11y;
@@ -649,7 +648,7 @@ fn tab(
             d.border_color(gpui::transparent_black())
                 .hover(move |s| s.bg(hover))
         })
-        .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
+        .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
         .on_click(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
             this.run("tab.select", serde_json::json!({ "tab": id }), window, cx);

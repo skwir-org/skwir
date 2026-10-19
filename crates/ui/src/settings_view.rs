@@ -32,6 +32,18 @@ const TEXTS_MIN: f32 = 240.;
 /// column's dropdowns line up.
 const TABLE_CHOICE: f32 = 210.;
 
+/// The family a font setting's control is written in: what its role
+/// resolved to (`Theme::font`…).
+fn font_role(key: &str, theme: &Theme) -> Option<SharedString> {
+    use crate::settings::{CODE_FONT_KEY, FONT_KEY, READING_FONT_KEY};
+    match key {
+        FONT_KEY => Some(theme.font.clone()),
+        READING_FONT_KEY => Some(theme.reading_font.clone()),
+        CODE_FONT_KEY => Some(theme.code_font.clone()),
+        _ => None,
+    }
+}
+
 /// The width of a table's column of a kind of control, its way back
 /// included.
 fn column_width(kind: SettingKind) -> f32 {
@@ -240,7 +252,6 @@ impl SettingsView {
                     .child(crate::elements::clip::clipped(
                         div().id("page-title").flex_1().min_w_0().truncate(),
                         title,
-                        self.font.clone(),
                     ))
                     .when(modified > 0, |d| {
                         d.child(
@@ -585,6 +596,8 @@ impl SettingsView {
         let key = row.spec.key.clone();
         let open = self.dropdown.as_deref() == Some(key.as_str());
         let toggle = key.clone();
+        // A font's control is written in the font it gives.
+        let written_in = font_role(&key, theme);
         let mut element = div().child(
             self.named(
                 controls::dropdown(
@@ -593,7 +606,8 @@ impl SettingsView {
                     focus,
                     theme,
                 )
-                .when(in_table, |d| d.min_w(px(TABLE_CHOICE))),
+                .when(in_table, |d| d.min_w(px(TABLE_CHOICE)))
+                .when_some(written_in, gpui::Styled::font_family),
                 row,
             )
             .aria_expanded(open)
@@ -622,7 +636,7 @@ impl SettingsView {
                 .bg(theme.bg)
                 .text_color(theme.text)
                 .text_xs()
-                .font_family(self.font.clone())
+                .font_family(theme.font.clone())
                 .shadow_lg()
                 .occlude()
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
@@ -731,7 +745,6 @@ impl SettingsView {
     ) -> gpui::Div {
         let (shown, more) = crate::settings::first_sentence(description);
         let full: SharedString = description.to_owned().into();
-        let font = self.font.clone();
         Self::texts(title, "", theme).when(!shown.is_empty(), |d| {
             d.child(
                 div()
@@ -740,9 +753,7 @@ impl SettingsView {
                     .text_color(theme.text_muted)
                     .child(shown.to_owned())
                     .when(more, |d| {
-                        d.tooltip(move |_, cx| {
-                            crate::toolbar::tooltip(full.clone(), font.clone(), cx)
-                        })
+                        d.tooltip(move |_, cx| crate::toolbar::tooltip(full.clone(), cx))
                     }),
             )
         })
@@ -774,7 +785,6 @@ impl SettingsView {
         let key = row.spec.key.clone();
         let focus = self.handle(&format!("revert:{key}"), cx);
         self.stop(&focus, Some(item), None);
-        let font = self.font.clone();
         let tip: SharedString = if row.default_text.is_empty() {
             "Restore the default (not set)".into()
         } else {
@@ -787,7 +797,7 @@ impl SettingsView {
         Some(
             controls::icon_button(format!("revert-{key}"), "revert", "Revert", &focus, theme)
                 .when(self.a11y, |d| d.aria_description(row.label.clone()))
-                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
+                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
                 .on_click(cx.listener(move |this, _, _, cx| this.reset(&key, cx)))
                 .into_any_element(),
         )

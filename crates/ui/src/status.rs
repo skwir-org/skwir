@@ -197,7 +197,6 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         bar = bar.child(crate::elements::clip::clipped(
             div().id("listing-error").text_color(theme.error).truncate(),
             e,
-            shell.font.clone(),
         ));
     }
     bar = bar
@@ -211,7 +210,6 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
     // what is waiting, and let a click forget it.
     let waiting = shell.pending.len();
     if waiting > 0 {
-        let font = shell.font.clone();
         let (verb, icon) = if shell.pending.cut {
             ("cut", "cut")
         } else {
@@ -233,7 +231,7 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
                 .cursor_pointer()
                 .text_color(theme.text)
                 .hover(|s| s.bg(theme.hover))
-                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
+                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.run("clipboard_clear", serde_json::json!({}), window, cx);
                 }))
@@ -279,7 +277,6 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         );
     }
     if let Some(title) = shell.app.executor.last_undo_title() {
-        let font = shell.font.clone();
         let keys = shell
             .keys_for("undo", &serde_json::Value::Null)
             .map_or_else(String::new, |keys| format!(" ({keys})"));
@@ -297,7 +294,7 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
                 .rounded_md()
                 .cursor_pointer()
                 .hover(|s| s.bg(theme.hover).text_color(theme.text))
-                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
+                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.run("undo", serde_json::json!({}), window, cx);
                 }))

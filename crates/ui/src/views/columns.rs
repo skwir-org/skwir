@@ -393,7 +393,6 @@ fn side_column(
                             .whitespace_nowrap()
                             .text_ellipsis_middle(),
                         row.label.clone(),
-                        this.font.clone(),
                     ))
                     .when(row.is_dir, |d| {
                         d.child(div().text_color(theme.text_muted).child("›"))

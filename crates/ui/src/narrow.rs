@@ -453,7 +453,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     }
     let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
-    let font = shell.font.clone();
     let command = shell
         .ui()
         .narrow
@@ -493,7 +492,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     value: String,
                     leave_out: bool| {
         n += 1;
-        let font = font.clone();
         let command = command.clone();
         let tip: SharedString = if leave_out {
             format!("{tip} · Alt+click: none tagged so").into()
@@ -515,7 +513,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .when(tone.is_none(), |d| d.border_1().border_color(theme.border))
             .cursor_pointer()
             .hover(|s| s.border_color(theme.accent))
-            .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
+            .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
             .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, window, cx| {
                 let facet = if leave_out && ev.modifiers().alt {
                     "not_tag"

@@ -93,22 +93,24 @@ impl GridView {
         let ws = shell.app.workspace.read();
         let listing = ws.pane(shell.pane).map(|pane| &pane.listing);
         let names = listing.map_or(0, skwir_core::Listing::names_version);
+        // Names wrap in the interface font, which may change while shown
+        // (ADR-073).
+        let font = cx.global::<crate::theme::Theme>().font.clone();
+        let at = (shell.zoom, font.clone());
         if let Some((counted, order, zoom)) = &self.lines_for
             && (*counted, *zoom) == (names, shell.zoom)
+            && self.wrapped_at.as_ref() == Some(&at)
             && (std::sync::Arc::ptr_eq(order, &list.sorted) || **order == *list.sorted)
         {
             return;
         }
         let started = std::time::Instant::now();
-        let at = (shell.zoom, shell.font.clone());
         if self.wrapped_at.as_ref() != Some(&at) {
             self.wrapped.clear();
             self.wrapped_at = Some(at);
         }
         let font_size = window.rem_size() * 0.75; // text_xs
-        let mut wrapper = cx
-            .text_system()
-            .line_wrapper(gpui::font(shell.font.clone()), font_size);
+        let mut wrapper = cx.text_system().line_wrapper(gpui::font(font), font_size);
         let width = px(Self::label_width(shell.zoom));
         let mut wrapped_now = 0usize;
         let counted = &mut self.wrapped;
@@ -287,7 +289,6 @@ fn cell(
                         &look.tags,
                         zoom as f32,
                         theme,
-                        shell.font.clone(),
                     )),
             ),
     )
@@ -302,7 +303,6 @@ fn cell(
             .text_ellipsis_middle()
             .line_clamp(usize::from(lines)),
         look.name.clone(),
-        shell.font.clone(),
     ));
     let seat = crate::views::entry::Seat {
         index: ix,

@@ -52,7 +52,6 @@ pub fn clear(
 ) -> Stateful<Div> {
     let theme = cx.global::<Theme>().clone();
     let pane: PaneId = shell.pane;
-    let font = shell.font.clone();
     let hover = theme.hover;
     let id = SharedString::from(format!("pill-clear-{}-{tip}", pane.0));
     div()
@@ -65,7 +64,7 @@ pub fn clear(
         .rounded_full()
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
-        .tooltip(move |_, cx| tooltip(tip.clone(), font.clone(), cx))
+        .tooltip(move |_, cx| tooltip(tip.clone(), cx))
         .on_click(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
             this.activate_pane(pane, cx);

@@ -217,7 +217,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 .child(crate::elements::clip::clipped(
                     div().id(("about-fact", row)).flex_1().min_w_0().truncate(),
                     value.clone(),
-                    shell.font.clone(),
                 )),
         );
     }
@@ -235,7 +234,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .on_click(cx.listener(|this, _, _, cx| this.copy_about(cx))),
     );
     if !WEBSITE.is_empty() {
-        let font = shell.font.clone();
         buttons = buttons.child(
             controls::button(
                 "about-website",
@@ -245,12 +243,11 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 &about.website,
                 &theme,
             )
-            .tooltip(move |_, cx| crate::toolbar::tooltip(WEBSITE.into(), font.clone(), cx))
+            .tooltip(move |_, cx| crate::toolbar::tooltip(WEBSITE.into(), cx))
             .on_click(cx.listener(|this, _, _, cx| this.open_address(WEBSITE, cx))),
         );
     }
     if !SOURCE.is_empty() {
-        let font = shell.font.clone();
         buttons = buttons.child(
             controls::button(
                 "about-source",
@@ -260,7 +257,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 &about.source,
                 &theme,
             )
-            .tooltip(move |_, cx| crate::toolbar::tooltip(SOURCE.into(), font.clone(), cx))
+            .tooltip(move |_, cx| crate::toolbar::tooltip(SOURCE.into(), cx))
             .on_click(cx.listener(|this, _, _, cx| this.open_address(SOURCE, cx))),
         );
     }

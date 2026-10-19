@@ -600,6 +600,14 @@ impl State {
                 .any(|field| field.is_focused(window, cx))
             || self.notes.holds_focus(window, cx)
     }
+
+    /// Every row is a different height now (the text size or a font
+    /// changed): measure them again where they stand, without leaving the
+    /// place.
+    pub fn remeasure(&self) {
+        self.list.remeasure_items(0..self.list.item_count());
+    }
+
     pub fn reset(&mut self, data: &Inspection) {
         self.labels = None;
         self.collapsed = Arc::default();
@@ -1545,8 +1553,7 @@ impl Shell {
                     let size = args["value"].as_f64().map_or(TEXT_SIZE, |v| v as f32);
                     let state = &mut self.preview.inspection;
                     state.font_size = size.clamp(10., 40.);
-                    let count = state.list.item_count();
-                    state.list.remeasure_items(0..count);
+                    state.remeasure();
                     // The size picker closes on its choice.
                     if let Some(popup) = self.preview.menu.take_if(|popup| popup.kind == "text") {
                         popup.restore(window, cx);
@@ -1558,10 +1565,7 @@ impl Shell {
                     let state = &mut self.preview.inspection;
                     state.font_size = (state.font_size + if action == "larger" { 2. } else { -2. })
                         .clamp(10., 40.);
-                    // Every row is a different height now: measure them
-                    // again where they stand, without leaving the place.
-                    let count = state.list.item_count();
-                    state.list.remeasure_items(0..count);
+                    state.remeasure();
                     cx.notify();
                     return;
                 }
@@ -2563,6 +2567,17 @@ pub fn outline_drawer(
     ))
 }
 
+/// Whether `kind` is read, its running text in the reading font: Markdown
+/// and HTML, word processors' documents, books the built-in engine
+/// reflows, mail (ADR-073). Code and text files are the code font's;
+/// tables, archives and the rest the interface's.
+fn reads(kind: InspectionKind) -> bool {
+    matches!(
+        kind,
+        InspectionKind::Markdown | InspectionKind::Book | InspectionKind::Mail
+    )
+}
+
 pub fn content(
     shell: &Shell,
     view: View<'_>,
@@ -2598,7 +2613,7 @@ pub fn content(
     let selected = state.selected;
     let selection = state.selection;
     let font_size = state.font_size;
-    let mono = shell.mono_font.clone();
+    let mono = theme.code_font.clone();
     let mut hex_font = gpui::font(mono.clone());
     // A byte viewer must preserve individual ASCII characters, even in coding fonts.
     hex_font.features = gpui::FontFeatures(Arc::new(vec![
@@ -2618,10 +2633,13 @@ pub fn content(
         ),
         shell.reading_measure,
     );
+    let mut list_style = list_style;
+    // What is read is written in the reading font (ADR-073): its blocks,
+    // and a note opened under its reference.
+    list_style.font = reads(display.data.kind).then(|| theme.reading_font.clone());
     let note = (!view.parked)
         .then(|| crate::note_popover::popover(shell, &list_style, theme, cx))
         .flatten();
-    let mut list_style = list_style;
     list_style.armed_link = shell.armed_link();
     list_style.labels = state.labels.as_ref().map(|labels| Rc::new(labels.shown()));
     // While the find is open, what it looks for is marked; a text read
@@ -2669,7 +2687,6 @@ pub fn content(
     };
     let measure = list_style.measure;
     let entity = cx.entity().downgrade();
-    let ui_font = shell.font.clone();
     // A text read where it is shown: its rows, scrolled by row, instead of
     // the list (`text_view`).
     let text = state.text.as_ref().filter(|_| data.text.is_some());
@@ -2808,7 +2825,6 @@ pub fn content(
                     row_icons.get(ri).and_then(Option::as_ref),
                     collapsed.contains(&ri),
                     selected == Some(data.blocks.len() + ri),
-                    ui_font.clone(),
                     theme,
                 )
                 .id(("inspect-row", ri))
@@ -2853,7 +2869,7 @@ pub fn content(
                 row = row.child(
                     div()
                         .id(("cell", column))
-                        .optional_tooltip(clip.tooltip(None, ui_font.clone()))
+                        .optional_tooltip(clip.tooltip(None))
                         .w(px(column_width(shape.as_deref(), data.kind, column)))
                         .flex_none()
                         .when(data.kind == InspectionKind::Table, |d| {
@@ -3018,9 +3034,7 @@ pub fn content(
             header = header.child(
                 div()
                     .id(("inspect-column", index))
-                    .when(table, |d| {
-                        d.optional_tooltip(clip.tooltip(None, shell.font.clone()))
-                    })
+                    .when(table, |d| d.optional_tooltip(clip.tooltip(None)))
                     .w(px(column_width(
                         display.table.as_deref(),
                         display.data.kind,

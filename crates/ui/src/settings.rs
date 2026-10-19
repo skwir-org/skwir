@@ -14,8 +14,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use gpui::{
-    AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
-    Subscription, Window,
+    AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Window,
 };
 use skwir_core::App;
 use skwir_core::command::{Invocation, Outcome};
@@ -45,11 +44,15 @@ pub const PRIVACY_OWNER: &str = skwir_core::permissions::SETTINGS;
 
 pub const THEME_KEY: &str = "ui.theme";
 /// Whether skwir wears the accent the desktop's settings name (ADR-071,
-/// `desktop_style`).
+/// `desktop_style`), and its fonts where a font says Automatic.
 pub const DESKTOP_COLORS_KEY: &str = "ui.desktop_colors";
-/// Whether the window opens in the desktop's interface font, under
-/// `ui.desktop_colors`.
-pub const DESKTOP_FONT_KEY: &str = "ui.desktop_font";
+/// The fonts skwir writes in, by role (ADR-073, `fonts.rs`): the
+/// interface's, what is read, code. Each is Automatic or a family.
+pub const FONT_KEY: &str = "ui.font";
+pub const READING_FONT_KEY: &str = "reading.font";
+pub const CODE_FONT_KEY: &str = "ui.code_font";
+/// The fonts' Automatic.
+pub const FONT_AUTO: &str = "auto";
 /// The icon theme skwir draws with, by its folder's name; Automatic is the
 /// desktop's (`icons::IconCache::set_theme`). The free desktops' only:
 /// macOS and Windows draw the system's own icons.
@@ -159,6 +162,89 @@ pub fn icon_theme_spec(
     .essential()
 }
 
+/// A font setting (`FONT_KEY`, `READING_FONT_KEY`, `CODE_FONT_KEY`):
+/// Automatic, then the families offered for it once listed
+/// (`list_fonts`: the text system's index and a program, a worker's
+/// work). The one chosen is always a choice, said missing once the list
+/// shows it is not installed.
+pub fn font_spec(
+    key: &str,
+    chosen: &str,
+    installed: Option<&crate::fonts::Installed>,
+) -> SettingSpec {
+    let mut choices = vec![(FONT_AUTO.to_owned(), "Automatic".to_owned())];
+    if let Some(installed) = installed {
+        choices.extend(
+            installed
+                .offered(key)
+                .into_iter()
+                .map(|family| (family.to_owned(), family.to_owned())),
+        );
+    }
+    if !chosen.is_empty() && !choices.iter().any(|(value, _)| value == chosen) {
+        let label = match installed {
+            Some(installed) if !installed.has(chosen) => format!("{chosen} (not installed)"),
+            _ => chosen.to_owned(),
+        };
+        choices.push((chosen.to_owned(), label));
+    }
+    let pairs: Vec<(&str, &str)> = choices
+        .iter()
+        .map(|(value, label)| (value.as_str(), label.as_str()))
+        .collect();
+    let spec = |title: &str, description: &str| {
+        SettingSpec::choice(key, title, description, FONT_AUTO, &pairs)
+            .more_choices("the fonts installed")
+    };
+    match key {
+        READING_FONT_KEY => spec(
+            "Reading font",
+            "The font books, Markdown and HTML files, documents and mail are read in. Automatic is your desktop's document font while Desktop colors is on, else the interface's.",
+        )
+        .section("Text")
+        .essential(),
+        CODE_FONT_KEY => spec(
+            "Code font",
+            "The font of source and text files, code in documents, the byte view and the terminal, where each letter takes the same width. Automatic is your desktop's monospace font while Desktop colors is on, else skwir's own.",
+        )
+        .page(page::READING)
+        .section("Code"),
+        _ => spec(
+            "Font",
+            "The font of skwir's menus, lists, bars and dialogs. Automatic is your desktop's while Desktop colors is on, else skwir's own: Inter where it is installed.",
+        ),
+    }
+}
+
+/// What a font setting says, Automatic when nothing.
+fn font_chosen(app: &App, key: &str) -> String {
+    app.settings
+        .get::<String>(key)
+        .unwrap_or_else(|| FONT_AUTO.to_owned())
+}
+
+/// List the families the text system draws on a worker and declare the
+/// font settings again with them: at start, so a script or an agent can
+/// choose one, and when the settings open, where a font installed since
+/// is found.
+pub(crate) fn list_fonts(app: &Arc<App>, text: Arc<gpui::TextSystem>) {
+    let weak = app.weak();
+    app.scheduler.spawn(
+        skwir_core::scheduler::Priority::Normal,
+        "fonts",
+        app.lifetime().child(),
+        move || {
+            let installed = crate::fonts::Installed::read(&text);
+            let Some(app) = weak.upgrade() else { return };
+            for key in [FONT_KEY, READING_FONT_KEY, CODE_FONT_KEY] {
+                app.settings
+                    .declare(font_spec(key, &font_chosen(&app, key), Some(&installed)));
+            }
+            app.wake();
+        },
+    );
+}
+
 /// A look's code theme setting: skwir's own colors, bat's themes of that
 /// look, then those the user added to bat once read (`list_code_themes`),
 /// the one chosen always among them (`code_preview::choices`).
@@ -259,21 +345,13 @@ pub fn declare(app: &App) {
         app.settings.declare(SettingSpec::toggle(
             DESKTOP_COLORS_KEY,
             "Desktop colors",
-            "Draw with the accent color chosen in your desktop's settings. Off, skwir keeps its own blue. More contrast, when your desktop asks for it, is followed either way.",
+            "Draw with the accent color chosen in your desktop's settings, and write in its fonts where a font says Automatic. Off, skwir keeps its own blue and fonts. More contrast, when your desktop asks for it, is followed either way.",
             true,
         )
         .essential());
-        app.settings.declare(
-            SettingSpec::toggle(
-                DESKTOP_FONT_KEY,
-                "Desktop font",
-                "Write in the font your desktop's settings name, while Desktop colors is on. Off, skwir writes in its own.",
-                true,
-            )
-            .under(DESKTOP_COLORS_KEY)
-            .restart_required(),
-        );
     }
+    app.settings
+        .declare(font_spec(FONT_KEY, &font_chosen(app, FONT_KEY), None));
     if !skwir_platform::system_icons::AVAILABLE {
         let chosen = app
             .settings
@@ -345,6 +423,11 @@ pub fn declare(app: &App) {
         .section("Pages")
         .essential(),
     );
+    app.settings.declare(font_spec(
+        READING_FONT_KEY,
+        &font_chosen(app, READING_FONT_KEY),
+        None,
+    ));
     app.settings.declare(
         SettingSpec::choice(
             READING_WIDTH_KEY,
@@ -398,6 +481,11 @@ pub fn declare(app: &App) {
             .unwrap_or_else(|| crate::code_preview::DEFAULT.to_owned());
         app.settings.declare(code_theme_spec(dark, &chosen, None));
     }
+    app.settings.declare(font_spec(
+        CODE_FONT_KEY,
+        &font_chosen(app, CODE_FONT_KEY),
+        None,
+    ));
     app.settings.declare(
         SettingSpec::choice(
             SLIDESHOW_KEY,
@@ -934,7 +1022,6 @@ pub(crate) struct Stop {
 #[allow(clippy::struct_excessive_bools)]
 pub struct SettingsView {
     pub(crate) app: Arc<App>,
-    pub(crate) font: SharedString,
     /// The Keyboard page: the keymap as it lists it, and what it edits.
     pub(crate) keys: crate::settings_keys_view::KeysPage,
     pub(crate) page: Page,
@@ -995,7 +1082,6 @@ impl EventEmitter<SettingsEvent> for SettingsView {}
 impl SettingsView {
     pub fn new(
         app: Arc<App>,
-        font: SharedString,
         bound: Arc<Vec<Bound>>,
         target: &serde_json::Value,
         window: &mut Window,
@@ -1034,7 +1120,6 @@ impl SettingsView {
             read_only: app.settings.read_only(),
             keys: crate::settings_keys_view::KeysPage::new(bound, cx),
             app,
-            font,
             page: Page::General,
             search,
             rows: Vec::new(),
@@ -1071,6 +1156,7 @@ impl SettingsView {
         view.probe_requirements();
         list_icon_themes(&view.app);
         list_code_themes(&view.app);
+        list_fonts(&view.app, cx.text_system().clone());
         window.focus(&view.nav, cx);
         view.open_target(target, window, cx);
         view
@@ -1863,11 +1949,11 @@ impl crate::shell::Shell {
         if let Some(popup) = self.toolbar_menu.take() {
             popup.restore(window, cx);
         }
-        let (app, font, bound) = (Arc::clone(&self.app), self.font.clone(), self.keys.bound());
+        let (app, bound) = (Arc::clone(&self.app), self.keys.bound());
         // What had the keyboard gets it back when the dialog closes, as a
         // popup's does: the reader, the address, the pane.
         let mut back = Some(crate::modal::FocusReturn::capture(window, cx));
-        let settings = cx.new(|cx| SettingsView::new(app, font, bound, target, window, cx));
+        let settings = cx.new(|cx| SettingsView::new(app, bound, target, window, cx));
         self.settings_subscription = Some(cx.subscribe_in(
             &settings,
             window,
@@ -1902,11 +1988,49 @@ impl crate::shell::Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        App, BUILTIN, CODE_APPEARANCE_KEY, CODE_DARK_KEY, CODE_LIGHT_KEY, ICON_THEME_AUTO, Page,
-        SINGLE_TAB_KEY, SettingSpec, THEME_KEY, code_theme_spec, declare, icon_theme_spec,
-        page_order,
+        App, BUILTIN, CODE_APPEARANCE_KEY, CODE_DARK_KEY, CODE_FONT_KEY, CODE_LIGHT_KEY, FONT_KEY,
+        ICON_THEME_AUTO, Page, READING_FONT_KEY, SINGLE_TAB_KEY, SettingSpec, THEME_KEY,
+        code_theme_spec, declare, font_spec, icon_theme_spec, page_order,
     };
     use skwir_platform::icons::Theme;
+
+    #[test]
+    fn a_font_is_automatic_or_a_family_the_text_system_draws() {
+        let installed = crate::fonts::Installed {
+            families: vec!["DejaVu Sans".into(), "Hack".into(), "Noto Serif".into()],
+            monospaced: Some(["Hack".to_owned()].into()),
+        };
+        let listed = font_spec(FONT_KEY, "auto", Some(&installed));
+        assert_eq!(
+            listed.constraints.choices,
+            ["auto", "DejaVu Sans", "Hack", "Noto Serif"]
+        );
+        assert_eq!(listed.constraints.choice_labels[0], "Automatic");
+        assert_eq!(listed.default.as_str(), Some("auto"));
+        assert!(!listed.constraints.more_choices.is_empty());
+        // Code is offered the monospaced ones, reading every one.
+        let code = font_spec(CODE_FONT_KEY, "auto", Some(&installed));
+        assert_eq!(code.constraints.choices, ["auto", "Hack"]);
+        let reading = font_spec(READING_FONT_KEY, "Noto Serif", Some(&installed));
+        assert_eq!(reading.constraints.choices.len(), 4);
+        assert!(reading.essential, "people are divided on it");
+        // Chosen, not listed yet: a choice of its own name.
+        let early = font_spec(CODE_FONT_KEY, "Iosevka", None);
+        assert_eq!(early.constraints.choices, ["auto", "Iosevka"]);
+        assert_eq!(early.constraints.choice_labels, ["Automatic", "Iosevka"]);
+        // A proportional family chosen for code is kept, not refused.
+        let kept = font_spec(CODE_FONT_KEY, "Noto Serif", Some(&installed));
+        assert_eq!(
+            kept.constraints.choice_labels.last().map(String::as_str),
+            Some("Noto Serif")
+        );
+        // Chosen and no longer installed: said so.
+        let gone = font_spec(CODE_FONT_KEY, "Iosevka", Some(&installed));
+        assert_eq!(
+            gone.constraints.choice_labels.last().map(String::as_str),
+            Some("Iosevka (not installed)")
+        );
+    }
 
     #[test]
     fn the_icon_theme_is_automatic_or_one_installed_by_its_folder() {
@@ -2024,7 +2148,27 @@ mod tests {
                 .filter(|(section, _)| section == "Code")
                 .map(|(_, key)| key)
                 .collect::<Vec<_>>(),
-            [CODE_APPEARANCE_KEY, CODE_LIGHT_KEY, CODE_DARK_KEY]
+            [
+                CODE_APPEARANCE_KEY,
+                CODE_LIGHT_KEY,
+                CODE_DARK_KEY,
+                CODE_FONT_KEY
+            ]
+        );
+        // The fonts stand by their subjects (ADR-073): the interface's on
+        // Appearance, the reading font first of what text reads in.
+        assert!(
+            page(&specs, &Page::Appearance)
+                .iter()
+                .any(|(_, key)| key == FONT_KEY)
+        );
+        assert_eq!(
+            page(&specs, &Page::Reading)
+                .into_iter()
+                .find(|(section, _)| section == "Text")
+                .map(|(_, key)| key)
+                .as_deref(),
+            Some(READING_FONT_KEY)
         );
         assert_eq!(sections(&specs, &Page::Media), ["Pictures", "3D models"]);
         assert_eq!(sections(&specs, &Page::Notes), ["Tags"]);

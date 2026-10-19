@@ -33,6 +33,7 @@ pub mod dnd;
 pub mod dock;
 mod dragicon;
 pub mod elements;
+pub mod fonts;
 pub mod format;
 mod fullscreen;
 pub mod icons;
@@ -107,63 +108,10 @@ mod weight;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{
-    Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, font, prelude::*, px, size,
-};
+use gpui::{Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size};
 use skwir_core::{App, Location};
 
 use crate::shell::Shell;
-
-/// Font families tried in order; the first the text system resolves wins.
-/// GPUI's `.SystemUIFont` falls back per frame at a large cost when
-/// unresolved. Each system's own come after Inter, which a user may have
-/// installed anywhere: macOS's and Windows' compiled, never run (ADR-035).
-#[cfg(not(any(target_os = "macos", windows)))]
-const FONT_CANDIDATES: &[&str] = &[
-    "Inter",
-    "DejaVu Sans",
-    "Noto Sans",
-    "Liberation Sans",
-    "Cantarell",
-];
-#[cfg(target_os = "macos")]
-const FONT_CANDIDATES: &[&str] = &["Inter", "Helvetica Neue", "Helvetica"];
-#[cfg(windows)]
-const FONT_CANDIDATES: &[&str] = &["Inter", "Segoe UI", "Tahoma"];
-
-#[cfg(not(any(target_os = "macos", windows)))]
-const MONO_CANDIDATES: &[&str] = &[
-    "JetBrains Mono",
-    "DejaVu Sans Mono",
-    "Noto Sans Mono",
-    "Liberation Mono",
-];
-#[cfg(target_os = "macos")]
-const MONO_CANDIDATES: &[&str] = &["JetBrains Mono", "SF Mono", "Menlo"];
-#[cfg(windows)]
-const MONO_CANDIDATES: &[&str] = &["JetBrains Mono", "Cascadia Mono", "Consolas"];
-
-/// The first of `candidates` the system has, else any family it has.
-/// Each is asked whether it loads (`font_id`), never resolved: resolving a
-/// family that is missing falls back to gpui's own stack and panics when
-/// none of it is installed either (a minimal system with only Liberation
-/// or Inter), before the window opens.
-fn pick_font(cx: &gpui::App, candidates: &[&str], label: &str) -> SharedString {
-    let ts = cx.text_system();
-    let loads = |family: &str| ts.font_id(&font(family.to_owned())).is_ok();
-    for c in candidates {
-        if loads(c) {
-            tracing::info!(family = c, label, "font");
-            return SharedString::from((*c).to_owned());
-        }
-    }
-    let any = ts
-        .all_font_names()
-        .into_iter()
-        .find(|family| !family.starts_with('.') && loads(family));
-    tracing::warn!(?any, "none of {candidates:?} is installed for {label}");
-    any.map_or_else(|| candidates[0].to_owned().into(), SharedString::from)
-}
 
 /// Dev-only PNG/JPEG decoder used to exercise the views before the platform
 /// providers exist. Enabled with `--features skwir-ui/dev-thumbs`.
@@ -234,7 +182,7 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
     // The shell's own commands, known to every surface as the others are.
     commands::declare_all(&app);
     // What the desktop said when skwir last ran, then what it says
-    // (ADR-071): its font is chosen below, its colors with the theme.
+    // (ADR-071): its colors and fonts are the theme's (ADR-073).
     desktop_style::start(&app);
 
     // The system's backend, with AccessKit (ADR-064).
@@ -245,15 +193,6 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
                 ms = started.elapsed().as_millis() as u64,
                 "gpui run callback"
             );
-            let desktop_font = desktop_style::font(&app.settings);
-            let fonts: Vec<&str> = desktop_font
-                .as_deref()
-                .into_iter()
-                .chain(FONT_CANDIDATES.iter().copied())
-                .collect();
-            let font = pick_font(cx, &fonts, "ui");
-            let mono_font = pick_font(cx, MONO_CANDIDATES, "mono");
-            tracing::debug!(ms = started.elapsed().as_millis() as u64, "font picked");
             let keymap =
                 keymap::install(&app, skwir_core::keymap::user_bindings(&app.settings), cx);
             // A key that begins a binding of several strokes waits for the
@@ -301,11 +240,7 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
                         ..Default::default()
                     },
                     |window, cx| {
-                        cx.new(|cx| {
-                            Shell::new(
-                                app, initial, started, font, mono_font, keymap, wake_rx, window, cx,
-                            )
-                        })
+                        cx.new(|cx| Shell::new(app, initial, started, keymap, wake_rx, window, cx))
                     },
                 )
                 .expect("open window");

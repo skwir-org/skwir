@@ -1133,7 +1133,6 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
     } else {
         format!("{title} · {}", state.artist)
     };
-    let font = shell.font.clone();
     Some(
         div()
             .flex()
@@ -1180,7 +1179,6 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
                         .hover(|d| d.bg(theme.hover)),
                     title,
                     Some(crate::dock::REVEAL_TIP.into()),
-                    font,
                 )
                 .on_click(cx.listener(|this, _, window, cx| this.player_reveal(window, cx))),
             )

@@ -724,7 +724,6 @@ impl SettingsView {
                             .id(gpui::SharedString::from(format!("record-title-{key}-{id}")))
                             .truncate(),
                         title,
-                        self.font.clone(),
                     ))
                     .child(crate::elements::clip::clipped(
                         div()
@@ -735,7 +734,6 @@ impl SettingsView {
                             .text_color(theme.text_muted)
                             .truncate(),
                         detail,
-                        self.font.clone(),
                     )),
             )
             .child(actions)

@@ -613,7 +613,6 @@ pub fn render(
     let marked = shell.sidebar_keys.cursor.clone();
     let cursor = marked.clone().filter(|_| focused);
     let mut drawn: Vec<(Item, usize)> = Vec::with_capacity(items.len());
-    let font = shell.font.clone();
     // The movable places drawn, in order, by group and by the command that
     // moves them, with what names each to it: a place moves among those
     // its own command moves (bookmarks among bookmarks, Home among the
@@ -760,7 +759,7 @@ pub fn render(
             .and_then(|moves| orders.get(&mover(&place.group, moves)))
             .unwrap_or(&no_order);
         if let Some(color) = color {
-            let mut pill = pill(i, place, color, is_current, at_cursor, &font, cx)
+            let mut pill = pill(i, place, color, is_current, at_cursor, cx)
                 .role(gpui::Role::TreeItem)
                 .when(a11y, |d| {
                     d.aria_label(place.title.clone())
@@ -952,7 +951,7 @@ pub fn render(
                 at_cursor,
                 StatefulInteractiveElement::aria_active_descendant,
             );
-        row = row.optional_tooltip(clip.tooltip(tip, font.clone()));
+        row = row.optional_tooltip(clip.tooltip(tip));
         if let Some(eject) = place.eject.clone().filter(|_| busy.is_none()) {
             let hover = theme.selection_bg;
             row = row.child(
@@ -1209,7 +1208,6 @@ fn pill(
     color: usize,
     is_current: bool,
     at_cursor: bool,
-    font: &SharedString,
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
     let theme = cx.global::<Theme>().clone();
@@ -1225,7 +1223,6 @@ fn pill(
         place.title
     )
     .into();
-    let font = font.clone();
     div()
         .id(("place", i))
         .flex_none()
@@ -1284,7 +1281,7 @@ fn pill(
                 this.run(&tab.name, tab.args.clone(), window, cx);
             }),
         )
-        .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
+        .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
         .child(div().truncate().child(title))
 }
 

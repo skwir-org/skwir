@@ -189,7 +189,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             // The letterbox round a film is the panel's own surface.
             .bg(theme.surface)
             .children(frame);
-        reveal(shell, "dock-letterbox", letterbox, cx).into_any_element()
+        reveal("dock-letterbox", letterbox, cx).into_any_element()
     } else if tall {
         // Only the cover's disc plays and pauses, with its own tooltip and
         // highlight; the ring around it and the room beside it show the
@@ -205,7 +205,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .border_2()
             .border_color(gpui::transparent_black())
             .hover(|d| d.border_color(theme.accent))
-            .tooltip(play_tip(shell))
+            .tooltip(play_tip())
             // What is under the disc is not hovered while the pointer is on
             // it: the figure lights up only where a click shows the track.
             .occlude()
@@ -236,10 +236,9 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             title.clone(),
             square.into_any_element(),
             Some(REVEAL_TIP),
-            &shell.font,
             &theme,
         );
-        reveal(shell, "dock-figure", figure, cx).into_any_element()
+        reveal("dock-figure", figure, cx).into_any_element()
     } else {
         let row = crate::elements::adaptive::AdaptiveRow {
             variants: [Form::Whole, Form::Least, Form::Stacked]
@@ -249,13 +248,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             height: height - 6. - TRANSPORT,
             chosen: None,
         };
-        reveal(
-            shell,
-            "dock-row",
-            div().flex_1().min_h_0().flex().child(row),
-            cx,
-        )
-        .into_any_element()
+        reveal("dock-row", div().flex_1().min_h_0().flex().child(row), cx).into_any_element()
     };
 
     // The transport, in the richest form that fits, and its More.
@@ -288,7 +281,6 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .child(revealed(
                 div().id("caption-title").min_w_0().truncate(),
                 title.clone(),
-                shell,
             ))
             .when(!by.is_empty(), |d| {
                 d.child(revealed(
@@ -298,10 +290,9 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
                         .truncate()
                         .text_color(theme.text_muted),
                     by.clone(),
-                    shell,
                 ))
             });
-        reveal(shell, "dock-caption", line, cx)
+        reveal("dock-caption", line, cx)
     });
     let mut dock = div()
         .id("player-dock")
@@ -558,29 +549,23 @@ pub(crate) const REVEAL_TIP: &str = "Show this track";
 
 /// A line of the dock's text inside `reveal`: cut, it says itself whole
 /// before what a click does.
-fn revealed(
-    el: gpui::Stateful<gpui::Div>,
-    text: String,
-    shell: &Shell,
-) -> gpui::Stateful<gpui::Div> {
-    crate::elements::clip::clipped_with(el, text, Some(REVEAL_TIP.into()), shell.font.clone())
+fn revealed(el: gpui::Stateful<gpui::Div>, text: String) -> gpui::Stateful<gpui::Div> {
+    crate::elements::clip::clipped_with(el, text, Some(REVEAL_TIP.into()))
 }
 
 /// Something of the dock that shows the track when clicked: what is not
 /// the picture and not the transport.
 fn reveal(
-    shell: &Shell,
     id: &'static str,
     inner: gpui::Div,
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
-    let font = shell.font.clone();
     let theme = cx.global::<Theme>().clone();
     inner
         .id(id)
         .cursor_pointer()
         .hover(move |d| d.bg(theme.hover))
-        .tooltip(move |_, cx| crate::toolbar::tooltip(REVEAL_TIP.into(), font.clone(), cx))
+        .tooltip(move |_, cx| crate::toolbar::tooltip(REVEAL_TIP.into(), cx))
         .on_click(cx.listener(|this, _, window, cx| this.player_reveal(window, cx)))
 }
 
@@ -597,9 +582,8 @@ enum Form {
 }
 
 /// What the cover says: it is the one place a click plays or pauses.
-fn play_tip(shell: &Shell) -> impl Fn(&mut Window, &mut gpui::App) -> gpui::AnyView + 'static {
-    let font = shell.font.clone();
-    move |_, cx| crate::toolbar::tooltip("Play / pause · Space".into(), font.clone(), cx)
+fn play_tip() -> impl Fn(&mut Window, &mut gpui::App) -> gpui::AnyView + 'static {
+    move |_, cx| crate::toolbar::tooltip("Play / pause · Space".into(), cx)
 }
 
 /// The compact dock's row in one of its forms: the cover, the title and
@@ -651,7 +635,7 @@ fn compact_row(
         Flash::Dock,
         cx,
     )
-    .tooltip(play_tip(shell));
+    .tooltip(play_tip());
     let line = |text: &str, muted: bool| {
         revealed(
             div()
@@ -659,7 +643,6 @@ fn compact_row(
                 .when(muted, |d| d.text_xs().text_color(theme.text_muted))
                 .truncate(),
             text.to_owned(),
-            shell,
         )
     };
     let text = div()

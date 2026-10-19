@@ -197,7 +197,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     .child(crate::elements::clip::clipped(
                         div().id(("shortcut", row)).flex_1().min_w_0().truncate(),
                         title.clone(),
-                        shell.font.clone(),
                     ))
                     .child(keys),
             );

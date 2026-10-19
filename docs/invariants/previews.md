@@ -376,7 +376,7 @@ A text document is read as its structure, or laid out as pages.
 - Styling is a cascade (built-in sheet, the page's sheets, `style`
   attributes, `!important`), never hard-coded tag checks: what a tag
   means is stated once, in the built-in sheet. Fonts, colours, boxes and
-  absolute sizes stay the reader's. A book searches with its
+  absolute sizes stay the reader's: the reading font (ADR-073). A book searches with its
   stylesheets, so hidden text never matches.
 - Superscripts, subscripts and small capitals are runs (`Run::script`,
   `Run::small_caps`, from `vertical-align` and `font-variant`), drawn by
@@ -503,6 +503,14 @@ A text document is read as its structure, or laid out as pages.
 - Reading typography lives in one place, `crates/ui/src/markdown.rs`
   (`MarkdownStyle`). Block layout asks it for sizes, spacing and colors
   and never hard-codes them in the inspector.
+- What is read is written in the reading font (`Theme::reading_font`,
+  ADR-073): the blocks of Markdown and HTML, word processors' documents,
+  books and mail (`inspector::reads`, `MarkdownStyle::font`), and a note
+  opened under its reference; code in them, the code view, text files
+  and bytes in the code font (`Theme::code_font`); the rest of an
+  inspection (tables, archives, a file's properties) in the interface's.
+  A font that changes measures the rows again where they stand
+  (`inspector::State::remeasure`), as a text size does.
 - `InspectionKind::Markdown` selects the roomier reading profile. Other
   kinds keep the compact spacing, which must stay legible: EPUB, email
   and HTML read in it.

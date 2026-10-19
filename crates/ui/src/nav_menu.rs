@@ -93,11 +93,11 @@ impl NavMenu {
         pane: PaneId,
         what: NavWhat,
         rows: Vec<NavRow>,
-        font: &SharedString,
         window: &mut Window,
         cx: &mut Context<Shell>,
     ) -> Self {
-        let width = width_of(&rows, font, window);
+        let font = cx.global::<Theme>().font.clone();
+        let width = width_of(&rows, &font, window);
         let focus = rows.iter().map(|_| cx.focus_handle()).collect();
         NavMenu {
             pane,
@@ -217,8 +217,7 @@ impl Shell {
                 rule: false,
             })
             .collect();
-        let font = self.font.clone();
-        self.nav_menu = Some(NavMenu::new(pane, what, rows, &font, window, cx));
+        self.nav_menu = Some(NavMenu::new(pane, what, rows, window, cx));
     }
 
     /// `ui.subfolder_menu { location, current }`: the folders inside
@@ -273,12 +272,10 @@ impl Shell {
                 };
                 let rows = inside_rows(&shell.app, &of, inside, current.as_ref());
                 shell.close_nav_menu(window, cx);
-                let font = shell.font.clone();
                 shell.nav_menu = Some(NavMenu::new(
                     pane,
                     NavWhat::Subfolders { of },
                     rows,
-                    &font,
                     window,
                     cx,
                 ));
@@ -325,12 +322,11 @@ impl Shell {
         if rows.is_empty() {
             return;
         }
-        let (pane, font) = (self.pane, self.font.clone());
+        let pane = self.pane;
         self.nav_menu = Some(NavMenu::new(
             pane,
             NavWhat::Parents { of },
             rows,
-            &font,
             window,
             cx,
         ));

@@ -324,7 +324,7 @@ pub(crate) fn popover(
     }
     let panel = toolbar::popup_panel(&open.popup, "ui.note", theme, cx)
         .w(px(size * 26.))
-        .font_family(shell.font.clone())
+        .font_family(style.font.clone().unwrap_or_else(|| theme.font.clone()))
         .child(text)
         .child(
             div().flex().justify_end().child(

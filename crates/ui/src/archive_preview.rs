@@ -6,7 +6,7 @@ use crate::{
     theme::Theme,
     views::list::{ROW_HEIGHT, column, line},
 };
-use gpui::{Div, SharedString, div, prelude::*, px, svg};
+use gpui::{Div, div, prelude::*, px, svg};
 use skwir_core::inspection::Row;
 
 const SIZE_WIDTH: f32 = 90.;
@@ -46,7 +46,6 @@ pub fn row(
     icon: Option<&icons::Pic>,
     collapsed: bool,
     selected: bool,
-    font: SharedString,
     theme: &Theme,
 ) -> Div {
     let icon = icon.map_or_else(
@@ -96,7 +95,6 @@ pub fn row(
                 .whitespace_nowrap()
                 .text_ellipsis_middle(),
             row.cells.first().cloned().unwrap_or_default(),
-            font,
         ));
     if let Some(status) = row.cells.get(2).filter(|s| !s.is_empty()) {
         name = name.child(

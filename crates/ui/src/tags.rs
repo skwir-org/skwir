@@ -189,7 +189,6 @@ pub fn tile_dots(
     tags: &[(String, usize)],
     zoom: f32,
     theme: &Theme,
-    font: gpui::SharedString,
 ) -> Option<AnyElement> {
     if tags.is_empty() {
         return None;
@@ -242,7 +241,7 @@ pub fn tile_dots(
                         .child(format!("+{more}")),
                 )
             })
-            .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
+            .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
             .into_any_element(),
     )
 }
@@ -837,7 +836,6 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                             .collect::<Vec<_>>()
                             .join(", ")
                     ),
-                    shell.font.clone(),
                 )),
             Shown::Row(i) => {
                 let tag = &e.rows[*i];
@@ -879,7 +877,6 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                             .child(clipped(
                                 div().id("tag-name").flex_none().max_w_full().truncate(),
                                 tag_leaf(&tag.name).to_owned(),
-                                shell.font.clone(),
                             ))
                             .when_some(tag_parent(&tag.name), |d, category| {
                                 d.child(clipped(
@@ -890,7 +887,6 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                                         .text_xs()
                                         .text_color(muted),
                                     category.to_owned(),
-                                    shell.font.clone(),
                                 ))
                             }),
                     )
@@ -935,9 +931,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 &theme,
             )
             .when_some(apply_keys, |d, keys| {
-                let font = shell.font.clone();
                 d.tooltip(move |_, cx| {
-                    crate::toolbar::tooltip(format!("Apply ({keys})").into(), font.clone(), cx)
+                    crate::toolbar::tooltip(format!("Apply ({keys})").into(), cx)
                 })
             })
             .on_click(cx.listener(|this, _, window, cx| this.tag_editor_apply(window, cx))),
@@ -969,7 +964,6 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         .text_xs()
                         .text_color(theme.text_muted),
                     e.title.clone(),
-                    shell.font.clone(),
                 ))
                 .child(e.input.clone()),
         )

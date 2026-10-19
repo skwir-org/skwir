@@ -434,10 +434,9 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     .whitespace_nowrap()
                     .text_ellipsis_middle(),
                 within,
-                shell.font.clone(),
             ))
         })
-        .child(list.text_xs().font_family(shell.mono_font.clone()))
+        .child(list.text_xs().font_family(theme.code_font.clone()))
         .child(modal::footer(
             hint,
             [
@@ -508,7 +507,7 @@ fn step_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec
         return Vec::new();
     };
     let theme = cx.global::<Theme>();
-    let font = shell.mono_font.clone();
+    let font = theme.code_font.clone();
     range
         .filter_map(|i| {
             let (change, status) = checked.steps.get(i)?;
@@ -545,7 +544,6 @@ fn step_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec
                             .whitespace_nowrap()
                             .text_ellipsis_middle(),
                         text,
-                        font.clone(),
                     ))
                     .child(div().flex_none().text_color(theme.text_muted).child(status))
                     .into_any_element(),

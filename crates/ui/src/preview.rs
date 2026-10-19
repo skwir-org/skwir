@@ -4999,7 +4999,6 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
                 .whitespace_nowrap()
                 .text_ellipsis_middle(),
             name,
-            shell.font.clone(),
         )
     };
     let parked = preview.parked().map(|parked| parked.depth);
@@ -5025,7 +5024,7 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
             let (text, clip) = crate::elements::clip::text(name_at);
             div()
                 .id(("preview-trail", depth))
-                .optional_tooltip(clip.tooltip(None, shell.font.clone()))
+                .optional_tooltip(clip.tooltip(None))
                 .min_w_0()
                 .flex_shrink_1()
                 .truncate()
@@ -5085,7 +5084,6 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
                 format!("{fact} ·")
             },
             mime.clone(),
-            shell.font.clone(),
         )
     });
     let card = div()
@@ -5129,10 +5127,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
                         .text_xs()
                         .text_color(theme.text_muted)
                         .when_some(info.mime.clone(), |d, mime| {
-                            let font = shell.font.clone();
-                            d.tooltip(move |_, cx| {
-                                crate::toolbar::tooltip(mime.clone().into(), font.clone(), cx)
-                            })
+                            d.tooltip(move |_, cx| crate::toolbar::tooltip(mime.clone().into(), cx))
                         })
                         .children(facts),
                 ),

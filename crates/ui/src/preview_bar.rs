@@ -285,7 +285,6 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
     };
     bar.always = false;
     let (text, muted) = (theme.text, theme.text_muted);
-    let font = shell.font.clone();
     bar.push(
         Item::widget(Slot::Title, 0, move |_, _| {
             div()
@@ -306,7 +305,6 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
                         .text_sm()
                         .text_color(text),
                     name.clone(),
-                    font.clone(),
                 ))
                 .children(
                     size.clone()
@@ -360,7 +358,6 @@ pub fn fullscreen_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
         return;
     }
     let (name, text) = (shell.preview.info.name.clone(), theme.text);
-    let font = shell.font.clone();
     bar.push(
         Item::widget(Slot::Title, 0, move |_, _| {
             div()
@@ -380,7 +377,6 @@ pub fn fullscreen_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
                         .text_sm()
                         .text_color(text),
                     name.clone(),
-                    font.clone(),
                 ))
                 .into_any_element()
         })

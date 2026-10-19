@@ -611,11 +611,7 @@ pub fn row(
                 .child(div().flex_none().child(icon))
         })
         // A name keeps its end: the extension tells files apart.
-        .child(crate::views::entry::name(
-            div().id(("name", ix)),
-            look,
-            shell,
-        ))
+        .child(crate::views::entry::name(div().id(("name", ix)), look))
         // The tags take only what the name leaves (no basis of their own):
         // the chips that do not fit drop whole, last first, "+N" saying how
         // many, and the name never gives way to them.
@@ -627,7 +623,7 @@ pub fn row(
         let shown = shell.shown_columns();
         for column in COLUMNS.iter().filter(|column| shown[column.detail]) {
             let cell = cell(shell, column.detail, muted, height);
-            line = line.child(detail(shell, r, column.detail, cell, theme));
+            line = line.child(detail(r, column.detail, cell, theme));
         }
     }
     let seat = crate::views::entry::Seat {
@@ -684,7 +680,7 @@ fn cell(shell: &Shell, detail: Detail, color: gpui::Hsla, height: f32) -> Div {
 /// What row `r` shows in its `detail` column. A text cut to fit says itself
 /// whole when pointed at, before what the column adds (a folder's path, the
 /// exact time).
-fn detail(shell: &Shell, r: &RowData, detail: Detail, cell: Div, theme: &Theme) -> AnyElement {
+fn detail(r: &RowData, detail: Detail, cell: Div, theme: &Theme) -> AnyElement {
     let (name, text, also) = match detail {
         Detail::Rating => {
             return cell
@@ -706,7 +702,6 @@ fn detail(shell: &Shell, r: &RowData, detail: Detail, cell: Div, theme: &Theme) 
         cell.id((name, r.ix)).min_w_0().truncate(),
         text,
         (!also.is_empty()).then(|| also.into()),
-        shell.font.clone(),
     )
     .into_any_element()
 }

@@ -458,7 +458,6 @@ impl PaneView for MapView {
                     .text_color(theme.text_muted)
                     .truncate(),
                 self.status(),
-                shell.font.clone(),
             ));
         if folder {
             header = header.child(

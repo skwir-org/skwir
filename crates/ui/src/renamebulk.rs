@@ -328,8 +328,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .track_scroll(&b.scroll)
         .overflow_y_scroll()
         .text_xs()
-        .font_family(shell.mono_font.clone());
-    let font = shell.mono_font.clone();
+        .font_family(theme.code_font.clone());
     for (i, (from, to)) in b.preview.iter().enumerate() {
         list = list.child(
             div()
@@ -343,13 +342,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                         .truncate()
                         .text_color(theme.text_muted),
                     from.clone(),
-                    font.clone(),
                 ))
                 .child(div().flex_none().child("→"))
                 .child(clipped(
                     div().id(("rename-to", i)).flex_1().min_w_0().truncate(),
                     to.clone(),
-                    font.clone(),
                 )),
         );
     }

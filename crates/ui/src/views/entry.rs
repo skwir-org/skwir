@@ -167,14 +167,13 @@ fn expose(el: Stateful<Div>, look: &Look, seat: Seat) -> Stateful<Div> {
 
 /// Its name, cut in the middle when too long (the extension tells files
 /// apart), which says itself whole when pointed at while cut.
-pub fn name(el: Stateful<Div>, look: &Look, shell: &Shell) -> AnyElement {
+pub fn name(el: Stateful<Div>, look: &Look) -> AnyElement {
     crate::elements::clip::clipped(
         el.min_w_0()
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis_middle(),
         look.name.clone(),
-        shell.font.clone(),
     )
     .into_any_element()
 }

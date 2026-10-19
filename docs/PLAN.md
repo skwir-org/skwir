@@ -73,7 +73,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
 | [Names indexed by skwird](#names-indexed-by-skwird) | planned (ADR-050) | — |
-| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A and B built 2026-10-19; C to E planned (ADR-071) | — |
+| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A, B and the fonts by role built 2026-10-19; C to E planned (ADR-071, ADR-073) | — |
 | [Phase 7: AI](#phase-7-ai) | planned, after Release 0.1 | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
 
@@ -2401,8 +2401,9 @@ after Release 0.1 and after skwird's phase 1.
 
 ## Colors and font from the desktop
 
-ADR-071. Steps A and B built 2026-10-19: Linux's portal is read; Plasma's
-scheme, GTK3 themes, macOS and Windows not yet (C to E).
+ADR-071, ADR-073. Steps A and B built 2026-10-19: Linux's portal is read;
+Plasma's scheme, GTK3 themes, macOS and Windows not yet (C to E). The
+fonts by role (ADR-073) built the same day.
 
 **Goal:** Skwir wears what the user chose on their desktop (the accent,
 more contrast, a color scheme, the font's family) on controls that stay
@@ -2468,6 +2469,35 @@ its own, every color readable on what it is drawn on.
 - **E. macOS and Windows:** the accent, more contrast, Windows' contrast
   themes; read again on appearance changes and activation. Windows tried
   under Wine for what it answers; macOS compiled only.
+- **Fonts by role (ADR-073), built 2026-10-19.** The user asked to choose
+  the font "among those on the system when relevant (text previews,
+  EPUB/HTML rendering, etc.)", then for the interface font too, amending
+  ADR-071's switch. Three choices, Automatic or a family:
+  `ui.font` (Appearance), `reading.font` (Reading › Text, essential),
+  `ui.code_font` (Reading › Code); `ui.desktop_font`, never released, is
+  gone. Automatic is the desktop's interface, document and monospace font
+  while Desktop colors is on (`DesktopStyle` reads the two new ones where
+  it read the first, and `fc-match` resolves an alias), else Skwir's.
+  The fonts are tokens of the theme (`fonts.rs`, `Theme::font`,
+  `reading_font`, `code_font`), resolved with it: `Shell::font`,
+  `Shell::mono_font` and the forty copies of them are gone, tooltips read
+  the theme, so a change shows at once (ADR-071's "at the next start"
+  with it). Reading mode writes Markdown, HTML, documents, books and mail
+  in the reading font (`MarkdownStyle::font`); the code view, code
+  blocks, bytes, the terminal, bulk rename and reviews in the code font.
+  The families are the text system's that write Latin
+  (`skwir_platform::fonts`: one `fc-list`, about 15 ms in a process of
+  its own), the code font's the monospaced ones, listed on a worker at
+  start and when the settings open, so `settings.apply` takes any of them
+  from a script. Tests:
+  the fallbacks, the portal's three fonts read and followed, fontconfig's
+  listing and aliases, the settings' choices, pages and essentials. In a
+  window (debug, Xvfb, the session's portal): see ADR-073's
+  consequences. Idle memory on headless sway, release builds alternated
+  seven times: own share 109.1 MiB against HEAD's 109.9, first frame
+  78.0 ms against 76.2 (medians, within the spread). Not checked:
+  Plasma, Xfce, Cinnamon and MATE reading their fonts, a screen reader
+  on the long list, the session's own display.
 
 ---
 

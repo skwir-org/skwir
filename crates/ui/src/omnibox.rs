@@ -1214,7 +1214,6 @@ pub fn dropdown(
                     .whitespace_nowrap()
                     .text_ellipsis_middle(),
                 title,
-                shell.font.clone(),
             ))
             .children(detail.map(|detail| {
                 crate::elements::clip::clipped(
@@ -1228,7 +1227,6 @@ pub fn dropdown(
                         .text_xs()
                         .text_color(muted),
                     detail,
-                    shell.font.clone(),
                 )
             }))
             .children(keys.map(|keys| {

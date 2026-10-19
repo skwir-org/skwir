@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::{
-    ClipboardItem, Context, Entity, FocusHandle, IntoElement, SharedString, Subscription, Window,
-    div, prelude::*, px,
+    ClipboardItem, Context, Entity, FocusHandle, IntoElement, Subscription, Window, div,
+    prelude::*, px,
 };
 use skwir_core::app::NotifyLevel;
 use skwir_core::command::{Invocation, Outcome};
@@ -233,8 +233,6 @@ pub struct Shell {
     /// deadline.
     pub(crate) held_since: Option<Instant>,
     pub(crate) hold_timer: Option<gpui::Task<()>>,
-    pub font: SharedString,
-    pub mono_font: SharedString,
     pub key_hints: keymap::Hints,
     /// What `key_hints` and GPUI's bindings were built from.
     pub(crate) keys: Installed,
@@ -424,17 +422,17 @@ impl Shell {
         app: Arc<App>,
         initial: Option<Location>,
         started: Instant,
-        font: SharedString,
-        mono_font: SharedString,
         keymap: keymap::Keymap,
         wake_rx: flume::Receiver<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         crate::settings::declare(&app);
-        // The themes the user added to bat, on a worker: then a script or
-        // an agent can choose one before the settings ever open.
+        // The themes the user added to bat and the fonts installed, on a
+        // worker: then a script or an agent can choose one before the
+        // settings ever open.
         crate::settings::list_code_themes(&app);
+        crate::settings::list_fonts(&app, cx.text_system().clone());
         crate::session::declare(&app);
         // Owner and group names for Properties: two small files, but a read can
         // block, so not here.
@@ -453,10 +451,17 @@ impl Shell {
                 }
             },
         );
-        cx.set_global(Theme::resolve(&app, window.appearance()));
+        let theme = Theme::resolve(&app, window.appearance(), cx.text_system());
+        tracing::info!(
+            ui = %theme.font,
+            reading = %theme.reading_font,
+            code = %theme.code_font,
+            "fonts"
+        );
+        cx.set_global(theme);
         let mut subs = Vec::new();
         subs.push(cx.observe_window_appearance(window, |this, window, cx| {
-            cx.set_global(Theme::resolve(&this.app, window.appearance()));
+            this.resolve_theme(window, cx);
             cx.notify();
         }));
         subs.push(cx.observe_pending_input(window, Self::on_pending_input));
@@ -574,8 +579,6 @@ impl Shell {
             presented_tab: None,
             held_since: None,
             hold_timer: None,
-            font,
-            mono_font,
             key_hints: keymap::Hints::new(keymap.hints),
             keys: Installed {
                 stamp: keymap.stamp,
@@ -2372,6 +2375,22 @@ impl Shell {
     /// wakes the shell (whether or not the window can draw) and first in
     /// `render`, for what the user did since; a second call finds nothing
     /// new to apply.
+    /// The look again, from the settings and the desktop's style: what
+    /// was measured in a font that changed is measured again (the
+    /// preview's rows, as a text size change does, `inspector.rs`); the
+    /// rest is laid out in the theme's fonts as it is drawn.
+    fn resolve_theme(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let was = cx.global::<Theme>().families();
+        let theme = Theme::resolve(&self.app, window.appearance(), cx.text_system());
+        let now = theme.families();
+        cx.set_global(theme);
+        if now != was {
+            tracing::info!(ui = %now.ui, reading = %now.reading, code = %now.code, "fonts");
+            self.preview.inspection.remeasure();
+            cx.refresh_windows();
+        }
+    }
+
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let t0 = Instant::now();
         let report = self.app.pump_report();
@@ -2415,7 +2434,7 @@ impl Shell {
         let revision = self.app.settings.revision() + crate::desktop_style::revision();
         if revision != self.theme_revision {
             self.theme_revision = revision;
-            cx.set_global(Theme::resolve(&self.app, window.appearance()));
+            self.resolve_theme(window, cx);
             self.tag_colors = crate::tags::TagColors::read(&self.app);
             self.tag_fields = self
                 .app
@@ -2998,7 +3017,7 @@ impl Render for Shell {
             .size_full()
             .flex()
             .flex_col()
-            .font_family(self.font.clone())
+            .font_family(theme.font.clone())
             .text_sm()
             .bg(theme.bg)
             .text_color(theme.text)

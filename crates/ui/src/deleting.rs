@@ -571,7 +571,6 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
         return Vec::new();
     };
     let theme = cx.global::<Theme>();
-    let font = shell.font.clone();
     range
         .filter_map(|at| {
             let row = listed.rows.get(at)?;
@@ -633,7 +632,6 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                             .child(clipped(
                                 div().id(("deleting-name", at)).min_w_0().truncate(),
                                 row.name.clone(),
-                                font.clone(),
                             ))
                             .children(companions.map(|c| {
                                 div()
@@ -655,7 +653,6 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                                 .whitespace_nowrap()
                                 .text_ellipsis_middle(),
                             folder,
-                            font.clone(),
                         )
                     }))
                     .child(

@@ -46,23 +46,18 @@ impl Clip {
     pub fn tooltip(
         self,
         also: Option<SharedString>,
-        font: SharedString,
     ) -> impl Fn(&mut Window, &mut App) -> Option<AnyView> + 'static {
         move |_, cx| {
             let tip = self.says(also.as_ref())?;
-            Some(crate::toolbar::tooltip(tip, font.clone(), cx))
+            Some(crate::toolbar::tooltip(tip, cx))
         }
     }
 }
 
 /// `el` showing `text`, cut as `el`'s style says, and saying all of it in a
 /// tooltip while cut.
-pub fn clipped(
-    el: Stateful<Div>,
-    text: impl Into<SharedString>,
-    font: SharedString,
-) -> Stateful<Div> {
-    clipped_with(el, text, None, font)
+pub fn clipped(el: Stateful<Div>, text: impl Into<SharedString>) -> Stateful<Div> {
+    clipped_with(el, text, None)
 }
 
 /// `clipped` inside an element with a tooltip of its own, `also`: pointed
@@ -71,8 +66,7 @@ pub fn clipped_with(
     el: Stateful<Div>,
     text: impl Into<SharedString>,
     also: Option<SharedString>,
-    font: SharedString,
 ) -> Stateful<Div> {
     let (text, clip) = self::text(text);
-    el.optional_tooltip(clip.tooltip(also, font)).child(text)
+    el.optional_tooltip(clip.tooltip(also)).child(text)
 }

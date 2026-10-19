@@ -383,7 +383,7 @@ fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>
         // A tag's categories go back up to them; the tag itself opens the
         // pill's choices, as the rest of it does.
         let pill = if is_tag {
-            tag_segments(pill, i, &chip.segments, ink.opacity(0.7), pane, shell, cx)
+            tag_segments(pill, i, &chip.segments, ink.opacity(0.7), pane, cx)
         } else {
             pill
         };
@@ -450,7 +450,6 @@ fn tag_segments(
     segments: &[Segment],
     muted: gpui::Hsla,
     pane: PaneId,
-    shell: &Shell,
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
     for (j, segment) in segments.iter().enumerate() {
@@ -459,7 +458,6 @@ fn tag_segments(
         }
         pill = match segment.command.clone() {
             Some(up) => {
-                let font = shell.font.clone();
                 let tip: SharedString = format!("All of “{}”", segment.label).into();
                 pill.child(
                     div()
@@ -470,7 +468,7 @@ fn tag_segments(
                         .text_color(muted)
                         .cursor_pointer()
                         .hover(gpui::Styled::underline)
-                        .tooltip(move |_, cx| toolbar::tooltip(tip.clone(), font.clone(), cx))
+                        .tooltip(move |_, cx| toolbar::tooltip(tip.clone(), cx))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
                             this.activate_pane(pane, cx);
@@ -487,7 +485,6 @@ fn tag_segments(
                     .overflow_hidden()
                     .text_ellipsis(),
                 segment.label.clone(),
-                shell.font.clone(),
             )),
         };
     }

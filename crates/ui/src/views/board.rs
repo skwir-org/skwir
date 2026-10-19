@@ -410,7 +410,6 @@ fn card_element(
                         .id(("card-name", (look.id.at ^ look.id.file.ino) as usize))
                         .text_sm(),
                     look,
-                    shell,
                 ))
                 // A line of chips takes what its row leaves: under the
                 // name, a row of its own.

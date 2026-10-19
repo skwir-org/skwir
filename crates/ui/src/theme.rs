@@ -40,6 +40,11 @@
 //!   toasts, cards, dialogs), `rounded_full` for pills.
 //! - elevation: `shadow_md` for menus and popovers, `shadow_lg` for toasts
 //!   and dialogs; nothing else casts a shadow.
+//! - fonts: `font` for the interface, `reading_font` for the running text
+//!   of what is read, `code_font` for what is read a character at a time
+//!   (`fonts.rs`, ADR-073), resolved with the look; what is drawn names
+//!   one of them, never a family, and keeps no copy: a tooltip or a
+//!   window of its own reads the theme too.
 //! - spacing: multiples of 4 px; rows are 26 px, controls 28 px, bars 42 px
 //!   (a pane's row, the sidebar's header, the tab strip: their edges meet).
 //!
@@ -58,7 +63,7 @@
 //! token is derived here, or kept (`Kept`) when no desktop's colors
 //! change what it means; never a literal beside the others.
 
-use gpui::{Global, Hsla, WindowAppearance, rgb};
+use gpui::{Global, Hsla, SharedString, WindowAppearance, rgb};
 use skwir_platform::mime::Kind;
 
 use crate::color::{self, Oklab};
@@ -159,6 +164,12 @@ pub struct Theme {
     /// The colors code is drawn in and their look: skwir's own colors and
     /// look unless the Reading page chooses (`code_preview::CodeTheme`).
     pub code: crate::code_preview::CodeTheme,
+    /// The families skwir writes in, by role (`fonts.rs`, ADR-073): the
+    /// interface's, the running text of what is read, what is read a
+    /// character at a time. Read where it is drawn, never copied.
+    pub font: SharedString,
+    pub reading_font: SharedString,
+    pub code_font: SharedString,
 }
 
 fn palette(hex: [u32; 16]) -> [Hsla; 16] {
@@ -522,6 +533,9 @@ impl Theme {
                 contrast,
             },
             code: crate::code_preview::CodeTheme::own(base.dark),
+            font: crate::fonts::Families::default().ui,
+            reading_font: crate::fonts::Families::default().reading,
+            code_font: crate::fonts::Families::default().code,
         }
     }
 
@@ -609,6 +623,7 @@ impl Theme {
         }
         let mut other = Theme::of(dark, self.desktop);
         other.code = self.code.clone();
+        other.set_fonts(self.families());
         std::borrow::Cow::Owned(other)
     }
 
@@ -643,9 +658,29 @@ impl Theme {
         theme
     }
 
+    /// The families it writes in.
+    pub fn families(&self) -> crate::fonts::Families {
+        crate::fonts::Families {
+            ui: self.font.clone(),
+            reading: self.reading_font.clone(),
+            code: self.code_font.clone(),
+        }
+    }
+
+    pub fn set_fonts(&mut self, families: crate::fonts::Families) {
+        self.font = families.ui;
+        self.reading_font = families.reading;
+        self.code_font = families.code;
+    }
+
     /// The `ui.theme` preference, falling back to the desktop's appearance,
-    /// in what the desktop's style lends it (`desktop_style::colors`).
-    pub fn resolve(app: &skwir_core::App, appearance: WindowAppearance) -> Self {
+    /// in what the desktop's style lends it (`desktop_style::colors`), and
+    /// its fonts as `text` draws them (`fonts::resolve`).
+    pub fn resolve(
+        app: &skwir_core::App,
+        appearance: WindowAppearance,
+        text: &gpui::TextSystem,
+    ) -> Self {
         let dark = match app
             .settings
             .get::<String>(crate::settings::THEME_KEY)
@@ -660,6 +695,7 @@ impl Theme {
         };
         let mut theme = Theme::of(dark, crate::desktop_style::colors(&app.settings));
         theme.code = crate::code_preview::CodeTheme::chosen(app, theme.is_dark);
+        theme.set_fonts(crate::fonts::resolve(app, text));
         theme
     }
 }

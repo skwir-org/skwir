@@ -830,7 +830,6 @@ impl PaneView for UsageView {
 fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
-    let font = shell.font.clone();
     let summary = summary(&shell.ui().usage);
     let mode = shell.usage_mode;
     // The richest toolbar that fits: the count of levels between the
@@ -992,7 +991,6 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                 .text_color(theme.text_muted)
                 .truncate(),
             hint,
-            font,
         ))
         .into_any_element()
 }
@@ -1067,7 +1065,6 @@ fn tools(
                             .text_xs()
                             .truncate(),
                         summary.to_owned(),
-                        shell.font.clone(),
                     ),
                 ),
             ),

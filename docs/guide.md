@@ -396,10 +396,18 @@ own, listed under the others.
 On Linux, Skwir wears the accent color your desktop's settings name
 (GNOME's, or any desktop whose settings portal says one), and follows it
 when you change it there; Appearance › **Desktop colors** turns that off.
-**Desktop font**, beneath it, writes in your desktop's interface font
-from the next start. When your desktop asks for more contrast, Skwir's
-colors give it, whatever these say. Skwir's own controls stay as they
-are: it takes your colors, not another toolkit's look (ADR-071).
+When your desktop asks for more contrast, Skwir's colors give it,
+whatever these say. Skwir's own controls stay as they are: it takes your
+colors, not another toolkit's look (ADR-071).
+
+Skwir writes in three fonts, each **Automatic** or a family installed on
+your system (ADR-073): **Font** on Appearance, for its menus, lists, bars
+and dialogs; **Reading font** on Reading, for books, Markdown and HTML,
+documents and mail; **Code font**, beside it, for source and text files,
+code in documents, the byte view and the terminal, which offers the fonts
+whose letters are all one width. Automatic is the font your desktop's
+settings name for each (its interface, document and monospace fonts)
+while Desktop colors is on, else Skwir's own. A change shows at once.
 
 If the settings file cannot be read (edited by hand into something that
 is no longer TOML), Skwir starts with its defaults, keeps the file aside

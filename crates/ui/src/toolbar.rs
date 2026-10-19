@@ -114,15 +114,16 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
 /// The widest a tooltip grows: a long name (`elements::clip`) wraps.
 const TIP_MAX: f32 = 480.;
 
+/// A tooltip: a view of its own, drawn outside what it is the tooltip of,
+/// so it says its font itself (the theme's, ADR-073).
 struct Tip {
     text: SharedString,
-    font: SharedString,
 }
 impl Render for Tip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         div()
-            .font_family(self.font.clone())
+            .font_family(theme.font.clone())
             .text_xs()
             .text_color(theme.text)
             .bg(theme.surface)
@@ -136,8 +137,8 @@ impl Render for Tip {
             .child(self.text.clone())
     }
 }
-pub(crate) fn tooltip(text: SharedString, font: SharedString, cx: &mut App) -> AnyView {
-    cx.new(|_| Tip { text, font }).into()
+pub(crate) fn tooltip(text: SharedString, cx: &mut App) -> AnyView {
+    cx.new(|_| Tip { text }).into()
 }
 
 #[derive(Clone)]
@@ -268,7 +269,6 @@ impl Button {
     }
     pub fn render(self, shell: &Shell, cx: &mut Context<Shell>) -> Stateful<Div> {
         let theme = cx.global::<Theme>().clone();
-        let font = shell.font.clone();
         let pane = shell.pane;
         let command = self.command.clone();
         let args = self.args.clone();
@@ -385,7 +385,7 @@ impl Button {
                     .as_ref()
                     .and_then(|clip| clip.says(Some(&title)))
                     .unwrap_or_else(|| title.clone());
-                tooltip(tip, font.clone(), cx)
+                tooltip(tip, cx)
             })
             .when(menu && self.icon.is_empty(), |d| {
                 d.child(div().size(px(16.)).flex_none())

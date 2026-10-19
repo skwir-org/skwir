@@ -655,10 +655,7 @@ impl SettingsView {
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
             .child(controls::glyph("plus", theme.text_muted, 14.))
-            .tooltip({
-                let font = self.font.clone();
-                move |_, cx| crate::toolbar::tooltip("Add keys".into(), font.clone(), cx)
-            })
+            .tooltip(move |_, cx| crate::toolbar::tooltip("Add keys".into(), cx))
             .on_click(cx.listener({
                 let id = id.clone();
                 move |this, _, window, cx| {
@@ -682,12 +679,7 @@ impl SettingsView {
                 .cursor_pointer()
                 .hover(move |s| s.bg(hover))
                 .child(controls::glyph("revert", theme.text_muted, 14.))
-                .tooltip({
-                    let font = self.font.clone();
-                    move |_, cx| {
-                        crate::toolbar::tooltip("Back to skwir's keys".into(), font.clone(), cx)
-                    }
-                })
+                .tooltip(move |_, cx| crate::toolbar::tooltip("Back to skwir's keys".into(), cx))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
                     this.reset_keys(&id, window, cx);
@@ -777,7 +769,6 @@ impl SettingsView {
                 .collect();
             format!("{first}{}. {said}", chars.as_str()).into()
         };
-        let font = self.font.clone();
         let id = action.id();
         let target = chip.clone();
         div()
@@ -815,7 +806,7 @@ impl SettingsView {
                         .child(chip.conditions.clone()),
                 )
             })
-            .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), font.clone(), cx))
+            .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 this.keys.cursor = Some((id.clone(), n));

@@ -645,7 +645,7 @@ impl Shell {
             )
         });
         let grid = self.terminal_session().map(|session| {
-            let mut font = gpui::font(self.mono_font.clone());
+            let mut font = gpui::font(theme.code_font.clone());
             // Glyphs sit one per cell: a ligature would shift the rest.
             font.features =
                 gpui::FontFeatures(Arc::new(vec![("calt".into(), 0), ("liga".into(), 0)]));
@@ -673,10 +673,9 @@ impl Shell {
         // Where a link a program wrote leads, said before it is followed:
         // its text may say something else.
         let tip = {
-            let (grid, font) = (Rc::clone(&self.terminal.grid), self.font.clone());
+            let grid = Rc::clone(&self.terminal.grid);
             move |_: &mut Window, cx: &mut gpui::App| {
-                grid.tip()
-                    .map(|tip| crate::toolbar::tooltip(tip, font.clone(), cx))
+                grid.tip().map(|tip| crate::toolbar::tooltip(tip, cx))
             }
         };
         let edge = crate::elements::edge::edge(

@@ -111,7 +111,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                         .truncate()
                         .text_color(theme.text_muted),
                     title.clone(),
-                    shell.font.clone(),
                 )),
         );
     }

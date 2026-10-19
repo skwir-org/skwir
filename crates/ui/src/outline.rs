@@ -45,16 +45,12 @@ pub fn drawer(
                 gpui::uniform_list(
                     "outline-rows",
                     count,
-                    cx.processor(
-                        move |shell: &mut Shell, range: std::ops::Range<usize>, _, cx| {
-                            let theme = cx.global::<Theme>().clone();
-                            range
-                                .map(|index| {
-                                    row(&entries[index], index, &closing, shell, &theme, cx)
-                                })
-                                .collect::<Vec<_>>()
-                        },
-                    ),
+                    cx.processor(move |_: &mut Shell, range: std::ops::Range<usize>, _, cx| {
+                        let theme = cx.global::<Theme>().clone();
+                        range
+                            .map(|index| row(&entries[index], index, &closing, &theme, cx))
+                            .collect::<Vec<_>>()
+                    }),
                 )
                 .flex_1()
                 .p_2(),
@@ -101,7 +97,6 @@ fn row(
     entry: &Entry,
     index: usize,
     close: &(&'static str, serde_json::Value),
-    shell: &Shell,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -109,7 +104,7 @@ fn row(
     let (title, clip) = crate::elements::clip::text(entry.title.clone());
     div()
         .id(("outline-entry", index))
-        .optional_tooltip(clip.tooltip(None, shell.font.clone()))
+        .optional_tooltip(clip.tooltip(None))
         .pl(px(entry.depth.min(12) as f32 * 10. + 8.))
         .py_1()
         .rounded_md()

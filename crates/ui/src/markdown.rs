@@ -62,6 +62,9 @@ pub struct MarkdownStyle {
     /// The widest the text column may be, when reading asks for a measure.
     pub measure: Option<f32>,
     pub reading: bool,
+    /// The family the blocks are written in, when not the interface's:
+    /// the reading font, for what is read (`Theme::reading_font`).
+    pub font: Option<SharedString>,
     /// The found link under the pointer while Ctrl (Cmd) is held: the text
     /// it is drawn in and its range there, drawn and followed as a link
     /// this frame (`links.rs`).
@@ -141,6 +144,7 @@ impl MarkdownStyle {
             placeholder: theme.surface,
             measure: measure.filter(|_| reading).map(|ems| body_size * ems),
             reading,
+            font: None,
             armed_link: None,
             labels: None,
             label_text: theme.on_accent,
@@ -211,7 +215,11 @@ pub fn block(
     entity: WeakEntity<crate::shell::Shell>,
 ) -> AnyElement {
     let id = ("inspect-block", index);
-    let mut row = div().id(id).w_full().px(px(style.page_padding));
+    let mut row = div()
+        .id(id)
+        .w_full()
+        .px(px(style.page_padding))
+        .when_some(style.font.clone(), gpui::Styled::font_family);
     row = if block.kind == BlockKind::Rule {
         row.py(px(style.section_spacing))
     } else if block.heading > 0 {

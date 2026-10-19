@@ -1263,7 +1263,6 @@ fn breadcrumbs(
     )>,
                    cx: &mut Context<Shell>| {
         let shown = open == Some(&what) || above.as_ref().is_some_and(|(a, ..)| open == Some(a));
-        let font = shell.font.clone();
         let hover = theme.hover;
         let hidden = {
             let in_sight = in_sight.clone();
@@ -1292,7 +1291,7 @@ fn breadcrumbs(
                     Some((_, _, above)) if hidden() => above.clone(),
                     _ => tip.clone(),
                 };
-                toolbar::tooltip(tip, font.clone(), cx)
+                toolbar::tooltip(tip, cx)
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
@@ -1377,7 +1376,7 @@ fn breadcrumbs(
                 d.aria_label(crumb.label.clone())
                     .when(index == last, |d| d.aria_selected(true))
             })
-            .optional_tooltip(clip.tooltip(None, shell.font.clone()))
+            .optional_tooltip(clip.tooltip(None))
             .max_w(px(260.))
             .px(px(6.))
             .flex()

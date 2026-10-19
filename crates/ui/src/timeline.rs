@@ -365,7 +365,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 .text_color(theme.text_muted)
                 .truncate(),
             info,
-            shell.font.clone(),
         ));
 
     let mut bars_row = div()

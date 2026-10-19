@@ -1444,7 +1444,6 @@ pub(crate) fn audio_figure(
     title: String,
     picture: AnyElement,
     also: Option<&'static str>,
-    font: &gpui::SharedString,
     theme: &Theme,
 ) -> gpui::Div {
     let line = |id: &'static str, text: String| {
@@ -1452,7 +1451,6 @@ pub(crate) fn audio_figure(
             div().id(id).flex_none().max_w_full().truncate(),
             text,
             also.map(gpui::SharedString::from),
-            font.clone(),
         )
     };
     div()
@@ -1498,7 +1496,7 @@ pub fn audio_content(
         .playing_path()
         .map(|path| track_title(&p.media.state, &path))
         .unwrap_or_default();
-    let figure = audio_figure(&p.media.state, title, square, None, &shell.font, theme);
+    let figure = audio_figure(&p.media.state, title, square, None, theme);
     if interactive {
         clickable("audio-surface", figure, Flash::Preview, cx).into_any_element()
     } else {
