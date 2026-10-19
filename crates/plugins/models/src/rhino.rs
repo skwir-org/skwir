@@ -1,11 +1,14 @@
 //! Rhino models (`.3dm`, openNURBS): the preview Rhino stores when it
-//! saves, and the application that wrote the file. A 3dm file is a
+//! saves, and the application that wrote the file; turned in 3D, or drawn
+//! when it stores no preview, from the meshes it keeps of its surfaces, by
+//! `skwir-model-worker`. A 3dm file is a
 //! 32-byte header then chunks, each a type code and a length (4 bytes
 //! before version 5, 8 since); the properties table near the start holds
 //! the preview, a Windows bitmap whose pixels are zlib-compressed.
 use crate::Found;
 use skwir_core::CancelToken;
 use skwir_platform::inspection::{self, limits};
+use skwir_platform::model::{Asked, MeshFormat};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -54,8 +57,40 @@ fn length(bytes: &[u8]) -> Option<usize> {
     usize::try_from(value).ok()
 }
 
-/// A Rhino model.
-pub fn read(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
+/// A Rhino model: its stored preview while `picture_first`, else its
+/// meshes, drawn or turned, with what it says of itself.
+pub fn read(
+    path: &Path,
+    side: u32,
+    asked: Asked,
+    picture_first: bool,
+    cancel: &CancelToken,
+) -> anyhow::Result<Found> {
+    let mut found = properties(path, side, cancel)?;
+    let worker = skwir_platform::model::worker_path().is_some();
+    let turned = matches!(asked, Asked::Turned { .. }) && !picture_first;
+    if (found.picture.is_some() && !turned) || !worker {
+        found.mesh_available = worker;
+        return Ok(found);
+    }
+    match crate::mesh::read(path, MeshFormat::Rhino, side, asked, cancel) {
+        Ok(mut drawn) => {
+            found.details.append(&mut drawn.details);
+            drawn.details = found.details;
+            Ok(drawn)
+        }
+        // A thumbnail asked again once the helper has a turn.
+        Err(error) if error.is::<skwir_core::thumbs::Busy>() => Err(error),
+        // Nothing stored to draw: the preview, saying why.
+        Err(error) => Ok(Found {
+            notice: Some(format!("{error:#}")),
+            ..found
+        }),
+    }
+}
+
+/// What the file says of itself, and the preview it stores.
+fn properties(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
     let mut file = inspection::open(path)?;
     let mut header = [0u8; 32];
     file.read_exact(&mut header)?;
@@ -270,7 +305,7 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a part’s model.3dm");
         std::fs::write(&path, model(5, 3)).unwrap();
-        let found = read(&path, 1600, &CancelToken::new()).unwrap();
+        let found = properties(&path, 1600, &CancelToken::new()).unwrap();
         let picture = found.picture.as_ref().expect("the preview");
         assert_eq!((picture.width, picture.height), (5, 3));
         // Rows run bottom-up: the last one written is the top.
@@ -293,10 +328,10 @@ pub(crate) mod tests {
         bytes.truncate(bytes.len() / 2);
         std::fs::write(&path, &bytes).unwrap();
         // The properties table ends past the file: nothing is read.
-        assert!(read(&path, 1600, &CancelToken::new()).is_err());
+        assert!(properties(&path, 1600, &CancelToken::new()).is_err());
         std::fs::write(&path, b"3D Geometry File Format  nothing").unwrap();
-        assert!(read(&path, 1600, &CancelToken::new()).is_err());
+        assert!(properties(&path, 1600, &CancelToken::new()).is_err());
         std::fs::write(&path, b"not a model at all, not a model at all").unwrap();
-        assert!(read(&path, 1600, &CancelToken::new()).is_err());
+        assert!(properties(&path, 1600, &CancelToken::new()).is_err());
     }
 }

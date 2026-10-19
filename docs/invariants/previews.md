@@ -162,6 +162,28 @@ A name that says nothing is not a binary file.
   the model's folder, and returns a line of measures and a PNG. Without
   the helper the plugin declines the mesh, leaving it to a desktop
   thumbnailer.
+- **A model of exact surfaces is meshed in the helper** (STEP, by ogeom,
+  ADR-069):
+  - each face keeps its own points: smooth shading averages normals at
+    shared positions, which would round a CAD edge;
+  - whether it is watertight, and its volume, are measured on the mesh
+    the kernel welds of the same faces, never on the faces as drawn,
+    whose edges meet only within the file's tolerance;
+  - a face that cannot be meshed is counted (`faces_missing`) and the
+    preview says so: a hole is never shown as the shape without a word;
+  - its bound is a file's (`Bounds::binary_input`), checked before the
+    helper runs: what the helper holds grows with the file, not with the
+    triangles.
+- **A model that keeps meshes of its surfaces** (Rhino) gives those
+  meshes, nothing computed:
+  - the helper reads it a chunk at a time, what is not a mesh, a material,
+    a layer or a block passed over by its length, never read whole;
+  - what Rhino hides is not drawn: hidden objects, layers off (with their
+    parents), a block's members but where an instance places them;
+  - colours are the rendered view's (vertices, B-rep faces, materials),
+    never a layer's display colour;
+  - an object shown that stores no mesh is counted (`objects_missing`)
+    and said; a model with none shows its picture with the reason.
 - **A window that draws meshes turns them** (ADR-067). The preview asks
   for the mesh only where the window draws them on a GPU
   (`Shell::draws_meshes`: `Window::draws_meshes`, and no software

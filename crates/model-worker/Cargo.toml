@@ -20,6 +20,16 @@ base64 = "0.22"
 # 3MF packages: the zip and XML readers already in the tree.
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 quick-xml = "0.42"
+# Rhino models' compressed buffers; the zip reader's zlib already.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+# STEP: read and meshed by ogeom, pure Rust (ADR-069).
+ogeom-algo = "0.9.16"
+ogeom-core = "0.9.16"
+ogeom-doc = "0.9.16"
+ogeom-io = "0.9.16"
+ogeom-math = "0.9.16"
+ogeom-mesh = "0.9.16"
+ogeom-topo = "0.9.16"
 
 [dev-dependencies]
 tempfile.workspace = true

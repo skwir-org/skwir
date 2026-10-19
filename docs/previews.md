@@ -341,11 +341,33 @@ The player, in the panel or pinned at its foot:
   ellipses, splines, solids, hatches, text and inserted blocks
   (dimensions among them). Properties gives the size in the drawing's unit,
   entities and blocks. A DXF over 32 MiB shows its stored picture, if
-  any.
+  any, and says so; Full preview draws it.
 - **Meshes** that store no picture (STL, OBJ, PLY, OFF, glTF and GLB, a
   3MF its slicer did not picture) are read by `skwir-model-worker` and
   measured: size, volume, whether they are watertight, triangles and
   objects. An STL is read in millimetres, as slicers read it.
+- **STEP** models (AP203, AP214, AP242) are read by the same helper,
+  with ogeom (ADR-069), and shown and measured as meshes are: each part
+  where the file's assembly places it, its faces in the colours the file
+  gives them, smooth within a curved face and sharp along the edges
+  between faces, in the file's unit.
+  - Properties adds the protocol, the program that wrote the file and
+    its faces. A face that cannot be meshed is left out and the panel
+    says so ("2 of 387 faces could not be drawn"), so a hole is never
+    taken for the shape.
+  - A STEP file over 16 MiB is drawn by Full preview, up to 128 MiB. A
+    file that holds only triangles (AP242's tessellated geometry) is not
+    read.
+- **Rhino** models show the picture Rhino stored; **3D** turns the meshes
+  the file keeps of its shapes: mesh objects and the render meshes of
+  B-reps and extrusions, placed by block instances, on the layers shown.
+  - They are drawn in their vertices', faces' or materials' colours, as
+    Rhino's Rendered view shows them; a layer's display colour (black by
+    default) is for wires and is not used.
+  - Rhino stores a render mesh only for what it showed shaded, never for a
+    SubD, and Save Small leaves them out: such objects are not drawn, and
+    the panel says how many. A model that stores none keeps its picture
+    and says why. Rhino 1 models, and Rhino 2's own B-reps, are not read.
   - The panel turns them in 3D, drawn by the graphics card: drag to
     turn, `Shift`+drag or the middle button to move, the wheel to zoom.
     Once clicked, the arrows turn it, `Shift` and the arrows move it,
@@ -359,7 +381,8 @@ The player, in the panel or pinned at its foot:
     rather than each flat.
   - A model's own colours are drawn, turned or still: PLY's and OBJ's
     point colours, glTF's materials and point colours, 3MF's materials
-    and colour groups. Textures are not.
+    and colour groups, STEP's styles, Rhino's (below). Textures are
+    not.
   - Without a graphics card, and in the grid, they are drawn from the
     front, right and above. A model larger than the graphics card can hold
     says so: 3D shows its picture again.
@@ -376,8 +399,8 @@ The player, in the panel or pinned at its foot:
   the SketchUp or Rhino version and a model's scenes or a LayOut
   document's pages, a print's time, filament, material, layer height,
   printer and slicer, a drawing's DWG or DXF version.
-- Other models (STEP, IGES…) are shown when an installed thumbnailer
-  (f3d, Blender) claims their type, isolated like picture thumbnailers.
+- Other models (IGES…) are shown when an installed thumbnailer (f3d,
+  Blender) claims their type, isolated like picture thumbnailers.
 
 ### Circuit boards (`circuits`)
 

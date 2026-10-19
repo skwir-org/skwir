@@ -482,9 +482,23 @@ fn whole(
     Vec<[u32; 3]>,
     Vec<[u8; 4]>,
 ) {
+    whole_up_to(path, format, 1000)
+}
+
+/// As `whole`, for a mesh of up to `most` triangles.
+fn whole_up_to(
+    path: &Path,
+    format: &str,
+    most: usize,
+) -> (
+    serde_json::Value,
+    Vec<[f32; 3]>,
+    Vec<[u32; 3]>,
+    Vec<[u8; 4]>,
+) {
     let output = Command::new(env!("CARGO_BIN_EXE_skwir-model-worker"))
         .arg(path)
-        .args(["--format", format, "--mesh", "1000"])
+        .args(["--format", format, "--mesh", &most.to_string()])
         .output()
         .unwrap();
     assert!(
@@ -595,6 +609,171 @@ fn a_coloured_still_is_drawn_in_its_colours() {
     assert!(r > 100 && r > 3 * g && r > 3 * b, "{r} {g} {b}");
 }
 
+/// A cylinder `radius` across and `height` tall, standing on the origin, as
+/// a CAD program exports it: a closed shell of a plane, a cylinder and a
+/// plane, its length unit millimetres or inches. The solid is red, its top
+/// face blue.
+fn step_cylinder(radius: f64, height: f64, inches: bool) -> String {
+    let unit = if inches {
+        "#1=( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) );\n\
+         #2=DIMENSIONAL_EXPONENTS(1.,0.,0.,0.,0.,0.,0.);\n\
+         #3=LENGTH_MEASURE_WITH_UNIT(LENGTH_MEASURE(25.4),#1);\n\
+         #4=( CONVERSION_BASED_UNIT('INCH',#3) LENGTH_UNIT() NAMED_UNIT(#2) );\n"
+    } else {
+        "#4=( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) );\n"
+    };
+    let (r, h) = (format!("{radius:?}"), format!("{height:?}"));
+    let style = |first: usize, rgb: &str, item: usize| {
+        let n = |k: usize| first + k;
+        format!(
+            "#{}=COLOUR_RGB('',{rgb});\n#{}=FILL_AREA_STYLE_COLOUR('',#{});\n\
+             #{}=FILL_AREA_STYLE('',(#{}));\n#{}=SURFACE_STYLE_FILL_AREA(#{});\n\
+             #{}=SURFACE_SIDE_STYLE('',(#{}));\n#{}=SURFACE_STYLE_USAGE(.BOTH.,#{});\n\
+             #{}=PRESENTATION_STYLE_ASSIGNMENT((#{}));\n#{}=STYLED_ITEM('',(#{}),#{item});\n",
+            n(0),
+            n(1),
+            n(0),
+            n(2),
+            n(1),
+            n(3),
+            n(2),
+            n(4),
+            n(3),
+            n(5),
+            n(4),
+            n(6),
+            n(5),
+            n(7),
+            n(6),
+        )
+    };
+    let red = style(56, "1.,0.,0.", 53);
+    let blue = style(64, "0.,0.,1.", 51);
+    "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\n\
+     FILE_NAME('cylinder','2026-10-19T00:00:00',(''),(''),'','skwir test','');\n\
+     FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\nENDSEC;\nDATA;\n"
+        .to_owned()
+        + unit
+        + &format!(
+            "#5=( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#6=( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+#7=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-7),#4,'distance_accuracy_value','confusion accuracy');
+#8=( GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#7)) GLOBAL_UNIT_ASSIGNED_CONTEXT((#4,#5,#6)) REPRESENTATION_CONTEXT('','3D') );
+#9=APPLICATION_CONTEXT('automotive design');
+#10=APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,#9);
+#11=PRODUCT_CONTEXT('',#9,'mechanical');
+#12=PRODUCT_DEFINITION_CONTEXT('part definition',#9,'design');
+#13=PRODUCT('cylinder','cylinder','',(#11));
+#14=PRODUCT_DEFINITION_FORMATION('','',#13);
+#15=PRODUCT_DEFINITION('design','',#14,#12);
+#16=PRODUCT_DEFINITION_SHAPE('','',#15);
+#17=CARTESIAN_POINT('',(0.,0.,0.));
+#18=DIRECTION('',(0.,0.,1.));
+#19=DIRECTION('',(1.,0.,0.));
+#20=AXIS2_PLACEMENT_3D('',#17,#18,#19);
+#21=CIRCLE('',#20,{r});
+#22=CARTESIAN_POINT('',({r},0.,0.));
+#23=VERTEX_POINT('',#22);
+#24=EDGE_CURVE('',#23,#23,#21,.T.);
+#25=CARTESIAN_POINT('',(0.,0.,{h}));
+#26=AXIS2_PLACEMENT_3D('',#25,#18,#19);
+#27=CIRCLE('',#26,{r});
+#28=CARTESIAN_POINT('',({r},0.,{h}));
+#29=VERTEX_POINT('',#28);
+#30=EDGE_CURVE('',#29,#29,#27,.T.);
+#31=PLANE('',#20);
+#32=ORIENTED_EDGE('',*,*,#24,.F.);
+#33=EDGE_LOOP('',(#32));
+#34=FACE_OUTER_BOUND('',#33,.T.);
+#35=ADVANCED_FACE('',(#34),#31,.F.);
+#36=CYLINDRICAL_SURFACE('',#20,{r});
+#37=VECTOR('',#18,{h});
+#38=LINE('',#22,#37);
+#39=EDGE_CURVE('',#23,#29,#38,.T.);
+#40=ORIENTED_EDGE('',*,*,#24,.T.);
+#41=ORIENTED_EDGE('',*,*,#39,.T.);
+#42=ORIENTED_EDGE('',*,*,#30,.F.);
+#43=ORIENTED_EDGE('',*,*,#39,.F.);
+#44=EDGE_LOOP('',(#40,#41,#42,#43));
+#45=FACE_OUTER_BOUND('',#44,.T.);
+#46=ADVANCED_FACE('',(#45),#36,.T.);
+#47=PLANE('',#26);
+#48=ORIENTED_EDGE('',*,*,#30,.T.);
+#49=EDGE_LOOP('',(#48));
+#50=FACE_OUTER_BOUND('',#49,.T.);
+#51=ADVANCED_FACE('',(#50),#47,.T.);
+#52=CLOSED_SHELL('',(#35,#46,#51));
+#53=MANIFOLD_SOLID_BREP('',#52);
+#54=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#20,#53),#8);
+#55=SHAPE_DEFINITION_REPRESENTATION(#16,#54);
+{red}{blue}#72=MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION('',(#63,#71),#8);
+ENDSEC;
+END-ISO-10303-21;
+"
+        )
+}
+
+#[test]
+fn a_step_model_is_meshed_in_its_unit_and_its_colours() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        "a part’s cylinder.stp",
+        step_cylinder(10., 30., false).as_bytes(),
+    );
+    let answer = run(&path, "step", &[]).unwrap();
+    assert_eq!(answer.facts["unit"], "mm");
+    assert_eq!(size(&answer), [20., 20., 30.]);
+    assert_eq!(answer.facts["faces"], 3);
+    assert_eq!(answer.facts["faces_missing"], 0);
+    assert_eq!(answer.facts["objects"], 1);
+    // Closed, though each face keeps its own points: π r² h within the
+    // mesh's chord.
+    assert_eq!(answer.facts["closed"], true);
+    let volume = answer.facts["volume"].as_f64().unwrap();
+    let exact = std::f64::consts::PI * 100. * 30.;
+    assert!((volume / exact - 1.).abs() < 0.01, "{volume} for {exact}");
+
+    // Each face in its colour: the side and the bottom the solid's red,
+    // the top its own blue; every corner of a triangle one face's.
+    let (said, positions, triangles, colours) = whole_up_to(&path, "step", 100_000);
+    assert_eq!(said["mesh"], true);
+    let red = [255, 0, 0, 255];
+    let blue = [0, 0, 255, 255];
+    for (triangle, corners) in triangles.iter().zip(corner_colours(&triangles, &colours)) {
+        assert!(corners.iter().all(|c| *c == corners[0]));
+        let top = triangle
+            .iter()
+            .all(|&i| (positions[i as usize][2] - 30.).abs() < 1e-4);
+        assert_eq!(corners[0], if top { blue } else { red });
+    }
+    assert!(colours.contains(&blue) && colours.contains(&red));
+
+    // The same part written in inches is measured in inches.
+    let path = write(
+        dir.path(),
+        "inches.step",
+        step_cylinder(10., 30., true).as_bytes(),
+    );
+    let answer = run(&path, "step", &[]).unwrap();
+    assert_eq!(answer.facts["unit"], "in");
+    assert_eq!(size(&answer), [20., 20., 30.]);
+}
+
+#[test]
+fn what_is_not_a_step_model_is_refused_with_a_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        "not.step",
+        b"ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\n",
+    );
+    let error = run(&path, "step", &[]).unwrap_err();
+    assert!(error.contains("STEP"), "{error}");
+    let path = write(dir.path(), "noise.step", &[0xff; 64]);
+    assert!(run(&path, "step", &[]).is_err());
+}
+
 fn base64_of(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
@@ -612,4 +791,360 @@ fn base64_of(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+/// A Rhino 5 model (archive 50) built as openNURBS writes one: 8-byte
+/// chunk lengths, a chunk's CRC left zero (not read).
+mod rhino_file {
+    const SHORT: u32 = 0x8000_0000;
+    const CRC: u32 = 0x8000;
+    pub const MESH: [u8; 16] = id(
+        0x4ED7_D4E4,
+        0xE947,
+        0x11D3,
+        [0xBF, 0xE5, 0, 0x10, 0x83, 1, 0x22, 0xF0],
+    );
+    pub const BREP: [u8; 16] = id(
+        0x60B5_DBC5,
+        0xE660,
+        0x11D3,
+        [0xBF, 0xE4, 0, 0x10, 0x83, 1, 0x22, 0xF0],
+    );
+    pub const INSTANCE: [u8; 16] = id(
+        0xF9CF_B638,
+        0xB9D4,
+        0x4340,
+        [0x87, 0xE3, 0xC5, 0x6E, 0x78, 0x65, 0xD9, 0x6A],
+    );
+    /// A class openNURBS does not check here: a layer's, a material's.
+    const ANY: [u8; 16] = [7; 16];
+
+    pub const fn id(a: u32, b: u16, c: u16, d: [u8; 8]) -> [u8; 16] {
+        let (a, b, c) = (a.to_le_bytes(), b.to_le_bytes(), c.to_le_bytes());
+        [
+            a[0], a[1], a[2], a[3], b[0], b[1], c[0], c[1], d[0], d[1], d[2], d[3], d[4], d[5],
+            d[6], d[7],
+        ]
+    }
+
+    pub fn chunk(code: u32, body: &[u8]) -> Vec<u8> {
+        let crc = if code & CRC != 0 { 4 } else { 0 };
+        let mut out = code.to_le_bytes().to_vec();
+        out.extend(((body.len() + crc) as u64).to_le_bytes());
+        out.extend(body);
+        out.extend(vec![0; crc]);
+        out
+    }
+
+    fn short(code: u32, value: u64) -> Vec<u8> {
+        let mut out = (code | SHORT).to_le_bytes().to_vec();
+        out.extend(value.to_le_bytes());
+        out
+    }
+
+    fn anonymous(body: &[u8]) -> Vec<u8> {
+        chunk(0x4000_8000, body)
+    }
+
+    /// Two version numbers, then `body`, in an anonymous chunk.
+    fn versioned(body: &[u8]) -> Vec<u8> {
+        anonymous(&[&1i32.to_le_bytes()[..], &0i32.to_le_bytes(), body].concat())
+    }
+
+    pub fn object(class: [u8; 16], data: &[u8]) -> Vec<u8> {
+        chunk(
+            0x0002_7FFA,
+            &[
+                chunk(0x0002_FFFB, &class),
+                chunk(0x0002_FFFC, data),
+                short(0x0002_7FFF, 0),
+            ]
+            .concat(),
+        )
+    }
+
+    /// An `ON_Mesh` of version 3.5: quads (a triangle repeats its third
+    /// corner), its vertices and colours stored uncompressed.
+    pub fn mesh(points: &[[f32; 3]], faces: &[[u32; 4]], colours: Option<&[[u8; 4]]>) -> Vec<u8> {
+        let mut out = vec![0x35];
+        out.extend(i32::try_from(points.len()).unwrap().to_le_bytes());
+        out.extend(i32::try_from(faces.len()).unwrap().to_le_bytes());
+        out.extend([0; 148 + 5]);
+        out.extend(4i32.to_le_bytes());
+        out.extend(faces.iter().flatten().flat_map(|i| i.to_le_bytes()));
+        let buffer = |bytes: Vec<u8>| {
+            let mut out = (bytes.len() as u32).to_le_bytes().to_vec();
+            if !bytes.is_empty() {
+                out.extend([0; 4]);
+                out.push(0);
+                out.extend(bytes);
+            }
+            out
+        };
+        out.extend(buffer(
+            points
+                .iter()
+                .flatten()
+                .flat_map(|v| v.to_le_bytes())
+                .collect(),
+        ));
+        for _ in 0..3 {
+            out.extend(buffer(Vec::new()));
+        }
+        out.extend(buffer(
+            colours
+                .unwrap_or_default()
+                .iter()
+                .flatten()
+                .copied()
+                .collect(),
+        ));
+        out
+    }
+
+    /// An `ON_Brep` of version 3.2: its curves, surfaces and topology empty,
+    /// a face for each of `meshes`, then those meshes (`None`: none stored).
+    pub fn brep(meshes: &[Option<Vec<u8>>]) -> Vec<u8> {
+        let mut out = vec![0x32];
+        for _ in 0..7 {
+            out.extend(anonymous(&[0x10]));
+        }
+        let mut faces = vec![0x10];
+        faces.extend(i32::try_from(meshes.len()).unwrap().to_le_bytes());
+        for i in 0..meshes.len() {
+            for value in [i32::try_from(i).unwrap(), 0, 0, 0, 0] {
+                faces.extend(value.to_le_bytes());
+            }
+        }
+        out.extend(anonymous(&faces));
+        out.extend([0; 48]);
+        let mut render = Vec::new();
+        for mesh in meshes {
+            match mesh {
+                Some(mesh) => {
+                    render.push(1);
+                    render.extend(object(MESH, mesh));
+                }
+                None => render.push(0),
+            }
+        }
+        out.extend(anonymous(&render));
+        out
+    }
+
+    /// Version 2.1 attributes: an id, a layer, then items.
+    pub fn attributes(
+        id: u8,
+        layer: i32,
+        material: Option<i32>,
+        mode: u8,
+        visible: bool,
+    ) -> Vec<u8> {
+        let mut out = vec![0x21];
+        out.extend([id; 16]);
+        out.extend(layer.to_le_bytes());
+        if let Some(material) = material {
+            out.push(4);
+            out.extend(material.to_le_bytes());
+        }
+        if !visible {
+            out.extend([11, 0]);
+        }
+        if mode != 0 {
+            out.extend([12, mode]);
+        }
+        if material.is_some() {
+            out.extend([16, 1]);
+        }
+        out.push(0);
+        out
+    }
+
+    pub fn record(object: &[u8], attributes: &[u8]) -> Vec<u8> {
+        chunk(
+            0x2000_8070,
+            &[
+                short(0x0200_0071, 32),
+                object.to_vec(),
+                chunk(0x0200_8072, attributes),
+                short(0x0200_007F, 0),
+            ]
+            .concat(),
+        )
+    }
+
+    /// A layer of version 1.1: its index, material and visibility.
+    pub fn layer(index: i32, visible: bool) -> Vec<u8> {
+        let mut data = vec![0x11];
+        for value in [0, index, 0, -1, 0] {
+            data.extend(value.to_le_bytes());
+        }
+        data.extend([0; 4 + 2 + 2 + 8 + 8]);
+        data.extend(0u32.to_le_bytes());
+        data.push(u8::from(visible));
+        chunk(0x2000_8050, &object(ANY, &data))
+    }
+
+    /// A material of version 2 (Rhino 4 and 5): its index and diffuse
+    /// colour.
+    pub fn material(index: i32, diffuse: [u8; 3]) -> Vec<u8> {
+        let mut inside = vec![0; 16];
+        inside.extend(index.to_le_bytes());
+        inside.extend(0u32.to_le_bytes());
+        inside.extend([0; 16]);
+        inside.extend([0, 0, 0, 0]);
+        inside.extend([diffuse[0], diffuse[1], diffuse[2], 0]);
+        let data = [&[0x20][..], &versioned(&inside)].concat();
+        chunk(0x2000_8040, &object(ANY, &data))
+    }
+
+    /// A block definition of Rhino 5's layout: its id and members.
+    pub fn definition(id: u8, members: &[u8]) -> Vec<u8> {
+        let mut data = vec![0x10];
+        data.extend([id; 16]);
+        data.extend((members.len() as u32).to_le_bytes());
+        for member in members {
+            data.extend([*member; 16]);
+        }
+        chunk(0x2000_8076, &object(ANY, &data))
+    }
+
+    /// A block instance: its definition, and the matrix placing it, rows
+    /// of one that maps column vectors.
+    pub fn instance(definition: u8, matrix: [[f64; 4]; 4]) -> Vec<u8> {
+        let mut data = vec![0x10];
+        data.extend([definition; 16]);
+        data.extend(matrix.iter().flatten().flat_map(|v| v.to_le_bytes()));
+        object(INSTANCE, &data)
+    }
+
+    pub fn table(code: u32, records: &[Vec<u8>]) -> Vec<u8> {
+        chunk(code, &[records.concat(), short(0xFFFF_FFFF, 0)].concat())
+    }
+
+    /// The file: its header, a comment, its tables, its end.
+    pub fn file(tables: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = b"3D Geometry File Format       50".to_vec();
+        out.extend(chunk(1, b"made by a test"));
+        out.extend(table(0x1000_0014, &[short(0x2000_0026, 201_005_000)]));
+        // Millimetres.
+        out.extend(table(
+            0x1000_0015,
+            &[chunk(
+                0x2000_8031,
+                &[100i32.to_le_bytes(), 2i32.to_le_bytes()].concat(),
+            )],
+        ));
+        for table in tables {
+            out.extend(table);
+        }
+        let length = out.len() as u64 + 12 + 8;
+        out.extend(chunk(0x7FFF, &length.to_le_bytes()));
+        out
+    }
+}
+
+#[test]
+fn a_rhino_model_draws_the_meshes_it_stores_as_rhino_shows_them() {
+    use rhino_file::*;
+    let square = mesh(
+        &[[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.]],
+        &[[0, 1, 2, 3]],
+        None,
+    );
+    let triangle = |z: f32| {
+        mesh(
+            &[[0., 0., z], [1., 0., z], [0., 1., z]],
+            &[[0, 1, 2, 2]],
+            Some(&[[0, 0, 255, 0]; 3]),
+        )
+    };
+    let objects = [
+        // A square in the object's own material.
+        record(&object(MESH, &square), &attributes(1, 0, Some(5), 0, true)),
+        // A B-rep with one face meshed and one not.
+        record(
+            &object(BREP, &brep(&[Some(triangle(2.)), None])),
+            &attributes(2, 0, None, 0, true),
+        ),
+        // A B-rep saved small: drawn by none, said.
+        record(
+            &object(BREP, &brep(&[None, None])),
+            &attributes(3, 0, None, 0, true),
+        ),
+        // On a hidden layer, and hidden itself: not drawn.
+        record(
+            &object(MESH, &triangle(9.)),
+            &attributes(4, 1, None, 0, true),
+        ),
+        record(
+            &object(MESH, &triangle(9.)),
+            &attributes(5, 0, None, 0, false),
+        ),
+        // A block's member, drawn only where an instance places it: there
+        // mirrored across X and moved 10 along it.
+        record(
+            &object(MESH, &triangle(4.)),
+            &attributes(6, 0, None, 3, true),
+        ),
+        record(
+            &instance(
+                8,
+                [
+                    [-1., 0., 0., 10.],
+                    [0., 1., 0., 0.],
+                    [0., 0., 1., 0.],
+                    [0., 0., 0., 1.],
+                ],
+            ),
+            &attributes(7, 0, None, 0, true),
+        ),
+    ];
+    let bytes = file(&[
+        table(0x1000_0010, &[material(5, [255, 0, 0])]),
+        table(0x1000_0011, &[layer(0, true), layer(1, false)]),
+        table(0x1000_0021, &[definition(8, &[6])]),
+        table(0x1000_0013, &objects),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "a part’s model.3dm", &bytes);
+    let answer = run(&path, "3dm", &[]).unwrap();
+    assert_eq!(answer.facts["unit"], "mm");
+    assert_eq!(answer.facts["objects"], 3, "{}", answer.facts);
+    assert_eq!(answer.facts["objects_missing"], 1);
+    assert_eq!(answer.facts["triangles"], 4);
+
+    let (_, positions, triangles, colours) = whole(&path, "3dm");
+    let red = [255, 0, 0, 255];
+    let blue = [0, 0, 255, 255];
+    let corners = corner_colours(&triangles, &colours);
+    // The square in its material's red, the triangles in their vertices'
+    // blue.
+    assert_eq!(corners[..2], [[red; 3], [red; 3]]);
+    assert_eq!(corners[2..], [[blue; 3], [blue; 3]]);
+    // The member placed by its instance: mirrored, so wound back to face
+    // the same way.
+    let placed = triangles[3].map(|i| positions[i as usize]);
+    assert_eq!(placed, [[10., 0., 4.], [10., 1., 4.], [9., 0., 4.]]);
+    assert!(
+        positions.iter().all(|p| (p[2] - 9.).abs() > 1e-3),
+        "nothing hidden drawn"
+    );
+
+    // Saved small: nothing to draw, and why.
+    let bytes = file(&[table(
+        0x1000_0013,
+        &[record(
+            &object(BREP, &brep(&[None])),
+            &attributes(1, -1, None, 0, true),
+        )],
+    )]);
+    let path = write(dir.path(), "small.3dm", &bytes);
+    let error = run(&path, "3dm", &[]).unwrap_err();
+    assert!(error.contains("stored mesh"), "{error}");
+    // Rhino 1's, and what is no model, refused.
+    let path = write(dir.path(), "old.3dm", b"3D Geometry File Format        1");
+    assert!(run(&path, "3dm", &[]).unwrap_err().contains("Rhino 1"));
+    let path = write(dir.path(), "cut.3dm", &file(&[])[..40]);
+    assert!(run(&path, "3dm", &[]).is_err());
 }

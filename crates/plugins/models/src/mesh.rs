@@ -1,5 +1,6 @@
 //! Meshes that carry no picture of their own (STL, OBJ, PLY, OFF, glTF, a
-//! 3MF its slicer did not picture), drawn and measured by
+//! 3MF its slicer did not picture, a STEP model's faces, the meshes a Rhino
+//! model stores), drawn and measured by
 //! `skwir-model-worker` (`skwir_platform::model`), or read whole for a
 //! window that draws and turns them (ADR-067). Properties says what a print
 //! needs: its size, whether it is watertight and what it holds.
@@ -45,6 +46,9 @@ pub fn details(format: MeshFormat, measures: &Measures) -> Vec<(String, String)>
         "Watertight".into(),
         if measures.closed { "Yes" } else { "No" }.into(),
     ));
+    if measures.faces > 0 {
+        out.push(("Faces".into(), measures.faces.to_string()));
+    }
     out.push(("Triangles".into(), measures.triangles.to_string()));
     if measures.objects > 1 {
         out.push(("Objects".into(), measures.objects.to_string()));
@@ -61,6 +65,8 @@ fn title(format: MeshFormat) -> &'static str {
         MeshFormat::Off => "OFF model",
         MeshFormat::Gltf => "glTF model",
         MeshFormat::ThreeMf => "3MF",
+        MeshFormat::Step => "STEP model",
+        MeshFormat::Rhino => "Rhino model",
     }
 }
 
@@ -74,28 +80,51 @@ pub fn read(
 ) -> anyhow::Result<Found> {
     let drawn = model::draw(path, format, side, asked, cancel)?;
     let details = details(format, &drawn.measures);
+    // Faces that would not mesh are holes in what is shown, not in the
+    // model: said, so a hole is never taken for the shape.
+    let missing = drawn.measures.faces_missing;
+    let unmeshed = drawn.measures.objects_missing;
+    let holes = if missing > 0 {
+        Some(format!(
+            "{missing} of {} faces could not be drawn",
+            drawn.measures.faces
+        ))
+    } else if unmeshed == 1 {
+        Some("1 object stores no mesh and is not drawn".to_owned())
+    } else if unmeshed > 1 {
+        Some(format!(
+            "{unmeshed} objects store no mesh and are not drawn"
+        ))
+    } else {
+        None
+    };
     Ok(match drawn.shown {
         Shown::Mesh(mesh) => Found {
             title: title(format).into(),
             mesh: Some(Arc::new(mesh)),
             details,
             mesh_available: true,
+            notice: holes,
             ..Found::default()
         },
-        Shown::Picture(picture) => Found {
-            title: title(format).into(),
-            picture: Some(picture),
-            details,
-            mesh_available: true,
+        Shown::Picture(picture) => {
             // Asked to be turned, and too large to be unasked.
-            notice: matches!(asked, Asked::Turned { whole: false }).then(|| {
+            let large = matches!(asked, Asked::Turned { whole: false }).then(|| {
                 format!(
                     "Shown as a picture: it has {:.1} million triangles. 3D turns it all the same",
                     drawn.measures.triangles as f64 / 1e6
                 )
-            }),
-            ..Found::default()
-        },
+            });
+            let notice: Vec<String> = holes.into_iter().chain(large).collect();
+            Found {
+                title: title(format).into(),
+                picture: Some(picture),
+                details,
+                mesh_available: true,
+                notice: (!notice.is_empty()).then(|| notice.join(" · ")),
+                ..Found::default()
+            }
+        }
     })
 }
 
@@ -112,6 +141,9 @@ mod tests {
             unit: None,
             closed: true,
             volume: Some(15_550.53),
+            faces: 0,
+            faces_missing: 0,
+            objects_missing: 0,
         };
         let said = |d: Vec<(String, String)>| {
             d.into_iter()
@@ -144,6 +176,12 @@ mod tests {
         assert_eq!(
             said(details(MeshFormat::Gltf, &measures))[..2],
             ["Size: 60 × 31 × 48 m", "Watertight: No"]
+        );
+        // A model of surfaces counts its faces.
+        measures.faces = 637;
+        assert_eq!(
+            said(details(MeshFormat::Step, &measures))[2..4],
+            ["Faces: 637", "Triangles: 225706"]
         );
     }
 }

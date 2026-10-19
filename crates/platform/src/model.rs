@@ -28,6 +28,10 @@ pub enum MeshFormat {
     /// glTF, as JSON or binary (GLB).
     Gltf,
     ThreeMf,
+    /// STEP: exact surfaces, meshed by the helper (ADR-069).
+    Step,
+    /// Rhino: the meshes it stores of its surfaces.
+    Rhino,
 }
 
 impl MeshFormat {
@@ -39,6 +43,8 @@ impl MeshFormat {
             MeshFormat::Off => "off",
             MeshFormat::Gltf => "gltf",
             MeshFormat::ThreeMf => "3mf",
+            MeshFormat::Step => "step",
+            MeshFormat::Rhino => "3dm",
         }
     }
 }
@@ -57,6 +63,13 @@ pub struct Measures {
     pub closed: bool,
     /// The volume enclosed, in the file's unit cubed, when it is closed.
     pub volume: Option<f64>,
+    /// The faces of a model made of surfaces (STEP), and how many of them
+    /// could not be meshed: holes in what is shown. Zero for a mesh.
+    pub faces: u64,
+    pub faces_missing: u64,
+    /// The objects of a model that keeps meshes of its surfaces (Rhino)
+    /// that store none: not drawn. Zero for a mesh.
+    pub objects_missing: u64,
 }
 
 /// What the helper hands back of a mesh.
@@ -250,6 +263,9 @@ fn draw_with(
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false),
         volume: number("volume"),
+        faces: number("faces").unwrap_or(0.) as u64,
+        faces_missing: number("faces_missing").unwrap_or(0.) as u64,
+        objects_missing: number("objects_missing").unwrap_or(0.) as u64,
     };
     let rest = &out[line + 1..];
     let said = |key: &str| facts.get(key).and_then(serde_json::Value::as_bool) == Some(true);

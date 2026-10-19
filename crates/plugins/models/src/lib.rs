@@ -6,8 +6,9 @@
 //! its entities (`dxf`), which most never picture, and G-code that stores
 //! none from its moves (`toolpath`). A mesh that carries none (STL, OBJ, PLY,
 //! OFF, glTF, a 3MF its slicer did not picture) is drawn by a helper of its
-//! own, `skwir-model-worker`, and measured; a window that draws meshes gets
-//! the mesh to turn instead (ADR-067). The same pictures are the grid's
+//! own, `skwir-model-worker`, and measured, as is a STEP model, whose faces
+//! the helper meshes (`step`, ADR-069); a window that draws meshes gets the
+//! mesh to turn instead (ADR-067). The same pictures are the grid's
 //! thumbnails, after any thumbnailer the desktop installed for these
 //! files.
 mod blend;
@@ -18,6 +19,7 @@ mod mesh;
 mod package;
 mod rhino;
 mod sketchup;
+mod step;
 mod toolpath;
 
 use skwir_core::{
@@ -44,7 +46,7 @@ impl Plugin for PreviewPlugin {
         "3D models and prints"
     }
     fn description(&self) -> &'static str {
-        "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings, G-code toolpaths and STL, OBJ, PLY, OFF and glTF models; print time, filament, size, volume and version in Properties"
+        "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings, G-code toolpaths, the meshes Rhino models keep and STL, OBJ, PLY, OFF, glTF and STEP models; print time, filament, size, volume and version in Properties"
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
@@ -128,6 +130,7 @@ impl Format {
             }
             "model/obj" => Some(Format::Mesh(MeshFormat::Obj)),
             "model/gltf-binary" | "model/gltf+json" => Some(Format::Mesh(MeshFormat::Gltf)),
+            "model/step" => Some(Format::Mesh(MeshFormat::Step)),
             _ => None,
         })
     }
@@ -167,7 +170,8 @@ impl Format {
             Format::Dxf => cad::dxf(path, side, bounds, cancel),
             Format::SketchUp => sketchup::model(path, side, cancel),
             Format::LayOut => sketchup::layout(path, side, cancel),
-            Format::Rhino => rhino::read(path, side, cancel),
+            Format::Rhino => rhino::read(path, side, asked, picture_first, cancel),
+            Format::Mesh(MeshFormat::Step) => step::read(path, side, asked, bounds, cancel),
             Format::Mesh(format) => mesh::read(path, format, side, asked, cancel),
         }
     }
@@ -255,7 +259,7 @@ impl PreviewProvider for Provider {
             }));
         }
         let side = match format {
-            Format::Mesh(_) | Format::ThreeMf => MESH_SIDE,
+            Format::Mesh(_) | Format::ThreeMf | Format::Rhino => MESH_SIDE,
             _ => limits::IMAGE_DISPLAY_SIDE,
         };
         // A window that draws meshes turns a model, unless the user chose
@@ -420,6 +424,12 @@ mod tests {
         assert_eq!(of("part.3dm", None), Some(Format::Rhino));
         assert_eq!(of("print", Some("text/x.gcode")), Some(Format::Gcode));
         assert_eq!(of("sign.nc", None), Some(Format::Gcode));
+        // A STEP model by its type alone: `.stp` names others too.
+        assert_eq!(
+            of("bracket.stp", Some("model/step")),
+            Some(Format::Mesh(MeshFormat::Step))
+        );
+        assert_eq!(of("bracket.step", None), None);
         assert_eq!(of("notes.txt", Some("text/plain")), None);
     }
 
@@ -628,6 +638,170 @@ mod tests {
             .unwrap();
         assert!(data.image.is_none());
         assert_eq!(data.notice, "Not a Wavefront OBJ model");
+    }
+
+    /// A cylinder 20 mm across and 30 mm tall as a CAD program exports it.
+    const STEP_CYLINDER: &str = "ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION((''),'2;1');
+FILE_NAME('cylinder','2026-10-19T00:00:00',(''),(''),'Translator 1','Modeller 2026','');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));
+ENDSEC;
+DATA;
+#1=( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) );
+#2=( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#3=( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+#4=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-7),#1,'distance_accuracy_value','');
+#5=( GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#4)) GLOBAL_UNIT_ASSIGNED_CONTEXT((#1,#2,#3)) REPRESENTATION_CONTEXT('','3D') );
+#6=APPLICATION_CONTEXT('automotive design');
+#7=PRODUCT_CONTEXT('',#6,'mechanical');
+#8=PRODUCT_DEFINITION_CONTEXT('part definition',#6,'design');
+#9=PRODUCT('cylinder','cylinder','',(#7));
+#10=PRODUCT_DEFINITION_FORMATION('','',#9);
+#11=PRODUCT_DEFINITION('design','',#10,#8);
+#12=PRODUCT_DEFINITION_SHAPE('','',#11);
+#13=CARTESIAN_POINT('',(0.,0.,0.));
+#14=DIRECTION('',(0.,0.,1.));
+#15=DIRECTION('',(1.,0.,0.));
+#16=AXIS2_PLACEMENT_3D('',#13,#14,#15);
+#17=CIRCLE('',#16,10.);
+#18=CARTESIAN_POINT('',(10.,0.,0.));
+#19=VERTEX_POINT('',#18);
+#20=EDGE_CURVE('',#19,#19,#17,.T.);
+#21=CARTESIAN_POINT('',(0.,0.,30.));
+#22=AXIS2_PLACEMENT_3D('',#21,#14,#15);
+#23=CIRCLE('',#22,10.);
+#24=CARTESIAN_POINT('',(10.,0.,30.));
+#25=VERTEX_POINT('',#24);
+#26=EDGE_CURVE('',#25,#25,#23,.T.);
+#27=PLANE('',#16);
+#28=ADVANCED_FACE('',(#29),#27,.F.);
+#29=FACE_OUTER_BOUND('',#30,.T.);
+#30=EDGE_LOOP('',(#31));
+#31=ORIENTED_EDGE('',*,*,#20,.F.);
+#32=CYLINDRICAL_SURFACE('',#16,10.);
+#33=VECTOR('',#14,30.);
+#34=LINE('',#18,#33);
+#35=EDGE_CURVE('',#19,#25,#34,.T.);
+#36=EDGE_LOOP('',(#37,#38,#39,#40));
+#37=ORIENTED_EDGE('',*,*,#20,.T.);
+#38=ORIENTED_EDGE('',*,*,#35,.T.);
+#39=ORIENTED_EDGE('',*,*,#26,.F.);
+#40=ORIENTED_EDGE('',*,*,#35,.F.);
+#41=ADVANCED_FACE('',(#42),#32,.T.);
+#42=FACE_OUTER_BOUND('',#36,.T.);
+#43=PLANE('',#22);
+#44=ADVANCED_FACE('',(#45),#43,.T.);
+#45=FACE_OUTER_BOUND('',#46,.T.);
+#46=EDGE_LOOP('',(#47));
+#47=ORIENTED_EDGE('',*,*,#26,.T.);
+#48=CLOSED_SHELL('',(#28,#41,#44));
+#49=MANIFOLD_SOLID_BREP('',#48);
+#50=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#16,#49),#5);
+#51=SHAPE_DEFINITION_REPRESENTATION(#12,#50);
+ENDSEC;
+END-ISO-10303-21;
+";
+
+    #[test]
+    fn a_step_model_is_drawn_by_its_helper_up_to_its_bound() {
+        if !with_model_worker() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a part’s cylinder.stp");
+        std::fs::write(&path, STEP_CYLINDER).unwrap();
+        // Known by its type, which the database reads from its name and
+        // its first line.
+        let step = |path: &Path| PreviewRequest {
+            mime: Some("model/step".into()),
+            ..request(path)
+        };
+        assert!(Provider.accepts(&step(&path)));
+        let data = Provider
+            .inspect(
+                &step(&path),
+                &InspectRequest::default(),
+                &CancelToken::new(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(data.title, "STEP model");
+        assert!(data.image.is_some(), "the model drawn");
+        assert!(data.notice.is_empty(), "{}", data.notice);
+        let said: Vec<String> = data
+            .details
+            .iter()
+            .map(|d| format!("{}: {}", d.label, d.value))
+            .collect();
+        assert_eq!(
+            said[..3],
+            [
+                "Made with: Modeller 2026",
+                "Format: STEP AP214",
+                "Size: 20 × 20 × 30 mm"
+            ]
+        );
+        assert_eq!(said[4..6], ["Watertight: Yes", "Faces: 3"]);
+
+        // Past the quick bound, refused for Full preview to draw, before
+        // the helper reads a byte.
+        let large = dir.path().join("large.step");
+        let file = std::fs::File::create(&large).unwrap();
+        file.set_len(limits::BINARY_INPUT as u64 + 1).unwrap();
+        let error = Provider
+            .inspect(
+                &step(&large),
+                &InspectRequest::default(),
+                &CancelToken::new(),
+            )
+            .unwrap_err();
+        assert!(skwir_core::inspection::TooLarge::is(&error), "{error:#}");
+        assert_eq!(error.to_string(), "Too large to draw (more than 16 MiB)");
+        let whole = InspectRequest {
+            whole: true,
+            ..InspectRequest::default()
+        };
+        // Within Full preview's bound it is read: zeros are no model.
+        let error = Provider
+            .inspect(&step(&large), &whole, &CancelToken::new())
+            .unwrap_err();
+        assert!(!skwir_core::inspection::TooLarge::is(&error));
+        assert!(format!("{error:#}").contains("STEP"), "{error:#}");
+    }
+
+    #[test]
+    fn a_rhino_model_shows_its_picture_and_offers_its_meshes() {
+        if !with_model_worker() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a part’s model.3dm");
+        std::fs::write(&path, rhino::tests::model(5, 3)).unwrap();
+        let data = Provider
+            .inspect(
+                &request(&path),
+                &InspectRequest::default(),
+                &CancelToken::new(),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(data.image.is_some(), "its picture");
+        assert!(data.mesh_available, "3D offered");
+        // Turned, a model that stores no mesh keeps its picture and says
+        // why.
+        let turned = InspectRequest {
+            meshes: true,
+            turned: Some(true),
+            ..InspectRequest::default()
+        };
+        let data = Provider
+            .inspect(&request(&path), &turned, &CancelToken::new())
+            .unwrap()
+            .unwrap();
+        assert!(data.image.is_some(), "its picture still");
+        assert!(data.notice.contains("no triangles"), "{}", data.notice);
+        assert_eq!(data.details[0].value, "Rhinoceros 5.0");
     }
 
     #[test]

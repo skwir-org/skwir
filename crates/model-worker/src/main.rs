@@ -2,12 +2,16 @@
 //! model can hold millions of triangles, whose memory is given back when
 //! this exits, and a reader that fails takes nothing else with it.
 //!
-//! `skwir-model-worker <path> --format stl|obj|ply|off|gltf|3mf --side N
-//! --triangles N --bytes N [--mesh N]` writes one line of JSON (what the
-//! mesh measures) then the picture as PNG, at most `side` pixels on its
-//! longer side, on standard output. A file larger than `bytes`, or a mesh
-//! of more than `triangles`, is refused. Anything else is an exit status
-//! of 1 and a reason on standard error. Pure Rust; nothing is written.
+//! `skwir-model-worker <path> --format stl|obj|ply|off|gltf|3mf|step|3dm
+//! --side N --triangles N --bytes N [--mesh N]` writes one line of JSON
+//! (what the mesh measures) then the picture as PNG, at most `side` pixels
+//! on its longer side, on standard output. A file larger than `bytes`, or a
+//! mesh of more than `triangles`, is refused. Anything else is an exit
+//! status of 1 and a reason on standard error. Pure Rust; nothing is
+//! written. A STEP model's line also says how many faces it has
+//! (`"faces"`) and how many could not be meshed (`"faces_missing"`); a
+//! Rhino model's how many of its objects store no mesh
+//! (`"objects_missing"`).
 //!
 //! With `--mesh N`, a mesh of at most N triangles is written instead of its
 //! picture, for a window that draws it itself (ADR-067): the line says
@@ -21,6 +25,8 @@ mod draw;
 mod gltf_mesh;
 mod mesh;
 mod ply;
+mod rhino;
+mod step;
 mod threemf;
 
 use std::io::Write;
@@ -100,16 +106,27 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args = arguments()?;
-    let bytes = mesh::read_bounded(&args.path, args.bytes)?;
     let mut mesh = mesh::Mesh::new(args.triangles);
-    if args.format == "3mf" {
-        threemf::read(bytes, args.bytes, &mut mesh)?;
+    let mut surfaces = None;
+    let mut unmeshed = None;
+    if args.format == "3dm" {
+        // Read a chunk at a time: most of a Rhino model is surfaces passed
+        // over.
+        unmeshed = Some(rhino::read(&args.path, args.bytes, &mut mesh)?);
+    } else if args.format == "3mf" {
+        threemf::read(
+            mesh::read_bounded(&args.path, args.bytes)?,
+            args.bytes,
+            &mut mesh,
+        )?;
     } else {
+        let bytes = mesh::read_bounded(&args.path, args.bytes)?;
         match args.format.as_str() {
             "stl" => mesh::stl(&bytes, &mut mesh)?,
             "obj" => mesh::obj(&bytes, &mut mesh)?,
             "off" => mesh::off(&bytes, &mut mesh)?,
             "ply" => ply::read(&bytes, &mut mesh)?,
+            "step" => surfaces = Some(step::read(&bytes, &mut mesh)?),
             "gltf" => gltf_mesh::read(&bytes, &args.path, args.bytes, &mut mesh)?,
             other => return Err(format!("the format {other:?} is not read here")),
         }
@@ -119,7 +136,11 @@ fn run() -> Result<(), String> {
     }
     let (lo, hi) = mesh.bounds().ok_or("the model has no triangles")?;
     let size: Vec<f32> = (0..3).map(|axis| hi[axis] - lo[axis]).collect();
-    let volume = mesh.closed_volume();
+    // A STEP model's volume is measured on the mesh ogeom welds.
+    let volume = match &surfaces {
+        Some(faces) => faces.volume,
+        None => mesh.closed_volume(),
+    };
     let whole = args.mesh.is_some_and(|most| mesh.triangles.len() <= most);
     let facts = serde_json::json!({
         "triangles": mesh.triangles.len(),
@@ -130,6 +151,9 @@ fn run() -> Result<(), String> {
         "volume": volume,
         "mesh": whole,
         "colours": !mesh.colours.is_empty(),
+        "faces": surfaces.as_ref().map(|f| f.all),
+        "faces_missing": surfaces.as_ref().map(|f| f.missing),
+        "objects_missing": unmeshed,
     });
     if whole {
         let mut out = std::io::BufWriter::with_capacity(1 << 20, std::io::stdout().lock());

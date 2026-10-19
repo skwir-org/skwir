@@ -479,9 +479,8 @@ dates, measurements and what is left.
     facts; `skwir-model-worker` (pure Rust, 1 MB) draws meshes without
     one (STL, OBJ, PLY, OFF, glTF): 3DBenchy (225,706 triangles) in
     140 ms, volume 15.55 cm³ as published. Since 2026-10-19 a window that
-    draws meshes on a GPU turns them instead (ADR-067). STEP and IGES stay with f3d
-    (nixpkgs' f3d names STEP `application/vnd.step`, which this MIME
-    database lacks); OpenCASCADE would be a helper of its own.
+    draws meshes on a GPU turns them instead (ADR-067). STEP is meshed by
+    the same helper with ogeom (ADR-069); IGES stays with f3d.
     SketchUp, LayOut and Rhino pictures checked on two SketchUp 2021
     models, a LayOut 2021 document and two Rhino 5 models; older
     SketchUp and newer Rhino files only on synthetic ones.
@@ -1342,6 +1341,34 @@ the rest.
   in a window on Linux, a long changelog, an HTML page, a wide CSV, JSON,
   a 67-megapixel picture and two archives, each whole and then quick
   again, their memory given back (the ADR lists what was not).
+
+**STEP and Rhino models in 3D (ADR-069).** Nothing drew a STEP file
+without f3d, and nixpkgs' f3d claims a type the database does not know; a
+Rhino model showed only its stored picture.
+
+- Engines scored on step-conformance (27 CC0 parts at four chords):
+  OpenCascade the reference, ogeom 89 of 108 runs (every real part),
+  Foxtrot 68 (faces of revolution dropped without a word), truck 91 on
+  its unreleased branch. ogeom chosen: pure Rust, in the model helper,
+  which grows from 1.5 to 3.6 MB stripped (0.6 to 1.3 MB compressed).
+- Each part placed by the file's assembly, each face meshed to a
+  thousandth of the model's diagonal, in its colours and the file's unit;
+  faces keep their points, so edges stay sharp under smooth shading, and
+  watertight and volume are measured on ogeom's welded mesh. Faces that
+  will not mesh are counted and said. Properties adds the protocol, the
+  program and the faces. 16 MiB quick, 128 MiB with Full preview.
+- Checked: helper and plugin tests; NIST's 28 public-domain STEP files
+  from several CAD programs, 27 read with no face missing in 0.04 to
+  0.8 s (the 28th holds triangles only). Windows and macOS compiled.
+- Rhino: 3D turns the meshes the file keeps (mesh objects, B-reps' and
+  extrusions' render meshes), placed by block instances, on shown layers,
+  in their materials' colours (layers' are black by default); read a chunk
+  at a time from openNURBS 8's layout, nothing else parsed. Objects that
+  store none (Save Small, SubD) are counted and said. On openNURBS's and
+  rhino3dm's 168 example files from Rhino 1 to 8: none failed to read,
+  48 drawn, the others storing no mesh shown or written by Rhino 1, each
+  refusal matching an independent reader; the largest (10 MB,
+  519,498 triangles) in 0.36 s and 65 MB, picture included.
 
 ---
 
