@@ -527,7 +527,8 @@ impl PropertySource {
 /// (they stop what runs) or the value is empty (they are all it says).
 /// With `folded`, a group of its own ships folded (what is seldom looked
 /// at: checksums), until the user unfolds it; Properties names no plugin's
-/// group itself.
+/// group itself. With `gist`, what the row says in short on its group's
+/// heading while the group is folded.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Property {
     pub group: String,
@@ -540,6 +541,8 @@ pub struct Property {
     pub actions_shown: bool,
     #[serde(default)]
     pub folded: bool,
+    #[serde(default)]
+    pub gist: Option<String>,
 }
 
 /// A link after a property's value: its words and what it runs.

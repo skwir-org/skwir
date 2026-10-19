@@ -635,7 +635,15 @@ is still to come are in `docs/preview-frame.md`.
     group's to say (`Group::folded`): the shell's Volume ships folded, and
     a source's group when its rows say so (`Property::folded`: the
     checksums'); the shell names no plugin's group. A folded group says
-    its gist on its heading (`Group::gist`: the drive and its free room).
+    its gist on its heading: what its rows say in short, each row's to
+    give (`Row::gist`, a source's `Property::gist`), joined in their
+    order once `render` has added its rows, so a count says how far it
+    went. The size without the bytes, the first fact of the content,
+    the notes, the URL's host, the path (cut at its start, `Gist::Path`:
+    its end names the file; in the trash, where it was), the owner and
+    the mode, when it changed, what More holds, the drive and its free
+    room, a digest's first digits. A row that says nothing new folded
+    (Device, On disk) has no gist.
   - A row's links (Change…, Edit…, Copy) show while the pointer is on
     it, over the end of its last line: hidden, they take no room, and
     nothing moves when they show. Those that are all a row says (Count,

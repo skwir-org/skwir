@@ -345,7 +345,10 @@ impl ChecksumsPlugin {
             .map(|algorithm| {
                 let asked = serde_json::json!({ "entries": entries, "algorithm": algorithm });
                 let computing = state.computing(&file, algorithm);
-                let (value, actions) = if let Some(digest) = state.done.get(&(version, algorithm)) {
+                let done = state.done.get(&(version, algorithm));
+                // Folded, the group says each digest's start, as short hashes go.
+                let gist = done.map(|digest| format!("{} {}", algorithm.label(), short(digest)));
+                let (value, actions) = if let Some(digest) = done {
                     let said = serde_json::json!({ "text": digest, "what": algorithm.label() });
                     (
                         digest.clone(),
@@ -378,6 +381,7 @@ impl ChecksumsPlugin {
                     "actions_shown": computing.is_some(),
                     // Seldom looked at: the group ships folded.
                     "folded": true,
+                    "gist": gist,
                 })
             })
             .collect();
@@ -583,6 +587,14 @@ fn answer(algorithm: Algorithm, digest: &str) -> Outcome {
     Outcome::Value(serde_json::json!({ "algorithm": algorithm, "checksum": digest }))
 }
 
+/// A digest's first eight digits, which tell two files apart at a glance.
+fn short(digest: &str) -> String {
+    match digest.get(..8) {
+        Some(start) if start.len() < digest.len() => format!("{start}…"),
+        _ => digest.to_owned(),
+    }
+}
+
 impl Plugin for ChecksumsPlugin {
     fn id(&self) -> &'static str {
         ID
@@ -750,6 +762,7 @@ mod tests {
         assert_eq!(before[0]["value"], "");
         assert_eq!(before[0]["actions"][0]["words"], "Compute");
         assert_eq!(before[0]["folded"], true, "the group ships folded");
+        assert!(before[0]["gist"].is_null(), "folded, it says nothing yet");
         // Off the window's thread, the command answers.
         let Outcome::Value(done) = app
             .dispatch(&Invocation::with_args(
@@ -773,6 +786,7 @@ mod tests {
             .map(|a| a["words"].as_str().unwrap())
             .collect();
         assert_eq!(words, ["Copy", "Compare with copied"]);
+        assert_eq!(after[0]["gist"], "SHA-256 ba7816bf…", "folded, its start");
         assert_eq!(after[1]["value"], "", "each when asked");
         // A file changed is another version: computed again when asked.
         std::fs::write(&file, b"abcd").unwrap();

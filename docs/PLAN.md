@@ -814,6 +814,16 @@ on Permissions' heading at first, went back among its rows: it looked out
 of place there. A first try wrapped the value
 and its links in one line that wraps: short values were laid out a
 letter per line until the value grew into its line.
+Then every folded group says its gist, as Volume's did: each row gives
+its part (`Row::gist`, a source's `Property::gist`), joined once render
+has added its rows, so a folder's count shows as it goes; a path is cut
+at its start. Unfolded, a heading says only its title, so the mode
+stays among Permissions' rows. Checked on Xvfb: a text file's groups
+folded one by one (size, rating, path cut at its start, owner and mode,
+modification time, the drive), a SHA-256 computed and folded (its first
+digits, as `sha256sum` gives them), a picture's dimensions, a folder's
+size once counted and nothing before, a selection's count and its
+shared owner where the modes differ.
 
 Archives made (ADR-059): Compress to ZIP, Compress… (the name's ending
 picks the format: ZIP, 7z, tar and gzip, bzip2, xz or Zstandard tars) and

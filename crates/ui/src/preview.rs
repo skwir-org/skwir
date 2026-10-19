@@ -722,20 +722,24 @@ impl VolumeFacts {
     /// Properties' Volume group, the volume named as the sidebar names it.
     fn group(self, app: &skwir_core::App) -> Option<crate::properties::Group> {
         use crate::properties::Row;
+        // Folded as Properties ships, it says which drive and how full.
         let mut rows = Vec::new();
         if let Some(mount) = &self.mount {
             let name = app.location_title(&skwir_core::Location::from_path(&mount.path));
-            rows.push(Row::new("Volume", name));
+            rows.push(Row::new("Volume", name).in_gist());
             if !mount.source.is_empty() {
                 rows.push(Row::new("Device", mount.source.clone()));
             }
             rows.push(Row::new("Filesystem", mount.fstype.clone()));
         }
         if let Some((free, total)) = self.space {
-            rows.push(Row::new(
-                "Free",
-                format!("{} of {}", format::size(free), format::size(total)),
-            ));
+            rows.push(
+                Row::new(
+                    "Free",
+                    format!("{} of {}", format::size(free), format::size(total)),
+                )
+                .gist(format!("{} free", format::size(free))),
+            );
         }
         if self.read_only {
             rows.push(Row::new("Read-only", "Nothing on it can change"));
@@ -746,18 +750,8 @@ impl VolumeFacts {
                 mount.path.to_string_lossy().into_owned(),
             ));
         }
-        // Folded as Properties ships, it says which drive and how full.
-        let name = self
-            .mount
-            .as_ref()
-            .map(|mount| app.location_title(&skwir_core::Location::from_path(&mount.path)));
-        let free = self
-            .space
-            .map(|(free, _)| format!("{} free", format::size(free)));
-        let gist = [name, free].into_iter().flatten().collect::<Vec<_>>();
         // Seldom looked at: it ships folded, its heading saying the gist.
         (!rows.is_empty()).then(|| crate::properties::Group {
-            gist: (!gist.is_empty()).then(|| gist.join(" · ").into()),
             folded: true,
             ..crate::properties::Group::new("Volume", rows)
         })

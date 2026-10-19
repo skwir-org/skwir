@@ -8,8 +8,9 @@
 //! under the header's card (`preview::under_card`, the one place that
 //! draws it), with at most its share of the room, above the preview or
 //! beside it (`Room`), the edge between them dragged. Its groups fold
-//! (`Folds`), and a row's links show under the pointer, so it says much
-//! in little room.
+//! (`Folds`), each then saying its gist on its heading (`Group::gist`),
+//! and a row's links show under the pointer, so it says much in little
+//! room.
 //!
 //! Facts come from three places, none of them read while painting: the entry's
 //! metadata, with its provenance, collected when the entry or its listing
@@ -74,6 +75,27 @@ pub struct Row {
     /// A click copies its value; not one that says a path lossily (a
     /// name that is not text), which would name another file.
     pub copies: bool,
+    /// What it says in short on its group's heading while the group is
+    /// folded (`Group::gist`); most rows say nothing there.
+    pub gist: Option<Gist>,
+}
+
+/// A row's part of its folded group's heading.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Gist {
+    /// Words, cut at their end where the heading is short of room.
+    Said(SharedString),
+    /// A path, cut at its start: its end says which file.
+    Path(SharedString),
+}
+
+impl Gist {
+    /// What it says, however it is cut.
+    pub fn words(&self) -> &SharedString {
+        match self {
+            Gist::Said(words) | Gist::Path(words) => words,
+        }
+    }
 }
 
 impl Row {
@@ -87,7 +109,20 @@ impl Row {
             actions_shown: false,
             edits_access: false,
             copies: true,
+            gist: None,
         }
+    }
+
+    /// It says `words` on its folded group's heading.
+    pub(crate) fn gist(mut self, words: impl Into<SharedString>) -> Self {
+        self.gist = Some(Gist::Said(words.into()));
+        self
+    }
+
+    /// It says its value on its folded group's heading.
+    pub(crate) fn in_gist(self) -> Self {
+        let value = self.value.clone();
+        self.gist(value)
     }
 
     /// A path, said as text: one that is not text is said lossily, and
@@ -141,9 +176,6 @@ impl Row {
 pub struct Group {
     pub title: SharedString,
     pub rows: Vec<Row>,
-    /// What its heading says at its right while it is folded: the gist of
-    /// its rows (the drive's name and its free room).
-    pub gist: Option<SharedString>,
     /// It ships folded, until the user unfolds it: what is seldom looked
     /// at (the drive's, the shell's own; a source's whose rows say so,
     /// `Property::folded`).
@@ -155,9 +187,35 @@ impl Group {
         Group {
             title: title.into(),
             rows,
-            gist: None,
             folded: false,
         }
+    }
+
+    /// What its heading says at its right while it is folded: what its
+    /// rows say in short (`Row::gist`: the size, the path, the drive and
+    /// its free room), in their order. Taken once its rows are all there
+    /// (`render` adds some), so a count says how far it went. Cut at its
+    /// start when a path is part of it.
+    pub fn gist(&self) -> Option<Gist> {
+        let parts: Vec<&Gist> = self
+            .rows
+            .iter()
+            .filter_map(|row| row.gist.as_ref())
+            .collect();
+        if parts.is_empty() {
+            return None;
+        }
+        let words: SharedString = parts
+            .iter()
+            .map(|part| part.words().as_ref())
+            .collect::<Vec<_>>()
+            .join(" · ")
+            .into();
+        Some(if parts.iter().any(|part| matches!(part, Gist::Path(_))) {
+            Gist::Path(words)
+        } else {
+            Gist::Said(words)
+        })
     }
 }
 
@@ -300,6 +358,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
                     skwir_core::metadata::tag_leaf(field).to_owned(),
                     value.to_owned(),
                 )
+                .in_gist()
                 .action(
                     "Change…",
                     Invocation::with_args(
@@ -318,6 +377,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
         source: meta
             .get(keys::TAGS)
             .and_then(|f| note_source(&f.provenance)),
+        gist: (!tags.is_empty()).then(|| Gist::Said(tags.join(", ").into())),
         ..Row::new("Tags", tags.join(", "))
     };
     tags_row = tags_row.action(
@@ -330,6 +390,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
             rating,
             target: EntryRef::new(entry.file(), path),
         },
+        gist: rating.map(|r| Gist::Said(crate::tags::stars_words(r).into())),
         ..Row::new(
             "Rating",
             rating.map_or_else(String::new, crate::tags::stars_words),
@@ -347,7 +408,12 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
     if let Some(comment) = &comment {
         ask["text"] = comment.as_str().into();
     }
+    // Its first line, which the heading cuts where room is short.
     let comment_row = Row {
+        gist: comment
+            .as_deref()
+            .and_then(|c| c.lines().map(str::trim).find(|line| !line.is_empty()))
+            .map(|line| Gist::Said(line.to_owned().into())),
         source: comment
             .as_ref()
             .and(meta.get(keys::COMMENT))
@@ -365,7 +431,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
     // A URL is opened only when asked, in the browser: skwir fetches
     // nothing a file names (ADR-020).
     let link = |label: &'static str, url: String| {
-        let row = Row::new(label, url.clone());
+        let row = Row::new(label, url.clone()).gist(host_of(&url).to_owned());
         let row = if url.starts_with("https://") || url.starts_with("http://") {
             row.action(
                 "Open",
@@ -446,6 +512,7 @@ pub fn entry_groups(
                         format::thousands(size as usize)
                     ),
                 )
+                .gist(format::size(size))
             })
             .into_iter()
             .collect()
@@ -469,6 +536,10 @@ pub fn entry_groups(
     if let Some(target) = meta.value(keys::LINK_TARGET).and_then(Value::as_str) {
         location.push(Row::new("Links to", target.to_owned()));
     }
+    // Folded, it says the first: where the file was, or where it is.
+    if let Some(first) = location.first_mut() {
+        first.gist = Some(Gist::Path(first.value.clone()));
+    }
 
     let mut permissions = if let Some(subject) = Subject::of(entry) {
         access_rows(
@@ -481,13 +552,13 @@ pub fn entry_groups(
         // A mode alone, or an owner alone: what is known, read-only.
         let mut rows = Vec::new();
         if let Some(uid) = uint(keys::UID) {
-            rows.push(Row::new("Owner", owner_named(uid)));
+            rows.push(Row::new("Owner", owner_named(uid)).gist(owner_gist(uid)));
         }
         if let Some(gid) = uint(keys::GID) {
             rows.push(Row::new("Group", group_named(gid)));
         }
         if let Some(mode) = uint(keys::MODE) {
-            rows.push(Row::new("Access", skwir_platform::users::mode(mode)));
+            rows.push(Row::new("Access", skwir_platform::users::mode(mode)).in_gist());
         }
         rows
     };
@@ -502,15 +573,26 @@ pub fn entry_groups(
         ("Accessed", keys::ACCESSED),
     ]
     .into_iter()
-    .filter_map(|(label, key)| Some(Row::new(label, crate::format::exact_time(time(key)?))))
+    .filter_map(|(label, key)| {
+        let at = time(key)?;
+        let row = Row::new(label, crate::format::exact_time(at));
+        // Folded, it says when the file last changed, to the minute.
+        Some(if key == keys::MODIFIED {
+            row.gist(crate::format::time(at))
+        } else {
+            row
+        })
+    })
     .collect();
 
-    // Whatever else a plugin or the user attached: tags, ratings, suggestions.
+    // Whatever else a plugin or the user attached: tags, ratings,
+    // suggestions. Folded, it says what they are.
     let more = meta
         .iter()
         .filter(|(key, _)| !CORE.contains(key))
         .map(|(key, field)| Row {
             source: source_of(&field.provenance),
+            gist: Some(Gist::Said(label_of(key).into())),
             ..Row::new(label_of(key), text_of(&field.value))
         })
         .filter(|row| !row.value.is_empty())
@@ -537,6 +619,21 @@ pub fn entry_groups(
 /// An owner by name and number, or its number alone where no name is known.
 fn owner_named(uid: u64) -> String {
     named(uid, skwir_platform::users::user(uid))
+}
+
+/// An owner on a folded heading: by name, or by number where no name is
+/// known.
+fn owner_gist(uid: u64) -> String {
+    skwir_platform::users::user(uid).unwrap_or_else(|| uid.to_string())
+}
+
+/// Where a URL leads, said short: its host, or the URL when it names none.
+fn host_of(url: &str) -> &str {
+    url.split_once("://")
+        .and_then(|(_, rest)| rest.split(['/', '?', '#']).next())
+        .map(|host| host.rsplit('@').next().unwrap_or(host))
+        .filter(|host| !host.is_empty())
+        .unwrap_or(url)
 }
 
 /// A group by name and number, or its number alone.
@@ -566,7 +663,7 @@ pub fn selection_groups(
     user: &User,
 ) -> Vec<Group> {
     let folders = entries.iter().filter(|e| e.is_dir()).count();
-    let mut rows = vec![Row::new("Selected", format::count(selected, "item"))];
+    let mut rows = vec![Row::new("Selected", format::count(selected, "item")).in_gist()];
     if folders > 0 && folders < entries.len() {
         rows.push(Row::new(
             "Of which",
@@ -583,7 +680,7 @@ pub fn selection_groups(
             ..Row::new("Total size", "")
         });
     } else if let Some(bytes) = bytes {
-        rows.push(Row::new("Total size", format::size(bytes)));
+        rows.push(Row::new("Total size", format::size(bytes)).in_gist());
     }
     let mut groups = vec![Group::new("Selection", rows)];
     // Who may use them, once every entry says it.
@@ -641,6 +738,7 @@ pub fn plugin_rows(
                             .map(|a| (a.words.into(), a.command))
                             .collect(),
                         actions_shown: property.actions_shown,
+                        gist: property.gist.map(|gist| Gist::Said(gist.into())),
                         ..Row::new(property.label, property.value)
                     },
                 }
@@ -881,10 +979,12 @@ pub fn access_rows(
         choice
     };
 
-    let mut rows = vec![Row::new(
-        "Owner",
-        shared(&|s| s.uid).map_or_else(mixed, owner_named),
-    )];
+    // Folded, the group says the owner and the mode they share.
+    let owner = shared(&|s| s.uid);
+    let mut rows = vec![Row {
+        gist: owner.map(|uid| Gist::Said(owner_gist(uid).into())),
+        ..Row::new("Owner", owner.map_or_else(mixed, owner_named))
+    }];
     let mut group = Row::new("Group", shared(&|s| s.gid).map_or_else(mixed, group_named));
     if editable && !user.groups.is_empty() {
         let now = shared(&|s| s.gid);
@@ -986,6 +1086,9 @@ pub fn access_rows(
         "Access",
         mode.map_or_else(mixed, skwir_platform::users::mode),
     );
+    if mode.is_some() {
+        access = access.in_gist();
+    }
     if editable {
         let mut ask = serde_json::json!({
             "title": format!("Access of {}", targets.named(count)),
@@ -1032,21 +1135,28 @@ pub fn count_rows(label: &str, count: Option<(skwir_core::fs::count::Count, bool
         return vec![Row::new(label.to_owned(), "").action("Count", again())];
     };
     let size = format::size(now.size);
+    // Folded, its group says the size as it stands, without the bytes.
     let first = if running {
-        Row::new(label.to_owned(), format!("{size} so far…")).action(
-            "Stop",
-            Invocation::with_args("ui.properties_count", &serde_json::json!({ "stop": true })),
-        )
+        Row::new(label.to_owned(), format!("{size} so far…"))
+            .in_gist()
+            .action(
+                "Stop",
+                Invocation::with_args("ui.properties_count", &serde_json::json!({ "stop": true })),
+            )
     } else if !now.done {
         Row::new(label.to_owned(), format!("At least {size}, stopped"))
+            .gist(format!("At least {size}"))
             .action("Count again", again())
     } else if now.lower_bound() {
-        Row::new(label.to_owned(), format!("At least {size}")).action("Count again", again())
+        Row::new(label.to_owned(), format!("At least {size}"))
+            .in_gist()
+            .action("Count again", again())
     } else {
         Row::new(
             label.to_owned(),
             format!("{size} ({} bytes)", format::thousands(now.size as usize)),
         )
+        .gist(size)
         .action("Count again", again())
     }
     .shown();
@@ -1114,6 +1224,8 @@ pub fn flag_rows(flags: skwir_core::fs::stat::Flags) -> Vec<Row> {
 }
 
 /// What the preview in memory knows, without touching the file again.
+/// Folded, it says what measures the content: a picture's size, what a
+/// folder holds, the format's first fact, the pages, the length.
 fn preview_group(shell: &Shell) -> Option<Group> {
     let preview = &shell.preview;
     let mut rows = Vec::new();
@@ -1125,11 +1237,11 @@ fn preview_group(shell: &Shell) -> Option<Group> {
             facts,
             ..
         }) if document.is_none() && !shell.shows_player() => {
-            rows.push(Row::new("Dimensions", format!("{width} × {height} px")));
+            rows.push(Row::new("Dimensions", format!("{width} × {height} px")).in_gist());
             rows.extend(facts.iter().map(Row::of));
         }
         Some(PreviewContent::Dir { items, folders }) => {
-            rows.push(Row::new("Contains", format::count(*items, "item")));
+            rows.push(Row::new("Contains", format::count(*items, "item")).in_gist());
             if *folders > 0 && folders < items {
                 rows.push(Row::new(
                     "Of which",
@@ -1142,12 +1254,21 @@ fn preview_group(shell: &Shell) -> Option<Group> {
             }
         }
         Some(PreviewContent::Inspection(display)) => {
-            rows.extend(display.data.details.iter().map(Row::of));
+            // A fact of the format's is said with its label: its value
+            // alone may be a bare number.
+            rows.extend(display.data.details.iter().enumerate().map(|(d, detail)| {
+                let row = Row::of(detail);
+                if d == 0 {
+                    row.gist(format!("{}: {}", detail.label, detail.value))
+                } else {
+                    row
+                }
+            }));
         }
         _ => {}
     }
     if let Some(pages) = crate::reader::pages(shell) {
-        rows.push(Row::new("Pages", pages.to_string()));
+        rows.push(Row::new("Pages", pages.to_string()).gist(format::count(pages as usize, "page")));
     }
     if shell.shows_player() {
         let state = &preview.media.state;
@@ -1161,7 +1282,7 @@ fn preview_group(shell: &Shell) -> Option<Group> {
             }
         }
         if let Some(duration) = state.duration {
-            rows.push(Row::new("Duration", crate::media::time(duration)));
+            rows.push(Row::new("Duration", crate::media::time(duration)).in_gist());
         }
         rows.extend(
             state
@@ -1322,10 +1443,10 @@ const ROW: &str = "properties-row";
 ///
 /// Each group's heading folds it (`ui.properties_fold`), as the user left
 /// it or as it ships (`Group::folded`), and while folded says at its right
-/// what its rows say in short (`Group::gist`: the drive and its free
-/// room). A row's links show while the pointer is on it, unless they are
-/// all it says or stop or start what runs (`Row::links_shown`); where they
-/// go is `row_element`'s.
+/// what its rows say in short (`Group::gist`: the size, the path, the
+/// drive and its free room). A row's links show while the pointer is on
+/// it, unless they are all it says or stop or start what runs
+/// (`Row::links_shown`); where they go is `row_element`'s.
 pub fn render(
     shell: &Shell,
     theme: &Theme,
@@ -1459,7 +1580,7 @@ pub fn render(
             g,
             &group.title,
             folded,
-            group.gist.filter(|_| folded),
+            folded.then(|| group.gist()).flatten(),
             theme,
             cx,
         ));
@@ -1494,22 +1615,27 @@ pub fn render(
 /// A group's heading: a heading, not one more label (in the text's own
 /// color and weight where the labels are muted), ruled off from the group
 /// above it; a click folds the group or unfolds it (saying which, as the
-/// heading shows it). While folded, its gist at its right.
+/// heading shows it). While folded, its gist at its right, cut at its
+/// end, or at its start when it holds a path.
 fn heading(
     g: usize,
     title: &SharedString,
     folded: bool,
-    gist: Option<SharedString>,
+    gist: Option<Gist>,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> gpui::Div {
     let gist = gist.map(|gist| {
-        div()
+        let cut = div()
             .ml_auto()
             .min_w_0()
-            .truncate()
-            .text_color(theme.text_muted)
-            .child(gist)
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_color(theme.text_muted);
+        match gist {
+            Gist::Said(words) => cut.text_ellipsis().child(words),
+            Gist::Path(words) => cut.text_ellipsis_start().child(words),
+        }
     });
     let fold = title.clone();
     div()
@@ -2171,6 +2297,156 @@ mod tests {
         assert!(
             ships_folded(&preview, "Volume"),
             "the shell's own, said by its group"
+        );
+    }
+
+    #[test]
+    fn a_folded_group_says_its_gist() {
+        let mut file = entry(20, "it's a café.txt", EntryKind::File, 4_000_000, None);
+        let meta = &mut file.metadata;
+        meta.set(keys::SIZE, Value::UInt(1_234_567), Provenance::Filesystem);
+        meta.set(keys::MODE, Value::UInt(0o100_640), Provenance::Filesystem);
+        let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        meta.set(
+            keys::MODIFIED,
+            Value::Time(modified),
+            Provenance::Filesystem,
+        );
+        meta.set(
+            keys::ACCESSED,
+            Value::Time(modified),
+            Provenance::Filesystem,
+        );
+        meta.set(
+            "tags",
+            Value::List(vec![Value::Text("work".into())]),
+            Provenance::User,
+        );
+        meta.set(keys::RATING, Value::UInt(7), Provenance::User);
+        meta.set(
+            keys::COMMENT,
+            Value::Text("\n  First line\nsecond".into()),
+            Provenance::User,
+        );
+        meta.set(
+            keys::ORIGIN,
+            Value::Text("https://someone@example.org:8080/it's a café.txt?x".into()),
+            Provenance::Filesystem,
+        );
+        meta.set(
+            "vision.subject",
+            Value::Text("a harbour".into()),
+            Provenance::Model {
+                name: "vision".into(),
+                confidence: 0.82,
+            },
+        );
+        let path = std::path::Path::new("/data/notes/it's a café.txt");
+        let groups = entry_groups(&file, path, Some(&[]), &User::default());
+        let gist = |groups: &[Group], title: &str| {
+            groups
+                .iter()
+                .find(|group| group.title == title)
+                .and_then(Group::gist)
+        };
+        let said = |words: &str| Some(Gist::Said(words.to_owned().into()));
+        assert_eq!(
+            gist(&groups, "General"),
+            said("1.2 MB"),
+            "without the bytes"
+        );
+        assert_eq!(gist(&groups, "Notes"), said("work · 3½ stars · First line"));
+        assert_eq!(gist(&groups, "Source"), said("example.org:8080"));
+        assert_eq!(
+            gist(&groups, "Location"),
+            Some(Gist::Path("/data/notes/it's a café.txt".into())),
+            "the path, cut at its start: its end names the file"
+        );
+        assert_eq!(
+            gist(&groups, "Permissions"),
+            said(&format!("{} · rw-r----- (640)", owner_gist(4_000_000)))
+        );
+        assert_eq!(
+            gist(&groups, "Times"),
+            said(&format::time(modified)),
+            "when it changed, to the minute"
+        );
+        assert_eq!(gist(&groups, "More"), said(&label_of("vision.subject")));
+
+        // A file of the trash says where it was.
+        file.metadata.set(
+            keys::TRASHED_FROM,
+            Value::Text("/data/notes".into()),
+            Provenance::Filesystem,
+        );
+        let trashed = entry_groups(&file, path, None, &User::default());
+        assert_eq!(
+            gist(&trashed, "Location"),
+            Some(Gist::Path("/data/notes".into()))
+        );
+
+        // A folder says its size once counted; the selection, how many
+        // and what they weigh; what they share, unless it is mixed.
+        let folder = entry(21, "a folder", EntryKind::Directory, 1000, Some(0o040_755));
+        let groups = entry_groups(&folder, path, None, &User::default());
+        let size = groups.iter().find(|g| g.title == "General").unwrap();
+        assert!(size.gist().is_none(), "not counted, it says nothing");
+        let done = skwir_core::fs::count::Count {
+            done: true,
+            size: 1234,
+            ..Default::default()
+        };
+        let counted = Group::new("General", count_rows("Size", Some((done, false))));
+        assert_eq!(counted.gist(), said("1.2 KB"));
+        let so_far = skwir_core::fs::count::Count {
+            size: 3 << 20,
+            ..Default::default()
+        };
+        let stopped = Group::new("General", count_rows("Size", Some((so_far, false))));
+        assert_eq!(
+            stopped.gist(),
+            said("At least 3.0 MB"),
+            "the bound, not why"
+        );
+        let me = User {
+            id: Some(1000),
+            groups: vec![100],
+        };
+        let a = entry(22, "a's file.txt", EntryKind::File, 1000, Some(0o100_644));
+        let b = entry(23, "b café", EntryKind::File, 1000, Some(0o100_755));
+        let pane = skwir_core::workspace::PaneId(3);
+        let groups = selection_groups(&[&a, &b], 2, Some(2048), pane, &me);
+        assert_eq!(gist(&groups, "Selection"), said("2 items · 2.0 KB"));
+        assert_eq!(
+            gist(&groups, SHARED_PERMISSIONS),
+            said(&owner_gist(1000)),
+            "their modes differ"
+        );
+
+        // Volume's gist is its rows', in their order; a path in it cuts
+        // it at its start.
+        let volume = Group::new(
+            "Volume",
+            vec![
+                Row::new("Volume", "Data").in_gist(),
+                Row::new("Device", "/dev/sdz1"),
+                Row::new("Free", "1 GB of 2 GB").gist("1 GB free"),
+            ],
+        );
+        assert_eq!(volume.gist(), said("Data · 1 GB free"));
+        let mixed = Group::new(
+            "Location",
+            vec![
+                Row::new("Size", "1 B").in_gist(),
+                Row {
+                    gist: Some(Gist::Path(path.to_string_lossy().into_owned().into())),
+                    ..Row::path("Path", path)
+                },
+            ],
+        );
+        assert_eq!(
+            mixed.gist(),
+            Some(Gist::Path("1 B · /data/notes/it's a café.txt".into()))
         );
     }
 
