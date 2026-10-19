@@ -407,7 +407,9 @@ documents and mail; **Code font**, beside it, for source and text files,
 code in documents, the byte view and the terminal, which offers the fonts
 whose letters are all one width. Automatic is the font your desktop's
 settings name for each (its interface, document and monospace fonts)
-while Desktop colors is on, else Skwir's own. A change shows at once.
+while Desktop colors is on, else Skwir's own. A change shows at once. A
+long list of choices, like the fonts, opens with a field that narrows it
+as you type, and a font's list writes the one you point at in itself.
 
 If the settings file cannot be read (edited by hand into something that
 is no longer TOML), Skwir starts with its defaults, keeps the file aside

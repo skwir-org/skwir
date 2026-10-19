@@ -249,32 +249,33 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // The lists one picks from while typing (the palette, a choice, Jump,
-    // the tag editor, the address's suggestions): one command, the same
+    // the tag editor, the address's suggestions, a long list of choices in
+    // Settings): one command, the same
     // keys, the arrows round their ends, the page keys a page at a time.
     // What a question lists before deleting scrolls by the same keys.
     (
         "up",
         "ui.list_move",
         r#"{"delta":-1}"#,
-        Some("palette|jump|choose|tag_editor|address|review|confirm"),
+        Some("palette|jump|choose|tag_editor|address|review|confirm|setting_choices"),
     ),
     (
         "down",
         "ui.list_move",
         r#"{"delta":1}"#,
-        Some("palette|jump|choose|tag_editor|address|review|confirm"),
+        Some("palette|jump|choose|tag_editor|address|review|confirm|setting_choices"),
     ),
     (
         "pageup",
         "ui.list_move",
         r#"{"to":"page_up"}"#,
-        Some("palette|jump|choose|tag_editor|address|review|confirm"),
+        Some("palette|jump|choose|tag_editor|address|review|confirm|setting_choices"),
     ),
     (
         "pagedown",
         "ui.list_move",
         r#"{"to":"page_down"}"#,
-        Some("palette|jump|choose|tag_editor|address|review|confirm"),
+        Some("palette|jump|choose|tag_editor|address|review|confirm|setting_choices"),
     ),
     // The cursor in the file list (`ui.cursor`): the arrows select what
     // they reach, Shift extends, Ctrl moves the cursor alone (and
@@ -1125,6 +1126,7 @@ pub(crate) const PLACES: &[Place] = &[
     inside("settings", "Settings", "Settings"),
     inside("settings_nav", "SettingsNav", "Settings"),
     inside("setting_control", "SettingControl", "Settings"),
+    inside("setting_choices", "SettingChoices", "Settings"),
     inside("setting_number", "SettingNumber", "Settings"),
     inside("setting_record", "SettingRecord", "Settings"),
     inside("setting_keys", "SettingKeys", "Settings"),

@@ -32,8 +32,19 @@ const TEXTS_MIN: f32 = 240.;
 /// column's dropdowns line up.
 const TABLE_CHOICE: f32 = 210.;
 
-/// The family a font setting's control is written in: what its role
-/// resolved to (`Theme::font`…).
+/// A dropdown of more choices than this opens with a field that narrows
+/// them (`settings::Narrowed`): the fonts, the icon themes, bat's themes.
+pub(crate) const FILTERED: usize = 12;
+/// The rows a long dropdown shows at once; the rest scroll.
+const LONG_ROWS: usize = 12;
+const CHOICE_ROW: f32 = 26.;
+/// What a font's specimen writes (ADR-073): letters and figures, and for
+/// code the shapes that tell characters apart.
+const SPECIMEN: &str = "Sphinx of black quartz, judge my vow. 0123456789";
+const SPECIMEN_CODE: &str = "if (x != 0O) { l1 = I[i]; } // => <=";
+
+/// The family a font setting's control and specimen are written in when
+/// it says Automatic: what its role resolved to (`Theme::font`…).
 fn font_role(key: &str, theme: &Theme) -> Option<SharedString> {
     use crate::settings::{CODE_FONT_KEY, FONT_KEY, READING_FONT_KEY};
     match key {
@@ -595,6 +606,7 @@ impl SettingsView {
     ) -> AnyElement {
         let key = row.spec.key.clone();
         let open = self.dropdown.as_deref() == Some(key.as_str());
+        let long = row.spec.constraints.choices.len() > FILTERED;
         let toggle = key.clone();
         // A font's control is written in the font it gives.
         let written_in = font_role(&key, theme);
@@ -613,15 +625,25 @@ impl SettingsView {
             .aria_expanded(open)
             .key_context("SettingControl")
             .child(row.anchor.marker())
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.dropdown = if open { None } else { Some(toggle.clone()) };
-                cx.notify();
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if open && long {
+                    this.close_choices(window, cx);
+                } else if long {
+                    this.open_choices(&toggle, window, cx);
+                } else {
+                    this.dropdown = if open { None } else { Some(toggle.clone()) };
+                    cx.notify();
+                }
             })),
         );
-        if open {
+        if open && long {
+            if let Some(panel) = self.long_choices(row, theme, cx) {
+                element = element.child(row.anchor.popup(panel));
+            }
+        } else if open {
             let hover = theme.hover;
-            // A long list (the code themes, the icon themes) scrolls in
-            // the height the popover leaves it under the row.
+            // Its choices scroll in the height the popover leaves them
+            // under the row; a long list narrows instead (`long_choices`).
             let mut panel = div()
                 .id(SharedString::from(format!("choices-{key}")))
                 .min_w(px(150.))
@@ -671,6 +693,172 @@ impl SettingsView {
             element = element.child(row.anchor.popup(panel));
         }
         element.into_any_element()
+    }
+
+    /// A long dropdown's panel: its field, the choices it keeps a row at a
+    /// time as they scroll into sight, and for a font the one highlighted
+    /// written in itself. Only that one is: a family drawn is loaded and
+    /// kept by the text system.
+    fn long_choices(
+        &self,
+        row: &Snapshot,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let narrowed = self.narrowed.as_ref().filter(|n| n.key == row.spec.key)?;
+        let key = row.spec.key.clone();
+        let count = narrowed.kept.len();
+        let field = narrowed.field.focus_handle(cx);
+        let (value, a11y) = (row.value.clone(), self.a11y);
+        let rows = gpui::uniform_list(
+            SharedString::from(format!("choices-{key}-rows")),
+            count,
+            cx.processor(
+                move |this: &mut SettingsView, range: std::ops::Range<usize>, _, cx| {
+                    let Some(narrowed) = &this.narrowed else {
+                        return Vec::new();
+                    };
+                    let theme = cx.global::<Theme>().clone();
+                    range
+                        .filter_map(|at| {
+                            let (choice, label) = &narrowed.choices[*narrowed.kept.get(at)?];
+                            let highlighted = at == narrowed.highlighted;
+                            let named = a11y.then(|| SharedString::from(label.clone()));
+                            let option = div().id(("choice", at));
+                            Some(
+                                crate::modal::option(option, named, at, highlighted, &field)
+                                    .w_full()
+                                    .h(px(CHOICE_ROW))
+                                    .px_2()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .rounded_sm()
+                                    .cursor_pointer()
+                                    .when(highlighted, |d| {
+                                        d.bg(theme.selection_bg).text_color(theme.selection_text)
+                                    })
+                                    .child(div().w(px(14.)).flex_none().when(
+                                        *choice == value,
+                                        |d| {
+                                            let tick = if highlighted {
+                                                theme.selection_text
+                                            } else {
+                                                theme.accent
+                                            };
+                                            d.child(controls::glyph("check", tick, 14.))
+                                        },
+                                    ))
+                                    .child(div().min_w_0().truncate().child(label.clone()))
+                                    .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                        if let Some(narrowed) = &mut this.narrowed
+                                            && narrowed.highlighted != at
+                                        {
+                                            narrowed.highlighted = at;
+                                            cx.notify();
+                                        }
+                                    }))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if let Some(narrowed) = &mut this.narrowed {
+                                            narrowed.highlighted = at;
+                                        }
+                                        this.take_choice(window, cx);
+                                    }))
+                                    .into_any_element(),
+                            )
+                        })
+                        .collect()
+                },
+            ),
+        )
+        .track_scroll(&narrowed.scroll)
+        .h(px(CHOICE_ROW * count.clamp(1, LONG_ROWS) as f32));
+        let list = crate::modal::options("choices-list", "Choices", count, a11y)
+            .relative()
+            .child(rows)
+            .when(count == 0, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .px_2()
+                        .h(px(CHOICE_ROW))
+                        .flex()
+                        .items_center()
+                        .text_color(theme.text_muted)
+                        .child("None holds what is typed"),
+                )
+            });
+        let specimen = font_role(&key, theme).map(|role| {
+            let family: SharedString = match narrowed.highlighted_value() {
+                Some(family) if family != crate::settings::FONT_AUTO => family.to_owned().into(),
+                _ => role,
+            };
+            let text = if key == crate::settings::CODE_FONT_KEY {
+                SPECIMEN_CODE
+            } else {
+                SPECIMEN
+            };
+            // Asked whether it loads before it is drawn: a family the
+            // index lists may still fail to, and gpui would search a
+            // fallback each frame.
+            let loads = cx
+                .text_system()
+                .font_id(&gpui::font(family.clone()))
+                .is_ok();
+            div()
+                .border_t_1()
+                .border_color(theme.border)
+                .mt_1()
+                .px_2()
+                .pt_2()
+                .pb_1()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_color(theme.text_muted).child(family.clone()))
+                .child(if loads {
+                    div().font_family(family).text_base().child(text)
+                } else {
+                    div()
+                        .text_color(theme.text_muted)
+                        .child("This font cannot be drawn")
+                })
+        });
+        Some(
+            div()
+                .id(SharedString::from(format!("choices-{key}")))
+                .key_context("SettingChoices")
+                .w(px(300.))
+                .p_1()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.bg)
+                .text_color(theme.text)
+                .text_xs()
+                .font_family(theme.font.clone())
+                .shadow_lg()
+                .occlude()
+                .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                    this.close_choices(window, cx);
+                }))
+                // The field has the keyboard as long as the list is open.
+                .child(controls::field(
+                    &narrowed.field,
+                    None,
+                    true,
+                    false,
+                    Some("search"),
+                    theme,
+                ))
+                .child(list)
+                .children(specimen)
+                .into_any_element(),
+        )
     }
 
     fn setting_row(

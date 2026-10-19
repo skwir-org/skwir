@@ -2489,7 +2489,10 @@ its own, every color readable on what it is drawn on.
   (`skwir_platform::fonts`: one `fc-list`, about 15 ms in a process of
   its own), the code font's the monospaced ones, listed on a worker at
   start and when the settings open, so `settings.apply` takes any of them
-  from a script. Tests:
+  from a script. A dropdown of more than 12 choices opens with a field
+  that narrows it, its rows drawn as they scroll, the arrows and the
+  pointer moving it, a font's specimen written in the one highlighted
+  (`settings::Narrowed`, `ui.list_move` let through the dialog). Tests:
   the fallbacks, the portal's three fonts read and followed, fontconfig's
   listing and aliases, the settings' choices, pages and essentials. In a
   window (debug, Xvfb, the session's portal): see ADR-073's

@@ -1017,6 +1017,63 @@ pub(crate) struct Stop {
     pub key: Option<String>,
 }
 
+/// A long dropdown open (`settings_view::FILTERED` choices or more: the
+/// fonts, the icon themes, bat's themes): a field above its list keeps the
+/// choices holding what is typed, and only the rows on screen are drawn.
+pub(crate) struct Narrowed {
+    pub(crate) key: String,
+    pub(crate) field: Entity<TextInput>,
+    /// The choices as the spec had them when opened or last listed:
+    /// stored value and label.
+    pub(crate) choices: std::rc::Rc<[(String, String)]>,
+    /// Which of `choices` the field keeps, in their order.
+    pub(crate) kept: Vec<usize>,
+    /// The one of `kept` Enter takes, and the one a font's specimen shows:
+    /// moved by the keys and by the pointer.
+    pub(crate) highlighted: usize,
+    pub(crate) scroll: gpui::UniformListScrollHandle,
+    _typed: Subscription,
+}
+
+impl Narrowed {
+    /// The choices of `spec`, as stored values and labels.
+    pub(crate) fn choices_of(spec: &SettingSpec) -> std::rc::Rc<[(String, String)]> {
+        spec.constraints
+            .choices
+            .iter()
+            .map(|value| (value.clone(), spec.choice_label(value).to_owned()))
+            .collect()
+    }
+
+    /// Keep the choices whose label holds every word of `query`, case
+    /// ignored, the one highlighted staying highlighted while kept.
+    pub(crate) fn narrow(&mut self, query: &str) {
+        let was = self.kept.get(self.highlighted).copied();
+        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        self.kept = self
+            .choices
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, label))| {
+                let label = label.to_lowercase();
+                words.iter().all(|word| label.contains(word.as_str()))
+            })
+            .map(|(at, _)| at)
+            .collect();
+        self.highlighted = was
+            .and_then(|was| self.kept.iter().position(|at| *at == was))
+            .unwrap_or(0);
+        self.scroll
+            .scroll_to_item(self.highlighted, gpui::ScrollStrategy::Nearest);
+    }
+
+    /// The stored value highlighted.
+    pub(crate) fn highlighted_value(&self) -> Option<&str> {
+        let at = *self.kept.get(self.highlighted)?;
+        Some(self.choices[at].0.as_str())
+    }
+}
+
 // Flags of independent parts of the dialog (a screen reader listening…),
 // not the states of one machine.
 #[allow(clippy::struct_excessive_bools)]
@@ -1055,6 +1112,8 @@ pub struct SettingsView {
     pub(crate) toggling: BTreeMap<String, bool>,
     pub(crate) reset_armed: bool,
     pub(crate) dropdown: Option<String>,
+    /// The dropdown open, when it is a long one.
+    pub(crate) narrowed: Option<Narrowed>,
     /// Setting to point out after `ui.settings {key}`.
     pub(crate) highlight: Option<String>,
     /// The pages unfolded to show all their settings, by their words
@@ -1143,6 +1202,7 @@ impl SettingsView {
             toggling: BTreeMap::new(),
             reset_armed: false,
             dropdown: None,
+            narrowed: None,
             highlight: None,
             unfolded: app_unfolded,
             revealed: std::collections::BTreeSet::new(),
@@ -1382,6 +1442,7 @@ impl SettingsView {
         if settings != self.settings_revision {
             self.settings_revision = settings;
             self.rebuild(window, cx);
+            self.relist_choices(cx);
             changed = true;
         }
         if let Some(found) = self.probe.lock().ok().and_then(|mut slot| slot.take()) {
@@ -1519,7 +1580,39 @@ impl SettingsView {
         else {
             return;
         };
-        self.adjust_key(&key, delta, cx);
+        // A long list opens rather than step: each step would apply its
+        // choice, a font loaded for each one passed.
+        let long = self.row(&key).is_some_and(|row| {
+            row.spec.kind == SettingKind::Choice
+                && row.spec.constraints.choices.len() > crate::settings_view::FILTERED
+        });
+        if long {
+            self.open_choices(&key, window, cx);
+        } else {
+            self.adjust_key(&key, delta, cx);
+        }
+    }
+
+    /// The choices a dropdown lists, as declared again (the fonts, once
+    /// listed on a worker): the long one open keeps what is typed; a short
+    /// one that grew long closes, to open as a long one.
+    fn relist_choices(&mut self, cx: &mut Context<Self>) {
+        if let Some(narrowed) = &mut self.narrowed
+            && let Some(spec) = self.app.settings.spec(&narrowed.key)
+        {
+            let choices = Narrowed::choices_of(&spec);
+            if choices != narrowed.choices {
+                narrowed.choices = choices;
+                let query = narrowed.field.read(cx).text().to_owned();
+                narrowed.narrow(&query);
+            }
+        } else if let Some(key) = &self.dropdown
+            && self.row(key).is_some_and(|row| {
+                row.spec.constraints.choices.len() > crate::settings_view::FILTERED
+            })
+        {
+            self.dropdown = None;
+        }
     }
 
     pub(crate) fn adjust_key(&mut self, key: &str, delta: i64, cx: &mut Context<Self>) {
@@ -1849,7 +1942,94 @@ impl SettingsView {
         self.go(pages[next].clone(), cx);
     }
 
+    /// Open the long dropdown of `key`, its field taking the keyboard and
+    /// the value chosen highlighted.
+    pub(crate) fn open_choices(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(spec) = self.app.settings.spec(key) else {
+            return;
+        };
+        let value = self
+            .row(key)
+            .map(|row| row.value.clone())
+            .unwrap_or_default();
+        let field = cx.new(|cx| TextInput::new("Type to narrow", cx));
+        let typed = cx.subscribe_in(
+            &field,
+            window,
+            |this, field, event: &InputEvent, window, cx| match event {
+                InputEvent::Changed => {
+                    let query = field.read(cx).text().to_owned();
+                    if let Some(narrowed) = &mut this.narrowed {
+                        narrowed.narrow(&query);
+                    }
+                    cx.notify();
+                }
+                InputEvent::Submit => this.take_choice(window, cx),
+                InputEvent::Cancel => this.close_choices(window, cx),
+            },
+        );
+        let mut narrowed = Narrowed {
+            key: key.to_owned(),
+            field: field.clone(),
+            choices: Narrowed::choices_of(&spec),
+            kept: Vec::new(),
+            highlighted: 0,
+            scroll: gpui::UniformListScrollHandle::new(),
+            _typed: typed,
+        };
+        narrowed.narrow("");
+        if let Some(at) = narrowed.choices.iter().position(|(v, _)| *v == value) {
+            narrowed.highlighted = at;
+            narrowed
+                .scroll
+                .scroll_to_item(at, gpui::ScrollStrategy::Center);
+        }
+        self.narrowed = Some(narrowed);
+        self.dropdown = Some(key.to_owned());
+        field.update(cx, |field, cx| field.focus(window, cx));
+        cx.notify();
+    }
+
+    /// Close the long dropdown, the keyboard back on its control.
+    pub(crate) fn close_choices(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.dropdown = None;
+        if let Some(narrowed) = self.narrowed.take() {
+            let control = self.handle(&format!("control:{}", narrowed.key), cx);
+            window.focus(&control, cx);
+        }
+        cx.notify();
+    }
+
+    /// Take the choice highlighted.
+    pub(crate) fn take_choice(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(narrowed) = &self.narrowed else {
+            return;
+        };
+        let key = narrowed.key.clone();
+        let value = narrowed.highlighted_value().map(str::to_owned);
+        self.close_choices(window, cx);
+        if let Some(value) = value {
+            self.change(&key, value, cx);
+        }
+    }
+
+    fn move_choices(&mut self, mv: crate::modal::ListMove, cx: &mut Context<Self>) {
+        let Some(narrowed) = &mut self.narrowed else {
+            return;
+        };
+        if narrowed.kept.is_empty() {
+            return;
+        }
+        narrowed.highlighted = mv.from(narrowed.highlighted, narrowed.kept.len());
+        narrowed
+            .scroll
+            .scroll_to_item(narrowed.highlighted, gpui::ScrollStrategy::Nearest);
+        cx.notify();
+    }
+
     fn step_focus(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        self.dropdown = None;
+        self.narrowed = None;
         if self.stops.is_empty() {
             return;
         }
@@ -1885,7 +2065,9 @@ impl SettingsView {
             .unwrap_or(1);
         match name {
             "settings_close" => {
-                if self.dropdown.take().is_some() {
+                if self.narrowed.is_some() {
+                    self.close_choices(window, cx);
+                } else if self.dropdown.take().is_some() {
                     cx.notify();
                 } else if self.keys.editor.is_some() {
                     self.close_key_editor(window, cx);
@@ -1896,6 +2078,7 @@ impl SettingsView {
                     cx.emit(SettingsEvent::Close);
                 }
             }
+            "settings_list_move" => self.move_choices(crate::modal::ListMove::of(args), cx),
             "settings_next" => self.step_focus(1, window, cx),
             "settings_prev" => self.step_focus(-1, window, cx),
             "settings_search" => {

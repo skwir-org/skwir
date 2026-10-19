@@ -1652,7 +1652,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.settings.is_some() && !name.starts_with("ui.settings") {
+        // The dialog's own, and Up and Down in a list of its (a long list
+        // of choices): the one command every list one picks from shares.
+        if self.settings.is_some() && !name.starts_with("ui.settings") && name != "ui.list_move" {
             return;
         }
         // The overview is something to read: a key meant for the window
@@ -1854,7 +1856,8 @@ impl Shell {
             // Up and Down in whichever list has the keyboard: what a
             // question before deleting lists, the names a plan found taken,
             // a review's steps, the palette, a choice, Jump, the tag
-            // editor, the address's suggestions.
+            // editor, a long list of choices in Settings, the address's
+            // suggestions.
             "list_move" => {
                 let mv = crate::modal::ListMove::of(args);
                 if self.confirm_move(mv, window, cx)
@@ -1869,6 +1872,8 @@ impl Shell {
                     self.jump_move(mv, cx);
                 } else if self.tag_editor.is_some() {
                     self.tag_editor_move(mv, cx);
+                } else if self.settings.is_some() {
+                    self.settings_command("settings_list_move", args, window, cx);
                 } else {
                     self.omnibox_move(mv, cx);
                 }
