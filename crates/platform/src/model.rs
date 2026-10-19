@@ -30,6 +30,8 @@ pub enum MeshFormat {
     ThreeMf,
     /// STEP: exact surfaces, meshed by the helper (ADR-069).
     Step,
+    /// IGES: exact surfaces, meshed as STEP's are.
+    Iges,
     /// Rhino: the meshes it stores of its surfaces.
     Rhino,
 }
@@ -44,6 +46,7 @@ impl MeshFormat {
             MeshFormat::Gltf => "gltf",
             MeshFormat::ThreeMf => "3mf",
             MeshFormat::Step => "step",
+            MeshFormat::Iges => "iges",
             MeshFormat::Rhino => "3dm",
         }
     }
@@ -63,7 +66,7 @@ pub struct Measures {
     pub closed: bool,
     /// The volume enclosed, in the file's unit cubed, when it is closed.
     pub volume: Option<f64>,
-    /// The faces of a model made of surfaces (STEP), and how many of them
+    /// The faces of a model made of surfaces (STEP, IGES), and how many of them
     /// could not be meshed: holes in what is shown. Zero for a mesh.
     pub faces: u64,
     pub faces_missing: u64,

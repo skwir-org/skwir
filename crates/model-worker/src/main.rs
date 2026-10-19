@@ -2,13 +2,13 @@
 //! model can hold millions of triangles, whose memory is given back when
 //! this exits, and a reader that fails takes nothing else with it.
 //!
-//! `skwir-model-worker <path> --format stl|obj|ply|off|gltf|3mf|step|3dm
+//! `skwir-model-worker <path> --format stl|obj|ply|off|gltf|3mf|step|iges|3dm
 //! --side N --triangles N --bytes N [--mesh N]` writes one line of JSON
 //! (what the mesh measures) then the picture as PNG, at most `side` pixels
 //! on its longer side, on standard output. A file larger than `bytes`, or a
 //! mesh of more than `triangles`, is refused. Anything else is an exit
 //! status of 1 and a reason on standard error. Pure Rust; nothing is
-//! written. A STEP model's line also says how many faces it has
+//! written. A STEP or IGES model's line also says how many faces it has
 //! (`"faces"`) and how many could not be meshed (`"faces_missing"`); a
 //! Rhino model's how many of its objects store no mesh
 //! (`"objects_missing"`).
@@ -22,15 +22,17 @@
 //! red, green, blue, alpha). Only the positions a triangle uses are
 //! written. A larger mesh is drawn, and the line says `"mesh": false`.
 mod draw;
+mod exchange;
 mod gltf_mesh;
 mod mesh;
 mod ply;
 mod rhino;
-mod step;
 mod threemf;
 
 use std::io::Write;
 use std::path::PathBuf;
+
+use exchange::Exchange;
 
 struct Arguments {
     path: PathBuf,
@@ -126,7 +128,8 @@ fn run() -> Result<(), String> {
             "obj" => mesh::obj(&bytes, &mut mesh)?,
             "off" => mesh::off(&bytes, &mut mesh)?,
             "ply" => ply::read(&bytes, &mut mesh)?,
-            "step" => surfaces = Some(step::read(&bytes, &mut mesh)?),
+            "step" => surfaces = Some(exchange::read(Exchange::Step, &bytes, &mut mesh)?),
+            "iges" => surfaces = Some(exchange::read(Exchange::Iges, &bytes, &mut mesh)?),
             "gltf" => gltf_mesh::read(&bytes, &args.path, args.bytes, &mut mesh)?,
             other => return Err(format!("the format {other:?} is not read here")),
         }
@@ -136,7 +139,7 @@ fn run() -> Result<(), String> {
     }
     let (lo, hi) = mesh.bounds().ok_or("the model has no triangles")?;
     let size: Vec<f32> = (0..3).map(|axis| hi[axis] - lo[axis]).collect();
-    // A STEP model's volume is measured on the mesh ogeom welds.
+    // A STEP or IGES model's volume is measured on the mesh ogeom welds.
     let volume = match &surfaces {
         Some(faces) => faces.volume,
         None => mesh.closed_volume(),

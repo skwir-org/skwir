@@ -162,8 +162,8 @@ A name that says nothing is not a binary file.
   the model's folder, and returns a line of measures and a PNG. Without
   the helper the plugin declines the mesh, leaving it to a desktop
   thumbnailer.
-- **A model of exact surfaces is meshed in the helper** (STEP, by ogeom,
-  ADR-069):
+- **A model of exact surfaces is meshed in the helper** (STEP and IGES,
+  by ogeom, ADR-069):
   - each face keeps its own points: smooth shading averages normals at
     shared positions, which would round a CAD edge;
   - whether it is watertight, and its volume, are measured on the mesh

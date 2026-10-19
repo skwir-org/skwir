@@ -81,7 +81,9 @@ pub fn read(
         }
         // A thumbnail asked again once the helper has a turn.
         Err(error) if error.is::<skwir_core::thumbs::Busy>() => Err(error),
-        // Nothing stored to draw: the preview, saying why.
+        // Nothing stored to draw: the preview, saying why, and nothing to
+        // turn (3D is offered where it turns something: it toggles from
+        // what is shown).
         Err(error) => Ok(Found {
             notice: Some(format!("{error:#}")),
             ..found

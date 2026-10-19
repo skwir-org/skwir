@@ -346,18 +346,20 @@ The player, in the panel or pinned at its foot:
   3MF its slicer did not picture) are read by `skwir-model-worker` and
   measured: size, volume, whether they are watertight, triangles and
   objects. An STL is read in millimetres, as slicers read it.
-- **STEP** models (AP203, AP214, AP242) are read by the same helper,
+- **STEP** models (AP203, AP214, AP242) and **IGES** models are read by
+  the same helper,
   with ogeom (ADR-069), and shown and measured as meshes are: each part
   where the file's assembly places it, its faces in the colours the file
   gives them, smooth within a curved face and sharp along the edges
   between faces, in the file's unit.
-  - Properties adds the protocol, the program that wrote the file and
-    its faces. A face that cannot be meshed is left out and the panel
+  - Properties adds the program that wrote the file, the STEP protocol
+    or the IGES version, and the faces. A face that cannot be meshed is left out and the panel
     says so ("2 of 387 faces could not be drawn"), so a hole is never
     taken for the shape.
-  - A STEP file over 16 MiB is drawn by Full preview, up to 128 MiB. A
+  - A file over 16 MiB is drawn by Full preview, up to 128 MiB. A STEP
     file that holds only triangles (AP242's tessellated geometry) is not
-    read.
+    read, nor an IGES file whose surfaces all sit in a group (some old
+    exporters write them so).
 - **Rhino** models show the picture Rhino stored; **3D** turns the meshes
   the file keeps of its shapes: mesh objects and the render meshes of
   B-reps and extrusions, placed by block instances, on the layers shown.
@@ -399,8 +401,8 @@ The player, in the panel or pinned at its foot:
   the SketchUp or Rhino version and a model's scenes or a LayOut
   document's pages, a print's time, filament, material, layer height,
   printer and slicer, a drawing's DWG or DXF version.
-- Other models (IGES…) are shown when an installed thumbnailer (f3d,
-  Blender) claims their type, isolated like picture thumbnailers.
+- Other models are shown when an installed thumbnailer (f3d, Blender)
+  claims their type, isolated like picture thumbnailers.
 
 ### Circuit boards (`circuits`)
 

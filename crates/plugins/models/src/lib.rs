@@ -6,15 +6,17 @@
 //! its entities (`dxf`), which most never picture, and G-code that stores
 //! none from its moves (`toolpath`). A mesh that carries none (STL, OBJ, PLY,
 //! OFF, glTF, a 3MF its slicer did not picture) is drawn by a helper of its
-//! own, `skwir-model-worker`, and measured, as is a STEP model, whose faces
-//! the helper meshes (`step`, ADR-069); a window that draws meshes gets the
-//! mesh to turn instead (ADR-067). The same pictures are the grid's
+//! own, `skwir-model-worker`, and measured, as is a STEP or IGES model,
+//! whose faces the helper meshes (`exchange`, ADR-069); a window that draws
+//! meshes gets the mesh to turn instead (ADR-067). The same pictures are the grid's
 //! thumbnails, after any thumbnailer the desktop installed for these
 //! files.
 mod blend;
 mod cad;
 mod dxf;
+mod exchange;
 mod gcode;
+mod iges;
 mod mesh;
 mod package;
 mod rhino;
@@ -46,7 +48,7 @@ impl Plugin for PreviewPlugin {
         "3D models and prints"
     }
     fn description(&self) -> &'static str {
-        "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings, G-code toolpaths, the meshes Rhino models keep and STL, OBJ, PLY, OFF, glTF and STEP models; print time, filament, size, volume and version in Properties"
+        "Show Blender files, 3MF packages, FreeCAD documents, SketchUp and Rhino models, DWG drawings and G-code prints by the picture stored in them, and draw DXF drawings, G-code toolpaths, the meshes Rhino models keep and STL, OBJ, PLY, OFF, glTF, STEP and IGES models; print time, filament, size, volume and version in Properties"
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
@@ -131,6 +133,7 @@ impl Format {
             "model/obj" => Some(Format::Mesh(MeshFormat::Obj)),
             "model/gltf-binary" | "model/gltf+json" => Some(Format::Mesh(MeshFormat::Gltf)),
             "model/step" => Some(Format::Mesh(MeshFormat::Step)),
+            "model/iges" => Some(Format::Mesh(MeshFormat::Iges)),
             _ => None,
         })
     }
@@ -171,7 +174,9 @@ impl Format {
             Format::SketchUp => sketchup::model(path, side, cancel),
             Format::LayOut => sketchup::layout(path, side, cancel),
             Format::Rhino => rhino::read(path, side, asked, picture_first, cancel),
-            Format::Mesh(MeshFormat::Step) => step::read(path, side, asked, bounds, cancel),
+            Format::Mesh(format @ (MeshFormat::Step | MeshFormat::Iges)) => {
+                exchange::read(path, format, side, asked, bounds, cancel)
+            }
             Format::Mesh(format) => mesh::read(path, format, side, asked, cancel),
         }
     }
@@ -430,6 +435,10 @@ mod tests {
             Some(Format::Mesh(MeshFormat::Step))
         );
         assert_eq!(of("bracket.step", None), None);
+        assert_eq!(
+            of("bracket.igs", Some("model/iges")),
+            Some(Format::Mesh(MeshFormat::Iges))
+        );
         assert_eq!(of("notes.txt", Some("text/plain")), None);
     }
 
@@ -801,6 +810,7 @@ END-ISO-10303-21;
             .unwrap();
         assert!(data.image.is_some(), "its picture still");
         assert!(data.notice.contains("no triangles"), "{}", data.notice);
+        assert!(!data.mesh_available, "nothing to turn");
         assert_eq!(data.details[0].value, "Rhinoceros 5.0");
     }
 

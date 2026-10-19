@@ -1,6 +1,7 @@
-//! STEP models (ISO 10303-21: AP203, AP214, AP242), read and meshed by
-//! ogeom (ADR-069). A STEP file holds exact surfaces, never triangles:
-//! each part is placed where the file's assembly puts it, and each face is
+//! CAD exchange files, STEP (ISO 10303-21: AP203, AP214, AP242) and IGES,
+//! read and meshed by ogeom (ADR-069). They hold exact surfaces, never
+//! triangles: each part is placed where the file's assembly puts it (a
+//! STEP file's product tree; an IGES file has none), and each face is
 //! meshed to a chord a thousandth of the model's size, in the colour the
 //! file gives it. Lengths are in the file's own unit. A face ogeom cannot
 //! mesh is left out and counted, so the preview says so rather than show
@@ -39,6 +40,22 @@ const UNITS: [(&str, f64); 6] = [
     ("µm", 0.001),
 ];
 
+/// The exchange formats read here.
+#[derive(Clone, Copy)]
+pub enum Exchange {
+    Step,
+    Iges,
+}
+
+impl Exchange {
+    fn name(self) -> &'static str {
+        match self {
+            Exchange::Step => "STEP",
+            Exchange::Iges => "IGES",
+        }
+    }
+}
+
 /// How many faces the file has, how many of them could not be meshed, and
 /// the volume its bodies enclose when every one of them is closed.
 pub struct Faces {
@@ -47,13 +64,13 @@ pub struct Faces {
     pub volume: Option<f64>,
 }
 
-/// The model in `bytes`, added to `mesh`.
-pub fn read(bytes: &[u8], mesh: &mut Mesh) -> Result<Faces, String> {
+/// The model in `bytes`, in `format`, added to `mesh`.
+pub fn read(format: Exchange, bytes: &[u8], mesh: &mut Mesh) -> Result<Faces, String> {
     // A reader of a format this large may fail on a file in ways it did
     // not foresee: a panic is said as the reason, not as a trace.
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
-    let read = std::panic::catch_unwind(AssertUnwindSafe(|| unguarded(bytes, mesh)));
+    let read = std::panic::catch_unwind(AssertUnwindSafe(|| unguarded(format, bytes, mesh)));
     std::panic::set_hook(hook);
     read.unwrap_or_else(|panic| {
         let said = panic
@@ -61,14 +78,33 @@ pub fn read(bytes: &[u8], mesh: &mut Mesh) -> Result<Faces, String> {
             .map(|s| (*s).to_owned())
             .or_else(|| panic.downcast_ref::<String>().cloned())
             .unwrap_or_default();
-        Err(format!("the STEP reader failed on this file: {said}"))
+        Err(format!(
+            "the {} reader failed on this file: {said}",
+            format.name()
+        ))
     })
 }
 
-fn unguarded(bytes: &[u8], mesh: &mut Mesh) -> Result<Faces, String> {
-    let import = ogeom_io::read_step(&String::from_utf8_lossy(bytes), TOLERANCES)
-        .map_err(|e| format!("not a STEP model ogeom reads: {e}"))?;
-    let document = &import.document;
+fn unguarded(format: Exchange, bytes: &[u8], mesh: &mut Mesh) -> Result<Faces, String> {
+    let text = String::from_utf8_lossy(bytes);
+    let refused = |e: ogeom_core::OgeomError| {
+        format!("this {} file holds nothing ogeom reads: {e}", format.name())
+    };
+    // The document, the bodies found, and the millimetres in a file unit.
+    let (document, found, scale_mm) = match format {
+        Exchange::Step => {
+            let import = ogeom_io::read_step(&text, TOLERANCES).map_err(refused)?;
+            let found = [import.solids, import.shells].concat();
+            (import.document, found, import.report.scale_mm)
+        }
+        Exchange::Iges => {
+            let import = ogeom_io::read_iges(&text, TOLERANCES).map_err(refused)?;
+            let found = [import.solids, import.sheets].concat();
+            (import.document, found, import.report.scale_mm)
+        }
+    };
+    drop(text);
+    let document = &document;
     let model = document.model();
     // Every part where the product tree places it, then any body the tree
     // does not reach, where the file states it.
@@ -82,7 +118,7 @@ fn unguarded(bytes: &[u8], mesh: &mut Mesh) -> Result<Faces, String> {
     for (_, body) in &bodies {
         reached.extend(faces_of(model, body)?.iter().map(Shape::node));
     }
-    for body in import.solids.iter().chain(&import.shells) {
+    for body in &found {
         if faces_of(model, body)?
             .iter()
             .any(|face| !reached.contains(&face.node()))
@@ -92,7 +128,7 @@ fn unguarded(bytes: &[u8], mesh: &mut Mesh) -> Result<Faces, String> {
     }
     let (unit, per_unit) = UNITS
         .into_iter()
-        .find(|(_, mm)| (import.report.scale_mm / mm - 1.).abs() < 1e-9)
+        .find(|(_, mm)| (scale_mm / mm - 1.).abs() < 1e-9)
         .unwrap_or(UNITS[0]);
     let deflection = Deflection {
         chord: (diagonal(model, &bodies)? * CHORD).max(1e-6),

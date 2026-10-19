@@ -1,5 +1,5 @@
 //! Meshes that carry no picture of their own (STL, OBJ, PLY, OFF, glTF, a
-//! 3MF its slicer did not picture, a STEP model's faces, the meshes a Rhino
+//! 3MF its slicer did not picture, a STEP or IGES model's faces, the meshes a Rhino
 //! model stores), drawn and measured by
 //! `skwir-model-worker` (`skwir_platform::model`), or read whole for a
 //! window that draws and turns them (ADR-067). Properties says what a print
@@ -66,6 +66,7 @@ fn title(format: MeshFormat) -> &'static str {
         MeshFormat::Gltf => "glTF model",
         MeshFormat::ThreeMf => "3MF",
         MeshFormat::Step => "STEP model",
+        MeshFormat::Iges => "IGES model",
         MeshFormat::Rhino => "Rhino model",
     }
 }

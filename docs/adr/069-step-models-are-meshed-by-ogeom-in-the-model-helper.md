@@ -1,7 +1,7 @@
 # ADR-069: STEP models are meshed by ogeom in the model helper
 
 Status: accepted, 2026-10-19. Built and checked on Linux; Windows and
-macOS compiled.
+macOS compiled. Amended the same day: IGES files are read alike.
 
 ## Context
 
@@ -72,9 +72,18 @@ macOS compiled.
   to 20 mm off; a cone to a point is 0.08 mm off at the finest chords. A
   file of triangles only is refused with ogeom's reason. Updates to ogeom
   are taken as any dependency's, re-scored on step-conformance.
-- ogeom also reads IGES (`read_iges`); it is not wired. OpenCascade
-  stays the way to the files ogeom cannot read, as a helper of its own,
-  if real files show the need.
+- IGES, amended the same day: ogeom reads it too (`read_iges`), so an
+  IGES file (`model/iges`) is meshed as a STEP file is, the global
+  section giving the program and the IGES version. Twelve SolidWorks
+  2014 exports (SparkFun's published models) read closed, no face
+  missing, in 0.02 to 0.18 s. ogeom keeps only *independent* trimmed
+  surfaces: a file that puts them in a group (a 402 entity, which makes
+  them logically dependent, as two 1998 EUCLID-QUANTUM files in
+  OpenCascade's test data do) is refused with ogeom's reason. Marking
+  them independent read one of those two right and the other as shards,
+  so the input is not rewritten: it is ogeom's to read them.
+- OpenCascade stays the way to the files ogeom cannot read, as a helper
+  of its own, if real files show the need.
 - Checked: the helper's tests (a cylinder in millimetres and in inches,
   red with a blue top face: closed, its volume within 1%, every triangle
   in its face's colour; what is not STEP refused), the plugin's (the

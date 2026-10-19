@@ -1148,3 +1148,44 @@ fn a_rhino_model_draws_the_meshes_it_stores_as_rhino_shows_them() {
     let path = write(dir.path(), "cut.3dm", &file(&[])[..40]);
     assert!(run(&path, "3dm", &[]).is_err());
 }
+
+#[test]
+fn an_iges_model_is_meshed_as_a_step_model_is() {
+    use ogeom_core::Tolerances;
+    // A red cylinder 20 mm across and 30 mm tall, written by ogeom.
+    let tolerances = Tolerances::millimetres();
+    let mut model = ogeom_topo::Model::new();
+    let cylinder = ogeom_algo::primitive::make_cylinder(
+        &mut model,
+        ogeom_math::Frame::WORLD,
+        10.,
+        30.,
+        tolerances,
+    )
+    .unwrap()
+    .shape;
+    let mut document = ogeom_doc::Document::over(model);
+    document.add_part("cylinder", cylinder.clone());
+    document.set_colour(&cylinder, ogeom_doc::Colour::rgb(1., 0., 0.));
+    let text = ogeom_io::write_iges(&document, tolerances).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "a part’s cylinder.igs", text.as_bytes());
+    let answer = run(&path, "iges", &[]).unwrap();
+    assert_eq!(answer.facts["unit"], "mm");
+    assert_eq!(size(&answer), [20., 20., 30.]);
+    assert_eq!(answer.facts["faces_missing"], 0);
+    assert_eq!(answer.facts["closed"], true);
+    let volume = answer.facts["volume"].as_f64().unwrap();
+    let exact = std::f64::consts::PI * 100. * 30.;
+    assert!((volume / exact - 1.).abs() < 0.01, "{volume} for {exact}");
+    let (_, _, _, colours) = whole_up_to(&path, "iges", 100_000);
+    assert!(
+        colours.iter().all(|c| *c == [255, 0, 0, 255]),
+        "in its colour"
+    );
+
+    // What is not IGES is refused, saying so.
+    let path = write(dir.path(), "not.igs", b"nothing of the sort\n");
+    let error = run(&path, "iges", &[]).unwrap_err();
+    assert!(error.contains("IGES"), "{error}");
+}

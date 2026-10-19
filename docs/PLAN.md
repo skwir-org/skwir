@@ -480,7 +480,7 @@ dates, measurements and what is left.
     one (STL, OBJ, PLY, OFF, glTF): 3DBenchy (225,706 triangles) in
     140 ms, volume 15.55 cm³ as published. Since 2026-10-19 a window that
     draws meshes on a GPU turns them instead (ADR-067). STEP is meshed by
-    the same helper with ogeom (ADR-069); IGES stays with f3d.
+    the same helper with ogeom (ADR-069), and IGES alike.
     SketchUp, LayOut and Rhino pictures checked on two SketchUp 2021
     models, a LayOut 2021 document and two Rhino 5 models; older
     SketchUp and newer Rhino files only on synthetic ones.
@@ -1342,9 +1342,9 @@ the rest.
   a 67-megapixel picture and two archives, each whole and then quick
   again, their memory given back (the ADR lists what was not).
 
-**STEP and Rhino models in 3D (ADR-069).** Nothing drew a STEP file
-without f3d, and nixpkgs' f3d claims a type the database does not know; a
-Rhino model showed only its stored picture.
+**STEP, IGES and Rhino models in 3D (ADR-069).** Nothing drew a STEP or
+IGES file without f3d, and nixpkgs' f3d claims a type the database does
+not know; a Rhino model showed only its stored picture.
 
 - Engines scored on step-conformance (27 CC0 parts at four chords):
   OpenCascade the reference, ogeom 89 of 108 runs (every real part),
@@ -1369,6 +1369,10 @@ Rhino model showed only its stored picture.
   48 drawn, the others storing no mesh shown or written by Rhino 1, each
   refusal matching an independent reader; the largest (10 MB,
   519,498 triangles) in 0.36 s and 65 MB, picture included.
+- IGES, the same day, through ogeom's own reader: the global section
+  gives the program and the version. Twelve SolidWorks exports read closed,
+  no face missing, in 0.02 to 0.18 s; files whose trimmed surfaces sit in
+  a group (two old EUCLID files) are refused by ogeom, left to it.
 
 ---
 
