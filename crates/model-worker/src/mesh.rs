@@ -8,6 +8,24 @@ use std::path::Path;
 
 pub type Point = [f32; 3];
 
+/// A colour as sRGB bytes, as PLY and 3MF write them: red, green, blue and
+/// alpha (kept, drawn opaque).
+pub type Colour = [u8; 4];
+
+/// The colour a part without one is drawn in, beside parts that have one:
+/// the surface's grey (`draw::ALBEDO`).
+pub fn grey() -> Colour {
+    let [r, g, b] = crate::draw::ALBEDO.map(crate::draw::encode);
+    [r, g, b, 255]
+}
+
+/// A colour of linear light, 0 to 1 (glTF's), as sRGB bytes.
+pub fn colour_of_linear(linear: [f32; 4]) -> Colour {
+    let [r, g, b, a] = linear;
+    let [r, g, b] = [r, g, b].map(crate::draw::encode);
+    [r, g, b, (a.clamp(0., 1.) * 255. + 0.5) as u8]
+}
+
 #[derive(Default)]
 pub struct Mesh {
     pub positions: Vec<Point>,
@@ -16,6 +34,8 @@ pub struct Mesh {
     pub objects: usize,
     /// The unit the file states its lengths in.
     pub unit: Option<&'static str>,
+    /// Each position's colour, when the file gives any; else empty.
+    pub colours: Vec<Colour>,
     /// Whether no two positions are the same: an STL's are made one as
     /// they are read, and need not be again to tell whether it is closed.
     welded: bool,
@@ -167,8 +187,34 @@ impl Mesh {
         triangles: impl IntoIterator<Item = [u32; 3]>,
         transform: &Transform,
     ) -> Result<(), String> {
+        self.add_coloured(points, None, triangles, transform)
+    }
+
+    /// As `add`, each point with its colour when `colours` gives them (one
+    /// a point). The positions added before without, and those added after
+    /// without, are grey.
+    pub fn add_coloured(
+        &mut self,
+        points: &[Point],
+        colours: Option<&[Colour]>,
+        triangles: impl IntoIterator<Item = [u32; 3]>,
+        transform: &Transform,
+    ) -> Result<(), String> {
         let base = u32::try_from(self.positions.len()).map_err(|_| "too many points")?;
         let count = u32::try_from(points.len()).map_err(|_| "too many points")?;
+        match colours.filter(|colours| colours.len() == points.len()) {
+            Some(colours) => {
+                if self.colours.is_empty() {
+                    self.colours = vec![grey(); self.positions.len()];
+                }
+                self.colours.extend_from_slice(colours);
+            }
+            None if !self.colours.is_empty() => {
+                self.colours
+                    .extend(std::iter::repeat_n(grey(), points.len()));
+            }
+            None => {}
+        }
         self.positions
             .extend(points.iter().map(|p| apply(transform, *p)));
         for [a, b, c] in triangles {
@@ -212,6 +258,7 @@ impl Mesh {
     pub fn compacted(self) -> Mesh {
         let mut renumbered = vec![u32::MAX; self.positions.len()];
         let mut positions = Vec::new();
+        let mut colours = Vec::new();
         let triangles = self
             .triangles
             .iter()
@@ -221,6 +268,9 @@ impl Mesh {
                     if *new == u32::MAX {
                         *new = u32::try_from(positions.len()).unwrap_or(u32::MAX);
                         positions.push(self.positions[i as usize]);
+                        if let Some(colour) = self.colours.get(i as usize) {
+                            colours.push(*colour);
+                        }
                     }
                     *new
                 })
@@ -229,6 +279,7 @@ impl Mesh {
         Mesh {
             positions,
             triangles,
+            colours,
             ..self
         }
     }
@@ -248,6 +299,10 @@ impl Mesh {
             for i in t {
                 out.write_all(&i.to_le_bytes())?;
             }
+        }
+        // Then, when there are any, a colour a position.
+        for colour in &self.colours {
+            out.write_all(colour)?;
         }
         Ok(())
     }
@@ -491,7 +546,22 @@ pub fn obj(bytes: &[u8], mesh: &mut Mesh) -> Result<(), String> {
     for model in &models {
         let points: Vec<Point> = model.mesh.positions.as_chunks::<3>().0.to_vec();
         let triangles = model.mesh.indices.as_chunks::<3>().0.iter().copied();
-        mesh.add(&points, triangles, &IDENTITY)?;
+        // MeshLab's `v x y z r g b`: a point's colour, fractions of one.
+        let colours: Option<Vec<Colour>> =
+            (model.mesh.vertex_color.len() == model.mesh.positions.len()).then(|| {
+                model
+                    .mesh
+                    .vertex_color
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|rgb| {
+                        let [r, g, b] = rgb.map(|v| (v.clamp(0., 1.) * 255.).round() as u8);
+                        [r, g, b, 255]
+                    })
+                    .collect()
+            });
+        mesh.add_coloured(&points, colours.as_deref(), triangles, &IDENTITY)?;
     }
     mesh.objects = models.len();
     mesh.y_up();

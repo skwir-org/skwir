@@ -1,8 +1,10 @@
 //! 3MF packages: the build's items, each an object placed by its
 //! transform; an object is a mesh, or components (other objects, maybe in
 //! another model file of the package, as Bambu Studio and Orca write them)
-//! placed by theirs. Lengths are in the unit the model states.
-use crate::mesh::{IDENTITY, Mesh, Point, Transform, compose};
+//! placed by theirs. Lengths are in the unit the model states. Colours are
+//! those of the core specification's base materials and the materials
+//! extension's colour groups, by triangle or by corner.
+use crate::mesh::{Colour, IDENTITY, Mesh, Point, Transform, compose, grey};
 use quick_xml::events::Event;
 use std::collections::HashMap;
 use std::io::Read;
@@ -18,6 +20,11 @@ type Archive = zip::ZipArchive<std::io::Cursor<Vec<u8>>>;
 struct Object {
     points: Vec<Point>,
     triangles: Vec<[u32; 3]>,
+    /// Its own property (`pid`, `pindex`): its triangles' unless they say.
+    property: Option<(u32, u32)>,
+    /// Each triangle's colour resource (a `Part::resources` index) and its
+    /// corners' colours in it (`p1`, `p2`, `p3`), once any triangle has one.
+    properties: Vec<Option<(u32, [u32; 3])>>,
     /// Other objects: the part holding them (`None`: this one), their id,
     /// and where they are placed.
     components: Vec<(Option<String>, String, Transform)>,
@@ -26,6 +33,11 @@ struct Object {
 #[derive(Default)]
 struct Part {
     objects: HashMap<String, Object>,
+    /// The ids a property names, each once.
+    resources: Vec<String>,
+    /// Their colours, in order: a base material's display colour, a colour
+    /// group's colours.
+    colours: HashMap<String, Vec<Colour>>,
     /// The build: objects placed by their transforms.
     items: Vec<(Option<String>, String, Transform)>,
     unit: Option<String>,
@@ -68,6 +80,39 @@ fn number(element: &quick_xml::events::BytesStart<'_>, name: &str) -> f32 {
         .unwrap_or(0.)
 }
 
+/// A colour as 3MF writes it: `#RRGGBB` or `#RRGGBBAA`.
+fn colour(text: &str) -> Option<Colour> {
+    let hex = text.strip_prefix('#')?;
+    let byte = |at: usize| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok();
+    match hex.len() {
+        6 => Some([byte(0)?, byte(2)?, byte(4)?, 255]),
+        8 => Some([byte(0)?, byte(2)?, byte(4)?, byte(6)?]),
+        _ => None,
+    }
+}
+
+impl Part {
+    /// The index `id` is kept by, among the ids properties name.
+    fn resource(&mut self, id: String) -> u32 {
+        if let Some(at) = self.resources.iter().position(|known| *known == id) {
+            return at as u32;
+        }
+        self.resources.push(id);
+        (self.resources.len() - 1) as u32
+    }
+
+    /// A triangle corner's colour: number `index` of resource `resource`,
+    /// grey where it names none.
+    fn colour(&self, resource: u32, index: u32) -> Colour {
+        self.resources
+            .get(resource as usize)
+            .and_then(|id| self.colours.get(id))
+            .and_then(|colours| colours.get(index as usize))
+            .copied()
+            .unwrap_or_else(grey)
+    }
+}
+
 /// A part's path as the zip names it.
 fn member_name(path: &str) -> String {
     path.trim_start_matches('/').to_owned()
@@ -78,6 +123,8 @@ fn parse(xml: &[u8], most: usize) -> Result<Part, String> {
     let mut buf = Vec::new();
     let mut part = Part::default();
     let mut current: Option<(String, Object)> = None;
+    // The colour resource being read: its id and colours.
+    let mut group: Option<(String, Vec<Colour>)> = None;
     let mut triangles = 0usize;
     loop {
         let event = reader
@@ -87,7 +134,36 @@ fn parse(xml: &[u8], most: usize) -> Result<Part, String> {
             Event::Start(e) | Event::Empty(e) => match e.local_name().as_ref() {
                 "model" => part.unit = attribute(&e, "unit"),
                 "object" => {
-                    current = attribute(&e, "id").map(|id| (id, Object::default()));
+                    let property = attribute(&e, "pid").map(|pid| {
+                        let index = attribute(&e, "pindex").and_then(|v| v.parse().ok());
+                        (part.resource(pid), index.unwrap_or(0))
+                    });
+                    current = attribute(&e, "id").map(|id| {
+                        (
+                            id,
+                            Object {
+                                property,
+                                ..Object::default()
+                            },
+                        )
+                    });
+                }
+                "basematerials" | "colorgroup" => {
+                    group = attribute(&e, "id").map(|id| (id, Vec::new()));
+                }
+                "base" | "color" => {
+                    let name = if e.local_name().as_ref() == "base" {
+                        "displaycolor"
+                    } else {
+                        "color"
+                    };
+                    if let Some((_, colours)) = &mut group {
+                        colours.push(
+                            attribute(&e, name)
+                                .and_then(|c| colour(&c))
+                                .unwrap_or_else(grey),
+                        );
+                    }
                 }
                 "vertex" => {
                     if let Some((_, object)) = &mut current {
@@ -113,6 +189,29 @@ fn parse(xml: &[u8], most: usize) -> Result<Part, String> {
                         object
                             .triangles
                             .push([index("v1"), index("v2"), index("v3")]);
+                        // Its colour: its own property, else its object's.
+                        let own = attribute(&e, "pid").map(|pid| part.resource(pid));
+                        let corner = |name: &str| attribute(&e, name).and_then(|v| v.parse().ok());
+                        let property = match (own.or(object.property.map(|p| p.0)), corner("p1")) {
+                            (Some(resource), first) => {
+                                let first = first.or(object.property.map(|p| p.1)).unwrap_or(0);
+                                Some((
+                                    resource,
+                                    [
+                                        first,
+                                        corner("p2").unwrap_or(first),
+                                        corner("p3").unwrap_or(first),
+                                    ],
+                                ))
+                            }
+                            (None, _) => None,
+                        };
+                        // Kept from the first triangle with one on, those
+                        // before it without.
+                        if property.is_some() || !object.properties.is_empty() {
+                            object.properties.resize(object.triangles.len() - 1, None);
+                            object.properties.push(property);
+                        }
                     }
                 }
                 "component" => {
@@ -139,6 +238,11 @@ fn parse(xml: &[u8], most: usize) -> Result<Part, String> {
             Event::End(e) if e.local_name().as_ref() == "object" => {
                 if let Some((id, object)) = current.take() {
                     part.objects.insert(id, object);
+                }
+            }
+            Event::End(e) if matches!(e.local_name().as_ref(), "basematerials" | "colorgroup") => {
+                if let Some((id, colours)) = group.take() {
+                    part.colours.insert(id, colours);
                 }
             }
             Event::Eof => break,
@@ -210,8 +314,29 @@ impl Package {
         let Some(object) = part.objects.get(id) else {
             return Ok(());
         };
-        if !object.triangles.is_empty() {
+        if !object.triangles.is_empty() && object.properties.is_empty() {
             mesh.add(&object.points, object.triangles.iter().copied(), placed)?;
+        } else if !object.triangles.is_empty() {
+            // Coloured: a point once for each colour its triangles give it.
+            let mut made: HashMap<(u32, Colour), u32> = HashMap::new();
+            let (mut points, mut colours) = (Vec::new(), Vec::new());
+            let mut triangles = Vec::with_capacity(object.triangles.len());
+            for (t, property) in object.triangles.iter().zip(&object.properties) {
+                if t.iter().any(|&i| i as usize >= object.points.len()) {
+                    continue;
+                }
+                triangles.push([0, 1, 2].map(|corner| {
+                    let colour = property.map_or_else(grey, |(resource, indices)| {
+                        part.colour(resource, indices[corner])
+                    });
+                    *made.entry((t[corner], colour)).or_insert_with(|| {
+                        points.push(object.points[t[corner] as usize]);
+                        colours.push(colour);
+                        (points.len() - 1) as u32
+                    })
+                }));
+            }
+            mesh.add_coloured(&points, Some(&colours), triangles, placed)?;
         }
         let components = object.components.clone();
         for (path, child, local) in components {

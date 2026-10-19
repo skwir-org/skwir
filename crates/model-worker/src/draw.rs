@@ -13,8 +13,8 @@ const ELEVATION: f32 = 28.;
 const MARGIN: f32 = 0.05;
 /// Pixels drawn per pixel given, along each side.
 const SAMPLES: usize = 2;
-/// The surface's colour, in linear light.
-const ALBEDO: [f32; 3] = [0.56, 0.60, 0.68];
+/// The surface's colour, in linear light, where the model gives none.
+pub const ALBEDO: [f32; 3] = [0.56, 0.60, 0.68];
 
 pub struct Picture {
     pub width: u32,
@@ -53,8 +53,18 @@ fn blend(parts: &[(f32, Point)]) -> Point {
     normalized(out).unwrap_or(out)
 }
 
+/// An sRGB byte as linear light.
+fn decode(byte: u8) -> f32 {
+    let s = f32::from(byte) / 255.;
+    if s <= 0.040_45 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 /// Linear light as an sRGB byte.
-fn encode(linear: f32) -> u8 {
+pub fn encode(linear: f32) -> u8 {
     let v = linear.clamp(0., 1.);
     let s = if v <= 0.003_130_8 {
         v * 12.92
@@ -116,7 +126,14 @@ pub fn draw(mesh: Mesh, side: u32) -> Picture {
                 normal = normal.map(|v| -v);
             }
             let light = 0.22 + 0.62 * dot(normal, key).max(0.) + 0.28 * dot(normal, fill).max(0.);
-            let colour = ALBEDO.map(|albedo| encode(albedo * light));
+            // The face's colour: its corners', averaged in linear light.
+            let albedo = if mesh.colours.is_empty() {
+                ALBEDO
+            } else {
+                let corners = t.map(|i| mesh.colours[i as usize]);
+                [0, 1, 2].map(|c| corners.iter().map(|k| decode(k[c])).sum::<f32>() / 3.)
+            };
+            let colour = albedo.map(|albedo| encode(albedo * light));
             let corners = t.map(|i| {
                 let p = projected[i as usize];
                 [

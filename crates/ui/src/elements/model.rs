@@ -130,10 +130,17 @@ pub struct Model {
 }
 
 impl Model {
-    /// `positions` and the triangles between them (`indices`), checked
-    /// again on the way to the GPU.
-    pub fn new(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> Result<Self, gpui::MeshError> {
-        let mesh = gpui::Mesh::new(positions, indices)?;
+    /// `positions` and the triangles between them (`indices`), and the
+    /// positions' colours if any, checked again on the way to the GPU.
+    pub fn new(
+        positions: Vec<[f32; 3]>,
+        indices: Vec<u32>,
+        colours: Option<Vec<[u8; 4]>>,
+    ) -> Result<Self, gpui::MeshError> {
+        let mut mesh = gpui::Mesh::new(positions, indices)?;
+        if let Some(colours) = colours {
+            mesh = mesh.with_colors(colours)?;
+        }
         let points = mesh.positions();
         let mut lo = [f32::INFINITY; 3];
         let mut hi = [f32::NEG_INFINITY; 3];
@@ -515,7 +522,7 @@ mod tests {
             0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7,
             6, 3, 0, 4, 3, 4, 7,
         ];
-        Model::new(positions, indices).unwrap()
+        Model::new(positions, indices, None).unwrap()
     }
 
     /// Where `p` lands in a view of `size`, in pixels from its top left.

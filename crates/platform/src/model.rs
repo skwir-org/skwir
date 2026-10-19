@@ -252,19 +252,23 @@ fn draw_with(
         volume: number("volume"),
     };
     let rest = &out[line + 1..];
+    let said = |key: &str| facts.get(key).and_then(serde_json::Value::as_bool) == Some(true);
     let shown = match whole {
-        Some(most) if facts.get("mesh").and_then(serde_json::Value::as_bool) == Some(true) => {
-            Shown::Mesh(mesh_from(rest, most)?)
-        }
+        Some(most) if said("mesh") => Shown::Mesh(mesh_from(rest, most, said("colours"))?),
         _ => Shown::Picture(crate::inspection::image(rest)?),
     };
     Ok(Drawn { shown, measures })
 }
 
 /// The mesh the helper wrote (`--mesh`): two counts, then the positions
-/// and the triangles, all little-endian, with no more than `most`
-/// triangles, each index naming a position, each coordinate finite.
-fn mesh_from(bytes: &[u8], most: usize) -> anyhow::Result<skwir_core::inspection::Mesh> {
+/// and the triangles, all little-endian, then when `coloured` a colour a
+/// position (four bytes); no more than `most` triangles, each index naming
+/// a position, each coordinate finite.
+fn mesh_from(
+    bytes: &[u8],
+    most: usize,
+    coloured: bool,
+) -> anyhow::Result<skwir_core::inspection::Mesh> {
     let word = |at: usize| -> anyhow::Result<u32> {
         let four = bytes
             .get(at..at + 4)
@@ -277,8 +281,10 @@ fn mesh_from(bytes: &[u8], most: usize) -> anyhow::Result<skwir_core::inspection
         "The model helper wrote a mesh larger than asked"
     );
     let points = 8 + positions * 12;
+    let corners = points + triangles * 12;
+    let colours = if coloured { positions * 4 } else { 0 };
     anyhow::ensure!(
-        bytes.len() == points + triangles * 12,
+        bytes.len() == corners + colours,
         "The model helper's mesh is not as long as it says"
     );
     let positions_read = bytes[8..points]
@@ -290,13 +296,18 @@ fn mesh_from(bytes: &[u8], most: usize) -> anyhow::Result<skwir_core::inspection
             [at(0), at(4), at(8)]
         })
         .collect();
-    let indices = bytes[points..]
+    let indices = bytes[points..corners]
         .as_chunks::<4>()
         .0
         .iter()
         .map(|four| u32::from_le_bytes(*four))
         .collect();
-    skwir_core::inspection::Mesh::new(positions_read, indices)
+    let mesh = skwir_core::inspection::Mesh::new(positions_read, indices)?;
+    if coloured {
+        mesh.with_colours(bytes[corners..].as_chunks::<4>().0.to_vec())
+    } else {
+        Ok(mesh)
+    }
 }
 
 #[cfg(test)]
@@ -317,10 +328,10 @@ mod tests {
     fn a_mesh_is_taken_only_as_long_and_as_large_as_it_says() {
         let square = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.]];
         let faces = [[0, 1, 2], [0, 2, 3]];
-        let mesh = mesh_from(&written(&square, &faces), 2).unwrap();
+        let mesh = mesh_from(&written(&square, &faces), 2, false).unwrap();
         assert_eq!(mesh.positions(), square);
         assert_eq!(mesh.indices(), [0, 1, 2, 0, 2, 3]);
-        let error = |bytes: &[u8], most| mesh_from(bytes, most).unwrap_err().to_string();
+        let error = |bytes: &[u8], most| mesh_from(bytes, most, false).unwrap_err().to_string();
         assert!(error(&written(&square, &faces), 1).contains("larger than asked"));
         let mut long = written(&square, &faces);
         long.push(0);
@@ -332,5 +343,26 @@ mod tests {
         assert!(error(&written(&square[..3], &[[0, 1, 3]]), 2).contains("names no position"));
         let broken = [[0., 0., 0.], [f32::INFINITY, 0., 0.], [0., 1., 0.]];
         assert!(error(&written(&broken, &[[0, 1, 2]]), 2).contains("not finite"));
+        // Coloured: a colour a position after the triangles, no more.
+        let mut coloured = written(&square, &faces);
+        coloured.extend(
+            [
+                [255u8, 0, 0, 255],
+                [0, 255, 0, 255],
+                [0, 0, 255, 255],
+                [9, 9, 9, 9],
+            ]
+            .iter()
+            .flatten(),
+        );
+        let mesh = mesh_from(&coloured, 2, true).unwrap();
+        assert_eq!(mesh.colours().unwrap()[1], [0, 255, 0, 255]);
+        coloured.truncate(coloured.len() - 4);
+        assert!(
+            mesh_from(&coloured, 2, true)
+                .unwrap_err()
+                .to_string()
+                .contains("not as long")
+        );
     }
 }

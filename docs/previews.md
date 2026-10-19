@@ -350,6 +350,9 @@ The player, in the panel or pinned at its foot:
   - **Perspective** and **Smooth shading** (in the bar, or Settings ›
     Reading › 3D models) draw nearer parts larger, and shade across faces
     rather than each flat.
+  - A model's own colours are drawn, turned or still: PLY's and OBJ's
+    point colours, glTF's materials and point colours, 3MF's materials
+    and colour groups. Textures are not.
   - Elsewhere (macOS, Windows, a machine without a graphics card), and in
     the grid, they are drawn from the front, right and above.
 - **G-code** that stores no picture is drawn from its moves:

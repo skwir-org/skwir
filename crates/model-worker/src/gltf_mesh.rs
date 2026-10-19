@@ -2,7 +2,9 @@
 //! transforms above it, as it stands before any animation. Buffers come
 //! from the GLB's own chunk, from `data:` URIs, or from a file beside the
 //! model that the model names by a relative path; nothing else is read.
-use crate::mesh::{IDENTITY, Mesh, Point, Transform, compose};
+//! Colours are a material's base colour times the points' own (`COLOR_0`);
+//! textures are not read.
+use crate::mesh::{IDENTITY, Mesh, Point, Transform, colour_of_linear, compose};
 use base64::Engine as _;
 use std::path::Path;
 
@@ -149,7 +151,24 @@ fn add_mesh(
             // Points and lines have no surface to draw.
             _ => continue,
         };
-        mesh.add(&points, triangles, transform)?;
+        // A primitive with a material or colours of its own is coloured;
+        // without either, it says nothing of its colour (glTF's default
+        // white would read as none).
+        let material = primitive.material();
+        let base = material.pbr_metallic_roughness().base_color_factor();
+        let own: Option<Vec<[f32; 4]>> = reader
+            .read_colors(0)
+            .map(|colours| colours.into_rgba_f32().collect());
+        let colours = (material.index().is_some() || own.is_some()).then(|| {
+            (0..points.len())
+                .map(|i| {
+                    let own = own.as_ref().and_then(|own| own.get(i)).copied();
+                    let [r, g, b, a] = own.unwrap_or([1.; 4]);
+                    colour_of_linear([base[0] * r, base[1] * g, base[2] * b, base[3] * a])
+                })
+                .collect::<Vec<_>>()
+        });
+        mesh.add_coloured(&points, colours.as_deref(), triangles, transform)?;
     }
     Ok(())
 }

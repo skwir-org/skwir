@@ -1,8 +1,9 @@
 //! PLY, as text or binary of either byte order: a header naming each
 //! element's properties, then the elements in that order. Only the points'
-//! `x`, `y`, `z` and the faces' index lists are kept; everything else
-//! (colours, normals, other elements) is read past.
-use crate::mesh::{IDENTITY, Mesh, Point};
+//! `x`, `y`, `z` and colours (`red`, `green`, `blue`, `alpha`, or
+//! `diffuse_` before them) and the faces' index lists are kept; everything
+//! else (normals, other elements) is read past.
+use crate::mesh::{Colour, IDENTITY, Mesh, Point};
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -98,6 +99,14 @@ impl Values<'_> {
 /// The corners a face may list.
 const CORNERS: usize = 1024;
 
+/// The channel of a point's colour a property names.
+fn channel(name: &str) -> Option<usize> {
+    let name = name.strip_prefix("diffuse_").unwrap_or(name);
+    ["red", "green", "blue", "alpha"]
+        .iter()
+        .position(|c| *c == name)
+}
+
 pub fn read(bytes: &[u8], mesh: &mut Mesh) -> Result<(), String> {
     const END: &[u8] = b"end_header";
     let end = bytes
@@ -164,9 +173,18 @@ pub fn read(bytes: &[u8], mesh: &mut Mesh) -> Result<(), String> {
         _ => return Err("the PLY format is unknown".into()),
     };
     let mut points: Vec<Point> = Vec::new();
+    let mut colours: Vec<Colour> = Vec::new();
     let mut triangles: Vec<[u32; 3]> = Vec::new();
     for element in &elements {
         let is_vertex = element.name == "vertex";
+        // Coloured when its points say red, green and blue.
+        let coloured = is_vertex
+            && [0, 1, 2].iter().all(|c| {
+                element
+                    .properties
+                    .iter()
+                    .any(|p| matches!(p, Property::One(name, _) if channel(name) == Some(*c)))
+            });
         let is_face = element.name == "face";
         if (is_vertex && element.count > mesh.most().saturating_mul(3))
             || (is_face && element.count > mesh.most())
@@ -175,6 +193,7 @@ pub fn read(bytes: &[u8], mesh: &mut Mesh) -> Result<(), String> {
         }
         for _ in 0..element.count {
             let mut point = [0f32; 3];
+            let mut colour: Colour = [0, 0, 0, 255];
             for property in &element.properties {
                 match property {
                     Property::One(name, kind) => {
@@ -183,6 +202,14 @@ pub fn read(bytes: &[u8], mesh: &mut Mesh) -> Result<(), String> {
                             && let Some(axis) = ["x", "y", "z"].iter().position(|a| a == name)
                         {
                             point[axis] = value as f32;
+                        } else if coloured && let Some(c) = channel(name) {
+                            // Bytes, or fractions of one.
+                            let scale = if matches!(kind, Kind::F32 | Kind::F64) {
+                                255.
+                            } else {
+                                1.
+                            };
+                            colour[c] = (value * scale).clamp(0., 255.).round() as u8;
                         }
                     }
                     Property::List(name, count, item) => {
@@ -209,9 +236,13 @@ pub fn read(bytes: &[u8], mesh: &mut Mesh) -> Result<(), String> {
             }
             if is_vertex {
                 points.push(point);
+                if coloured {
+                    colours.push(colour);
+                }
             }
         }
     }
     mesh.objects = 1;
-    mesh.add(&points, triangles, &IDENTITY)
+    let colours = (!colours.is_empty()).then_some(colours.as_slice());
+    mesh.add_coloured(&points, colours, triangles, &IDENTITY)
 }

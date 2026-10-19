@@ -36,6 +36,9 @@ Windows show the still, as before.
    - Faces are shaded flat from the screen-space derivatives of their
      position, so no normals are sent, and lit on either side: a mesh's
      winding is not always kept.
+   - A mesh may carry a colour for each position (`Mesh::with_colors`,
+     sRGB bytes), drawn in place of the view's and blended across a face
+     in linear light.
    - Smooth shading (`MeshView::smooth`) asks for normals, which the
      renderer makes on its upload thread when a frame first asks for them
      (each position's faces' normals, weighted by their areas): the mesh is
@@ -51,7 +54,14 @@ Windows show the still, as before.
      windows do; Metal and Direct3D 11 draw nothing yet and say so.
 2. **The file is still read in the helper.** `skwir-model-worker --mesh`
    writes what it measures, then the positions and triangles as
-   little-endian numbers. Skwir checks the counts against what it asked,
+   little-endian numbers, then a colour a position when the file gives
+   any: PLY's point colours, MeshLab's in OBJ, a glTF material's base
+   colour times its points' (`COLOR_0`), 3MF's base materials and colour
+   groups (a point split where its triangles disagree). A part without
+   one beside parts with one is the still's grey. The still and the
+   thumbnails are drawn in them too. Textures are not read: an image
+   decoder in the helper, coordinates, a texture and a sampler for what
+   the base colours mostly say already. Skwir checks the counts against what it asked,
    every index against the positions and every coordinate before anything
    reaches the GPU (`inspection::Mesh::new`, then `gpui::Mesh::new`). The
    rule becomes: nothing is read in-process; the window draws what the
@@ -149,7 +159,5 @@ Windows show the still, as before.
   Ctrl+0; on X11 (Xwayland): drawn and turned by a drag; on lavapipe, the
   still. **Not checked yet:** the window on NVIDIA (the user's session),
   a screen reader. macOS and Windows compile the batch they skip.
-- **To decide before going further:**
-  - Metal and Direct3D 11 passes (the same shader, translated), or the
-    still there for good;
-  - a model's own colours and textures (glTF, 3MF, PLY).
+- **To decide before going further:** Metal and Direct3D 11 passes (the
+  same shader, translated), or the still there for good.

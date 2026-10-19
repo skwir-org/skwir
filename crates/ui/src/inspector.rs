@@ -177,10 +177,10 @@ impl Display {
             .map(Arc::new);
         // The mesh moves on to the GPU's side whole: its only holder here.
         let model = data.mesh.take().and_then(|mesh| {
-            let (positions, indices) = Arc::try_unwrap(mesh)
+            let (positions, indices, colours) = Arc::try_unwrap(mesh)
                 .unwrap_or_else(|shared| (*shared).clone())
                 .into_parts();
-            crate::elements::model::Model::new(positions, indices)
+            crate::elements::model::Model::new(positions, indices, colours)
                 .ok()
                 .map(Arc::new)
         });

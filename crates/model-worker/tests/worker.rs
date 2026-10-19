@@ -470,3 +470,146 @@ fn a_binary_stl_that_begins_solid_is_binary() {
     assert_eq!(answer.facts["triangles"], 12);
     assert_eq!(size(&answer), [2., 3., 4.]);
 }
+
+/// The helper's answer to `--mesh`: what it says, its positions,
+/// triangles and colours (none when it says it has none).
+fn whole(
+    path: &Path,
+    format: &str,
+) -> (
+    serde_json::Value,
+    Vec<[f32; 3]>,
+    Vec<[u32; 3]>,
+    Vec<[u8; 4]>,
+) {
+    let output = Command::new(env!("CARGO_BIN_EXE_skwir-model-worker"))
+        .arg(path)
+        .args(["--format", format, "--mesh", "1000"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let line = output.stdout.iter().position(|b| *b == b'\n').unwrap();
+    let said: serde_json::Value = serde_json::from_slice(&output.stdout[..line]).unwrap();
+    let rest = &output.stdout[line + 1..];
+    let word = |at: usize| u32::from_le_bytes(rest[at..at + 4].try_into().unwrap()) as usize;
+    let mesh_end = 8 + word(0) * 12 + word(4) * 12;
+    let colours: Vec<[u8; 4]> = rest[mesh_end..].as_chunks::<4>().0.to_vec();
+    assert_eq!(said["colours"], !colours.is_empty());
+    let (positions, triangles) = mesh_after(&rest[..mesh_end]);
+    if !colours.is_empty() {
+        assert_eq!(colours.len(), positions.len(), "a colour a position");
+    }
+    (said, positions, triangles, colours)
+}
+
+/// Each triangle's corners' colours, in its order.
+fn corner_colours(triangles: &[[u32; 3]], colours: &[[u8; 4]]) -> Vec<[[u8; 4]; 3]> {
+    triangles
+        .iter()
+        .map(|t| t.map(|i| colours[i as usize]))
+        .collect()
+}
+
+#[test]
+fn colours_are_read_from_ply_obj_gltf_and_3mf() {
+    let dir = tempfile::tempdir().unwrap();
+    // PLY: a point's red, green and blue bytes.
+    let ply = "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0 255 0 0\n1 0 0 0 255 0\n0 1 0 0 0 255\n3 0 1 2\n";
+    let (_, _, triangles, colours) = whole(&write(dir.path(), "scan.ply", ply.as_bytes()), "ply");
+    assert_eq!(
+        corner_colours(&triangles, &colours),
+        [[[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]]]
+    );
+    // Without colours, none.
+    let plain = "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
+    let (said, ..) = whole(&write(dir.path(), "plain.ply", plain.as_bytes()), "ply");
+    assert_eq!(said["colours"], false);
+    // OBJ: MeshLab's `v x y z r g b`, fractions of one.
+    let obj = "v 0 0 0 1 0 0\nv 1 0 0 1 0 0\nv 0 1 0 0 0.5 1\nf 1 2 3\n";
+    let (_, _, triangles, colours) =
+        whole(&write(dir.path(), "painted.obj", obj.as_bytes()), "obj");
+    assert_eq!(
+        corner_colours(&triangles, &colours)[0][2],
+        [0, 128, 255, 255]
+    );
+    // glTF: a material's base colour, in linear light, written as sRGB;
+    // the other primitive, without one, grey.
+    let positions: Vec<u8> = [[0f32, 0., 0.], [1., 0., 0.], [0., 1., 0.]]
+        .iter()
+        .flatten()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    let uri = format!(
+        "data:application/octet-stream;base64,{}",
+        base64_of(&positions)
+    );
+    let gltf = format!(
+        r#"{{"asset":{{"version":"2.0"}},"buffers":[{{"uri":"{uri}","byteLength":36}}],"bufferViews":[{{"buffer":0,"byteLength":36}}],"accessors":[{{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}}],"materials":[{{"pbrMetallicRoughness":{{"baseColorFactor":[0.5,0.2140,0,1]}}}}],"meshes":[{{"primitives":[{{"attributes":{{"POSITION":0}},"material":0}},{{"attributes":{{"POSITION":0}}}}]}}],"nodes":[{{"mesh":0}}],"scenes":[{{"nodes":[0]}}],"scene":0}}"#
+    );
+    let (_, _, triangles, colours) =
+        whole(&write(dir.path(), "part.gltf", gltf.as_bytes()), "gltf");
+    let corners = corner_colours(&triangles, &colours);
+    assert_eq!(corners[0][0], [188, 127, 0, 255], "sRGB of 0.5, 0.214, 0");
+    assert_eq!(corners[1][0], [197, 203, 215, 255], "the surface's grey");
+    // 3MF: two triangles sharing an edge, of two base materials: the
+    // shared corners are written once for each colour.
+    let model = r##"<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><basematerials id="5"><base name="red" displaycolor="#FF0000"/><base name="teal" displaycolor="#00808080"/></basematerials><object id="1" type="model" pid="5" pindex="0"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="1" y="1" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/><triangle v1="0" v2="2" v3="3" pid="5" p1="1"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>"##;
+    let package = dir.path().join("two colours.3mf");
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&package).unwrap());
+    zip.start_file("3D/3dmodel.model", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(model.as_bytes()).unwrap();
+    zip.finish().unwrap();
+    let (_, positions, triangles, colours) = whole(&package, "3mf");
+    assert_eq!(positions.len(), 6, "the shared edge once a colour");
+    let corners = corner_colours(&triangles, &colours);
+    assert_eq!(corners[0], [[255, 0, 0, 255]; 3]);
+    assert_eq!(corners[1], [[0, 128, 128, 128]; 3]);
+}
+
+/// A coloured model's still is drawn in its colours.
+#[test]
+fn a_coloured_still_is_drawn_in_its_colours() {
+    let dir = tempfile::tempdir().unwrap();
+    let ply = "ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0 220 20 20\n1 0 0 220 20 20\n1 0 1 220 20 20\n0 0 1 220 20 20\n4 0 1 2 3\n";
+    let path = write(dir.path(), "red.ply", ply.as_bytes());
+    let output = Command::new(env!("CARGO_BIN_EXE_skwir-model-worker"))
+        .arg(&path)
+        .args(["--format", "ply", "--side", "64"])
+        .output()
+        .unwrap();
+    let line = output.stdout.iter().position(|b| *b == b'\n').unwrap();
+    let png = &output.stdout[line + 1..];
+    let decoder = png::Decoder::new(std::io::Cursor::new(png));
+    let mut reader = decoder.read_info().unwrap();
+    let mut pixels = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut pixels).unwrap();
+    // The square covers the middle of its picture: red, lit.
+    let at = ((info.height / 2 * info.width + info.width / 2) * 4) as usize;
+    let [r, g, b, a] = [pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3]];
+    assert_eq!(a, 255);
+    assert!(r > 100 && r > 3 * g && r > 3 * b, "{r} {g} {b}");
+}
+
+fn base64_of(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, b)| n | u32::from(*b) << (16 - 8 * i));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(TABLE[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}

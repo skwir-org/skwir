@@ -92,13 +92,16 @@ pub struct Inspection {
 }
 
 /// A 3D mesh as a provider read it (ADR-067): positions, in the file's
-/// unit with Z up, and the triangles between them, three indices each.
-/// Checked when made, so a view hands it to the GPU as it is: it has
-/// triangles, every index names a position, every coordinate is finite.
+/// unit with Z up, and the triangles between them, three indices each, and
+/// each position's colour when the file gives them (sRGB bytes, red, green,
+/// blue, alpha). Checked when made, so a view hands it to the GPU as it is:
+/// it has triangles, every index names a position, every coordinate is
+/// finite, there is a colour a position or none.
 #[derive(Clone, PartialEq)]
 pub struct Mesh {
     positions: Vec<[f32; 3]>,
     indices: Vec<u32>,
+    colours: Option<Vec<[u8; 4]>>,
 }
 
 impl Mesh {
@@ -116,7 +119,29 @@ impl Mesh {
             positions.iter().flatten().all(|v| v.is_finite()),
             "the mesh has a position that is not finite"
         );
-        Ok(Mesh { positions, indices })
+        Ok(Mesh {
+            positions,
+            indices,
+            colours: None,
+        })
+    }
+
+    /// The same mesh with a colour for each position.
+    pub fn with_colours(self, colours: Vec<[u8; 4]>) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            colours.len() == self.positions.len(),
+            "the mesh has {} colours for {} positions",
+            colours.len(),
+            self.positions.len()
+        );
+        Ok(Mesh {
+            colours: Some(colours),
+            ..self
+        })
+    }
+
+    pub fn colours(&self) -> Option<&[[u8; 4]]> {
+        self.colours.as_deref()
     }
 
     pub fn positions(&self) -> &[[f32; 3]] {
@@ -132,9 +157,9 @@ impl Mesh {
         self.indices.len() / 3
     }
 
-    /// Its positions and indices, for a view to hand on.
-    pub fn into_parts(self) -> (Vec<[f32; 3]>, Vec<u32>) {
-        (self.positions, self.indices)
+    /// Its positions, indices and colours, for a view to hand on.
+    pub fn into_parts(self) -> (Vec<[f32; 3]>, Vec<u32>, Option<Vec<[u8; 4]>>) {
+        (self.positions, self.indices, self.colours)
     }
 }
 

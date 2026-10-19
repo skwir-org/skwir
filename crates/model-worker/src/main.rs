@@ -13,9 +13,10 @@
 //! picture, for a window that draws it itself (ADR-067): the line says
 //! `"mesh": true`, then come the number of positions and of triangles
 //! (each a little-endian `u32`), the positions (three little-endian `f32`
-//! each) and the triangles (three little-endian `u32` indices each). Only
-//! the positions a triangle uses are written. A larger mesh is drawn, and
-//! the line says `"mesh": false`.
+//! each), the triangles (three little-endian `u32` indices each) and, when
+//! the line says `"colours": true`, a colour a position (four sRGB bytes,
+//! red, green, blue, alpha). Only the positions a triangle uses are
+//! written. A larger mesh is drawn, and the line says `"mesh": false`.
 mod draw;
 mod gltf_mesh;
 mod mesh;
@@ -128,6 +129,7 @@ fn run() -> Result<(), String> {
         "closed": volume.is_some(),
         "volume": volume,
         "mesh": whole,
+        "colours": !mesh.colours.is_empty(),
     });
     if whole {
         let mut out = std::io::BufWriter::with_capacity(1 << 20, std::io::stdout().lock());

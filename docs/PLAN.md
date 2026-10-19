@@ -1304,6 +1304,9 @@ mesh's preview was one still the helper drew on the CPU.
   its picture and 3D turns that file alone. Perspective and Smooth shading
   are settings with bar buttons; gpui makes the normals on its upload
   thread only once smooth shading asks, drawing flat meanwhile.
+- And a model's own colours: PLY's and OBJ's point colours, glTF's
+  materials and `COLOR_0`, 3MF's base materials and colour groups, drawn
+  by the window, the still and the thumbnails alike; not textures.
 - Checked on Wayland and on X11 (Xwayland), a headless sway rendering on
   the Intel GPU; on lavapipe, the still. Not checked: the window on
   NVIDIA (the user's session), a screen reader; macOS and Windows

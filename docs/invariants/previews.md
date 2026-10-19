@@ -150,8 +150,13 @@ A name that says nothing is not a binary file.
     choice does not apply; the button turns that file, unremembered.
   - What it wrote is taken only as long and as large as it says
     (`model::mesh_from`), every index naming a position and every
-    coordinate finite (`inspection::Mesh::new`), checked again on the way
-    to the GPU (`gpui::Mesh::new`).
+    coordinate finite (`inspection::Mesh::new`), a colour a position or
+    none (`with_colours`), checked again on the way to the GPU
+    (`gpui::Mesh::new`, `with_colors`).
+  - A model's colours are its points' (sRGB bytes): the helper reads
+    them, the still and the window draw them alike. A part without one
+    beside parts with one is the still's grey (`mesh::grey`); a glTF
+    primitive with neither a material nor `COLOR_0` has none.
   - It is an `InspectionKind::Model`, framed once on the worker
     (`Display::model`, `elements::model::Model`), never while painting.
   - It opens as its still is drawn (the angle, no perspective, the
