@@ -31,8 +31,9 @@ pub mod limits {
     pub const MEMBER_JSON_OVERHEAD: usize = 160;
     /// Helper listing output, derived from the name bound: JSON escaping expands
     /// a byte to at most six characters (`\u00XX`), plus fixed fields per entry.
+    /// Full preview's listing is the largest (`WHOLE_MEMBER_NAMES`).
     pub const HELPER_OUTPUT: u64 =
-        (MEMBER_NAMES * 6 + CONTAINER_MEMBERS * MEMBER_JSON_OVERHEAD) as u64;
+        (WHOLE_MEMBER_NAMES * 6 + WHOLE_CONTAINER_MEMBERS * MEMBER_JSON_OVERHEAD) as u64;
     pub const HELPER_TIMEOUT: Duration = Duration::from_secs(15);
     /// One hexadecimal page.
     pub const HEX_PAGE: u64 = 4096;
@@ -86,6 +87,114 @@ pub mod limits {
     /// Font specimen text and characters per character-sheet section.
     pub const SPECIMEN_CHARS: usize = 200;
     pub const SHEET_GLYPHS: usize = 192;
+
+    /// The pixels of a picture the panel decodes (`width × height`).
+    pub const PICTURE_PIXELS: u64 = 64 * 1024 * 1024;
+
+    // Full preview's bounds (`Bounds`), past those above that keep a
+    // preview quick: what a worker can still hold of one file the user
+    // asked for, a few hundred megabytes at most.
+    pub const WHOLE_TEXT_INPUT: usize = 32 * 1024 * 1024;
+    pub const WHOLE_BINARY_INPUT: usize = 128 * 1024 * 1024;
+    pub const WHOLE_BLOCKS: usize = 100_000;
+    pub const WHOLE_CODE_LINES: usize = 100_000;
+    pub const WHOLE_CODE_NODES: usize = 100_000;
+    pub const WHOLE_CONTAINER_MEMBERS: usize = 64_000;
+    pub const WHOLE_MEMBER_NAMES: usize = 4 * 1024 * 1024;
+    /// A row draws every column it has (`inspector_rows`): a few hundred
+    /// keep a scroll smooth.
+    pub const WHOLE_TABLE_COLUMNS: usize = 256;
+    /// What `image` decodes within its own allocation bound (512 MiB) at
+    /// four bytes a pixel.
+    pub const WHOLE_PICTURE_PIXELS: u64 = 128 * 1024 * 1024;
+
+    /// What a preview of one file reads and shows at most, as the user
+    /// asked: the bounds above that keep it quick, or, once they asked for
+    /// all of the file (`InspectRequest::whole`, Full preview), Full
+    /// preview's. Only those bounds are lifted: the ones that keep hostile
+    /// input out (nesting, inflation, a decoder's allocation, a container's
+    /// declared expansion, a cell, a line) stay as they are.
+    ///
+    /// A provider takes them from the request (`Bounds::of`) and reads every
+    /// bound they hold through them. What it leaves out by them it says
+    /// (`Inspection::whole_available`, set from `Bounds::cut`), and what it
+    /// refuses by them it refuses with `Bounds::refuse`, so the panel
+    /// offers Full preview for exactly what Full preview shows.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct Bounds {
+        whole: bool,
+    }
+
+    impl Bounds {
+        /// The bounds that keep a preview quick: a thumbnail's, an agent's.
+        pub const QUICK: Bounds = Bounds { whole: false };
+        /// Full preview's.
+        pub const WHOLE: Bounds = Bounds { whole: true };
+
+        /// The bounds `view` asks for.
+        pub fn of(view: &skwir_core::inspection::InspectRequest) -> Self {
+            Bounds { whole: view.whole }
+        }
+
+        /// `quick` or `whole`, as asked: a bound of a provider's own (a
+        /// circuit's input) chosen alike.
+        pub fn choose<T>(self, quick: T, whole: T) -> T {
+            if self.whole { whole } else { quick }
+        }
+
+        /// Text parsed whole: Markdown, a page, structured data.
+        pub fn text_input(self) -> usize {
+            self.choose(TEXT_INPUT, WHOLE_TEXT_INPUT)
+        }
+        /// A file read whole: a font, a message, a notebook, an archive's
+        /// member written out. Not what a container's member inflates to,
+        /// which keeps `BINARY_INPUT`.
+        pub fn binary_input(self) -> usize {
+            self.choose(BINARY_INPUT, WHOLE_BINARY_INPUT)
+        }
+        /// Blocks of a rich document, a playlist's tracks.
+        pub fn blocks(self) -> usize {
+            self.choose(BLOCKS, WHOLE_BLOCKS)
+        }
+        /// Lines and nodes of structured data shown as code.
+        pub fn code_lines(self) -> usize {
+            self.choose(CODE_LINES, WHOLE_CODE_LINES)
+        }
+        pub fn code_nodes(self) -> usize {
+            self.choose(CODE_NODES, WHOLE_CODE_NODES)
+        }
+        /// An archive's members listed, and the bytes of their names.
+        pub fn members(self) -> usize {
+            self.choose(CONTAINER_MEMBERS, WHOLE_CONTAINER_MEMBERS)
+        }
+        pub fn member_names(self) -> usize {
+            self.choose(MEMBER_NAMES, WHOLE_MEMBER_NAMES)
+        }
+        pub fn table_columns(self) -> usize {
+            self.choose(TABLE_COLUMNS, WHOLE_TABLE_COLUMNS)
+        }
+        pub fn picture_pixels(self) -> u64 {
+            self.choose(PICTURE_PIXELS, WHOLE_PICTURE_PIXELS)
+        }
+
+        /// Whether what these bounds left out Full preview shows:
+        /// `Inspection::whole_available` for a preview cut by them.
+        pub fn cut(self) -> bool {
+            !self.whole
+        }
+
+        /// The refusal of a file past one of these bounds, saying
+        /// `message`: one the panel offers Full preview for
+        /// (`inspection::TooLarge`) while they are the quick ones.
+        pub fn refuse(self, message: impl Into<String>) -> anyhow::Error {
+            let message = message.into();
+            if self.whole {
+                anyhow::anyhow!(message)
+            } else {
+                skwir_core::inspection::TooLarge(message).into()
+            }
+        }
+    }
 
     /// Whole binary units for messages: `16 MiB`, `64 KiB`, `500 bytes`.
     pub fn describe(bytes: usize) -> String {
@@ -228,6 +337,43 @@ pub fn read(
     check(cancel)?;
     Ok(out)
 }
+/// A whole file of at most `limit` bytes, a bound `bounds` chose (a font's
+/// `binary_input`, a circuit's own): past it, refused by `bounds`, with
+/// `what` in the message, so the panel offers Full preview while they are
+/// the quick ones. Its length is asked first: a file far past the bound is
+/// refused unread.
+pub fn read_within(
+    path: &Path,
+    limit: usize,
+    bounds: limits::Bounds,
+    what: &str,
+    cancel: &CancelToken,
+) -> anyhow::Result<Vec<u8>> {
+    let refused = || {
+        bounds.refuse(format!(
+            "{what} exceeds {} preview limit",
+            limits::describe(limit)
+        ))
+    };
+    if std::fs::metadata(path).is_ok_and(|meta| meta.len() > limit as u64) {
+        return Err(refused());
+    }
+    let bytes = read(path, 0, limit + 1, cancel)?;
+    if bytes.len() > limit {
+        return Err(refused());
+    }
+    Ok(bytes)
+}
+/// A file read whole (a font, a message, a notebook) within `bounds`'
+/// `binary_input` (`read_within`).
+pub fn read_file(
+    path: &Path,
+    bounds: limits::Bounds,
+    what: &str,
+    cancel: &CancelToken,
+) -> anyhow::Result<Vec<u8>> {
+    read_within(path, bounds.binary_input(), bounds, what, cancel)
+}
 /// Read a whole file of at most `limit` bytes, or fail with `what` in the message.
 pub fn read_bounded(
     path: &Path,
@@ -245,10 +391,21 @@ pub fn read_bounded(
 }
 /// Copy at most `limit` bytes from a stream; more is an error, never a truncation.
 pub fn copy_bounded(
-    mut source: impl Read,
+    source: impl Read,
     limit: usize,
     what: &str,
     cancel: &CancelToken,
+) -> anyhow::Result<Vec<u8>> {
+    copy_with(source, limit, cancel, |limit| {
+        anyhow::anyhow!("{what} exceeds {} preview limit", limits::describe(limit))
+    })
+}
+/// `copy_bounded`, refused past `limit` with what `refuse` makes of it.
+fn copy_with(
+    mut source: impl Read,
+    limit: usize,
+    cancel: &CancelToken,
+    refuse: impl FnOnce(usize) -> anyhow::Error,
 ) -> anyhow::Result<Vec<u8>> {
     check(cancel)?;
     let mut out = Vec::new();
@@ -258,11 +415,9 @@ pub fn copy_bounded(
         if n == 0 {
             break;
         }
-        anyhow::ensure!(
-            out.len() + n <= limit,
-            "{what} exceeds {} preview limit",
-            limits::describe(limit)
-        );
+        if out.len() + n > limit {
+            return Err(refuse(limit));
+        }
         out.extend_from_slice(&chunk[..n]);
         check(cancel)?;
     }
@@ -334,20 +489,16 @@ pub fn decode(bytes: &[u8]) -> (Cow<'_, str>, Encoding) {
 }
 
 /// A whole text file parsed by a format (Markdown, tables, structured data),
-/// decoded by `decode`, with the encoding it was read in.
-pub fn read_text(path: &Path, cancel: &CancelToken) -> anyhow::Result<(String, Encoding)> {
-    let bytes = read(path, 0, limits::TEXT_INPUT + 1, cancel)?;
-    anyhow::ensure!(
-        bytes.len() <= limits::TEXT_INPUT,
-        "Text exceeds {} preview limit",
-        limits::describe(limits::TEXT_INPUT)
-    );
+/// within `bounds`' `text_input` (`read_within`), decoded by `decode`, with
+/// the encoding it was read in.
+pub fn read_text(
+    path: &Path,
+    bounds: limits::Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<(String, Encoding)> {
+    let bytes = read_within(path, bounds.text_input(), bounds, "Text", cancel)?;
     let (text, encoding) = decode(&bytes);
     Ok((text.into_owned(), encoding))
-}
-/// `read_text` without the encoding.
-pub fn text(path: &Path, cancel: &CancelToken) -> anyhow::Result<String> {
-    read_text(path, cancel).map(|(text, _)| text)
 }
 /// A file's own text behind a rendered presentation: what any text file
 /// is (`plain`), with the switch back to the presentation.
@@ -547,12 +698,22 @@ fn svg(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
     render_svg(&tree, own, (width, height))
 }
 /// A drawing file (SVG, or SVG compressed as `.svgz`) read whole, within
-/// `limits::BINARY_INPUT` before and after inflating.
-pub fn read_drawing(path: &Path, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
-    let bytes = read_bounded(path, limits::BINARY_INPUT, "Drawing", cancel)?;
+/// `bounds`' `binary_input` before and after inflating.
+pub fn read_drawing(
+    path: &Path,
+    bounds: limits::Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<Vec<u8>> {
+    let bytes = read_file(path, bounds, "Drawing", cancel)?;
     if bytes.starts_with(&[0x1f, 0x8b]) {
+        // Larger inflated than read: refused as a larger file would be.
         let inflated = flate2::read::GzDecoder::new(bytes.as_slice());
-        return copy_bounded(inflated, limits::BINARY_INPUT, "Drawing", cancel);
+        return copy_with(inflated, bounds.binary_input(), cancel, |limit| {
+            bounds.refuse(format!(
+                "Drawing exceeds {} preview limit",
+                limits::describe(limit)
+            ))
+        });
     }
     Ok(bytes)
 }
@@ -762,9 +923,9 @@ pub fn detail(label: &str, value: impl AsRef<str>) -> Option<skwir_core::inspect
         skwir_core::inspection::Detail::new(label, text)
     })
 }
-/// What a rich document cut at `limits::BLOCKS` says in its notice.
-pub fn blocks_notice() -> String {
-    format!("First {} blocks · Source shows the rest", limits::BLOCKS)
+/// What a rich document cut at `bounds`' `blocks` says in its notice.
+pub fn blocks_notice(bounds: limits::Bounds) -> String {
+    format!("First {} blocks · Source shows the rest", bounds.blocks())
 }
 /// The facts of `Inspection::details` from `(label, value)` pairs, in order,
 /// leaving out what is blank or `None` (`count` makes a zero blank).
@@ -1042,14 +1203,41 @@ mod tests {
         let path = dir.path().join("drawing.svgz");
         std::fs::write(&path, gzip(DRAWING.as_bytes())).unwrap();
         let cancel = CancelToken::new();
-        let bytes = read_drawing(&path, &cancel).unwrap();
+        let bytes = read_drawing(&path, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(drawing_size(&bytes).unwrap(), (40, 20));
 
         let mut bomb = DRAWING.as_bytes().to_vec();
         bomb.resize(limits::BINARY_INPUT + 1, b' ');
         std::fs::write(&path, gzip(&bomb)).unwrap();
-        let error = read_drawing(&path, &cancel).unwrap_err();
+        let error = read_drawing(&path, limits::Bounds::QUICK, &cancel).unwrap_err();
         assert!(error.to_string().contains("exceeds"), "{error}");
+        assert!(
+            skwir_core::inspection::TooLarge::is(&error),
+            "past the quick bound, as a larger file"
+        );
+    }
+
+    #[test]
+    fn full_preview_reads_past_the_quick_bounds_and_no_further() {
+        use skwir_core::inspection::TooLarge;
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = CancelToken::new();
+        let path = dir.path().join("long.md");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(limits::TEXT_INPUT as u64 + 1).unwrap();
+        let error = read_text(&path, limits::Bounds::QUICK, &cancel).unwrap_err();
+        assert!(TooLarge::is(&error), "Full preview is offered: {error}");
+        let (text, _) = read_text(&path, limits::Bounds::WHOLE, &cancel).unwrap();
+        assert_eq!(text.len(), limits::TEXT_INPUT + 1, "and reads it");
+
+        // Past Full preview's bound, refused unread, and not offered again.
+        file.set_len(limits::WHOLE_TEXT_INPUT as u64 + 1).unwrap();
+        let error = read_text(&path, limits::Bounds::WHOLE, &cancel).unwrap_err();
+        assert!(!TooLarge::is(&error), "{error}");
+        assert!(error.to_string().contains("32 MiB"), "{error}");
+        let error = read_file(&path, limits::Bounds::QUICK, "Font", &cancel).unwrap_err();
+        assert!(TooLarge::is(&error), "{error}");
+        assert!(read_file(&path, limits::Bounds::WHOLE, "Font", &cancel).is_ok());
     }
 
     #[test]
@@ -1141,7 +1329,7 @@ mod tests {
         let path = dir.path().join("export.csv");
         std::fs::write(&path, b"name;price\ncaf\xe9;3\n").unwrap();
         assert_eq!(
-            read_text(&path, &cancel).unwrap(),
+            read_text(&path, limits::Bounds::QUICK, &cancel).unwrap(),
             ("name;price\ncaf\u{e9};3\n".into(), Encoding::Windows1252)
         );
         let data = plain(&path, &cancel).unwrap();
@@ -1180,7 +1368,7 @@ mod tests {
             0,
         )
         .unwrap();
-        let error = text(&fifo, &CancelToken::new()).unwrap_err();
+        let error = read_text(&fifo, limits::Bounds::QUICK, &CancelToken::new()).unwrap_err();
         assert_eq!(error.to_string(), "preview needs a regular file");
     }
 

@@ -15,7 +15,7 @@ use skwir_core::{
     inspection::Picture,
 };
 use skwir_platform::{
-    inspection,
+    inspection::{self, limits},
     rich_preview::{self, Drawing, Markup},
 };
 
@@ -151,6 +151,7 @@ impl FixedBook {
         let read = rich_preview::html(
             &source,
             markup,
+            limits::Bounds::QUICK,
             cancel,
             chapter(&mut container, base, cancel, &mut sheets),
         )?;
@@ -250,13 +251,18 @@ impl DocumentSession for FixedBook {
                 images: false,
                 sheets: &mut sheets,
             };
-            let found =
-                rich_preview::html(&inspection::decode(&bytes).0, markup, cancel, resources)
-                    .is_ok_and(|read| {
-                        read.blocks
-                            .iter()
-                            .any(|block| block.text.to_lowercase().contains(&query))
-                    });
+            let found = rich_preview::html(
+                &inspection::decode(&bytes).0,
+                markup,
+                limits::Bounds::QUICK,
+                cancel,
+                resources,
+            )
+            .is_ok_and(|read| {
+                read.blocks
+                    .iter()
+                    .any(|block| block.text.to_lowercase().contains(&query))
+            });
             if found {
                 hits.push(SearchHit {
                     page: index as u32 + 1,

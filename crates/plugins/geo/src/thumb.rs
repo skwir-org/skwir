@@ -41,7 +41,12 @@ impl ThumbnailProvider for Lines {
             // A `.csv` or a `.txt` that is not a plan.
             return Ok(None);
         };
-        let data = crate::inspect_as(&path, format, cancel)?;
+        let data = crate::inspect_as(
+            &path,
+            format,
+            skwir_platform::inspection::limits::Bounds::QUICK,
+            cancel,
+        )?;
         Ok(data.geo.and_then(|doc| draw(&doc, req.size.pixels())))
     }
 }

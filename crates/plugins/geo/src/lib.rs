@@ -54,7 +54,7 @@ use skwir_core::{
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use skwir_platform::inspection::{self, limits};
+use skwir_platform::inspection::{self, limits::Bounds};
 
 const ID: &str = "geo";
 /// What is read of a file, streamed: more than a year of GPS logging.
@@ -449,11 +449,13 @@ impl Format {
     }
 }
 
-/// Read `path` into `into`; a note when the file was damaged or cut.
+/// Read `path` into `into`, what is read whole within `bounds`; a note
+/// when the file was damaged or cut.
 fn read(
     path: &Path,
     format: Format,
     into: &mut Collector,
+    bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<String>> {
     let mut notes = Vec::new();
@@ -497,7 +499,7 @@ fn read(
             }
         }
         Format::QgcPlan => {
-            let bytes = inspection::read_bounded(path, limits::BINARY_INPUT, "This plan", cancel)?;
+            let bytes = inspection::read_file(path, bounds, "This plan", cancel)?;
             let document: serde_json::Value = serde_json::from_slice(&bytes)
                 .map_err(|error| anyhow::anyhow!("Not a valid QGroundControl plan: {error}"))?;
             inspection::check(cancel)?;
@@ -505,8 +507,7 @@ fn read(
             None
         }
         Format::GeoJson => {
-            let bytes =
-                inspection::read_bounded(path, limits::BINARY_INPUT, "This GeoJSON file", cancel)?;
+            let bytes = inspection::read_file(path, bounds, "This GeoJSON file", cancel)?;
             geojson::read(&bytes, into, cancel)?;
             None
         }
@@ -784,20 +785,26 @@ fn summary(doc: &GeoDoc, c: &Collector) -> String {
     .join(", ")
 }
 
-/// Read a file into what the map shows and what Properties says.
-pub(crate) fn inspect_file(path: &Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
+/// Read a file into what the map shows and what Properties says, within
+/// `bounds`.
+pub(crate) fn inspect_file(
+    path: &Path,
+    bounds: Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<Inspection> {
     let format = Format::detect(path).ok_or_else(|| anyhow::anyhow!("Not a map file"))?;
-    inspect_as(path, format, cancel)
+    inspect_as(path, format, bounds, cancel)
 }
 
 /// Read a file of a format already known.
 pub(crate) fn inspect_as(
     path: &Path,
     format: Format,
+    bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
     let mut collector = Collector::new();
-    let mut notes = read(path, format, &mut collector, cancel)?;
+    let mut notes = read(path, format, &mut collector, bounds, cancel)?;
     let (doc, c) = collector.finish();
     if doc.bounds.is_none() {
         notes.insert(0, "Nothing in this file has a position".into());
@@ -867,7 +874,7 @@ impl PreviewProvider for Provider {
             return Ok(None);
         }
         let path = req.entry.resolve()?;
-        inspect_file(&path, cancel).map(Some)
+        inspect_file(&path, Bounds::of(view), cancel).map(Some)
     }
 }
 
@@ -891,7 +898,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("it's a café walk.gpx");
         std::fs::write(&path, gpx::tests::HIKE).unwrap();
-        let data = inspect_file(&path, &CancelToken::new()).unwrap();
+        let data = inspect_file(&path, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(data.kind, InspectionKind::Map);
         assert_eq!(data.title, "GPX · 1 track, 1 route, 2 waypoints");
         assert_eq!(fact(&data, "Distance"), Some("222 m"));
@@ -921,7 +928,7 @@ mod tests {
         )
         .unwrap();
         zip.finish().unwrap();
-        let data = inspect_file(&path, &CancelToken::new()).unwrap();
+        let data = inspect_file(&path, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(data.title, "KMZ · 1 waypoint");
         assert!(!data.source_available);
         assert_eq!(data.geo.as_ref().unwrap().waypoints[0].name, "Here");
@@ -932,14 +939,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty.geojson");
         std::fs::write(&path, r#"{"type":"FeatureCollection","features":[]}"#).unwrap();
-        let data = inspect_file(&path, &CancelToken::new()).unwrap();
+        let data = inspect_file(&path, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert!(
             data.notice
                 .starts_with("Nothing in this file has a position")
         );
         assert!(data.geo.as_ref().unwrap().bounds.is_none());
         std::fs::write(&path, "{ not json").unwrap();
-        let error = inspect_file(&path, &CancelToken::new()).unwrap_err();
+        let error = inspect_file(&path, Bounds::QUICK, &CancelToken::new()).unwrap_err();
         assert!(
             error.to_string().starts_with("Not valid GeoJSON"),
             "{error}"

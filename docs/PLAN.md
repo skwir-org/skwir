@@ -1322,6 +1322,27 @@ still the helper drew on the CPU.
   compiled only. A mesh the GPU will not hold says so instead of loading
   for good.
 
+**Full preview (ADR-068).** A file past a bound that keeps a preview
+quick was shown in part, as its text, or not at all, with no way to see
+the rest.
+
+- Each such bound has a larger one for Full preview, read through
+  `limits::Bounds`: text 2 → 32 MiB, a file read whole 16 → 128 MiB,
+  blocks 2,000 → 100,000, code lines 10,000 → 100,000, archive members
+  4,000 → 64,000, table columns 64 → 256, pictures 64 → 128 megapixels,
+  DXF and circuit drawings 32 → 128 MiB. Bounds against hostile input
+  stay.
+- The bar's Full preview asks for them, for the file shown, unremembered;
+  it is offered exactly where it shows more (`whole_available`,
+  `inspection::TooLarge`). No setting (the user's question, answered in
+  the ADR).
+- A DXF too large to draw now says so; an archive member is found in any
+  listing kept of it; `extract` takes the member's view.
+- Checked: providers' tests past each quick bound and the larger one;
+  in a window on Linux, a long changelog, an HTML page, a wide CSV, JSON,
+  a 67-megapixel picture and two archives, each whole and then quick
+  again, their memory given back (the ADR lists what was not).
+
 ---
 
 ## Maps

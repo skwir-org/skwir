@@ -65,8 +65,15 @@ fn columns(connection: &Connection, table: &str) -> anyhow::Result<Vec<String>> 
 
 /// One page of `TABLE_ROWS` rows of one table, at `offset` (`TABLE` times
 /// the table, plus the row). Next goes on down the table, then to the next
-/// table's top; Previous back up, then to the previous table's.
-pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<Inspection> {
+/// table's top; Previous back up, then to the previous table's. Its
+/// columns are `bounds`'.
+pub fn table(
+    path: &Path,
+    offset: u64,
+    bounds: limits::Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<Inspection> {
+    let most = bounds.table_columns();
     inspection::check(cancel)?;
     let connection = open(path, cancel)?;
     let tables = tables(&connection)?;
@@ -78,7 +85,7 @@ pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<I
     let first = offset % TABLE;
     let page = limits::TABLE_ROWS as u64;
     let all = columns(&connection, name)?;
-    let shown = &all[..all.len().min(limits::TABLE_COLUMNS)];
+    let shown = &all[..all.len().min(most)];
     // Each cell as its type and a bounded value: a text cut one character
     // past the bound (so the cut is seen), a blob's length.
     let cells: Vec<String> = shown
@@ -149,8 +156,7 @@ pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<I
     };
     let plural = |n: usize| if n == 1 { "" } else { "s" };
     let notice = [
-        (all.len() > limits::TABLE_COLUMNS)
-            .then(|| format!("Only the first {} columns shown", limits::TABLE_COLUMNS)),
+        (all.len() > most).then(|| format!("Only the first {most} columns shown")),
         (cut > 0).then(|| {
             format!(
                 "{cut} cell{} longer than {} characters shortened",
@@ -190,6 +196,7 @@ pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<I
         previous,
         next,
         notice,
+        whole_available: all.len() > most && bounds.cut(),
         ..Inspection::default()
     })
 }
@@ -238,7 +245,7 @@ mod tests {
         let path = database(dir.path());
         let before = listing(dir.path());
         let cancel = CancelToken::new();
-        let people = table(&path, 0, &cancel).unwrap();
+        let people = table(&path, 0, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(people.title, "people · rows 1–2");
         assert_eq!(people.columns, ["id", "name", "photo", "score", "note"]);
         assert_eq!(
@@ -252,7 +259,7 @@ mod tests {
             Some(TABLE),
             "then the next table, not the view"
         );
-        let odd = table(&path, TABLE, &cancel).unwrap();
+        let odd = table(&path, TABLE, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(odd.title, "odd \"name\" · rows 1–1");
         assert_eq!(odd.rows[0].cells, ["here"]);
         assert_eq!((odd.previous, odd.next), (Some(0), None));
@@ -269,6 +276,6 @@ mod tests {
         let path = database(dir.path());
         let cancel = CancelToken::new();
         cancel.cancel();
-        assert!(table(&path, 0, &cancel).is_err());
+        assert!(table(&path, 0, limits::Bounds::QUICK, &cancel).is_err());
     }
 }

@@ -141,10 +141,13 @@ pub trait PreviewProvider: Send + Sync {
     /// provider's choosing: a member's own name is a label, never a path.
     /// The caller previews the file like any other, so an archived picture
     /// zooms and an attached PDF opens in the reader. `None` means targets are
-    /// not files here (a book's chapters) and `inspect` handles them.
+    /// not files here (a book's chapters) and `inspect` handles them. `view`
+    /// is how the member is to be looked at: written out whole past the
+    /// quick bounds when the user asked (`InspectRequest::whole`).
     fn extract(
         &self,
         _request: &PreviewRequest,
+        _view: &crate::inspection::InspectRequest,
         _target: &str,
         _into: &std::path::Path,
         _cancel: &CancelToken,
@@ -277,6 +280,7 @@ impl Previews {
     pub fn extract(
         &self,
         request: &PreviewRequest,
+        view: &crate::inspection::InspectRequest,
         target: &str,
         into: &std::path::Path,
         cancel: &CancelToken,
@@ -285,7 +289,7 @@ impl Previews {
             .dispatch(
                 cancel,
                 |p| p.accepts(request),
-                |p, cancel| p.extract(request, target, into, cancel),
+                |p, cancel| p.extract(request, view, target, into, cancel),
             )?
             .flatten())
     }

@@ -1226,9 +1226,13 @@ pub(crate) fn plan_geotag(
         more => anyhow::bail!("Select one track: {} are selected", more.len()),
     };
     let track_name = display_name(track);
-    let doc = crate::inspect_file(track, cancel)?
-        .geo
-        .ok_or_else(|| anyhow::anyhow!("“{track_name}” holds no track"))?;
+    let doc = crate::inspect_file(
+        track,
+        skwir_platform::inspection::limits::Bounds::QUICK,
+        cancel,
+    )?
+    .geo
+    .ok_or_else(|| anyhow::anyhow!("“{track_name}” holds no track"))?;
     let fixes = fixes(&doc);
     anyhow::ensure!(
         !fixes.is_empty(),

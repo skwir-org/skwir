@@ -6,7 +6,7 @@ use skwir_core::{
     preview::{PreviewProvider, PreviewRequest},
     thumbs::Image,
 };
-use skwir_platform::inspection::{self, limits};
+use skwir_platform::inspection::{self, limits, limits::Bounds};
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -70,22 +70,22 @@ impl PreviewProvider for Provider {
         view: &InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Inspection>> {
-        let bytes =
-            inspection::read_bounded(&req.entry.resolve()?, limits::BINARY_INPUT, "Font", cancel)?;
-        let (font, packed) = unpacked(bytes)?;
+        let bounds = Bounds::of(view);
+        let bytes = inspection::read_file(&req.entry.resolve()?, bounds, "Font", cancel)?;
+        let (font, packed) = unpacked(bytes, bounds)?;
         specimen(&font, packed, view, cancel).map(Some)
     }
 }
 /// A web font unpacked into the font it carries, and what it was packed
 /// as, for Properties; any other font as it is. Bounded like every input:
-/// WOFF is inflated table by table within `limits::BINARY_INPUT` (a table
-/// can declare any size), WOFF2 within its decoder's own bound (at most
-/// 100 times its size, and 128 MB).
-fn unpacked(bytes: Vec<u8>) -> anyhow::Result<(Vec<u8>, Option<&'static str>)> {
+/// WOFF is inflated table by table within `bounds`' binary input, as a
+/// font read as it is (a table can declare any size), WOFF2 within its
+/// decoder's own bound (at most 100 times its size, and 128 MB).
+fn unpacked(bytes: Vec<u8>, bounds: Bounds) -> anyhow::Result<(Vec<u8>, Option<&'static str>)> {
     let damaged = || anyhow::anyhow!("The web font is damaged or uses an unknown feature");
     match bytes.get(..4) {
         Some(b"wOFF") => {
-            let mut left = limits::BINARY_INPUT;
+            let mut left = bounds.binary_input();
             let mut over = false;
             let mut inflate = |data: &[u8], size: usize| {
                 if size > left {
@@ -102,11 +102,12 @@ fn unpacked(bytes: Vec<u8>) -> anyhow::Result<(Vec<u8>, Option<&'static str>)> {
                 Ok(table)
             };
             let font = wuff::decompress_woff1_with_custom_z(&bytes, &mut inflate);
-            anyhow::ensure!(
-                !over,
-                "Font exceeds {} preview limit",
-                limits::describe(limits::BINARY_INPUT)
-            );
+            if over {
+                return Err(bounds.refuse(format!(
+                    "Font exceeds {} preview limit",
+                    limits::describe(bounds.binary_input())
+                )));
+            }
             Ok((font.map_err(|_| damaged())?, Some("WOFF")))
         }
         Some(b"wOF2") => Ok((
@@ -551,7 +552,7 @@ mod tests {
     }
 
     fn render(font: Vec<u8>, query: Option<&str>) -> anyhow::Result<Inspection> {
-        let (font, packed) = unpacked(font)?;
+        let (font, packed) = unpacked(font, Bounds::QUICK)?;
         specimen(
             &font,
             packed,

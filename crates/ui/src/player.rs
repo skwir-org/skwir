@@ -568,8 +568,15 @@ impl Shell {
                         .iter()
                         .map_while(|target| {
                             (!job.is_cancelled()).then(|| {
-                                let member =
-                                    previews.extract(&request, target, scratch.path(), &job);
+                                // A track, a file of its own: nothing is
+                                // written, whatever the bounds.
+                                let member = previews.extract(
+                                    &request,
+                                    &skwir_core::inspection::InspectRequest::default(),
+                                    target,
+                                    scratch.path(),
+                                    &job,
+                                );
                                 member.ok().flatten().filter(|m| m.own_file).map(|m| m.path)
                             })
                         })

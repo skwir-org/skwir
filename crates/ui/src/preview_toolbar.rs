@@ -150,7 +150,7 @@ pub(crate) fn hex_available(shell: &Shell) -> bool {
 fn shows_nothing(shell: &Shell) -> bool {
     matches!(
         shell.preview.content,
-        Some(PreviewContent::Error(_) | PreviewContent::Generic)
+        Some(PreviewContent::Error(_) | PreviewContent::TooLarge(_) | PreviewContent::Generic)
     ) && shell.preview.shown_content().is_some()
 }
 
@@ -167,6 +167,7 @@ fn caption(shell: &Shell) -> String {
         Some(PreviewContent::Image { width, height, .. }) => format!("{width} × {height}"),
         Some(PreviewContent::Dir { items, .. }) => crate::format::count(*items, "item"),
         Some(PreviewContent::Error(_)) => "Preview unavailable".into(),
+        Some(PreviewContent::TooLarge(_)) => "Large file".into(),
         Some(PreviewContent::Generic) => "No preview".into(),
         // Only once the wait has lasted: a caption that flashes by is noise.
         None if shell.preview_busy() => "Loading…".into(),
@@ -225,6 +226,10 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
     }
     if image {
         zoom_tools(&mut bar, shell);
+    }
+    // Refused to stay quick: all of it, asked.
+    if matches!(shell.preview.content, Some(PreviewContent::TooLarge(_))) {
+        crate::preview_bar::whole_tool(&mut bar);
     }
     if shell.walks_pictures() {
         picture_tools(&mut bar, shell);

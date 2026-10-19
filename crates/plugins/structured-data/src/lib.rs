@@ -5,7 +5,7 @@ use skwir_core::{
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use skwir_platform::inspection::{self, limits};
+use skwir_platform::inspection::{self, limits, limits::Bounds};
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -49,9 +49,11 @@ impl PreviewProvider for Provider {
         let path = req.entry.resolve()?;
         let language = inspection::extension(&path);
         // A file that cannot be read whole or parsed fails: the panel shows
-        // its source instead, saying why (`preview::source_instead`).
-        let (text, encoding) = inspection::read_text(&path, cancel)?;
-        let mut data = code(&text, &language, view.source, cancel)?;
+        // its source instead, saying why (`preview::source_instead`), and
+        // offers Full preview when only its size kept it from being shown.
+        let bounds = Bounds::of(view);
+        let (text, encoding) = inspection::read_text(&path, bounds, cancel)?;
+        let mut data = code(&text, &language, view.source, bounds, cancel)?;
         data.notice = encoding.notice().unwrap_or_default();
         Ok(Some(data))
     }
@@ -63,6 +65,7 @@ fn code(
     source: &str,
     language: &str,
     original: bool,
+    bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
     inspection::check(cancel)?;
@@ -93,10 +96,15 @@ fn code(
         while let Some((node, depth)) = pending.pop() {
             inspection::check(cancel)?;
             count += 1;
+            if count > bounds.code_nodes() {
+                return Err(bounds.refuse(format!(
+                    "Code preview exceeds {} nodes",
+                    bounds.code_nodes()
+                )));
+            }
             anyhow::ensure!(
-                count <= limits::CODE_NODES && depth <= limits::NESTING,
-                "Code preview exceeds {} nodes or {} levels",
-                limits::CODE_NODES,
+                depth <= limits::NESTING,
+                "Code preview exceeds {} levels",
                 limits::NESTING
             );
             match node {
@@ -113,17 +121,22 @@ fn code(
     } else {
         source.to_owned()
     };
-    anyhow::ensure!(
-        text.len() <= limits::TEXT_INPUT,
-        "Formatted preview exceeds {}",
-        limits::describe(limits::TEXT_INPUT)
-    );
+    if text.len() > bounds.text_input() {
+        return Err(bounds.refuse(format!(
+            "Formatted preview exceeds {}",
+            limits::describe(bounds.text_input())
+        )));
+    }
     let lines: Vec<_> = text.split('\n').collect();
+    if lines.len() > bounds.code_lines() {
+        return Err(bounds.refuse(format!(
+            "Code preview exceeds {} lines",
+            bounds.code_lines()
+        )));
+    }
     anyhow::ensure!(
-        lines.len() <= limits::CODE_LINES
-            && lines.iter().all(|line| line.len() <= limits::LINE_BYTES),
-        "Code preview exceeds {} lines or {} bytes per line",
-        limits::CODE_LINES,
+        lines.iter().all(|line| line.len() <= limits::LINE_BYTES),
+        "Code preview exceeds {} bytes per line",
         limits::LINE_BYTES
     );
     let folds = folds::parse(&text, language, cancel)?;
@@ -165,7 +178,7 @@ mod tests {
     #[test]
     fn json_formats_without_folding_delimiters_in_strings() {
         let source = r#"{"title":"café [braces] and \"quote\"","items":[{"enabled":true},2]}"#;
-        let data = code(source, "json", false, &CancelToken::new()).unwrap();
+        let data = code(source, "json", false, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&data.plain_text()).unwrap(),
             serde_json::from_str::<serde_json::Value>(source).unwrap()
@@ -178,7 +191,7 @@ mod tests {
         assert_eq!(data.folds.len(), 3);
         assert_eq!(data.folds[0], 0..data.blocks.len() - 1);
         assert_eq!(data.title, "JSON · formatted");
-        let raw = code(source, "json", true, &CancelToken::new()).unwrap();
+        let raw = code(source, "json", true, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(raw.plain_text(), source);
         assert!(raw.folds.is_empty());
         assert_eq!(raw.title, "JSON");
@@ -191,7 +204,7 @@ mod tests {
         // brackets in a comment and in a string that fold nothing.
         let source = "{\n  // paths [not a fold\n  \"paths\": {\n    \"@/*\": [\"src/*\"],\n  },\n  /* { */ \"strict\": true,\n}\n";
         for language in ["json", "jsonc"] {
-            let data = code(source, language, false, &CancelToken::new()).unwrap();
+            let data = code(source, language, false, Bounds::QUICK, &CancelToken::new()).unwrap();
             assert_eq!(data.plain_text(), source, "{language} keeps its comments");
             assert_eq!(data.folds, [0..6, 2..4]);
             assert_eq!(data.blocks[0].language.as_deref(), Some("json"));
@@ -201,6 +214,7 @@ mod tests {
             "{ \"a\": // no value\n }",
             "jsonc",
             false,
+            Bounds::QUICK,
             &CancelToken::new(),
         )
         .unwrap_err();
@@ -210,7 +224,7 @@ mod tests {
     #[test]
     fn json5_folds_step_over_single_quoted_strings() {
         let source = "{\n  unquoted: 'a ] and a {',\n  list: [\n    0x10,\n  ],\n}\n";
-        let data = code(source, "json5", false, &CancelToken::new()).unwrap();
+        let data = code(source, "json5", false, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(data.plain_text(), source);
         assert_eq!(data.folds, [0..5, 2..4]);
     }
@@ -226,7 +240,7 @@ mod tests {
     #[test]
     fn toml_keeps_comments_order_and_multiline_strings() {
         let source = "# Example\n[\"first.section\"]\ntext = \"\"\"\n[not.a.table]\n# not a comment\n\"\"\"\nitems = [\n  1,\n  2,\n]\n\n[[second]]\nname = 'café'\n[[second]]\nname = 'next'\n";
-        let data = code(source, "toml", false, &CancelToken::new()).unwrap();
+        let data = code(source, "toml", false, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(data.plain_text(), source);
         assert_eq!(data.folds, [1..11, 2..5, 6..9, 11..13, 13..16]);
         assert_eq!(data.title, "TOML");
@@ -239,7 +253,7 @@ mod tests {
     #[test]
     fn yaml_folds_collections_without_mistaking_scalar_contents() {
         let source = "group:\n  title: 'café: [example]'\n  items:\n    - one\n    - two\nother:\n  text: |\n    fake:\n      - value\n  enabled: true\n";
-        let data = code(source, "yaml", false, &CancelToken::new()).unwrap();
+        let data = code(source, "yaml", false, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(data.plain_text(), source);
         assert_eq!(data.folds, [0..5, 2..5, 5..10]);
     }
@@ -293,18 +307,28 @@ mod tests {
     #[test]
     fn invalid_large_and_cancelled_documents_are_bounded() {
         let cancel = CancelToken::new();
-        assert!(code("{broken", "json", false, &cancel).is_err());
+        assert!(code("{broken", "json", false, Bounds::QUICK, &cancel).is_err());
         assert!(
             code(
                 &format!("name = '{}'", "a".repeat(4096)),
                 "toml",
                 false,
+                Bounds::QUICK,
                 &cancel
             )
             .is_err()
         );
-        assert!(code(&"\n".repeat(10001), "yaml", false, &cancel).is_err());
+        // Long: refused while quick, for Full preview to show; a line too
+        // long is refused either way.
+        let long = "\n".repeat(10001);
+        let error = code(&long, "yaml", false, Bounds::QUICK, &cancel).unwrap_err();
+        assert!(skwir_core::inspection::TooLarge::is(&error), "{error}");
+        let all = code(&long, "yaml", false, Bounds::WHOLE, &cancel).unwrap();
+        assert_eq!(all.blocks.len(), 10002);
+        let wide = format!("name = '{}'", "a".repeat(4096));
+        let error = code(&wide, "toml", false, Bounds::WHOLE, &cancel).unwrap_err();
+        assert!(!skwir_core::inspection::TooLarge::is(&error), "{error}");
         cancel.cancel();
-        assert!(code("{}", "json", false, &cancel).is_err());
+        assert!(code("{}", "json", false, Bounds::QUICK, &cancel).is_err());
     }
 }

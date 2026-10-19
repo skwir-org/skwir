@@ -58,6 +58,13 @@ contributors). The rules for working on preview code are in
   text instead, saying why ("Shown as written: …"). Any other file says
   why it is not shown, with **View as hex** in the bar, the one way left
   to look at it; elsewhere View as hex is in More.
+- **Full preview.** A preview keeps to sizes that keep it quick (see
+  [Limits](#limits)). A file past them is shown in part (a long
+  document's first blocks, a wide table's first columns, a large
+  archive's first members), as its text, or not at all, and says so;
+  **Full preview** in the bar then reads all of it, up to larger bounds.
+  It applies to that file only, while it is shown: the next file, or the
+  same one selected again, is quick again.
 - **Find.** `Ctrl+F` searches the preview that has the keyboard; the
   search button is always there. Searching again continues after the
   last match: a text file is searched whole, either way and around its
@@ -420,13 +427,28 @@ The player, in the panel or pinned at its foot:
 ## Limits
 
 Large inputs have explicit bounds and errors rather than unbounded
-parsing ([ADR-009](adr/009-structured-previews.md)):
+parsing ([ADR-009](adr/009-structured-previews.md)). Those that keep a
+preview quick are lifted for one file by Full preview
+([ADR-068](adr/068-full-preview-reads-past-the-quick-bounds.md)), to a
+larger bound:
 
-- Text parsed whole (Markdown, tables, structured code): 2 MiB. Code:
-  10,000 lines and 4096 bytes per line. A document that is invalid or
-  too large shows its text instead, read as you scroll, with the reason.
-- DXF drawings and circuit files: 32 MiB.
-- Containers: an archive inside an archive, no deeper.
+| What | Unasked | Full preview |
+| --- | --- | --- |
+| Text parsed whole (Markdown, HTML, structured data, a notebook's text) | 2 MiB | 32 MiB |
+| A file read whole (a font, a message, a notebook, GeoJSON, an archive's member written out) | 16 MiB | 128 MiB |
+| Blocks of a document, a playlist's tracks | 2,000 | 100,000 |
+| Lines and values of structured data shown as code | 10,000 | 100,000 |
+| Members of an archive listed | 4,000 | 64,000 |
+| Columns of a table | 64 | 256 |
+| A picture's pixels | 64 megapixels | 128 megapixels |
+| DXF drawings and circuit files drawn | 32 MiB | 128 MiB |
+| A notebook output's lines | 200 | all |
+
+A document that is invalid or too large shows its text instead, read as
+you scroll, with the reason. These stay whatever is asked: 4096 bytes a
+line of code, 1024 characters a table cell, an archive inside an archive
+and no deeper, a document's nesting, what a compressed file may inflate
+to, and a 3D model's 8 million triangles.
 
 ## Dependencies (for packagers)
 

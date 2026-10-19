@@ -139,15 +139,17 @@ impl Pandoc {
         Ok(())
     }
 
-    /// `source` converted to HTML in `work`, read within
-    /// `limits::TEXT_INPUT`: the page, and whether it was cut.
+    /// `source` converted to HTML in `work`, read within `bounds`'
+    /// `text_input`: the page, and whether it was cut.
     pub(crate) fn convert(
         &self,
         source: &Path,
         format: &str,
         work: &Path,
+        bounds: limits::Bounds,
         cancel: &CancelToken,
     ) -> anyhow::Result<(String, bool)> {
+        let most = bounds.text_input();
         // Its own sandbox lets it run where the system has none.
         let otherwise = if self.sandboxes {
             sandbox::Otherwise::Run
@@ -159,14 +161,9 @@ impl Pandoc {
             format,
             cancel,
         )?;
-        let bytes = inspection::read(
-            &work.join("document.html"),
-            0,
-            limits::TEXT_INPUT + 1,
-            cancel,
-        )?;
-        let cut = bytes.len() > limits::TEXT_INPUT;
-        let bytes = &bytes[..bytes.len().min(limits::TEXT_INPUT)];
+        let bytes = inspection::read(&work.join("document.html"), 0, most + 1, cancel)?;
+        let cut = bytes.len() > most;
+        let bytes = &bytes[..bytes.len().min(most)];
         Ok((String::from_utf8_lossy(bytes).into_owned(), cut))
     }
 }

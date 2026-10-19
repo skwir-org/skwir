@@ -15,10 +15,11 @@ const VALUE: &str = "value";
 
 /// One page of `TABLE_ROWS` lines from line `offset`, streamed from the
 /// file like a CSV table: lines before the page are counted, not parsed.
-/// Blank lines are no row.
+/// Blank lines are no row. Its columns are `bounds`'.
 pub fn table(
     path: &std::path::Path,
     offset: u64,
+    bounds: limits::Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
     use std::io::Seek as _;
@@ -74,8 +75,8 @@ pub fn table(
             }
         }
     }
-    let wide = columns.len() > limits::TABLE_COLUMNS;
-    columns.truncate(limits::TABLE_COLUMNS);
+    let wide = columns.len() > bounds.table_columns();
+    columns.truncate(bounds.table_columns());
     let mut cut = 0;
     let rows = parsed
         .iter()
@@ -101,7 +102,7 @@ pub fn table(
     let plural = |n: usize| if n == 1 { "" } else { "s" };
     let notice = [
         (invalid > 0).then(|| format!("{invalid} line{} not JSON", plural(invalid))),
-        wide.then(|| format!("Only the first {} keys shown", limits::TABLE_COLUMNS)),
+        wide.then(|| format!("Only the first {} keys shown", bounds.table_columns())),
         (cut > 0).then(|| {
             format!(
                 "{cut} cell{} longer than {} characters shortened",
@@ -141,6 +142,7 @@ pub fn table(
         next: more.then_some(offset + page),
         source_available: true,
         notice,
+        whole_available: wide && bounds.cut(),
         ..Inspection::default()
     })
 }
@@ -185,7 +187,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a log’s name.jsonl");
         std::fs::write(&path, bytes).unwrap();
-        table(&path, offset, &CancelToken::new()).unwrap()
+        table(&path, offset, limits::Bounds::QUICK, &CancelToken::new()).unwrap()
     }
 
     #[test]

@@ -19,7 +19,7 @@ use skwir_core::{
     preview::{PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
-use skwir_platform::inspection;
+use skwir_platform::inspection::{self, limits::Bounds};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -27,6 +27,8 @@ const ID: &str = "circuits";
 /// The largest file drawn. A board is read an item at a time, but its
 /// text is held whole, and its drawing is as long.
 const INPUT: usize = 32 * 1024 * 1024;
+/// The largest under Full preview (`Bounds`).
+const WHOLE_INPUT: usize = 128 * 1024 * 1024;
 /// The side a drawing is rasterized at for the panel: fine traces stay
 /// visible on a dense screen.
 const PANEL_SIDE: u32 = 2048;
@@ -128,9 +130,10 @@ impl Format {
         })
     }
 
-    fn read(self, path: &Path, cancel: &CancelToken) -> anyhow::Result<Found> {
+    fn read(self, path: &Path, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Found> {
         skwir_platform::thumb_providers::ensure_file(path)?;
-        let bytes = inspection::read_bounded(path, INPUT, "The file", cancel)?;
+        let most = bounds.choose(INPUT, WHOLE_INPUT);
+        let bytes = inspection::read_within(path, most, bounds, "The file", cancel)?;
         let text = String::from_utf8_lossy(&bytes);
         match self {
             Format::Board => board::board(&text, cancel),
@@ -160,9 +163,9 @@ impl Format {
     }
 }
 
-/// Whether the file is larger than what is drawn.
-fn too_large(path: &Path) -> anyhow::Result<bool> {
-    Ok(std::fs::metadata(path)?.len() > INPUT as u64)
+/// Whether the file is larger than what is drawn within `bounds`.
+fn too_large(path: &Path, bounds: Bounds) -> anyhow::Result<bool> {
+    Ok(std::fs::metadata(path)?.len() > bounds.choose(INPUT, WHOLE_INPUT) as u64)
 }
 
 /// What a file holds: its drawing, and facts in the order shown.
@@ -213,13 +216,16 @@ impl PreviewProvider for Provider {
             return Ok(None);
         };
         // Not drawn: the panel shows its source instead, saying why
-        // (`preview::source_instead`).
-        anyhow::ensure!(
-            !too_large(&path)?,
-            "Too large to draw (more than {})",
-            inspection::limits::describe(INPUT)
-        );
-        let found = format.read(&path, cancel)?;
+        // (`preview::source_instead`), and offers Full preview while the
+        // bound is the quick one.
+        let bounds = Bounds::of(view);
+        if too_large(&path, bounds)? {
+            return Err(bounds.refuse(format!(
+                "Too large to draw (more than {})",
+                inspection::limits::describe(bounds.choose(INPUT, WHOLE_INPUT))
+            )));
+        }
+        let found = format.read(&path, bounds, cancel)?;
         let image = match &found.svg {
             Some(svg) => Some(raster(svg, PANEL_SIDE, cancel)?),
             None => None,
@@ -262,10 +268,10 @@ impl ThumbnailProvider for Pictures {
         let Some(format) = Format::of(&path) else {
             return Ok(None);
         };
-        if too_large(&path)? || !format.ours(&path)? {
+        if too_large(&path, Bounds::QUICK)? || !format.ours(&path)? {
             return Ok(None);
         }
-        match format.read(&path, cancel)?.svg {
+        match format.read(&path, Bounds::QUICK, cancel)?.svg {
             Some(svg) => Ok(Some(raster(&svg, req.size.pixels(), cancel)?)),
             None => Ok(None),
         }
@@ -381,6 +387,10 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(error.to_string(), "Too large to draw (more than 32 MiB)");
+        assert!(
+            skwir_core::inspection::TooLarge::is(&error),
+            "Full preview draws it"
+        );
         // A GIMP brush named like a Gerber layer is not ours: left to the
         // other previews.
         let brush = dir.path().join("pencil.gbr");

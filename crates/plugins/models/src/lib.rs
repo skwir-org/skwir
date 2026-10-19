@@ -27,7 +27,7 @@ use skwir_core::{
     preview::{PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
-use skwir_platform::inspection::{self, limits};
+use skwir_platform::inspection::{self, limits, limits::Bounds};
 use skwir_platform::model::{Asked, MeshFormat};
 use std::path::Path;
 use std::sync::Arc;
@@ -153,6 +153,7 @@ impl Format {
         side: u32,
         asked: Asked,
         picture_first: bool,
+        bounds: Bounds,
         cancel: &CancelToken,
     ) -> anyhow::Result<Found> {
         skwir_platform::thumb_providers::ensure_file(path)?;
@@ -163,7 +164,7 @@ impl Format {
             Format::ThreeMf => package::three_mf(path, side, asked, picture_first, cancel),
             Format::FreeCad => package::freecad(path, side, cancel),
             Format::Dwg => cad::dwg(path, side, cancel),
-            Format::Dxf => cad::dxf(path, side, cancel),
+            Format::Dxf => cad::dxf(path, side, bounds, cancel),
             Format::SketchUp => sketchup::model(path, side, cancel),
             Format::LayOut => sketchup::layout(path, side, cancel),
             Format::Rhino => rhino::read(path, side, cancel),
@@ -186,6 +187,8 @@ struct Found {
     details: Vec<(String, String)>,
     /// What was left out, and why.
     notice: Option<String>,
+    /// Whether it was left out to stay quick: Full preview shows it.
+    whole_available: bool,
 }
 
 /// `image` at most `side` pixels on its longer side, never enlarged.
@@ -263,7 +266,15 @@ impl PreviewProvider for Provider {
         } else {
             Asked::Preview
         };
-        let found = format.read(&path, side, asked, view.turned != Some(true), cancel)?;
+        let found = format.read(
+            &path,
+            side,
+            asked,
+            view.turned != Some(true),
+            Bounds::of(view),
+            cancel,
+        )?;
+        let whole_available = found.whole_available;
         let notice = found.notice.unwrap_or_default();
         let details = found
             .details
@@ -290,12 +301,20 @@ impl PreviewProvider for Provider {
                 source_available: format.is_text(),
                 mesh_available: found.mesh_available,
                 notice,
+                whole_available,
                 ..Inspection::default()
             },
-            // Text without a picture is read as the text it is.
+            // Text without a picture is read as the text it is, saying what
+            // was left out.
             None if format.is_text() => {
                 let mut data = inspection::plain(&path, cancel)?;
                 data.details = details;
+                data.notice = [notice, std::mem::take(&mut data.notice)]
+                    .into_iter()
+                    .filter(|notice| !notice.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                data.whole_available = whole_available;
                 data
             }
             None => Inspection {
@@ -307,6 +326,7 @@ impl PreviewProvider for Provider {
                 } else {
                     notice
                 },
+                whole_available,
                 ..Inspection::default()
             },
         }))
@@ -358,7 +378,14 @@ impl ThumbnailProvider for Pictures {
             return Ok(None);
         }
         Ok(format
-            .read(&path, req.size.pixels(), Asked::Thumbnail, true, cancel)?
+            .read(
+                &path,
+                req.size.pixels(),
+                Asked::Thumbnail,
+                true,
+                Bounds::QUICK,
+                cancel,
+            )?
             .picture)
     }
 }

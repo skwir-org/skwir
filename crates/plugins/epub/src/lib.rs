@@ -13,7 +13,7 @@ use skwir_core::{
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
 use skwir_platform::{
-    inspection::{self, limits},
+    inspection::{self, limits, limits::Bounds},
     rich_preview,
 };
 use std::{collections::HashMap, io::Write, sync::Arc};
@@ -273,6 +273,7 @@ impl PreviewProvider for Provider {
                             rich_preview::html(
                                 &inspection::decode(&bytes).0,
                                 markups[candidate],
+                                Bounds::of(view),
                                 cancel,
                                 resources,
                             )
@@ -371,9 +372,10 @@ impl PreviewProvider for Provider {
             images: true,
             sheets: &mut sheets,
         };
-        let page = rich_preview::html(&source, markups[index], cancel, resources)?;
+        let bounds = Bounds::of(view);
+        let page = rich_preview::html(&source, markups[index], bounds, cancel, resources)?;
         if page.truncated {
-            notice.push(inspection::blocks_notice());
+            notice.push(inspection::blocks_notice(bounds));
         }
         let mut blocks = page.blocks;
         for block in &mut blocks {
@@ -391,6 +393,7 @@ impl PreviewProvider for Provider {
             blocks,
             rows,
             notice: notice.join(" · "),
+            whole_available: page.truncated && bounds.cut(),
             ..frame
         }))
     }

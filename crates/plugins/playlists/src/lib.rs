@@ -14,7 +14,7 @@ use skwir_core::{
     plugin::Plugin,
     preview::{Member, PreviewProvider, PreviewRequest},
 };
-use skwir_platform::inspection::{self, limits};
+use skwir_platform::inspection::{self, limits, limits::Bounds};
 use skwir_platform::preview::{self, PlaylistFormat};
 
 pub struct PreviewPlugin;
@@ -92,8 +92,8 @@ fn server_of(path: &str) -> Option<&str> {
     rest.split('/').next().filter(|server| !server.is_empty())
 }
 
-/// The playlist's tracks, the first `limits::BLOCKS` of them, whether there
-/// were more, and the encoding the text was read in.
+/// The playlist's tracks, the first its bounds' `blocks` of them, whether
+/// there were more, and the encoding the text was read in.
 struct Playlist {
     tracks: Vec<Track>,
     more: bool,
@@ -107,16 +107,21 @@ fn format_of(req: &PreviewRequest) -> Option<PlaylistFormat> {
         .filter(|format| *format != PlaylistFormat::Asx)
 }
 
-fn tracks(path: &Path, format: PlaylistFormat, cancel: &CancelToken) -> anyhow::Result<Playlist> {
-    let (source, encoding) = inspection::read_text(path, cancel)?;
+fn tracks(
+    path: &Path,
+    format: PlaylistFormat,
+    bounds: Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<Playlist> {
+    let (source, encoding) = inspection::read_text(path, bounds, cancel)?;
     let mut tracks = match format {
         PlaylistFormat::Pls => parse::pls(&source),
         PlaylistFormat::Xspf => parse::xspf(&source)?,
         PlaylistFormat::Cue => parse::cue(&source),
         PlaylistFormat::M3u | PlaylistFormat::Asx => parse::m3u(&source),
     };
-    let more = tracks.len() > limits::BLOCKS;
-    tracks.truncate(limits::BLOCKS);
+    let more = tracks.len() > bounds.blocks();
+    tracks.truncate(bounds.blocks());
     Ok(Playlist {
         tracks,
         more,
@@ -145,6 +150,7 @@ impl PreviewProvider for Provider {
     fn extract(
         &self,
         req: &PreviewRequest,
+        _view: &InspectRequest,
         target: &str,
         _into: &Path,
         cancel: &CancelToken,
@@ -154,7 +160,10 @@ impl PreviewProvider for Provider {
         };
         let path = req.entry.resolve()?;
         let base = path.parent().unwrap_or(Path::new("."));
-        let list = tracks(&path, format, cancel)?;
+        // The track as a row showed it, within whatever bounds it was
+        // shown (Full preview's lists past the quick ones). Nothing is
+        // written: the track is a file of its own.
+        let list = tracks(&path, format, Bounds::WHOLE, cancel)?;
         let track = list
             .tracks
             .get(target.parse::<usize>()?)
@@ -188,7 +197,8 @@ impl PreviewProvider for Provider {
         };
         let path = req.entry.resolve()?;
         let base = path.parent().unwrap_or(Path::new("."));
-        let list = tracks(&path, format, cancel)?;
+        let bounds = Bounds::of(view);
+        let list = tracks(&path, format, bounds, cancel)?;
         let mut rows = Vec::with_capacity(list.tracks.len());
         let (mut total, mut missing, mut remote) = (0., 0, 0);
         for (index, track) in list.tracks.iter().enumerate() {
@@ -246,7 +256,7 @@ impl PreviewProvider for Provider {
         let notice = [
             list.encoding.notice(),
             list.more
-                .then(|| format!("First {} tracks · Source shows the rest", limits::BLOCKS)),
+                .then(|| format!("First {} tracks · Source shows the rest", bounds.blocks())),
             (remote > 0).then(|| "Remote entries are named, never fetched".to_owned()),
         ]
         .into_iter()
@@ -263,6 +273,7 @@ impl PreviewProvider for Provider {
             details,
             source_available: true,
             notice,
+            whole_available: list.more && bounds.cut(),
             ..Inspection::default()
         }))
     }
@@ -322,7 +333,7 @@ mod tests {
     #[test]
     fn a_marked_legacy_or_long_playlist_is_read_whole_and_said() {
         let dir = tempfile::tempdir().unwrap();
-        let read = |name: &str, bytes: &[u8]| {
+        let read_as = |name: &str, bytes: &[u8], view: &InspectRequest| {
             let list = dir.path().join(name);
             std::fs::write(&list, bytes).unwrap();
             let request = PreviewRequest {
@@ -335,10 +346,11 @@ mod tests {
                 fit: None,
             };
             Provider
-                .inspect(&request, &InspectRequest::default(), &CancelToken::new())
+                .inspect(&request, view, &CancelToken::new())
                 .unwrap()
                 .unwrap()
         };
+        let read = |name: &str, bytes: &[u8]| read_as(name, bytes, &InspectRequest::default());
         // A byte order mark does not become a track named `#EXTM3U`.
         let data = read("marked.m3u8", "\u{feff}#EXTM3U\none.mp3\n".as_bytes());
         assert_eq!(data.rows.len(), 1);
@@ -356,6 +368,18 @@ mod tests {
             data.notice
         );
         assert_eq!(data.details[0].value, "more than 2000");
+        assert!(data.whole_available, "Full preview shows the rest");
+        let whole = InspectRequest {
+            whole: true,
+            ..InspectRequest::default()
+        };
+        let data = read_as(
+            "long.m3u",
+            "a.mp3\n".repeat(limits::BLOCKS + 5).as_bytes(),
+            &whole,
+        );
+        assert_eq!(data.rows.len(), limits::BLOCKS + 5);
+        assert!(!data.whole_available && data.notice.is_empty());
     }
 
     // Types from the free desktops' database (step E, ADR-035).
@@ -403,20 +427,38 @@ mod tests {
         assert!(!data.notice.is_empty());
 
         let member = Provider
-            .extract(&request, "0", dir.path(), &cancel)
+            .extract(
+                &request,
+                &InspectRequest::default(),
+                "0",
+                dir.path(),
+                &cancel,
+            )
             .unwrap()
             .unwrap();
         assert_eq!(member.name, "it's a café.mp3");
         assert!(member.own_file && member.path.ends_with("music/it's a café.mp3"));
         assert!(
             Provider
-                .extract(&request, "1", dir.path(), &cancel)
+                .extract(
+                    &request,
+                    &InspectRequest::default(),
+                    "1",
+                    dir.path(),
+                    &cancel
+                )
                 .is_err(),
             "missing"
         );
         assert!(
             Provider
-                .extract(&request, "2", dir.path(), &cancel)
+                .extract(
+                    &request,
+                    &InspectRequest::default(),
+                    "2",
+                    dir.path(),
+                    &cancel
+                )
                 .is_err(),
             "remote"
         );

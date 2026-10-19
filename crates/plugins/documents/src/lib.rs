@@ -22,7 +22,7 @@ use skwir_core::{
     plugin::Plugin,
     preview::{PreviewProvider, PreviewRequest},
 };
-use skwir_platform::inspection::{self, limits};
+use skwir_platform::inspection::{self, limits, limits::Bounds};
 use skwir_platform::preview::DocumentPreviews;
 use skwir_platform::rich_preview;
 use skwir_platform::thumb_providers::{OfficePages, PdfPages};
@@ -292,15 +292,17 @@ impl Reading {
         path: &Path,
         tool: &Pandoc,
         format: &str,
+        bounds: Bounds,
         cancel: &CancelToken,
     ) -> anyhow::Result<Inspection> {
         // What Pandoc made of this very file before, with its pictures'
-        // sizes: kept, it is shown again without running Pandoc.
+        // sizes, within these bounds: kept, it is shown again without
+        // running Pandoc.
         let html_key = skwir_platform::preview::made_key(
             req.entry.id,
             path,
             &tool.path,
-            ("pandoc-html", format),
+            (bounds.choose("pandoc-html", "pandoc-html-whole"), format),
         )?;
         let (page, cut) = if let Some((html, cut, sizes)) = self
             .cache
@@ -311,6 +313,7 @@ impl Reading {
                 rich_preview::html(
                     &html,
                     rich_preview::Markup::Html,
+                    bounds,
                     cancel,
                     pandoc::Sized(&sizes),
                 )?,
@@ -318,7 +321,7 @@ impl Reading {
             )
         } else {
             let work = tempfile::tempdir()?;
-            let (html, cut) = tool.convert(path, format, work.path(), cancel)?;
+            let (html, cut) = tool.convert(path, format, work.path(), bounds, cancel)?;
             let mut kept = 0u64;
             let mut sizes = std::collections::HashMap::new();
             let keep = |name: &str, bytes: &[u8]| {
@@ -336,7 +339,8 @@ impl Reading {
                 keep,
                 cancel,
             };
-            let page = rich_preview::html(&html, rich_preview::Markup::Html, cancel, media)?;
+            let page =
+                rich_preview::html(&html, rich_preview::Markup::Html, bounds, cancel, media)?;
             let made = converted_to(&html, cut, &sizes);
             if self.cache.put(&html_key, &made).is_ok() {
                 kept += made.len() as u64;
@@ -357,10 +361,11 @@ impl Reading {
             Some("Read by Pandoc · layout, headers and comments are not shown".to_owned()),
             cut.then(|| "Only the start is shown".to_owned()),
             page.truncated
-                .then(|| format!("First {} blocks", limits::BLOCKS)),
+                .then(|| format!("First {} blocks", bounds.blocks())),
         ];
         Ok(Inspection {
             kind: InspectionKind::Markdown,
+            whole_available: (cut || page.truncated) && bounds.cut(),
             blocks: page.blocks,
             notice: notice.into_iter().flatten().collect::<Vec<_>>().join(" · "),
             details: details(&facts, words),
@@ -507,7 +512,9 @@ impl PreviewProvider for Reading {
         Ok(Some(match engine {
             Engine::Word => shown(docx::read(&path, view.offset, cancel)?),
             Engine::OpenDocument => shown(odt::read(&path, view.offset, cancel)?),
-            Engine::Pandoc(tool, format) => self.pandoc(req, &path, &tool, format, cancel)?,
+            Engine::Pandoc(tool, format) => {
+                self.pandoc(req, &path, &tool, format, Bounds::of(view), cancel)?
+            }
         }))
     }
     /// A picture the document named: a member of its package, read through
@@ -516,7 +523,7 @@ impl PreviewProvider for Reading {
     fn picture(
         &self,
         req: &PreviewRequest,
-        _view: &InspectRequest,
+        view: &InspectRequest,
         key: &str,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<skwir_core::thumbs::Image>> {
@@ -535,7 +542,7 @@ impl PreviewProvider for Reading {
                     // Converted again: every picture is kept again, not
                     // only this one, so the others do not each convert.
                     let work = tempfile::tempdir()?;
-                    tool.convert(&path, format, work.path(), cancel)?;
+                    tool.convert(&path, format, work.path(), Bounds::of(view), cancel)?;
                     let mut wanted = None;
                     let mut kept = 0u64;
                     for (each, file) in pandoc::extracted(work.path()) {

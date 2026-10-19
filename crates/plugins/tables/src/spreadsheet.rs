@@ -245,7 +245,14 @@ fn text(value: &DataRef<'_>) -> String {
 /// One page of `TABLE_ROWS` rows of one sheet, at `offset` (`SHEET`
 /// times the sheet, plus the row). Next goes on down the sheet, then to
 /// the next sheet's top; Previous back up, then to the previous sheet's.
-pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<Inspection> {
+/// Its columns are `bounds`'.
+pub fn table(
+    path: &Path,
+    offset: u64,
+    bounds: limits::Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<Inspection> {
+    let most = bounds.table_columns();
     bounded(path, limits::CONTAINER_EXPANSION, cancel)?;
     let mut book = Book::open(path)?;
     let sheets = book.sheets();
@@ -280,7 +287,7 @@ pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<I
         rows = rows.max(u64::from(row) + 1);
         columns = columns.max(column + 1);
         let row = u64::from(row);
-        if row >= first && row < first + page && (column as usize) < limits::TABLE_COLUMNS {
+        if row >= first && row < first + page && (column as usize) < most {
             let at = (row - first) as usize;
             if grid.len() <= at {
                 grid.resize_with(at + 1, Vec::new);
@@ -307,7 +314,7 @@ pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<I
         }
         kept.push((version, sheets[sheet].clone(), (rows, columns)));
     }
-    let shown = (columns as usize).min(limits::TABLE_COLUMNS);
+    let shown = (columns as usize).min(most);
     let last = rows.min(first + page);
     grid.resize_with(last.saturating_sub(first) as usize, Vec::new);
     let table_rows: Vec<Row> = grid
@@ -333,8 +340,7 @@ pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<I
     };
     let plural = |n: usize| if n == 1 { "" } else { "s" };
     let notice = [
-        (columns as usize > limits::TABLE_COLUMNS)
-            .then(|| format!("Only the first {} columns shown", limits::TABLE_COLUMNS)),
+        (columns as usize > most).then(|| format!("Only the first {most} columns shown")),
         (cut > 0).then(|| {
             format!(
                 "{cut} cell{} longer than {} characters shortened",
@@ -367,6 +373,7 @@ pub fn table(path: &Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<I
         previous,
         next,
         notice,
+        whole_available: columns as usize > most && bounds.cut(),
         ..Inspection::default()
     })
 }
@@ -473,7 +480,7 @@ mod tests {
             &["name", "when", "café"],
         );
         let cancel = CancelToken::new();
-        let data = table(&path, 0, &cancel).unwrap();
+        let data = table(&path, 0, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(data.columns.len(), limits::TABLE_COLUMNS);
         assert_eq!(&data.columns[..4], ["A", "B", "C", "D"]);
         assert_eq!(&data.rows[0].cells[..2], ["name", "when"]);
@@ -494,7 +501,7 @@ mod tests {
         assert_eq!(fact(&data, "Columns").as_deref(), Some("16384"));
         assert_eq!(fact(&data, "Sheets").as_deref(), Some("2"));
         // Turned to again, the page is read alone, its sheet's size known.
-        let again = table(&path, 0, &cancel).unwrap();
+        let again = table(&path, 0, limits::Bounds::QUICK, &cancel).unwrap();
         let cells = |data: &Inspection| -> Vec<Vec<String>> {
             data.rows.iter().map(|row| row.cells.clone()).collect()
         };
@@ -515,10 +522,10 @@ mod tests {
         );
 
         // The last page of the sheet, then the next sheet from its top.
-        let last = table(&path, 999_900, &cancel).unwrap();
+        let last = table(&path, 999_900, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(last.rows.len(), 100);
         assert_eq!(last.next, Some(SHEET));
-        let other = table(&path, SHEET, &cancel).unwrap();
+        let other = table(&path, SHEET, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(other.title, "Other · rows 1–1");
         assert_eq!(other.rows[0].cells, ["TRUE"]);
         assert_eq!((other.previous, other.next), (Some(0), None));

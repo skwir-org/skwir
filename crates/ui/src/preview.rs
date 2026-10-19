@@ -6,9 +6,11 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use skwir_core::inspection::TooLarge;
 use skwir_core::op::EntryRef;
 use skwir_core::preview::{PreviewInfo, PreviewRequest};
 use skwir_core::workspace::PaneId;
+use skwir_platform::inspection::limits::Bounds;
 use std::sync::Arc;
 
 use gpui::{
@@ -62,6 +64,9 @@ pub enum PreviewContent {
     },
     Generic,
     Error(String),
+    /// Not shown only because it is large, past a bound that keeps a
+    /// preview quick (`inspection::TooLarge`): Full preview reads it.
+    TooLarge(String),
 }
 
 /// How many pixels a picture can be drawn with (`Sharpen::most`).
@@ -1044,25 +1049,33 @@ fn opens_as_pages(shell: &Shell) -> bool {
 fn image_size(path: &Path, mime: &str, cancel: &CancelToken) -> Option<(u32, u32)> {
     use skwir_platform::inspection;
     if skwir_platform::thumb_providers::is_drawing(mime) {
-        return inspection::drawing_size(&inspection::read_drawing(path, cancel).ok()?).ok();
+        let bytes = inspection::read_drawing(path, Bounds::QUICK, cancel).ok()?;
+        return inspection::drawing_size(&bytes).ok();
     }
     skwir_platform::picture::size(skwir_platform::picture::open(path).ok()?).ok()
 }
 
 /// An image decoded at most `side` pixels on its longer side (at least the
 /// display side, `IMAGE_MAX_SIDE`; a zoom asks for more), with its own size,
-/// what 100% is, as its width and height.
-fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<PreviewContent> {
+/// what 100% is, as its width and height, if its pixels are within `bounds`.
+fn decode_image(
+    path: &Path,
+    side: u32,
+    bounds: Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<PreviewContent> {
     let side = side.clamp(
         IMAGE_MAX_SIDE,
         skwir_platform::inspection::limits::PICTURE_SIDE,
     );
     let reader = || skwir_platform::picture::open(path);
     let (w, h) = skwir_platform::picture::size(reader()?)?;
-    anyhow::ensure!(
-        u64::from(w) * u64::from(h) <= 64 * 1024 * 1024,
-        "image is too large to preview"
-    );
+    if u64::from(w) * u64::from(h) > bounds.picture_pixels() {
+        return Err(bounds.refuse(format!(
+            "Too large to preview ({w} × {h} pixels, more than {} megapixels)",
+            bounds.picture_pixels() / (1024 * 1024)
+        )));
+    }
     // A decode that panicked held nothing worth protecting: take the turn.
     let _turn = DECODE_TURN
         .lock()
@@ -1097,10 +1110,15 @@ fn decode_image(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<
 
 /// A drawing (SVG) rasterized at its own size, or, once the panel asked
 /// for `side` pixels (a zoom, a high-density panel), at that; its own size
-/// is what 100% is.
-fn decode_drawing(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<PreviewContent> {
+/// is what 100% is. Its file is read within `bounds`.
+fn decode_drawing(
+    path: &Path,
+    side: u32,
+    bounds: Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<PreviewContent> {
     use skwir_platform::inspection;
-    let bytes = inspection::read_drawing(path, cancel)?;
+    let bytes = inspection::read_drawing(path, bounds, cancel)?;
     let decoded = inspection::drawing(&bytes, (side > 0).then_some(side))?;
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
@@ -1230,7 +1248,9 @@ fn inspected(
 /// is text, with why it is not presented as the notice; the failure
 /// otherwise. Not when another way of looking at it was chosen (bytes), nor
 /// for a member the provider shows itself (`view.target`), which `path` is
-/// not. There is nothing to switch back to: it offers no Source.
+/// not. There is nothing to switch back to: it offers no Source, but Full
+/// preview when only the file's size kept it from being presented
+/// (`inspection::TooLarge`).
 pub fn source_instead(
     view: &skwir_core::inspection::InspectRequest,
     path: &Path,
@@ -1252,7 +1272,18 @@ pub fn source_instead(
         .collect::<Vec<_>>()
         .join(" · ");
     data.source_available = false;
+    data.whole_available = TooLarge::is(&error);
     Ok(data)
+}
+
+/// What the panel shows of a preview that failed: why, and Full preview
+/// when only the file's size kept it from being shown.
+fn failure_content(error: &anyhow::Error) -> PreviewContent {
+    if TooLarge::is(error) {
+        PreviewContent::TooLarge(format!("{error:#}"))
+    } else {
+        PreviewContent::Error(format!("{error:#}"))
+    }
 }
 
 /// Whether a picture of type `mime` at `path` is written as text (an SVG
@@ -1304,6 +1335,7 @@ fn sweep(directory: &Path) {
 fn extract_member(
     previews: &skwir_core::preview::Previews,
     request: &PreviewRequest,
+    view: &skwir_core::inspection::InspectRequest,
     target: &str,
     members: &Path,
     cancel: &CancelToken,
@@ -1312,7 +1344,7 @@ fn extract_member(
     let directory = tempfile::Builder::new()
         .prefix("member-")
         .tempdir_in(members)?;
-    let Some(member) = previews.extract(request, target, directory.path(), cancel)? else {
+    let Some(member) = previews.extract(request, view, target, directory.path(), cancel)? else {
         return Ok(None);
     };
     anyhow::ensure!(
@@ -1342,6 +1374,7 @@ fn compute(
     mime: Option<&str>,
     code: &crate::code_preview::CodeTheme,
     picture_side: u32,
+    bounds: Bounds,
     cancel: &CancelToken,
 ) -> PreviewContent {
     if is_dir {
@@ -1362,12 +1395,12 @@ fn compute(
     }
     let top = mime.and_then(|m| m.split('/').next()).unwrap_or("");
     if mime.is_some_and(skwir_platform::thumb_providers::is_drawing) {
-        return decode_drawing(path, picture_side, cancel)
-            .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
+        return decode_drawing(path, picture_side, bounds, cancel)
+            .unwrap_or_else(|e| failure_content(&e));
     }
     if top == "image" {
-        return decode_image(path, picture_side, cancel)
-            .unwrap_or_else(|e| PreviewContent::Error(format!("{e:#}")));
+        return decode_image(path, picture_side, bounds, cancel)
+            .unwrap_or_else(|e| failure_content(&e));
     }
     if top == "video" || mime == Some("application/pdf") {
         return PreviewContent::Generic;
@@ -1385,7 +1418,7 @@ fn compute(
         // selection, find and copy. There is no second, poorer text view.
         return match skwir_platform::inspection::plain(path, cancel) {
             Ok(data) => PreviewContent::Inspection(crate::inspector::Display::new(data, code)),
-            Err(error) => PreviewContent::Error(format!("{error:#}")),
+            Err(error) => failure_content(&error),
         };
     }
     PreviewContent::Generic
@@ -2308,14 +2341,7 @@ impl Shell {
                         wake();
                     }
                 };
-                let fail = |error: anyhow::Error| {
-                    send(
-                        PreviewContent::Error(format!("{error:#}")),
-                        true,
-                        None,
-                        None,
-                    );
-                };
+                let fail = |error: anyhow::Error| send(failure_content(&error), true, None, None);
                 // What is previewed: the entry, or the member of it the panel
                 // went down into. Everything below treats it as any file.
                 let mut request = request;
@@ -2330,7 +2356,14 @@ impl Shell {
                     source(member, &mut request, &mut path);
                 }
                 if let Some(target) = descend {
-                    match extract_member(&previews, &request, &target, &members, &cancel) {
+                    match extract_member(
+                        &previews,
+                        &request,
+                        &inspection,
+                        &target,
+                        &members,
+                        &cancel,
+                    ) {
                         Ok(Some(member)) => {
                             source(&member, &mut request, &mut path);
                             let _ = nested_tx.send((generation, member));
@@ -2584,14 +2617,7 @@ impl Shell {
                             (false, None) => {
                                 send(PreviewContent::Generic, true, None, Some(Media::NoPlayer));
                             }
-                            (false, Some(error)) => {
-                                send(
-                                    PreviewContent::Error(format!("{error:#}")),
-                                    true,
-                                    None,
-                                    None,
-                                );
-                            }
+                            (false, Some(error)) => send(failure_content(&error), true, None, None),
                         }
                     });
                 }
@@ -2642,12 +2668,7 @@ impl Shell {
                                 Err(error) => error,
                             },
                         };
-                        return send(
-                            PreviewContent::Error(format!("{error:#}")),
-                            true,
-                            Some(session),
-                            None,
-                        );
+                        return send(failure_content(&error), true, Some(session), None);
                     }
                     Err(error) => return failed(error),
                     Ok(None) => {}
@@ -2691,15 +2712,19 @@ impl Shell {
                         request.mime.as_deref(),
                         &code,
                         picture_side,
+                        Bounds::of(&inspection),
                         &cancel,
                     ),
-                    Err(e) => PreviewContent::Error(format!("{e:#}")),
+                    Err(e) => failure_content(&e),
                 };
                 let content = match content {
                     // A picture not drawn, written as text (an SVG): its
-                    // source, as for any presentation.
+                    // source, as for any presentation, offering Full
+                    // preview when its size alone kept it from being drawn.
                     PreviewContent::Error(error) if !is_dir => instead(anyhow::anyhow!(error))
-                        .unwrap_or_else(|error| PreviewContent::Error(format!("{error:#}"))),
+                        .unwrap_or_else(|error| failure_content(&error)),
+                    PreviewContent::TooLarge(error) if !is_dir => instead(TooLarge(error).into())
+                        .unwrap_or_else(|error| failure_content(&error)),
                     // A picture written as text offers its source.
                     PreviewContent::Image { detail: None, .. } => {
                         picture_source.replace(
@@ -2803,7 +2828,15 @@ impl Shell {
                 if claimed {
                     return;
                 }
-                let content = compute(&request.entry.path, false, Some(&mime), &code, side, &token);
+                let content = compute(
+                    &request.entry.path,
+                    false,
+                    Some(&mime),
+                    &code,
+                    side,
+                    Bounds::QUICK,
+                    &token,
+                );
                 if token.is_cancelled() {
                     return;
                 }
@@ -4794,20 +4827,22 @@ pub(crate) fn content(
                 )
                 .into_any_element()
         }
-        Some(PreviewContent::Error(error)) => failure(error, theme),
+        Some(PreviewContent::Error(error)) => failure(error, theme.error),
+        // Not a fault: the bar's Full preview reads it.
+        Some(PreviewContent::TooLarge(why)) => failure(why, theme.text_muted),
     }
 }
 
-/// Why there is no preview, in the content's place; the entry itself is
-/// already in the header.
-fn failure(error: &str, theme: &Theme) -> AnyElement {
+/// Why there is no preview, in the content's place, in `color`; the entry
+/// itself is already in the header.
+fn failure(error: &str, color: gpui::Hsla) -> AnyElement {
     div()
         .flex_none()
         .px_3()
         .py_4()
         .text_xs()
         .text_center()
-        .text_color(theme.error)
+        .text_color(color)
         .child(error.to_owned())
         .into_any_element()
 }
@@ -5897,6 +5932,7 @@ mod tests {
                 Some("image/svg+xml"),
                 &crate::code_preview::CodeTheme::own(false),
                 side,
+                skwir_platform::inspection::limits::Bounds::QUICK,
                 &cancel,
             );
             let PreviewContent::Image {
@@ -5942,6 +5978,7 @@ mod tests {
             fn extract(
                 &self,
                 _: &PreviewRequest,
+                _: &skwir_core::inspection::InspectRequest,
                 target: &str,
                 into: &Path,
                 _: &CancelToken,
@@ -5976,6 +6013,7 @@ mod tests {
             mime,
             &crate::code_preview::CodeTheme::own(false),
             1024,
+            skwir_platform::inspection::limits::Bounds::QUICK,
             &cancel,
         ) {
             PreviewContent::Inspection(display) => Some(display.data.notice.clone()),
@@ -5995,9 +6033,16 @@ mod tests {
                 "{which} in a folder"
             );
             let members = dir.path().join("members");
-            let member = extract_member(&previews, &request, which, &members, &cancel)
-                .unwrap()
-                .unwrap();
+            let member = extract_member(
+                &previews,
+                &request,
+                &skwir_core::inspection::InspectRequest::default(),
+                which,
+                &members,
+                &cancel,
+            )
+            .unwrap()
+            .unwrap();
             assert_eq!(member.mime.as_deref(), Some("text/plain"));
             assert_eq!(
                 notice(&member.path, member.mime.as_deref()).as_deref(),
@@ -6031,5 +6076,31 @@ mod tests {
         assert!((max_width(1600., 2, 360.) - 760.).abs() < 1e-3);
         // A small window still leaves the panel its minimum.
         assert!((max_width(500., 2, 0.) - 200.).abs() < 1e-3);
+    }
+
+    /// A picture past the pixels a preview decodes unasked is refused for
+    /// Full preview to show, never decoded: its headers say its size.
+    #[test]
+    fn a_picture_too_large_to_decode_unasked_is_offered_whole() {
+        use skwir_platform::inspection::limits::Bounds;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a panorama’s name.bmp");
+        // A bitmap's headers saying 8193 × 8193 pixels, and no pixels.
+        let mut bmp = b"BM".to_vec();
+        for word in [54u32, 0, 54, 40, 8193, 8193] {
+            bmp.extend_from_slice(&word.to_le_bytes());
+        }
+        bmp.extend_from_slice(&1u16.to_le_bytes());
+        bmp.extend_from_slice(&24u16.to_le_bytes());
+        bmp.extend_from_slice(&[0; 24]);
+        std::fs::write(&path, &bmp).unwrap();
+        let error = super::decode_image(&path, 0, Bounds::QUICK, &skwir_core::CancelToken::new())
+            .err()
+            .unwrap();
+        assert!(skwir_core::inspection::TooLarge::is(&error), "{error}");
+        assert!(matches!(
+            super::failure_content(&error),
+            super::PreviewContent::TooLarge(why) if why.contains("8193 × 8193")
+        ));
     }
 }

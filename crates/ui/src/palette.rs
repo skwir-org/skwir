@@ -193,6 +193,11 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         r#"{"action":"turn"}"#,
         "Preview: 3D / picture",
     ),
+    (
+        "ui.inspect",
+        r#"{"action":"whole"}"#,
+        "Preview: full preview",
+    ),
     ("ui.model_perspective", "{}", "Model: perspective"),
     ("ui.model_smooth", "{}", "Model: smooth shading"),
     ("ui.wrap_lines", "{}", "Preview: wrap lines"),

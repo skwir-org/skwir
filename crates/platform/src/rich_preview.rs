@@ -39,9 +39,9 @@ use style::{Display, Sheets, Style};
 #[derive(Debug, Default)]
 pub struct Page {
     pub blocks: Vec<Block>,
-    /// The page went on past `limits::BLOCKS` and the rest was left out: the
-    /// caller says so in its notice (`inspection::blocks_notice`), and the
-    /// page's source shows it whole.
+    /// The page went on past its bounds' `blocks` and the rest was left
+    /// out: the caller says so in its notice (`inspection::blocks_notice`),
+    /// and the page's source shows it whole.
     pub truncated: bool,
 }
 
@@ -125,12 +125,15 @@ impl Resources for Local<'_> {
     }
 }
 
+/// The page `source`, its blocks within `bounds`.
 pub fn html(
     source: &str,
     markup: Markup,
+    bounds: limits::Bounds,
     cancel: &CancelToken,
     mut resources: impl Resources,
 ) -> anyhow::Result<Page> {
+    let most = bounds.blocks();
     let doc = document(source, markup);
     let mut sheets = stylesheets(&doc, &mut resources);
     check(cancel)?;
@@ -142,8 +145,8 @@ pub fn html(
         if visited % 256 == 0 {
             check(cancel)?;
         }
-        if walk.blocks.len() + walk.notes.len() > limits::BLOCKS {
-            return Ok(walk.page());
+        if walk.blocks.len() + walk.notes.len() > most {
+            return Ok(walk.page(most));
         }
         match edge {
             Edge::Open(node) => {
@@ -215,7 +218,7 @@ pub fn html(
             }
         }
     }
-    Ok(walk.page())
+    Ok(walk.page(most))
 }
 
 /// The page's tree: XHTML read as XML when it is well-formed.
@@ -733,7 +736,8 @@ impl Walk {
         self.row = row;
     }
 
-    fn page(mut self) -> Page {
+    /// The page read, its first `most` blocks.
+    fn page(mut self, most: usize) -> Page {
         if self.filled() {
             self.finish();
         }
@@ -752,8 +756,8 @@ impl Walk {
             self.sizes.append(&mut self.note_sizes);
         }
         sizes(&mut self.blocks, &self.sizes);
-        let truncated = self.blocks.len() > limits::BLOCKS;
-        self.blocks.truncate(limits::BLOCKS);
+        let truncated = self.blocks.len() > most;
+        self.blocks.truncate(most);
         Page {
             blocks: self.blocks,
             truncated,
@@ -912,7 +916,7 @@ mod tests {
     use skwir_core::inspection::Align;
     #[test]
     fn semantic_text_does_not_include_active_content() {
-        let blocks=html("<h1>Title</h1><p>A <strong>bold</strong> <a href='https://example.invalid'>link</a></p><script>secret()</script>", Markup::Html, &CancelToken::new(), pictures(|_|None)).unwrap().blocks;
+        let blocks=html("<h1>Title</h1><p>A <strong>bold</strong> <a href='https://example.invalid'>link</a></p><script>secret()</script>", Markup::Html, limits::Bounds::QUICK, &CancelToken::new(), pictures(|_|None)).unwrap().blocks;
         assert_eq!(blocks[0].heading, 1);
         assert!(blocks.iter().any(|b| b.runs.iter().any(|r| r.bold)));
         assert!(!blocks.iter().any(|b| b.text.contains("secret")));
@@ -937,6 +941,7 @@ mod tests {
         let blocks = html(
             source,
             Markup::Html,
+            limits::Bounds::QUICK,
             &CancelToken::new(),
             pictures(|_| None),
         )
@@ -1011,6 +1016,7 @@ mod tests {
         let blocks = html(
             &source,
             Markup::Html,
+            limits::Bounds::QUICK,
             &CancelToken::new(),
             pictures(|src| {
                 requested.push(src.to_owned());
@@ -1029,6 +1035,7 @@ mod tests {
         let whole = html(
             &paragraphs(limits::BLOCKS),
             Markup::Html,
+            limits::Bounds::QUICK,
             &CancelToken::new(),
             pictures(|_| None),
         )
@@ -1040,17 +1047,37 @@ mod tests {
         let long = html(
             &paragraphs(limits::BLOCKS + 5),
             Markup::Html,
+            limits::Bounds::QUICK,
             &CancelToken::new(),
             pictures(|_| None),
         )
         .unwrap();
         assert_eq!((long.blocks.len(), long.truncated), (limits::BLOCKS, true));
+        // Full preview reads on.
+        let all = html(
+            &paragraphs(limits::BLOCKS + 5),
+            Markup::Html,
+            limits::Bounds::WHOLE,
+            &CancelToken::new(),
+            pictures(|_| None),
+        )
+        .unwrap();
+        assert_eq!(
+            (all.blocks.len(), all.truncated),
+            (limits::BLOCKS + 5, false)
+        );
     }
 
     fn read(source: &str, markup: Markup) -> Vec<Block> {
-        html(source, markup, &CancelToken::new(), pictures(|_| None))
-            .unwrap()
-            .blocks
+        html(
+            source,
+            markup,
+            limits::Bounds::QUICK,
+            &CancelToken::new(),
+            pictures(|_| None),
+        )
+        .unwrap()
+        .blocks
     }
     fn texts(blocks: &[Block]) -> Vec<&str> {
         blocks.iter().map(|b| b.text.as_str()).collect()
@@ -1075,9 +1102,15 @@ mod tests {
             <body><p class="c">CHAPTER ONE</p>
             <p class="calibre3">She said <span class="calibre5">never</span> and <span class="calibre7">meant</span> <span class="u">it</span>.</p>
             <p class="hide">hidden</p><p style="display:none">also hidden</p></body></html>"#;
-        let blocks = html(source, Markup::Html, &CancelToken::new(), Book)
-            .unwrap()
-            .blocks;
+        let blocks = html(
+            source,
+            Markup::Html,
+            limits::Bounds::QUICK,
+            &CancelToken::new(),
+            Book,
+        )
+        .unwrap()
+        .blocks;
         assert_eq!(
             texts(&blocks),
             ["CHAPTER ONE", "She said never and meant it."]
@@ -1227,6 +1260,7 @@ mod tests {
             let blocks = html(
                 source,
                 markup,
+                limits::Bounds::QUICK,
                 &CancelToken::new(),
                 pictures(|src| {
                     asked.push(src.to_owned());
@@ -1271,6 +1305,7 @@ mod tests {
         let blocks = html(
             source,
             Markup::Html,
+            limits::Bounds::QUICK,
             &cancel,
             Local {
                 base: &docs,

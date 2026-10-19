@@ -8,7 +8,7 @@ use skwir_core::{
 };
 use skwir_platform::{
     archive,
-    inspection::{self, limits},
+    inspection::{self, limits, limits::Bounds},
     rich_preview,
 };
 use std::sync::Arc;
@@ -46,15 +46,26 @@ impl PreviewProvider for Provider {
     fn extract(
         &self,
         req: &PreviewRequest,
+        view: &InspectRequest,
         target: &str,
         into: &std::path::Path,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<skwir_core::preview::Member>> {
-        let bytes = read(req, cancel)?;
+        // The message as it was shown, within whatever bounds it was (Full
+        // preview's reads past the quick ones); the attachment written out
+        // as it is to be looked at.
+        let bytes = read(req, Bounds::WHOLE, cancel)?;
         let message = parse(&bytes, cancel)?;
         let attachment = message
             .attachment(target.parse()?)
             .ok_or_else(|| anyhow::anyhow!("Missing attachment"))?;
+        let bounds = Bounds::of(view);
+        if attachment.contents().len() > bounds.binary_input() {
+            return Err(bounds.refuse(format!(
+                "Attachment exceeds {} preview limit",
+                limits::describe(bounds.binary_input())
+            )));
+        }
         let name = attachment.attachment_name().unwrap_or("Attachment");
         let file = archive::member_file(into, name);
         std::fs::write(&file, attachment.contents())?;
@@ -76,7 +87,8 @@ impl PreviewProvider for Provider {
         if view.source {
             return Ok(None);
         }
-        let bytes = read(req, cancel)?;
+        let bounds = Bounds::of(view);
+        let bytes = read(req, bounds, cancel)?;
         let message = parse(&bytes, cancel)?;
         let sent = message
             .date()
@@ -107,7 +119,8 @@ impl PreviewProvider for Provider {
                 let part = message.parts.iter().find(|p| p.content_id() == Some(id))?;
                 inspection::image(part.contents()).ok()
             });
-            let mut page = rich_preview::html(&html, rich_preview::Markup::Html, cancel, images)?;
+            let mut page =
+                rich_preview::html(&html, rich_preview::Markup::Html, bounds, cancel, images)?;
             truncated = page.truncated;
             // The parser writes a message in plain text as HTML: the addresses
             // its text gives are links, as mail readers make them.
@@ -158,7 +171,7 @@ impl PreviewProvider for Provider {
         // same thing stops being read.
         let notice = [
             remote.then(|| "Remote images are not loaded".to_owned()),
-            truncated.then(inspection::blocks_notice),
+            truncated.then(|| inspection::blocks_notice(bounds)),
             (attachments > 0).then(|| "Select an attachment to preview it".to_owned()),
         ]
         .into_iter()
@@ -173,12 +186,13 @@ impl PreviewProvider for Provider {
             rows,
             source_available: true,
             notice,
+            whole_available: truncated && bounds.cut(),
             ..Inspection::default()
         }))
     }
 }
-fn read(req: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
-    inspection::read_bounded(&req.entry.resolve()?, limits::BINARY_INPUT, "Email", cancel)
+fn read(req: &PreviewRequest, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
+    inspection::read_file(&req.entry.resolve()?, bounds, "Email", cancel)
 }
 /// The one parse both the message and its attachments are read from.
 fn parse<'x>(bytes: &'x [u8], cancel: &CancelToken) -> anyhow::Result<mail_parser::Message<'x>> {

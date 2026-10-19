@@ -292,7 +292,13 @@ fn email_decodes_headers_body_and_attachment_without_fetching() {
     std::fs::create_dir(&into).unwrap();
     let extracted = app
         .previews
-        .extract(&request(&path), "0", &into, &CancelToken::new())
+        .extract(
+            &request(&path),
+            &InspectRequest::default(),
+            "0",
+            &into,
+            &CancelToken::new(),
+        )
         .unwrap()
         .unwrap();
     assert_eq!(extracted.name, "sample.txt");
@@ -300,7 +306,13 @@ fn email_decodes_headers_body_and_attachment_without_fetching() {
     assert_eq!(std::fs::read(&extracted.path).unwrap(), b"hello");
     assert!(
         app.previews
-            .extract(&request(&path), "7", &into, &CancelToken::new())
+            .extract(
+                &request(&path),
+                &InspectRequest::default(),
+                "7",
+                &into,
+                &CancelToken::new()
+            )
             .is_err(),
         "no such attachment"
     );
@@ -309,7 +321,13 @@ fn email_decodes_headers_body_and_attachment_without_fetching() {
     std::fs::write(&notes, "# Title\n").unwrap();
     assert!(
         app.previews
-            .extract(&request(&notes), "0", &into, &CancelToken::new())
+            .extract(
+                &request(&notes),
+                &InspectRequest::default(),
+                "0",
+                &into,
+                &CancelToken::new()
+            )
             .unwrap()
             .is_none()
     );
@@ -470,6 +488,17 @@ fn a_presentation_that_fails_on_text_shows_its_source_instead() {
     assert!(!shown.source_available);
     assert!(shown.plain_text().starts_with("<p>Some <b>bold</b>"));
     assert!(shown.text.is_some(), "read where it is shown (ADR-051)");
+    // Only its size kept it from being presented: Full preview presents it,
+    // all of it.
+    assert!(shown.whole_available);
+    let whole = InspectRequest {
+        whole: true,
+        ..InspectRequest::default()
+    };
+    let all = inspect(&app, &page, &whole);
+    assert_eq!(all.kind, InspectionKind::Markdown);
+    assert_eq!(all.blocks.len(), large.len() / paragraph.len());
+    assert!(!all.whole_available);
     // Its Source asked for: the same text, and still a way back.
     let asked = InspectRequest {
         source: true,
@@ -492,8 +521,21 @@ fn a_presentation_that_fails_on_text_shows_its_source_instead() {
     )
     .unwrap_err();
     assert_eq!(error.to_string(), "Text exceeds 2 MiB preview limit");
-    // Nor when another way of looking was chosen, or the wait was given up.
+    assert!(
+        skwir_core::inspection::TooLarge::is(&error),
+        "the panel offers Full preview"
+    );
+    // Another failure is no size's: its text, and no Full preview.
     let failed = || anyhow::anyhow!("Synthetic failure");
+    let instead = skwir_ui::preview::source_instead(
+        &InspectRequest::default(),
+        &page,
+        failed(),
+        &CancelToken::new(),
+    )
+    .unwrap();
+    assert!(!instead.whole_available);
+    // Nor when another way of looking was chosen, or the wait was given up.
     let hex = InspectRequest {
         provider: Some("hex".into()),
         ..InspectRequest::default()
@@ -769,6 +811,7 @@ fn archive_members_are_written_out_under_our_names() {
             .previews
             .extract(
                 &request(&path),
+                &InspectRequest::default(),
                 row.target.as_deref().unwrap(),
                 &into,
                 &CancelToken::new(),
@@ -811,6 +854,7 @@ fn compressed_files_and_long_archives_are_listed() {
         .previews
         .extract(
             &request(&log),
+            &InspectRequest::default(),
             listing.rows[0].target.as_deref().unwrap(),
             &into,
             &CancelToken::new(),

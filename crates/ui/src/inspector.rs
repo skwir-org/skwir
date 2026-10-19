@@ -1830,6 +1830,9 @@ impl Shell {
                     remembered = true;
                 }
             }
+            // All of this file, past the bounds that keep a preview quick:
+            // for this file only, never remembered.
+            "whole" => state.request.whole = true,
             "page" => {
                 state.request.offset = args["offset"].as_u64().unwrap_or(0);
                 state.request.target = None;
@@ -2345,6 +2348,10 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             .label(label::TURN)
             .active(data.kind == InspectionKind::Model),
         ));
+    }
+    // What was cut short to stay quick: all of it, asked.
+    if data.whole_available {
+        crate::preview_bar::whole_tool(&mut bar);
     }
     if data.source_available {
         bar.push(Item::button(

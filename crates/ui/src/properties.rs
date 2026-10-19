@@ -1276,7 +1276,10 @@ pub fn alone(shell: &Shell) -> bool {
         && match &shell.preview.content {
             None => shell.preview.phase == crate::preview::PreviewPhase::Idle,
             Some(
-                PreviewContent::Generic | PreviewContent::Dir { .. } | PreviewContent::Error(_),
+                PreviewContent::Generic
+                | PreviewContent::Dir { .. }
+                | PreviewContent::Error(_)
+                | PreviewContent::TooLarge(_),
             ) => true,
             Some(_) => false,
         }

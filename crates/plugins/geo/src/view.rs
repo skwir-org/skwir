@@ -198,7 +198,11 @@ enum Kind {
 
 /// A track's line and start, thinned for the view.
 fn track(path: &Path, cancel: &CancelToken) -> Found {
-    let Ok(data) = crate::inspect_file(path, cancel) else {
+    let Ok(data) = crate::inspect_file(
+        path,
+        skwir_platform::inspection::limits::Bounds::QUICK,
+        cancel,
+    ) else {
         return Found {
             at: None,
             line: Vec::new(),

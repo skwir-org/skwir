@@ -103,15 +103,16 @@ impl PreviewProvider for Provider {
             .mime
             .as_deref()
             .is_some_and(|mime| sqlite::MIMES.contains(&mime));
+        let bounds = limits::Bounds::of(view);
         match extension.as_str() {
             _ if database || sqlite::EXTENSIONS.contains(&extension.as_str()) => {
-                sqlite::table(&path, view.offset, cancel).map(Some)
+                sqlite::table(&path, view.offset, bounds, cancel).map(Some)
             }
-            "jsonl" | "ndjson" => jsonl::table(&path, view.offset, cancel).map(Some),
+            "jsonl" | "ndjson" => jsonl::table(&path, view.offset, bounds, cancel).map(Some),
             _ if spreadsheet::EXTENSIONS.contains(&extension.as_str()) => {
-                spreadsheet::table(&path, view.offset, cancel).map(Some)
+                spreadsheet::table(&path, view.offset, bounds, cancel).map(Some)
             }
-            _ => table(&path, view.offset, cancel).map(Some),
+            _ => table(&path, view.offset, bounds, cancel).map(Some),
         }
     }
 }
@@ -158,8 +159,14 @@ impl<R: Read> Read for RecordBound<R> {
 
 /// One page of `TABLE_ROWS` records from record `offset`, streamed from the
 /// file: a table is as long as its file, and only the page is kept. Rows
-/// before the page are parsed and dropped, so numbering stays exact.
-fn table(path: &std::path::Path, offset: u64, cancel: &CancelToken) -> anyhow::Result<Inspection> {
+/// before the page are parsed and dropped, so numbering stays exact. Its
+/// columns are `asked`'s.
+fn table(
+    path: &std::path::Path,
+    offset: u64,
+    asked: limits::Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<Inspection> {
     let mut file = inspection::open(path)?;
     let mut prefix = Vec::new();
     (&mut file).take(64 * 1024).read_to_end(&mut prefix)?;
@@ -168,7 +175,7 @@ fn table(path: &std::path::Path, offset: u64, cancel: &CancelToken) -> anyhow::R
     // so it is decoded whole, within the bound for text read whole.
     let input: Box<dyn Read> = match encoding {
         Encoding::Utf16Le | Encoding::Utf16Be => {
-            let (text, _) = inspection::read_text(path, cancel)?;
+            let (text, _) = inspection::read_text(path, asked, cancel)?;
             Box::new(std::io::Cursor::new(text.into_bytes()))
         }
         _ => Box::new(std::io::Cursor::new(prefix).chain(file)),
@@ -191,7 +198,7 @@ fn table(path: &std::path::Path, offset: u64, cancel: &CancelToken) -> anyhow::R
         .flexible(true)
         .has_headers(false)
         .from_reader(input);
-    let mut bounds = Bounds::default();
+    let mut bounds = Bounds::new(asked.table_columns());
     let mut record = csv::ByteRecord::new();
     let columns = if reader.read_byte_record(&mut record)? {
         since.set(0);
@@ -284,27 +291,36 @@ fn table(path: &std::path::Path, offset: u64, cancel: &CancelToken) -> anyhow::R
         next: more.then_some(offset + page),
         source_available: true,
         notice,
+        whole_available: bounds.rows > 0 && asked.cut(),
         ..Inspection::default()
     })
 }
 
 /// The table's bounds, applied alike to the header and every row, and what
 /// they left out, for the notice.
-#[derive(Default)]
 struct Bounds {
+    /// Fields kept of a row: `limits::Bounds::table_columns`.
+    columns: usize,
     /// Cells cut to `TABLE_CELL` characters.
     cells: usize,
-    /// Rows (the header included) cut to `TABLE_COLUMNS` fields.
+    /// Rows (the header included) cut to `columns` fields.
     rows: usize,
 }
 impl Bounds {
+    fn new(columns: usize) -> Self {
+        Bounds {
+            columns,
+            cells: 0,
+            rows: 0,
+        }
+    }
     fn row(&mut self, record: &csv::ByteRecord, encoding: Encoding) -> Vec<String> {
-        if record.len() > limits::TABLE_COLUMNS {
+        if record.len() > self.columns {
             self.rows += 1;
         }
         record
             .iter()
-            .take(limits::TABLE_COLUMNS)
+            .take(self.columns)
             .map(|cell| bounded_cell(&encoding.decode(cell), &mut self.cells))
             .collect()
     }
@@ -316,7 +332,7 @@ impl Bounds {
                     "{} row{} cut to {} columns",
                     self.rows,
                     plural(self.rows),
-                    limits::TABLE_COLUMNS
+                    self.columns
                 )
             }),
             (self.cells > 0).then(|| {
@@ -354,7 +370,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(name);
         std::fs::write(&path, bytes).unwrap();
-        table(&path, offset, &CancelToken::new()).unwrap()
+        table(&path, offset, limits::Bounds::QUICK, &CancelToken::new()).unwrap()
     }
 
     #[test]
@@ -398,6 +414,13 @@ mod tests {
         assert_eq!(data.rows[0].cells.len(), limits::TABLE_COLUMNS);
         assert_eq!(data.rows[1].cells, ["short"]);
         assert_eq!(data.notice, "2 rows cut to 64 columns");
+        assert!(data.whole_available, "Full preview shows the rest");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wide.csv");
+        std::fs::write(&path, format!("{wide}\n{wide}\n")).unwrap();
+        let all = table(&path, 0, limits::Bounds::WHOLE, &CancelToken::new()).unwrap();
+        assert_eq!(all.columns.len(), limits::TABLE_COLUMNS + 6);
+        assert!(all.notice.is_empty() && !all.whole_available);
     }
 
     /// A page turned to is read from where the pages before it were seen
@@ -414,12 +437,12 @@ mod tests {
         let path = dir.path().join("long.csv");
         std::fs::write(&path, &text).unwrap();
         let cancel = CancelToken::new();
-        let fresh = |offset| table(&path, offset, &cancel).unwrap();
+        let fresh = |offset| table(&path, offset, limits::Bounds::QUICK, &cancel).unwrap();
         let first_last = fresh(2500);
         assert_eq!(first_last.rows[0].cells[0], "2501");
         // Read in turn, each page's start is learned.
         for offset in (0..=2000).step_by(500) {
-            table(&path, offset, &cancel).unwrap();
+            table(&path, offset, limits::Bounds::QUICK, &cancel).unwrap();
         }
         assert_eq!(starts::nearest(&path, 2500).0, 2500);
         let again = fresh(2500);
@@ -436,11 +459,11 @@ mod tests {
         }
         let path = dir.path().join("long.jsonl");
         std::fs::write(&path, &lines).unwrap();
-        let before = jsonl::table(&path, 1000, &cancel).unwrap();
-        jsonl::table(&path, 0, &cancel).unwrap();
-        jsonl::table(&path, 500, &cancel).unwrap();
+        let before = jsonl::table(&path, 1000, limits::Bounds::QUICK, &cancel).unwrap();
+        jsonl::table(&path, 0, limits::Bounds::QUICK, &cancel).unwrap();
+        jsonl::table(&path, 500, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(starts::nearest(&path, 1000).0, 1000);
-        let after = jsonl::table(&path, 1000, &cancel).unwrap();
+        let after = jsonl::table(&path, 1000, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(after.rows[0].cells, before.rows[0].cells);
         assert_eq!(after.rows.len(), before.rows.len());
     }
@@ -480,7 +503,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("unclosed.csv");
         std::fs::write(&path, &text).unwrap();
-        assert!(table(&path, 0, &CancelToken::new()).is_err());
+        assert!(table(&path, 0, limits::Bounds::QUICK, &CancelToken::new()).is_err());
         let data = read("quoted.tsv", b"name\tnote\n\"it\ta\n", 0);
         assert_eq!(data.rows[0].cells, ["\"it", "a"]);
     }

@@ -39,6 +39,8 @@ pub mod label {
     /// A model turned in 3D (ADR-067).
     pub const TURN: &str = "3D";
     pub const HEX: &str = "View as hex";
+    /// All of a file a preview cut short or refused to stay quick.
+    pub const WHOLE: &str = "Full preview";
     pub const ZOOM: &str = "Zoom and fit";
     pub const FULLSCREEN: &str = "Fullscreen";
     pub const MORE: &str = "More";
@@ -314,6 +316,24 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
         })
         .fills(),
     );
+}
+
+/// Full preview: all of a file a preview cut short or refused to stay
+/// quick, read again past those bounds (`InspectRequest::whole`), for this
+/// file only. The same tool in every kind's bar that has it.
+pub fn whole_tool(bar: &mut Bar) {
+    bar.push(Item::button(
+        Slot::View,
+        2,
+        Button::new(
+            "preview-whole",
+            "down",
+            "All of this file, past the size a preview keeps to",
+            "ui.inspect",
+        )
+        .args(serde_json::json!({"action":"whole"}))
+        .label(label::WHOLE),
+    ));
 }
 
 /// The whole screen, the same tool at the end of every kind's bar, lit

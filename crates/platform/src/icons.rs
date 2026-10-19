@@ -21,7 +21,11 @@ use crate::mime::Mime;
 /// with the 16 px of a sidebar row. Inert, as a drawing previewed is.
 /// Reads the file: call it from a worker.
 pub fn rasterize(path: &std::path::Path, side: u32) -> anyhow::Result<crate::inspection::Decoded> {
-    let bytes = crate::inspection::read_drawing(path, &skwir_core::CancelToken::new())?;
+    let bytes = crate::inspection::read_drawing(
+        path,
+        crate::inspection::limits::Bounds::QUICK,
+        &skwir_core::CancelToken::new(),
+    )?;
     crate::inspection::drawing_within(&bytes, side)
 }
 

@@ -22,9 +22,11 @@ pub struct InspectRequest {
     /// shown by it.
     #[serde(default)]
     pub turned: Option<bool>,
-    /// Whether the user asked to see all of this file, past the size at
-    /// which a preview shows less to stay quick (a mesh too large to turn
-    /// unasked). Never past a bound that keeps hostile input out.
+    /// Whether the user asked to see all of this file (Full preview), past
+    /// the size at which a preview shows less to stay quick: a file too
+    /// large to read whole, a document's first blocks, a mesh too large to
+    /// turn unasked. Never past a bound that keeps hostile input out. Kept
+    /// for the file shown, never for the next.
     #[serde(default)]
     pub whole: bool,
 }
@@ -89,6 +91,33 @@ pub struct Inspection {
     /// Whether the file is a model whose mesh can be turned in 3D, asked
     /// with `InspectRequest::meshes` and `turned`.
     pub mesh_available: bool,
+    /// Whether this is less than the file holds, cut short to stay quick:
+    /// asked again with `InspectRequest::whole`, the provider shows all of
+    /// it. Never set when it was asked so: what a bound that keeps hostile
+    /// input out leaves out stays out.
+    pub whole_available: bool,
+}
+
+/// A file a preview refused only because it is large: past a bound that
+/// keeps previews quick, not one that keeps hostile input out. Asked again
+/// with `InspectRequest::whole`, the provider reads it; the panel offers
+/// that (Full preview). Never made when the file was asked whole.
+#[derive(Debug)]
+pub struct TooLarge(pub String);
+
+impl std::fmt::Display for TooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TooLarge {}
+
+impl TooLarge {
+    /// Whether `error` is a [`TooLarge`], or was caused by one.
+    pub fn is(error: &anyhow::Error) -> bool {
+        error.chain().any(<dyn std::error::Error>::is::<TooLarge>)
+    }
 }
 
 /// A 3D mesh as a provider read it (ADR-067): positions, in the file's

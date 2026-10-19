@@ -9,7 +9,7 @@ use skwir_core::{
 };
 use skwir_platform::{
     archive,
-    inspection::{self, limits},
+    inspection::{self, limits, limits::Bounds},
     mime,
 };
 use std::{collections::BTreeMap, sync::Arc};
@@ -74,18 +74,15 @@ impl PreviewProvider for Provider {
     fn extract(
         &self,
         req: &PreviewRequest,
+        view: &InspectRequest,
         target: &str,
         into: &std::path::Path,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<skwir_core::preview::Member>> {
         let path = req.entry.resolve()?;
-        let index = target.parse::<u64>()?;
-        let listing = archive::list(&path, cancel)?;
-        let member = listing
-            .members
-            .iter()
-            .find(|m| m.index == index)
-            .ok_or_else(|| anyhow::anyhow!("Missing archive member"))?;
+        // Found as the listing showed it; written out as the member is to be
+        // looked at.
+        let member = archive::member(&path, target.parse::<u64>()?, cancel)?;
         anyhow::ensure!(
             member.regular && !member.encrypted,
             "This member cannot be previewed (directory, link or encrypted file)"
@@ -93,7 +90,7 @@ impl PreviewProvider for Provider {
         Ok(Some(skwir_core::preview::Member {
             own_file: false,
             name: member.file_name().to_owned(),
-            path: archive::extract(&path, member, into, cancel)?,
+            path: archive::extract(&path, &member, into, Bounds::of(view), cancel)?,
         }))
     }
     /// The listing. A member is never inspected here: the panel extracts it
@@ -101,11 +98,12 @@ impl PreviewProvider for Provider {
     fn inspect(
         &self,
         req: &PreviewRequest,
-        _view: &InspectRequest,
+        view: &InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Inspection>> {
         let path = req.entry.resolve()?;
-        let listing = archive::list(&path, cancel)?;
+        let bounds = Bounds::of(view);
+        let listing = archive::list_within(&path, bounds, cancel)?;
         let members = &listing.members;
         let rows = member_rows(members, cancel)?;
         let details = facts(members, &rows);
@@ -125,6 +123,7 @@ impl PreviewProvider for Provider {
             notice,
             rows,
             columns: vec!["Name".into(), "Size".into(), "Status".into()],
+            whole_available: !listing.complete && bounds.cut(),
             ..Inspection::default()
         }))
     }

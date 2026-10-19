@@ -43,6 +43,36 @@ is binding, like `AGENTS.md`.
   WAL or not), schema untrusted, tables only, each cell bounded in the
   query, cancellation wired to SQLite's progress handler.
 
+### Full preview (ADR-068)
+
+- **Two tiers.** A bound that keeps a preview quick (text read whole,
+  a file read whole, blocks, code lines, archive members, table columns,
+  a picture's pixels, a drawing's size) has a larger one for Full
+  preview, both in `limits` and read only through
+  `limits::Bounds::of(view)` (`InspectRequest::whole`). A bound that
+  keeps hostile input out (nesting, a line, a cell, inflation inside a
+  container, a decoder's allocation, a model's triangles) is the same
+  for both. A provider never reads a quick bound's constant directly
+  where the request is at hand.
+- **Say what Full preview shows, exactly.** What a provider leaves out by
+  its bounds sets `Inspection::whole_available` (`Bounds::cut`); what it
+  refuses by them it refuses with `Bounds::refuse`, an
+  `inspection::TooLarge` while the bounds are quick, so a refusal that
+  Full preview would not lift never offers it. The panel shows a refused
+  text file as written with Full preview offered (`source_instead`), any
+  other as `PreviewContent::TooLarge`, and puts **Full preview** in the
+  bar for both (`preview_bar::whole_tool`).
+- **For the file shown only.** `whole` lives in the panel's request,
+  reset with the file (`cancel_preview`) and for a member gone down into;
+  never in a type's memory (`SourceTypes`, `TurnedTypes`) nor the
+  session. Thumbnails, an agent's preview and reading ahead use
+  `Bounds::QUICK`.
+- **A member is found as it was shown.** `extract`'s `view` is the
+  member's: it bounds what is written out. Where the member is listed
+  (an archive's listing kept by its bounds, `archive::member`; a
+  playlist's tracks; a message's attachments) it is found within Full
+  preview's bounds, as the row the user chose may have been.
+
 ## File types
 
 A name that says nothing is not a binary file.
@@ -141,7 +171,8 @@ A name that says nothing is not a binary file.
   - The helper writes the mesh itself (`--mesh`, `Asked::Turned`) up to
     `model::VIEW_TRIANGLES`, else its still, with a notice saying why; up
     to `model::TRIANGLES` when the user asked for this file
-    (`InspectRequest::whole`).
+    (`InspectRequest::whole`): 3D asks it, so a model needs no Full
+    preview of its own.
   - Whether a model is turned is the user's, by type (`TurnedTypes`,
     `InspectRequest::turned`, the bar's 3D button): unchosen, a mesh is
     turned and a model that stores a picture shows it. A model that can be

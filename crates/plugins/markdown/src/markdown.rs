@@ -14,7 +14,7 @@ use skwir_core::{
     inspection::{Block, BlockKind, Picture, Run},
 };
 use skwir_platform::{
-    inspection::{check, limits},
+    inspection::{check, limits, limits::Bounds},
     rich_preview,
 };
 
@@ -277,6 +277,7 @@ fn level(level: HeadingLevel) -> u8 {
 fn emit_html(
     blocks: &mut Vec<Block>,
     html: &mut String,
+    bounds: Bounds,
     cancel: &CancelToken,
     image: &mut impl FnMut(&str) -> Option<Picture>,
     quote_depth: u32,
@@ -288,6 +289,7 @@ fn emit_html(
     let page = rich_preview::html(
         &source,
         rich_preview::Markup::Html,
+        bounds,
         cancel,
         rich_preview::named(image),
     )?;
@@ -298,11 +300,12 @@ fn emit_html(
     Ok(())
 }
 
-/// The document's blocks, up to `limits::BLOCKS`: a longer one (a changelog
-/// is a list item per line) is cut there and says so (`Page::truncated`),
-/// its source one toggle away.
+/// The document's blocks, up to `bounds`' `blocks`: a longer one (a
+/// changelog is a list item per line) is cut there and says so
+/// (`Page::truncated`), its source one toggle away.
 pub fn parse(
     source: &str,
+    bounds: Bounds,
     cancel: &CancelToken,
     mut load: impl FnMut(&str) -> Option<Picture>,
     mut wiki: Option<&mut Wiki>,
@@ -337,9 +340,9 @@ pub fn parse(
 
     for event in Parser::new_ext(source, options) {
         check(cancel)?;
-        if blocks.len() >= limits::BLOCKS {
+        if blocks.len() >= bounds.blocks() {
             return Ok(rich_preview::Page {
-                blocks: cut(blocks),
+                blocks: cut(blocks, bounds),
                 truncated: true,
             });
         }
@@ -426,7 +429,14 @@ pub fn parse(
         // A run of raw HTML ends here: read it where it stood.
         if !html.is_empty() && !matches!(event, Event::Html(_)) {
             flush(&mut blocks, &mut current, &mut marker);
-            emit_html(&mut blocks, &mut html, cancel, &mut load, quote_depth)?;
+            emit_html(
+                &mut blocks,
+                &mut html,
+                bounds,
+                cancel,
+                &mut load,
+                quote_depth,
+            )?;
             begin(&mut current, quote_depth, &lists, marker.as_deref());
         }
         match event {
@@ -577,16 +587,23 @@ pub fn parse(
         }
     }
     flush(&mut blocks, &mut current, &mut marker);
-    emit_html(&mut blocks, &mut html, cancel, &mut load, quote_depth)?;
+    emit_html(
+        &mut blocks,
+        &mut html,
+        bounds,
+        cancel,
+        &mut load,
+        quote_depth,
+    )?;
     Ok(rich_preview::Page {
-        truncated: blocks.len() > limits::BLOCKS,
-        blocks: cut(blocks),
+        truncated: blocks.len() > bounds.blocks(),
+        blocks: cut(blocks, bounds),
     })
 }
 
 /// A run of raw HTML may add several blocks at once: keep to the bound.
-fn cut(mut blocks: Vec<Block>) -> Vec<Block> {
-    blocks.truncate(limits::BLOCKS);
+fn cut(mut blocks: Vec<Block>, bounds: Bounds) -> Vec<Block> {
+    blocks.truncate(bounds.blocks());
     blocks
 }
 
@@ -595,7 +612,7 @@ mod tests {
     use super::*;
 
     fn parse(source: &str) -> Vec<Block> {
-        super::parse(source, &CancelToken::new(), |_| None, None)
+        super::parse(source, Bounds::QUICK, &CancelToken::new(), |_| None, None)
             .unwrap()
             .blocks
     }
@@ -741,6 +758,7 @@ mod tests {
             ![Not there](missing.png)\n";
         let blocks = super::parse(
             source,
+            Bounds::QUICK,
             &CancelToken::new(),
             |href| {
                 (href != "missing.png").then(|| Picture::Later {
@@ -774,6 +792,7 @@ mod tests {
         let mut asked = Vec::new();
         let blocks = super::parse(
             "![Run `ls -a` *here*\nthen ![the inner](inner.png) [a link](u) <kbd>K</kbd>](x.png)\n",
+            Bounds::QUICK,
             &CancelToken::new(),
             |href| {
                 asked.push(href.to_owned());
@@ -795,6 +814,7 @@ mod tests {
         let mut asked = Vec::new();
         let blocks = super::parse(
             "<p align=\"center\"><img src=\"logo.png\" alt=\"Logo\"></p>\n\nText.\n",
+            Bounds::QUICK,
             &CancelToken::new(),
             |href| {
                 asked.push(href.to_owned());
@@ -823,6 +843,7 @@ mod tests {
         let mut asked = 0usize;
         super::parse(
             &source,
+            Bounds::QUICK,
             &CancelToken::new(),
             |_| {
                 asked += 1;
@@ -940,11 +961,23 @@ mod tests {
     #[test]
     fn a_long_document_is_cut_at_the_bound_not_refused() {
         let source = "- item\n".repeat(limits::BLOCKS + 500);
-        let page = super::parse(&source, &CancelToken::new(), |_| None, None).unwrap();
+        let page =
+            super::parse(&source, Bounds::QUICK, &CancelToken::new(), |_| None, None).unwrap();
         assert!(page.truncated);
         assert_eq!(page.blocks.len(), limits::BLOCKS);
-        let short = super::parse("- one\n- two\n", &CancelToken::new(), |_| None, None).unwrap();
+        let short = super::parse(
+            "- one\n- two\n",
+            Bounds::QUICK,
+            &CancelToken::new(),
+            |_| None,
+            None,
+        )
+        .unwrap();
         assert!(!short.truncated);
+        let all =
+            super::parse(&source, Bounds::WHOLE, &CancelToken::new(), |_| None, None).unwrap();
+        assert!(!all.truncated);
+        assert_eq!(all.blocks.len(), limits::BLOCKS + 500);
     }
 
     #[test]
@@ -995,7 +1028,14 @@ mod tests {
         let source = "[[Next steps]] [[Inbox#Read later|later]] [[l'été]] [[plan.txt]] \
                       [[Nowhere]] [[#Plan of attack]] [[Next steps#^abc]] [[100% sure?]]";
         let mut wiki = Wiki::new(&projects.join("plan.md")).unwrap();
-        let page = super::parse(source, &CancelToken::new(), |_| None, Some(&mut wiki)).unwrap();
+        let page = super::parse(
+            source,
+            Bounds::QUICK,
+            &CancelToken::new(),
+            |_| None,
+            Some(&mut wiki),
+        )
+        .unwrap();
         let links: Vec<(&str, &str)> =
             page.blocks
                 .iter()

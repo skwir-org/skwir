@@ -7,7 +7,7 @@
 use base64::Engine as _;
 use serde_json::Value;
 use skwir_core::{CancelToken, inspection::Picture, thumbs::Image};
-use skwir_platform::inspection::{self, limits};
+use skwir_platform::inspection::{self, limits, limits::Bounds};
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -15,7 +15,8 @@ use std::path::Path;
 /// the notebook, counted in reading order.
 pub const OUTPUT: &str = "notebook-output:";
 
-/// Lines of one output kept: a training loop can print thousands.
+/// Lines of one output kept: a training loop can print thousands. Full
+/// preview keeps them all.
 const OUTPUT_LINES: usize = 200;
 
 /// What the notebook says of itself, for Properties.
@@ -24,14 +25,14 @@ pub struct Notebook {
     pub cells: usize,
     pub language: Option<String>,
     pub kernel: Option<String>,
-    /// Outputs shortened to `OUTPUT_LINES`.
+    /// Outputs shortened to `OUTPUT_LINES`, not under Full preview.
     pub shortened: usize,
 }
 
-/// Read the notebook at `path`, within the bound for binary input: its
+/// Read the notebook at `path`, within `bounds`' binary input: its
 /// pictures are inside it.
-pub fn read(path: &Path, cancel: &CancelToken) -> anyhow::Result<Value> {
-    let bytes = inspection::read_bounded(path, limits::BINARY_INPUT, "Notebook", cancel)?;
+pub fn read(path: &Path, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Value> {
+    let bytes = inspection::read_file(path, bounds, "Notebook", cancel)?;
     let value: Value = serde_json::from_slice(&bytes)?;
     anyhow::ensure!(
         value.get("nbformat").and_then(Value::as_u64) == Some(4),
@@ -124,9 +125,15 @@ fn outputs(cell: &Value) -> impl Iterator<Item = &Value> {
         .flatten()
 }
 
-/// The notebook as one Markdown document. Pictures are named `OUTPUT`
-/// and a number; `load` is asked for each as the parser meets it.
-pub fn markdown(notebook: &Value, cancel: &CancelToken) -> anyhow::Result<Notebook> {
+/// The notebook as one Markdown document, within `bounds`. Pictures are
+/// named `OUTPUT` and a number; `load` is asked for each as the parser
+/// meets it.
+pub fn markdown(
+    notebook: &Value,
+    bounds: Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<Notebook> {
+    let output_lines = bounds.choose(OUTPUT_LINES, usize::MAX);
     let metadata = notebook.get("metadata");
     let language = metadata
         .and_then(|m| {
@@ -194,8 +201,8 @@ pub fn markdown(notebook: &Value, cancel: &CancelToken) -> anyhow::Result<Notebo
                         continue;
                     };
                     let mut lines: Vec<&str> = shown.trim_end().lines().collect();
-                    if lines.len() > OUTPUT_LINES {
-                        lines.truncate(OUTPUT_LINES);
+                    if lines.len() > output_lines {
+                        lines.truncate(output_lines);
                         shortened += 1;
                     }
                     let shown = lines.join("\n");
@@ -207,11 +214,12 @@ pub fn markdown(notebook: &Value, cancel: &CancelToken) -> anyhow::Result<Notebo
             // A raw cell is for a converter, not for reading.
             _ => {}
         }
-        anyhow::ensure!(
-            out.len() <= limits::TEXT_INPUT,
-            "Notebook text exceeds {} preview limit",
-            limits::describe(limits::TEXT_INPUT)
-        );
+        if out.len() > bounds.text_input() {
+            return Err(bounds.refuse(format!(
+                "Notebook text exceeds {} preview limit",
+                limits::describe(bounds.text_input())
+            )));
+        }
     }
     Ok(Notebook {
         markdown: out,

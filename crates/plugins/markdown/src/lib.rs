@@ -12,7 +12,7 @@ use skwir_core::{
     preview::{PreviewProvider, PreviewRequest},
 };
 use skwir_platform::mime::Types;
-use skwir_platform::{inspection, rich_preview};
+use skwir_platform::{inspection, inspection::limits::Bounds, rich_preview};
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -40,11 +40,12 @@ impl Plugin for PreviewPlugin {
     }
 }
 /// What reading a document tells us for free: how long it is. What was left
-/// out (an encoding assumed, blocks past the bound) is the notice.
+/// out (an encoding assumed, blocks past `bounds`) is the notice.
 fn measured(
     mut data: Inspection,
     encoding: inspection::Encoding,
     page: rich_preview::Page,
+    bounds: Bounds,
 ) -> Inspection {
     let words: usize = page
         .blocks
@@ -58,13 +59,14 @@ fn measured(
     ]);
     data.notice = [
         encoding.notice(),
-        page.truncated.then(inspection::blocks_notice),
+        page.truncated.then(|| inspection::blocks_notice(bounds)),
         (!data.notice.is_empty()).then(|| std::mem::take(&mut data.notice)),
     ]
     .into_iter()
     .flatten()
     .collect::<Vec<_>>()
     .join(" · ");
+    data.whole_available |= page.truncated && bounds.cut();
     data.blocks = page.blocks;
     data
 }
@@ -108,13 +110,14 @@ impl PreviewProvider for Provider {
     fn picture(
         &self,
         req: &PreviewRequest,
-        _view: &InspectRequest,
+        view: &InspectRequest,
         key: &str,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<skwir_core::thumbs::Image>> {
         let path = req.entry.resolve()?;
         if key.starts_with(notebook::OUTPUT) && format_of(req) == Some(Format::Notebook) {
-            return Ok(notebook::decoded(&notebook::read(&path, cancel)?, key));
+            let notebook = notebook::read(&path, Bounds::of(view), cancel)?;
+            return Ok(notebook::decoded(&notebook, key));
         }
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         Ok(rich_preview::local_image(base, key, cancel))
@@ -133,15 +136,16 @@ impl PreviewProvider for Provider {
             return Ok(None);
         };
         let path = req.entry.resolve()?;
+        let bounds = Bounds::of(view);
         if format == Format::Notebook {
-            return notebook(&path, cancel).map(Some);
+            return notebook(&path, bounds, cancel).map(Some);
         }
-        let (source, encoding) = inspection::read_text(&path, cancel)?;
+        let (source, encoding) = inspection::read_text(&path, bounds, cancel)?;
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         let image = |href: &str| rich_preview::local_picture(base, href, cancel);
         let (title, page, notice) = if format == Format::Markdown {
             let mut wiki = markdown::Wiki::new(&path);
-            let page = markdown::parse(&source, cancel, image, wiki.as_mut())?;
+            let page = markdown::parse(&source, bounds, cancel, image, wiki.as_mut())?;
             ("Markdown", page, "")
         } else {
             let markup = if format == Format::Xhtml {
@@ -154,6 +158,7 @@ impl PreviewProvider for Provider {
                 rich_preview::html(
                     &source,
                     markup,
+                    bounds,
                     cancel,
                     rich_preview::Local { base, cancel },
                 )?,
@@ -170,18 +175,24 @@ impl PreviewProvider for Provider {
             },
             encoding,
             page,
+            bounds,
         )))
     }
 }
 
 /// A notebook read as a document: its Markdown, its code and outputs, and
 /// its pictures beside it or drawn by its outputs.
-fn notebook(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
-    let value = notebook::read(path, cancel)?;
-    let read = notebook::markdown(&value, cancel)?;
+fn notebook(
+    path: &std::path::Path,
+    bounds: Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<Inspection> {
+    let value = notebook::read(path, bounds, cancel)?;
+    let read = notebook::markdown(&value, bounds, cancel)?;
     let base = path.parent().unwrap_or(std::path::Path::new("."));
     let page = markdown::parse(
         &read.markdown,
+        bounds,
         cancel,
         |href| {
             notebook::named(&value, href)
@@ -203,10 +214,12 @@ fn notebook(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Insp
             } else {
                 String::new()
             },
+            whole_available: read.shortened > 0 && bounds.cut(),
             ..Inspection::default()
         },
         inspection::Encoding::Utf8,
         page,
+        bounds,
     );
     data.details.extend(inspection::details([
         ("Cells", inspection::count(read.cells)),
@@ -280,7 +293,15 @@ mod tests {
         let changelog = "- a change\n".repeat(3000);
         let data = read("CHANGELOG.md", changelog.as_bytes());
         assert_eq!(data.blocks.len(), inspection::limits::BLOCKS);
-        assert_eq!(data.notice, inspection::blocks_notice());
+        assert_eq!(data.notice, inspection::blocks_notice(Bounds::QUICK));
+        assert!(data.whole_available, "Full preview shows the rest");
+        let whole = InspectRequest {
+            whole: true,
+            ..InspectRequest::default()
+        };
+        let data = read_as("CHANGELOG.md", changelog.as_bytes(), &whole).unwrap();
+        assert_eq!(data.blocks.len(), 3000);
+        assert!(data.notice.is_empty() && !data.whole_available);
         let source = InspectRequest {
             source: true,
             ..InspectRequest::default()
@@ -320,7 +341,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a notebook’s name.ipynb");
         std::fs::write(&path, document.to_string()).unwrap();
-        let data = notebook(&path, &CancelToken::new()).unwrap();
+        let data = notebook(&path, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(data.blocks[0].heading, 1);
         assert_eq!(data.blocks[0].text, "Café results");
         let code: Vec<_> = data

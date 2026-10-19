@@ -7,7 +7,7 @@
 //! its end may hold a bitmap in hexadecimal.
 use crate::Found;
 use skwir_core::CancelToken;
-use skwir_platform::inspection::{self, limits};
+use skwir_platform::inspection::{self, limits, limits::Bounds};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -24,6 +24,8 @@ const DXF_TAIL: u64 = 2 * 1024 * 1024;
 const DXF_HEAD: u64 = 64 * 1024;
 /// The largest DXF drawn from its entities: its text is held whole.
 const DXF_DRAWN: usize = 32 * 1024 * 1024;
+/// The largest under Full preview (`Bounds`).
+const WHOLE_DXF_DRAWN: usize = 128 * 1024 * 1024;
 
 /// The release a format version (`AC1032`) was introduced with.
 fn release(version: &str) -> Option<&'static str> {
@@ -111,8 +113,9 @@ pub fn dwg(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found
     Ok(found)
 }
 
-/// A DXF drawing: text of group codes and values, a pair of lines each.
-pub fn dxf(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
+/// A DXF drawing: text of group codes and values, a pair of lines each,
+/// drawn from its entities when `bounds` hold it.
+pub fn dxf(path: &Path, side: u32, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Found> {
     let mut file = inspection::open(path)?;
     let len = file.metadata()?.len();
     let mut head = Vec::new();
@@ -142,9 +145,17 @@ pub fn dxf(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found
         ));
     }
     inspection::check(cancel)?;
-    // Drawn from its entities, when it is not too large to.
-    if len <= DXF_DRAWN as u64 {
-        let text = inspection::read_bounded(path, DXF_DRAWN, "The drawing", cancel)?;
+    // Drawn from its entities, when it is not too large to; else what it
+    // stored, saying why.
+    let drawn = bounds.choose(DXF_DRAWN, WHOLE_DXF_DRAWN);
+    if len > drawn as u64 {
+        found.notice = Some(format!(
+            "Too large to draw (more than {})",
+            limits::describe(drawn)
+        ));
+        found.whole_available = bounds.cut();
+    } else {
+        let text = inspection::read_bounded(path, drawn, "The drawing", cancel)?;
         let drawing = crate::dxf::draw(&String::from_utf8_lossy(&text), cancel)?;
         found.details.extend(drawing.details);
         found.notice = drawing.notice;
@@ -283,11 +294,37 @@ mod tests {
         }
         text.push_str("  0\nENDSEC\n  0\nEOF\n");
         std::fs::write(&path, text).unwrap();
-        let found = dxf(&path, 256, &CancelToken::new()).unwrap();
+        let found = dxf(&path, 256, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(
             found.details,
             [("Format".to_owned(), "DXF 2013".to_owned())]
         );
         assert!(red_first(&found.picture.unwrap()));
+    }
+
+    #[test]
+    fn a_dxf_too_large_to_draw_says_so_and_full_preview_draws_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large.dxf");
+        std::fs::write(&path, "  0\nSECTION\n  2\nENTITIES\n").unwrap();
+        // Sparse: nothing more is written.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(DXF_DRAWN as u64 + 1)
+            .unwrap();
+        let found = dxf(&path, 256, Bounds::QUICK, &CancelToken::new()).unwrap();
+        assert_eq!(
+            found.notice.as_deref(),
+            Some("Too large to draw (more than 32 MiB)")
+        );
+        assert!(found.whole_available);
+        let found = dxf(&path, 256, Bounds::WHOLE, &CancelToken::new()).unwrap();
+        assert!(!found.whole_available);
+        assert_ne!(
+            found.notice.as_deref(),
+            Some("Too large to draw (more than 32 MiB)")
+        );
     }
 }

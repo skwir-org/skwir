@@ -1,6 +1,6 @@
 //! Small native helper for archive metadata, bounded member reads, whole
 //! archives extracted (ADR-048), and archives made (ADR-059).
-use crate::inspection::{self, limits};
+use crate::inspection::{self, limits, limits::Bounds};
 use crate::sandbox::{self, Otherwise};
 use anyhow::Context;
 use serde::Deserialize;
@@ -62,19 +62,20 @@ pub fn worker_path() -> Option<std::path::PathBuf> {
 fn worker() -> anyhow::Result<std::path::PathBuf> {
     WORKER.require("open archives")
 }
-/// An archive's members as the helper listed them: the first
-/// `limits::CONTAINER_MEMBERS`, within `limits::MEMBER_NAMES` bytes of names.
+/// An archive's members as the helper listed them: the first its bounds'
+/// `members`, within their `member_names` bytes of names.
 #[derive(Debug, Deserialize)]
 pub struct Listing {
     pub members: Vec<Member>,
     /// Every member is listed. A longer archive shows its start, and says so.
     pub complete: bool,
 }
-/// The listings read last, by the archive's identity, size and time: a
-/// member extracted, a page read, the listing shown again take the listing
-/// read, where each read the whole archive again (a compressed tar
-/// decompressed whole) before writing out one member.
-static LISTINGS: parking_lot::Mutex<Vec<(ListingKey, Arc<Listing>)>> =
+/// The listings read last, by the archive's identity, size and time, and
+/// the bounds they were read within: a member extracted, a page read, the
+/// listing shown again take the listing read, where each read the whole
+/// archive again (a compressed tar decompressed whole) before writing out
+/// one member.
+static LISTINGS: parking_lot::Mutex<Vec<(ListingKey, Bounds, Arc<Listing>)>> =
     parking_lot::const_mutex(Vec::new());
 /// Listings kept at most.
 const LISTINGS_KEPT: usize = 4;
@@ -102,44 +103,92 @@ pub fn listed(path: &Path) -> Option<Arc<Listing>> {
     LISTINGS
         .lock()
         .iter()
-        .find(|(k, _)| *k == key)
-        .map(|(_, listing)| Arc::clone(listing))
+        .find(|(k, _, _)| *k == key)
+        .map(|(_, _, listing)| Arc::clone(listing))
 }
 
+/// The archive's listing within the quick bounds: what an operation reads
+/// (an extraction's names, a compression's check), and a comic's pages.
 pub fn list(path: &Path, cancel: &CancelToken) -> anyhow::Result<Arc<Listing>> {
+    list_within(path, Bounds::QUICK, cancel)
+}
+
+/// The archive's listing within `bounds`: one kept serves when it was read
+/// within them, or lists every member.
+pub fn list_within(
+    path: &Path,
+    bounds: Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<Arc<Listing>> {
     let key = listing_key(path);
     if let Some(key) = &key
-        && let Some((_, listing)) = LISTINGS.lock().iter().find(|(k, _)| k == key)
+        && let Some((_, _, listing)) = LISTINGS
+            .lock()
+            .iter()
+            .find(|(k, b, listing)| k == key && (*b == bounds || listing.complete))
     {
         return Ok(Arc::clone(listing));
     }
-    let listing = Arc::new(read_listing(path, cancel)?);
+    let listing = Arc::new(read_listing(path, bounds, cancel)?);
     if let Some(key) = key {
         let mut kept = LISTINGS.lock();
-        kept.retain(|(k, _)| k.0 != key.0);
+        // Another version of the archive, or the same read again, goes.
+        kept.retain(|(k, b, _)| k.0 != key.0 || (*k == key && *b != bounds));
         if kept.len() >= LISTINGS_KEPT {
             kept.remove(0);
         }
-        kept.push((key, Arc::clone(&listing)));
+        kept.push((key, bounds, Arc::clone(&listing)));
     }
     Ok(listing)
 }
 
-fn read_listing(path: &Path, cancel: &CancelToken) -> anyhow::Result<Listing> {
+/// The member listed at `index`, as a preview showed it: from a listing
+/// kept of the archive as it stands, whatever bounds it was read within
+/// (Full preview's lists past the quick ones), else from the quick
+/// listing, else Full preview's.
+pub fn member(path: &Path, index: u64, cancel: &CancelToken) -> anyhow::Result<Member> {
+    let held = |listing: &Listing| listing.members.iter().find(|m| m.index == index).cloned();
+    if let Some(key) = listing_key(path)
+        && let Some(member) = LISTINGS
+            .lock()
+            .iter()
+            .filter(|(k, _, _)| *k == key)
+            .find_map(|(_, _, listing)| held(listing))
+    {
+        return Ok(member);
+    }
+    for bounds in [Bounds::QUICK, Bounds::WHOLE] {
+        let listing = list_within(path, bounds, cancel)?;
+        if let Some(member) = held(&listing) {
+            return Ok(member);
+        }
+        if listing.complete {
+            break;
+        }
+    }
+    anyhow::bail!("Missing archive member")
+}
+
+fn read_listing(path: &Path, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Listing> {
     let worker = worker()?;
-    read_listing_with(&worker, path, cancel)
+    read_listing_with(&worker, path, bounds, cancel)
         .map_err(|error| crate::process::explain(&worker, cancel, error))
 }
-fn read_listing_with(worker: &Path, path: &Path, cancel: &CancelToken) -> anyhow::Result<Listing> {
+fn read_listing_with(
+    worker: &Path,
+    path: &Path,
+    bounds: Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<Listing> {
     let work = tempfile::tempdir()?;
     let mut run = sandbox::untrusted(worker, path, work.path(), Otherwise::Run)?;
     run.command
         .arg(&run.input)
         .args(stem(path))
         .arg("--members")
-        .arg(limits::CONTAINER_MEMBERS.to_string())
+        .arg(bounds.members().to_string())
         .arg("--names")
-        .arg(limits::MEMBER_NAMES.to_string())
+        .arg(bounds.member_names().to_string())
         // Told what it listed before the run's time is up.
         .arg("--seconds")
         .arg(
@@ -178,21 +227,26 @@ pub fn member_file(into: &Path, name: &str) -> std::path::PathBuf {
     }
     file
 }
-/// Stream `member`, as listed, to `output`. The helper finds it by index and
-/// checks it still carries the listed name, so an archive rewritten since
-/// its listing fails instead of showing another member. The declared size
-/// is checked here first; the helper bounds the bytes it actually produces.
+/// Stream `member`, as listed, to `output`, within `bounds`' `binary_input`.
+/// The helper finds it by index and checks it still carries the listed
+/// name, so an archive rewritten since its listing fails instead of showing
+/// another member. The declared size is checked here first, and a member
+/// declared past the bound is refused by `bounds`; the helper bounds the
+/// bytes it actually produces.
 fn write_member(
     path: &Path,
     member: &Member,
     output: &Path,
+    bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        u64::try_from(member.size).unwrap_or(0) <= limits::BINARY_INPUT as u64,
-        "Member preview exceeds {} limit",
-        limits::describe(limits::BINARY_INPUT)
-    );
+    let most = bounds.binary_input();
+    if u64::try_from(member.size).unwrap_or(0) > most as u64 {
+        return Err(bounds.refuse(format!(
+            "Member preview exceeds {} limit",
+            limits::describe(most)
+        )));
+    }
     // It writes in the folder that will hold the member, and nowhere else.
     let (Some(into), Some(name)) = (output.parent(), output.file_name()) else {
         anyhow::bail!("Nowhere to write the member");
@@ -208,29 +262,30 @@ fn write_member(
             .arg("--name")
             .arg(&member.name)
             .arg("--bytes")
-            .arg(limits::BINARY_INPUT.to_string());
+            .arg(most.to_string());
         crate::process::run(&mut run.command, cancel, limits::HELPER_TIMEOUT)?;
         Ok(())
     };
     written().map_err(|error| crate::process::explain(&worker, cancel, error))
 }
 /// Write one member of an archive as a file of its own, named by
-/// `member_file` after the last component of its name.
+/// `member_file` after the last component of its name, within `bounds`.
 pub fn extract(
     path: &Path,
     member: &Member,
     into: &Path,
+    bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<std::path::PathBuf> {
     let output = member_file(into, member.file_name());
-    write_member(path, member, &output, cancel)?;
+    write_member(path, member, &output, bounds, cancel)?;
     Ok(output)
 }
-/// One member's bytes, bounded like `extract`.
+/// One member's bytes, within the quick bounds: a comic's page.
 pub fn read(path: &Path, member: &Member, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
     let temp = tempfile::tempdir()?;
     let output = temp.path().join("member");
-    write_member(path, member, &output, cancel)?;
+    write_member(path, member, &output, Bounds::QUICK, cancel)?;
     inspection::read_bounded(&output, limits::BINARY_INPUT, "Member preview", cancel)
 }
 /// Units of work the helper may run ahead of what it last reported while

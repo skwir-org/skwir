@@ -298,7 +298,8 @@ impl ThumbnailProvider for ImageDecoder {
 /// has as many pixels as it is asked for: as inert as the preview's,
 /// nothing outside it read.
 fn drawn_to(path: &Path, pixels: u32, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
-    let bytes = crate::inspection::read_drawing(path, cancel)?;
+    let bytes =
+        crate::inspection::read_drawing(path, crate::inspection::limits::Bounds::QUICK, cancel)?;
     let drawn = crate::inspection::drawing_within(&bytes, pixels)?;
     if cancel.is_cancelled() {
         return Ok(None);
