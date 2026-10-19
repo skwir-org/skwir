@@ -409,9 +409,14 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   rest, then counts each item as deleting it takes it
   (`fs::count::count_each`: a link is itself, a file of several names
   counts once), handing over what it has as it goes, stopped when the
-  question closes. The list draws only the rows on screen and scrolls
-  by the wheel and by Up, Down and the page keys; the question's height
-  is set when it opens.
+  question closes. The question's height is set when it opens.
+- **What a dialog lists scrolls, all of it** (`modal::Rows`): a box of
+  rows of one height, a set number in sight, only those on screen built,
+  scrolled by the wheel and by Up, Down and the page keys
+  (`ui.list_move`) while the dialog has the keyboard; never cut at a
+  count, nor clipped unsaid. What a deletion takes, a proposal's steps
+  (each line cut in its middle, so it ends with what it comes to) and
+  what a question to allow says.
 
 ## Keys
 

@@ -1,15 +1,18 @@
 //! What every dialog and popup shares: where the keyboard goes back to when
 //! it closes, the dimmed backdrop, panel and buttons of a modal dialog, how
-//! its keys stay in it, and the window of rows a long picker list shows.
+//! its keys stay in it, the window of rows a long picker list shows, and
+//! the box of rows a dialog lists.
 
+use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Context, Div, FocusHandle, Focusable, KeyDownEvent, MouseButton, Stateful,
-    Window, deferred, div,
+    AnyElement, App, Context, Div, FocusHandle, Focusable, KeyDownEvent, MouseButton, ScrollHandle,
+    SharedString, Stateful, UniformListScrollHandle, Window, deferred, div, point,
 };
 use gpui::{prelude::*, px};
 
+use crate::elements::scrollbar::{self, Scrolls};
 use crate::keymap::RunCommand;
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -266,6 +269,98 @@ pub fn footer(
                 })
                 .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
         }))
+}
+
+/// What a dialog lists, rows of one `height` (what a deletion takes, a
+/// plan's steps): every row there is, in a box that scrolls under a
+/// scrollbar with at most `shown` in sight, by the wheel and by the keys
+/// of `ui.list_move` (`Rows::scroll`). Only the rows on screen are built:
+/// an emptied trash lists thousands, a plan ten thousand steps.
+#[derive(Clone, Copy)]
+pub struct Rows {
+    pub height: f32,
+    pub shown: usize,
+}
+
+impl Rows {
+    /// The box of `count` rows, `build` making those on screen.
+    pub fn list(
+        self,
+        id: &'static str,
+        count: usize,
+        scroll: &UniformListScrollHandle,
+        theme: &Theme,
+        build: impl Fn(&mut Shell, Range<usize>, &mut Window, &mut Context<Shell>) -> Vec<AnyElement>
+        + 'static,
+        cx: &mut Context<Shell>,
+    ) -> Stateful<Div> {
+        let rows = gpui::uniform_list(
+            SharedString::from(format!("{id}-rows")),
+            count,
+            cx.processor(build),
+        )
+        .track_scroll(scroll)
+        .h(px(self.height * count.min(self.shown) as f32));
+        let handle = scroll.0.borrow().base_handle.clone();
+        Self::boxed(id, rows, handle, theme)
+    }
+
+    /// The same box holding `text`, which wraps: as tall as it is, up to
+    /// `shown` rows, scrolled by the same keys.
+    pub fn text(
+        self,
+        id: &'static str,
+        text: impl IntoElement,
+        scroll: &UniformListScrollHandle,
+        theme: &Theme,
+    ) -> Stateful<Div> {
+        let handle = scroll.0.borrow().base_handle.clone();
+        let text = div()
+            .id(SharedString::from(format!("{id}-text")))
+            .max_h(px(self.height * self.shown as f32))
+            .overflow_y_scroll()
+            .track_scroll(&handle)
+            .px_2()
+            .child(text);
+        Self::boxed(id, text, handle, theme)
+    }
+
+    fn boxed(
+        id: &'static str,
+        content: impl IntoElement,
+        handle: ScrollHandle,
+        theme: &Theme,
+    ) -> Stateful<Div> {
+        div()
+            .id(id)
+            .relative()
+            .py_1()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.bg)
+            .child(content)
+            .child(scrollbar::vertical(
+                SharedString::from(format!("{id}-scrollbar")),
+                Scrolls::Offset(handle),
+            ))
+    }
+
+    /// Scroll the box as a key asks: a row, a page, an end; never past its
+    /// ends, as it was last laid out.
+    pub fn scroll(self, scroll: &UniformListScrollHandle, mv: ListMove) {
+        let handle = scroll.0.borrow().base_handle.clone();
+        let offset = handle.offset();
+        let end = f32::from(handle.max_offset().y).max(0.);
+        let top = -f32::from(offset.y);
+        let to = match mv {
+            ListMove::By(rows) => top + self.height * rows as f32,
+            ListMove::Page(pages) => top + self.height * (self.shown as isize * pages) as f32,
+            ListMove::First => 0.,
+            ListMove::Last => end,
+        };
+        handle.set_offset(point(offset.x, px(-to.clamp(0., end))));
+    }
 }
 
 /// Rows a picker (the palette, Jump) shows at once.

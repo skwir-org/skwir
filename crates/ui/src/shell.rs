@@ -1845,11 +1845,15 @@ impl Shell {
             name if name.starts_with("menu_") => self.menu_command(name, window, cx),
             "palette" => self.open_palette(window, cx),
             // Up and Down in whichever list has the keyboard: what a
-            // question before deleting lists, the palette, a choice, Jump,
-            // the tag editor, the address's suggestions.
+            // question before deleting lists, the names a plan found taken,
+            // a review's steps, the palette, a choice, Jump, the tag
+            // editor, the address's suggestions.
             "list_move" => {
                 let mv = crate::modal::ListMove::of(args);
-                if self.confirm_move(mv, cx) || self.clashes_move(mv, cx) {
+                if self.confirm_move(mv, window, cx)
+                    || self.clashes_move(mv, cx)
+                    || self.review_move(mv, window, cx)
+                {
                 } else if self.palette.is_some() {
                     self.palette_move(mv, cx);
                 } else if self.choose.is_some() {

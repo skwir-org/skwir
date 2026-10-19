@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, Context, SharedString, UniformListScrollHandle, Window, div, point, prelude::*, px,
+    AnyElement, Context, SharedString, UniformListScrollHandle, Window, div, prelude::*, px,
 };
 use skwir_core::fs::count::{self, Count};
 use skwir_core::op::{Change, PlanId};
@@ -25,16 +25,17 @@ use skwir_platform::calendar::Calendar;
 
 use crate::controls;
 use crate::elements::clip::clipped;
-use crate::elements::scrollbar::{self, Scrolls};
 use crate::format;
-use crate::modal::ListMove;
+use crate::modal::{ListMove, Rows};
 use crate::prompts::Confirmed;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
 /// A row's height, and the rows shown before the list scrolls.
-const ROW: f32 = 24.;
-const SHOWN: usize = 8;
+const ROWS: Rows = Rows {
+    height: 24.,
+    shown: 8,
+};
 
 /// The width of the folder each row is in, where they are not all in one.
 const FOLDER: f32 = 200.;
@@ -327,21 +328,6 @@ impl Deleting {
             said
         }
     }
-
-    /// Scroll the list as a key asks: rows, a page, an end.
-    fn scroll_by(&self, mv: ListMove) {
-        let handle = self.scroll.0.borrow().base_handle.clone();
-        let offset = handle.offset();
-        let max = ROW * self.rows.len().saturating_sub(SHOWN) as f32;
-        let top = -f32::from(offset.y);
-        let to = match mv {
-            ListMove::By(rows) => top + ROW * rows as f32,
-            ListMove::Page(pages) => top + ROW * (SHOWN as isize * pages) as f32,
-            ListMove::First => 0.,
-            ListMove::Last => max,
-        };
-        handle.set_offset(point(offset.x, px(-to.clamp(0., max))));
-    }
 }
 
 /// What a count says less than there is of: not over, something it could
@@ -521,15 +507,24 @@ impl Shell {
         self.confirm.as_mut()?.listed.as_mut()
     }
 
-    /// Up, Down and the page keys while a question is asked
+    /// Up, Down and the page keys while a question has the keyboard
     /// (`ui.list_move`): they scroll what it lists, and reach nothing
-    /// behind it. False when none is asked.
-    pub(crate) fn confirm_move(&mut self, mv: ListMove, cx: &mut Context<Self>) -> bool {
-        if self.confirm.is_none() {
+    /// behind it. False when none has it (a palette opened over it).
+    pub(crate) fn confirm_move(
+        &mut self,
+        mv: ListMove,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(confirm) = self
+            .confirm
+            .as_ref()
+            .filter(|c| c.focus.contains_focused(window, cx))
+        else {
             return false;
-        }
-        if let Some(listed) = self.deleting() {
-            listed.scroll_by(mv);
+        };
+        if let Some(listed) = &confirm.listed {
+            ROWS.scroll(&listed.scroll, mv);
             cx.notify();
         }
         true
@@ -544,36 +539,21 @@ pub fn render(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let count = listed.rows.len();
-    let list = gpui::uniform_list(
-        "deleting-rows",
+    let list = ROWS.list(
+        "deleting",
         count,
-        cx.processor(|shell: &mut Shell, range: Range<usize>, _, cx| rows(shell, range, cx)),
-    )
-    .track_scroll(&listed.scroll)
-    .h(px(ROW * count.min(SHOWN) as f32));
+        &listed.scroll,
+        theme,
+        |shell, range, _, cx| rows(shell, range, cx),
+        cx,
+    );
     div()
         .flex()
         .flex_col()
         .gap_1()
-        .child(
-            div()
-                .id("deleting")
-                .role(gpui::Role::List)
-                .when(shell.a11y, |d| {
-                    d.aria_label("What is deleted").aria_size_of_set(count)
-                })
-                .relative()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.border)
-                .bg(theme.bg)
-                .child(list)
-                .child(scrollbar::vertical(
-                    "deleting-scrollbar",
-                    Scrolls::Offset(listed.scroll.0.borrow().base_handle.clone()),
-                )),
-        )
+        .child(list.role(gpui::Role::List).when(shell.a11y, |d| {
+            d.aria_label("What is deleted").aria_size_of_set(count)
+        }))
         .child(
             div()
                 .min_h(px(16.))
@@ -626,7 +606,7 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                     .role(gpui::Role::ListItem)
                     .when_some(said, |d, said| d.aria_label(said).aria_position_in_set(at))
                     .w_full()
-                    .h(px(ROW))
+                    .h(px(ROWS.height))
                     .px_2()
                     .flex()
                     .items_center()
@@ -671,6 +651,8 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                                 .flex_none()
                                 .text_xs()
                                 .text_color(theme.text_muted)
+                                .overflow_hidden()
+                                .whitespace_nowrap()
                                 .text_ellipsis_middle(),
                             folder,
                             font.clone(),

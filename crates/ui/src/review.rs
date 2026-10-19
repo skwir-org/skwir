@@ -4,14 +4,19 @@
 //! in the same queue and is answered the same way: Allow or Refuse; so do
 //! the names a copy, a move or a link found taken (ADR-054, `clashes.rs`).
 
-use gpui::{AnyElement, Context, FocusHandle, Window, div, prelude::*, px};
+use std::ops::Range;
+
+use gpui::{
+    AnyElement, Context, FocusHandle, UniformListScrollHandle, Window, div, prelude::*, px,
+};
 use skwir_core::Plan;
 use skwir_core::app::{Asker, ClashQuestion, Question};
-use skwir_core::op::{PlanDiff, StepStatus};
+use skwir_core::op::{Change, PlanDiff, StepStatus};
 
 use crate::controls::{self, ButtonStyle};
+use crate::elements::clip::clipped;
 use crate::keymap;
-use crate::modal::{self, FocusReturn};
+use crate::modal::{self, FocusReturn, ListMove, Rows};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
@@ -23,12 +28,15 @@ pub enum LineKind {
     Conflict,
 }
 
-/// The lines the dialog shows at most.
-const SHOWN: usize = 60;
+/// A step's row, and the rows in sight before the list scrolls.
+const ROWS: Rows = Rows {
+    height: 20.,
+    shown: 16,
+};
 
-/// One line per step: the change, a status label, and its kind.
-pub fn lines(diff: &PlanDiff) -> impl Iterator<Item = (String, &'static str, LineKind)> + '_ {
-    diff.steps.iter().map(|(change, status)| match status {
+/// A step's line: the change, a status label, and its kind.
+pub fn line(change: &Change, status: &StepStatus) -> (String, &'static str, LineKind) {
+    match status {
         StepStatus::Pending { reversible: true } => {
             (change.to_string(), "pending", LineKind::Pending)
         }
@@ -43,17 +51,18 @@ pub fn lines(diff: &PlanDiff) -> impl Iterator<Item = (String, &'static str, Lin
             "conflict",
             LineKind::Conflict,
         ),
-    })
+    }
 }
 
-/// A plan's dry run as the dialog shows it, made once when it is done:
-/// its first lines and whether it applies. Made in every frame, a plan of
-/// ten thousand steps formatted each one to show sixty.
+/// A plan's dry run as the dialog shows it, kept from when it is done:
+/// every step and whether it applies. A step is made into its line only
+/// while its row is on screen: a plan of ten thousand steps formats the
+/// dozen shown.
 pub struct Checked {
-    lines: Vec<(String, &'static str, LineKind)>,
+    /// Its steps as it will be done (a folder merged is many), each with
+    /// what its dry run found.
+    steps: Vec<(Change, StepStatus)>,
     applicable: bool,
-    /// Its steps as it will be done: a folder merged is many.
-    steps: usize,
     /// The names it finds taken that the user is asked about as it is
     /// applied (ADR-054): its lines show them settled as the defaults
     /// would.
@@ -61,15 +70,14 @@ pub struct Checked {
 }
 
 impl Checked {
-    fn of((diff, asked): &(PlanDiff, usize)) -> Self {
+    fn of((diff, asked): (PlanDiff, usize)) -> Self {
         Checked {
-            lines: lines(diff).take(SHOWN).collect(),
             applicable: !diff
                 .steps
                 .iter()
                 .any(|(_, status)| matches!(status, StepStatus::Conflict { .. })),
-            steps: diff.steps.len(),
-            asked: *asked,
+            steps: diff.steps,
+            asked,
         }
     }
 }
@@ -98,11 +106,13 @@ impl Review {
     }
 }
 
-/// The keyboard while a proposal is shown: its own focus, and what had it.
+/// The keyboard while a proposal is shown: its own focus, and what had it;
+/// where its list is scrolled to.
 pub struct ReviewFocus {
     pub focus: FocusHandle,
     pub(crate) cancel: FocusHandle,
     pub(crate) apply: FocusHandle,
+    scroll: UniformListScrollHandle,
     back: FocusReturn,
 }
 
@@ -116,7 +126,7 @@ impl Shell {
             self.reviews.push_back(Review::Plan { plan, diff: None });
             self.off_thread(
                 "review-diff",
-                move || Checked::of(&dry.review(&companions)),
+                move || Checked::of(dry.review(&companions)),
                 move |this, done, _, cx| {
                     let waiting = this.reviews.iter_mut().find_map(|r| match r {
                         Review::Plan { plan, diff } if plan.id == id => Some(diff),
@@ -164,6 +174,7 @@ impl Shell {
                     focus,
                     cancel: cx.focus_handle(),
                     apply: cx.focus_handle(),
+                    scroll: UniformListScrollHandle::new(),
                     back,
                 });
                 cx.notify();
@@ -178,11 +189,40 @@ impl Shell {
         }
     }
 
+    /// The front proposal, answered: the next one is read from its top.
+    fn take_review(&mut self) -> Option<Review> {
+        if let Some(focus) = &mut self.review_focus {
+            focus.scroll = UniformListScrollHandle::new();
+        }
+        self.reviews.pop_front()
+    }
+
+    /// Up, Down and the page keys while a proposal has the keyboard
+    /// (`ui.list_move`): they scroll its steps, or what a question says.
+    /// The names a plan found taken are rows one walks (`clashes_move`).
+    pub(crate) fn review_move(
+        &mut self,
+        mv: ListMove,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(review) = self
+            .review_focus
+            .as_ref()
+            .filter(|r| r.focus.contains_focused(window, cx))
+        else {
+            return false;
+        };
+        ROWS.scroll(&review.scroll, mv);
+        cx.notify();
+        true
+    }
+
     /// Apply the front proposal, if its dry run found no conflict. It
     /// stays in front otherwise, for the user to discard.
     pub fn review_apply(&mut self, cx: &mut Context<Self>) {
         match self.reviews.front().map(Review::applicable) {
-            Some(Some(true)) => match self.reviews.pop_front() {
+            Some(Some(true)) => match self.take_review() {
                 // Checked again when its turn comes: all or nothing.
                 Some(Review::Plan { plan, .. }) => self.app.apply_whole(plan),
                 Some(Review::Question(question)) if !self.app.answer(question.id, true) => {
@@ -214,7 +254,7 @@ impl Shell {
     }
 
     pub fn review_cancel(&mut self, cx: &mut Context<Self>) {
-        match self.reviews.pop_front() {
+        match self.take_review() {
             Some(Review::Plan { plan, .. }) => {
                 self.app.dismissed(plan.id);
                 self.set_status(format!("Discarded proposal: {}", plan.title), false, cx);
@@ -249,14 +289,6 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let (cancel_focus, apply_focus) = (handles.cancel.clone(), handles.apply.clone());
     let theme = cx.global::<Theme>().clone();
     let applicable = review.applicable();
-    let list = div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .max_h(px(380.))
-        .overflow_hidden()
-        .text_xs()
-        .font_family(shell.mono_font.clone());
     let pending = shell.reviews.len() - 1;
     let more = if pending > 0 {
         format!(" · {pending} more waiting")
@@ -267,7 +299,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     // the words of its keys and buttons.
     let (title, size, note, list, hint, refuse, allow) = match review {
         Review::Plan { plan, diff } => {
-            let steps = diff.as_ref().map_or(plan.steps.len(), |d| d.steps);
+            let steps = diff.as_ref().map_or(plan.steps.len(), |d| d.steps.len());
             // The names taken, asked about as it is applied: its lines say
             // what the defaults would do.
             let asked = diff.as_ref().map_or(0, |d| d.asked);
@@ -290,7 +322,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 },
                 format!("{}{more}", crate::format::count(steps, "step")),
                 note,
-                plan_lines(shell, list, diff.as_ref(), steps, &theme),
+                plan_lines(diff.as_ref(), &handles.scroll, &theme, cx),
                 match applicable {
                     Some(true) => "Enter applies (undoable), Escape discards",
                     Some(false) => "Cannot apply: fix the conflicts first",
@@ -320,9 +352,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 question.title.clone(),
                 more.trim_start_matches(" · ").to_owned(),
                 Some(note.to_owned()),
-                question.detail.lines().take(40).fold(list, |list, line| {
-                    list.child(div().text_color(theme.text).child(line.to_owned()))
-                }),
+                ROWS.text(
+                    "review-detail",
+                    div().text_color(theme.text).child(question.detail.clone()),
+                    &handles.scroll,
+                    &theme,
+                ),
                 hint,
                 refuse,
                 allow,
@@ -346,7 +381,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .when_some(note, |d, note| {
             d.child(div().text_xs().text_color(theme.text_muted).child(note))
         })
-        .child(list)
+        .child(list.text_xs().font_family(shell.mono_font.clone()))
         .child(modal::footer(
             hint,
             [
@@ -377,53 +412,89 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     Some(modal::modal(panel, 80., 6, |_, _, _| {}, &theme, cx))
 }
 
-/// A plan's lines: each step's change and status once its dry run is
-/// done, the first 60.
+/// A plan's steps, each one's change and status once its dry run is done,
+/// all of them under a scrollbar.
 fn plan_lines(
-    shell: &Shell,
-    mut list: gpui::Div,
     diff: Option<&Checked>,
-    steps: usize,
+    scroll: &UniformListScrollHandle,
     theme: &Theme,
-) -> gpui::Div {
+    cx: &mut Context<Shell>,
+) -> gpui::Stateful<gpui::Div> {
     match diff {
-        Some(checked) => {
-            for (i, (text, status, kind)) in checked.lines.iter().cloned().enumerate() {
-                let color = match kind {
-                    LineKind::Pending => theme.text,
-                    LineKind::Done => theme.text_muted,
-                    LineKind::Conflict => theme.error,
-                };
-                list = list.child(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .text_color(color)
-                        .child(crate::elements::clip::clipped(
-                            div().id(("step", i)).flex_1().min_w_0().truncate(),
-                            text,
-                            shell.mono_font.clone(),
-                        ))
-                        .child(div().flex_none().text_color(theme.text_muted).child(status)),
-                );
-            }
-        }
-        None => {
-            list = list.child(
-                div()
-                    .text_color(theme.text_muted)
-                    .child("Checking each step…"),
-            );
-        }
-    }
-    if steps > SHOWN {
-        list = list.child(
+        Some(checked) => ROWS
+            .list(
+                "review-steps",
+                checked.steps.len(),
+                scroll,
+                theme,
+                |shell, range, _, cx| step_rows(shell, range, cx),
+                cx,
+            )
+            .role(gpui::Role::List),
+        None => ROWS.text(
+            "review-steps",
             div()
                 .text_color(theme.text_muted)
-                .child(format!("… and {} more steps", steps - SHOWN)),
-        );
+                .child("Checking each step…"),
+            scroll,
+            theme,
+        ),
     }
-    list
+}
+
+/// The steps in `range` of the plan shown, the only ones made into lines.
+fn step_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyElement> {
+    let Some(Review::Plan {
+        diff: Some(checked),
+        ..
+    }) = shell.reviews.front()
+    else {
+        return Vec::new();
+    };
+    let theme = cx.global::<Theme>();
+    let font = shell.mono_font.clone();
+    range
+        .filter_map(|i| {
+            let (change, status) = checked.steps.get(i)?;
+            let (text, status, kind) = line(change, status);
+            let color = match kind {
+                LineKind::Pending => theme.text,
+                LineKind::Done => theme.text_muted,
+                LineKind::Conflict => theme.error,
+            };
+            let said = shell.a11y.then(|| format!("{text}, {status}"));
+            Some(
+                div()
+                    .id(("step-row", i))
+                    .role(gpui::Role::ListItem)
+                    .when_some(said, |d, said| d.aria_label(said).aria_position_in_set(i))
+                    .w_full()
+                    .h(px(ROWS.height))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_xs()
+                    .font_family(font.clone())
+                    .text_color(color)
+                    // Cut in the middle: a line ends with what it comes
+                    // to (the new name, where it goes).
+                    .child(clipped(
+                        div()
+                            .id(("step", i))
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_middle(),
+                        text,
+                        font.clone(),
+                    ))
+                    .child(div().flex_none().text_color(theme.text_muted).child(status))
+                    .into_any_element(),
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -432,7 +503,7 @@ mod tests {
 
     use skwir_core::op::{Change, PlanDiff, StepStatus};
 
-    use super::{LineKind, lines};
+    use super::{LineKind, line};
 
     #[test]
     fn diff_lines_carry_change_text_and_status() {
@@ -465,7 +536,7 @@ mod tests {
                 ),
             ],
         };
-        let l: Vec<_> = lines(&diff).collect();
+        let l: Vec<_> = diff.steps.iter().map(|(c, s)| line(c, s)).collect();
         assert_eq!(
             l[0],
             ("rename /a/x -> /a/y".into(), "pending", LineKind::Pending)
