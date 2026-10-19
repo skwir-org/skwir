@@ -83,6 +83,9 @@ pub const MODEL_SMOOTH_KEY: &str = "reading.model_smooth";
 /// How long a slideshow shows each picture, in seconds
 /// (`fullscreen.rs`), chosen here or from its bar.
 pub const SLIDESHOW_KEY: &str = "reading.slideshow";
+/// Whether the picture the next step shows is decoded ahead
+/// (`Shell::read_ahead_next`).
+pub const READ_AHEAD_KEY: &str = "reading.read_ahead";
 /// The paces a slideshow goes at: the setting's choices and its bar's.
 pub const SLIDESHOW_PACES: [(&str, &str); 4] = [
     ("3", "3 seconds"),
@@ -384,6 +387,15 @@ pub fn declare(app: &App) {
             "How long a slideshow shows each picture. A slideshow plays the pictures of the folder or search on the whole screen, in the order they are listed, from the one shown to the last.",
             "5",
             &SLIDESHOW_PACES,
+        )
+        .section("Pictures"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            READ_AHEAD_KEY,
+            "Read ahead",
+            "While you step through pictures, in the preview panel, in peek or on the whole screen, decode the next one before you reach it, so it shows at once. The preview reads ahead in the panel once two steps went the same way, and holds one more picture in memory meanwhile. Off, each picture is decoded when you reach it.",
+            true,
         )
         .section("Pictures"),
     );

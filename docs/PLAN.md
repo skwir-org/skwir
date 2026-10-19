@@ -1417,6 +1417,42 @@ better.
   on the test display), a slow disk's "Reading…" line, a screen reader
   itself (Orca), Windows and macOS (compiled only).
 
+**The next picture is read ahead in the panel and in peek too.** The
+whole screen read the next picture ahead; the panel decoded each photo
+when it was reached, about a quarter of a second each.
+
+- A walk is two steps alike through the pane's order (`preview::Walk`):
+  Down twice, or a grid's row down twice. Its next entry is decoded once
+  the one shown has arrived, as the whole screen's is, and taken in the
+  sync that makes the step. A click starts no walk; a step another way
+  lets what was read go, as do the panel and peek closing and the pane
+  showing another location (`location_lifetime`).
+- A picture read ahead decodes in a turn of its own (`preview::Turn`):
+  a wrong guess never keeps the step waiting, and at most two pictures
+  decode at once.
+- The panel decodes a JPEG twice its side and more reduced
+  (`picture::decode_fitted`, as thumbnails do). Measured outside the app
+  on synthetic photos, the least CPU time of seven runs on a loaded
+  machine: 24 megapixels, 320–340 ms decoded whole and shrunk against
+  225–255 ms reduced, peak +87 against +52 MB. A 12-megapixel phone
+  photo (4032 px, half of it under 2048) gains nothing.
+- `reading.read_ahead` (the Pictures settings, on) turns it off, the
+  whole screen's too: one more picture held while walking, 2048 × 1365 × 4
+  bytes.
+- Checked: unit tests (a walk's steps, a large photo's side and size); a
+  release build on Xvfb, 16 synthetic 24-megapixel photos, a timing line
+  added for the check only, from the step's sync to the picture: the
+  first two steps 251–262 ms, every step of the walk after 0.3–0.7 ms
+  (the picture in the step's frame); a step back 255 ms twice, then read
+  ahead the other way; with the setting off every step 244–319 ms. Held
+  Down: the first repeats read ahead, then none while the steps outran
+  the decodes. Peek, the grid (a row down) and the whole screen (Left
+  turns it back; entering it reuses the panel's picture, not decoded
+  again) read ahead too. A walk broken freed 10.8 MB (`Pss_Anon`); idle
+  CPU 0.3 % with a picture held. Not checked: a HiDPI panel asking a
+  sharper picture after a step, a slow disk, Windows and macOS
+  (compiled only).
+
 ---
 
 ## Maps

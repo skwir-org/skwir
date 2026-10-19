@@ -141,6 +141,36 @@ A name that says nothing is not a binary file.
   `EMBEDDED_IMAGES`.
 - Floating-point pictures hold linear light and are encoded as sRGB in
   `picture::decode`, which every shown picture passes.
+- **A picture is decoded at the side it is shown at** (`decode_image`,
+  through `picture::decode_fitted`, as a thumbnail is): a JPEG twice
+  that side and more at its least reduced scale still covering it (a
+  24-megapixel photo computes and holds a quarter of its pixels), any
+  other whole, then shrunk. The preview's own decodes take turns
+  (`preview::Turn`): one at a time, and a request whose turn came after
+  the panel moved on gives it up.
+- **The next picture is read ahead** (`Shell::read_ahead_next`,
+  `read_ahead`), `reading.read_ahead` on (the default). On the whole
+  screen, the next picture the way the last step went; in the panel and
+  in peek, the next entry of a walk (`preview::Walk`): two steps alike
+  in the pane's order (Down twice, a grid's row down twice), so a click
+  starts none, at the side the panel asks. Only once the one shown has
+  arrived: the two never wait for each other's decode, and an arrow held
+  down, its steps quicker than a photo's decode, starts none. One at most, `PreviewState::ahead`, kept
+  beside the preview since a step replaces the preview. It is keyed as
+  the step's preview will be (`shown_entry`); the step takes it in the
+  sync that makes the step (`take_ahead`), so the picture is drawn in
+  the frame the step is, and one still decoding is adopted as the step's
+  request (`AheadSlot::Adopted`), never decoded twice. Its decode has a
+  turn of its own (`Turn::Ahead`): a guess the step proves wrong never
+  keeps the step waiting, and at most two pictures decode at once.
+- Only what skwir decodes itself is read ahead: a type the name
+  settles, which no provider accepts (asked on the worker, as `accepts`
+  may read), and not written as text (an SVG may open on its source,
+  and offers it). A file another program, a player or a reader shows is
+  never opened before it is asked for. What was read ahead goes, pixels
+  and all, when the whole screen is left, a walk breaks, the panel and
+  peek close, the pane shows another location (it is the pane's work,
+  `location_lifetime`) or the setting is turned off.
 - A picture the panel shows and a document's pictures sit on
   `picture_backdrop` as thumbnails do (`backdrop`, views.md). Their ink is
   read where they are decoded, on the worker (`PreviewContent::Image`'s
@@ -945,20 +975,9 @@ is still to come are in `docs/preview-frame.md`.
   skipped, and so is a file whose name several types claim
   (`mime::ambiguous`): the walk reads no bytes, and a `.djvu` may be a
   book, whose pages would then keep the arrows.
-- **The next picture is read ahead** (`Shell::read_ahead`), the way the
-  last step went, once the one shown has arrived (they never wait for
-  each other's decode turn), at the side the screen covers
-  (`screen_side`): one at most, `PreviewState::ahead`, kept beside the
-  preview since a step replaces the preview. It is keyed as the step's
-  preview will be (`shown_entry`); the step takes it in the sync that
-  makes the step (`take_ahead`), so the picture is drawn in the frame the
-  step is, and one still decoding is adopted as the step's request
-  (`AheadSlot::Adopted`), never decoded twice. Only what skwir decodes
-  itself (`compute`) is read ahead: a type the name settles, which no
-  provider accepts (asked on the worker, as `accepts` may read), and not
-  written as text (an SVG may open on its source, and offers it). A file
-  another program, a player or a reader shows is never opened before it
-  is asked for. Leaving the whole screen lets it go, pixels and all.
+- **The next picture is read ahead** the way the last step went, at the
+  side the screen covers (`screen_side`), as in the panel (Pictures,
+  above).
 - A picture shown as text (its source, its bytes) is still one of the
   pane's pictures: the inspection's bar keeps the walk's tools
   (`preview_toolbar::picture_tools`), and the slideshow goes on.

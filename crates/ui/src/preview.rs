@@ -96,13 +96,14 @@ enum Media {
     NoPlayer,
 }
 
-/// A picture read ahead for the whole screen's next step (`read_ahead`):
-/// what it is for, as the step's preview will be keyed, and where its
-/// worker stands.
+/// A picture read ahead for the next step (`read_ahead`), the whole
+/// screen's or a walk's: what it is for, as the step's preview will be
+/// keyed, and where its worker stands.
 pub(crate) struct Ahead {
     key: PreviewKey,
     version: Version,
-    /// The side it is decoded at: the screen's (`screen_side`).
+    /// The side it is decoded at: the screen's (`screen_side`), or the
+    /// panel's, as its request asks (a drawing's own size: 0).
     side: u32,
     cancel: CancelToken,
     slot: Arc<parking_lot::Mutex<AheadSlot>>,
@@ -125,6 +126,61 @@ enum AheadSlot {
     },
     /// Taken or let go.
     Done,
+}
+
+/// The steps the preview takes through its pane's order as the cursor
+/// moves, in places of that order (`ListState::sorted`): two alike in a
+/// row are a walk (Down twice; in a grid, a row down twice), whose next
+/// entry is read ahead in the panel and in peek (`Shell::read_ahead_next`).
+/// A click lands anywhere, so it starts no walk.
+#[derive(Default)]
+struct Walk {
+    /// The entry shown last, its pane and its place in the order.
+    at: Option<(PaneId, EntryId, usize)>,
+    /// The last step; 0 before one.
+    step: isize,
+    /// Whether the step before it was the same.
+    alike: bool,
+}
+
+impl Walk {
+    /// The preview went to `to`, an entry of a pane listed in `sorted`, or
+    /// to no entry. The last one still at its place in the order (an order
+    /// sorted again with nothing moved before it) measures the step; else
+    /// the walk starts again. Asked once per step, never while painting.
+    fn moved(&mut self, to: Option<(PaneId, EntryId)>, sorted: &[EntryId]) {
+        let Some((pane, id)) = to else {
+            *self = Self::default();
+            return;
+        };
+        let expected = self
+            .at
+            .and_then(|(_, _, index)| index.checked_add_signed(self.step))
+            .filter(|index| sorted.get(*index) == Some(&id));
+        let Some(index) = expected.or_else(|| sorted.iter().position(|e| *e == id)) else {
+            *self = Self::default();
+            return;
+        };
+        let step = match self.at {
+            Some((before, last, at)) if before == pane && sorted.get(at) == Some(&last) => {
+                index.cast_signed() - at.cast_signed()
+            }
+            _ => 0,
+        };
+        self.alike = step != 0 && step == self.step;
+        self.step = step;
+        self.at = Some((pane, id, index));
+    }
+
+    /// Where the walk goes next in `pane`, listed in `sorted`: `None` until
+    /// two steps alike make it one.
+    fn next(&self, pane: PaneId, sorted: &[EntryId]) -> Option<EntryId> {
+        let (walked, id, index) = self.at?;
+        if !self.alike || walked != pane || sorted.get(index) != Some(&id) {
+            return None;
+        }
+        sorted.get(index.checked_add_signed(self.step)?).copied()
+    }
 }
 
 struct PreviewResult {
@@ -520,8 +576,10 @@ pub struct PreviewState {
     /// The preview on the whole screen (`fullscreen.rs`): kept while the
     /// file shown changes, so a step or a slideshow stays there.
     pub fullscreen: Option<crate::fullscreen::Fullscreen>,
-    /// The picture read ahead for the whole screen's next step.
+    /// The picture read ahead for the next step.
     ahead: Option<Ahead>,
+    /// The steps the preview takes through its pane's order.
+    walk: Walk,
     /// The files of the same kind (music, films, pictures) before and after
     /// this one in the pane's order; found when the listing, its order or
     /// the entry changes (`properties_at`), never while painting.
@@ -800,6 +858,7 @@ impl Default for PreviewState {
             peek_press: None,
             fullscreen: None,
             ahead: None,
+            walk: Walk::default(),
             neighbours: (None, None),
             queue: None,
             closed_links: None,
@@ -980,14 +1039,35 @@ impl Drop for PreviewState {
     }
 }
 
-/// Whose turn it is to decode a picture for the preview. A photo decodes
-/// at full size before it is scaled down, tens of megabytes at a time, and
-/// a decode that has started cannot be stopped: holding an arrow key through
-/// a folder of photos otherwise ran one on every worker at once. One at a
-/// time, and a request that waited for its turn gives it up if the panel
-/// moved on meanwhile, so the peak is one picture and passed-over files are
-/// never decoded.
-static DECODE_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Whose turn a picture's decode waits for. A photo decodes at full size
+/// before it is scaled down (a JPEG at a reduced scale where one fits),
+/// tens of megabytes at a time, and a decode that has started cannot be
+/// stopped: holding an arrow key through a folder of photos otherwise ran
+/// one on every worker at once. The preview's own decode one at a time,
+/// and a request that waited for its turn gives it up if the panel moved
+/// on meanwhile, so passed-over files are never decoded. A picture read
+/// ahead (`Shell::read_ahead`) has a turn of its own: a guess the next
+/// step proves wrong never keeps the step waiting for its decode, and at
+/// most two pictures decode at once.
+#[derive(Clone, Copy)]
+enum Turn {
+    Shown,
+    Ahead,
+}
+
+impl Turn {
+    fn take(self) -> std::sync::MutexGuard<'static, ()> {
+        static SHOWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        static AHEAD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let turn = match self {
+            Self::Shown => &SHOWN,
+            Self::Ahead => &AHEAD,
+        };
+        // A decode that panicked held nothing worth protecting: take it.
+        turn.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
 
 /// A film's or a track's picture (`PreviewProvider::media`), asked at the
 /// side it is shown at, laid out by its own size, which `Sharpen` asks
@@ -1056,6 +1136,7 @@ fn decode_image(
     path: &Path,
     side: u32,
     bounds: Bounds,
+    turn: Turn,
     cancel: &CancelToken,
 ) -> anyhow::Result<PreviewContent> {
     let side = side.clamp(
@@ -1070,22 +1151,16 @@ fn decode_image(
             bounds.picture_pixels() / (1024 * 1024)
         )));
     }
-    // A decode that panicked held nothing worth protecting: take the turn.
-    let _turn = DECODE_TURN
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _turn = turn.take();
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
-    let img = skwir_platform::picture::decode(reader()?)?;
+    // A JPEG at least twice the side is decoded at a reduced scale: a
+    // 24-megapixel photo has a quarter of its pixels computed and held.
+    let img = skwir_platform::picture::decode_fitted(reader()?, side)?;
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
-    let img = if img.width().max(img.height()) > side {
-        img.thumbnail(side, side)
-    } else {
-        img
-    };
     let rgba = img.to_rgba8();
     let ink = crate::backdrop::ink(&rgba);
     let image = crate::thumbs::owned_render_image(rgba.width(), rgba.height(), rgba.into_raw())
@@ -1393,7 +1468,7 @@ fn compute(
             .unwrap_or_else(|e| failure_content(&e));
     }
     if top == "image" {
-        return decode_image(path, picture_side, bounds, cancel)
+        return decode_image(path, picture_side, bounds, Turn::Shown, cancel)
             .unwrap_or_else(|e| failure_content(&e));
     }
     if top == "video" || mime == Some("application/pdf") {
@@ -1541,7 +1616,11 @@ impl Shell {
 
     /// Called on UI wake. Only a changed request schedules worker work.
     pub fn sync_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !(self.preview.open || self.preview.peek) || !self.prefs.read_ahead {
+            self.let_ahead_go(window, cx);
+        }
         if !(self.preview.open || self.preview.peek) {
+            self.preview.walk = Walk::default();
             if self.preview.key.is_some() {
                 self.cancel_preview(window, cx);
             }
@@ -1636,6 +1715,22 @@ impl Shell {
             self.cancel_preview(window, cx);
             self.preview.key = Some(key.clone());
             self.preview.phase = PreviewPhase::Queued;
+            // The step taken in the pane's order: a walk's goes on, and
+            // what was read ahead for a walk that broke goes.
+            let sorted = Arc::clone(&self.ui().list.sorted);
+            self.preview
+                .walk
+                .moved((!here).then_some((self.pane, id)), &sorted);
+            if self.preview.fullscreen.is_none()
+                && self.preview.walk.next(self.pane, &sorted).is_none()
+                && self
+                    .preview
+                    .ahead
+                    .as_ref()
+                    .is_some_and(|ahead| ahead.key != key)
+            {
+                self.let_ahead_go(window, cx);
+            }
             let mime = skwir_platform::mime::of_entry(&entry).map(|m| {
                 // Ask for the type's name now; the header reads it later.
                 self.type_names.get(&m);
@@ -2135,6 +2230,35 @@ impl Shell {
             PreviewPhase::Loading
         };
         self.fullscreen_arrived(window, cx);
+        self.read_ahead_next(window, cx);
+    }
+
+    /// Read ahead what the next step shows, once the entry shown has
+    /// arrived (the two never wait for each other's decode): on the whole
+    /// screen the next picture the way the last step went, at the side the
+    /// screen covers (`screen_side`); in the panel and in peek the next
+    /// entry of a walk (`Walk`), at the side the panel asks. Nothing to
+    /// read ahead, or `reading.read_ahead` off, lets what was read go.
+    pub(crate) fn read_ahead_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let next = if !self.prefs.read_ahead {
+            None
+        } else if self.preview.fullscreen.is_some() {
+            self.fullscreen_ahead().map(|id| (id, screen_side(window)))
+        } else if self.preview.pane() == Some(self.pane) {
+            self.preview
+                .walk
+                .next(self.pane, &self.ui().list.sorted)
+                .map(|id| (id, 0))
+        } else {
+            None
+        };
+        match next {
+            None => self.let_ahead_go(window, cx),
+            Some((id, side)) if self.preview.phase == PreviewPhase::Idle => {
+                self.read_ahead(id, side, window, cx);
+            }
+            Some(_) => {}
+        }
     }
 
     /// A player opened for the shown file.
@@ -2736,12 +2860,13 @@ impl Shell {
     }
 
     /// Read ahead picture `id` of the pane the panel previews, for the step
-    /// the whole screen takes next (`fullscreen.rs`): decoded on a worker
-    /// as the panel's request would decode it, at `side`, and shown at once
-    /// when stepped to (`take_ahead`). Only a picture skwir decodes itself,
-    /// whose type its name settles: a file a provider shows (by another
-    /// program, as pages, as a film) is never opened before it is asked
-    /// for. One at most; another lets the last go.
+    /// taken next (`read_ahead_next`): decoded on a worker as the panel's
+    /// request would decode it, at `side`, and shown at once when stepped
+    /// to (`take_ahead`). Only a picture skwir decodes itself, whose type
+    /// its name settles: a file a provider shows (by another program, as
+    /// pages, as a film) is never opened before it is asked for. One at
+    /// most; another lets the last go. It is the pane's: the pane showing
+    /// another location stops it.
     pub(crate) fn read_ahead(
         &mut self,
         id: EntryId,
@@ -2755,11 +2880,30 @@ impl Shell {
         let code = cx.global::<Theme>().code.clone();
         let shown = {
             let ws = self.app.workspace.read();
-            ws.pane(pane)
-                .and_then(|p| shown_entry(p, pane, id, self.app.previews.revision(), &code))
+            ws.pane(pane).and_then(|p| {
+                shown_entry(p, pane, id, self.app.previews.revision(), &code)
+                    .map(|shown| (shown, p.location_lifetime()))
+            })
         };
-        let Some((key, version, entry)) = shown else {
+        let Some(((key, version, entry), cancel)) = shown else {
             return self.let_ahead_go(window, cx);
+        };
+        // Its type as the panel would take it, settled by the name alone
+        // (`sync_preview`): bytes to read first are the request's to read.
+        let mime = skwir_platform::mime::of_entry(&entry);
+        // The side it is decoded at: a drawing's own size unless asked, a
+        // photo's never under the display side (`decode_image`), so the
+        // panel's and a screen as large read the same picture.
+        let side = if mime
+            .as_ref()
+            .is_some_and(|mime| skwir_platform::thumb_providers::is_drawing(mime.as_str()))
+        {
+            side
+        } else {
+            side.clamp(
+                IMAGE_MAX_SIDE,
+                skwir_platform::inspection::limits::PICTURE_SIDE,
+            )
         };
         if self.preview.ahead.as_ref().is_some_and(|ahead| {
             ahead.key == key && !ahead.version.rewritten(&version) && ahead.side >= side
@@ -2767,9 +2911,6 @@ impl Shell {
             return;
         }
         self.let_ahead_go(window, cx);
-        // Its type as the panel would take it, settled by the name alone
-        // (`sync_preview`): bytes to read first are the request's to read.
-        let mime = skwir_platform::mime::of_entry(&entry);
         let settled = entry.inode_type().is_some()
             || (mime.is_some() && !skwir_platform::mime::ambiguous(entry.type_name()));
         let (Some(mime), Some(content)) = (mime.filter(|_| settled), key.content.clone()) else {
@@ -2794,7 +2935,6 @@ impl Shell {
             text_size: None,
             fit: None,
         };
-        let cancel = self.app.lifetime().child();
         let slot = Arc::new(parking_lot::Mutex::new(AheadSlot::Asking));
         let previews = Arc::clone(&self.app.previews);
         let wake = self.app.waker_handle();
@@ -2822,15 +2962,14 @@ impl Shell {
                 if claimed {
                     return;
                 }
-                let content = compute(
-                    &request.entry.path,
-                    false,
-                    Some(&mime),
-                    &code,
-                    side,
-                    Bounds::QUICK,
-                    &token,
-                );
+                // As `compute` decodes it, in the turn of what is read ahead.
+                let path = &request.entry.path;
+                let content = if skwir_platform::thumb_providers::is_drawing(&mime) {
+                    decode_drawing(path, side, Bounds::QUICK, &token)
+                } else {
+                    decode_image(path, side, Bounds::QUICK, Turn::Ahead, &token)
+                }
+                .unwrap_or_else(|error| failure_content(&error));
                 if token.is_cancelled() {
                     return;
                 }
@@ -5377,7 +5516,8 @@ pub(crate) struct Sharpen {
 const SHARPEN_STEP: u32 = 512;
 
 /// The side a picture fitted to the whole screen covers at most, in device
-/// pixels, in `sharper`'s steps: what a picture read ahead is decoded at.
+/// pixels, in `sharper`'s steps: what a picture read ahead for the whole
+/// screen is decoded at.
 pub(crate) fn screen_side(window: &Window) -> u32 {
     use skwir_platform::inspection::limits::PICTURE_SIDE;
     let size = window.viewport_size();
@@ -6088,13 +6228,102 @@ mod tests {
         bmp.extend_from_slice(&24u16.to_le_bytes());
         bmp.extend_from_slice(&[0; 24]);
         std::fs::write(&path, &bmp).unwrap();
-        let error = super::decode_image(&path, 0, Bounds::QUICK, &skwir_core::CancelToken::new())
-            .err()
-            .unwrap();
+        let error = super::decode_image(
+            &path,
+            0,
+            Bounds::QUICK,
+            super::Turn::Shown,
+            &skwir_core::CancelToken::new(),
+        )
+        .err()
+        .unwrap();
         assert!(skwir_core::inspection::TooLarge::is(&error), "{error}");
         assert!(matches!(
             super::failure_content(&error),
             super::PreviewContent::TooLarge(why) if why.contains("8193 × 8193")
         ));
+    }
+
+    /// A photo twice the panel's side and more is decoded reduced, and
+    /// shown as the whole decode shrunk would be: the panel's side, its own
+    /// size what 100% is.
+    #[test]
+    fn a_large_photo_is_shown_at_the_panel_side_with_its_own_size() {
+        use skwir_platform::inspection::limits::Bounds;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a panorama’s strip.jpg");
+        let strip = image::RgbImage::from_fn(4200, 60, |x, _| {
+            image::Rgb([u8::try_from(x % 251).unwrap(), 90, 160])
+        });
+        strip.save(&path).unwrap();
+        let content = super::decode_image(
+            &path,
+            0,
+            Bounds::QUICK,
+            super::Turn::Ahead,
+            &skwir_core::CancelToken::new(),
+        )
+        .unwrap();
+        let super::PreviewContent::Image {
+            image,
+            width,
+            height,
+            ..
+        } = content
+        else {
+            panic!("not a picture");
+        };
+        assert_eq!((width, height), (4200, 60));
+        let size = image.size(0);
+        assert_eq!((size.width.0, size.height.0), (2048, 29));
+    }
+
+    /// Two steps alike through the pane's order make a walk, whose next
+    /// entry is read ahead; a step another way, another pane or nothing
+    /// shown starts it again.
+    #[test]
+    fn two_steps_alike_make_a_walk() {
+        use skwir_core::EntryId;
+        // Identities only: nothing here is listed from a disk.
+        let sorted: Vec<EntryId> = (0..10).map(EntryId::place).collect();
+        let (pane, other) = (PaneId(1), PaneId(2));
+        let mut walk = super::Walk::default();
+        let to = |walk: &mut super::Walk, pane, index: usize| {
+            walk.moved(Some((pane, sorted[index])), &sorted);
+            walk.next(pane, &sorted)
+        };
+        assert_eq!(to(&mut walk, pane, 2), None, "shown, no step yet");
+        assert_eq!(to(&mut walk, pane, 3), None, "one step is no walk");
+        assert_eq!(to(&mut walk, pane, 4), Some(sorted[5]));
+        assert_eq!(to(&mut walk, pane, 5), Some(sorted[6]));
+        assert_eq!(to(&mut walk, pane, 3), None, "a step back breaks it");
+        assert_eq!(to(&mut walk, pane, 1), None, "nothing before the first");
+        // A grid's row down, twice.
+        to(&mut walk, pane, 0);
+        to(&mut walk, pane, 3);
+        assert_eq!(to(&mut walk, pane, 6), Some(sorted[9]));
+        assert_eq!(to(&mut walk, pane, 9), None, "nothing after the last");
+        // Another pane, or nothing shown, starts again.
+        to(&mut walk, pane, 2);
+        to(&mut walk, pane, 3);
+        assert_eq!(to(&mut walk, other, 4), None);
+        assert_eq!(to(&mut walk, other, 5), None);
+        assert_eq!(to(&mut walk, other, 6), Some(sorted[7]));
+        walk.moved(None, &sorted);
+        assert_eq!(to(&mut walk, other, 7), None);
+        // Sorted again with the last one moved: its place says nothing.
+        to(&mut walk, pane, 1);
+        to(&mut walk, pane, 2);
+        let mut resorted = sorted.clone();
+        resorted.swap(2, 8);
+        walk.moved(Some((pane, resorted[3])), &resorted);
+        assert_eq!(walk.next(pane, &resorted), None);
+        // Still walking, its order sorted again: its next is the new one's.
+        walk.moved(Some((pane, resorted[4])), &resorted);
+        assert_eq!(walk.next(pane, &resorted), None, "one step since");
+        walk.moved(Some((pane, resorted[5])), &resorted);
+        assert_eq!(walk.next(pane, &resorted), Some(resorted[6]));
+        resorted.swap(5, 9);
+        assert_eq!(walk.next(pane, &resorted), None, "its place moved");
     }
 }

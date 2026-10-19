@@ -152,6 +152,9 @@ pub struct Preferences {
     /// `ui.wrap_lines`: a text's long lines wrap to the panel, else go on
     /// sideways (`text_view`).
     pub wrap_lines: bool,
+    /// `reading.read_ahead`: the picture the next step shows is decoded
+    /// ahead (`Shell::read_ahead_next`).
+    pub read_ahead: bool,
     /// `ui.drag_image`: how a drag of several files is drawn.
     pub drag_image: crate::dragicon::Layout,
     /// `ui.model_perspective` and `ui.model_smooth`: how a 3D model is
@@ -173,6 +176,7 @@ impl Default for Preferences {
             full_path: false,
             printed_pages: false,
             wrap_lines: true,
+            read_ahead: true,
             drag_image: crate::dragicon::Layout::Fan,
             model_look: crate::elements::model::Look::default(),
             close_split: crate::layout::CloseSplit::Other,
@@ -2477,6 +2481,11 @@ impl Shell {
                 .app
                 .settings
                 .get::<bool>(crate::settings::WRAP_LINES_KEY)
+                .unwrap_or(true);
+            self.prefs.read_ahead = self
+                .app
+                .settings
+                .get::<bool>(crate::settings::READ_AHEAD_KEY)
                 .unwrap_or(true);
             self.prefs.model_look = crate::elements::model::Look {
                 perspective: self

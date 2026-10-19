@@ -202,30 +202,21 @@ impl Shell {
             window.focus(&focus, cx);
         }
         self.arm_slideshow(window, cx);
-        self.read_ahead_next(window, cx);
     }
 
-    /// Read ahead the picture the next step shows, the way the last went
-    /// (the slideshow's is the next), once the one shown has arrived: the
-    /// two never wait for each other's decode.
-    fn read_ahead_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(fullscreen) = &self.preview.fullscreen else {
-            return;
-        };
+    /// The picture the whole screen's next step shows, the way the last
+    /// went (the slideshow's is the next): what is read ahead there
+    /// (`Shell::read_ahead_next`).
+    pub(crate) fn fullscreen_ahead(&self) -> Option<skwir_core::EntryId> {
+        let fullscreen = self.preview.fullscreen.as_ref()?;
+        if !self.walks_pictures() {
+            return None;
+        }
         let (previous, next) = self.preview.neighbours;
-        let ahead = if !self.walks_pictures() {
-            None
-        } else if fullscreen.toward < 0 {
+        if fullscreen.toward < 0 {
             previous
         } else {
             next
-        };
-        match ahead {
-            None => self.let_ahead_go(window, cx),
-            Some(id) if self.preview.phase == PreviewPhase::Idle => {
-                self.read_ahead(id, crate::preview::screen_side(window), window, cx);
-            }
-            Some(_) => {}
         }
     }
 
