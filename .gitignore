@@ -1,6 +1,10 @@
 # Rust
 /target/
 **/*.rs.bk
+# What an editor builds when it checks the vendored gpui as a workspace of
+# its own: Skwir builds gpui in /target/ with the root Cargo.lock's pins
+/vendor/zed/target/
+/vendor/zed/Cargo.lock
 # Nix / direnv
 /result
 /result-*
