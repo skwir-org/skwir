@@ -11,19 +11,19 @@ use crate::{
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Mesh, MeshPreparation, MeshView,
-    Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent,
-    MouseUpEvent, PaintMesh, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode,
-    TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
-    prelude::*, px, rems, size, transparent_black,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Mesh, MeshPainted, MeshPreparation,
+    MeshView, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
+    MouseMoveEvent, MouseUpEvent, PaintMesh, Path, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority,
+    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle,
+    Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController,
+    TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTextSystem,
+    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -5191,10 +5191,11 @@ impl Window {
     }
 
     /// Paint `mesh` in 3D into the scene for the next frame at the current
-    /// z-index, seen through `view`: clip space spans `bounds`. Whether it is
-    /// painted: a mesh is first uploaded to the GPU off the main thread, and
-    /// the window drawn again once it is there. A window whose renderer has
-    /// no 3D pass never paints one ([`Window::draws_meshes`]).
+    /// z-index, seen through `view`: clip space spans `bounds`. Says whether
+    /// it is painted: a mesh is first uploaded to the GPU off the main
+    /// thread, and the window drawn again once it is there. A window whose
+    /// renderer has no 3D pass never paints one ([`Window::draws_meshes`]),
+    /// nor one larger than its GPU holds.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_mesh(
@@ -5203,7 +5204,7 @@ impl Window {
         mesh: Arc<Mesh>,
         view: MeshView,
         cx: &mut App,
-    ) -> bool {
+    ) -> MeshPainted {
         self.invalidator.debug_assert_paint();
 
         let refresh_when = |uploaded: oneshot::Receiver<()>, window: &Self, cx: &mut App| {
@@ -5221,9 +5222,10 @@ impl Window {
             MeshPreparation::Flat(Some(normals)) => refresh_when(normals, self, cx),
             MeshPreparation::Started(uploaded) => {
                 refresh_when(uploaded, self, cx);
-                return false;
+                return MeshPainted::Loading;
             }
-            MeshPreparation::Pending | MeshPreparation::Never => return false,
+            MeshPreparation::Pending => return MeshPainted::Loading,
+            MeshPreparation::Never => return MeshPainted::Refused,
         }
         let bounds = self.snap_bounds(bounds);
         let content_mask = self.snapped_content_mask();
@@ -5234,7 +5236,7 @@ impl Window {
             mesh,
             view,
         });
-        true
+        MeshPainted::Painted
     }
 
     /// Whether this window draws meshes ([`Window::paint_mesh`]).

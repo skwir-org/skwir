@@ -1087,6 +1087,14 @@ impl PlatformWindow for WindowsWindow {
         self.state.renderer.borrow().gpu_specs().log_err()
     }
 
+    fn draws_meshes(&self) -> bool {
+        true
+    }
+
+    fn prepare_mesh(&self, mesh: &Arc<gpui::Mesh>, smooth: bool) -> gpui::MeshPreparation {
+        self.state.renderer.borrow_mut().prepare_mesh(mesh, smooth)
+    }
+
     fn set_idle_inhibited(&self, inhibited: bool) {
         if self.state.idle_inhibited.replace(inhibited) != inhibited {
             hold_display(inhibited);

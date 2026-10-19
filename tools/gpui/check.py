@@ -65,10 +65,9 @@ def fonts(commit):
     return cache
 
 
-def main():
-    args = sys.argv[1:]
-    extra = args[args.index("--") + 1:] if "--" in args else []
-    only = {a for a in (args[:args.index("--")] if "--" in args else args)}
+def copy():
+    """Make the copy of vendor/zed the tests build in (check-windows.sh's
+    too)."""
     commit = (VENDOR / "UPSTREAM-COMMIT").read_text().split()[0]
     # One place, copied anew each run: the build reuses what did not change.
     shutil.rmtree(COPY, ignore_errors=True)
@@ -83,6 +82,13 @@ def main():
     with (COPY / "Cargo.toml").open("a") as out:
         out.write("\n[patch.crates-io]\n" + "\n".join(patches) + "\n")
     shutil.copytree(fonts(commit), COPY / "assets/fonts")
+
+
+def main():
+    args = sys.argv[1:]
+    extra = args[args.index("--") + 1:] if "--" in args else []
+    only = {a for a in (args[:args.index("--")] if "--" in args else args)}
+    copy()
     failed = []
     for crate, features, filters in RUNS:
         if only and crate not in only:

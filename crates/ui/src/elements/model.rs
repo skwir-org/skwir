@@ -8,16 +8,16 @@
 //! middle button moves it, the wheel zooms at the pointer. Each input asks
 //! for one frame; nothing is drawn otherwise. Until the GPU has it (gpui
 //! uploads it off the window's thread, then draws the window again), it
-//! says it is loading.
+//! says it is loading; a mesh the GPU cannot hold, that it is too large.
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
     App, Bounds, CursorStyle, DispatchPhase, Element, ElementId, GlobalElementId, Hitbox,
-    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MeshLight, MeshView,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollDelta,
-    ScrollWheelEvent, Size, Style, Window, point, px, relative,
+    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MeshLight, MeshPainted,
+    MeshView, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    ScrollDelta, ScrollWheelEvent, Size, Style, Window, point, px, relative,
 };
 
 /// Where the still is drawn from: degrees right of the front, and above.
@@ -412,8 +412,14 @@ impl Element for ModelView {
         handles.shown.set(Some(size));
         let camera = handles.camera.get().unwrap_or_else(|| model.opening());
         let view = model.view(&camera, size, self.look);
-        if !window.paint_mesh(bounds, Arc::clone(&model.mesh), view, cx) {
-            let words = crate::elements::map::shape("Loading…".into(), self.muted, window);
+        let said = match window.paint_mesh(bounds, Arc::clone(&model.mesh), view, cx) {
+            MeshPainted::Painted => None,
+            MeshPainted::Loading => Some("Loading…"),
+            // The 3D button shows its still again.
+            MeshPainted::Refused => Some("Too large for this GPU to draw"),
+        };
+        if let Some(said) = said {
+            let words = crate::elements::map::shape(said.into(), self.muted, window);
             let at = bounds.center() - point(words.width / 2., px(7.));
             let _ = words.paint(at, px(14.), gpui::TextAlign::Left, None, window, cx);
         }

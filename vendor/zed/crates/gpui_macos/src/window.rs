@@ -2136,6 +2136,18 @@ impl PlatformWindow for MacWindow {
         None
     }
 
+    fn draws_meshes(&self) -> bool {
+        true
+    }
+
+    fn prepare_mesh(
+        &self,
+        mesh: &std::sync::Arc<gpui::Mesh>,
+        smooth: bool,
+    ) -> gpui::MeshPreparation {
+        self.0.lock().renderer.prepare_mesh(mesh, smooth)
+    }
+
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
         let executor = self.0.lock().foreground_executor.clone();
         executor

@@ -1,4 +1,4 @@
-0033 meshes: a triangle mesh drawn in 3D (Window::paint_mesh), by wgpu
+0033 meshes: a triangle mesh drawn in 3D (Window::paint_mesh), by wgpu, Direct3D 11 and Metal
 
 diff --git a/crates/gpui/src/gpui.rs b/crates/gpui/src/gpui.rs
 index 6758bc47..cdea79ac 100644
@@ -22,16 +22,19 @@ index 6758bc47..cdea79ac 100644
  pub use profiler::*;
 diff --git a/crates/gpui/src/mesh.rs b/crates/gpui/src/mesh.rs
 new file mode 100644
-index 00000000..356afbae
+index 00000000..cff68594
 --- /dev/null
 +++ b/crates/gpui/src/mesh.rs
-@@ -0,0 +1,376 @@
+@@ -0,0 +1,1061 @@
 +//! Triangle meshes drawn in 3D by the GPU, through [`crate::Window::paint_mesh`].
 +
 +use std::fmt;
-+use std::sync::atomic::{AtomicU64, Ordering};
++use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use std::sync::{Arc, mpsc};
 +
 +use futures::channel::oneshot;
++
++use crate::{DevicePixels, PaintMesh, Size};
 +
 +/// A mesh's identity: a renderer keeps the mesh's buffers by it.
 +#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -244,7 +247,7 @@ index 00000000..356afbae
 +    /// they are there.
 +    Flat(Option<oneshot::Receiver<()>>),
 +    /// It will not be drawn: the window draws no meshes, or this one is
-+    /// larger than its GPU's buffers.
++    /// larger than its GPU's buffers, or they could not be made.
 +    Never,
 +}
 +
@@ -271,6 +274,332 @@ index 00000000..356afbae
 +    /// It can be drawn.
 +    pub fn done(self) {
 +        self.0.send(()).ok();
++    }
++}
++
++/// A renderer's part of a [`MeshStore`]: how its GPU holds a mesh. Cloned
++/// onto the store's thread, which makes the buffers there.
++pub trait MeshMaker: Clone + Send + 'static {
++    /// A mesh's buffers: its positions, its indices, its colors if any.
++    type Buffers: Send + 'static;
++    /// A mesh's normals' buffer, for smooth shading.
++    type Normals: Send + 'static;
++    /// Whether the GPU can hold `mesh`, its buffers within its limits.
++    fn holds(&self, mesh: &Mesh) -> bool;
++    /// `mesh`'s buffers, made and filled; `None` when the GPU could not
++    /// make them (out of memory, the device lost).
++    fn buffers(&self, mesh: &Mesh) -> Option<Self::Buffers>;
++    /// A buffer of `normals`, one a position, made and filled; `None` when
++    /// the GPU could not make it.
++    fn normals(&self, normals: &[[f32; 3]]) -> Option<Self::Normals>;
++}
++
++/// The meshes a renderer keeps for the frames that draw them. A mesh is
++/// uploaded on a thread of the store's own the first time a window asks
++/// for it ([`MeshStore::prepare`]), never on the window's: where a driver
++/// maps the memory uploads go through uncached, 72 MB took a second. Its
++/// normals are made there too, only once smooth shading asks. What the
++/// frame being drawn does not draw is let go of ([`MeshStore::end_frame`]).
++pub struct MeshStore<M: MeshMaker> {
++    maker: M,
++    stored: collections::FxHashMap<MeshId, Stored<M>>,
++    uploader: Option<Uploader<M>>,
++    /// The meshes being uploaded, and those whose normals are being made.
++    uploading: collections::FxHashSet<MeshId>,
++    smoothing: collections::FxHashSet<MeshId>,
++    /// The last mesh refused: too large for the GPU (said once), or its
++    /// buffers could not be made. It is not asked for again.
++    refused: Option<MeshId>,
++}
++
++struct Stored<M: MeshMaker> {
++    buffers: M::Buffers,
++    normals: Normals<M::Normals>,
++    /// Whether the frame being drawn draws it.
++    drawn: bool,
++}
++
++/// A stored mesh's normals.
++enum Normals<N> {
++    /// Not asked for yet.
++    Unasked,
++    Made(N),
++    /// Asked for, but the GPU could not hold them: the mesh stays flat.
++    Failed,
++}
++
++impl<N> Normals<N> {
++    fn from(made: Option<N>) -> Self {
++        made.map_or(Normals::Failed, Normals::Made)
++    }
++
++    fn get(&self) -> Option<&N> {
++        match self {
++            Normals::Made(normals) => Some(normals),
++            Normals::Unasked | Normals::Failed => None,
++        }
++    }
++}
++
++/// What the store's thread is asked to make for a mesh, and what tells
++/// the window that asked once it is made.
++struct Upload {
++    mesh: Arc<Mesh>,
++    normals_only: bool,
++    with_normals: bool,
++    uploaded: MeshUploaded,
++}
++
++/// What the store's thread made.
++enum Made<M: MeshMaker> {
++    /// A mesh's buffers, and its normals when asked.
++    Mesh(MeshId, M::Buffers, Normals<M::Normals>),
++    /// A mesh's normals, asked for once it was there.
++    Normals(MeshId, Normals<M::Normals>),
++    /// Nothing, for a mesh no one held any more; whether only its normals
++    /// were asked for.
++    Unwanted(MeshId, bool),
++    /// Nothing: the GPU could not make the mesh's buffers.
++    Failed(MeshId),
++}
++
++/// The store's thread. It ends with the store, which waits for the upload
++/// under way, if any, and skips those asked for after it: nothing of the
++/// GPU's is made or let go of once the renderer is gone (under Wine, a
++/// device let go of while the process exited had it killed).
++struct Uploader<M: MeshMaker> {
++    uploads: Option<mpsc::Sender<Upload>>,
++    made: mpsc::Receiver<Made<M>>,
++    stopped: Arc<AtomicBool>,
++    thread: Option<std::thread::JoinHandle<()>>,
++}
++
++impl<M: MeshMaker> Drop for Uploader<M> {
++    fn drop(&mut self) {
++        self.stopped.store(true, Ordering::Relaxed);
++        self.uploads = None;
++        if let Some(thread) = self.thread.take() {
++            thread.join().ok();
++        }
++    }
++}
++
++impl<M: MeshMaker> Uploader<M> {
++    fn start(maker: M) -> std::io::Result<Self> {
++        let (uploads, asked) = mpsc::channel::<Upload>();
++        let (made_by, made) = mpsc::channel();
++        let stopped = Arc::new(AtomicBool::new(false));
++        let stop = Arc::clone(&stopped);
++        let thread = std::thread::Builder::new()
++            .name("gpui-meshes".into())
++            .spawn(move || {
++                for upload in asked {
++                    if stop.load(Ordering::Relaxed) {
++                        break;
++                    }
++                    // Held by nothing else: no frame will draw it.
++                    let wanted = Arc::strong_count(&upload.mesh) > 1;
++                    let (mesh, id) = (&upload.mesh, upload.mesh.id());
++                    let normals = || Normals::from(maker.normals(&mesh.smooth_normals()));
++                    let made = if !wanted {
++                        Made::Unwanted(id, upload.normals_only)
++                    } else if upload.normals_only {
++                        Made::Normals(id, normals())
++                    } else {
++                        match maker.buffers(mesh) {
++                            Some(buffers) if upload.with_normals => {
++                                Made::Mesh(id, buffers, normals())
++                            }
++                            Some(buffers) => Made::Mesh(id, buffers, Normals::Unasked),
++                            None => Made::Failed(id),
++                        }
++                    };
++                    let done = matches!(made, Made::Mesh(..) | Made::Normals(..));
++                    // Handed over before the window hears of it, so the frame
++                    // it draws finds it.
++                    if made_by.send(made).is_err() {
++                        break;
++                    }
++                    if done {
++                        upload.uploaded.done();
++                    }
++                }
++            })?;
++        Ok(Uploader {
++            uploads: Some(uploads),
++            made,
++            stopped,
++            thread: Some(thread),
++        })
++    }
++}
++
++impl<M: MeshMaker> MeshStore<M> {
++    /// Meshes held by `maker`'s GPU.
++    pub fn new(maker: M) -> Self {
++        Self {
++            maker,
++            stored: collections::FxHashMap::default(),
++            uploader: None,
++            uploading: collections::FxHashSet::default(),
++            smoothing: collections::FxHashSet::default(),
++            refused: None,
++        }
++    }
++
++    /// Make `mesh` ready to draw, uploading it unless it is there or on its
++    /// way, its normals with it when `smooth`. Asked by the window before it
++    /// paints the mesh. A mesh there already, its normals asked for, is drawn
++    /// flat until they are made.
++    pub fn prepare(&mut self, mesh: &Arc<Mesh>, smooth: bool) -> MeshPreparation {
++        self.take_made();
++        let id = mesh.id();
++        if let Some(stored) = self.stored.get(&id) {
++            if !smooth || !matches!(stored.normals, Normals::Unasked) {
++                return MeshPreparation::Ready;
++            }
++            if self.smoothing.contains(&id) {
++                return MeshPreparation::Flat(None);
++            }
++            let (preparation, uploaded) = MeshPreparation::flat_until();
++            return match self.send(mesh, true, true, uploaded) {
++                Ok(()) => {
++                    self.smoothing.insert(id);
++                    preparation
++                }
++                Err(()) => MeshPreparation::Flat(None),
++            };
++        }
++        if self.uploading.contains(&id) {
++            return MeshPreparation::Pending;
++        }
++        if self.refused == Some(id) {
++            return MeshPreparation::Never;
++        }
++        if !self.maker.holds(mesh) {
++            if self.refused != Some(id) {
++                self.refused = Some(id);
++                log::warn!(
++                    "a mesh of {} triangles is larger than this GPU's buffers",
++                    mesh.triangles()
++                );
++            }
++            return MeshPreparation::Never;
++        }
++        let (preparation, uploaded) = MeshPreparation::start();
++        match self.send(mesh, false, smooth, uploaded) {
++            Ok(()) => {
++                self.uploading.insert(id);
++                preparation
++            }
++            Err(()) => MeshPreparation::Never,
++        }
++    }
++
++    /// `id`'s buffers and normals for the frame being drawn, which keeps
++    /// them; `None` when it is not uploaded.
++    pub fn drawn(&mut self, id: MeshId) -> Option<(&M::Buffers, Option<&M::Normals>)> {
++        let stored = self.stored.get_mut(&id)?;
++        stored.drawn = true;
++        Some((&stored.buffers, stored.normals.get()))
++    }
++
++    /// `id`'s buffers and normals, if it is uploaded.
++    pub fn get(&self, id: MeshId) -> Option<(&M::Buffers, Option<&M::Normals>)> {
++        let stored = self.stored.get(&id)?;
++        Some((&stored.buffers, stored.normals.get()))
++    }
++
++    /// After a frame: let go of the meshes it did not draw.
++    pub fn end_frame(&mut self) {
++        self.stored
++            .retain(|_, stored| std::mem::take(&mut stored.drawn));
++    }
++
++    /// How many meshes it holds.
++    pub fn len(&self) -> usize {
++        self.stored.len()
++    }
++
++    /// Whether it holds none.
++    pub fn is_empty(&self) -> bool {
++        self.stored.is_empty()
++    }
++
++    /// Give the thread `mesh` to make, starting it with the first.
++    fn send(
++        &mut self,
++        mesh: &Arc<Mesh>,
++        normals_only: bool,
++        with_normals: bool,
++        uploaded: MeshUploaded,
++    ) -> Result<(), ()> {
++        if self.uploader.is_none() {
++            match Uploader::start(self.maker.clone()) {
++                Ok(uploader) => self.uploader = Some(uploader),
++                Err(error) => {
++                    log::error!("no thread to upload meshes: {error}");
++                    return Err(());
++                }
++            }
++        }
++        let upload = Upload {
++            mesh: Arc::clone(mesh),
++            normals_only,
++            with_normals,
++            uploaded,
++        };
++        match self
++            .uploader
++            .as_ref()
++            .and_then(|uploader| uploader.uploads.as_ref())
++            .map(|uploads| uploads.send(upload))
++        {
++            Some(Ok(())) => Ok(()),
++            _ => Err(()),
++        }
++    }
++
++    /// Take what the thread made.
++    fn take_made(&mut self) {
++        let Some(uploader) = &self.uploader else {
++            return;
++        };
++        while let Ok(made) = uploader.made.try_recv() {
++            match made {
++                Made::Mesh(id, buffers, normals) => {
++                    self.uploading.remove(&id);
++                    // Kept through the frame being painted, which asked for
++                    // it.
++                    self.stored.insert(
++                        id,
++                        Stored {
++                            buffers,
++                            normals,
++                            drawn: true,
++                        },
++                    );
++                }
++                Made::Normals(id, normals) => {
++                    self.smoothing.remove(&id);
++                    if let Some(stored) = self.stored.get_mut(&id) {
++                        stored.normals = normals;
++                    }
++                }
++                Made::Unwanted(id, normals_only) => {
++                    if normals_only {
++                        self.smoothing.remove(&id);
++                    } else {
++                        self.uploading.remove(&id);
++                    }
++                }
++                Made::Failed(id) => {
++                    self.uploading.remove(&id);
++                    self.refused = Some(id);
++                    log::error!("the GPU could not make a mesh's buffers");
++                }
++            }
++        }
 +    }
 +}
 +
@@ -315,6 +644,137 @@ index 00000000..356afbae
 +    pub ambient: f32,
 +    /// Two lights.
 +    pub lights: [MeshLight; 2],
++}
++
++/// What [`crate::Window::paint_mesh`] did with a mesh.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum MeshPainted {
++    /// It is painted.
++    Painted,
++    /// It is on its way to the GPU: the window draws again once it is
++    /// there.
++    Loading,
++    /// It will not be: the window draws no meshes, or its GPU cannot hold
++    /// this one.
++    Refused,
++}
++
++/// The parameters a mesh's pass reads, as words in the order and layout
++/// gpui_wgpu's `shaders_mesh.wgsl` declares its `MeshParams` (and naga's
++/// HLSL and Metal translations of it): matrices, then `ndc_scale`,
++/// `ndc_offset`, `color`, the two lights, `ambient`, and three flags.
++pub type MeshParams = [u32; 52];
++
++/// The parameters a mesh's composite reads (`MeshComposite`): the shown
++/// part's origin and size, the frame's size.
++pub type MeshComposite = [u32; 8];
++
++/// A target's sides grow and shrink in steps of this many pixels, so a
++/// panel being resized does not make a target at every frame.
++const TARGET_STEP: u32 = 256;
++
++/// Where a mesh is drawn in a frame ([`PaintMesh::framed`]): what of it
++/// shows, and the target it is drawn into before it is composited there,
++/// pixel for pixel. Every renderer draws a mesh so.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct MeshFrame {
++    /// The shown part's top left in the frame, in whole pixels.
++    pub origin: [f32; 2],
++    /// Its size in pixels: the viewport the mesh is drawn in, at the
++    /// target's top left.
++    pub shown: [u32; 2],
++    /// The target's size: the shown part's, in steps.
++    pub target: [u32; 2],
++    frame: [f32; 2],
++    /// Clip space spans the bounds; the viewport spans what is shown: x
++    /// and y are scaled and moved from the one to the other.
++    ndc_scale: [f32; 2],
++    ndc_offset: [f32; 2],
++}
++
++impl PaintMesh {
++    /// Where this mesh is drawn in a frame of `frame`'s size, its target's
++    /// sides at most `largest` pixels: `None` when nothing of it shows.
++    pub fn framed(&self, frame: Size<DevicePixels>, largest: u32) -> Option<MeshFrame> {
++        let bounds = self.bounds;
++        let shown = bounds.intersect(&self.content_mask.bounds);
++        let largest = largest as f32;
++        let left = shown.origin.x.0.floor().max(0.);
++        let top = shown.origin.y.0.floor().max(0.);
++        let right = (shown.origin.x.0 + shown.size.width.0)
++            .ceil()
++            .min(frame.width.0 as f32)
++            .min(left + largest);
++        let bottom = (shown.origin.y.0 + shown.size.height.0)
++            .ceil()
++            .min(frame.height.0 as f32)
++            .min(top + largest);
++        let (width, height) = (bounds.size.width.0, bounds.size.height.0);
++        if right <= left || bottom <= top || width <= 0. || height <= 0. {
++            return None;
++        }
++        let (shown_width, shown_height) = (right - left, bottom - top);
++        let step = |side: f32| {
++            (side as u32)
++                .div_ceil(TARGET_STEP)
++                .saturating_mul(TARGET_STEP)
++                .min(largest as u32)
++        };
++        Some(MeshFrame {
++            origin: [left, top],
++            shown: [shown_width as u32, shown_height as u32],
++            target: [step(shown_width), step(shown_height)],
++            frame: [frame.width.0 as f32, frame.height.0 as f32],
++            ndc_scale: [width / shown_width, height / shown_height],
++            ndc_offset: [
++                (2. * (bounds.origin.x.0 - left) + width) / shown_width - 1.,
++                1. - (2. * (bounds.origin.y.0 - top) + height) / shown_height,
++            ],
++        })
++    }
++}
++
++impl MeshFrame {
++    /// What the pass drawing `view` reads, shaded smoothly or flat, in the
++    /// mesh's colours or the view's.
++    pub fn params(&self, view: &MeshView, smooth: bool, colored: bool) -> MeshParams {
++        let floats = view
++            .model_view
++            .iter()
++            .chain(&view.projection)
++            .flatten()
++            .copied()
++            .chain(self.ndc_scale)
++            .chain(self.ndc_offset)
++            .chain(view.color)
++            .chain([1.])
++            .chain(view.lights.iter().flat_map(|light| {
++                let [x, y, z] = light.direction;
++                [x, y, z, light.strength]
++            }))
++            .chain([view.ambient]);
++        let mut words = [0; 52];
++        for (word, float) in words.iter_mut().zip(floats) {
++            *word = float.to_bits();
++        }
++        words[49] = u32::from(view.perspective);
++        words[50] = u32::from(smooth);
++        words[51] = u32::from(colored);
++        words
++    }
++
++    /// What the composite reads.
++    pub fn composite(&self) -> MeshComposite {
++        let shown = self.shown.map(|side| side as f32);
++        let mut words = [0; 8];
++        for (word, float) in words
++            .iter_mut()
++            .zip(self.origin.into_iter().chain(shown).chain(self.frame))
++        {
++            *word = float.to_bits();
++        }
++        words
++    }
 +}
 +
 +#[cfg(test)]
@@ -400,6 +860,231 @@ index 00000000..356afbae
 +        let ridge = 50f32.sqrt();
 +        assert!(near(normals[1], [1. / ridge, 0., 7. / ridge]));
 +        assert_eq!(normals[6], [0., 0., 1.]);
++    }
++
++    /// A GPU that makes buffers, or normals, only when told to.
++    #[derive(Clone)]
++    struct Fussy {
++        buffers: bool,
++        normals: bool,
++    }
++
++    impl MeshMaker for Fussy {
++        type Buffers = usize;
++        type Normals = usize;
++
++        fn holds(&self, _: &Mesh) -> bool {
++            true
++        }
++
++        fn buffers(&self, mesh: &Mesh) -> Option<usize> {
++            self.buffers.then_some(mesh.triangles())
++        }
++
++        fn normals(&self, normals: &[[f32; 3]]) -> Option<usize> {
++            self.normals.then_some(normals.len())
++        }
++    }
++
++    /// Whether the window that started an upload is told it is done.
++    fn told(preparation: MeshPreparation) -> bool {
++        match preparation {
++            MeshPreparation::Started(uploaded) | MeshPreparation::Flat(Some(uploaded)) => {
++                futures::executor::block_on(uploaded).is_ok()
++            }
++            _ => panic!("nothing started"),
++        }
++    }
++
++    /// A mesh whose buffers the GPU could not make is not asked for again;
++    /// normals it could not make leave the mesh flat, asked for once.
++    #[test]
++    fn what_the_gpu_cannot_make_is_asked_for_once() {
++        let mesh = Arc::new(
++            Mesh::new(
++                vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
++                vec![0, 1, 2],
++            )
++            .unwrap(),
++        );
++
++        let mut store = MeshStore::new(Fussy {
++            buffers: false,
++            normals: true,
++        });
++        assert!(!told(store.prepare(&mesh, false)));
++        assert!(matches!(
++            store.prepare(&mesh, false),
++            MeshPreparation::Never
++        ));
++        assert!(store.is_empty());
++
++        let mut store = MeshStore::new(Fussy {
++            buffers: true,
++            normals: false,
++        });
++        assert!(told(store.prepare(&mesh, false)));
++        assert!(matches!(
++            store.prepare(&mesh, true),
++            MeshPreparation::Flat(Some(_))
++        ));
++        // Asked for and not made: flat from then on.
++        while store.smoothing.contains(&mesh.id()) {
++            store.take_made();
++            std::thread::yield_now();
++        }
++        assert!(matches!(store.prepare(&mesh, true), MeshPreparation::Ready));
++        assert_eq!(
++            store
++                .drawn(mesh.id())
++                .map(|(buffers, normals)| (*buffers, normals.copied())),
++            Some((1, None))
++        );
++    }
++
++    /// A store let go of waits for the upload under way and skips those
++    /// asked for after it.
++    #[test]
++    fn a_store_let_go_of_makes_nothing_more() {
++        use std::sync::atomic::AtomicUsize;
++        #[derive(Clone)]
++        struct Slow(Arc<AtomicUsize>);
++        impl MeshMaker for Slow {
++            type Buffers = ();
++            type Normals = ();
++            fn holds(&self, _: &Mesh) -> bool {
++                true
++            }
++            fn buffers(&self, _: &Mesh) -> Option<()> {
++                std::thread::sleep(std::time::Duration::from_millis(50));
++                self.0.fetch_add(1, Ordering::SeqCst);
++                Some(())
++            }
++            fn normals(&self, _: &[[f32; 3]]) -> Option<()> {
++                Some(())
++            }
++        }
++        let made = Arc::new(AtomicUsize::new(0));
++        let mut store = MeshStore::new(Slow(Arc::clone(&made)));
++        let meshes = (0..5)
++            .map(|_| {
++                Arc::new(
++                    Mesh::new(
++                        vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
++                        vec![0, 1, 2],
++                    )
++                    .unwrap(),
++                )
++            })
++            .collect::<Vec<_>>();
++        for mesh in &meshes {
++            assert!(matches!(
++                store.prepare(mesh, false),
++                MeshPreparation::Started(_)
++            ));
++        }
++        drop(store);
++        let after = made.load(Ordering::SeqCst);
++        assert!(after <= 1, "{after} made");
++        std::thread::sleep(std::time::Duration::from_millis(120));
++        assert_eq!(
++            made.load(Ordering::SeqCst),
++            after,
++            "nothing made once it went"
++        );
++    }
++
++    /// A mesh is drawn into a target of its own, the size of what shows
++    /// of it, in steps; each corner of its bounds falls on its pixel.
++    #[test]
++    fn a_mesh_is_framed_by_what_shows_of_it() {
++        use crate::{Bounds, ContentMask, ScaledPixels, point, size};
++        let pixels = |x, y, width, height| Bounds {
++            origin: point(ScaledPixels(x), ScaledPixels(y)),
++            size: size(ScaledPixels(width), ScaledPixels(height)),
++        };
++        let mesh = Arc::new(
++            Mesh::new(
++                vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
++                vec![0, 1, 2],
++            )
++            .unwrap(),
++        );
++        let light = MeshLight {
++            direction: [0., 0., 1.],
++            strength: 0.5,
++        };
++        let view = MeshView {
++            model_view: [
++                [1., 0., 0., 0.],
++                [0., 1., 0., 0.],
++                [0., 0., 1., 0.],
++                [0., 0., 0., 1.],
++            ],
++            projection: [
++                [2., 0., 0., 0.],
++                [0., 2., 0., 0.],
++                [0., 0., 1., 0.],
++                [0., 0., 0., 1.],
++            ],
++            perspective: true,
++            smooth: false,
++            color: [0.25, 0.5, 0.75],
++            ambient: 0.125,
++            lights: [light, light],
++        };
++        // Half a pixel in from the left, its lower half clipped away.
++        let paint = PaintMesh {
++            order: 0,
++            bounds: pixels(100.5, 50., 300., 200.),
++            content_mask: ContentMask {
++                bounds: pixels(0., 0., 800., 150.),
++            },
++            mesh,
++            view,
++        };
++        let frame = size(DevicePixels(800), DevicePixels(600));
++        let framed = paint.framed(frame, 8192).unwrap();
++        assert_eq!(framed.origin, [100., 50.]);
++        assert_eq!(framed.shown, [301, 100]);
++        assert_eq!(framed.target, [512, 256]);
++        assert_eq!(paint.framed(frame, 300).unwrap().target, [300, 256]);
++        let x = |ndc: f32| {
++            let shown = ndc * framed.ndc_scale[0] + framed.ndc_offset[0];
++            framed.origin[0] + (shown + 1.) / 2. * framed.shown[0] as f32
++        };
++        let y = |ndc: f32| {
++            let shown = ndc * framed.ndc_scale[1] + framed.ndc_offset[1];
++            framed.origin[1] + (1. - shown) / 2. * framed.shown[1] as f32
++        };
++        let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
++        assert!(near(x(-1.), 100.5) && near(x(1.), 400.5));
++        assert!(near(y(1.), 50.) && near(y(-1.), 250.));
++
++        // Nothing shows: out of the frame, or clipped away.
++        let mut outside = paint.clone();
++        outside.bounds = pixels(900., 0., 100., 100.);
++        assert_eq!(outside.framed(frame, 8192), None);
++        let mut clipped = paint.clone();
++        clipped.content_mask.bounds = pixels(0., 0., 50., 50.);
++        assert_eq!(clipped.framed(frame, 8192), None);
++
++        // The words as the shader declares them.
++        let params = framed.params(&view, true, false);
++        let float = |word: u32| f32::from_bits(word);
++        assert_eq!(float(params[0]), 1.);
++        assert_eq!(float(params[16]), 2.);
++        assert_eq!(float(params[32]), framed.ndc_scale[0]);
++        assert_eq!(float(params[35]), framed.ndc_offset[1]);
++        assert_eq!(
++            params[36..40].iter().map(|&w| float(w)).collect::<Vec<_>>(),
++            [0.25, 0.5, 0.75, 1.]
++        );
++        assert_eq!(float(params[43]), 0.5);
++        assert_eq!(float(params[48]), 0.125);
++        assert_eq!(params[49..], [1, 1, 0]);
++        let composite = framed.composite().map(float);
++        assert_eq!(composite, [100., 50., 301., 100., 800., 600., 0., 0.]);
 +    }
 +}
 diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
@@ -621,7 +1306,7 @@ index be378132..d65dffaf 100644
  #[expect(missing_docs)]
  pub struct PathId(pub usize);
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index 63bc2428..35da6933 100644
+index 63bc2428..1d43952a 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
 @@ -11,18 +11,19 @@ use crate::{
@@ -640,31 +1325,32 @@ index 63bc2428..35da6933 100644
 -    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
 -    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
 -    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
-+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Mesh, MeshPreparation, MeshView,
-+    Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent,
-+    MouseUpEvent, PaintMesh, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-+    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-+    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-+    TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode,
-+    TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-+    WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
-+    prelude::*, px, rems, size, transparent_black,
++    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Mesh, MeshPainted, MeshPreparation,
++    MeshView, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
++    MouseMoveEvent, MouseUpEvent, PaintMesh, Path, Pixels, PlatformAtlas, PlatformDisplay,
++    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority,
++    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
++    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
++    SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle,
++    Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController,
++    TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange,
++    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
++    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
++    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTextSystem,
++    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
  };
  
  use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
-@@ -5189,6 +5190,58 @@ impl Window {
+@@ -5189,6 +5190,60 @@ impl Window {
          Ok(())
      }
  
 +    /// Paint `mesh` in 3D into the scene for the next frame at the current
-+    /// z-index, seen through `view`: clip space spans `bounds`. Whether it is
-+    /// painted: a mesh is first uploaded to the GPU off the main thread, and
-+    /// the window drawn again once it is there. A window whose renderer has
-+    /// no 3D pass never paints one ([`Window::draws_meshes`]).
++    /// z-index, seen through `view`: clip space spans `bounds`. Says whether
++    /// it is painted: a mesh is first uploaded to the GPU off the main
++    /// thread, and the window drawn again once it is there. A window whose
++    /// renderer has no 3D pass never paints one ([`Window::draws_meshes`]),
++    /// nor one larger than its GPU holds.
 +    ///
 +    /// This method should only be called as part of the paint phase of element drawing.
 +    pub fn paint_mesh(
@@ -673,7 +1359,7 @@ index 63bc2428..35da6933 100644
 +        mesh: Arc<Mesh>,
 +        view: MeshView,
 +        cx: &mut App,
-+    ) -> bool {
++    ) -> MeshPainted {
 +        self.invalidator.debug_assert_paint();
 +
 +        let refresh_when = |uploaded: oneshot::Receiver<()>, window: &Self, cx: &mut App| {
@@ -691,9 +1377,10 @@ index 63bc2428..35da6933 100644
 +            MeshPreparation::Flat(Some(normals)) => refresh_when(normals, self, cx),
 +            MeshPreparation::Started(uploaded) => {
 +                refresh_when(uploaded, self, cx);
-+                return false;
++                return MeshPainted::Loading;
 +            }
-+            MeshPreparation::Pending | MeshPreparation::Never => return false,
++            MeshPreparation::Pending => return MeshPainted::Loading,
++            MeshPreparation::Never => return MeshPainted::Refused,
 +        }
 +        let bounds = self.snap_bounds(bounds);
 +        let content_mask = self.snapped_content_mask();
@@ -704,7 +1391,7 @@ index 63bc2428..35da6933 100644
 +            mesh,
 +            view,
 +        });
-+        true
++        MeshPainted::Painted
 +    }
 +
 +    /// Whether this window draws meshes ([`Window::paint_mesh`]).
@@ -715,19 +1402,715 @@ index 63bc2428..35da6933 100644
      /// Paint a surface into the scene for the next frame at the current z-index.
      ///
      /// This method should only be called as part of the paint phase of element drawing.
+diff --git a/crates/gpui_apple/src/gpui_apple.rs b/crates/gpui_apple/src/gpui_apple.rs
+index 6f39e63b..92d84e45 100644
+--- a/crates/gpui_apple/src/gpui_apple.rs
++++ b/crates/gpui_apple/src/gpui_apple.rs
+@@ -8,6 +8,7 @@
+ mod dispatcher;
+ pub mod keychain;
+ mod metal_atlas;
++mod metal_meshes;
+ pub mod metal_renderer;
+ pub mod thermal;
+ 
+diff --git a/crates/gpui_apple/src/metal_meshes.rs b/crates/gpui_apple/src/metal_meshes.rs
+new file mode 100644
+index 00000000..fe90ee30
+--- /dev/null
++++ b/crates/gpui_apple/src/metal_meshes.rs
+@@ -0,0 +1,380 @@
++//! Meshes drawn in 3D (`gpui::PaintMesh`) by Metal, as gpui_wgpu draws
++//! them: each in a pass of its own into an offscreen target the size of what
++//! is shown of it (`gpui::MeshFrame`), multisampled as paths are and with a
++//! depth buffer, then composited into the frame in draw order.
++//!
++//! The shaders are naga's translation of gpui_wgpu's `shaders_mesh.wgsl`
++//! (`shaders_mesh.metal`, kept current by a test there), compiled when the
++//! first mesh is asked for. The meshes are kept by a `gpui::MeshStore`,
++//! which makes their buffers on a thread of its own and lets go of them in
++//! the first frame that does not draw them; the target goes with the last
++//! mesh drawn.
++
++use std::{cell::OnceCell, ffi::c_void, sync::Arc};
++
++use gpui::{DevicePixels, Mesh, MeshMaker, MeshPreparation, MeshStore, PaintMesh, Size};
++use metal::{MTLPixelFormat, MTLResourceOptions, NSUInteger};
++
++const SOURCE: &str = include_str!("shaders_mesh.metal");
++/// Samples a pixel, as paths are drawn: every Metal GPU has four.
++const SAMPLE_COUNT: NSUInteger = 4;
++const COLOR_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm;
++const DEPTH_FORMAT: MTLPixelFormat = MTLPixelFormat::Depth32Float;
++/// The largest side of a texture every Metal GPU allows.
++const LARGEST_TARGET: u32 = 8192;
++/// Where the vertex function finds the positions, normals and colors: after
++/// its parameters, in buffer 0.
++const POSITIONS: NSUInteger = 1;
++const NORMALS: NSUInteger = 2;
++const COLORS: NSUInteger = 3;
++
++/// A mesh's buffers on the device.
++pub(crate) struct Buffers {
++    positions: metal::Buffer,
++    indices: metal::Buffer,
++    /// Its positions' colors, when it has some.
++    colors: Option<metal::Buffer>,
++    count: NSUInteger,
++}
++
++/// How the device holds a mesh (`gpui::MeshMaker`).
++#[derive(Clone)]
++pub(crate) struct Maker {
++    device: metal::Device,
++    options: MTLResourceOptions,
++}
++
++impl MeshMaker for Maker {
++    type Buffers = Buffers;
++    type Normals = metal::Buffer;
++
++    fn holds(&self, mesh: &Mesh) -> bool {
++        let largest = self.device.max_buffer_length();
++        [
++            size_of_val(mesh.positions()),
++            size_of_val(mesh.indices()),
++            mesh.colors().map_or(0, size_of_val),
++        ]
++        .into_iter()
++        .all(|bytes| bytes as NSUInteger <= largest)
++    }
++
++    fn buffers(&self, mesh: &Mesh) -> Option<Buffers> {
++        Some(Buffers {
++            positions: self.buffer(mesh.positions()),
++            indices: self.buffer(mesh.indices()),
++            colors: mesh.colors().map(|colors| self.buffer(colors)),
++            count: mesh.indices().len() as NSUInteger,
++        })
++    }
++
++    fn normals(&self, normals: &[[f32; 3]]) -> Option<metal::Buffer> {
++        Some(self.buffer(normals))
++    }
++}
++
++impl Maker {
++    /// A buffer holding a copy of `data`.
++    fn buffer<T: Copy>(&self, data: &[T]) -> metal::Buffer {
++        self.device.new_buffer_with_data(
++            data.as_ptr().cast::<c_void>(),
++            size_of_val(data) as NSUInteger,
++            self.options,
++        )
++    }
++}
++
++struct Pipelines {
++    draw: metal::RenderPipelineState,
++    composite: metal::RenderPipelineState,
++    depth: metal::DepthStencilState,
++}
++
++impl Pipelines {
++    fn new(device: &metal::DeviceRef) -> Result<Self, String> {
++        let library = device.new_library_with_source(SOURCE, &metal::CompileOptions::new())?;
++        let function = |name| library.get_function(name, None);
++        let (vertex, fragment) = (function("vs_mesh")?, function("fs_mesh")?);
++        let (composite_vertex, composite_fragment) = (
++            function("vs_mesh_composite")?,
++            function("fs_mesh_composite")?,
++        );
++
++        let descriptor = metal::RenderPipelineDescriptor::new();
++        descriptor.set_label("meshes");
++        descriptor.set_vertex_function(Some(vertex.as_ref()));
++        descriptor.set_fragment_function(Some(fragment.as_ref()));
++        // Positions, normals, colors: a buffer each.
++        let vertices = metal::VertexDescriptor::new();
++        for (location, (buffer, format, stride)) in [
++            (POSITIONS, metal::MTLVertexFormat::Float3, 12),
++            (NORMALS, metal::MTLVertexFormat::Float3, 12),
++            (COLORS, metal::MTLVertexFormat::UChar4Normalized, 4),
++        ]
++        .into_iter()
++        .enumerate()
++        {
++            let attribute = vertices
++                .attributes()
++                .object_at(location as NSUInteger)
++                .ok_or("no vertex attribute")?;
++            attribute.set_format(format);
++            attribute.set_offset(0);
++            attribute.set_buffer_index(buffer);
++            let layout = vertices
++                .layouts()
++                .object_at(buffer)
++                .ok_or("no vertex layout")?;
++            layout.set_stride(stride);
++            layout.set_step_function(metal::MTLVertexStepFunction::PerVertex);
++            layout.set_step_rate(1);
++        }
++        descriptor.set_vertex_descriptor(Some(vertices));
++        descriptor.set_raster_sample_count(SAMPLE_COUNT);
++        descriptor.set_depth_attachment_pixel_format(DEPTH_FORMAT);
++        let color = descriptor
++            .color_attachments()
++            .object_at(0)
++            .ok_or("no color attachment")?;
++        color.set_pixel_format(COLOR_FORMAT);
++        // What is drawn is written as it is: the target holds nothing else.
++        color.set_blending_enabled(false);
++        let draw = device.new_render_pipeline_state(&descriptor)?;
++
++        let descriptor = metal::RenderPipelineDescriptor::new();
++        descriptor.set_label("mesh_composite");
++        descriptor.set_vertex_function(Some(composite_vertex.as_ref()));
++        descriptor.set_fragment_function(Some(composite_fragment.as_ref()));
++        let color = descriptor
++            .color_attachments()
++            .object_at(0)
++            .ok_or("no color attachment")?;
++        color.set_pixel_format(COLOR_FORMAT);
++        // What was drawn is premultiplied by its coverage: resolved edges
++        // over nothing.
++        color.set_blending_enabled(true);
++        color.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
++        color.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
++        color.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
++        color.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
++        color.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
++        color.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
++        let composite = device.new_render_pipeline_state(&descriptor)?;
++
++        let descriptor = metal::DepthStencilDescriptor::new();
++        descriptor.set_depth_compare_function(metal::MTLCompareFunction::Less);
++        descriptor.set_depth_write_enabled(true);
++        let depth = device.new_depth_stencil_state(&descriptor);
++        Ok(Pipelines {
++            draw,
++            composite,
++            depth,
++        })
++    }
++}
++
++/// Where meshes are drawn: a multisampled colour and depth, resolved into a
++/// texture the composite reads.
++struct Target {
++    width: u32,
++    height: u32,
++    multisampled: metal::Texture,
++    depth: metal::Texture,
++    resolved: metal::Texture,
++}
++
++impl Target {
++    /// Kept in tile memory only, where the GPU can (Apple's): drawn and
++    /// resolved in one pass.
++    fn new(device: &metal::DeviceRef, width: u32, height: u32, memoryless: bool) -> Self {
++        let texture = |format, samples, usage, memoryless| {
++            let descriptor = metal::TextureDescriptor::new();
++            descriptor.set_width(width.max(1) as NSUInteger);
++            descriptor.set_height(height.max(1) as NSUInteger);
++            descriptor.set_pixel_format(format);
++            if samples > 1 {
++                descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
++                descriptor.set_sample_count(samples);
++            }
++            descriptor.set_storage_mode(if memoryless {
++                metal::MTLStorageMode::Memoryless
++            } else {
++                metal::MTLStorageMode::Private
++            });
++            descriptor.set_usage(usage);
++            device.new_texture(&descriptor)
++        };
++        let target = metal::MTLTextureUsage::RenderTarget;
++        Target {
++            width,
++            height,
++            multisampled: texture(COLOR_FORMAT, SAMPLE_COUNT, target, memoryless),
++            depth: texture(DEPTH_FORMAT, SAMPLE_COUNT, target, memoryless),
++            resolved: texture(
++                COLOR_FORMAT,
++                1,
++                target | metal::MTLTextureUsage::ShaderRead,
++                false,
++            ),
++        }
++    }
++}
++
++pub(crate) struct MeshPass {
++    device: metal::Device,
++    memoryless: bool,
++    /// Made when the first mesh is asked for; `None` if they cannot be.
++    pipelines: OnceCell<Option<Pipelines>>,
++    meshes: MeshStore<Maker>,
++    target: Option<Target>,
++}
++
++impl MeshPass {
++    /// `options` are the buffers', and `apple_gpu` whether the device can
++    /// keep a texture in tile memory only.
++    pub(crate) fn new(
++        device: &metal::Device,
++        options: MTLResourceOptions,
++        apple_gpu: bool,
++    ) -> Self {
++        Self {
++            device: device.clone(),
++            memoryless: apple_gpu,
++            pipelines: OnceCell::new(),
++            meshes: MeshStore::new(Maker {
++                device: device.clone(),
++                options,
++            }),
++            target: None,
++        }
++    }
++
++    fn pipelines(&self) -> Option<&Pipelines> {
++        self.pipelines
++            .get_or_init(|| {
++                Pipelines::new(&self.device)
++                    .inspect_err(|error| log::error!("meshes will not be drawn: {error}"))
++                    .ok()
++            })
++            .as_ref()
++    }
++
++    /// Make `mesh` ready to draw, with its normals when `smooth`
++    /// (`MeshStore::prepare`); never, when the shaders cannot be made.
++    pub(crate) fn prepare_mesh(&mut self, mesh: &Arc<Mesh>, smooth: bool) -> MeshPreparation {
++        if self.pipelines().is_none() {
++            return MeshPreparation::Never;
++        }
++        self.meshes.prepare(mesh, smooth)
++    }
++
++    /// Draw `paint` into the target, for a frame of `frame`'s size, in a
++    /// pass of its own in `command_buffer`, which encodes nothing else
++    /// meanwhile; `None` when nothing of it is drawn.
++    pub(crate) fn draw(
++        &mut self,
++        command_buffer: &metal::CommandBufferRef,
++        paint: &PaintMesh,
++        frame: Size<DevicePixels>,
++    ) -> Option<Drawn> {
++        let framed = paint.framed(frame, LARGEST_TARGET)?;
++        let (buffers, normals) = self.meshes.drawn(paint.mesh.id())?;
++        let [width, height] = framed.target;
++        if self
++            .target
++            .as_ref()
++            .is_none_or(|target| (target.width, target.height) != (width, height))
++        {
++            self.target = None;
++            self.target = Some(Target::new(&self.device, width, height, self.memoryless));
++        }
++        let (Some(Some(pipelines)), Some(target)) = (self.pipelines.get(), self.target.as_ref())
++        else {
++            return None;
++        };
++        // Flat until its normals are made.
++        let smooth = paint.view.smooth && normals.is_some();
++        let colored = buffers.colors.is_some();
++        let params = framed.params(&paint.view, smooth, colored);
++
++        let descriptor = metal::RenderPassDescriptor::new();
++        let color = descriptor.color_attachments().object_at(0)?;
++        color.set_texture(Some(&target.multisampled));
++        color.set_resolve_texture(Some(&target.resolved));
++        color.set_load_action(metal::MTLLoadAction::Clear);
++        color.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 0.));
++        // Only what is resolved is read.
++        color.set_store_action(metal::MTLStoreAction::MultisampleResolve);
++        let depth = descriptor.depth_attachment()?;
++        depth.set_texture(Some(&target.depth));
++        depth.set_load_action(metal::MTLLoadAction::Clear);
++        depth.set_clear_depth(1.);
++        depth.set_store_action(metal::MTLStoreAction::DontCare);
++
++        let encoder = command_buffer.new_render_command_encoder(descriptor);
++        let [shown_width, shown_height] = framed.shown;
++        encoder.set_viewport(metal::MTLViewport {
++            originX: 0.,
++            originY: 0.,
++            width: f64::from(shown_width),
++            height: f64::from(shown_height),
++            znear: 0.,
++            zfar: 1.,
++        });
++        encoder.set_render_pipeline_state(&pipelines.draw);
++        encoder.set_depth_stencil_state(&pipelines.depth);
++        // Either side may face the camera, as a mesh's winding is not
++        // always kept.
++        encoder.set_cull_mode(metal::MTLCullMode::None);
++        let bytes = size_of_val(&params) as NSUInteger;
++        encoder.set_vertex_bytes(0, bytes, params.as_ptr().cast());
++        encoder.set_fragment_bytes(0, bytes, params.as_ptr().cast());
++        // Without normals or colors the shader reads none: the positions
++        // stand in, as long as either would be.
++        encoder.set_vertex_buffer(POSITIONS, Some(&buffers.positions), 0);
++        encoder.set_vertex_buffer(NORMALS, Some(normals.unwrap_or(&buffers.positions)), 0);
++        let colors = buffers.colors.as_ref().unwrap_or(&buffers.positions);
++        encoder.set_vertex_buffer(COLORS, Some(colors), 0);
++        encoder.draw_indexed_primitives(
++            metal::MTLPrimitiveType::Triangle,
++            buffers.count,
++            metal::MTLIndexType::UInt32,
++            &buffers.indices,
++            0,
++        );
++        encoder.end_encoding();
++        Some(Drawn {
++            composite: framed.composite(),
++        })
++    }
++
++    /// Composite a mesh drawn into the target, pixel for pixel, with
++    /// `encoder`.
++    pub(crate) fn composite(&self, encoder: &metal::RenderCommandEncoderRef, drawn: &Drawn) {
++        let (Some(Some(pipelines)), Some(target)) = (self.pipelines.get(), self.target.as_ref())
++        else {
++            return;
++        };
++        let bytes = size_of_val(&drawn.composite) as NSUInteger;
++        let composite = drawn.composite.as_ptr().cast();
++        encoder.set_render_pipeline_state(&pipelines.composite);
++        encoder.set_vertex_bytes(0, bytes, composite);
++        encoder.set_fragment_bytes(0, bytes, composite);
++        encoder.set_fragment_texture(0, Some(&target.resolved));
++        encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
++    }
++
++    /// After a frame: let go of the meshes it did not draw, and of the
++    /// target if it drew none.
++    pub(crate) fn end_frame(&mut self) {
++        self.meshes.end_frame();
++        if self.meshes.is_empty() {
++            self.target = None;
++        }
++    }
++}
++
++/// A mesh drawn into the target, to be composited.
++pub(crate) struct Drawn {
++    composite: gpui::MeshComposite,
++}
 diff --git a/crates/gpui_apple/src/metal_renderer.rs b/crates/gpui_apple/src/metal_renderer.rs
-index 862e62a5..8e287513 100644
+index 862e62a5..ecd08bd5 100644
 --- a/crates/gpui_apple/src/metal_renderer.rs
 +++ b/crates/gpui_apple/src/metal_renderer.rs
-@@ -821,6 +821,8 @@ impl MetalRenderer {
+@@ -1,10 +1,11 @@
+ use crate::metal_atlas::MetalAtlas;
++use crate::metal_meshes::MeshPass;
+ use anyhow::{Context as _, Result};
+ use block2::RcBlock;
+ use core_graphics::geometry::CGSize;
+ use gpui::{
+-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, PaintSurface, Path, Point,
+-    PrimitiveBatch, ScaledPixels, Scene, Size, point, size,
++    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, Mesh, MeshPreparation,
++    PaintSurface, Path, Point, PrimitiveBatch, ScaledPixels, Scene, Size, point, size,
+ };
+ #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+ use image::RgbaImage;
+@@ -134,6 +135,8 @@ pub struct MetalRenderer {
+     path_intermediate_texture: Option<metal::Texture>,
+     path_intermediate_msaa_texture: Option<metal::Texture>,
+     path_sample_count: u32,
++    /// Meshes drawn in 3D (`metal_meshes`).
++    meshes: MeshPass,
+     /// Offscreen render target reused across `render_scene` calls when
+     /// rendering headlessly without reading pixels back.
+     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+@@ -311,16 +314,17 @@ impl MetalRenderer {
+             to_float2_bits(point(1., 0.)),
+             to_float2_bits(point(1., 1.)),
+         ];
++        let buffer_options = if is_unified_memory {
++            MTLResourceOptions::StorageModeShared | MTLResourceOptions::CPUCacheModeWriteCombined
++        } else {
++            MTLResourceOptions::StorageModeManaged
++        };
+         let unit_vertices = device.new_buffer_with_data(
+             unit_vertices.as_ptr() as *const c_void,
+             mem::size_of_val(&unit_vertices) as u64,
+-            if is_unified_memory {
+-                MTLResourceOptions::StorageModeShared
+-                    | MTLResourceOptions::CPUCacheModeWriteCombined
+-            } else {
+-                MTLResourceOptions::StorageModeManaged
+-            },
++            buffer_options,
+         );
++        let meshes = MeshPass::new(&device, buffer_options, is_apple_gpu);
+ 
+         let paths_rasterization_pipeline_state = build_path_rasterization_pipeline_state(
+             &device,
+@@ -434,6 +438,7 @@ impl MetalRenderer {
+             path_intermediate_texture: None,
+             path_intermediate_msaa_texture: None,
+             path_sample_count: PATH_SAMPLE_COUNT,
++            meshes,
+             #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+             headless_render_target: None,
+         }
+@@ -506,6 +511,11 @@ impl MetalRenderer {
+         }
+     }
+ 
++    /// Make `mesh` ready to draw (`gpui::PlatformWindow::prepare_mesh`).
++    pub fn prepare_mesh(&mut self, mesh: &Arc<Mesh>, smooth: bool) -> MeshPreparation {
++        self.meshes.prepare_mesh(mesh, smooth)
++    }
++
+     pub fn update_transparency(&mut self, transparent: bool) {
+         self.opaque = !transparent;
+         if let Some(layer) = &self.layer {
+@@ -821,8 +831,33 @@ impl MetalRenderer {
                      command_encoder,
                  ),
                  PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
-+                // No 3D pass yet: the window says it draws no meshes.
-+                PrimitiveBatch::Meshes(_) => {}
++                // Each mesh drawn offscreen, then composited where it is.
++                PrimitiveBatch::Meshes(range) => {
++                    command_encoder.end_encoding();
++                    for paint in &scene.meshes[range] {
++                        let Some(drawn) = self.meshes.draw(command_buffer, paint, viewport_size)
++                        else {
++                            continue;
++                        };
++                        let composite = new_command_encoder_for_texture(
++                            command_buffer,
++                            texture,
++                            viewport_size,
++                            None,
++                        );
++                        self.meshes.composite(composite, &drawn);
++                        composite.end_encoding();
++                    }
++                    command_encoder = new_command_encoder_for_texture(
++                        command_buffer,
++                        texture,
++                        viewport_size,
++                        None,
++                    );
++                }
              }
          }
++        self.meshes.end_frame();
  
+         command_encoder.end_encoding();
+ 
+diff --git a/crates/gpui_apple/src/shaders_mesh.metal b/crates/gpui_apple/src/shaders_mesh.metal
+new file mode 100644
+index 00000000..04e62910
+--- /dev/null
++++ b/crates/gpui_apple/src/shaders_mesh.metal
+@@ -0,0 +1,200 @@
++// Made by naga from gpui_wgpu's shaders_mesh.wgsl: do not edit. Its
++// test `the_mesh_shader_s_translations_are_current` makes it again.
++// language: metal2.0
++#include <metal_stdlib>
++#include <simd/simd.h>
++
++using metal::uint;
++
++struct MeshParams {
++    metal::float4x4 model_view;
++    metal::float4x4 projection;
++    metal::float2 ndc_scale;
++    metal::float2 ndc_offset;
++    metal::float4 color;
++    metal::float4 light0_;
++    metal::float4 light1_;
++    float ambient;
++    uint perspective;
++    uint shaded_smooth;
++    uint colored;
++};
++struct MeshVarying {
++    metal::float4 position;
++    metal::float3 eye;
++    metal::float3 normal;
++    metal::float3 color;
++};
++struct MeshComposite {
++    metal::float2 origin;
++    metal::float2 size;
++    metal::float2 viewport;
++    metal::float2 pad;
++};
++
++metal::float3 linear_from_srgb(
++    metal::float3 srgb
++) {
++    metal::float3 low = srgb / metal::float3(12.92);
++    metal::float3 high = metal::pow((srgb + metal::float3(0.055)) / metal::float3(1.055), metal::float3(2.4));
++    return metal::select(high, low, srgb <= metal::float3(0.04045));
++}
++
++metal::float3 srgb_from_linear(
++    metal::float3 linear
++) {
++    metal::float3 v = metal::clamp(linear, metal::float3(0.0), metal::float3(1.0));
++    metal::float3 low_1 = v * 12.92;
++    metal::float3 high_1 = (1.055 * metal::pow(v, metal::float3(0.41666666))) - metal::float3(0.055);
++    return metal::select(high_1, low_1, v <= metal::float3(0.0031308));
++}
++
++struct vs_meshInput {
++    metal::float3 position [[attribute(0)]];
++    metal::float3 normal [[attribute(1)]];
++    metal::float4 color [[attribute(2)]];
++};
++struct vs_meshOutput {
++    metal::float4 position [[position]];
++    metal::float3 eye [[user(loc0), center_perspective]];
++    metal::float3 normal [[user(loc1), center_perspective]];
++    metal::float3 color [[user(loc2), center_perspective]];
++};
++vertex vs_meshOutput vs_mesh(
++  vs_meshInput varyings [[stage_in]]
++, constant MeshParams& mesh [[buffer(0)]]
++) {
++    const auto position = varyings.position;
++    const auto normal = varyings.normal;
++    const auto color = varyings.color;
++    MeshVarying out = {};
++    metal::float4x4 _e5 = mesh.model_view;
++    metal::float4 eye = _e5 * metal::float4(position, 1.0);
++    metal::float4x4 _e11 = mesh.projection;
++    metal::float4 clip = _e11 * eye;
++    metal::float2 _e18 = mesh.ndc_scale;
++    metal::float2 _e22 = mesh.ndc_offset;
++    out.position = metal::float4((clip.xy * _e18) + (_e22 * clip.w), clip.z, clip.w);
++    out.eye = eye.xyz;
++    metal::float4x4 _e34 = mesh.model_view;
++    out.normal = (_e34 * metal::float4(normal, 0.0)).xyz;
++    metal::float4 _e42 = mesh.color;
++    out.color = _e42.xyz;
++    uint _e46 = mesh.colored;
++    if (_e46 != 0u) {
++        metal::float3 _e51 = linear_from_srgb(color.xyz);
++        out.color = _e51;
++    }
++    MeshVarying _e52 = out;
++    const auto _tmp = _e52;
++    return vs_meshOutput { _tmp.position, _tmp.eye, _tmp.normal, _tmp.color };
++}
++
++
++struct fs_meshInput {
++    metal::float3 eye [[user(loc0), center_perspective]];
++    metal::float3 normal_2 [[user(loc1), center_perspective]];
++    metal::float3 color_1 [[user(loc2), center_perspective]];
++};
++struct fs_meshOutput {
++    metal::float4 member_1 [[color(0)]];
++};
++fragment fs_meshOutput fs_mesh(
++  fs_meshInput varyings_1 [[stage_in]]
++, metal::float4 position_2 [[position]]
++, constant MeshParams& mesh [[buffer(0)]]
++) {
++    const MeshVarying input = { position_2, varyings_1.eye, varyings_1.normal_2, varyings_1.color_1 };
++    metal::float3 toward = metal::float3(0.0, 0.0, 1.0);
++    metal::float3 normal_1 = {};
++    bool local = {};
++    metal::float3 surface = {};
++    uint _e8 = mesh.perspective;
++    if (_e8 != 0u) {
++        toward = metal::normalize(-(input.eye));
++    }
++    metal::float3 _e15 = metal::dfdx(input.eye);
++    metal::float3 _e17 = metal::dfdy(input.eye);
++    metal::float3 across = metal::cross(_e15, _e17);
++    metal::float3 _e19 = toward;
++    normal_1 = _e19;
++    float length_squared = metal::dot(across, across);
++    if (length_squared > 0.000000000000000000000000000001) {
++        normal_1 = across * metal::rsqrt(length_squared);
++    }
++    metal::float3 _e26 = normal_1;
++    metal::float3 _e27 = toward;
++    if (metal::dot(_e26, _e27) < 0.0) {
++        metal::float3 _e31 = normal_1;
++        normal_1 = -(_e31);
++    }
++    float smooth_length = metal::dot(input.normal, input.normal);
++    uint _e38 = mesh.shaded_smooth;
++    if (_e38 != 0u) {
++        local = smooth_length > 0.000000000000000000000000000001;
++    } else {
++        local = false;
++    }
++    bool _e46 = local;
++    if (_e46) {
++        surface = input.normal * metal::rsqrt(smooth_length);
++        metal::float3 _e51 = surface;
++        metal::float3 _e52 = normal_1;
++        if (metal::dot(_e51, _e52) < 0.0) {
++            metal::float3 _e56 = surface;
++            surface = -(_e56);
++        }
++        metal::float3 _e58 = surface;
++        normal_1 = _e58;
++    }
++    float _e61 = mesh.ambient;
++    float _e65 = mesh.light0_.w;
++    metal::float3 _e66 = normal_1;
++    metal::float4 _e69 = mesh.light0_;
++    float _e79 = mesh.light1_.w;
++    metal::float3 _e80 = normal_1;
++    metal::float4 _e83 = mesh.light1_;
++    float light = (_e61 + (_e65 * metal::max(metal::dot(_e66, _e69.xyz), 0.0))) + (_e79 * metal::max(metal::dot(_e80, _e83.xyz), 0.0));
++    metal::float3 _e92 = srgb_from_linear(input.color * light);
++    return fs_meshOutput { metal::float4(_e92, 1.0) };
++}
++
++
++struct vs_mesh_compositeInput {
++};
++struct vs_mesh_compositeOutput {
++    metal::float4 member_2 [[position]];
++};
++vertex vs_mesh_compositeOutput vs_mesh_composite(
++  uint vertex_id [[vertex_id]]
++, constant MeshComposite& composite [[buffer(0)]]
++) {
++    metal::float2 unit = metal::float2(static_cast<float>(vertex_id & 1u), 0.5 * static_cast<float>(vertex_id & 2u));
++    metal::float2 _e12 = composite.origin;
++    metal::float2 _e15 = composite.size;
++    metal::float2 pixel = _e12 + (unit * _e15);
++    metal::float2 _e20 = composite.viewport;
++    metal::float2 device_ = ((pixel / _e20) * metal::float2(2.0, -2.0)) + metal::float2(-1.0, 1.0);
++    return vs_mesh_compositeOutput { metal::float4(device_, 0.0, 1.0) };
++}
++
++metal::int2 naga_f2i32(metal::float2 value) {
++    return static_cast<metal::int2>(metal::clamp(value, -2147483600.0, 2147483500.0));
++}
++
++
++struct fs_mesh_compositeInput {
++};
++struct fs_mesh_compositeOutput {
++    metal::float4 member_3 [[color(0)]];
++};
++fragment fs_mesh_compositeOutput fs_mesh_composite(
++  metal::float4 position_1 [[position]]
++, constant MeshComposite& composite [[buffer(0)]]
++, metal::texture2d<float, metal::access::sample> t_mesh [[texture(0)]]
++) {
++    metal::float2 _e4 = composite.origin;
++    metal::int2 texel = naga_f2i32(metal::floor(position_1.xy - _e4));
++    metal::float4 _e10 = t_mesh.read(metal::uint2(texel), 0);
++    return fs_mesh_compositeOutput { _e10 };
++}
 diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
 index f509432f..81451982 100644
 --- a/crates/gpui_linux/src/linux/wayland/window.rs
@@ -784,6 +2167,42 @@ index c2d2f148..7e52aaaa 100644
      fn play_system_bell(&self) {
          // Volume 0% means don't increase or decrease from system volume
          let _ = self.0.xcb.bell(0);
+diff --git a/crates/gpui_macos/src/window.rs b/crates/gpui_macos/src/window.rs
+index dbbf295b..8c42c046 100644
+--- a/crates/gpui_macos/src/window.rs
++++ b/crates/gpui_macos/src/window.rs
+@@ -2136,6 +2136,18 @@ impl PlatformWindow for MacWindow {
+         None
+     }
+ 
++    fn draws_meshes(&self) -> bool {
++        true
++    }
++
++    fn prepare_mesh(
++        &self,
++        mesh: &std::sync::Arc<gpui::Mesh>,
++        smooth: bool,
++    ) -> gpui::MeshPreparation {
++        self.0.lock().renderer.prepare_mesh(mesh, smooth)
++    }
++
+     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+         let executor = self.0.lock().foreground_executor.clone();
+         executor
+diff --git a/crates/gpui_wgpu/Cargo.toml b/crates/gpui_wgpu/Cargo.toml
+index 3ce9dcec..e70ea50a 100644
+--- a/crates/gpui_wgpu/Cargo.toml
++++ b/crates/gpui_wgpu/Cargo.toml
+@@ -56,7 +56,7 @@ criterion.workspace = true
+ gpui = { workspace = true, features = ["bench-support"] }
+ image.workspace = true
+ # Validate shaders with the same Naga revision that wgpu uses at runtime.
+-naga = { git = "https://github.com/gfx-rs/wgpu", rev = "3b3506ea31154edc04de64debda0e780cba2639c", features = ["wgsl-in"] }
++naga = { git = "https://github.com/gfx-rs/wgpu", rev = "3b3506ea31154edc04de64debda0e780cba2639c", features = ["wgsl-in", "hlsl-out", "msl-out"] }
+ 
+ [[bench]]
+ name = "layout_line"
 diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
 index 29a79afc..98037639 100644
 --- a/crates/gpui_wgpu/src/gpui_wgpu.rs
@@ -798,10 +2217,10 @@ index 29a79afc..98037639 100644
  pub use cosmic_text_system::*;
 diff --git a/crates/gpui_wgpu/src/shaders_mesh.wgsl b/crates/gpui_wgpu/src/shaders_mesh.wgsl
 new file mode 100644
-index 00000000..c8f8bda3
+index 00000000..d366ab60
 --- /dev/null
 +++ b/crates/gpui_wgpu/src/shaders_mesh.wgsl
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,135 @@
 +// Meshes drawn in 3D (`gpui::PaintMesh`): each into an offscreen target, with
 +// depth, then composited into the frame. A module of its own, made when the
 +// first mesh is drawn.
@@ -918,8 +2337,10 @@ index 00000000..c8f8bda3
 +    pad: vec2<f32>,
 +}
 +
-+@group(0) @binding(0) var<uniform> composite: MeshComposite;
-+@group(0) @binding(1) var t_mesh: texture_2d<f32>;
++// Bindings apart from the mesh's, so that Direct3D gives each its own
++// register in naga's translation.
++@group(0) @binding(1) var<uniform> composite: MeshComposite;
++@group(0) @binding(2) var t_mesh: texture_2d<f32>;
 +
 +@vertex
 +fn vs_mesh_composite(@builtin(vertex_index) vertex_id: u32) -> @builtin(position) vec4<f32> {
@@ -937,59 +2358,26 @@ index 00000000..c8f8bda3
 +}
 diff --git a/crates/gpui_wgpu/src/wgpu_meshes.rs b/crates/gpui_wgpu/src/wgpu_meshes.rs
 new file mode 100644
-index 00000000..cfffa8b4
+index 00000000..12d14b37
 --- /dev/null
 +++ b/crates/gpui_wgpu/src/wgpu_meshes.rs
-@@ -0,0 +1,790 @@
+@@ -0,0 +1,680 @@
 +//! Meshes drawn in 3D (`gpui::PaintMesh`). Each is drawn in a pass of its
 +//! own into an offscreen target the size of what is shown of it,
 +//! multisampled as paths are and with a depth buffer, then composited into
 +//! the frame in draw order, as paths are.
 +//!
-+//! A mesh's buffers are made and filled on a thread of the pass's own, so a
-+//! large mesh never holds the window's thread: where the driver maps the
-+//! memory uploads go through uncached, 72 MB took a second. A frame draws a
-+//! mesh only once it is there (`prepare_mesh`, which the window asks before
-+//! painting it), and lets go of it in the first frame that does not draw
-+//! it. The target goes with the last mesh drawn; the pipelines come with the
-+//! first, never at start.
++//! The meshes are kept by a `gpui::MeshStore`, which uploads them off the
++//! window's thread and lets go of them in the first frame that does not
++//! draw them; this is how wgpu holds and draws them. The target goes with
++//! the last mesh drawn; the pipelines come with the first, never at start.
 +
-+use std::sync::{Arc, mpsc};
++use std::sync::Arc;
 +
-+use bytemuck::{Pod, Zeroable};
-+use collections::{FxHashMap, FxHashSet};
-+use gpui::{DevicePixels, Mesh, MeshId, MeshPreparation, MeshUploaded, PaintMesh, Size};
++use gpui::{DevicePixels, Mesh, MeshId, MeshMaker, MeshPreparation, MeshStore, PaintMesh, Size};
 +use wgpu::util::DeviceExt as _;
 +
 +const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-+/// The target's sides grow and shrink in steps of this many pixels, so a
-+/// panel being resized does not make a target at every frame.
-+const TARGET_STEP: u32 = 256;
-+
-+#[repr(C)]
-+#[derive(Clone, Copy, Pod, Zeroable)]
-+struct MeshParams {
-+    model_view: [[f32; 4]; 4],
-+    projection: [[f32; 4]; 4],
-+    ndc_scale: [f32; 2],
-+    ndc_offset: [f32; 2],
-+    color: [f32; 4],
-+    light0: [f32; 4],
-+    light1: [f32; 4],
-+    ambient: f32,
-+    perspective: u32,
-+    smooth: u32,
-+    colored: u32,
-+}
-+
-+#[repr(C)]
-+#[derive(Clone, Copy, Pod, Zeroable)]
-+struct CompositeParams {
-+    origin: [f32; 2],
-+    size: [f32; 2],
-+    viewport: [f32; 2],
-+    pad: [f32; 2],
-+}
 +
 +struct Pipelines {
 +    draw: wgpu::RenderPipeline,
@@ -998,119 +2386,63 @@ index 00000000..cfffa8b4
 +    composite_layout: wgpu::BindGroupLayout,
 +}
 +
-+struct Buffers {
++/// A mesh's buffers on wgpu's device.
++pub(crate) struct Buffers {
 +    positions: wgpu::Buffer,
 +    indices: wgpu::Buffer,
-+    /// Made once a frame shades the mesh smoothly.
-+    normals: Option<wgpu::Buffer>,
 +    /// Its positions' colors, when it has some.
 +    colors: Option<wgpu::Buffer>,
 +    count: u32,
-+    /// Whether the frame being drawn draws it.
-+    drawn: bool,
 +}
 +
-+/// `mesh`'s normals for smooth shading, made and filled.
-+fn normals_of(device: &wgpu::Device, mesh: &Mesh) -> wgpu::Buffer {
-+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-+        label: Some("mesh_normals"),
-+        contents: bytemuck::cast_slice(&mesh.smooth_normals()),
-+        usage: wgpu::BufferUsages::VERTEX,
-+    })
-+}
++/// How wgpu's device holds a mesh (`gpui::MeshMaker`).
++#[derive(Clone)]
++pub(crate) struct Maker(Arc<wgpu::Device>);
 +
-+impl Buffers {
-+    /// `mesh`'s, made and filled, with its normals when `normals`.
-+    fn of(device: &wgpu::Device, mesh: &Mesh, normals: bool) -> Self {
-+        Buffers {
-+            positions: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-+                label: Some("mesh_positions"),
-+                contents: bytemuck::cast_slice(mesh.positions()),
-+                usage: wgpu::BufferUsages::VERTEX,
-+            }),
-+            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-+                label: Some("mesh_indices"),
-+                contents: bytemuck::cast_slice(mesh.indices()),
-+                usage: wgpu::BufferUsages::INDEX,
-+            }),
-+            normals: normals.then(|| normals_of(device, mesh)),
-+            colors: mesh.colors().map(|colors| {
-+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-+                    label: Some("mesh_colors"),
-+                    contents: bytemuck::cast_slice(colors),
-+                    usage: wgpu::BufferUsages::VERTEX,
-+                })
-+            }),
-+            count: mesh.indices().len() as u32,
-+            drawn: false,
-+        }
++impl MeshMaker for Maker {
++    type Buffers = Buffers;
++    type Normals = wgpu::Buffer;
++
++    fn holds(&self, mesh: &Mesh) -> bool {
++        let largest = self.0.limits().max_buffer_size;
++        [mesh.positions().len() * 12, mesh.indices().len() * 4]
++            .into_iter()
++            .all(|bytes| bytes as u64 <= largest)
 +    }
-+}
 +
-+/// What an upload makes: a mesh's buffers, with its normals or not, or
-+/// the normals of a mesh already there.
-+#[derive(Clone, Copy, PartialEq, Eq)]
-+enum Making {
-+    Mesh { normals: bool },
-+    Normals,
-+}
++    fn buffers(&self, mesh: &Mesh) -> Option<Buffers> {
++        let buffer = |label, contents: &[u8]| {
++            self.0
++                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
++                    label: Some(label),
++                    contents,
++                    usage: if label == "mesh_indices" {
++                        wgpu::BufferUsages::INDEX
++                    } else {
++                        wgpu::BufferUsages::VERTEX
++                    },
++                })
++        };
++        // What wgpu cannot make goes to the device's error handler.
++        Some(Buffers {
++            positions: buffer("mesh_positions", bytemuck::cast_slice(mesh.positions())),
++            indices: buffer("mesh_indices", bytemuck::cast_slice(mesh.indices())),
++            colors: mesh
++                .colors()
++                .map(|colors| buffer("mesh_colors", bytemuck::cast_slice(colors))),
++            count: mesh.indices().len() as u32,
++        })
++    }
 +
-+/// A mesh to upload, and what tells the window that asked once it is.
-+struct Upload {
-+    mesh: Arc<Mesh>,
-+    making: Making,
-+    uploaded: MeshUploaded,
-+}
-+
-+/// What the uploader made, for a mesh (nothing for one no one held any
-+/// more).
-+enum Made {
-+    Mesh(MeshId, Option<Buffers>),
-+    Normals(MeshId, Option<wgpu::Buffer>),
-+}
-+
-+/// The thread that uploads meshes, one after another: what it is given,
-+/// and what it made.
-+struct Uploader {
-+    uploads: mpsc::Sender<Upload>,
-+    made: mpsc::Receiver<Made>,
-+}
-+
-+impl Uploader {
-+    fn start(device: Arc<wgpu::Device>) -> std::io::Result<Self> {
-+        let (uploads, asked) = mpsc::channel::<Upload>();
-+        let (made_by, made) = mpsc::channel();
-+        std::thread::Builder::new()
-+            .name("gpui-meshes".into())
-+            .spawn(move || {
-+                for Upload {
-+                    mesh,
-+                    making,
-+                    uploaded,
-+                } in asked
-+                {
-+                    // Held by nothing else: no frame will draw it.
-+                    let wanted = Arc::strong_count(&mesh) > 1;
-+                    let id = mesh.id();
-+                    let made = match making {
-+                        Making::Mesh { normals } => {
-+                            Made::Mesh(id, wanted.then(|| Buffers::of(&device, &mesh, normals)))
-+                        }
-+                        Making::Normals => {
-+                            Made::Normals(id, wanted.then(|| normals_of(&device, &mesh)))
-+                        }
-+                    };
-+                    // Handed over before the window hears of it, so the frame it
-+                    // draws finds it.
-+                    if made_by.send(made).is_err() {
-+                        break;
-+                    }
-+                    if wanted {
-+                        uploaded.done();
-+                    }
-+                }
-+            })?;
-+        Ok(Uploader { uploads, made })
++    fn normals(&self, normals: &[[f32; 3]]) -> Option<wgpu::Buffer> {
++        Some(
++            self.0
++                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
++                    label: Some("mesh_normals"),
++                    contents: bytemuck::cast_slice(normals),
++                    usage: wgpu::BufferUsages::VERTEX,
++                }),
++        )
 +    }
 +}
 +
@@ -1138,20 +2470,11 @@ index 00000000..cfffa8b4
 +}
 +
 +pub(crate) struct MeshPass {
-+    device: Arc<wgpu::Device>,
 +    format: wgpu::TextureFormat,
 +    sample_count: u32,
 +    pipelines: Option<Pipelines>,
-+    buffers: FxHashMap<MeshId, Buffers>,
++    meshes: MeshStore<Maker>,
 +    target: Option<Target>,
-+    /// Started with the first upload.
-+    uploader: Option<Uploader>,
-+    /// The meshes being uploaded.
-+    uploading: FxHashSet<MeshId>,
-+    /// The meshes whose normals are being made.
-+    smoothing: FxHashSet<MeshId>,
-+    /// The last mesh too large for this device, said once.
-+    refused: Option<MeshId>,
 +}
 +
 +impl MeshPass {
@@ -1163,115 +2486,18 @@ index 00000000..cfffa8b4
 +        sample_count: u32,
 +    ) -> Self {
 +        Self {
-+            device,
 +            format,
 +            sample_count,
 +            pipelines: None,
-+            buffers: FxHashMap::default(),
++            meshes: MeshStore::new(Maker(device)),
 +            target: None,
-+            uploader: None,
-+            uploading: FxHashSet::default(),
-+            smoothing: FxHashSet::default(),
-+            refused: None,
 +        }
 +    }
 +
-+    /// Make `mesh` ready to draw, uploading it unless it is there or on its
-+    /// way, its normals with it when `smooth`. Asked by the window before it
-+    /// paints the mesh. A mesh there already, its normals asked for, is drawn
-+    /// flat until they are made.
++    /// Make `mesh` ready to draw, with its normals when `smooth`
++    /// (`MeshStore::prepare`).
 +    pub(crate) fn prepare_mesh(&mut self, mesh: &Arc<Mesh>, smooth: bool) -> MeshPreparation {
-+        self.take_uploaded();
-+        let id = mesh.id();
-+        if let Some(buffers) = self.buffers.get(&id) {
-+            if !smooth || buffers.normals.is_some() {
-+                return MeshPreparation::Ready;
-+            }
-+            if self.smoothing.contains(&id) {
-+                return MeshPreparation::Flat(None);
-+            }
-+            let (preparation, uploaded) = MeshPreparation::flat_until();
-+            return match self.send(mesh, Making::Normals, uploaded) {
-+                Ok(()) => {
-+                    self.smoothing.insert(id);
-+                    preparation
-+                }
-+                Err(()) => MeshPreparation::Flat(None),
-+            };
-+        }
-+        if self.uploading.contains(&id) {
-+            return MeshPreparation::Pending;
-+        }
-+        let largest = self.device.limits().max_buffer_size;
-+        if [mesh.positions().len() * 12, mesh.indices().len() * 4]
-+            .into_iter()
-+            .any(|bytes| bytes as u64 > largest)
-+        {
-+            if self.refused != Some(id) {
-+                self.refused = Some(id);
-+                log::warn!(
-+                    "a mesh of {} triangles is larger than this GPU's buffers ({largest} bytes)",
-+                    mesh.triangles()
-+                );
-+            }
-+            return MeshPreparation::Never;
-+        }
-+        let (preparation, uploaded) = MeshPreparation::start();
-+        match self.send(mesh, Making::Mesh { normals: smooth }, uploaded) {
-+            Ok(()) => {
-+                self.uploading.insert(id);
-+                preparation
-+            }
-+            Err(()) => MeshPreparation::Never,
-+        }
-+    }
-+
-+    /// Give the uploader `mesh` to make, starting it with the first.
-+    fn send(&mut self, mesh: &Arc<Mesh>, making: Making, uploaded: MeshUploaded) -> Result<(), ()> {
-+        if self.uploader.is_none() {
-+            match Uploader::start(Arc::clone(&self.device)) {
-+                Ok(uploader) => self.uploader = Some(uploader),
-+                Err(error) => {
-+                    log::error!("no thread to upload meshes: {error}");
-+                    return Err(());
-+                }
-+            }
-+        }
-+        let upload = Upload {
-+            mesh: Arc::clone(mesh),
-+            making,
-+            uploaded,
-+        };
-+        match self.uploader.as_ref().map(|u| u.uploads.send(upload)) {
-+            Some(Ok(())) => Ok(()),
-+            _ => Err(()),
-+        }
-+    }
-+
-+    /// Take what the uploader made.
-+    fn take_uploaded(&mut self) {
-+        let Some(uploader) = &self.uploader else {
-+            return;
-+        };
-+        while let Ok(made) = uploader.made.try_recv() {
-+            match made {
-+                Made::Mesh(id, buffers) => {
-+                    self.uploading.remove(&id);
-+                    if let Some(mut buffers) = buffers {
-+                        // Kept through the frame being painted, which asked
-+                        // for it.
-+                        buffers.drawn = true;
-+                        self.buffers.insert(id, buffers);
-+                    }
-+                }
-+                Made::Normals(id, normals) => {
-+                    self.smoothing.remove(&id);
-+                    if let (Some(buffers), Some(normals)) = (self.buffers.get_mut(&id), normals) {
-+                        buffers.normals = Some(normals);
-+                    }
-+                }
-+            }
-+        }
++        self.meshes.prepare(mesh, smooth)
 +    }
 +
 +    /// The samples a pixel meshes are drawn with on `adapter` into frames
@@ -1296,40 +2522,19 @@ index 00000000..cfffa8b4
 +        paint: &PaintMesh,
 +        frame: Size<DevicePixels>,
 +    ) -> Option<Prepared> {
-+        let bounds = paint.bounds;
-+        let shown = bounds.intersect(&paint.content_mask.bounds);
-+        let left = shown.origin.x.0.floor().max(0.);
-+        let top = shown.origin.y.0.floor().max(0.);
-+        let right = (shown.origin.x.0 + shown.size.width.0)
-+            .ceil()
-+            .min(frame.width.0 as f32);
-+        let bottom = (shown.origin.y.0 + shown.size.height.0)
-+            .ceil()
-+            .min(frame.height.0 as f32);
-+        let (width, height) = (bounds.size.width.0, bounds.size.height.0);
-+        if right <= left || bottom <= top || width <= 0. || height <= 0. {
-+            return None;
-+        }
-+        let shown_size = ((right - left) as u32, (bottom - top) as u32);
++        let framed = paint.framed(frame, device.limits().max_texture_dimension_2d)?;
 +        let id = paint.mesh.id();
-+        let buffers = self.buffers.get_mut(&id)?;
-+        buffers.drawn = true;
++        let (buffers, normals) = self.meshes.drawn(id)?;
 +        // Flat until its normals are made.
-+        let smooth = paint.view.smooth && buffers.normals.is_some();
++        let smooth = paint.view.smooth && normals.is_some();
 +        let colored = buffers.colors.is_some();
-+        let largest = device.limits().max_texture_dimension_2d;
-+        let step = |side: u32| {
-+            side.div_ceil(TARGET_STEP)
-+                .saturating_mul(TARGET_STEP)
-+                .min(largest)
-+        };
-+        let wanted = (step(shown_size.0), step(shown_size.1));
++        let [width, height] = framed.target;
 +        if self
 +            .target
 +            .as_ref()
-+            .is_none_or(|target| (target.width, target.height) != wanted)
++            .is_none_or(|target| (target.width, target.height) != (width, height))
 +        {
-+            self.target = Some(self.make_target(device, wanted.0, wanted.1));
++            self.target = Some(self.make_target(device, width, height));
 +        }
 +        let format = self.format;
 +        let sample_count = self.sample_count;
@@ -1338,47 +2543,14 @@ index 00000000..cfffa8b4
 +            .get_or_insert_with(|| Self::make_pipelines(device, format, sample_count));
 +        let target = self.target.as_ref()?;
 +
-+        // Clip space spans the bounds; the viewport spans what is shown.
-+        let (shown_width, shown_height) = (shown_size.0 as f32, shown_size.1 as f32);
-+        let view = &paint.view;
-+        let [light0, light1] = view.lights.map(|light| {
-+            [
-+                light.direction[0],
-+                light.direction[1],
-+                light.direction[2],
-+                light.strength,
-+            ]
-+        });
-+        let params = MeshParams {
-+            model_view: view.model_view,
-+            projection: view.projection,
-+            ndc_scale: [width / shown_width, height / shown_height],
-+            ndc_offset: [
-+                (2. * (bounds.origin.x.0 - left) + width) / shown_width - 1.,
-+                1. - (2. * (bounds.origin.y.0 - top) + height) / shown_height,
-+            ],
-+            color: [view.color[0], view.color[1], view.color[2], 1.],
-+            light0,
-+            light1,
-+            ambient: view.ambient,
-+            perspective: u32::from(view.perspective),
-+            smooth: u32::from(smooth),
-+            colored: u32::from(colored),
-+        };
-+        let composite = CompositeParams {
-+            origin: [left, top],
-+            size: [shown_width, shown_height],
-+            viewport: [frame.width.0 as f32, frame.height.0 as f32],
-+            pad: [0.; 2],
-+        };
 +        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 +            label: Some("mesh_params"),
-+            contents: bytemuck::bytes_of(&params),
++            contents: bytemuck::cast_slice(&framed.params(&paint.view, smooth, colored)),
 +            usage: wgpu::BufferUsages::UNIFORM,
 +        });
 +        let composite = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 +            label: Some("mesh_composite_params"),
-+            contents: bytemuck::bytes_of(&composite),
++            contents: bytemuck::cast_slice(&framed.composite()),
 +            usage: wgpu::BufferUsages::UNIFORM,
 +        });
 +        Some(Prepared {
@@ -1396,25 +2568,25 @@ index 00000000..cfffa8b4
 +                layout: &pipelines.composite_layout,
 +                entries: &[
 +                    wgpu::BindGroupEntry {
-+                        binding: 0,
++                        binding: 1,
 +                        resource: composite.as_entire_binding(),
 +                    },
 +                    wgpu::BindGroupEntry {
-+                        binding: 1,
++                        binding: 2,
 +                        resource: wgpu::BindingResource::TextureView(&target.resolved),
 +                    },
 +                ],
 +            }),
-+            shown: shown_size,
++            shown: (framed.shown[0], framed.shown[1]),
 +        })
 +    }
 +
 +    /// Draw a prepared mesh into the target.
 +    pub(crate) fn draw(&self, encoder: &mut wgpu::CommandEncoder, prepared: &Prepared) {
-+        let (Some(pipelines), Some(target), Some(buffers)) = (
++        let (Some(pipelines), Some(target), Some((buffers, normals))) = (
 +            self.pipelines.as_ref(),
 +            self.target.as_ref(),
-+            self.buffers.get(&prepared.mesh),
++            self.meshes.get(prepared.mesh),
 +        ) else {
 +            return;
 +        };
@@ -1455,7 +2627,7 @@ index 00000000..cfffa8b4
 +        pass.set_vertex_buffer(0, buffers.positions.slice(..));
 +        // Without normals or colors the shader reads none: the positions
 +        // stand in, as long as either would be.
-+        let normals = buffers.normals.as_ref().unwrap_or(&buffers.positions);
++        let normals = normals.unwrap_or(&buffers.positions);
 +        pass.set_vertex_buffer(1, normals.slice(..));
 +        let colors = buffers.colors.as_ref().unwrap_or(&buffers.positions);
 +        pass.set_vertex_buffer(2, colors.slice(..));
@@ -1476,9 +2648,8 @@ index 00000000..cfffa8b4
 +    /// After a frame: let go of the meshes it did not draw, and of the
 +    /// target if it drew none.
 +    pub(crate) fn end_frame(&mut self) {
-+        self.buffers
-+            .retain(|_, buffers| std::mem::take(&mut buffers.drawn));
-+        if self.buffers.is_empty() {
++        self.meshes.end_frame();
++        if self.meshes.is_empty() {
 +            self.target = None;
 +        }
 +    }
@@ -1486,7 +2657,7 @@ index 00000000..cfffa8b4
 +    /// How many meshes have buffers, and whether there is a target.
 +    #[cfg(test)]
 +    pub(crate) fn held(&self) -> (usize, bool) {
-+        (self.buffers.len(), self.target.is_some())
++        (self.meshes.len(), self.target.is_some())
 +    }
 +
 +    fn make_target(&self, device: &wgpu::Device, width: u32, height: u32) -> Target {
@@ -1569,9 +2740,9 @@ index 00000000..cfffa8b4
 +        let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
 +            label: Some("mesh_composite_layout"),
 +            entries: &[
-+                uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
++                uniform(1, wgpu::ShaderStages::VERTEX_FRAGMENT),
 +                wgpu::BindGroupLayoutEntry {
-+                    binding: 1,
++                    binding: 2,
 +                    visibility: wgpu::ShaderStages::FRAGMENT,
 +                    ty: wgpu::BindingType::Texture {
 +                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
@@ -1701,9 +2872,8 @@ index 00000000..cfffa8b4
 +
 +#[cfg(test)]
 +mod tests {
-+    use super::*;
-+
-+    /// The shader is valid, and reads the parameters as they are written.
++    /// The shader is valid, and reads the parameters where
++    /// `gpui::MeshFrame` writes them.
 +    #[test]
 +    fn the_mesh_shader_reads_what_is_written() {
 +        let module = naga::front::wgsl::parse_str(include_str!("shaders_mesh.wgsl"))
@@ -1716,19 +2886,160 @@ index 00000000..cfffa8b4
 +        .expect("shader should validate");
 +        let mut layouter = naga::proc::Layouter::default();
 +        layouter.update(module.to_ctx()).expect("types lay out");
-+        let size = |name: &str| {
-+            let (handle, _) = module
++        // Each member's first word, and the struct's words.
++        let words = |name: &str| {
++            let (handle, ty) = module
 +                .types
 +                .iter()
 +                .find(|(_, ty)| ty.name.as_deref() == Some(name))
 +                .expect("the shader declares it");
-+            layouter[handle].size as usize
++            let naga::TypeInner::Struct { members, .. } = &ty.inner else {
++                panic!("{name} is a struct");
++            };
++            let at = members
++                .iter()
++                .map(|member| (member.name.clone().unwrap_or_default(), member.offset / 4))
++                .collect::<Vec<_>>();
++            (at, layouter[handle].size as usize / 4)
 +        };
-+        assert_eq!(size("MeshParams"), std::mem::size_of::<MeshParams>());
++        let named = |at: &[(&str, u32)]| {
++            at.iter()
++                .map(|&(name, word)| (name.to_owned(), word))
++                .collect::<Vec<_>>()
++        };
 +        assert_eq!(
-+            size("MeshComposite"),
-+            std::mem::size_of::<CompositeParams>()
++            words("MeshParams"),
++            (
++                named(&[
++                    ("model_view", 0),
++                    ("projection", 16),
++                    ("ndc_scale", 32),
++                    ("ndc_offset", 34),
++                    ("color", 36),
++                    ("light0", 40),
++                    ("light1", 44),
++                    ("ambient", 48),
++                    ("perspective", 49),
++                    ("shaded_smooth", 50),
++                    ("colored", 51),
++                ]),
++                std::mem::size_of::<gpui::MeshParams>() / 4
++            )
 +        );
++        assert_eq!(
++            words("MeshComposite"),
++            (
++                named(&[("origin", 0), ("size", 2), ("viewport", 4), ("pad", 6)]),
++                std::mem::size_of::<gpui::MeshComposite>() / 4
++            )
++        );
++    }
++
++    /// The mesh shader as Direct3D 11 and Metal take it: naga's translations
++    /// of `shaders_mesh.wgsl`, kept beside their renderers, so the three
++    /// draw one shader. `GPUI_WRITE_MESH_SHADERS=1` writes them again.
++    #[test]
++    fn the_mesh_shader_s_translations_are_current() {
++        use std::collections::BTreeMap;
++        let module = naga::front::wgsl::parse_str(include_str!("shaders_mesh.wgsl"))
++            .expect("shader should parse");
++        let info = naga::valid::Validator::new(
++            naga::valid::ValidationFlags::all(),
++            naga::valid::Capabilities::empty(),
++        )
++        .validate(&module)
++        .expect("shader should validate");
++        let binding = |binding| naga::ResourceBinding { group: 0, binding };
++
++        // Shader model 5.0: the mesh's parameters in register b0, the
++        // composite's in b1, the drawn mesh in t0.
++        let register = |register| naga::back::hlsl::BindTarget {
++            space: 0,
++            register,
++            binding_array_size: None,
++            dynamic_storage_buffer_offsets_index: None,
++            restrict_indexing: false,
++        };
++        let mut options = naga::back::hlsl::Options {
++            shader_model: naga::back::hlsl::ShaderModel::V5_0,
++            fake_missing_bindings: false,
++            ..naga::back::hlsl::Options::default()
++        };
++        options.binding_map.insert(binding(0), register(0));
++        options.binding_map.insert(binding(1), register(1));
++        options.binding_map.insert(binding(2), register(0));
++        let mut hlsl = String::new();
++        naga::back::hlsl::Writer::new(&mut hlsl, &options, &Default::default())
++            .write(&module, &info, None)
++            .expect("HLSL");
++
++        // Metal 2.0: the parameters in buffer 0 of each stage, the drawn
++        // mesh in texture 0; the vertices from the pipeline's descriptor.
++        let target = |buffer, texture| naga::back::msl::BindTarget {
++            buffer,
++            texture,
++            ..Default::default()
++        };
++        let stage = |composite: bool| {
++            let mut resources = BTreeMap::new();
++            if composite {
++                resources.insert(binding(1), target(Some(0), None));
++                resources.insert(binding(2), target(None, Some(0)));
++            } else {
++                resources.insert(binding(0), target(Some(0), None));
++            }
++            naga::back::msl::EntryPointResources {
++                resources,
++                ..Default::default()
++            }
++        };
++        let options = naga::back::msl::Options {
++            lang_version: (2, 0),
++            per_entry_point_map: [
++                ("vs_mesh", false),
++                ("fs_mesh", false),
++                ("vs_mesh_composite", true),
++                ("fs_mesh_composite", true),
++            ]
++            .into_iter()
++            .map(|(name, composite)| (name.to_owned(), stage(composite)))
++            .collect(),
++            fake_missing_bindings: false,
++            ..Default::default()
++        };
++        let pipeline = naga::back::msl::PipelineOptions {
++            vertex_pulling_transform: false,
++            ..Default::default()
++        };
++        let (msl, _) =
++            naga::back::msl::write_string(&module, &info, &options, &pipeline).expect("MSL");
++
++        let header = |comment: &str| {
++            format!(
++                "{comment} Made by naga from gpui_wgpu's shaders_mesh.wgsl: do not edit. Its\n{comment} test `the_mesh_shader_s_translations_are_current` makes it again.\n"
++            )
++        };
++        let crates = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
++        let kept = [
++            (
++                format!("{crates}/gpui_windows/src/shaders_mesh.hlsl"),
++                header("//") + &hlsl,
++            ),
++            (
++                format!("{crates}/gpui_apple/src/shaders_mesh.metal"),
++                header("//") + &msl,
++            ),
++        ];
++        for (path, made) in kept {
++            if std::env::var_os("GPUI_WRITE_MESH_SHADERS").is_some() {
++                std::fs::write(&path, &made).unwrap();
++            }
++            let current = std::fs::read_to_string(&path).unwrap_or_default();
++            assert!(
++                current == made,
++                "{path} is not naga's translation of the shader"
++            );
++        }
 +    }
 +}
 diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
@@ -2228,16 +3539,1275 @@ index dc716237..fe044a5e 100644
      #[test]
      fn webgl_shader_is_valid_wgsl_without_storage_buffers() {
          assert!(!WEBGL_SHADERS.contains("var<storage"));
+diff --git a/crates/gpui_windows/src/directx_meshes.rs b/crates/gpui_windows/src/directx_meshes.rs
+new file mode 100644
+index 00000000..6d1a4ec7
+--- /dev/null
++++ b/crates/gpui_windows/src/directx_meshes.rs
+@@ -0,0 +1,951 @@
++//! Meshes drawn in 3D (`gpui::PaintMesh`) by Direct3D 11, as gpui_wgpu draws
++//! them: each in a pass of its own into an offscreen target the size of what
++//! is shown of it (`gpui::MeshFrame`), multisampled as paths are and with a
++//! depth buffer, then composited into the frame in draw order.
++//!
++//! The shaders are naga's translation of gpui_wgpu's `shaders_mesh.wgsl`
++//! (`shaders_mesh.hlsl`, kept current by a test there), compiled once a
++//! process when the first mesh is asked for. The meshes are kept by a
++//! `gpui::MeshStore`, which makes their buffers on a thread of its own (the
++//! device is free-threaded) and lets go of them in the first frame that does
++//! not draw them; the target goes with the last mesh drawn.
++
++use std::{cell::OnceCell, ffi::c_void, slice, sync::Arc, sync::OnceLock};
++
++use anyhow::{Context as _, Result};
++use gpui::{
++    DevicePixels, Mesh, MeshComposite, MeshMaker, MeshParams, MeshPreparation, MeshStore,
++    PaintMesh, Size,
++};
++use windows::{
++    Win32::Graphics::{
++        Direct3D::{Fxc::*, *},
++        Direct3D11::*,
++        Dxgi::Common::*,
++    },
++    core::PCSTR,
++};
++
++/// Samples a pixel, as paths are drawn: Direct3D 10.1 guarantees four for
++/// these formats.
++const SAMPLE_COUNT: u32 = 4;
++const COLOR_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
++const DEPTH_FORMAT: DXGI_FORMAT = DXGI_FORMAT_D32_FLOAT;
++/// The largest side of a texture at feature level 10.1, the least gpui asks
++/// for.
++const LARGEST_TARGET: u32 = 8192;
++/// The largest buffer Direct3D 11 guarantees, whatever the GPU's memory.
++const LARGEST_BUFFER: usize = 128 << 20;
++
++/// A mesh's buffers on the device.
++pub(crate) struct Buffers {
++    positions: ID3D11Buffer,
++    indices: ID3D11Buffer,
++    /// Its positions' colors, when it has some.
++    colors: Option<ID3D11Buffer>,
++    count: u32,
++}
++
++/// How the device holds a mesh (`gpui::MeshMaker`).
++#[derive(Clone)]
++pub(crate) struct Maker(ID3D11Device);
++
++impl MeshMaker for Maker {
++    type Buffers = Buffers;
++    type Normals = ID3D11Buffer;
++
++    fn holds(&self, mesh: &Mesh) -> bool {
++        [
++            size_of_val(mesh.positions()),
++            size_of_val(mesh.indices()),
++            mesh.colors().map_or(0, size_of_val),
++        ]
++        .into_iter()
++        .all(|bytes| bytes <= LARGEST_BUFFER)
++    }
++
++    fn buffers(&self, mesh: &Mesh) -> Option<Buffers> {
++        Some(Buffers {
++            positions: self.buffer(mesh.positions(), D3D11_BIND_VERTEX_BUFFER)?,
++            indices: self.buffer(mesh.indices(), D3D11_BIND_INDEX_BUFFER)?,
++            colors: match mesh.colors() {
++                Some(colors) => Some(self.buffer(colors, D3D11_BIND_VERTEX_BUFFER)?),
++                None => None,
++            },
++            count: mesh.indices().len() as u32,
++        })
++    }
++
++    fn normals(&self, normals: &[[f32; 3]]) -> Option<ID3D11Buffer> {
++        self.buffer(normals, D3D11_BIND_VERTEX_BUFFER)
++    }
++}
++
++impl Maker {
++    /// A buffer holding `data` for good, bound as `bind`.
++    fn buffer<T: Copy>(&self, data: &[T], bind: D3D11_BIND_FLAG) -> Option<ID3D11Buffer> {
++        let desc = D3D11_BUFFER_DESC {
++            ByteWidth: u32::try_from(size_of_val(data)).ok()?,
++            Usage: D3D11_USAGE_IMMUTABLE,
++            BindFlags: bind.0 as u32,
++            CPUAccessFlags: 0,
++            MiscFlags: 0,
++            StructureByteStride: 0,
++        };
++        let initial = D3D11_SUBRESOURCE_DATA {
++            pSysMem: data.as_ptr().cast::<c_void>(),
++            SysMemPitch: 0,
++            SysMemSlicePitch: 0,
++        };
++        let mut buffer = None;
++        // SAFETY: `initial` points at `ByteWidth` readable bytes, copied
++        // before the call returns.
++        match unsafe {
++            self.0
++                .CreateBuffer(&desc, Some(&initial), Some(&mut buffer))
++        } {
++            Ok(()) => buffer,
++            Err(error) => {
++                log::error!("a mesh's buffer of {} bytes: {error}", desc.ByteWidth);
++                None
++            }
++        }
++    }
++}
++
++/// The shaders, compiled from naga's translation: the same bytes for every
++/// device, so once a process.
++struct Compiled {
++    vertex: Vec<u8>,
++    fragment: Vec<u8>,
++    composite_vertex: Vec<u8>,
++    composite_fragment: Vec<u8>,
++}
++
++impl Compiled {
++    fn get() -> Result<&'static Compiled> {
++        static COMPILED: OnceLock<Result<Compiled, String>> = OnceLock::new();
++        COMPILED
++            .get_or_init(|| {
++                let compiled =
++                    |entry, target| compile(entry, target).map_err(|error| format!("{error:#}"));
++                Ok(Compiled {
++                    vertex: compiled("vs_mesh\0", "vs_4_1\0")?,
++                    fragment: compiled("fs_mesh\0", "ps_4_1\0")?,
++                    composite_vertex: compiled("vs_mesh_composite\0", "vs_4_1\0")?,
++                    composite_fragment: compiled("fs_mesh_composite\0", "ps_4_1\0")?,
++                })
++            })
++            .as_ref()
++            .map_err(|error| anyhow::anyhow!("{error}"))
++    }
++}
++
++/// `entry` of the mesh shaders, compiled for `target`, both nul-terminated.
++/// Shader model 4.1, as gpui's other shaders: what feature level 10.1 runs.
++fn compile(entry: &str, target: &str) -> Result<Vec<u8>> {
++    const SOURCE: &str = include_str!("shaders_mesh.hlsl");
++    let mut code = None;
++    let mut errors = None;
++    // SAFETY: the source is `SOURCE.len()` bytes; `entry` and `target` end
++    // with a nul; the blobs are read before they are dropped.
++    unsafe {
++        let compiled = D3DCompile(
++            SOURCE.as_ptr().cast(),
++            SOURCE.len(),
++            PCSTR(c"shaders_mesh.hlsl".as_ptr().cast()),
++            None,
++            None,
++            PCSTR::from_raw(entry.as_ptr()),
++            PCSTR::from_raw(target.as_ptr()),
++            D3DCOMPILE_OPTIMIZATION_LEVEL3,
++            0,
++            &mut code,
++            Some(&mut errors),
++        );
++        if let Err(error) = compiled {
++            let said = errors.map(|blob: ID3DBlob| {
++                let bytes = slice::from_raw_parts(
++                    blob.GetBufferPointer().cast::<u8>(),
++                    blob.GetBufferSize(),
++                );
++                String::from_utf8_lossy(bytes).into_owned()
++            });
++            anyhow::bail!(
++                "{}: {error} {}",
++                entry.trim_end_matches('\0'),
++                said.unwrap_or_default()
++            );
++        }
++        let code = code.context("no shader code")?;
++        Ok(
++            slice::from_raw_parts(code.GetBufferPointer().cast::<u8>(), code.GetBufferSize())
++                .to_vec(),
++        )
++    }
++}
++
++struct Pipelines {
++    vertex: ID3D11VertexShader,
++    fragment: ID3D11PixelShader,
++    /// Positions, normals and colors, a buffer each.
++    layout: ID3D11InputLayout,
++    composite_vertex: ID3D11VertexShader,
++    composite_fragment: ID3D11PixelShader,
++    depth: ID3D11DepthStencilState,
++    /// Either side may face the camera, as a mesh's winding is not always
++    /// kept.
++    rasterizer: ID3D11RasterizerState,
++    /// What is drawn is written as it is: the target holds nothing else.
++    drawn: ID3D11BlendState,
++    /// What was drawn is premultiplied by its coverage: resolved edges over
++    /// nothing.
++    composited: ID3D11BlendState,
++    params: ID3D11Buffer,
++    composite: ID3D11Buffer,
++}
++
++impl Pipelines {
++    fn new(device: &ID3D11Device) -> Result<Self> {
++        let compiled = Compiled::get()?;
++        // SAFETY: plain Direct3D calls, every pointer to a value that lives
++        // through the call.
++        unsafe {
++            let mut vertex = None;
++            device.CreateVertexShader(&compiled.vertex, None, Some(&mut vertex))?;
++            let mut fragment = None;
++            device.CreatePixelShader(&compiled.fragment, None, Some(&mut fragment))?;
++            let mut composite_vertex = None;
++            device.CreateVertexShader(
++                &compiled.composite_vertex,
++                None,
++                Some(&mut composite_vertex),
++            )?;
++            let mut composite_fragment = None;
++            device.CreatePixelShader(
++                &compiled.composite_fragment,
++                None,
++                Some(&mut composite_fragment),
++            )?;
++
++            // naga names each location `LOC<n>`.
++            let element = |slot: u32, format| D3D11_INPUT_ELEMENT_DESC {
++                SemanticName: PCSTR(c"LOC".as_ptr().cast()),
++                SemanticIndex: slot,
++                Format: format,
++                InputSlot: slot,
++                AlignedByteOffset: 0,
++                InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
++                InstanceDataStepRate: 0,
++            };
++            let mut layout = None;
++            device.CreateInputLayout(
++                &[
++                    element(0, DXGI_FORMAT_R32G32B32_FLOAT),
++                    element(1, DXGI_FORMAT_R32G32B32_FLOAT),
++                    element(2, DXGI_FORMAT_R8G8B8A8_UNORM),
++                ],
++                &compiled.vertex,
++                Some(&mut layout),
++            )?;
++
++            let mut depth = None;
++            device.CreateDepthStencilState(
++                &D3D11_DEPTH_STENCIL_DESC {
++                    DepthEnable: true.into(),
++                    DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ALL,
++                    DepthFunc: D3D11_COMPARISON_LESS,
++                    StencilEnable: false.into(),
++                    ..Default::default()
++                },
++                Some(&mut depth),
++            )?;
++
++            let mut rasterizer = None;
++            device.CreateRasterizerState(
++                &D3D11_RASTERIZER_DESC {
++                    FillMode: D3D11_FILL_SOLID,
++                    CullMode: D3D11_CULL_NONE,
++                    FrontCounterClockwise: false.into(),
++                    DepthBias: 0,
++                    DepthBiasClamp: 0.,
++                    SlopeScaledDepthBias: 0.,
++                    DepthClipEnable: true.into(),
++                    ScissorEnable: false.into(),
++                    MultisampleEnable: true.into(),
++                    AntialiasedLineEnable: false.into(),
++                },
++                Some(&mut rasterizer),
++            )?;
++
++            let mut desc = D3D11_BLEND_DESC::default();
++            desc.RenderTarget[0].BlendEnable = false.into();
++            desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
++            let mut drawn = None;
++            device.CreateBlendState(&desc, Some(&mut drawn))?;
++            let target = &mut desc.RenderTarget[0];
++            target.BlendEnable = true.into();
++            target.BlendOp = D3D11_BLEND_OP_ADD;
++            target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
++            target.SrcBlend = D3D11_BLEND_ONE;
++            target.SrcBlendAlpha = D3D11_BLEND_ONE;
++            target.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
++            target.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
++            let mut composited = None;
++            device.CreateBlendState(&desc, Some(&mut composited))?;
++
++            let constants = |bytes: usize| -> Result<ID3D11Buffer> {
++                let mut buffer = None;
++                device.CreateBuffer(
++                    &D3D11_BUFFER_DESC {
++                        ByteWidth: bytes as u32,
++                        Usage: D3D11_USAGE_DYNAMIC,
++                        BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
++                        CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
++                        MiscFlags: 0,
++                        StructureByteStride: 0,
++                    },
++                    None,
++                    Some(&mut buffer),
++                )?;
++                buffer.context("no constant buffer")
++            };
++
++            Ok(Pipelines {
++                vertex: vertex.context("no vertex shader")?,
++                fragment: fragment.context("no pixel shader")?,
++                layout: layout.context("no input layout")?,
++                composite_vertex: composite_vertex.context("no vertex shader")?,
++                composite_fragment: composite_fragment.context("no pixel shader")?,
++                depth: depth.context("no depth state")?,
++                rasterizer: rasterizer.context("no rasterizer state")?,
++                drawn: drawn.context("no blend state")?,
++                composited: composited.context("no blend state")?,
++                params: constants(size_of::<MeshParams>())?,
++                composite: constants(size_of::<MeshComposite>())?,
++            })
++        }
++    }
++}
++
++/// Where meshes are drawn: a multisampled colour and depth, resolved into a
++/// texture the composite reads.
++struct Target {
++    width: u32,
++    height: u32,
++    multisampled: ID3D11Texture2D,
++    multisampled_view: ID3D11RenderTargetView,
++    depth_view: ID3D11DepthStencilView,
++    resolved: ID3D11Texture2D,
++    resolved_view: ID3D11ShaderResourceView,
++}
++
++impl Target {
++    fn new(device: &ID3D11Device, width: u32, height: u32) -> Result<Self> {
++        let texture = |format, samples, bind: i32| -> Result<ID3D11Texture2D> {
++            let mut texture = None;
++            // SAFETY: the description lives through the call.
++            unsafe {
++                device.CreateTexture2D(
++                    &D3D11_TEXTURE2D_DESC {
++                        Width: width.max(1),
++                        Height: height.max(1),
++                        MipLevels: 1,
++                        ArraySize: 1,
++                        Format: format,
++                        SampleDesc: DXGI_SAMPLE_DESC {
++                            Count: samples,
++                            Quality: if samples > 1 {
++                                D3D11_STANDARD_MULTISAMPLE_PATTERN.0 as u32
++                            } else {
++                                0
++                            },
++                        },
++                        Usage: D3D11_USAGE_DEFAULT,
++                        BindFlags: bind as u32,
++                        CPUAccessFlags: 0,
++                        MiscFlags: 0,
++                    },
++                    None,
++                    Some(&mut texture),
++                )?
++            };
++            texture.context("no texture")
++        };
++        let multisampled = texture(COLOR_FORMAT, SAMPLE_COUNT, D3D11_BIND_RENDER_TARGET.0)?;
++        let depth = texture(DEPTH_FORMAT, SAMPLE_COUNT, D3D11_BIND_DEPTH_STENCIL.0)?;
++        let resolved = texture(COLOR_FORMAT, 1, D3D11_BIND_SHADER_RESOURCE.0)?;
++        let (mut multisampled_view, mut depth_view, mut resolved_view) = (None, None, None);
++        // SAFETY: views of the textures just made.
++        unsafe {
++            device.CreateRenderTargetView(&multisampled, None, Some(&mut multisampled_view))?;
++            device.CreateDepthStencilView(&depth, None, Some(&mut depth_view))?;
++            device.CreateShaderResourceView(&resolved, None, Some(&mut resolved_view))?;
++        }
++        Ok(Target {
++            width,
++            height,
++            multisampled,
++            multisampled_view: multisampled_view.context("no render target view")?,
++            depth_view: depth_view.context("no depth view")?,
++            resolved,
++            resolved_view: resolved_view.context("no shader resource view")?,
++        })
++    }
++}
++
++pub(crate) struct MeshPass {
++    device: ID3D11Device,
++    /// Made when the first mesh is asked for; `None` if they cannot be.
++    pipelines: OnceCell<Option<Pipelines>>,
++    meshes: MeshStore<Maker>,
++    target: Option<Target>,
++}
++
++impl MeshPass {
++    pub(crate) fn new(device: &ID3D11Device) -> Self {
++        Self {
++            device: device.clone(),
++            pipelines: OnceCell::new(),
++            meshes: MeshStore::new(Maker(device.clone())),
++            target: None,
++        }
++    }
++
++    fn pipelines(&self) -> Option<&Pipelines> {
++        self.pipelines
++            .get_or_init(|| {
++                Pipelines::new(&self.device)
++                    .inspect_err(|error| log::error!("meshes will not be drawn: {error:#}"))
++                    .ok()
++            })
++            .as_ref()
++    }
++
++    /// Make `mesh` ready to draw, with its normals when `smooth`
++    /// (`MeshStore::prepare`); never, when the shaders cannot be made.
++    pub(crate) fn prepare_mesh(&mut self, mesh: &Arc<Mesh>, smooth: bool) -> MeshPreparation {
++        if self.pipelines().is_none() {
++            return MeshPreparation::Never;
++        }
++        self.meshes.prepare(mesh, smooth)
++    }
++
++    /// Draw `paint` into the target, then composite it into the frame
++    /// `frame` draws into, of `viewport`'s size. Leaves the device context
++    /// set for meshes, but for its rasterizer state: the caller sets the
++    /// rest back for its own primitives.
++    pub(crate) fn draw(
++        &mut self,
++        context: &ID3D11DeviceContext,
++        paint: &PaintMesh,
++        frame: &Option<ID3D11RenderTargetView>,
++        viewport: &D3D11_VIEWPORT,
++    ) -> Result<()> {
++        let size = Size {
++            width: DevicePixels(viewport.Width as i32),
++            height: DevicePixels(viewport.Height as i32),
++        };
++        let Some(framed) = paint.framed(size, LARGEST_TARGET) else {
++            return Ok(());
++        };
++        let Some((buffers, normals)) = self.meshes.drawn(paint.mesh.id()) else {
++            return Ok(());
++        };
++        let [width, height] = framed.target;
++        if self
++            .target
++            .as_ref()
++            .is_none_or(|target| (target.width, target.height) != (width, height))
++        {
++            self.target = None;
++            self.target = Some(Target::new(&self.device, width, height)?);
++        }
++        let (Some(Some(pipelines)), Some(target)) = (self.pipelines.get(), self.target.as_ref())
++        else {
++            return Ok(());
++        };
++        // Flat until its normals are made.
++        let smooth = paint.view.smooth && normals.is_some();
++        let colored = buffers.colors.is_some();
++        write(
++            context,
++            &pipelines.params,
++            &framed.params(&paint.view, smooth, colored),
++        )?;
++        write(context, &pipelines.composite, &framed.composite())?;
++        // Without normals or colors the shader reads none: the positions
++        // stand in, as long as either would be.
++        let vertices = [
++            Some(buffers.positions.clone()),
++            Some(normals.unwrap_or(&buffers.positions).clone()),
++            Some(
++                buffers
++                    .colors
++                    .as_ref()
++                    .unwrap_or(&buffers.positions)
++                    .clone(),
++            ),
++        ];
++        let strides = [12, 12, 4];
++        let offsets = [0; 3];
++        let [shown_width, shown_height] = framed.shown;
++        // SAFETY: plain Direct3D calls, every pointer to a value that lives
++        // through the call.
++        unsafe {
++            let rasterizer = context.RSGetState().ok();
++            context.RSSetState(&pipelines.rasterizer);
++            context.ClearRenderTargetView(&target.multisampled_view, &[0.; 4]);
++            context.ClearDepthStencilView(&target.depth_view, D3D11_CLEAR_DEPTH.0 as u32, 1., 0);
++            context.OMSetRenderTargets(
++                Some(&[Some(target.multisampled_view.clone())]),
++                &target.depth_view,
++            );
++            context.OMSetDepthStencilState(&pipelines.depth, 0);
++            context.OMSetBlendState(&pipelines.drawn, None, 0xFFFFFFFF);
++            context.RSSetViewports(Some(&[D3D11_VIEWPORT {
++                TopLeftX: 0.,
++                TopLeftY: 0.,
++                Width: shown_width as f32,
++                Height: shown_height as f32,
++                MinDepth: 0.,
++                MaxDepth: 1.,
++            }]));
++            context.IASetInputLayout(&pipelines.layout);
++            context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++            context.IASetVertexBuffers(
++                0,
++                3,
++                Some(vertices.as_ptr()),
++                Some(strides.as_ptr()),
++                Some(offsets.as_ptr()),
++            );
++            context.IASetIndexBuffer(&buffers.indices, DXGI_FORMAT_R32_UINT, 0);
++            context.VSSetShader(&pipelines.vertex, None);
++            context.PSSetShader(&pipelines.fragment, None);
++            let params = [Some(pipelines.params.clone())];
++            context.VSSetConstantBuffers(0, Some(&params));
++            context.PSSetConstantBuffers(0, Some(&params));
++            context.DrawIndexed(buffers.count, 0, 0);
++            context.ResolveSubresource(&target.resolved, 0, &target.multisampled, 0, COLOR_FORMAT);
++
++            // Composited where it is shown, pixel for pixel.
++            context.OMSetRenderTargets(Some(slice::from_ref(frame)), None);
++            context.OMSetDepthStencilState(None, 0);
++            context.OMSetBlendState(&pipelines.composited, None, 0xFFFFFFFF);
++            context.RSSetViewports(Some(slice::from_ref(viewport)));
++            // Let go of the mesh's buffers.
++            context.IASetInputLayout(None);
++            context.IASetVertexBuffers(
++                0,
++                3,
++                Some([None, None, None].as_ptr()),
++                Some(offsets.as_ptr()),
++                Some(offsets.as_ptr()),
++            );
++            context.IASetIndexBuffer(None, DXGI_FORMAT_R32_UINT, 0);
++            context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
++            context.VSSetShader(&pipelines.composite_vertex, None);
++            context.PSSetShader(&pipelines.composite_fragment, None);
++            let composite = [Some(pipelines.composite.clone())];
++            context.VSSetConstantBuffers(1, Some(&composite));
++            context.PSSetConstantBuffers(1, Some(&composite));
++            context.PSSetShaderResources(0, Some(&[Some(target.resolved_view.clone())]));
++            context.Draw(4, 0);
++            // Free to be drawn into again.
++            context.PSSetShaderResources(0, Some(&[None]));
++            context.RSSetState(rasterizer.as_ref());
++        }
++        Ok(())
++    }
++
++    /// After a frame: let go of the meshes it did not draw, and of the
++    /// target if it drew none.
++    pub(crate) fn end_frame(&mut self) {
++        self.meshes.end_frame();
++        if self.meshes.is_empty() {
++            self.target = None;
++        }
++    }
++}
++
++/// Write `value` into a dynamic constant buffer.
++fn write<T: Copy>(context: &ID3D11DeviceContext, buffer: &ID3D11Buffer, value: &T) -> Result<()> {
++    // SAFETY: the buffer was made `size_of::<T>()` bytes long, and is
++    // written whole while mapped.
++    unsafe {
++        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
++        context.Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped))?;
++        std::ptr::copy_nonoverlapping(value, mapped.pData.cast::<T>(), 1);
++        context.Unmap(buffer, 0);
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use gpui::{Bounds, ContentMask, MeshLight, MeshView, ScaledPixels, point, size};
++    use windows::Win32::Foundation::HMODULE;
++
++    const SIDE: u32 = 64;
++
++    fn device() -> (ID3D11Device, ID3D11DeviceContext) {
++        for driver in [D3D_DRIVER_TYPE_WARP, D3D_DRIVER_TYPE_HARDWARE] {
++            let (mut device, mut context) = (None, None);
++            let made = unsafe {
++                D3D11CreateDevice(
++                    None,
++                    driver,
++                    HMODULE::default(),
++                    D3D11_CREATE_DEVICE_BGRA_SUPPORT,
++                    Some(&[D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1]),
++                    D3D11_SDK_VERSION,
++                    Some(&mut device),
++                    None,
++                    Some(&mut context),
++                )
++            };
++            if let (Ok(()), Some(device), Some(context)) = (made, device, context) {
++                return (device, context);
++            }
++        }
++        panic!("no Direct3D 11 device");
++    }
++
++    /// A frame of `SIDE` pixels a side, black, and the view drawn into it.
++    fn frame(
++        device: &ID3D11Device,
++        context: &ID3D11DeviceContext,
++    ) -> (ID3D11Texture2D, ID3D11RenderTargetView) {
++        let mut texture = None;
++        let mut view = None;
++        unsafe {
++            device
++                .CreateTexture2D(
++                    &D3D11_TEXTURE2D_DESC {
++                        Width: SIDE,
++                        Height: SIDE,
++                        MipLevels: 1,
++                        ArraySize: 1,
++                        Format: COLOR_FORMAT,
++                        SampleDesc: DXGI_SAMPLE_DESC {
++                            Count: 1,
++                            Quality: 0,
++                        },
++                        Usage: D3D11_USAGE_DEFAULT,
++                        BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
++                        CPUAccessFlags: 0,
++                        MiscFlags: 0,
++                    },
++                    None,
++                    Some(&mut texture),
++                )
++                .unwrap();
++            let texture = texture.unwrap();
++            device
++                .CreateRenderTargetView(&texture, None, Some(&mut view))
++                .unwrap();
++            let view = view.unwrap();
++            context.ClearRenderTargetView(&view, &[0., 0., 0., 1.]);
++            (texture, view)
++        }
++    }
++
++    /// The frame's pixels, red, green, blue, alpha, row after row.
++    fn pixels(
++        device: &ID3D11Device,
++        context: &ID3D11DeviceContext,
++        texture: &ID3D11Texture2D,
++    ) -> Vec<[u8; 4]> {
++        let mut staging = None;
++        unsafe {
++            device
++                .CreateTexture2D(
++                    &D3D11_TEXTURE2D_DESC {
++                        Width: SIDE,
++                        Height: SIDE,
++                        MipLevels: 1,
++                        ArraySize: 1,
++                        Format: COLOR_FORMAT,
++                        SampleDesc: DXGI_SAMPLE_DESC {
++                            Count: 1,
++                            Quality: 0,
++                        },
++                        Usage: D3D11_USAGE_STAGING,
++                        BindFlags: 0,
++                        CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
++                        MiscFlags: 0,
++                    },
++                    None,
++                    Some(&mut staging),
++                )
++                .unwrap();
++            let staging = staging.unwrap();
++            context.CopyResource(&staging, texture);
++            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
++            context
++                .Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
++                .unwrap();
++            let mut pixels = Vec::new();
++            for row in 0..SIDE as usize {
++                let bytes = slice::from_raw_parts(
++                    mapped
++                        .pData
++                        .cast::<u8>()
++                        .add(row * mapped.RowPitch as usize),
++                    SIDE as usize * 4,
++                );
++                pixels.extend(
++                    bytes
++                        .chunks_exact(4)
++                        .map(|bgra| [bgra[2], bgra[1], bgra[0], bgra[3]]),
++                );
++            }
++            context.Unmap(&staging, 0);
++            pixels
++        }
++    }
++
++    /// Two squares in their own colours, the blue one nearer though drawn
++    /// first: where they overlap, it shows. Drawn in the middle half of the
++    /// frame, composited over black.
++    #[test]
++    fn draws_a_mesh_in_depth_where_it_is() {
++        let (device, context) = device();
++        let square = |left: f32, right: f32, z: f32| {
++            [
++                [left, -0.5, z],
++                [right, -0.5, z],
++                [right, 0.5, z],
++                [left, 0.5, z],
++            ]
++        };
++        let positions = [square(0., 0.5, 0.25), square(-0.5, 0.5, 0.5)].concat();
++        let indices = vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7];
++        let colors = [[[0, 0, 255, 255]; 4], [[255, 0, 0, 255]; 4]].concat();
++        let mesh = Arc::new(
++            Mesh::new(positions, indices)
++                .unwrap()
++                .with_colors(colors)
++                .unwrap(),
++        );
++        let mut pass = MeshPass::new(&device);
++        match pass.prepare_mesh(&mesh, false) {
++            MeshPreparation::Started(uploaded) => futures::executor::block_on(uploaded).unwrap(),
++            _ => panic!("the upload should start"),
++        }
++        assert!(matches!(
++            pass.prepare_mesh(&mesh, false),
++            MeshPreparation::Ready
++        ));
++
++        let identity = [
++            [1., 0., 0., 0.],
++            [0., 1., 0., 0.],
++            [0., 0., 1., 0.],
++            [0., 0., 0., 1.],
++        ];
++        let light = MeshLight {
++            direction: [0., 0., 1.],
++            strength: 0.,
++        };
++        let pixels_at = |x: f32, y: f32, width: f32, height: f32| Bounds {
++            origin: point(ScaledPixels(x), ScaledPixels(y)),
++            size: size(ScaledPixels(width), ScaledPixels(height)),
++        };
++        let quarter = SIDE as f32 / 4.;
++        let paint = PaintMesh {
++            order: 0,
++            bounds: pixels_at(quarter, quarter, 2. * quarter, 2. * quarter),
++            content_mask: ContentMask {
++                bounds: pixels_at(0., 0., SIDE as f32, SIDE as f32),
++            },
++            mesh: Arc::clone(&mesh),
++            view: MeshView {
++                model_view: identity,
++                projection: identity,
++                perspective: false,
++                smooth: false,
++                color: [0.5; 3],
++                ambient: 1.,
++                lights: [light, light],
++            },
++        };
++        let (texture, view) = frame(&device, &context);
++        let viewport = D3D11_VIEWPORT {
++            TopLeftX: 0.,
++            TopLeftY: 0.,
++            Width: SIDE as f32,
++            Height: SIDE as f32,
++            MinDepth: 0.,
++            MaxDepth: 1.,
++        };
++        pass.draw(&context, &paint, &Some(view), &viewport).unwrap();
++        pass.end_frame();
++
++        let pixels = pixels(&device, &context, &texture);
++        let at = |x: u32, y: u32| pixels[(y * SIDE + x) as usize];
++        let middle = SIDE / 2;
++        // The mesh spans the middle quarter of the frame: its left half
++        // red, its right half blue, in front.
++        assert_eq!(at(middle - 4, middle), [255, 0, 0, 255]);
++        assert_eq!(at(middle + 4, middle), [0, 0, 255, 255]);
++        // Around it, in its bounds and out of them, the frame as it was.
++        assert_eq!(at(middle, SIDE / 4 + 2), [0, 0, 0, 255]);
++        assert_eq!(at(2, 2), [0, 0, 0, 255]);
++        // Let go of once a frame does not draw it.
++        pass.end_frame();
++        assert!(pass.meshes.is_empty() && pass.target.is_none());
++    }
++
++    /// Whether this runs under Wine, whose HLSL compiler (vkd3d) cannot
++    /// compile gpui's own shaders: no renderer can be made there.
++    fn under_wine() -> bool {
++        use windows::{
++            Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress},
++            core::{s, w},
++        };
++        unsafe { GetModuleHandleW(w!("ntdll.dll")) }
++            .ok()
++            .and_then(|ntdll| unsafe { GetProcAddress(ntdll, s!("wine_get_version")) })
++            .is_some()
++    }
++
++    /// Among other primitives, in the renderer: a quad painted before the
++    /// mesh shows around it, one painted after covers it, each where it is.
++    #[test]
++    fn the_renderer_draws_a_mesh_among_other_primitives() {
++        if under_wine() {
++            eprintln!("skipped: Wine cannot compile gpui's shaders");
++            return;
++        }
++        use gpui::{
++            BorderStyle, Corners, Edges, Hsla, Quad, Scene, WindowBackgroundAppearance, hsla,
++        };
++        use windows::{
++            Win32::UI::WindowsAndMessaging::{CreateWindowExW, WINDOW_EX_STYLE, WS_POPUP},
++            core::w,
++        };
++
++        let devices = crate::DirectXDevices::new().expect("a device");
++        let hwnd = unsafe {
++            CreateWindowExW(
++                WINDOW_EX_STYLE(0),
++                w!("STATIC"),
++                w!(""),
++                WS_POPUP,
++                0,
++                0,
++                SIDE as i32,
++                SIDE as i32,
++                None,
++                None,
++                None,
++                None,
++            )
++        }
++        .expect("a window");
++        let mut renderer = crate::DirectXRenderer::new(hwnd, &devices, true).expect("a renderer");
++        renderer
++            .resize(size(DevicePixels(SIDE as i32), DevicePixels(SIDE as i32)))
++            .unwrap();
++
++        // A square facing the camera, half the bounds wide and high.
++        let mesh = Arc::new(
++            Mesh::new(
++                vec![
++                    [-0.5, -0.5, 0.5],
++                    [0.5, -0.5, 0.5],
++                    [0.5, 0.5, 0.5],
++                    [-0.5, 0.5, 0.5],
++                ],
++                vec![0, 1, 2, 0, 2, 3],
++            )
++            .unwrap()
++            .with_colors(vec![[0, 0, 255, 255]; 4])
++            .unwrap(),
++        );
++        loop {
++            match renderer.prepare_mesh(&mesh, false) {
++                MeshPreparation::Ready => break,
++                MeshPreparation::Started(uploaded) => {
++                    futures::executor::block_on(uploaded).expect("uploaded")
++                }
++                MeshPreparation::Pending | MeshPreparation::Flat(_) => std::thread::yield_now(),
++                MeshPreparation::Never => panic!("never drawn"),
++            }
++        }
++
++        let bounds = |x: f32, y: f32, width: f32, height: f32| Bounds {
++            origin: point(ScaledPixels(x), ScaledPixels(y)),
++            size: size(ScaledPixels(width), ScaledPixels(height)),
++        };
++        let quad = |at: Bounds<ScaledPixels>, color: Hsla| Quad {
++            order: 0,
++            border_style: BorderStyle::Solid,
++            bounds: at,
++            content_mask: ContentMask { bounds: at },
++            background: color.into(),
++            border_color: color,
++            corner_radii: Corners::default(),
++            border_widths: Edges::default(),
++        };
++        let identity = [
++            [1., 0., 0., 0.],
++            [0., 1., 0., 0.],
++            [0., 0., 1., 0.],
++            [0., 0., 0., 1.],
++        ];
++        let light = MeshLight {
++            direction: [0., 0., 1.],
++            strength: 0.,
++        };
++        let quarter = SIDE as f32 / 4.;
++        let mut scene = Scene::default();
++        // Green under the mesh's bounds, red over its right side.
++        scene.insert_primitive(quad(
++            bounds(0., 0., SIDE as f32, SIDE as f32 / 2.),
++            hsla(1. / 3., 1., 0.5, 1.),
++        ));
++        scene.insert_primitive(PaintMesh {
++            order: 0,
++            bounds: bounds(quarter, quarter, 2. * quarter, 2. * quarter),
++            content_mask: ContentMask {
++                bounds: bounds(0., 0., SIDE as f32, SIDE as f32),
++            },
++            mesh: Arc::clone(&mesh),
++            view: MeshView {
++                model_view: identity,
++                projection: identity,
++                perspective: false,
++                smooth: false,
++                color: [0.5; 3],
++                ambient: 1.,
++                lights: [light, light],
++            },
++        });
++        scene.insert_primitive(quad(
++            bounds(36., 0., 4., SIDE as f32),
++            hsla(0., 1., 0.5, 1.),
++        ));
++        scene.finish();
++        let image = renderer
++            .render_to_image(&scene, WindowBackgroundAppearance::Opaque)
++            .unwrap();
++        let at = |x: u32, y: u32| image.get_pixel(x, y).0;
++        let middle = SIDE / 2;
++        assert_eq!(at(middle, middle), [0, 0, 255, 255], "the mesh");
++        assert_eq!(at(37, middle), [255, 0, 0, 255], "the quad after it");
++        assert_eq!(
++            at(middle, 20),
++            [0, 255, 0, 255],
++            "the quad under its bounds"
++        );
++        assert_eq!(
++            at(middle, 44),
++            [255, 255, 255, 255],
++            "the window's background"
++        );
++    }
++}
 diff --git a/crates/gpui_windows/src/directx_renderer.rs b/crates/gpui_windows/src/directx_renderer.rs
-index 98a13f30..387dd64b 100644
+index 98a13f30..6a46512f 100644
 --- a/crates/gpui_windows/src/directx_renderer.rs
 +++ b/crates/gpui_windows/src/directx_renderer.rs
-@@ -385,6 +385,8 @@ impl DirectXRenderer {
+@@ -43,6 +43,8 @@ pub(crate) struct DirectXRenderer {
+     resources: Option<DirectXResources>,
+     globals: DirectXGlobalElements,
+     pipelines: DirectXRenderPipelines,
++    /// Meshes drawn in 3D (`directx_meshes`).
++    meshes: MeshPass,
+     direct_composition: Option<DirectComposition>,
+     font_info: &'static FontInfo,
+ 
+@@ -170,6 +172,7 @@ impl DirectXRenderer {
+             .context("Creating DirectX global elements")?;
+         let pipelines = DirectXRenderPipelines::new(&devices.device)
+             .context("Creating DirectX render pipelines")?;
++        let meshes = MeshPass::new(&devices.device);
+ 
+         let direct_composition = if disable_direct_composition {
+             None
+@@ -189,6 +192,7 @@ impl DirectXRenderer {
+             resources: Some(resources),
+             globals,
+             pipelines,
++            meshes,
+             direct_composition,
+             font_info: Self::get_font_info(),
+             width: 1,
+@@ -318,6 +322,9 @@ impl DirectXRenderer {
+                 .device_context
+                 .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
+         }
++        // The meshes' buffers were the lost device's: uploaded again when
++        // next drawn.
++        self.meshes = MeshPass::new(&devices.device);
+         self.devices = Some(devices);
+         self.resources = Some(resources);
+         self.globals = globals;
+@@ -385,6 +392,7 @@ impl DirectXRenderer {
                      self.draw_polychrome_sprites(texture_id, range.start, range.len())
                  }
                  PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
-+                // No 3D pass yet: the window says it draws no meshes.
-+                PrimitiveBatch::Meshes(_) => Ok(()),
++                PrimitiveBatch::Meshes(range) => self.draw_meshes(&scene.meshes[range]),
              }
              .with_context(|| {
                  format!(
+@@ -401,6 +409,7 @@ impl DirectXRenderer {
+                 )
+             })?;
+         }
++        self.meshes.end_frame();
+         Ok(())
+     }
+ 
+@@ -813,6 +822,39 @@ impl DirectXRenderer {
+         )
+     }
+ 
++    /// Make `mesh` ready to draw (`gpui::PlatformWindow::prepare_mesh`).
++    pub(crate) fn prepare_mesh(&mut self, mesh: &Arc<Mesh>, smooth: bool) -> MeshPreparation {
++        self.meshes.prepare_mesh(mesh, smooth)
++    }
++
++    /// Each mesh drawn offscreen, then composited where it is; then the
++    /// state the other primitives are drawn with, as `pre_draw` set it.
++    fn draw_meshes(&mut self, meshes: &[PaintMesh]) -> Result<()> {
++        let devices = self.devices.as_ref().context("devices missing")?;
++        let resources = self.resources.as_ref().context("resources missing")?;
++        let context = &devices.device_context;
++        let drawn = meshes.iter().try_for_each(|paint| {
++            self.meshes.draw(
++                context,
++                paint,
++                &resources.render_target_view,
++                &resources.viewport,
++            )
++        });
++        unsafe {
++            context.OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
++            context.RSSetViewports(Some(slice::from_ref(&resources.viewport)));
++            context
++                .VSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
++            context
++                .VSSetConstantBuffers(1, Some(slice::from_ref(&self.globals.batch_params_buffer)));
++            context
++                .PSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
++            context.PSSetConstantBuffers(1, Some(&[None]));
++        }
++        drawn
++    }
++
+     fn draw_surfaces(&mut self, surfaces: &[PaintSurface]) -> Result<()> {
+         if surfaces.is_empty() {
+             return Ok(());
+diff --git a/crates/gpui_windows/src/gpui_windows.rs b/crates/gpui_windows/src/gpui_windows.rs
+index e7a45a03..f1f5d3fd 100644
+--- a/crates/gpui_windows/src/gpui_windows.rs
++++ b/crates/gpui_windows/src/gpui_windows.rs
+@@ -7,6 +7,7 @@ mod direct_manipulation;
+ mod direct_write;
+ mod directx_atlas;
+ mod directx_devices;
++mod directx_meshes;
+ mod directx_renderer;
+ mod dispatcher;
+ mod display;
+@@ -25,6 +26,7 @@ pub(crate) use destination_list::*;
+ pub(crate) use direct_write::*;
+ pub(crate) use directx_atlas::*;
+ pub(crate) use directx_devices::*;
++pub(crate) use directx_meshes::*;
+ pub(crate) use directx_renderer::*;
+ pub(crate) use dispatcher::*;
+ pub(crate) use display::*;
+diff --git a/crates/gpui_windows/src/shaders_mesh.hlsl b/crates/gpui_windows/src/shaders_mesh.hlsl
+new file mode 100644
+index 00000000..c1d6fb52
+--- /dev/null
++++ b/crates/gpui_windows/src/shaders_mesh.hlsl
+@@ -0,0 +1,175 @@
++// Made by naga from gpui_wgpu's shaders_mesh.wgsl: do not edit. Its
++// test `the_mesh_shader_s_translations_are_current` makes it again.
++struct MeshParams {
++    row_major float4x4 model_view;
++    row_major float4x4 projection;
++    float2 ndc_scale;
++    float2 ndc_offset;
++    float4 color;
++    float4 light0_;
++    float4 light1_;
++    float ambient;
++    uint perspective;
++    uint shaded_smooth;
++    uint colored;
++};
++
++struct MeshVarying {
++    float4 position : SV_Position;
++    float3 eye : LOC0;
++    float3 normal : LOC1;
++    float3 color : LOC2;
++};
++
++struct MeshComposite {
++    float2 origin;
++    float2 size;
++    float2 viewport;
++    float2 pad;
++};
++
++cbuffer mesh : register(b0) { MeshParams mesh; }
++cbuffer composite : register(b1) { MeshComposite composite; }
++Texture2D<float4> t_mesh : register(t0);
++
++struct VertexOutput_vs_mesh {
++    float3 eye : LOC0;
++    float3 normal_2 : LOC1;
++    float3 color_1 : LOC2;
++    float4 position_2 : SV_Position;
++};
++
++struct FragmentInput_fs_mesh {
++    float3 eye_1 : LOC0;
++    float3 normal_3 : LOC1;
++    float3 color_2 : LOC2;
++    float4 position_3 : SV_Position;
++};
++
++struct FragmentInput_fs_mesh_composite {
++    float4 position_4 : SV_Position;
++};
++
++float3 linear_from_srgb(float3 srgb)
++{
++    float3 low = (srgb / (12.92).xxx);
++    float3 high = pow(((srgb + (0.055).xxx) / (1.055).xxx), (2.4).xxx);
++    return ((srgb <= (0.04045).xxx) ? low : high);
++}
++
++float3 srgb_from_linear(float3 linear_)
++{
++    float3 v = clamp(linear_, (0.0).xxx, (1.0).xxx);
++    float3 low_1 = (v * 12.92);
++    float3 high_1 = ((1.055 * pow(v, (0.41666666).xxx)) - (0.055).xxx);
++    return ((v <= (0.0031308).xxx) ? low_1 : high_1);
++}
++
++VertexOutput_vs_mesh vs_mesh(float3 position : LOC0, float3 normal : LOC1, float4 color : LOC2)
++{
++    MeshVarying out_ = (MeshVarying)0;
++
++    float4x4 _e5 = mesh.model_view;
++    float4 eye_2 = mul(float4(position, 1.0), _e5);
++    float4x4 _e11 = mesh.projection;
++    float4 clip_ = mul(eye_2, _e11);
++    float2 _e18 = mesh.ndc_scale;
++    float2 _e22 = mesh.ndc_offset;
++    out_.position = float4(((clip_.xy * _e18) + (_e22 * clip_.w)), clip_.z, clip_.w);
++    out_.eye = eye_2.xyz;
++    float4x4 _e34 = mesh.model_view;
++    out_.normal = mul(float4(normal, 0.0), _e34).xyz;
++    float4 _e42 = mesh.color;
++    out_.color = _e42.xyz;
++    uint _e46 = mesh.colored;
++    if ((_e46 != 0u)) {
++        const float3 _e51 = linear_from_srgb(color.xyz);
++        out_.color = _e51;
++    }
++    MeshVarying _e52 = out_;
++    const MeshVarying meshvarying = _e52;
++    const VertexOutput_vs_mesh meshvarying_1 = { meshvarying.eye, meshvarying.normal, meshvarying.color, meshvarying.position };
++    return meshvarying_1;
++}
++
++float4 fs_mesh(FragmentInput_fs_mesh fragmentinput_fs_mesh) : SV_Target0
++{
++    MeshVarying input = { fragmentinput_fs_mesh.position_3, fragmentinput_fs_mesh.eye_1, fragmentinput_fs_mesh.normal_3, fragmentinput_fs_mesh.color_2 };
++    float3 toward = float3(0.0, 0.0, 1.0);
++    float3 normal_1 = (float3)0;
++    bool local = (bool)0;
++    float3 surface = (float3)0;
++
++    uint _e8 = mesh.perspective;
++    if ((_e8 != 0u)) {
++        toward = normalize(-(input.eye));
++    }
++    float3 _e15 = ddx(input.eye);
++    float3 _e17 = ddy(input.eye);
++    float3 across = cross(_e15, _e17);
++    float3 _e19 = toward;
++    normal_1 = _e19;
++    float length_squared = dot(across, across);
++    if ((length_squared > 1e-30)) {
++        normal_1 = (across * rsqrt(length_squared));
++    }
++    float3 _e26 = normal_1;
++    float3 _e27 = toward;
++    if ((dot(_e26, _e27) < 0.0)) {
++        float3 _e31 = normal_1;
++        normal_1 = -(_e31);
++    }
++    float smooth_length = dot(input.normal, input.normal);
++    uint _e38 = mesh.shaded_smooth;
++    if ((_e38 != 0u)) {
++        local = (smooth_length > 1e-30);
++    } else {
++        local = false;
++    }
++    bool _e46 = local;
++    if (_e46) {
++        surface = (input.normal * rsqrt(smooth_length));
++        float3 _e51 = surface;
++        float3 _e52 = normal_1;
++        if ((dot(_e51, _e52) < 0.0)) {
++            float3 _e56 = surface;
++            surface = -(_e56);
++        }
++        float3 _e58 = surface;
++        normal_1 = _e58;
++    }
++    float _e61 = mesh.ambient;
++    float _e65 = mesh.light0_.w;
++    float3 _e66 = normal_1;
++    float4 _e69 = mesh.light0_;
++    float _e79 = mesh.light1_.w;
++    float3 _e80 = normal_1;
++    float4 _e83 = mesh.light1_;
++    float light = ((_e61 + (_e65 * max(dot(_e66, _e69.xyz), 0.0))) + (_e79 * max(dot(_e80, _e83.xyz), 0.0)));
++    const float3 _e92 = srgb_from_linear((input.color * light));
++    return float4(_e92, 1.0);
++}
++
++float4 vs_mesh_composite(uint vertex_id : SV_VertexID) : SV_Position
++{
++    float2 unit = float2(float((vertex_id & 1u)), (0.5 * float((vertex_id & 2u))));
++    float2 _e12 = composite.origin;
++    float2 _e15 = composite.size;
++    float2 pixel = (_e12 + (unit * _e15));
++    float2 _e20 = composite.viewport;
++    float2 device = (((pixel / _e20) * float2(2.0, -2.0)) + float2(-1.0, 1.0));
++    return float4(device, 0.0, 1.0);
++}
++
++int2 naga_f2i32(float2 value) {
++    return int2(clamp(value, -2147483600.0, 2147483500.0));
++}
++
++float4 fs_mesh_composite(FragmentInput_fs_mesh_composite fragmentinput_fs_mesh_composite) : SV_Target0
++{
++    float4 position_1 = fragmentinput_fs_mesh_composite.position_4;
++    float2 _e4 = composite.origin;
++    int2 texel = naga_f2i32(floor((position_1.xy - _e4)));
++    float4 _e10 = t_mesh.Load(int3(texel, int(0)));
++    return _e10;
++}
+diff --git a/crates/gpui_windows/src/window.rs b/crates/gpui_windows/src/window.rs
+index 7b80af97..40b884e0 100644
+--- a/crates/gpui_windows/src/window.rs
++++ b/crates/gpui_windows/src/window.rs
+@@ -1087,6 +1087,14 @@ impl PlatformWindow for WindowsWindow {
+         self.state.renderer.borrow().gpu_specs().log_err()
+     }
+ 
++    fn draws_meshes(&self) -> bool {
++        true
++    }
++
++    fn prepare_mesh(&self, mesh: &Arc<gpui::Mesh>, smooth: bool) -> gpui::MeshPreparation {
++        self.state.renderer.borrow_mut().prepare_mesh(mesh, smooth)
++    }
++
+     fn set_idle_inhibited(&self, inhibited: bool) {
+         if self.state.idle_inhibited.replace(inhibited) != inhibited {
+             hold_display(inhibited);

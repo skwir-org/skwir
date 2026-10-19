@@ -56,7 +56,7 @@ criterion.workspace = true
 gpui = { workspace = true, features = ["bench-support"] }
 image.workspace = true
 # Validate shaders with the same Naga revision that wgpu uses at runtime.
-naga = { git = "https://github.com/gfx-rs/wgpu", rev = "3b3506ea31154edc04de64debda0e780cba2639c", features = ["wgsl-in"] }
+naga = { git = "https://github.com/gfx-rs/wgpu", rev = "3b3506ea31154edc04de64debda0e780cba2639c", features = ["wgsl-in", "hlsl-out", "msl-out"] }
 
 [[bench]]
 name = "layout_line"

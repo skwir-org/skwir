@@ -30,6 +30,11 @@ same modules:
   which need a wgpu adapter (lavapipe will do);
 - gpui_linux's clipboard tests.
 
+`just gpui-check-windows` runs gpui_windows's tests of the mesh pass under
+Wine, built for Windows from the same copy (`tools/gpui/check-windows.sh`).
+Wine's Direct3D 11 draws on OpenGL, through Mesa's llvmpipe on an Xvfb of
+its own.
+
 gpui's library tests embed two of Zed's fonts, which the script fetches once
 at the vendored commit.
 
@@ -57,7 +62,7 @@ at the vendored commit.
 | `0030-active-descendant-for` | An element is said as focused while a focus handle beside it holds the focus (the combobox pattern) | — |
 | `0031-aria-states` | Live regions, modal dialogs, lists of many selected, disabled and read-only elements | — |
 | `0032-held-keys` | An action sees the key event it came from, held or not; X11 tells a held key from a press | — |
-| `0033-meshes` | A triangle mesh drawn in 3D (`Window::paint_mesh`), by wgpu | — |
+| `0033-meshes` | A triangle mesh drawn in 3D (`Window::paint_mesh`), by wgpu, Direct3D 11 and Metal | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -388,8 +393,9 @@ in its preview (ADR-067).
   face in linear light.
 - **`Window::paint_mesh(bounds, mesh, view, cx)`** paints one, a
   primitive of its own (`PaintMesh`) in draw order and clipped by the
-  content mask like any other, and says whether it did. Clip space spans
-  the bounds. `MeshView` gives the model-view and projection matrices
+  content mask like any other, and says what it did (`MeshPainted`:
+  painted, loading, or refused by a window without a 3D pass or a GPU that
+  cannot hold it). Clip space spans the bounds. `MeshView` gives the model-view and projection matrices
   (column-major), whether the projection has perspective, the surface's
   colour in linear RGB, the ambient light and two lights fixed to the
   camera.
@@ -400,9 +406,24 @@ in its preview (ADR-067).
   arrives (a task awaiting the upload refreshes it). The renderer uploads
   on a thread of its own: NVIDIA's driver maps the memory uploads go
   through uncached, and 72 MB took a second there.
+- **`gpui::MeshStore`** is that bookkeeping, for every renderer: it keeps
+  a mesh's buffers by its id, makes them on its thread through the
+  renderer's `MeshMaker` (how its GPU holds a mesh), the normals too once
+  smooth shading asks, and lets go of what a frame did not draw
+  (`end_frame`). Buffers the GPU could not make refuse the mesh for good
+  (`MeshPreparation::Never`); normals it could not make leave it flat. Its
+  thread ends with it: the store waits for the upload under way and skips
+  the rest, so nothing of the GPU's is made or let go of once the renderer
+  is gone (under Wine, a device let go of by a thread while the process
+  exited had it killed).
 - **`Window::draws_meshes`** says whether the window draws them
-  (`PlatformWindow::draws_meshes`, false by default). The Wayland and X11
-  windows say yes; Metal and Direct3D 11 draw nothing yet and say no.
+  (`PlatformWindow::draws_meshes`, false by default). The Wayland, X11,
+  Windows and macOS windows say yes.
+- **`PaintMesh::framed`** says where a mesh is drawn in a frame, alike for
+  every renderer (`MeshFrame`): the part shown, in whole pixels, and the
+  target's size, rounded up to 256 pixels; `MeshFrame::params` and
+  `composite` are the words the shaders read, in the order and layout the
+  WGSL declares them.
 - **wgpu** (`wgpu_meshes.rs`, `shaders_mesh.wgsl`) draws each mesh in a
   pass of its own, as paths are drawn:
   - into a target the size of what is shown of it, rounded up to 256
@@ -418,11 +439,28 @@ in its preview (ADR-067).
     and the window drawn again when they arrive (`MeshPreparation::Flat`).
     Without normals the positions' buffer stands in for theirs, unread;
   - then composited into the frame pixel for pixel, premultiplied.
+- **Direct3D 11** (`directx_meshes.rs`) and **Metal** (`metal_meshes.rs`)
+  draw it the same way, from naga's translations of the same WGSL
+  (`gpui_windows/src/shaders_mesh.hlsl`, `gpui_apple/src/shaders_mesh.metal`),
+  which a test of gpui_wgpu's writes and keeps current
+  (`GPUI_WRITE_MESH_SHADERS=1` writes them again). The composite's
+  bindings are apart from the mesh's, so Direct3D gives each a register of
+  its own. Direct3D compiles the HLSL at shader model 4.1, as gpui's own
+  shaders, once a process, and Metal the MSL once a renderer, when the
+  first mesh is asked for: no build tool of either system is needed, so a
+  build from Linux has them too. Both multisample four times (what every
+  device of theirs has) with a `D32_FLOAT`/`Depth32Float` depth; Metal
+  keeps the multisampled target in tile memory on Apple's GPUs. Direct3D
+  makes buffers from the store's thread (its device is free-threaded),
+  sets a rasterizer state of its own (no culling) and puts back the
+  caller's, then the renderer sets back what `pre_draw` set.
 - **What it holds:** a mesh's buffers are let go of in the first frame
   that does not draw it; the target goes when no mesh is drawn. An upload
   no one waits for any more (nothing else holds the mesh) is skipped. The
-  pipelines are made when the first mesh is drawn, never at start. A
-  mesh larger than the device's buffers is never drawn (logged once).
+  pipelines are made when the first mesh is drawn (Direct3D's and Metal's
+  when the first is asked for, so shaders that cannot be made refuse it),
+  never at start. A mesh larger than the device's buffers is never drawn
+  (logged once).
 
 The tests are the renderer's, on the headless renderer (lavapipe will do):
 `headless_renderer_draws_a_mesh_lit_and_in_depth` (nothing drawn before
@@ -433,9 +471,23 @@ are made, then a roof's ridge lit as its normal says),
 `headless_renderer_draws_a_mesh_in_its_colors`, gpui's
 `smooth_normals_average_the_faces_around`, `headless_renderer_clips_a_mesh_and_keeps_its_order` (what a mask
 shows of a mesh is where the whole is drawn, under a quad painted after),
-and `the_mesh_shader_reads_what_is_written` (the shader validates, its
-parameters' layout matches the Rust side's). `mesh_frame_times` (ignored)
-times the pass on the adapter the headless renderer takes.
+`the_mesh_shader_reads_what_is_written` (the shader validates, each
+parameter where `MeshFrame` writes it) and
+`the_mesh_shader_s_translations_are_current`. gpui's
+`a_mesh_is_framed_by_what_shows_of_it`,
+`what_the_gpu_cannot_make_is_asked_for_once` and
+`a_store_let_go_of_makes_nothing_more` test the shared parts.
+`mesh_frame_times` (ignored) times the pass on the adapter the headless
+renderer takes.
+
+Direct3D 11's tests run under Wine, its d3d11 on OpenGL or Vulkan (Mesa's
+llvmpipe or lavapipe) on an X display of its own:
+`draws_a_mesh_in_depth_where_it_is` (the pass: the nearer square over the
+one drawn after it, in its colours, composited where its bounds are, let
+go of) and `the_renderer_draws_a_mesh_among_other_primitives` (a quad
+under it and one over it, through `DirectXRenderer`; it skips under Wine,
+whose HLSL compiler cannot compile gpui's own shaders). Metal is compiled
+only.
 
 ## Adding or changing a patch
 

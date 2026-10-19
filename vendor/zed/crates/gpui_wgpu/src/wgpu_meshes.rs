@@ -3,50 +3,17 @@
 //! multisampled as paths are and with a depth buffer, then composited into
 //! the frame in draw order, as paths are.
 //!
-//! A mesh's buffers are made and filled on a thread of the pass's own, so a
-//! large mesh never holds the window's thread: where the driver maps the
-//! memory uploads go through uncached, 72 MB took a second. A frame draws a
-//! mesh only once it is there (`prepare_mesh`, which the window asks before
-//! painting it), and lets go of it in the first frame that does not draw
-//! it. The target goes with the last mesh drawn; the pipelines come with the
-//! first, never at start.
+//! The meshes are kept by a `gpui::MeshStore`, which uploads them off the
+//! window's thread and lets go of them in the first frame that does not
+//! draw them; this is how wgpu holds and draws them. The target goes with
+//! the last mesh drawn; the pipelines come with the first, never at start.
 
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
 
-use bytemuck::{Pod, Zeroable};
-use collections::{FxHashMap, FxHashSet};
-use gpui::{DevicePixels, Mesh, MeshId, MeshPreparation, MeshUploaded, PaintMesh, Size};
+use gpui::{DevicePixels, Mesh, MeshId, MeshMaker, MeshPreparation, MeshStore, PaintMesh, Size};
 use wgpu::util::DeviceExt as _;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-/// The target's sides grow and shrink in steps of this many pixels, so a
-/// panel being resized does not make a target at every frame.
-const TARGET_STEP: u32 = 256;
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct MeshParams {
-    model_view: [[f32; 4]; 4],
-    projection: [[f32; 4]; 4],
-    ndc_scale: [f32; 2],
-    ndc_offset: [f32; 2],
-    color: [f32; 4],
-    light0: [f32; 4],
-    light1: [f32; 4],
-    ambient: f32,
-    perspective: u32,
-    smooth: u32,
-    colored: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct CompositeParams {
-    origin: [f32; 2],
-    size: [f32; 2],
-    viewport: [f32; 2],
-    pad: [f32; 2],
-}
 
 struct Pipelines {
     draw: wgpu::RenderPipeline,
@@ -55,119 +22,63 @@ struct Pipelines {
     composite_layout: wgpu::BindGroupLayout,
 }
 
-struct Buffers {
+/// A mesh's buffers on wgpu's device.
+pub(crate) struct Buffers {
     positions: wgpu::Buffer,
     indices: wgpu::Buffer,
-    /// Made once a frame shades the mesh smoothly.
-    normals: Option<wgpu::Buffer>,
     /// Its positions' colors, when it has some.
     colors: Option<wgpu::Buffer>,
     count: u32,
-    /// Whether the frame being drawn draws it.
-    drawn: bool,
 }
 
-/// `mesh`'s normals for smooth shading, made and filled.
-fn normals_of(device: &wgpu::Device, mesh: &Mesh) -> wgpu::Buffer {
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("mesh_normals"),
-        contents: bytemuck::cast_slice(&mesh.smooth_normals()),
-        usage: wgpu::BufferUsages::VERTEX,
-    })
-}
+/// How wgpu's device holds a mesh (`gpui::MeshMaker`).
+#[derive(Clone)]
+pub(crate) struct Maker(Arc<wgpu::Device>);
 
-impl Buffers {
-    /// `mesh`'s, made and filled, with its normals when `normals`.
-    fn of(device: &wgpu::Device, mesh: &Mesh, normals: bool) -> Self {
-        Buffers {
-            positions: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh_positions"),
-                contents: bytemuck::cast_slice(mesh.positions()),
-                usage: wgpu::BufferUsages::VERTEX,
-            }),
-            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh_indices"),
-                contents: bytemuck::cast_slice(mesh.indices()),
-                usage: wgpu::BufferUsages::INDEX,
-            }),
-            normals: normals.then(|| normals_of(device, mesh)),
-            colors: mesh.colors().map(|colors| {
-                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("mesh_colors"),
-                    contents: bytemuck::cast_slice(colors),
-                    usage: wgpu::BufferUsages::VERTEX,
-                })
-            }),
-            count: mesh.indices().len() as u32,
-            drawn: false,
-        }
+impl MeshMaker for Maker {
+    type Buffers = Buffers;
+    type Normals = wgpu::Buffer;
+
+    fn holds(&self, mesh: &Mesh) -> bool {
+        let largest = self.0.limits().max_buffer_size;
+        [mesh.positions().len() * 12, mesh.indices().len() * 4]
+            .into_iter()
+            .all(|bytes| bytes as u64 <= largest)
     }
-}
 
-/// What an upload makes: a mesh's buffers, with its normals or not, or
-/// the normals of a mesh already there.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Making {
-    Mesh { normals: bool },
-    Normals,
-}
+    fn buffers(&self, mesh: &Mesh) -> Option<Buffers> {
+        let buffer = |label, contents: &[u8]| {
+            self.0
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(label),
+                    contents,
+                    usage: if label == "mesh_indices" {
+                        wgpu::BufferUsages::INDEX
+                    } else {
+                        wgpu::BufferUsages::VERTEX
+                    },
+                })
+        };
+        // What wgpu cannot make goes to the device's error handler.
+        Some(Buffers {
+            positions: buffer("mesh_positions", bytemuck::cast_slice(mesh.positions())),
+            indices: buffer("mesh_indices", bytemuck::cast_slice(mesh.indices())),
+            colors: mesh
+                .colors()
+                .map(|colors| buffer("mesh_colors", bytemuck::cast_slice(colors))),
+            count: mesh.indices().len() as u32,
+        })
+    }
 
-/// A mesh to upload, and what tells the window that asked once it is.
-struct Upload {
-    mesh: Arc<Mesh>,
-    making: Making,
-    uploaded: MeshUploaded,
-}
-
-/// What the uploader made, for a mesh (nothing for one no one held any
-/// more).
-enum Made {
-    Mesh(MeshId, Option<Buffers>),
-    Normals(MeshId, Option<wgpu::Buffer>),
-}
-
-/// The thread that uploads meshes, one after another: what it is given,
-/// and what it made.
-struct Uploader {
-    uploads: mpsc::Sender<Upload>,
-    made: mpsc::Receiver<Made>,
-}
-
-impl Uploader {
-    fn start(device: Arc<wgpu::Device>) -> std::io::Result<Self> {
-        let (uploads, asked) = mpsc::channel::<Upload>();
-        let (made_by, made) = mpsc::channel();
-        std::thread::Builder::new()
-            .name("gpui-meshes".into())
-            .spawn(move || {
-                for Upload {
-                    mesh,
-                    making,
-                    uploaded,
-                } in asked
-                {
-                    // Held by nothing else: no frame will draw it.
-                    let wanted = Arc::strong_count(&mesh) > 1;
-                    let id = mesh.id();
-                    let made = match making {
-                        Making::Mesh { normals } => {
-                            Made::Mesh(id, wanted.then(|| Buffers::of(&device, &mesh, normals)))
-                        }
-                        Making::Normals => {
-                            Made::Normals(id, wanted.then(|| normals_of(&device, &mesh)))
-                        }
-                    };
-                    // Handed over before the window hears of it, so the frame it
-                    // draws finds it.
-                    if made_by.send(made).is_err() {
-                        break;
-                    }
-                    if wanted {
-                        uploaded.done();
-                    }
-                }
-            })?;
-        Ok(Uploader { uploads, made })
+    fn normals(&self, normals: &[[f32; 3]]) -> Option<wgpu::Buffer> {
+        Some(
+            self.0
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("mesh_normals"),
+                    contents: bytemuck::cast_slice(normals),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }),
+        )
     }
 }
 
@@ -195,20 +106,11 @@ pub(crate) struct Prepared {
 }
 
 pub(crate) struct MeshPass {
-    device: Arc<wgpu::Device>,
     format: wgpu::TextureFormat,
     sample_count: u32,
     pipelines: Option<Pipelines>,
-    buffers: FxHashMap<MeshId, Buffers>,
+    meshes: MeshStore<Maker>,
     target: Option<Target>,
-    /// Started with the first upload.
-    uploader: Option<Uploader>,
-    /// The meshes being uploaded.
-    uploading: FxHashSet<MeshId>,
-    /// The meshes whose normals are being made.
-    smoothing: FxHashSet<MeshId>,
-    /// The last mesh too large for this device, said once.
-    refused: Option<MeshId>,
 }
 
 impl MeshPass {
@@ -220,115 +122,18 @@ impl MeshPass {
         sample_count: u32,
     ) -> Self {
         Self {
-            device,
             format,
             sample_count,
             pipelines: None,
-            buffers: FxHashMap::default(),
+            meshes: MeshStore::new(Maker(device)),
             target: None,
-            uploader: None,
-            uploading: FxHashSet::default(),
-            smoothing: FxHashSet::default(),
-            refused: None,
         }
     }
 
-    /// Make `mesh` ready to draw, uploading it unless it is there or on its
-    /// way, its normals with it when `smooth`. Asked by the window before it
-    /// paints the mesh. A mesh there already, its normals asked for, is drawn
-    /// flat until they are made.
+    /// Make `mesh` ready to draw, with its normals when `smooth`
+    /// (`MeshStore::prepare`).
     pub(crate) fn prepare_mesh(&mut self, mesh: &Arc<Mesh>, smooth: bool) -> MeshPreparation {
-        self.take_uploaded();
-        let id = mesh.id();
-        if let Some(buffers) = self.buffers.get(&id) {
-            if !smooth || buffers.normals.is_some() {
-                return MeshPreparation::Ready;
-            }
-            if self.smoothing.contains(&id) {
-                return MeshPreparation::Flat(None);
-            }
-            let (preparation, uploaded) = MeshPreparation::flat_until();
-            return match self.send(mesh, Making::Normals, uploaded) {
-                Ok(()) => {
-                    self.smoothing.insert(id);
-                    preparation
-                }
-                Err(()) => MeshPreparation::Flat(None),
-            };
-        }
-        if self.uploading.contains(&id) {
-            return MeshPreparation::Pending;
-        }
-        let largest = self.device.limits().max_buffer_size;
-        if [mesh.positions().len() * 12, mesh.indices().len() * 4]
-            .into_iter()
-            .any(|bytes| bytes as u64 > largest)
-        {
-            if self.refused != Some(id) {
-                self.refused = Some(id);
-                log::warn!(
-                    "a mesh of {} triangles is larger than this GPU's buffers ({largest} bytes)",
-                    mesh.triangles()
-                );
-            }
-            return MeshPreparation::Never;
-        }
-        let (preparation, uploaded) = MeshPreparation::start();
-        match self.send(mesh, Making::Mesh { normals: smooth }, uploaded) {
-            Ok(()) => {
-                self.uploading.insert(id);
-                preparation
-            }
-            Err(()) => MeshPreparation::Never,
-        }
-    }
-
-    /// Give the uploader `mesh` to make, starting it with the first.
-    fn send(&mut self, mesh: &Arc<Mesh>, making: Making, uploaded: MeshUploaded) -> Result<(), ()> {
-        if self.uploader.is_none() {
-            match Uploader::start(Arc::clone(&self.device)) {
-                Ok(uploader) => self.uploader = Some(uploader),
-                Err(error) => {
-                    log::error!("no thread to upload meshes: {error}");
-                    return Err(());
-                }
-            }
-        }
-        let upload = Upload {
-            mesh: Arc::clone(mesh),
-            making,
-            uploaded,
-        };
-        match self.uploader.as_ref().map(|u| u.uploads.send(upload)) {
-            Some(Ok(())) => Ok(()),
-            _ => Err(()),
-        }
-    }
-
-    /// Take what the uploader made.
-    fn take_uploaded(&mut self) {
-        let Some(uploader) = &self.uploader else {
-            return;
-        };
-        while let Ok(made) = uploader.made.try_recv() {
-            match made {
-                Made::Mesh(id, buffers) => {
-                    self.uploading.remove(&id);
-                    if let Some(mut buffers) = buffers {
-                        // Kept through the frame being painted, which asked
-                        // for it.
-                        buffers.drawn = true;
-                        self.buffers.insert(id, buffers);
-                    }
-                }
-                Made::Normals(id, normals) => {
-                    self.smoothing.remove(&id);
-                    if let (Some(buffers), Some(normals)) = (self.buffers.get_mut(&id), normals) {
-                        buffers.normals = Some(normals);
-                    }
-                }
-            }
-        }
+        self.meshes.prepare(mesh, smooth)
     }
 
     /// The samples a pixel meshes are drawn with on `adapter` into frames
@@ -353,40 +158,19 @@ impl MeshPass {
         paint: &PaintMesh,
         frame: Size<DevicePixels>,
     ) -> Option<Prepared> {
-        let bounds = paint.bounds;
-        let shown = bounds.intersect(&paint.content_mask.bounds);
-        let left = shown.origin.x.0.floor().max(0.);
-        let top = shown.origin.y.0.floor().max(0.);
-        let right = (shown.origin.x.0 + shown.size.width.0)
-            .ceil()
-            .min(frame.width.0 as f32);
-        let bottom = (shown.origin.y.0 + shown.size.height.0)
-            .ceil()
-            .min(frame.height.0 as f32);
-        let (width, height) = (bounds.size.width.0, bounds.size.height.0);
-        if right <= left || bottom <= top || width <= 0. || height <= 0. {
-            return None;
-        }
-        let shown_size = ((right - left) as u32, (bottom - top) as u32);
+        let framed = paint.framed(frame, device.limits().max_texture_dimension_2d)?;
         let id = paint.mesh.id();
-        let buffers = self.buffers.get_mut(&id)?;
-        buffers.drawn = true;
+        let (buffers, normals) = self.meshes.drawn(id)?;
         // Flat until its normals are made.
-        let smooth = paint.view.smooth && buffers.normals.is_some();
+        let smooth = paint.view.smooth && normals.is_some();
         let colored = buffers.colors.is_some();
-        let largest = device.limits().max_texture_dimension_2d;
-        let step = |side: u32| {
-            side.div_ceil(TARGET_STEP)
-                .saturating_mul(TARGET_STEP)
-                .min(largest)
-        };
-        let wanted = (step(shown_size.0), step(shown_size.1));
+        let [width, height] = framed.target;
         if self
             .target
             .as_ref()
-            .is_none_or(|target| (target.width, target.height) != wanted)
+            .is_none_or(|target| (target.width, target.height) != (width, height))
         {
-            self.target = Some(self.make_target(device, wanted.0, wanted.1));
+            self.target = Some(self.make_target(device, width, height));
         }
         let format = self.format;
         let sample_count = self.sample_count;
@@ -395,47 +179,14 @@ impl MeshPass {
             .get_or_insert_with(|| Self::make_pipelines(device, format, sample_count));
         let target = self.target.as_ref()?;
 
-        // Clip space spans the bounds; the viewport spans what is shown.
-        let (shown_width, shown_height) = (shown_size.0 as f32, shown_size.1 as f32);
-        let view = &paint.view;
-        let [light0, light1] = view.lights.map(|light| {
-            [
-                light.direction[0],
-                light.direction[1],
-                light.direction[2],
-                light.strength,
-            ]
-        });
-        let params = MeshParams {
-            model_view: view.model_view,
-            projection: view.projection,
-            ndc_scale: [width / shown_width, height / shown_height],
-            ndc_offset: [
-                (2. * (bounds.origin.x.0 - left) + width) / shown_width - 1.,
-                1. - (2. * (bounds.origin.y.0 - top) + height) / shown_height,
-            ],
-            color: [view.color[0], view.color[1], view.color[2], 1.],
-            light0,
-            light1,
-            ambient: view.ambient,
-            perspective: u32::from(view.perspective),
-            smooth: u32::from(smooth),
-            colored: u32::from(colored),
-        };
-        let composite = CompositeParams {
-            origin: [left, top],
-            size: [shown_width, shown_height],
-            viewport: [frame.width.0 as f32, frame.height.0 as f32],
-            pad: [0.; 2],
-        };
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh_params"),
-            contents: bytemuck::bytes_of(&params),
+            contents: bytemuck::cast_slice(&framed.params(&paint.view, smooth, colored)),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let composite = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh_composite_params"),
-            contents: bytemuck::bytes_of(&composite),
+            contents: bytemuck::cast_slice(&framed.composite()),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         Some(Prepared {
@@ -453,25 +204,25 @@ impl MeshPass {
                 layout: &pipelines.composite_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
-                        binding: 0,
+                        binding: 1,
                         resource: composite.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 1,
+                        binding: 2,
                         resource: wgpu::BindingResource::TextureView(&target.resolved),
                     },
                 ],
             }),
-            shown: shown_size,
+            shown: (framed.shown[0], framed.shown[1]),
         })
     }
 
     /// Draw a prepared mesh into the target.
     pub(crate) fn draw(&self, encoder: &mut wgpu::CommandEncoder, prepared: &Prepared) {
-        let (Some(pipelines), Some(target), Some(buffers)) = (
+        let (Some(pipelines), Some(target), Some((buffers, normals))) = (
             self.pipelines.as_ref(),
             self.target.as_ref(),
-            self.buffers.get(&prepared.mesh),
+            self.meshes.get(prepared.mesh),
         ) else {
             return;
         };
@@ -512,7 +263,7 @@ impl MeshPass {
         pass.set_vertex_buffer(0, buffers.positions.slice(..));
         // Without normals or colors the shader reads none: the positions
         // stand in, as long as either would be.
-        let normals = buffers.normals.as_ref().unwrap_or(&buffers.positions);
+        let normals = normals.unwrap_or(&buffers.positions);
         pass.set_vertex_buffer(1, normals.slice(..));
         let colors = buffers.colors.as_ref().unwrap_or(&buffers.positions);
         pass.set_vertex_buffer(2, colors.slice(..));
@@ -533,9 +284,8 @@ impl MeshPass {
     /// After a frame: let go of the meshes it did not draw, and of the
     /// target if it drew none.
     pub(crate) fn end_frame(&mut self) {
-        self.buffers
-            .retain(|_, buffers| std::mem::take(&mut buffers.drawn));
-        if self.buffers.is_empty() {
+        self.meshes.end_frame();
+        if self.meshes.is_empty() {
             self.target = None;
         }
     }
@@ -543,7 +293,7 @@ impl MeshPass {
     /// How many meshes have buffers, and whether there is a target.
     #[cfg(test)]
     pub(crate) fn held(&self) -> (usize, bool) {
-        (self.buffers.len(), self.target.is_some())
+        (self.meshes.len(), self.target.is_some())
     }
 
     fn make_target(&self, device: &wgpu::Device, width: u32, height: u32) -> Target {
@@ -626,9 +376,9 @@ impl MeshPass {
         let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mesh_composite_layout"),
             entries: &[
-                uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+                uniform(1, wgpu::ShaderStages::VERTEX_FRAGMENT),
                 wgpu::BindGroupLayoutEntry {
-                    binding: 1,
+                    binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: false },
@@ -758,9 +508,8 @@ impl MeshPass {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    /// The shader is valid, and reads the parameters as they are written.
+    /// The shader is valid, and reads the parameters where
+    /// `gpui::MeshFrame` writes them.
     #[test]
     fn the_mesh_shader_reads_what_is_written() {
         let module = naga::front::wgsl::parse_str(include_str!("shaders_mesh.wgsl"))
@@ -773,18 +522,159 @@ mod tests {
         .expect("shader should validate");
         let mut layouter = naga::proc::Layouter::default();
         layouter.update(module.to_ctx()).expect("types lay out");
-        let size = |name: &str| {
-            let (handle, _) = module
+        // Each member's first word, and the struct's words.
+        let words = |name: &str| {
+            let (handle, ty) = module
                 .types
                 .iter()
                 .find(|(_, ty)| ty.name.as_deref() == Some(name))
                 .expect("the shader declares it");
-            layouter[handle].size as usize
+            let naga::TypeInner::Struct { members, .. } = &ty.inner else {
+                panic!("{name} is a struct");
+            };
+            let at = members
+                .iter()
+                .map(|member| (member.name.clone().unwrap_or_default(), member.offset / 4))
+                .collect::<Vec<_>>();
+            (at, layouter[handle].size as usize / 4)
         };
-        assert_eq!(size("MeshParams"), std::mem::size_of::<MeshParams>());
+        let named = |at: &[(&str, u32)]| {
+            at.iter()
+                .map(|&(name, word)| (name.to_owned(), word))
+                .collect::<Vec<_>>()
+        };
         assert_eq!(
-            size("MeshComposite"),
-            std::mem::size_of::<CompositeParams>()
+            words("MeshParams"),
+            (
+                named(&[
+                    ("model_view", 0),
+                    ("projection", 16),
+                    ("ndc_scale", 32),
+                    ("ndc_offset", 34),
+                    ("color", 36),
+                    ("light0", 40),
+                    ("light1", 44),
+                    ("ambient", 48),
+                    ("perspective", 49),
+                    ("shaded_smooth", 50),
+                    ("colored", 51),
+                ]),
+                std::mem::size_of::<gpui::MeshParams>() / 4
+            )
         );
+        assert_eq!(
+            words("MeshComposite"),
+            (
+                named(&[("origin", 0), ("size", 2), ("viewport", 4), ("pad", 6)]),
+                std::mem::size_of::<gpui::MeshComposite>() / 4
+            )
+        );
+    }
+
+    /// The mesh shader as Direct3D 11 and Metal take it: naga's translations
+    /// of `shaders_mesh.wgsl`, kept beside their renderers, so the three
+    /// draw one shader. `GPUI_WRITE_MESH_SHADERS=1` writes them again.
+    #[test]
+    fn the_mesh_shader_s_translations_are_current() {
+        use std::collections::BTreeMap;
+        let module = naga::front::wgsl::parse_str(include_str!("shaders_mesh.wgsl"))
+            .expect("shader should parse");
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .expect("shader should validate");
+        let binding = |binding| naga::ResourceBinding { group: 0, binding };
+
+        // Shader model 5.0: the mesh's parameters in register b0, the
+        // composite's in b1, the drawn mesh in t0.
+        let register = |register| naga::back::hlsl::BindTarget {
+            space: 0,
+            register,
+            binding_array_size: None,
+            dynamic_storage_buffer_offsets_index: None,
+            restrict_indexing: false,
+        };
+        let mut options = naga::back::hlsl::Options {
+            shader_model: naga::back::hlsl::ShaderModel::V5_0,
+            fake_missing_bindings: false,
+            ..naga::back::hlsl::Options::default()
+        };
+        options.binding_map.insert(binding(0), register(0));
+        options.binding_map.insert(binding(1), register(1));
+        options.binding_map.insert(binding(2), register(0));
+        let mut hlsl = String::new();
+        naga::back::hlsl::Writer::new(&mut hlsl, &options, &Default::default())
+            .write(&module, &info, None)
+            .expect("HLSL");
+
+        // Metal 2.0: the parameters in buffer 0 of each stage, the drawn
+        // mesh in texture 0; the vertices from the pipeline's descriptor.
+        let target = |buffer, texture| naga::back::msl::BindTarget {
+            buffer,
+            texture,
+            ..Default::default()
+        };
+        let stage = |composite: bool| {
+            let mut resources = BTreeMap::new();
+            if composite {
+                resources.insert(binding(1), target(Some(0), None));
+                resources.insert(binding(2), target(None, Some(0)));
+            } else {
+                resources.insert(binding(0), target(Some(0), None));
+            }
+            naga::back::msl::EntryPointResources {
+                resources,
+                ..Default::default()
+            }
+        };
+        let options = naga::back::msl::Options {
+            lang_version: (2, 0),
+            per_entry_point_map: [
+                ("vs_mesh", false),
+                ("fs_mesh", false),
+                ("vs_mesh_composite", true),
+                ("fs_mesh_composite", true),
+            ]
+            .into_iter()
+            .map(|(name, composite)| (name.to_owned(), stage(composite)))
+            .collect(),
+            fake_missing_bindings: false,
+            ..Default::default()
+        };
+        let pipeline = naga::back::msl::PipelineOptions {
+            vertex_pulling_transform: false,
+            ..Default::default()
+        };
+        let (msl, _) =
+            naga::back::msl::write_string(&module, &info, &options, &pipeline).expect("MSL");
+
+        let header = |comment: &str| {
+            format!(
+                "{comment} Made by naga from gpui_wgpu's shaders_mesh.wgsl: do not edit. Its\n{comment} test `the_mesh_shader_s_translations_are_current` makes it again.\n"
+            )
+        };
+        let crates = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+        let kept = [
+            (
+                format!("{crates}/gpui_windows/src/shaders_mesh.hlsl"),
+                header("//") + &hlsl,
+            ),
+            (
+                format!("{crates}/gpui_apple/src/shaders_mesh.metal"),
+                header("//") + &msl,
+            ),
+        ];
+        for (path, made) in kept {
+            if std::env::var_os("GPUI_WRITE_MESH_SHADERS").is_some() {
+                std::fs::write(&path, &made).unwrap();
+            }
+            let current = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(
+                current == made,
+                "{path} is not naga's translation of the shader"
+            );
+        }
     }
 }

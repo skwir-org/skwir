@@ -1,10 +1,11 @@
 use crate::metal_atlas::MetalAtlas;
+use crate::metal_meshes::MeshPass;
 use anyhow::{Context as _, Result};
 use block2::RcBlock;
 use core_graphics::geometry::CGSize;
 use gpui::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, PaintSurface, Path, Point,
-    PrimitiveBatch, ScaledPixels, Scene, Size, point, size,
+    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, Mesh, MeshPreparation,
+    PaintSurface, Path, Point, PrimitiveBatch, ScaledPixels, Scene, Size, point, size,
 };
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 use image::RgbaImage;
@@ -134,6 +135,8 @@ pub struct MetalRenderer {
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
+    /// Meshes drawn in 3D (`metal_meshes`).
+    meshes: MeshPass,
     /// Offscreen render target reused across `render_scene` calls when
     /// rendering headlessly without reading pixels back.
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
@@ -311,16 +314,17 @@ impl MetalRenderer {
             to_float2_bits(point(1., 0.)),
             to_float2_bits(point(1., 1.)),
         ];
+        let buffer_options = if is_unified_memory {
+            MTLResourceOptions::StorageModeShared | MTLResourceOptions::CPUCacheModeWriteCombined
+        } else {
+            MTLResourceOptions::StorageModeManaged
+        };
         let unit_vertices = device.new_buffer_with_data(
             unit_vertices.as_ptr() as *const c_void,
             mem::size_of_val(&unit_vertices) as u64,
-            if is_unified_memory {
-                MTLResourceOptions::StorageModeShared
-                    | MTLResourceOptions::CPUCacheModeWriteCombined
-            } else {
-                MTLResourceOptions::StorageModeManaged
-            },
+            buffer_options,
         );
+        let meshes = MeshPass::new(&device, buffer_options, is_apple_gpu);
 
         let paths_rasterization_pipeline_state = build_path_rasterization_pipeline_state(
             &device,
@@ -434,6 +438,7 @@ impl MetalRenderer {
             path_intermediate_texture: None,
             path_intermediate_msaa_texture: None,
             path_sample_count: PATH_SAMPLE_COUNT,
+            meshes,
             #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
             headless_render_target: None,
         }
@@ -504,6 +509,11 @@ impl MetalRenderer {
         } else {
             self.path_intermediate_msaa_texture = None;
         }
+    }
+
+    /// Make `mesh` ready to draw (`gpui::PlatformWindow::prepare_mesh`).
+    pub fn prepare_mesh(&mut self, mesh: &Arc<Mesh>, smooth: bool) -> MeshPreparation {
+        self.meshes.prepare_mesh(mesh, smooth)
     }
 
     pub fn update_transparency(&mut self, transparent: bool) {
@@ -821,10 +831,33 @@ impl MetalRenderer {
                     command_encoder,
                 ),
                 PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
-                // No 3D pass yet: the window says it draws no meshes.
-                PrimitiveBatch::Meshes(_) => {}
+                // Each mesh drawn offscreen, then composited where it is.
+                PrimitiveBatch::Meshes(range) => {
+                    command_encoder.end_encoding();
+                    for paint in &scene.meshes[range] {
+                        let Some(drawn) = self.meshes.draw(command_buffer, paint, viewport_size)
+                        else {
+                            continue;
+                        };
+                        let composite = new_command_encoder_for_texture(
+                            command_buffer,
+                            texture,
+                            viewport_size,
+                            None,
+                        );
+                        self.meshes.composite(composite, &drawn);
+                        composite.end_encoding();
+                    }
+                    command_encoder = new_command_encoder_for_texture(
+                        command_buffer,
+                        texture,
+                        viewport_size,
+                        None,
+                    );
+                }
             }
         }
+        self.meshes.end_frame();
 
         command_encoder.end_encoding();
 

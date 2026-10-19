@@ -43,6 +43,8 @@ pub(crate) struct DirectXRenderer {
     resources: Option<DirectXResources>,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
+    /// Meshes drawn in 3D (`directx_meshes`).
+    meshes: MeshPass,
     direct_composition: Option<DirectComposition>,
     font_info: &'static FontInfo,
 
@@ -170,6 +172,7 @@ impl DirectXRenderer {
             .context("Creating DirectX global elements")?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)
             .context("Creating DirectX render pipelines")?;
+        let meshes = MeshPass::new(&devices.device);
 
         let direct_composition = if disable_direct_composition {
             None
@@ -189,6 +192,7 @@ impl DirectXRenderer {
             resources: Some(resources),
             globals,
             pipelines,
+            meshes,
             direct_composition,
             font_info: Self::get_font_info(),
             width: 1,
@@ -318,6 +322,9 @@ impl DirectXRenderer {
                 .device_context
                 .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
         }
+        // The meshes' buffers were the lost device's: uploaded again when
+        // next drawn.
+        self.meshes = MeshPass::new(&devices.device);
         self.devices = Some(devices);
         self.resources = Some(resources);
         self.globals = globals;
@@ -385,8 +392,7 @@ impl DirectXRenderer {
                     self.draw_polychrome_sprites(texture_id, range.start, range.len())
                 }
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
-                // No 3D pass yet: the window says it draws no meshes.
-                PrimitiveBatch::Meshes(_) => Ok(()),
+                PrimitiveBatch::Meshes(range) => self.draw_meshes(&scene.meshes[range]),
             }
             .with_context(|| {
                 format!(
@@ -403,6 +409,7 @@ impl DirectXRenderer {
                 )
             })?;
         }
+        self.meshes.end_frame();
         Ok(())
     }
 
@@ -813,6 +820,39 @@ impl DirectXRenderer {
             start as u32,
             len as u32,
         )
+    }
+
+    /// Make `mesh` ready to draw (`gpui::PlatformWindow::prepare_mesh`).
+    pub(crate) fn prepare_mesh(&mut self, mesh: &Arc<Mesh>, smooth: bool) -> MeshPreparation {
+        self.meshes.prepare_mesh(mesh, smooth)
+    }
+
+    /// Each mesh drawn offscreen, then composited where it is; then the
+    /// state the other primitives are drawn with, as `pre_draw` set it.
+    fn draw_meshes(&mut self, meshes: &[PaintMesh]) -> Result<()> {
+        let devices = self.devices.as_ref().context("devices missing")?;
+        let resources = self.resources.as_ref().context("resources missing")?;
+        let context = &devices.device_context;
+        let drawn = meshes.iter().try_for_each(|paint| {
+            self.meshes.draw(
+                context,
+                paint,
+                &resources.render_target_view,
+                &resources.viewport,
+            )
+        });
+        unsafe {
+            context.OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
+            context.RSSetViewports(Some(slice::from_ref(&resources.viewport)));
+            context
+                .VSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
+            context
+                .VSSetConstantBuffers(1, Some(slice::from_ref(&self.globals.batch_params_buffer)));
+            context
+                .PSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
+            context.PSSetConstantBuffers(1, Some(&[None]));
+        }
+        drawn
     }
 
     fn draw_surfaces(&mut self, surfaces: &[PaintSurface]) -> Result<()> {

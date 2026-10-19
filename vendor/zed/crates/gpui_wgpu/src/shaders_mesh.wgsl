@@ -114,8 +114,10 @@ struct MeshComposite {
     pad: vec2<f32>,
 }
 
-@group(0) @binding(0) var<uniform> composite: MeshComposite;
-@group(0) @binding(1) var t_mesh: texture_2d<f32>;
+// Bindings apart from the mesh's, so that Direct3D gives each its own
+// register in naga's translation.
+@group(0) @binding(1) var<uniform> composite: MeshComposite;
+@group(0) @binding(2) var t_mesh: texture_2d<f32>;
 
 @vertex
 fn vs_mesh_composite(@builtin(vertex_index) vertex_id: u32) -> @builtin(position) vec4<f32> {

@@ -131,6 +131,11 @@ previews-check:
 gpui-check *args:
     python3 tools/gpui/check.py {{args}}
 
+# Run gpui_windows's tests of our patches under Wine, its Direct3D 11 on
+# Mesa on an X display of its own (args go to the test binary).
+gpui-check-windows *args:
+    tools/gpui/check-windows.sh {{args}}
+
 # Lint: rustfmt check + clippy with warnings as errors (default members).
 lint:
     cargo fmt --all -- --check
