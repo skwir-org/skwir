@@ -270,7 +270,7 @@ impl Render for DragPreview {
             .py_1()
             .rounded_md()
             .bg(theme.accent)
-            .text_color(theme.on_fill)
+            .text_color(theme.on_accent)
             .text_xs()
             .shadow_md()
             .child(text);

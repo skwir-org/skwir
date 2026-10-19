@@ -19,10 +19,11 @@
 //!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
 //!   `stage` behind a picture, a page or a film on the whole screen,
 //!   `find_*` for what a find found in text,
-//!   `drop_target` under a drag, `on_fill` for text on a saturated fill,
-//!   `handle` for an edge being dragged, `band` and `band_edge` for the
-//!   rubber band, `block_hover` and `block_selected` for a block of the
-//!   Usage map pointed at and chosen, over any fill, `block_rest` for
+//!   `drop_target` under a drag, `on_accent` for text and glyphs on an
+//!   `accent` fill, `handle` for an edge being dragged, `band` and
+//!   `band_edge` for the rubber band, `block_hover` and `block_selected`
+//!   for a block of the Usage map pointed at and chosen, over any fill,
+//!   `block_text` for what is written on one, `block_rest` for
 //!   a block that stands for several entries (the smaller ones, the
 //!   hidden ones), and `block_reclaim` for the line around a block whose
 //!   room can be had back (a cache, a trash); its fills are `block`,
@@ -41,9 +42,25 @@
 //!   and dialogs; nothing else casts a shadow.
 //! - spacing: multiples of 4 px; rows are 26 px, controls 28 px, bars 42 px
 //!   (a pane's row, the sidebar's header, the tab strip: their edges meet).
+//!
+//! A look is derived (`Theme::derive`, ADR-071) from a few colors, its
+//! `Base`: skwir's own (`Base::own`), or later what a desktop's scheme
+//! names. The other grounds and lines (`zebra`, `code_bg`, `hover`,
+//! `border`, a derived selection) are `Steps` in Oklab from `bg` towards
+//! `text`, tinted by the accent; the marks of the accent (`band`,
+//! `handle`, `chart`…) are it, fainter. Then the contrast is guarded:
+//! text reads at 4.5:1 on every ground it is drawn on, the accent at 3:1
+//! on `bg` and `surface` (7:1 and 4.5:1 when the desktop asks for more,
+//! `Contrast::More`), a color that does not moved in lightness, its hue
+//! kept (`color::readable`); a fill under text (the accent, the
+//! selection) gives way when no lightness of its text reads on it. A new
+//! token is derived here, or kept (`Kept`) when no desktop's colors
+//! change what it means; never a literal beside the others.
 
 use gpui::{Global, Hsla, WindowAppearance, rgb};
 use skwir_platform::mime::Kind;
+
+use crate::color::{self, Oklab};
 
 /// The color tokens every module renders with.
 #[derive(Clone, Debug, PartialEq)]
@@ -91,8 +108,12 @@ pub struct Theme {
     pub find_current_text: Hsla,
     /// A folder, row or place that a drag would drop into.
     pub drop_target: Hsla,
-    /// Text and glyphs on a saturated fill (`accent`, `error`, chart blocks).
-    pub on_fill: Hsla,
+    /// Text and glyphs on an `accent` fill: white, or dark on a light
+    /// accent.
+    pub on_accent: Hsla,
+    /// What is written on a block of the Usage map, over any of its fills
+    /// (`block`, `block_age`, `block_kind`).
+    pub block_text: Hsla,
     /// The colors a tag wears, in the order of
     /// `skwir_core::metadata::TAG_COLORS` (red, orange, yellow, green, teal,
     /// blue, purple, pink): a tag's dot is one, its chip `tag_fill` of it.
@@ -145,50 +166,186 @@ impl Global for Theme {}
 /// The steps of `Theme::block_age`.
 pub const AGES: usize = 5;
 
-impl Theme {
-    pub fn light() -> Self {
-        Theme {
-            bg: rgb(0xfafafa).into(),
-            surface: rgb(0xf0f0f0).into(),
-            code_bg: rgb(0xf0f1f3).into(),
-            zebra: rgb(0xf4f5f6).into(),
-            hover: rgb(0xe9eef7).into(),
-            border: rgb(0xd8d8d8).into(),
-            text: rgb(0x1f1f1f).into(),
-            text_muted: rgb(0x707070).into(),
-            accent: rgb(0x2f6feb).into(),
-            selection_bg: rgb(0xd6e4ff).into(),
-            selection_text: rgb(0x0b2a6b).into(),
-            error: rgb(0xc62828).into(),
-            success: rgb(0x2e7d32).into(),
-            warning: rgb(0xb26a00).into(),
+/// How much contrast the desktop asks for (ADR-071).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Contrast {
+    #[default]
+    Normal,
+    /// More: GNOME's high contrast, macOS's "Increase contrast".
+    More,
+}
+
+impl Contrast {
+    /// What text needs on what it is drawn on, and the accent on the
+    /// grounds it marks (WCAG 2: 1.4.3 and 1.4.11, more as 1.4.6).
+    fn ratios(self) -> (f32, f32) {
+        match self {
+            Contrast::Normal => (4.5, 3.),
+            Contrast::More => (7., 4.5),
+        }
+    }
+}
+
+/// The colors a look is made of: skwir's own (`Base::own`), or what a
+/// desktop's scheme names (ADR-071). The other tokens are derived from
+/// them (`Theme::derive`), and so is each left `None`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Base {
+    pub dark: bool,
+    pub bg: Hsla,
+    pub surface: Hsla,
+    pub text: Hsla,
+    pub text_muted: Option<Hsla>,
+    pub zebra: Option<Hsla>,
+    pub border: Option<Hsla>,
+    pub accent: Hsla,
+    /// The selection's background and its text.
+    pub selection: Option<(Hsla, Hsla)>,
+    pub error: Hsla,
+    pub warning: Hsla,
+    pub success: Hsla,
+}
+
+impl Base {
+    /// Skwir's own colors, of the dark look or the light one.
+    pub fn own(dark: bool) -> Self {
+        let [bg, surface, text, accent, error, warning, success] = if dark {
+            [
+                0x1e1e1e, 0x262626, 0xe6e6e6, 0x6ea8fe, 0xff6b6b, 0xf2b84b, 0x6fcf7f,
+            ]
+        } else {
+            [
+                0xfafafa, 0xf0f0f0, 0x1f1f1f, 0x2f6feb, 0xc62828, 0xb26a00, 0x2e7d32,
+            ]
+        }
+        .map(|value| Hsla::from(rgb(value)));
+        Base {
+            dark,
+            bg,
+            surface,
+            text,
+            text_muted: None,
+            zebra: None,
+            border: None,
+            accent,
+            selection: None,
+            error,
+            warning,
+            success,
+        }
+    }
+}
+
+/// Where a derived color lies, in Oklab: `along` the way from `bg` (0)
+/// to `text` (1), past it beyond 1, its hue moved `tint` of the way to
+/// the accent's (0 none, 1 the accent's own).
+#[derive(Clone, Copy, Debug)]
+struct Step {
+    along: f32,
+    tint: f32,
+}
+
+impl Step {
+    const fn new(along: f32, tint: f32) -> Self {
+        Step { along, tint }
+    }
+
+    fn of(self, bg: Oklab, text: Oklab, accent: Oklab) -> Hsla {
+        let at = bg.mix(text, self.along);
+        Oklab {
+            l: at.l,
+            a: at.a + (accent.a - at.a) * self.tint,
+            b: at.b + (accent.b - at.b) * self.tint,
+        }
+        .to_hsla(1.)
+    }
+}
+
+/// A look's steps: fitted to the hand-picked palettes they replaced
+/// (2026-10-19), which skwir's base, stepped, gives again within two
+/// units of a channel (the dark selection within five: it takes the
+/// accent's hue). A dark look steps further: its grays are told apart by
+/// less.
+struct Steps {
+    zebra: Step,
+    code_bg: Step,
+    hover: Step,
+    map_grid: Step,
+    block_rest: Step,
+    border: Step,
+    text_muted: Step,
+    selection_bg: Step,
+    selection_text: Step,
+}
+
+const LIGHT: Steps = Steps {
+    zebra: Step::new(0.021, 0.01),
+    code_bg: Step::new(0.036, 0.015),
+    hover: Step::new(0.05, 0.065),
+    map_grid: Step::new(0.081, 0.),
+    block_rest: Step::new(0.121, 0.),
+    border: Step::new(0.138, 0.),
+    text_muted: Step::new(0.59, 0.),
+    selection_bg: Step::new(0.092, 0.2),
+    selection_text: Step::new(0.906, 0.6),
+};
+
+const DARK: Steps = Steps {
+    zebra: Step::new(0.031, 0.),
+    code_bg: Step::new(0.078, 0.057),
+    hover: Step::new(0.105, 0.114),
+    map_grid: Step::new(0.084, 0.),
+    block_rest: Step::new(0.153, 0.),
+    border: Step::new(0.164, 0.),
+    text_muted: Step::new(0.654, 0.),
+    selection_bg: Step::new(0.286, 0.76),
+    selection_text: Step::new(1.11, 0.),
+};
+
+/// What no desktop's colors change: a color that means something of its
+/// own (a tag's, a find's, a map's land and water), or that is drawn on
+/// skwir's own fills (the Usage map's) or belongs to no desktop's scheme
+/// (a terminal's sixteen).
+struct Kept {
+    scrim: Hsla,
+    stage: Hsla,
+    page_match: Hsla,
+    find_match: Hsla,
+    find_current: Hsla,
+    find_current_text: Hsla,
+    tags: [Hsla; 8],
+    rating: Hsla,
+    picture_backdrop: Hsla,
+    block_text: Hsla,
+    block_hover: Hsla,
+    block_selected: Hsla,
+    block_reclaim: Hsla,
+    map_route: Hsla,
+    map_land: Hsla,
+    map_water: Hsla,
+    map_border: Hsla,
+    terminal: [Hsla; 16],
+}
+
+impl Kept {
+    fn light() -> Self {
+        Kept {
             scrim: gpui::hsla(0., 0., 0., 0.25),
             stage: gpui::black(),
-            highlight: Hsla::from(rgb(0xd6e4ff)).opacity(0.5),
-            handle: Hsla::from(rgb(0x2f6feb)).opacity(0.35),
-            band: Hsla::from(rgb(0x2f6feb)).opacity(0.14),
-            band_edge: Hsla::from(rgb(0x2f6feb)).opacity(0.8),
-            page_selection: Hsla::from(rgb(0x2f6feb)).opacity(0.35),
             page_match: Hsla::from(rgb(0xffce33)).opacity(0.4),
             find_match: Hsla::from(rgb(0xffce33)).opacity(0.5),
             find_current: rgb(0xff9632).into(),
             find_current_text: rgb(0x1f1f1f).into(),
-            drop_target: Hsla::from(rgb(0xd6e4ff)).opacity(0.6),
-            on_fill: gpui::white(),
             tags: [
                 0xd93025, 0xe8710a, 0xc49a00, 0x1e8e3e, 0x00897b, 0x2f6feb, 0x8e44d8, 0xd6336c,
             ]
             .map(|value| rgb(value).into()),
             rating: rgb(0xe0a100).into(),
-            placeholder: Hsla::from(rgb(0xd8d8d8)).opacity(0.6),
             picture_backdrop: gpui::white(),
-            chart: Hsla::from(rgb(0x2f6feb)).opacity(0.6),
+            block_text: gpui::white(),
             block_hover: gpui::white().opacity(0.2),
             block_selected: rgb(0x1f1f1f).into(),
             block_reclaim: gpui::white().opacity(0.85),
-            block_rest: rgb(0xdcdcdc).into(),
-            map_grid: rgb(0xe6e6e6).into(),
-            map_track: rgb(0x2f6feb).into(),
             map_route: rgb(0x9333ea).into(),
             map_land: rgb(0xf3f1ec).into(),
             map_water: rgb(0xd5e3f0).into(),
@@ -197,54 +354,27 @@ impl Theme {
                 0x000000, 0xcd3131, 0x00bc00, 0x949800, 0x0451a5, 0xbc05bc, 0x0598bc, 0x555555,
                 0x666666, 0xcd3131, 0x14ce14, 0xb5ba00, 0x0451a5, 0xbc05bc, 0x0598bc, 0xa5a5a5,
             ]),
-            is_dark: false,
-            code: crate::code_preview::CodeTheme::own(false),
         }
     }
 
-    pub fn dark() -> Self {
-        Theme {
-            bg: rgb(0x1e1e1e).into(),
-            surface: rgb(0x262626).into(),
-            code_bg: rgb(0x292b2f).into(),
-            zebra: rgb(0x232323).into(),
-            hover: rgb(0x2b3038).into(),
-            border: rgb(0x3a3a3a).into(),
-            text: rgb(0xe6e6e6).into(),
-            text_muted: rgb(0x9a9a9a).into(),
-            accent: rgb(0x6ea8fe).into(),
-            selection_bg: rgb(0x2c4f8a).into(),
-            selection_text: rgb(0xffffff).into(),
-            error: rgb(0xff6b6b).into(),
-            success: rgb(0x6fcf7f).into(),
-            warning: rgb(0xf2b84b).into(),
+    fn dark() -> Self {
+        Kept {
             scrim: gpui::hsla(0., 0., 0., 0.5),
             stage: gpui::black(),
-            highlight: Hsla::from(rgb(0x2c4f8a)).opacity(0.5),
-            handle: Hsla::from(rgb(0x6ea8fe)).opacity(0.35),
-            band: Hsla::from(rgb(0x6ea8fe)).opacity(0.14),
-            band_edge: Hsla::from(rgb(0x6ea8fe)).opacity(0.8),
-            page_selection: Hsla::from(rgb(0x6ea8fe)).opacity(0.35),
             page_match: Hsla::from(rgb(0xffce33)).opacity(0.4),
             find_match: Hsla::from(rgb(0xffce33)).opacity(0.35),
             find_current: rgb(0xff9632).into(),
             find_current_text: rgb(0x1f1f1f).into(),
-            drop_target: Hsla::from(rgb(0x2c4f8a)).opacity(0.6),
-            on_fill: gpui::white(),
             tags: [
                 0xff7b72, 0xffa657, 0xe3c55b, 0x7ee787, 0x56d4c4, 0x6ea8fe, 0xc49cff, 0xff8fb3,
             ]
             .map(|value| rgb(value).into()),
             rating: rgb(0xf2c14b).into(),
-            placeholder: Hsla::from(rgb(0x3a3a3a)).opacity(0.6),
             picture_backdrop: rgb(0xd8d8d8).into(),
-            chart: Hsla::from(rgb(0x6ea8fe)).opacity(0.6),
+            block_text: gpui::white(),
             block_hover: gpui::white().opacity(0.16),
             block_selected: gpui::white(),
             block_reclaim: gpui::white().opacity(0.75),
-            block_rest: rgb(0x383838).into(),
-            map_grid: rgb(0x2c2c2c).into(),
-            map_track: rgb(0x6ea8fe).into(),
             map_route: rgb(0xc084fc).into(),
             map_land: rgb(0x2b2a27).into(),
             map_water: rgb(0x18212b).into(),
@@ -253,8 +383,129 @@ impl Theme {
                 0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5,
                 0x666666, 0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xe5e5e5,
             ]),
-            is_dark: true,
-            code: crate::code_preview::CodeTheme::own(true),
+        }
+    }
+}
+
+/// `fg` made to read at `ratio` on each of `grounds` (`color::readable`),
+/// said when even black or white cannot.
+fn guarded(name: &str, fg: Hsla, grounds: &[Hsla], ratio: f32) -> Hsla {
+    let fg = color::readable(fg, grounds, ratio);
+    if !color::reads(fg, grounds, ratio) {
+        tracing::debug!("theme: {name} cannot read at {ratio}:1 on all its grounds");
+    }
+    fg
+}
+
+/// Skwir's own looks, derived once: code kept in the other look asks for
+/// one as it is drawn (`Theme::in_look`).
+static OWN: std::sync::LazyLock<[Theme; 2]> = std::sync::LazyLock::new(|| {
+    [false, true].map(|dark| Theme::derive(&Base::own(dark), Contrast::Normal))
+});
+
+impl Theme {
+    pub fn light() -> Self {
+        OWN[0].clone()
+    }
+
+    pub fn dark() -> Self {
+        OWN[1].clone()
+    }
+
+    /// Every token of the look `base` makes, its contrast guarded.
+    pub fn derive(base: &Base, contrast: Contrast) -> Self {
+        let (text_ratio, mark_ratio) = contrast.ratios();
+        let steps = if base.dark { &DARK } else { &LIGHT };
+        let kept = if base.dark {
+            Kept::dark()
+        } else {
+            Kept::light()
+        };
+        let (bg, surface) = (base.bg, base.surface);
+        // The accent marks `bg` and `surface` (a focus ring, a switch that
+        // is on) and is a fill under `on_accent`: white, or the darkest of
+        // the look where that reads better.
+        let accent = guarded("accent", base.accent, &[bg, surface], mark_ratio);
+        let darkest = if color::luminance(base.text) < color::luminance(bg) {
+            base.text
+        } else {
+            bg
+        };
+        let on = if color::ratio(gpui::white(), accent) >= color::ratio(darkest, accent) {
+            gpui::white()
+        } else {
+            darkest
+        };
+        let (on_accent, accent) = color::readable_on(on, accent, text_ratio);
+
+        let (from, to, hue) = (Oklab::of(bg), Oklab::of(base.text), Oklab::of(accent));
+        let step = |step: Step| step.of(from, to, hue);
+        let zebra = base.zebra.unwrap_or_else(|| step(steps.zebra));
+        let code_bg = step(steps.code_bg);
+        let hover = step(steps.hover);
+        let border = base.border.unwrap_or_else(|| step(steps.border));
+        let border = match contrast {
+            Contrast::Normal => border,
+            Contrast::More => guarded("border", border, &[bg, surface], 3.),
+        };
+        let (selection_bg, selection_text) = base
+            .selection
+            .unwrap_or_else(|| (step(steps.selection_bg), step(steps.selection_text)));
+        let (selection_text, selection_bg) =
+            color::readable_on(selection_text, selection_bg, text_ratio);
+        let grounds = [bg, surface, code_bg, zebra, hover];
+        let text = guarded("text", base.text, &grounds, text_ratio);
+        let text_muted = base.text_muted.unwrap_or_else(|| step(steps.text_muted));
+        let text_muted = guarded("text_muted", text_muted, &grounds, text_ratio);
+        let outcome = |name, color| guarded(name, color, &[bg, surface], text_ratio);
+
+        Theme {
+            bg,
+            surface,
+            code_bg,
+            zebra,
+            hover,
+            border,
+            text,
+            text_muted,
+            accent,
+            selection_bg,
+            selection_text,
+            error: outcome("error", base.error),
+            success: outcome("success", base.success),
+            warning: outcome("warning", base.warning),
+            scrim: kept.scrim,
+            stage: kept.stage,
+            highlight: selection_bg.opacity(0.5),
+            handle: accent.opacity(0.35),
+            band: accent.opacity(0.14),
+            band_edge: accent.opacity(0.8),
+            page_selection: accent.opacity(0.35),
+            page_match: kept.page_match,
+            find_match: kept.find_match,
+            find_current: kept.find_current,
+            find_current_text: kept.find_current_text,
+            drop_target: selection_bg.opacity(0.6),
+            on_accent,
+            block_text: kept.block_text,
+            tags: kept.tags,
+            rating: kept.rating,
+            placeholder: border.opacity(0.6),
+            picture_backdrop: kept.picture_backdrop,
+            chart: accent.opacity(0.6),
+            block_hover: kept.block_hover,
+            block_selected: kept.block_selected,
+            block_reclaim: kept.block_reclaim,
+            block_rest: step(steps.block_rest),
+            map_grid: step(steps.map_grid),
+            map_track: accent,
+            map_route: kept.map_route,
+            map_land: kept.map_land,
+            map_water: kept.map_water,
+            map_border: kept.map_border,
+            terminal: kept.terminal,
+            is_dark: base.dark,
+            code: crate::code_preview::CodeTheme::own(base.dark),
         }
     }
 
@@ -365,5 +616,188 @@ impl Theme {
             WindowAppearance::Light | WindowAppearance::VibrantLight => Theme::light(),
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Theme::dark(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A color, what it is drawn on, the ratio it must read at there, and
+    /// whether those grounds are fills that give way (`readable_on`).
+    struct Group {
+        name: &'static str,
+        fg: Hsla,
+        grounds: Vec<Hsla>,
+        ratio: f32,
+        fill: bool,
+    }
+
+    fn groups(t: &Theme, contrast: Contrast) -> Vec<Group> {
+        let (text, mark) = contrast.ratios();
+        let grounds = vec![t.bg, t.surface, t.code_bg, t.zebra, t.hover];
+        let on = |name, fg, grounds: &[Hsla], ratio, fill| Group {
+            name,
+            fg,
+            grounds: grounds.to_vec(),
+            ratio,
+            fill,
+        };
+        let mut groups = vec![
+            on("text", t.text, &grounds, text, false),
+            on("text_muted", t.text_muted, &grounds, text, false),
+            on(
+                "selection_text",
+                t.selection_text,
+                &[t.selection_bg],
+                text,
+                true,
+            ),
+            on("on_accent", t.on_accent, &[t.accent], text, true),
+            on("error", t.error, &[t.bg, t.surface], text, false),
+            on("warning", t.warning, &[t.bg, t.surface], text, false),
+            on("success", t.success, &[t.bg, t.surface], text, false),
+            on("accent", t.accent, &[t.bg, t.surface], mark, false),
+        ];
+        if contrast == Contrast::More {
+            groups.push(on("border", t.border, &[t.bg, t.surface], 3., false));
+        }
+        groups
+    }
+
+    #[test]
+    fn skwir_s_looks_read_in_either_contrast() {
+        for dark in [false, true] {
+            for contrast in [Contrast::Normal, Contrast::More] {
+                let theme = Theme::derive(&Base::own(dark), contrast);
+                for g in groups(&theme, contrast) {
+                    assert!(
+                        color::reads(g.fg, &g.grounds, g.ratio),
+                        "{} in the {} look, {contrast:?}",
+                        g.name,
+                        if dark { "dark" } else { "light" }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn any_scheme_reads_wherever_a_color_could() {
+        // A scheme of any colors, a light one or a dark one: each color
+        // reads on its grounds, unless no color could (a ground of middle
+        // gray under text asked to read at 7:1); a fill always gives way.
+        let mut seed = 0x2545_f491_u32;
+        let mut next = move |low: u32, high: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            low + seed % (high - low + 1)
+        };
+        let mut gray = |low, high| {
+            let [r, g, b] = [(); 3].map(|()| next(low, high));
+            Hsla::from(rgb(r << 16 | g << 8 | b))
+        };
+        for case in 0..400 {
+            let dark = case % 2 == 1;
+            let (ground, ink) = if dark {
+                ((0, 90), (120, 255))
+            } else {
+                ((170, 255), (0, 140))
+            };
+            let bg = gray(ground.0, ground.1);
+            let base = Base {
+                dark,
+                bg,
+                surface: gray(ground.0, ground.1),
+                text: gray(ink.0, ink.1),
+                text_muted: (case % 3 == 0).then(|| gray(0, 255)),
+                zebra: None,
+                border: (case % 5 == 0).then(|| gray(0, 255)),
+                accent: gray(0, 255),
+                selection: (case % 4 == 0).then(|| (gray(0, 255), gray(0, 255))),
+                error: gray(0, 255),
+                warning: gray(0, 255),
+                success: gray(0, 255),
+            };
+            for contrast in [Contrast::Normal, Contrast::More] {
+                let theme = Theme::derive(&base, contrast);
+                for g in groups(&theme, contrast) {
+                    let could = [gpui::black(), gpui::white()]
+                        .iter()
+                        .any(|c| color::reads(*c, &g.grounds, g.ratio));
+                    assert!(
+                        color::reads(g.fg, &g.grounds, g.ratio) || (!g.fill && !could),
+                        "case {case}, {}, {contrast:?}: {base:?}",
+                        g.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn skwir_s_steps_give_its_hand_picked_colors_again() {
+        let near = |a: Hsla, b: u32, units: f32| {
+            let (a, b) = (a.to_rgb(), rgb(b));
+            [a.r - b.r, a.g - b.g, a.b - b.b]
+                .iter()
+                .all(|d| d.abs() * 255. <= units)
+        };
+        let light = Theme::light();
+        for (token, was) in [
+            (light.zebra, 0xf4f5f6),
+            (light.code_bg, 0xf0f1f3),
+            (light.hover, 0xe9eef7),
+            (light.border, 0xd8d8d8),
+            (light.block_rest, 0xdcdcdc),
+            (light.map_grid, 0xe6e6e6),
+            (light.selection_bg, 0xd6e4ff),
+            (light.selection_text, 0x0b2a6b),
+        ] {
+            assert!(near(token, was, 2.5), "{was:06x}: {:?}", token.to_rgb());
+        }
+        let dark = Theme::dark();
+        for (token, was) in [
+            (dark.zebra, 0x232323),
+            (dark.code_bg, 0x292b2f),
+            (dark.hover, 0x2b3038),
+            (dark.border, 0x3a3a3a),
+            (dark.block_rest, 0x383838),
+            (dark.map_grid, 0x2c2c2c),
+            (dark.text_muted, 0x9a9a9a),
+            (dark.selection_text, 0xffffff),
+        ] {
+            assert!(near(token, was, 2.5), "{was:06x}: {:?}", token.to_rgb());
+        }
+        // The selection takes the accent's hue, a little bluer than it was.
+        assert!(near(dark.selection_bg, 0x2c4f8a, 5.));
+    }
+
+    #[test]
+    fn a_scheme_s_own_colors_are_kept_where_they_read() {
+        let muted = Hsla::from(rgb(0x555555));
+        let selection = (Hsla::from(rgb(0x3daee9)), Hsla::from(rgb(0x000000)));
+        let base = Base {
+            text_muted: Some(muted),
+            selection: Some(selection),
+            ..Base::own(false)
+        };
+        let theme = Theme::derive(&base, Contrast::Normal);
+        assert_eq!(theme.text_muted, muted);
+        assert_eq!((theme.selection_bg, theme.selection_text), selection);
+    }
+
+    #[test]
+    fn the_three_pairs_that_did_not_read_now_do() {
+        // 2026-10-19: muted text on the light sidebar (4.35:1), a warning
+        // on the light look (4.06:1), white on the dark look's accent
+        // (2.42:1).
+        let (light, dark) = (Theme::light(), Theme::dark());
+        assert!(color::ratio(light.text_muted, light.surface) >= 4.5);
+        assert!(color::ratio(light.warning, light.bg) >= 4.5);
+        assert!(color::ratio(dark.on_accent, dark.accent) >= 4.5);
+        assert!(color::luminance(dark.on_accent) < color::luminance(dark.accent));
+        assert_eq!(light.on_accent, gpui::white());
     }
 }

@@ -23,6 +23,7 @@ pub mod choose;
 pub mod clashes;
 mod clipboard;
 mod code_preview;
+pub mod color;
 pub mod commands;
 mod complete;
 pub mod controls;

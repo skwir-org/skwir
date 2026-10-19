@@ -143,7 +143,7 @@ impl MarkdownStyle {
             reading,
             armed_link: None,
             labels: None,
-            label_text: theme.on_fill,
+            label_text: theme.on_accent,
             sought: None,
             find_match: theme.find_match,
             find_current: theme.find_current,

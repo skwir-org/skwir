@@ -16,6 +16,7 @@ use std::sync::Arc;
 use gpui::{Hsla, RenderImage, prelude::*};
 use skwir_core::thumbs::Image;
 
+use crate::color::{contrast, linear, luminance};
 use crate::theme::Theme;
 
 /// A picture converted for the window, with its ink: a thumbnail, a
@@ -82,26 +83,6 @@ pub fn behind(ink: Option<f32>, on: Hsla, theme: &Theme) -> Option<Hsla> {
             && contrast(ink, luminance(theme.picture_backdrop)) >= LEGIBLE
     })
     .then_some(theme.picture_backdrop)
-}
-
-/// An sRGB channel (0 to 1) in linear light.
-fn linear(c: f32) -> f32 {
-    if c <= 0.040_45 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-/// A color's relative luminance.
-fn luminance(color: Hsla) -> f32 {
-    let rgb = color.to_rgb();
-    0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b)
-}
-
-/// The contrast of two relative luminances, from 1 to 21.
-fn contrast(a: f32, b: f32) -> f32 {
-    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
 #[cfg(test)]

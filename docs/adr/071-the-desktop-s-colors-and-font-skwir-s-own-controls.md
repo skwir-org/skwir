@@ -1,6 +1,8 @@
 # ADR-071: The desktop's colors and font, Skwir's own controls
 
-Status: accepted, 2026-10-19. Not built.
+Status: accepted, 2026-10-19. Step 1 built 2026-10-19 (the derivation
+and the guard, Skwir's palettes through them); the desktop is not read
+yet.
 
 ## Context
 
@@ -102,23 +104,31 @@ Status: accepted, 2026-10-19. Not built.
    scheme's, and then the selection is derived from it; a Windows
    contrast theme keeps its own. Every other token is derived in
    `theme.rs` from these (`hover`, `code_bg`, `band`, `drop_target`,
-   `chart`…). Skwir's own palettes become the same
-   derivation over Skwir's base colors, so the desktop's colors and
-   Skwir's take one path; their derived tokens may move slightly, and
-   are compared in screenshots before and after. Kept as Skwir's in
-   every case, contrast aside: the tags' colors, the rating, a find's
-   marks, maps, `stage`, `picture_backdrop`, the Usage map's hues, the
-   terminal's sixteen colors (a terminal's palette is its emulator's,
-   not the desktop's) and the code themes (`reading.code_*`).
+   `chart`, a map's graticule and track…). Skwir's own palettes become
+   the same derivation over Skwir's base colors, so the desktop's colors
+   and Skwir's take one path; their derived tokens may move slightly,
+   and are compared in screenshots before and after. Kept as Skwir's in
+   every case (`Kept`): the tags' colors, the rating, a find's marks, a
+   map's land, water, borders and route, `stage`, `picture_backdrop`,
+   the Usage map's hues and what is drawn on them, the terminal's
+   sixteen colors (a terminal's palette is its emulator's, not the
+   desktop's) and the code themes (`reading.code_*`).
 5. **Contrast is guarded.** Text on every surface it is drawn on (`bg`,
    `surface`, `code_bg`, `zebra`, `hover`), `selection_text` on
-   `selection_bg`, `on_fill` on `accent` and `error`, `warning`,
-   `success` on `bg` reach 4.5:1; `accent` on `bg` reaches 3:1 (a focus
-   ring, a switch that is on). A foreground that falls short is moved in
-   lightness, its hue kept, until it passes; a background is never
-   moved; a debug log line names the token. Skwir's own palettes pass
-   the same check, asserted by a test, so building it corrects the three
-   pairs above.
+   `selection_bg`, `on_accent` on `accent` and `error`, `warning`,
+   `success` on `bg` and `surface` reach 4.5:1; `accent` on `bg` and
+   `surface` reaches 3:1 (a focus ring, a switch that is on). A
+   foreground that falls short is moved in lightness, its hue kept, to
+   the nearest lightness that passes (`color::readable`); a ground is
+   never moved, but a fill under text (the accent, the selection) gives
+   way when no lightness of its text reads on it (`color::readable_on`).
+   Text on grounds of middle gray, where neither black nor white reaches
+   the ratio, takes the better of the two, and a debug log line names
+   the token. Skwir's own palettes pass the same check, asserted by a
+   test, so building it corrects the three pairs above. `on_fill`,
+   which was both the text on the accent and the text on the Usage
+   map's blocks, is two tokens: `on_accent`, guarded, and `block_text`,
+   kept.
 6. **More contrast is followed whatever the setting says** (point 7):
    it is a need, not a style. Asked for (the portal's `contrast`,
    macOS's "Increase contrast"), the guard asks 7:1 of text and 4.5:1

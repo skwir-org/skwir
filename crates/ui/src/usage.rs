@@ -630,7 +630,7 @@ impl Build<'_> {
                 label: child.name.clone().into(),
                 detail: self.detail(child).into(),
                 color: self.color(child, hue, depth),
-                text: self.theme.on_fill,
+                text: self.theme.block_text,
                 hatched: child.incomplete,
                 dashed: child.reclaim.is_some(),
                 selected: depth == 0 && entry.is_some_and(|id| (self.selected)(id)),
@@ -971,7 +971,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
         .size_full()
         .flex()
         .flex_col()
-        .text_color(theme.on_fill)
+        .text_color(theme.block_text)
         .child(header)
         .child(
             div()

@@ -661,7 +661,7 @@ impl Shell {
                     ansi: theme.terminal,
                     selection: theme.selection_bg,
                     link: theme.accent,
-                    on_link: theme.on_fill,
+                    on_link: theme.on_accent,
                 },
                 state: Rc::clone(&self.terminal.grid),
                 follow,

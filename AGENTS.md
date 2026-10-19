@@ -78,7 +78,10 @@ working in an area, also read that area's rules (see
   dropped.
 - **Tokens.** Colors, radii and shadows come from `theme.rs` (its header
   lists the scales). State colors are tokens too (`hover`, `selection_*`,
-  `success`/`warning`/`error`, `scrim`); never derive one locally.
+  `success`/`warning`/`error`, `scrim`); never derive one locally. A
+  new color token is derived in `Theme::derive` from the look's `Base`,
+  its contrast guarded, or kept as Skwir's (`Kept`) when no desktop's
+  colors change what it means (ADR-071).
 - **Toolkit isolation.** gpui appears only in `skwir-ui` and the binary.
   Views implement `PaneView` in `skwir-ui`; a toolkit-independent
   `ui-api` crate waits until a third-party view exists.

@@ -755,11 +755,11 @@ fn mark_box(mark: Mark, theme: &Theme) -> Div {
         .items_center()
         .justify_center()
         .child(match mark {
-            Mark::All => controls::glyph("check", theme.on_fill, 12.).into_any_element(),
+            Mark::All => controls::glyph("check", theme.on_accent, 12.).into_any_element(),
             Mark::Some => div()
                 .w(px(8.))
                 .h(px(2.))
-                .bg(theme.on_fill)
+                .bg(theme.on_accent)
                 .into_any_element(),
             Mark::None => div().into_any_element(),
         })

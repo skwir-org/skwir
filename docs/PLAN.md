@@ -73,7 +73,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
 | [Names indexed by skwird](#names-indexed-by-skwird) | planned (ADR-050) | — |
-| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | planned (ADR-071) | — |
+| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A built 2026-10-19; B to E planned (ADR-071) | — |
 | [Phase 7: AI](#phase-7-ai) | planned, after Release 0.1 | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
 
@@ -2327,7 +2327,7 @@ after Release 0.1 and after skwird's phase 1.
 
 ## Colors and font from the desktop
 
-ADR-071. Planned; nothing is built.
+ADR-071. Step A built 2026-10-19; the desktop is not read yet (B to E).
 
 **Goal:** Skwir wears what the user chose on their desktop (the accent,
 more contrast, a color scheme, the font's family) on controls that stay
@@ -2341,6 +2341,21 @@ its own, every color readable on what it is drawn on.
   pass after the guard; Skwir's pass, fixing the three pairs that fail
   today (light `text_muted` on `surface`, light `warning` on `bg`, dark
   `on_fill` on `accent`). Screenshots of both looks before and after.
+  **Built 2026-10-19:** `color.rs` (Oklab, WCAG contrast, `readable`,
+  `readable_on`), `Base`, `Steps`, `Kept` and `Theme::derive` in
+  `theme.rs`; `on_fill` split into `on_accent` (guarded) and
+  `block_text` (the Usage map's, kept). Skwir's looks are derived once
+  (`OWN`). Tests: both looks pass in both contrasts; 400 generated
+  schemes pass wherever black or white could; the steps give the
+  hand-picked colors again within two units of a channel (the dark
+  selection within five). Screenshots with `tools/screenshots/readme.py`,
+  the commit before against this one, debug builds on Xvfb: the light
+  look's muted text and the icons it tints went from #707070 to #6c6c6c,
+  the selection from #d6e4ff to #d5e4ff (dark: #2c4f8a to #28508a),
+  nothing else moved; in the dark look, the tags editor's tick is dark on
+  the light accent (6.8:1, was white at 2.42:1). Not checked in a
+  window: the warning's color in Settings, the drag's count, link
+  labels; `Contrast::More` is tested but nothing asks for it until B.
 - **B. The portal on Linux.** Accent, contrast and, on a desktop whose
   own settings do not name it, the font, read on a worker through
   ashpd, followed through `SettingChanged`; the last answers kept in the
