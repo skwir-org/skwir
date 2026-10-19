@@ -130,6 +130,8 @@ mod tests {
             accent: Some([0.1, 0.55, 0.5]),
             more_contrast: false,
             font: Some("Noto Sans".into()),
+            document_font: Some("Noto Serif".into()),
+            monospace_font: None,
         }
     }
 

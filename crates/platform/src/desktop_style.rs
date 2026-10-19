@@ -1,15 +1,17 @@
 //! What the user chose on their desktop for how applications look
-//! (ADR-071): an accent, a preference for more contrast, the interface
-//! font's family. Skwir's own controls wear them; it never imitates a
-//! desktop's palette.
+//! (ADR-071): an accent, a preference for more contrast, the families of
+//! its fonts (the interface's, documents', monospace: ADR-073). Skwir's
+//! own controls wear them; it never imitates a desktop's palette.
 //!
 //! On Linux the accent and the contrast are the settings portal's
-//! (`org.freedesktop.appearance`, over D-Bus). The font is read where
-//! the desktop keeps it (`desktop_settings`: `GSettings`, `kdeglobals`,
-//! xfconf), then in GTK's `settings.ini`, then from the portal
-//! (`org.gnome.desktop.interface`, which it answers outside GNOME too).
-//! macOS and Windows say nothing yet: skwir's own colors and font there,
-//! until they are read (ADR-071, step 5).
+//! (`org.freedesktop.appearance`, over D-Bus). The fonts are read where
+//! the desktop keeps them (`desktop_settings`: `GSettings`, `kdeglobals`,
+//! xfconf), the interface's then in GTK's `settings.ini`, then from the
+//! portal (`org.gnome.desktop.interface`, which it answers outside GNOME
+//! too); a fontconfig alias among them (`Monospace`) is the family
+//! fontconfig matches it to (`fonts::unalias`). macOS and Windows say
+//! nothing yet: skwir's own colors and fonts there, until they are read
+//! (ADR-071, step 5).
 
 use skwir_core::CancelToken;
 
@@ -28,6 +30,13 @@ pub struct DesktopStyle {
     /// The interface font's family (`Noto Sans`), without its size or
     /// style.
     pub font: Option<String>,
+    /// The family documents are read in (GNOME's `document-font-name`).
+    #[serde(default)]
+    pub document_font: Option<String>,
+    /// The monospace font's family (`monospace-font-name`, Plasma's
+    /// `fixed`).
+    #[serde(default)]
+    pub monospace_font: Option<String>,
 }
 
 /// What the desktop says now. It asks the session's bus and may run a
@@ -132,7 +141,7 @@ mod imp {
 
     pub(super) fn read() -> DesktopStyle {
         let bus = Connection::session().ok();
-        read_from(bus.as_ref(), own_font())
+        read_from(bus.as_ref(), own_fonts())
     }
 
     pub(super) fn follow(
@@ -146,28 +155,46 @@ mod imp {
                 if let Err(error) = &bus {
                     tracing::debug!("the desktop's style is not followed: {error}");
                 }
-                follow_on(bus.as_ref().ok(), own_font, &mut changed, &stop);
+                follow_on(bus.as_ref().ok(), own_fonts, &mut changed, &stop);
             });
         if let Err(error) = thread {
             tracing::debug!("the desktop's style is not followed: {error}");
         }
     }
 
-    /// What the desktop says, its font as `own_font` found it where the
+    /// The fonts a desktop's own settings name, each a family.
+    #[derive(Debug, Default)]
+    pub(super) struct Named {
+        pub(super) interface: Option<String>,
+        pub(super) document: Option<String>,
+        pub(super) monospace: Option<String>,
+    }
+
+    /// The portal's keys of the fonts, in `INTERFACE`.
+    const FONT_KEYS: [&str; 3] = ["font-name", "document-font-name", "monospace-font-name"];
+
+    /// What the desktop says, each font as `own` found it where the
     /// desktop keeps it, else as the portal on `bus` names it.
-    pub(super) fn read_from(bus: Option<&Connection>, own_font: Option<String>) -> DesktopStyle {
+    pub(super) fn read_from(bus: Option<&Connection>, own: Named) -> DesktopStyle {
         let portal =
             |namespace: &str, key: &str| bus.and_then(|bus| portal_read(bus, namespace, key));
+        let font = |own: Option<String>, key: &str| {
+            own.or_else(|| {
+                portal(INTERFACE, key)
+                    .and_then(|value| String::try_from(value).ok())
+                    .and_then(|name| super::pango_family(&name))
+            })
+            .map(|family| crate::fonts::unalias(&family))
+        };
+        let [interface, document, monospace] = FONT_KEYS;
         DesktopStyle {
             accent: portal(APPEARANCE, "accent-color").and_then(accent),
             more_contrast: portal(APPEARANCE, "contrast")
                 .and_then(|value| u32::try_from(value).ok())
                 == Some(1),
-            font: own_font.or_else(|| {
-                portal(INTERFACE, "font-name")
-                    .and_then(|value| String::try_from(value).ok())
-                    .and_then(|name| super::pango_family(&name))
-            }),
+            font: font(own.interface, interface),
+            document_font: font(own.document, document),
+            monospace_font: font(own.monospace, monospace),
         }
     }
 
@@ -175,11 +202,11 @@ mod imp {
     /// is read, until the bus goes or a change comes after `stop`.
     pub(super) fn follow_on(
         bus: Option<&Connection>,
-        own_font: impl Fn() -> Option<String>,
+        own_fonts: impl Fn() -> Named,
         changed: &mut dyn FnMut(DesktopStyle),
         stop: &CancelToken,
     ) {
-        let mut said = read_from(bus, own_font());
+        let mut said = read_from(bus, own_fonts());
         changed(said.clone());
         let Some(bus) = bus else { return };
         let rule = zbus::MatchRule::builder()
@@ -208,13 +235,13 @@ mod imp {
             };
             let read = match key.as_str() {
                 "accent-color" | "contrast" => namespace == APPEARANCE,
-                "font-name" => namespace.ends_with(".interface"),
+                key if FONT_KEYS.contains(&key) => namespace.ends_with(".interface"),
                 _ => false,
             };
             if !read {
                 continue;
             }
-            let now = read_from(Some(bus), own_font());
+            let now = read_from(Some(bus), own_fonts());
             if now != said {
                 said = now.clone();
                 changed(now);
@@ -256,26 +283,55 @@ mod imp {
             .then(|| channels.map(|c| c as f32))
     }
 
-    /// The font the desktop's own settings name, else GTK's `settings.ini`.
-    fn own_font() -> Option<String> {
-        let own = match desktop::chosen() {
-            Some(Chosen::GSettings(schema)) => desktop::gsettings(schema, "font-name")
-                .as_deref()
-                .and_then(super::pango_family),
-            Some(Chosen::Kde) => desktop::kdeglobals()
-                .and_then(|text| desktop::keyfile_value(&text, "General", "font"))
-                .as_deref()
-                .and_then(super::qt_family),
-            Some(Chosen::Xfce) => desktop::xfconf("/Gtk/FontName")
-                .as_deref()
-                .and_then(super::pango_family),
-            None => None,
+    /// The fonts the desktop's own settings name; the interface's, when
+    /// they name none, as GTK's `settings.ini` does.
+    fn own_fonts() -> Named {
+        let pango = |described: Option<String>| described.as_deref().and_then(super::pango_family);
+        let mut named = match desktop::chosen() {
+            // GNOME's and MATE's schemas name the three; Cinnamon's its
+            // interface font alone, the others kept in GNOME's.
+            Some(Chosen::GSettings(schema)) => {
+                let other = |key| {
+                    pango(desktop::gsettings(schema, key)).or_else(|| {
+                        (schema != INTERFACE)
+                            .then(|| pango(desktop::gsettings(INTERFACE, key)))
+                            .flatten()
+                    })
+                };
+                Named {
+                    interface: pango(desktop::gsettings(schema, "font-name")),
+                    document: other("document-font-name"),
+                    monospace: other("monospace-font-name"),
+                }
+            }
+            Some(Chosen::Kde) => {
+                let kdeglobals = desktop::kdeglobals();
+                let qt = |key| {
+                    kdeglobals
+                        .as_deref()
+                        .and_then(|text| desktop::keyfile_value(text, "General", key))
+                        .as_deref()
+                        .and_then(super::qt_family)
+                };
+                Named {
+                    interface: qt("font"),
+                    document: None,
+                    monospace: qt("fixed"),
+                }
+            }
+            Some(Chosen::Xfce) => Named {
+                interface: pango(desktop::xfconf("/Gtk/FontName")),
+                document: None,
+                monospace: pango(desktop::xfconf("/Gtk/MonospaceFontName")),
+            },
+            None => Named::default(),
         };
-        own.or_else(|| {
-            desktop::gtk_settings("gtk-font-name")
+        if named.interface.is_none() {
+            named.interface = desktop::gtk_settings("gtk-font-name")
                 .first()
-                .and_then(|name| super::pango_family(name))
-        })
+                .and_then(|name| super::pango_family(name));
+        }
+        named
     }
 }
 
@@ -448,25 +504,42 @@ mod tests {
                 &Value::from((0.2_f64, 0.4, 0.6)),
             );
             set(&values, APPEARANCE, "contrast", &Value::from(1_u32));
-            set(
-                &values,
-                "org.gnome.desktop.interface",
-                "font-name",
-                &Value::from("Noto Sans 10"),
-            );
+            for (key, font) in [
+                ("font-name", "Noto Sans 10"),
+                ("document-font-name", "Noto Serif 11"),
+                ("monospace-font-name", "Hack Bold 10"),
+            ] {
+                set(
+                    &values,
+                    "org.gnome.desktop.interface",
+                    key,
+                    &Value::from(font),
+                );
+            }
             let (bus, _server) = portal(&values);
-            let style = imp::read_from(Some(&bus), None);
+            let style = imp::read_from(Some(&bus), imp::Named::default());
             assert_eq!(
                 style,
                 DesktopStyle {
                     accent: Some([0.2, 0.4, 0.6]),
                     more_contrast: true,
                     font: Some("Noto Sans".into()),
+                    document_font: Some("Noto Serif".into()),
+                    monospace_font: Some("Hack".into()),
                 }
             );
-            // The desktop's own settings name the font before the portal.
-            let own = imp::read_from(Some(&bus), Some("Cantarell".into()));
+            // The desktop's own settings name a font before the portal.
+            let own = imp::read_from(
+                Some(&bus),
+                imp::Named {
+                    interface: Some("Cantarell".into()),
+                    monospace: Some("Source Code Pro".into()),
+                    ..imp::Named::default()
+                },
+            );
             assert_eq!(own.font.as_deref(), Some("Cantarell"));
+            assert_eq!(own.document_font.as_deref(), Some("Noto Serif"));
+            assert_eq!(own.monospace_font.as_deref(), Some("Source Code Pro"));
         }
 
         #[test]
@@ -482,7 +555,7 @@ mod tests {
             let (bus, _server) = serve(OldPortal {
                 values: Arc::clone(&values),
             });
-            let style = imp::read_from(Some(&bus), None);
+            let style = imp::read_from(Some(&bus), imp::Named::default());
             assert_eq!(style.accent, Some([0.2, 0.4, 0.6]));
             assert!(style.more_contrast);
         }
@@ -497,9 +570,15 @@ mod tests {
                 &Value::from((-1_f64, -1., -1.)),
             );
             let (bus, _server) = portal(&values);
-            assert_eq!(imp::read_from(Some(&bus), None), DesktopStyle::default());
+            assert_eq!(
+                imp::read_from(Some(&bus), imp::Named::default()),
+                DesktopStyle::default()
+            );
             // No bus at all: skwir's own.
-            assert_eq!(imp::read_from(None, None), DesktopStyle::default());
+            assert_eq!(
+                imp::read_from(None, imp::Named::default()),
+                DesktopStyle::default()
+            );
         }
 
         #[test]
@@ -517,7 +596,7 @@ mod tests {
             let following = std::thread::spawn(move || {
                 imp::follow_on(
                     Some(&bus),
-                    || None,
+                    imp::Named::default,
                     &mut |style| sent.send(style).unwrap(),
                     &stop,
                 );
@@ -547,6 +626,22 @@ mod tests {
             assert_eq!(changed.accent, Some([0.9, 0.5, 0.1]));
             assert!(changed.more_contrast);
             assert!(got.recv_timeout(Duration::from_millis(300)).is_err());
+
+            // A font the desktop names for code, followed as the rest is.
+            let interface = "org.gnome.desktop.interface";
+            set(
+                &values,
+                interface,
+                "monospace-font-name",
+                &Value::from("Hack 10"),
+            );
+            say(
+                &server,
+                interface,
+                "monospace-font-name",
+                Value::from("Hack 10"),
+            );
+            assert_eq!(next().monospace_font.as_deref(), Some("Hack"));
 
             // The portal gone, the thread ends.
             drop(server);

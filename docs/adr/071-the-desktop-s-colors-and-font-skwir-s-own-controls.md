@@ -4,7 +4,8 @@ Status: accepted, 2026-10-19. Steps 1 and 2 built 2026-10-19: the
 derivation and the guard, Skwir's palettes through them; Linux's portal
 read and followed (the accent, more contrast, the font). Plasma's scheme,
 GTK3 themes, macOS and Windows are not read yet. Amended 2026-10-19 (two
-switches, the font at the window's opening).
+switches, the font at the window's opening), and again by ADR-073 (the
+font a choice among the system's, three of them, followed live).
 
 ## Context
 
@@ -63,7 +64,8 @@ switches, the font at the window's opening).
    toolkit in the process, on Linux alone, past the memory budget.
 2. **From the desktop, what the user chose there:** the look (as now),
    the accent, the contrast preference, a color scheme where the desktop
-   lets the user pick one, the interface font's family. Never a
+   lets the user pick one, the families of its fonts (the interface's,
+   documents', monospace; ADR-073). Never a
    platform's fixed palette (Adwaita's grays, macOS's window
    backgrounds, Fluent's): those are their designers' choices for their
    own controls, and copying them is the imitation point 1 declines.
@@ -71,7 +73,7 @@ switches, the font at the window's opening).
 
    | | Accent | Contrast | Color scheme | Font |
    |---|---|---|---|---|
-   | Linux | the portal's `accent-color` | the portal's `contrast` | Plasma (`XDG_CURRENT_DESKTOP` names KDE): `kdeglobals`. Elsewhere: the GTK3 theme the desktop names, where its files define its colors | on Plasma, `kdeglobals`' `[General] font`; elsewhere found as the GTK theme is |
+   | Linux | the portal's `accent-color` | the portal's `contrast` | Plasma (`XDG_CURRENT_DESKTOP` names KDE): `kdeglobals`. Elsewhere: the GTK3 theme the desktop names, where its files define its colors | on Plasma, `kdeglobals`' `[General] font` and `fixed`; elsewhere found as the GTK theme is |
    | macOS | `NSColor.controlAccentColor` | "Increase contrast" (`NSWorkspace`) | none | Skwir's |
    | Windows | `UISettings`' accent | a contrast theme on (`SPI_GETHIGHCONTRAST`) | the contrast theme's system colors (`GetSysColor`) | Skwir's |
 
@@ -79,16 +81,19 @@ switches, the font at the window's opening).
    where the icon theme is read (`chosen_in`, in the platform's
    `icons.rs`): GSettings' `gtk-theme`, Xfce's `/Net/ThemeName`,
    `settings.ini`'s `gtk-theme-name`; on a desktop none of those names,
-   the portal's `gtk-theme`. The font is read beside it (`font-name`,
-   `/Gtk/FontName`, `gtk-font-name`, the portal's `font-name`). The
+   the portal's `gtk-theme`. The fonts are read beside it: the
+   interface's (`font-name`, `/Gtk/FontName`, `gtk-font-name`, the
+   portal's `font-name`), documents' (`document-font-name`, the
+   portal's), monospace (`monospace-font-name`, `/Gtk/MonospaceFontName`,
+   the portal's); a fontconfig alias among them (`Monospace`) is what
+   `fc-match` makes of it (ADR-073). The
    theme is found under the XDG data folders (`skwir_core::xdg`) and
    `~/.themes`, with `gtk-dark.css` for the dark look where it has one.
    Its colors are its `@define-color`s, after its `@import`s within the
    theme, with GTK's `shade`, `mix`, `alpha`, `lighter` and `darker`
    evaluated. A theme whose CSS lives only in a compiled
    `gtk.gresource`, or GTK's built-in Adwaita, gives none.
-   macOS and Windows name no interface font a user chose: Skwir keeps
-   its own there.
+   macOS and Windows name no font a user chose: Skwir's own there.
 4. **A scheme fills the base tokens; the rest are derived.**
 
    | Token | `kdeglobals` | GTK3 theme | Windows contrast theme |
@@ -137,14 +142,16 @@ switches, the font at the window's opening).
    of the accent, and `border` on `bg` reaches 3:1. A Windows contrast
    theme is a palette the user chose: its colors fill the scheme of
    point 4, under the same stricter guard.
-7. **Two switches, on by default** (amended 2026-10-19, see below):
-   `ui.desktop_colors`, "Desktop colors", and under it
-   `ui.desktop_font`, "Desktop font", which applies only while the
-   first is on (`SettingSpec::under`: drawn indented beneath it,
-   unavailable while it is off). Off, Skwir's own palette and accent, or
-   its own font. `ui.theme` (Automatic, Light, Dark) chooses the look
-   either way. A scheme is one look's: when `ui.theme` forces the other
-   look, that look is Skwir's palette with the desktop's accent.
+7. **A switch, on by default, and the fonts' choices** (amended twice
+   on 2026-10-19, see below): `ui.desktop_colors`, "Desktop colors".
+   Off, Skwir's own palette and accent. The fonts are three choices of
+   their own (ADR-073): `ui.font`, "Font", for the interface, and the
+   reading and code fonts, each Automatic or a family installed.
+   Automatic is the desktop's font while Desktop colors is on, else
+   Skwir's; a family chosen is kept either way. `ui.theme` (Automatic,
+   Light, Dark) chooses the look either way. A scheme is one look's:
+   when `ui.theme` forces the other look, that look is Skwir's palette
+   with the desktop's accent.
 8. **Read off the UI thread; the first frame draws what was read last.**
    The desktop's answers are read on a thread of `skwir-platform`'s own
    (`desktop_style::follow`: the portal through zbus's blocking API, the
@@ -152,15 +159,14 @@ switches, the font at the window's opening).
    the cache (`skwir_core::cache`), from which the next start draws its
    first frame. An answer that differs from what is drawn replaces it
    and wakes the window. With the cache deleted, the first frames are
-   Skwir's own until the answer arrives. The font family is chosen once,
-   when the window opens: what was read last, resolved against the text
-   system, Skwir's candidates taking over when it does not resolve
-   (`AGENTS.md`: always an explicit family). A window keeps copies of
-   its font (its toolbar, its dialogs), so a change of the desktop's
-   font shows at the next start, and the font's switch says so. Only the
-   family is the desktop's: sizes follow Skwir's scales and zoom.
+   Skwir's own until the answer arrives. The fonts are tokens of the
+   theme (ADR-073): what was read last, resolved against the text
+   system with the rest of the look, Skwir's candidates taking over when
+   it does not load (`AGENTS.md`: always an explicit family), and
+   resolved again when the desktop names another. Only the family is
+   the desktop's: sizes follow Skwir's scales and zoom.
 9. **Followed while Skwir runs.** Linux: the portal's `SettingChanged`
-   (the accent, the contrast, the font for the next start), and a watch
+   (the accent, the contrast, the fonts), and a watch
    on `kdeglobals`' folder for the file Plasma replaces
    (access events dropped, as `fs/watch.rs` does); a GTK theme is read
    again when another is named, not watched. macOS and Windows: read
@@ -171,8 +177,8 @@ switches, the font at the window's opening).
 ## Consequences
 
 - GNOME: Skwir's palette with the user's accent, more contrast when
-  asked, GNOME's interface font. Plasma: the user's color scheme
-  (Breeze's by default), its accent and font. Xfce, Cinnamon, MATE and
+  asked, GNOME's interface, document and monospace fonts. Plasma: the
+  user's color scheme (Breeze's by default), its accent and fonts. Xfce, Cinnamon, MATE and
   compositors whose portal names a GTK3 theme (the reference session's
   does): that theme's colors. macOS: Skwir's palette and font, the
   accent, more contrast. Windows: Skwir's palette and font, the accent,
@@ -221,3 +227,14 @@ switches, the font at the window's opening).
   thread of its own, as the media controls do, with no async runtime to
   drive. The README's screenshots turn the desktop's colors off, so they
   never wear the accent of the machine that makes them.
+- 2026-10-19, ADR-073: the font is chosen among the system's. The user,
+  told that point 7 offered the desktop's font or Skwir's and nothing
+  else: "don't leave it out, change the ADR relevant sections to add the
+  font picker". So `ui.desktop_font` (a switch under Desktop colors,
+  never released) became `ui.font`, a choice of Automatic or any family
+  installed, no longer under the switch: a family chosen has nothing to
+  do with the desktop's colors, and only Automatic asks whether they are
+  worn. With it, the desktop's document and monospace fonts are read
+  for the reading and code fonts (point 3), and the fonts are tokens of
+  the theme, so a change, the desktop's or the user's, shows at once
+  (points 8 and 9) rather than at the next start.

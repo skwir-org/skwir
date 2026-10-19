@@ -36,6 +36,7 @@ pub mod document;
 pub mod exif;
 pub mod file;
 pub mod filesystem;
+pub mod fonts;
 #[cfg(target_os = "linux")]
 mod icon_theme;
 pub mod icons;

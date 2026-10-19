@@ -351,7 +351,14 @@ Left:
   vim, geo, edit-as-buffer. Absent elsewhere, so read as nothing.
 - **Fonts**: `mupdf-worker/fonts.rs` `fc-match` **(c)**. Each system's UI
   fonts after Inter (step J, done, never run): Helvetica Neue and Menlo on a
-  Mac; Segoe UI and Cascadia Mono or Consolas on Windows.
+  Mac; Segoe UI and Cascadia Mono or Consolas on Windows. The font
+  settings (ADR-073) offer every family the text system lists there:
+  `platform/fonts.rs` asks fontconfig which write Latin and which are
+  monospaced, and resolves its aliases **(c)**; a Mac (CoreText's traits)
+  and Windows (DirectWrite's `IsMonospacedFont`) say nothing yet, so a
+  family that writes no Latin is offered and drawn as Automatic, and code
+  is offered every family. Neither names a font of the desktop's
+  (ADR-071).
 - `alloc/lib.rs` ELF constructor (Linux); `skwir/gpu.rs` sysfs **(c)**.
 - `archive-worker/main.rs`: `LC_CTYPE` value and `C.UTF-8` **(c)**.
 - **Keys** (step J, done): the standard shortcuts are `secondary` (Cmd on a
