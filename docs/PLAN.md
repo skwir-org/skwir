@@ -73,6 +73,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
 | [Names indexed by skwird](#names-indexed-by-skwird) | planned (ADR-050) | — |
+| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | planned (ADR-071) | — |
 | [Phase 7: AI](#phase-7-ai) | planned, after Release 0.1 | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
 
@@ -2321,6 +2322,39 @@ after Release 0.1 and after skwird's phase 1.
 - **D. Then, each decided on its own:** the address field searching as
   one types, Usage of a tree from skwird's folder totals, "recently
   changed", the tags index's checks.
+
+---
+
+## Colors and font from the desktop
+
+ADR-071. Planned; nothing is built.
+
+**Goal:** Skwir wears what the user chose on their desktop (the accent,
+more contrast, a color scheme, the font's family) on controls that stay
+its own, every color readable on what it is drawn on.
+
+- **A. One derivation, guarded.** `theme.rs` derives every token from a
+  few base colors; Skwir's light and dark palettes become that
+  derivation over its own. The contrast guard (4.5:1 for text, 3:1 for
+  the accent; 7:1 and 4.5:1 when more contrast is asked) moves a
+  foreground's lightness until it passes. Tested: generated palettes
+  pass after the guard; Skwir's pass, fixing the three pairs that fail
+  today (light `text_muted` on `surface`, light `warning` on `bg`, dark
+  `on_fill` on `accent`). Screenshots of both looks before and after.
+- **B. The portal on Linux.** Accent, contrast and, on a desktop whose
+  own settings do not name it, the font, read on a worker through
+  ashpd, followed through `SettingChanged`; the last answers kept in the
+  cache for the first frame; the `ui.desktop_style` switch. Checked on
+  the session and on headless sway with a portal answering; `just
+  idle-pss` and the first frame measured before and after.
+- **C. Plasma's color scheme** from `kdeglobals`, watched; tested on
+  synthetic schemes.
+- **D. GTK3 themes**, found as the icon theme is; `@define-color`s,
+  `@import`s and GTK's color functions read from synthetic themes, then
+  real ones (adw-gtk3, Arc, Materia).
+- **E. macOS and Windows:** the accent, more contrast, Windows' contrast
+  themes; read again on appearance changes and activation. Windows tried
+  under Wine for what it answers; macOS compiled only.
 
 ---
 
