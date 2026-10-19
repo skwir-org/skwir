@@ -335,7 +335,8 @@ class Window:
         self.procs.append(window)
         deadline = time.time() + 60
         while True:
-            found = self.xdotool("search", "--onlyvisible", "--name", "^skwir$")
+            # The title is the place shown, then skwir (ADR-065).
+            found = self.xdotool("search", "--onlyvisible", "--name", "skwir$")
             if found:
                 self.window = found.split()[0]
                 break
