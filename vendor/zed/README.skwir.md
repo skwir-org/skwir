@@ -383,7 +383,9 @@ in its preview (ADR-067).
 - **`gpui::Mesh`** holds positions and the triangles between them, three
   indices each. `Mesh::new` refuses one without triangles, an index past
   the positions and a coordinate that is not finite. Each mesh has an id,
-  which a renderer keeps its buffers by.
+  which a renderer keeps its buffers by. `with_colors` gives each position
+  a colour (sRGB bytes), drawn in place of the view's, blended across a
+  face in linear light.
 - **`Window::paint_mesh(bounds, mesh, view, cx)`** paints one, a
   primitive of its own (`PaintMesh`) in draw order and clipped by the
   content mask like any other, and says whether it did. Clip space spans
@@ -427,7 +429,8 @@ The tests are the renderer's, on the headless renderer (lavapipe will do):
 the upload, the light's values, the nearer face over the farther drawn
 after it, the buffers and target let go of),
 `headless_renderer_shades_smoothly_once_normals_are_made` (flat while they
-are made, then a roof's ridge lit as its normal says), gpui's
+are made, then a roof's ridge lit as its normal says),
+`headless_renderer_draws_a_mesh_in_its_colors`, gpui's
 `smooth_normals_average_the_faces_around`, `headless_renderer_clips_a_mesh_and_keeps_its_order` (what a mask
 shows of a mesh is where the whole is drawn, under a quad painted after),
 and `the_mesh_shader_reads_what_is_written` (the shader validates, its

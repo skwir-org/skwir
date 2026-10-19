@@ -17,7 +17,9 @@ struct MeshParams {
     perspective: u32,
     // Whether `normal` holds the surface's normals, else faces are flat.
     shaded_smooth: u32,
-    pad: u32,
+    // Whether `color` holds each position's color, else `mesh.color` is the
+    // surface's.
+    colored: u32,
 }
 
 @group(0) @binding(0) var<uniform> mesh: MeshParams;
@@ -26,10 +28,21 @@ struct MeshVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) eye: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    @location(2) color: vec3<f32>,
+}
+
+fn linear_from_srgb(srgb: vec3<f32>) -> vec3<f32> {
+    let low = srgb / 12.92;
+    let high = pow((srgb + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(high, low, srgb <= vec3<f32>(0.04045));
 }
 
 @vertex
-fn vs_mesh(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>) -> MeshVarying {
+fn vs_mesh(
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+) -> MeshVarying {
     let eye = mesh.model_view * vec4<f32>(position, 1.0);
     let clip = mesh.projection * eye;
     var out: MeshVarying;
@@ -42,6 +55,11 @@ fn vs_mesh(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>) -> 
     // Turned as the mesh is: the model-view only turns, moves and scales
     // evenly.
     out.normal = (mesh.model_view * vec4<f32>(normal, 0.0)).xyz;
+    // Blended in linear light across the face.
+    out.color = mesh.color.rgb;
+    if (mesh.colored != 0u) {
+        out.color = linear_from_srgb(color.rgb);
+    }
     return out;
 }
 
@@ -83,7 +101,7 @@ fn fs_mesh(input: MeshVarying) -> @location(0) vec4<f32> {
     let light = mesh.ambient
         + mesh.light0.w * max(dot(normal, mesh.light0.xyz), 0.0)
         + mesh.light1.w * max(dot(normal, mesh.light1.xyz), 0.0);
-    return vec4<f32>(srgb_from_linear(mesh.color.rgb * light), 1.0);
+    return vec4<f32>(srgb_from_linear(input.color * light), 1.0);
 }
 
 // --- the target composited into the frame --- //

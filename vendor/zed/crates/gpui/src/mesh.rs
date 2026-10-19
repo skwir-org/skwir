@@ -18,6 +18,9 @@ pub struct Mesh {
     id: MeshId,
     positions: Vec<[f32; 3]>,
     indices: Vec<u32>,
+    /// A colour for each position (sRGB bytes, red, green, blue, alpha),
+    /// drawn in place of `MeshView::color`.
+    colors: Option<Vec<[u8; 4]>>,
 }
 
 /// Why a mesh could not be made.
@@ -39,6 +42,13 @@ pub enum MeshError {
         /// The position holding it.
         position: usize,
     },
+    /// Not a colour for each position.
+    Colors {
+        /// How many colours there are.
+        colors: usize,
+        /// How many positions there are.
+        positions: usize,
+    },
 }
 
 impl fmt::Display for MeshError {
@@ -52,6 +62,9 @@ impl fmt::Display for MeshError {
             ),
             MeshError::NotFinite { position } => {
                 write!(f, "the mesh's position {position} is not finite")
+            }
+            MeshError::Colors { colors, positions } => {
+                write!(f, "the mesh has {colors} colors for {positions} positions")
             }
         }
     }
@@ -87,7 +100,27 @@ impl Mesh {
             id: MeshId(NEXT.fetch_add(1, Ordering::Relaxed)),
             positions,
             indices,
+            colors: None,
         })
+    }
+
+    /// The same mesh with a color for each position, sRGB bytes.
+    pub fn with_colors(self, colors: Vec<[u8; 4]>) -> Result<Self, MeshError> {
+        if colors.len() != self.positions.len() {
+            return Err(MeshError::Colors {
+                colors: colors.len(),
+                positions: self.positions.len(),
+            });
+        }
+        Ok(Mesh {
+            colors: Some(colors),
+            ..self
+        })
+    }
+
+    /// Its positions' colors, if it has some.
+    pub fn colors(&self) -> Option<&[[u8; 4]]> {
+        self.colors.as_deref()
     }
 
     /// Its identity.
@@ -110,10 +143,12 @@ impl Mesh {
         self.indices.len() / 3
     }
 
-    /// What its buffers take, in bytes: the positions and the indices.
+    /// What its buffers take, in bytes: the positions, the indices and the
+    /// colors.
     pub fn size_in_bytes(&self) -> u64 {
         (std::mem::size_of_val(self.positions.as_slice())
-            + std::mem::size_of_val(self.indices.as_slice())) as u64
+            + std::mem::size_of_val(self.indices.as_slice())
+            + self.colors.as_ref().map_or(0, |colors| colors.len() * 4)) as u64
     }
 
     /// A normal for each position, for smooth shading: the normals of the
@@ -271,6 +306,22 @@ mod tests {
         assert_eq!(
             Mesh::new(square.clone(), vec![]).err(),
             Some(MeshError::Empty)
+        );
+        let painted = Mesh::new(square.clone(), vec![0, 1, 2])
+            .unwrap()
+            .with_colors(vec![[255, 0, 0, 255]; 4])
+            .unwrap();
+        assert_eq!(painted.colors().map(<[_]>::len), Some(4));
+        assert_eq!(painted.size_in_bytes(), 4 * 12 + 3 * 4 + 4 * 4);
+        assert_eq!(
+            Mesh::new(square.clone(), vec![0, 1, 2])
+                .unwrap()
+                .with_colors(vec![[0; 4]; 3])
+                .err(),
+            Some(MeshError::Colors {
+                colors: 3,
+                positions: 4
+            })
         );
         assert_eq!(
             Mesh::new(square.clone(), vec![0, 1]).err(),

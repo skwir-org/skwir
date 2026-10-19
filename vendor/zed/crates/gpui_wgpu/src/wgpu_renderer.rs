@@ -3172,6 +3172,35 @@ mod tests {
         Ok(())
     }
 
+    /// A mesh's own colors take the view's: a red square facing the camera,
+    /// lit 0.2 + 0.6, is 0.8 of red in linear light.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_draws_a_mesh_in_its_colors() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let square = vec![
+            [-0.5, -0.5, 0.],
+            [0.5, -0.5, 0.],
+            [0.5, 0.5, 0.],
+            [-0.5, 0.5, 0.],
+        ];
+        let red = std::sync::Arc::new(
+            gpui::Mesh::new(square, vec![0, 1, 2, 0, 2, 3])
+                .unwrap()
+                .with_colors(vec![[255, 0, 0, 255]; 4])
+                .unwrap(),
+        );
+        upload(&mut renderer, &red);
+        let all = scaled_bounds(0., 0., 40., 40.);
+        let mut scene = Scene::default();
+        scene.insert_primitive(paint_mesh(&red, all, all));
+        scene.finish();
+        let image = renderer.render_scene_to_image(&scene, device_size(40, 40))?;
+        assert_pixel(&image, 20, 20, [231, 0, 0, 255]);
+        assert_pixel(&image, 2, 2, BLACK);
+        Ok(())
+    }
+
     #[test]
     fn webgl_shader_is_valid_wgsl_without_storage_buffers() {
         assert!(!WEBGL_SHADERS.contains("var<storage"));

@@ -22,10 +22,10 @@ index 6758bc47..cdea79ac 100644
  pub use profiler::*;
 diff --git a/crates/gpui/src/mesh.rs b/crates/gpui/src/mesh.rs
 new file mode 100644
-index 00000000..f89e4b28
+index 00000000..356afbae
 --- /dev/null
 +++ b/crates/gpui/src/mesh.rs
-@@ -0,0 +1,325 @@
+@@ -0,0 +1,376 @@
 +//! Triangle meshes drawn in 3D by the GPU, through [`crate::Window::paint_mesh`].
 +
 +use std::fmt;
@@ -46,6 +46,9 @@ index 00000000..f89e4b28
 +    id: MeshId,
 +    positions: Vec<[f32; 3]>,
 +    indices: Vec<u32>,
++    /// A colour for each position (sRGB bytes, red, green, blue, alpha),
++    /// drawn in place of `MeshView::color`.
++    colors: Option<Vec<[u8; 4]>>,
 +}
 +
 +/// Why a mesh could not be made.
@@ -67,6 +70,13 @@ index 00000000..f89e4b28
 +        /// The position holding it.
 +        position: usize,
 +    },
++    /// Not a colour for each position.
++    Colors {
++        /// How many colours there are.
++        colors: usize,
++        /// How many positions there are.
++        positions: usize,
++    },
 +}
 +
 +impl fmt::Display for MeshError {
@@ -80,6 +90,9 @@ index 00000000..f89e4b28
 +            ),
 +            MeshError::NotFinite { position } => {
 +                write!(f, "the mesh's position {position} is not finite")
++            }
++            MeshError::Colors { colors, positions } => {
++                write!(f, "the mesh has {colors} colors for {positions} positions")
 +            }
 +        }
 +    }
@@ -115,7 +128,27 @@ index 00000000..f89e4b28
 +            id: MeshId(NEXT.fetch_add(1, Ordering::Relaxed)),
 +            positions,
 +            indices,
++            colors: None,
 +        })
++    }
++
++    /// The same mesh with a color for each position, sRGB bytes.
++    pub fn with_colors(self, colors: Vec<[u8; 4]>) -> Result<Self, MeshError> {
++        if colors.len() != self.positions.len() {
++            return Err(MeshError::Colors {
++                colors: colors.len(),
++                positions: self.positions.len(),
++            });
++        }
++        Ok(Mesh {
++            colors: Some(colors),
++            ..self
++        })
++    }
++
++    /// Its positions' colors, if it has some.
++    pub fn colors(&self) -> Option<&[[u8; 4]]> {
++        self.colors.as_deref()
 +    }
 +
 +    /// Its identity.
@@ -138,10 +171,12 @@ index 00000000..f89e4b28
 +        self.indices.len() / 3
 +    }
 +
-+    /// What its buffers take, in bytes: the positions and the indices.
++    /// What its buffers take, in bytes: the positions, the indices and the
++    /// colors.
 +    pub fn size_in_bytes(&self) -> u64 {
 +        (std::mem::size_of_val(self.positions.as_slice())
-+            + std::mem::size_of_val(self.indices.as_slice())) as u64
++            + std::mem::size_of_val(self.indices.as_slice())
++            + self.colors.as_ref().map_or(0, |colors| colors.len() * 4)) as u64
 +    }
 +
 +    /// A normal for each position, for smooth shading: the normals of the
@@ -299,6 +334,22 @@ index 00000000..f89e4b28
 +        assert_eq!(
 +            Mesh::new(square.clone(), vec![]).err(),
 +            Some(MeshError::Empty)
++        );
++        let painted = Mesh::new(square.clone(), vec![0, 1, 2])
++            .unwrap()
++            .with_colors(vec![[255, 0, 0, 255]; 4])
++            .unwrap();
++        assert_eq!(painted.colors().map(<[_]>::len), Some(4));
++        assert_eq!(painted.size_in_bytes(), 4 * 12 + 3 * 4 + 4 * 4);
++        assert_eq!(
++            Mesh::new(square.clone(), vec![0, 1, 2])
++                .unwrap()
++                .with_colors(vec![[0; 4]; 3])
++                .err(),
++            Some(MeshError::Colors {
++                colors: 3,
++                positions: 4
++            })
 +        );
 +        assert_eq!(
 +            Mesh::new(square.clone(), vec![0, 1]).err(),
@@ -747,10 +798,10 @@ index 29a79afc..98037639 100644
  pub use cosmic_text_system::*;
 diff --git a/crates/gpui_wgpu/src/shaders_mesh.wgsl b/crates/gpui_wgpu/src/shaders_mesh.wgsl
 new file mode 100644
-index 00000000..9ce4bbfc
+index 00000000..c8f8bda3
 --- /dev/null
 +++ b/crates/gpui_wgpu/src/shaders_mesh.wgsl
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,133 @@
 +// Meshes drawn in 3D (`gpui::PaintMesh`): each into an offscreen target, with
 +// depth, then composited into the frame. A module of its own, made when the
 +// first mesh is drawn.
@@ -770,7 +821,9 @@ index 00000000..9ce4bbfc
 +    perspective: u32,
 +    // Whether `normal` holds the surface's normals, else faces are flat.
 +    shaded_smooth: u32,
-+    pad: u32,
++    // Whether `color` holds each position's color, else `mesh.color` is the
++    // surface's.
++    colored: u32,
 +}
 +
 +@group(0) @binding(0) var<uniform> mesh: MeshParams;
@@ -779,10 +832,21 @@ index 00000000..9ce4bbfc
 +    @builtin(position) position: vec4<f32>,
 +    @location(0) eye: vec3<f32>,
 +    @location(1) normal: vec3<f32>,
++    @location(2) color: vec3<f32>,
++}
++
++fn linear_from_srgb(srgb: vec3<f32>) -> vec3<f32> {
++    let low = srgb / 12.92;
++    let high = pow((srgb + 0.055) / 1.055, vec3<f32>(2.4));
++    return select(high, low, srgb <= vec3<f32>(0.04045));
 +}
 +
 +@vertex
-+fn vs_mesh(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>) -> MeshVarying {
++fn vs_mesh(
++    @location(0) position: vec3<f32>,
++    @location(1) normal: vec3<f32>,
++    @location(2) color: vec4<f32>,
++) -> MeshVarying {
 +    let eye = mesh.model_view * vec4<f32>(position, 1.0);
 +    let clip = mesh.projection * eye;
 +    var out: MeshVarying;
@@ -795,6 +859,11 @@ index 00000000..9ce4bbfc
 +    // Turned as the mesh is: the model-view only turns, moves and scales
 +    // evenly.
 +    out.normal = (mesh.model_view * vec4<f32>(normal, 0.0)).xyz;
++    // Blended in linear light across the face.
++    out.color = mesh.color.rgb;
++    if (mesh.colored != 0u) {
++        out.color = linear_from_srgb(color.rgb);
++    }
 +    return out;
 +}
 +
@@ -836,7 +905,7 @@ index 00000000..9ce4bbfc
 +    let light = mesh.ambient
 +        + mesh.light0.w * max(dot(normal, mesh.light0.xyz), 0.0)
 +        + mesh.light1.w * max(dot(normal, mesh.light1.xyz), 0.0);
-+    return vec4<f32>(srgb_from_linear(mesh.color.rgb * light), 1.0);
++    return vec4<f32>(srgb_from_linear(input.color * light), 1.0);
 +}
 +
 +// --- the target composited into the frame --- //
@@ -868,10 +937,10 @@ index 00000000..9ce4bbfc
 +}
 diff --git a/crates/gpui_wgpu/src/wgpu_meshes.rs b/crates/gpui_wgpu/src/wgpu_meshes.rs
 new file mode 100644
-index 00000000..9fcf2c93
+index 00000000..cfffa8b4
 --- /dev/null
 +++ b/crates/gpui_wgpu/src/wgpu_meshes.rs
-@@ -0,0 +1,766 @@
+@@ -0,0 +1,790 @@
 +//! Meshes drawn in 3D (`gpui::PaintMesh`). Each is drawn in a pass of its
 +//! own into an offscreen target the size of what is shown of it,
 +//! multisampled as paths are and with a depth buffer, then composited into
@@ -910,7 +979,7 @@ index 00000000..9fcf2c93
 +    ambient: f32,
 +    perspective: u32,
 +    smooth: u32,
-+    pad: u32,
++    colored: u32,
 +}
 +
 +#[repr(C)]
@@ -934,6 +1003,8 @@ index 00000000..9fcf2c93
 +    indices: wgpu::Buffer,
 +    /// Made once a frame shades the mesh smoothly.
 +    normals: Option<wgpu::Buffer>,
++    /// Its positions' colors, when it has some.
++    colors: Option<wgpu::Buffer>,
 +    count: u32,
 +    /// Whether the frame being drawn draws it.
 +    drawn: bool,
@@ -963,6 +1034,13 @@ index 00000000..9fcf2c93
 +                usage: wgpu::BufferUsages::INDEX,
 +            }),
 +            normals: normals.then(|| normals_of(device, mesh)),
++            colors: mesh.colors().map(|colors| {
++                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
++                    label: Some("mesh_colors"),
++                    contents: bytemuck::cast_slice(colors),
++                    usage: wgpu::BufferUsages::VERTEX,
++                })
++            }),
 +            count: mesh.indices().len() as u32,
 +            drawn: false,
 +        }
@@ -1238,6 +1316,7 @@ index 00000000..9fcf2c93
 +        buffers.drawn = true;
 +        // Flat until its normals are made.
 +        let smooth = paint.view.smooth && buffers.normals.is_some();
++        let colored = buffers.colors.is_some();
 +        let largest = device.limits().max_texture_dimension_2d;
 +        let step = |side: u32| {
 +            side.div_ceil(TARGET_STEP)
@@ -1284,7 +1363,7 @@ index 00000000..9fcf2c93
 +            ambient: view.ambient,
 +            perspective: u32::from(view.perspective),
 +            smooth: u32::from(smooth),
-+            pad: 0,
++            colored: u32::from(colored),
 +        };
 +        let composite = CompositeParams {
 +            origin: [left, top],
@@ -1374,9 +1453,12 @@ index 00000000..9fcf2c93
 +        pass.set_pipeline(&pipelines.draw);
 +        pass.set_bind_group(0, &prepared.draw, &[]);
 +        pass.set_vertex_buffer(0, buffers.positions.slice(..));
-+        // Without normals the shader reads none: the positions stand in.
++        // Without normals or colors the shader reads none: the positions
++        // stand in, as long as either would be.
 +        let normals = buffers.normals.as_ref().unwrap_or(&buffers.positions);
 +        pass.set_vertex_buffer(1, normals.slice(..));
++        let colors = buffers.colors.as_ref().unwrap_or(&buffers.positions);
++        pass.set_vertex_buffer(2, colors.slice(..));
 +        pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
 +        pass.draw_indexed(0..buffers.count, 0, 0..1);
 +    }
@@ -1523,25 +1605,36 @@ index 00000000..9fcf2c93
 +            vertex: wgpu::VertexState {
 +                module: &module,
 +                entry_point: Some("vs_mesh"),
-+                buffers: &[0, 1].map(|location| {
++                // Positions, normals, colors: a buffer each.
++                buffers: &[
 +                    Some(wgpu::VertexBufferLayout {
 +                        array_stride: 12,
 +                        step_mode: wgpu::VertexStepMode::Vertex,
-+                        attributes: if location == 0 {
-+                            &[wgpu::VertexAttribute {
-+                                format: wgpu::VertexFormat::Float32x3,
-+                                offset: 0,
-+                                shader_location: 0,
-+                            }]
-+                        } else {
-+                            &[wgpu::VertexAttribute {
-+                                format: wgpu::VertexFormat::Float32x3,
-+                                offset: 0,
-+                                shader_location: 1,
-+                            }]
-+                        },
-+                    })
-+                }),
++                        attributes: &[wgpu::VertexAttribute {
++                            format: wgpu::VertexFormat::Float32x3,
++                            offset: 0,
++                            shader_location: 0,
++                        }],
++                    }),
++                    Some(wgpu::VertexBufferLayout {
++                        array_stride: 12,
++                        step_mode: wgpu::VertexStepMode::Vertex,
++                        attributes: &[wgpu::VertexAttribute {
++                            format: wgpu::VertexFormat::Float32x3,
++                            offset: 0,
++                            shader_location: 1,
++                        }],
++                    }),
++                    Some(wgpu::VertexBufferLayout {
++                        array_stride: 4,
++                        step_mode: wgpu::VertexStepMode::Vertex,
++                        attributes: &[wgpu::VertexAttribute {
++                            format: wgpu::VertexFormat::Unorm8x4,
++                            offset: 0,
++                            shader_location: 2,
++                        }],
++                    }),
++                ],
 +                compilation_options: wgpu::PipelineCompilationOptions::default(),
 +            },
 +            fragment: Some(wgpu::FragmentState {
@@ -1639,7 +1732,7 @@ index 00000000..9fcf2c93
 +    }
 +}
 diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
-index dc716237..a4000567 100644
+index dc716237..fe044a5e 100644
 --- a/crates/gpui_wgpu/src/wgpu_renderer.rs
 +++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
 @@ -1,3 +1,4 @@
@@ -1774,7 +1867,7 @@ index dc716237..a4000567 100644
              gamma_ratios,
              grayscale_enhanced_contrast,
              subpixel_enhanced_contrast,
-@@ -2787,6 +2847,331 @@ mod tests {
+@@ -2787,6 +2847,360 @@ mod tests {
          Ok(())
      }
  
@@ -2100,6 +2193,35 @@ index dc716237..a4000567 100644
 +        assert!(lit(&smooth, outer).abs_diff(lit(&flat, outer)) <= 6);
 +        assert!(lit(&smooth, ridge) > lit(&flat, ridge) + 8);
 +        assert!(lit(&smooth, ridge).abs_diff(lit(&smooth, right)) <= 6);
++        Ok(())
++    }
++
++    /// A mesh's own colors take the view's: a red square facing the camera,
++    /// lit 0.2 + 0.6, is 0.8 of red in linear light.
++    #[cfg(target_os = "linux")]
++    #[test]
++    fn headless_renderer_draws_a_mesh_in_its_colors() -> anyhow::Result<()> {
++        let mut renderer = WgpuHeadlessRenderer::new()?;
++        let square = vec![
++            [-0.5, -0.5, 0.],
++            [0.5, -0.5, 0.],
++            [0.5, 0.5, 0.],
++            [-0.5, 0.5, 0.],
++        ];
++        let red = std::sync::Arc::new(
++            gpui::Mesh::new(square, vec![0, 1, 2, 0, 2, 3])
++                .unwrap()
++                .with_colors(vec![[255, 0, 0, 255]; 4])
++                .unwrap(),
++        );
++        upload(&mut renderer, &red);
++        let all = scaled_bounds(0., 0., 40., 40.);
++        let mut scene = Scene::default();
++        scene.insert_primitive(paint_mesh(&red, all, all));
++        scene.finish();
++        let image = renderer.render_scene_to_image(&scene, device_size(40, 40))?;
++        assert_pixel(&image, 20, 20, [231, 0, 0, 255]);
++        assert_pixel(&image, 2, 2, BLACK);
 +        Ok(())
 +    }
 +

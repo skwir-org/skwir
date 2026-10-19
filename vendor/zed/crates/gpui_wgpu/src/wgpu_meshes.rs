@@ -36,7 +36,7 @@ struct MeshParams {
     ambient: f32,
     perspective: u32,
     smooth: u32,
-    pad: u32,
+    colored: u32,
 }
 
 #[repr(C)]
@@ -60,6 +60,8 @@ struct Buffers {
     indices: wgpu::Buffer,
     /// Made once a frame shades the mesh smoothly.
     normals: Option<wgpu::Buffer>,
+    /// Its positions' colors, when it has some.
+    colors: Option<wgpu::Buffer>,
     count: u32,
     /// Whether the frame being drawn draws it.
     drawn: bool,
@@ -89,6 +91,13 @@ impl Buffers {
                 usage: wgpu::BufferUsages::INDEX,
             }),
             normals: normals.then(|| normals_of(device, mesh)),
+            colors: mesh.colors().map(|colors| {
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("mesh_colors"),
+                    contents: bytemuck::cast_slice(colors),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
+            }),
             count: mesh.indices().len() as u32,
             drawn: false,
         }
@@ -364,6 +373,7 @@ impl MeshPass {
         buffers.drawn = true;
         // Flat until its normals are made.
         let smooth = paint.view.smooth && buffers.normals.is_some();
+        let colored = buffers.colors.is_some();
         let largest = device.limits().max_texture_dimension_2d;
         let step = |side: u32| {
             side.div_ceil(TARGET_STEP)
@@ -410,7 +420,7 @@ impl MeshPass {
             ambient: view.ambient,
             perspective: u32::from(view.perspective),
             smooth: u32::from(smooth),
-            pad: 0,
+            colored: u32::from(colored),
         };
         let composite = CompositeParams {
             origin: [left, top],
@@ -500,9 +510,12 @@ impl MeshPass {
         pass.set_pipeline(&pipelines.draw);
         pass.set_bind_group(0, &prepared.draw, &[]);
         pass.set_vertex_buffer(0, buffers.positions.slice(..));
-        // Without normals the shader reads none: the positions stand in.
+        // Without normals or colors the shader reads none: the positions
+        // stand in, as long as either would be.
         let normals = buffers.normals.as_ref().unwrap_or(&buffers.positions);
         pass.set_vertex_buffer(1, normals.slice(..));
+        let colors = buffers.colors.as_ref().unwrap_or(&buffers.positions);
+        pass.set_vertex_buffer(2, colors.slice(..));
         pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
         pass.draw_indexed(0..buffers.count, 0, 0..1);
     }
@@ -649,25 +662,36 @@ impl MeshPass {
             vertex: wgpu::VertexState {
                 module: &module,
                 entry_point: Some("vs_mesh"),
-                buffers: &[0, 1].map(|location| {
+                // Positions, normals, colors: a buffer each.
+                buffers: &[
                     Some(wgpu::VertexBufferLayout {
                         array_stride: 12,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: if location == 0 {
-                            &[wgpu::VertexAttribute {
-                                format: wgpu::VertexFormat::Float32x3,
-                                offset: 0,
-                                shader_location: 0,
-                            }]
-                        } else {
-                            &[wgpu::VertexAttribute {
-                                format: wgpu::VertexFormat::Float32x3,
-                                offset: 0,
-                                shader_location: 1,
-                            }]
-                        },
-                    })
-                }),
+                        attributes: &[wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 0,
+                            shader_location: 0,
+                        }],
+                    }),
+                    Some(wgpu::VertexBufferLayout {
+                        array_stride: 12,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 0,
+                            shader_location: 1,
+                        }],
+                    }),
+                    Some(wgpu::VertexBufferLayout {
+                        array_stride: 4,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Unorm8x4,
+                            offset: 0,
+                            shader_location: 2,
+                        }],
+                    }),
+                ],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
