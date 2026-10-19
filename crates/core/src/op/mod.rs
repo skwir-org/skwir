@@ -348,6 +348,22 @@ pub enum Followed {
 }
 
 impl Change {
+    /// The file it acts on, as it was asked: what is copied, moved, linked,
+    /// renamed, trashed, restored (where it goes back), deleted or made.
+    pub fn subject(&self) -> Option<&Path> {
+        match self {
+            Change::Copy { from, .. }
+            | Change::Move { from, .. }
+            | Change::Link { from, .. }
+            | Change::Rename { from, .. } => Some(from),
+            Change::Trash { path }
+            | Change::Restore { path }
+            | Change::Delete { path }
+            | Change::Create { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+
     /// Where `path` is once this change holds: what a holder of paths (the
     /// shelf, a clipboard) does with each change a
     /// [`ChangeObserver`](executor::ChangeObserver) hears.

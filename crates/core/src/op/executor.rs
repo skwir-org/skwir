@@ -33,8 +33,23 @@ pub struct Progress {
     pub step: usize,
     pub total: usize,
     pub change: Change,
+    /// The name the user knows what the change acts on by, where its path
+    /// says another: an item of a trash, by the name it had where it came
+    /// from, not the trash's (`a.txt.2`, `$R…`). Read for the first step and
+    /// for one that fails, what a toast names.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named: Option<String>,
     pub status: StepStatus,
     pub error: Option<String>,
+}
+
+/// What `change` acts on, by the name the user knows it by where its path
+/// says another (`Progress::named`). Reads its trash's record, before the
+/// step takes it away; nothing for a file that is no item of a trash,
+/// which its path alone says.
+fn named(change: &Change) -> Option<String> {
+    let name = super::builtin::trashed_name(change.subject()?)?;
+    Some(name.to_string_lossy().into_owned())
 }
 
 /// Executor events, consumed by the UI (and tests) without blocking.
@@ -1081,6 +1096,8 @@ impl Executor {
                 break;
             }
             let change = step.describe();
+            // What a toast names: read before the step takes the record.
+            let mut named = if i == 0 { self::named(&change) } else { None };
             ctx.step_begins();
             // A step that panics fails, as one that errs: the plan ends
             // and says so, and what was applied before it stays undoable.
@@ -1123,12 +1140,17 @@ impl Executor {
             if holds {
                 held.push(change.clone());
             }
+            // Failed, its record is still there: the toast names it too.
+            if err.is_some() && named.is_none() {
+                named = self::named(&change);
+            }
             meter.step_ended();
             self.emit_step(ExecEvent::Step(Progress {
                 plan: plan.id,
                 step: i,
                 total,
                 change,
+                named,
                 status,
                 error: err.clone(),
             }));

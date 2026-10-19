@@ -1499,7 +1499,7 @@ pub use super::records::parse_trash_info;
 /// holding a file of that name already gives it another (`a.txt.2`), and
 /// taken out, it goes back to its own. `None` for a file that is no item
 /// of a trash. Reads its `.trashinfo`.
-fn trashed_name(item: &Path) -> Option<OsString> {
+pub(super) fn trashed_name(item: &Path) -> Option<OsString> {
     let info = trash_info_of(item)?;
     let bytes = read_record(&info).ok()?;
     let said = super::records::read(&info, &bytes, Some(Path::new("/")))?;

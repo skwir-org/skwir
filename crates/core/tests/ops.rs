@@ -12,7 +12,7 @@ use skwir_core::app::App;
 #[cfg(target_os = "linux")]
 use skwir_core::op::Restore;
 use skwir_core::op::{
-    Copy, EntryRef, ExecEvent, Executor, Mkdir, Move, Operation, Plan, Rename, StepContext,
+    Copy, Delete, EntryRef, ExecEvent, Executor, Mkdir, Move, Operation, Plan, Rename, StepContext,
     StepStatus, Swap, Trash,
 };
 
@@ -857,6 +857,47 @@ fn events_until(app: &App, last: impl Fn(&ExecEvent) -> bool) -> Vec<ExecEvent> 
             return events;
         }
     }
+}
+
+/// A step that deletes an item of a trash says the name it had where it
+/// came from, read before the step takes its record away: the toast names
+/// it so, never by the trash's `.2`.
+#[test]
+fn a_deleted_item_of_a_trash_is_named_as_it_came() {
+    let tmp = Scratch::new();
+    let app = app(tmp.path());
+    // A volume's trash of the scratch tree's own, never the user's.
+    let trash = tmp.path().join(".Trash-1000");
+    std::fs::create_dir_all(trash.join("files")).unwrap();
+    std::fs::create_dir_all(trash.join("info")).unwrap();
+    let item = trash.join("files/it's a note.txt.2");
+    std::fs::write(&item, b"note").unwrap();
+    let info = trash.join("info/it's a note.txt.2.trashinfo");
+    std::fs::write(
+        &info,
+        "[Trash Info]\nPath=docs/it%27s%20a%20note.txt\nDeletionDate=2026-10-19T10:00:00\n",
+    )
+    .unwrap();
+    let other = tmp.path().join("plain  name.txt");
+    std::fs::write(&other, b"x").unwrap();
+    let mut plan = Plan::new("delete permanently");
+    plan.push(Delete {
+        entry: EntryRef::from_path(&item).unwrap(),
+    });
+    plan.push(Delete {
+        entry: EntryRef::from_path(&other).unwrap(),
+    });
+    app.executor.execute(plan, app.lifetime().child());
+    let events = events_until(&app, |e| matches!(e, ExecEvent::Finished { .. }));
+    let named: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            ExecEvent::Step(step) => Some(step.named.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(named, [Some("it's a note.txt".to_owned()), None]);
+    assert!(!item.exists() && !info.exists() && !other.exists());
 }
 
 #[test]

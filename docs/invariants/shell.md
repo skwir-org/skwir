@@ -258,7 +258,10 @@ of bars, split or not.
 - **Every user action gets an answer** in `toast.rs`: a sentence built
   from the applied `Change`s ("Moved “a.txt” to Trash"), with Undo when
   the journal can take it back, Redo after an undo. Progress bars:
-  [operations.md](operations.md).
+  [operations.md](operations.md). It names the file a step acts on as the
+  user knows it: an item of a trash by the name it had, which the
+  executor reads from its record before the step takes it away
+  (`Progress::named`), never by the trash's (`a.txt.2`, `$R…`).
 - `Shell::set_status` is a toast; `set_status_about` (core:
   `App::notify_about_setting`) links to the setting that fixes it.
   Toasts are drawn under the overlays, but over the preview on the whole

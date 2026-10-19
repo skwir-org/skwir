@@ -46,10 +46,15 @@ pub struct Running {
     pub title: String,
     pub run: RunKind,
     pub total: usize,
-    /// First change that was applied, to name a single item in the result.
+    /// First change that was applied, to name a single item in the result,
+    /// and the name the user knows its file by where its path says another
+    /// (`Progress::named`: an item of a trash).
     first: Option<Change>,
-    /// The change whose step failed, to say what could not be done.
+    first_named: Option<String>,
+    /// The change whose step failed, to say what could not be done, and
+    /// its file's name as the user knows it.
     failed: Option<Change>,
+    failed_named: Option<String>,
     /// What the user asked for, where the steps are not its items (a
     /// merge, a replace): what the result says once the plan is through.
     items: Option<skwir_core::op::Items>,
@@ -91,12 +96,33 @@ fn capitalized(text: &str) -> String {
     })
 }
 
+/// How a sentence about `change` quotes a path: the file it acts on by
+/// `named` where the step said it (an item of a trash, by the name it had),
+/// any other path by its own name.
+fn quoting<'a>(
+    change: Option<&'a Change>,
+    named: Option<&'a str>,
+) -> impl Fn(&Path) -> String + 'a {
+    let subject = change.and_then(Change::subject);
+    move |path: &Path| match named {
+        Some(named) if subject == Some(path) => format!("“{named}”"),
+        _ => format!("“{}”", name_of(path)),
+    }
+}
+
 /// What an applied plan did, in a sentence: the item by name when there is
-/// one, a count otherwise. Falls back to the plan's title.
-pub fn describe(title: &str, run: RunKind, first: Option<&Change>, applied: usize) -> String {
+/// one (by `named`, where the step said the name the user knows it by), a
+/// count otherwise. Falls back to the plan's title.
+pub fn describe(
+    title: &str,
+    run: RunKind,
+    first: Option<&Change>,
+    named: Option<&str>,
+    applied: usize,
+) -> String {
     let many = format::count(applied, "item");
     let one = applied == 1;
-    let quoted = |path: &Path| format!("“{}”", name_of(path));
+    let quoted = quoting(first, named);
     match first {
         _ if run == RunKind::Undo => {
             format!("Undid: {}", title.strip_prefix("undo ").unwrap_or(title))
@@ -148,10 +174,11 @@ pub fn describe(title: &str, run: RunKind, first: Option<&Change>, applied: usiz
 }
 
 /// What a plan that did nothing could not do, in a sentence: the step that
-/// failed, by name, then why. An error that begins by naming that step
-/// ("“a.txt” could not be renamed …") gives its reason alone after it.
-pub fn failure(title: &str, failed: Option<&Change>, error: &str) -> String {
-    let quoted = |path: &Path| format!("“{}”", name_of(path));
+/// failed, by name (`named`, as `describe`), then why. An error that begins
+/// by naming that step ("“a.txt” could not be renamed …", "… could not all
+/// be deleted") gives its reason alone after it.
+pub fn failure(title: &str, failed: Option<&Change>, named: Option<&str>, error: &str) -> String {
+    let quoted = quoting(failed, named);
     let tried = match failed {
         Some(Change::Copy { from, to }) => {
             format!("Couldn't copy {} to {}", quoted(from), folder_of(to))
@@ -184,19 +211,12 @@ pub fn failure(title: &str, failed: Option<&Change>, error: &str) -> String {
         Some(Change::Create { path, .. }) => format!("Couldn't create {}", quoted(path)),
         _ => return format!("{}: {error}", capitalized(title)),
     };
-    let named = failed.and_then(|change| match change {
-        Change::Copy { from: path, .. }
-        | Change::Move { from: path, .. }
-        | Change::Link { from: path, .. }
-        | Change::Rename { from: path, .. }
-        | Change::Trash { path }
-        | Change::Restore { path }
-        | Change::Delete { path }
-        | Change::Create { path, .. } => Some(quoted(path)),
-        _ => None,
-    });
-    let reason = named
-        .and_then(|name| error.strip_prefix(&format!("{name} could not be ")))
+    // The error names the step's file by its path, as the step reads it.
+    let own = failed
+        .and_then(Change::subject)
+        .map(|path| format!("“{}”", name_of(path)));
+    let reason = own
+        .and_then(|name| error.strip_prefix(&format!("{name} could not ")))
         .and_then(|rest| rest.split_once(": "))
         .map_or(error, |(_, reason)| reason);
     format!("{tried}: {reason}")
@@ -314,7 +334,9 @@ impl Shell {
                         run,
                         total,
                         first: None,
+                        first_named: None,
                         failed: None,
+                        failed_named: None,
                         items,
                         paused: false,
                         cancelling: false,
@@ -336,8 +358,10 @@ impl Shell {
                         running.total = progress.total;
                         if progress.error.is_some() {
                             running.failed = Some(progress.change);
+                            running.failed_named = progress.named;
                         } else if running.first.is_none() {
                             running.first = Some(progress.change);
+                            running.first_named = progress.named;
                         }
                     }
                 }
@@ -357,19 +381,24 @@ impl Shell {
                     let (title, run) = (running.title, running.run);
                     // Through, it did what was asked, item by item; cut
                     // short, as far as its steps went.
-                    let (first, count) = match running.items {
+                    let (first, named, count) = match running.items {
                         Some(items) if error.is_none() && !cancelled => {
-                            (Some(items.first), items.count)
+                            (Some(items.first), None, items.count)
                         }
-                        _ => (running.first, applied),
+                        _ => (running.first, running.first_named, applied),
                     };
-                    let done = describe(&title, run, first.as_ref(), count);
+                    let done = describe(&title, run, first.as_ref(), named.as_deref(), count);
                     let (text, tone) = match (error, cancelled) {
                         (Some(error), _) if applied > 0 => {
                             (format!("{done}, then stopped: {error}"), Tone::Error)
                         }
                         (Some(error), _) => (
-                            failure(&title, running.failed.as_ref(), &error),
+                            failure(
+                                &title,
+                                running.failed.as_ref(),
+                                running.failed_named.as_deref(),
+                                &error,
+                            ),
                             Tone::Error,
                         ),
                         (None, true) => (format!("Cancelled. {done}"), Tone::Info),
@@ -678,7 +707,7 @@ mod tests {
             to: PathBuf::from("/a/locked/it's a draft.txt"),
         };
         assert_eq!(
-            failure("copy to /a/locked", Some(&copy), "permission denied"),
+            failure("copy to /a/locked", Some(&copy), None, "permission denied"),
             "Couldn't copy “it's a draft.txt” to locked: permission denied"
         );
         let rename = Change::Rename {
@@ -689,6 +718,7 @@ mod tests {
             failure(
                 "rename",
                 Some(&rename),
+                None,
                 "“a.txt” could not be renamed “b.txt”: the name is too long, or not allowed there"
             ),
             "Couldn't rename “a.txt” to “b.txt”: the name is too long, or not allowed there",
@@ -702,13 +732,28 @@ mod tests {
             failure(
                 "link in /a/locked",
                 Some(&link),
+                None,
                 "“it's a draft.txt” could not be linked in “locked”: permission denied"
             ),
             "Couldn't make a link to “it's a draft.txt” in locked: permission denied"
         );
         assert_eq!(
-            failure("tag 2 files", None, "the drive is full"),
+            failure("tag 2 files", None, None, "the drive is full"),
             "Tag 2 files: the drive is full"
+        );
+        // An item of a trash, by the name it had: the error names the
+        // trash's, and its reason alone is said.
+        let trashed = Change::Delete {
+            path: PathBuf::from("/a/.Trash-1000/files/it's a draft.txt.2"),
+        };
+        assert_eq!(
+            failure(
+                "delete permanently",
+                Some(&trashed),
+                Some("it's a draft.txt"),
+                "“it's a draft.txt.2” could not all be deleted: permission denied"
+            ),
+            "Couldn't delete “it's a draft.txt”: permission denied"
         );
     }
 
@@ -718,11 +763,11 @@ mod tests {
             path: PathBuf::from("/example/it's a draft.txt"),
         };
         assert_eq!(
-            describe("move to trash", RunKind::Apply, Some(&trash), 1),
+            describe("move to trash", RunKind::Apply, Some(&trash), None, 1),
             "Moved “it's a draft.txt” to Trash"
         );
         assert_eq!(
-            describe("move to trash", RunKind::Apply, Some(&trash), 3),
+            describe("move to trash", RunKind::Apply, Some(&trash), None, 3),
             "Moved 3 items to Trash"
         );
         let copy = Change::Copy {
@@ -730,7 +775,7 @@ mod tests {
             to: PathBuf::from("/example/Archive 2026/a.txt"),
         };
         assert_eq!(
-            describe("copy", RunKind::Apply, Some(&copy), 2),
+            describe("copy", RunKind::Apply, Some(&copy), None, 2),
             "Copied 2 items to Archive 2026"
         );
         let link = Change::Link {
@@ -738,24 +783,53 @@ mod tests {
             to: PathBuf::from("/example/Archive 2026/a.txt"),
         };
         assert_eq!(
-            describe("link", RunKind::Apply, Some(&link), 1),
+            describe("link", RunKind::Apply, Some(&link), None, 1),
             "Made a link to “a.txt” in Archive 2026"
         );
         assert_eq!(
-            describe("link", RunKind::Apply, Some(&link), 3),
+            describe("link", RunKind::Apply, Some(&link), None, 3),
             "Made 3 links in Archive 2026"
         );
         assert_eq!(
-            describe("undo move to trash", RunKind::Undo, Some(&trash), 1),
+            describe("undo move to trash", RunKind::Undo, Some(&trash), None, 1),
             "Undid: move to trash"
         );
         assert_eq!(
-            describe("add tag", RunKind::Apply, None, 2),
+            describe("add tag", RunKind::Apply, None, None, 2),
             "Add tag (2 items)"
         );
         assert_eq!(
-            describe("paste", RunKind::Apply, None, 0),
+            describe("paste", RunKind::Apply, None, None, 0),
             "Paste: nothing to do"
+        );
+        // An item of a trash, by the name the step said it had there; a
+        // move out of it, by the name it arrived under.
+        let trashed = Change::Delete {
+            path: PathBuf::from("/example/Trash/files/it's a draft.txt.2"),
+        };
+        assert_eq!(
+            describe(
+                "delete permanently",
+                RunKind::Apply,
+                Some(&trashed),
+                Some("it's a draft.txt"),
+                1
+            ),
+            "Deleted “it's a draft.txt” permanently"
+        );
+        let out = Change::Move {
+            from: PathBuf::from("/example/Trash/files/it's a draft.txt.2"),
+            to: PathBuf::from("/example/Archive 2026/it's a draft.txt"),
+        };
+        assert_eq!(
+            describe(
+                "move",
+                RunKind::Apply,
+                Some(&out),
+                Some("it's a draft.txt"),
+                1
+            ),
+            "Moved “it's a draft.txt” to Archive 2026"
         );
     }
 }
