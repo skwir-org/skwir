@@ -381,6 +381,10 @@ pub struct Run {
     /// The link is a reference to a note, which the view opens beside the
     /// text rather than going to it.
     pub note: bool,
+    /// The link's own name (its `id`, an `a`'s `name`), which a note links
+    /// back to: a reference set as plain text (`[1]`) is known by that way
+    /// back from what it leads to (`note_popover`).
+    pub name: Option<String>,
     pub code: bool,
     pub link: Option<String>,
     /// The link was found in raw text rather than written as one (source,

@@ -296,6 +296,8 @@ struct Context {
     /// The nearest list item and its marker.
     item: Option<(NodeId, String)>,
     link: Option<String>,
+    /// The link's own name, which a note may link back to.
+    link_name: Option<String>,
     language: Option<String>,
     row: Option<NodeId>,
     /// The note the content is part of, and whether it is one that moves to
@@ -324,6 +326,7 @@ impl Default for Context {
             list: None,
             item: None,
             link: None,
+            link_name: None,
             language: None,
             row: None,
             note: None,
@@ -382,6 +385,7 @@ impl Context {
             "a" => {
                 if let Some(href) = e.attr("href") {
                     context.link = Some(href.to_owned());
+                    context.link_name = e.id().or_else(|| e.attr("name")).map(str::to_owned);
                     context.reference = false;
                 }
             }
@@ -603,6 +607,7 @@ impl Walk {
             // like a note's number, as most books without the marks do.
             note: context.link.is_some()
                 && (context.reference || context.style.script == Script::Superscript),
+            name: context.link_name.clone(),
             code: context.code,
             link: context.link.clone(),
             found: false,
@@ -1415,6 +1420,39 @@ mod tests {
                 ("", None),
                 ("First para.", Some(0)),
                 ("Second para.", Some(0)),
+            ]
+        );
+    }
+
+    /// A link keeps its own name, by which a note set as plain text links
+    /// back to it; an `a` named the old way is named too, and a name around
+    /// a link is not the link's.
+    #[test]
+    fn a_link_keeps_its_own_name() {
+        let source = r##"<p>Plain<a href="../Text/notes.xhtml#ftn1" id="bodyftn1">[1]</a>,
+            old<a href="#_ftn2" name="_ftnref2"><span>[2]</span></a>,
+            <span id="around"><a href="#n3">three</a></span>
+            and <a href="other.xhtml">a plain link</a>.</p>"##;
+        let blocks = read(source, Markup::Html);
+        let links: Vec<_> = blocks[0]
+            .runs
+            .iter()
+            .filter(|run| run.link.is_some())
+            .map(|run| {
+                (
+                    &blocks[0].text[run.range.clone()],
+                    run.note,
+                    run.name.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            links,
+            [
+                ("[1]", false, Some("bodyftn1")),
+                ("[2]", false, Some("_ftnref2")),
+                ("three", false, None),
+                ("a plain link", false, None),
             ]
         );
     }

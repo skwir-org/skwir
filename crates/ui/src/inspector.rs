@@ -1644,14 +1644,18 @@ impl Shell {
             }
             // A reference to a note opens the note under it, where the
             // reading goes on; only a link to no note goes there.
-            if args["note"].as_bool() == Some(true)
-                && let (Some(target), Some(x), Some(y)) = (
-                    args["target"].as_str(),
-                    args["x"].as_f64(),
-                    args["y"].as_f64(),
-                )
-                && self.open_note(target, gpui::point(px(x as f32), px(y as f32)), window, cx)
-            {
+            if let (Some(reference), Some(target), Some(x), Some(y)) = (
+                crate::note_popover::Reference::of(args),
+                args["target"].as_str(),
+                args["x"].as_f64(),
+                args["y"].as_f64(),
+            ) && self.open_note(
+                target,
+                reference,
+                gpui::point(px(x as f32), px(y as f32)),
+                window,
+                cx,
+            ) {
                 return;
             }
             if let Some(anchor) = args["target"].as_str().and_then(|s| s.strip_prefix('#')) {

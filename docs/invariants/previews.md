@@ -364,7 +364,10 @@ A text document is read as its structure, or laid out as pages.
   the end of the page under a rule. A printed page number (`pagebreak`)
   is a target, never read.
 - **A note opens under its reference** (`note_popover.rs`). A reference
-  is a link the book marks as one or sets raised (`Run::note`). A note is
+  is a link the book marks as one or sets raised (`Run::note`), or one
+  whose target links back to the link's own name (`Run::name`: its `id`,
+  an `a`'s `name`), as a book that sets its references as plain `[1]`
+  writes its notes; a heading is never such a note. A note is
   every block of the element marked as one (`Block::note`: a footnote,
   an endnote, an item of a list of notes), else the one block its target
   lands in. A note in another chapter is read there on a worker, through

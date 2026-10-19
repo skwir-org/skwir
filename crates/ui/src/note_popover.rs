@@ -1,8 +1,10 @@
 //! A note opened beside the text it annotates.
 //!
 //! A reference to a note (`Run::note`: marked as one by the book, or raised
-//! like a note's number) opens the note in a popover under the reference,
-//! where it is read without losing one's place; "Go to note" still goes there.
+//! like a note's number; or a link whose note links back to its name, as a
+//! book that sets its references as plain `[1]` writes them) opens the note
+//! in a popover under the reference, where it is read without losing one's
+//! place; "Go to note" still goes there.
 //! A note on the page shown is its blocks (`Block::note`, every block of the
 //! note the reference names); one in another chapter, as endnotes usually
 //! are, is read from that chapter on a worker, through the provider that read
@@ -61,10 +63,40 @@ impl Notes {
     }
 }
 
+/// What makes a link a reference to a note.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Reference {
+    /// The book marks it as one, or sets it raised (`Run::note`).
+    Marked,
+    /// A link with a name of its own (`Run::name`), which is a reference
+    /// when what it leads to links back to that name, as the notes of most
+    /// books without the marks do.
+    Named(String),
+}
+impl Reference {
+    /// What a click on a link says of it; `None` for a link that cannot be
+    /// a reference.
+    pub(crate) fn of(args: &serde_json::Value) -> Option<Self> {
+        if args["note"].as_bool() == Some(true) {
+            return Some(Self::Marked);
+        }
+        args["name"]
+            .as_str()
+            .map(|name| Self::Named(name.to_owned()))
+    }
+}
+
 /// The blocks of the note `fragment` names in `blocks`: every block of that
 /// note, or the named block alone when it is part of none (a book that sets
-/// its notes as numbered paragraphs). Pictures stay in the text.
-pub(crate) fn note_blocks(blocks: &[Block], fragment: &str) -> Option<Vec<Block>> {
+/// its notes as numbered paragraphs). Pictures stay in the text. A link
+/// known only by its name leads to a note when the note links back to it,
+/// and never to a heading: a chapter's title linking back to the contents
+/// is not a note.
+pub(crate) fn note_blocks(
+    blocks: &[Block],
+    fragment: &str,
+    reference: &Reference,
+) -> Option<Vec<Block>> {
     let index = blocks
         .iter()
         .position(|block| block.anchors.iter().any(|name| name == fragment))?;
@@ -72,7 +104,7 @@ pub(crate) fn note_blocks(blocks: &[Block], fragment: &str) -> Option<Vec<Block>
         picture: None,
         ..block.clone()
     };
-    Some(match blocks[index].note {
+    let note: Vec<Block> = match blocks[index].note {
         Some(note) => blocks
             .iter()
             .filter(|block| block.note == Some(note))
@@ -80,7 +112,27 @@ pub(crate) fn note_blocks(blocks: &[Block], fragment: &str) -> Option<Vec<Block>
             .map(text)
             .collect(),
         None => vec![text(&blocks[index])],
-    })
+    };
+    if let Reference::Named(name) = reference {
+        let back = |link: &str| {
+            link.rsplit_once('#')
+                .is_some_and(|(_, to)| decoded(to) == *name)
+        };
+        let leads_back = note
+            .iter()
+            .flat_map(|block| &block.runs)
+            .filter_map(|run| run.link.as_deref())
+            .any(back);
+        if blocks[index].heading > 0 || !leads_back {
+            return None;
+        }
+    }
+    Some(note)
+}
+
+/// A link's fragment as the page names it, its escapes undone.
+fn decoded(fragment: &str) -> String {
+    String::from_utf8_lossy(&skwir_platform::uri::percent_decode(fragment)).into_owned()
 }
 
 impl Shell {
@@ -90,6 +142,7 @@ impl Shell {
     pub(crate) fn open_note(
         &mut self,
         target: &str,
+        reference: Reference,
         at: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -103,8 +156,9 @@ impl Shell {
         if fragment.is_empty() {
             return false;
         }
+        let fragment = decoded(fragment);
         if chapter.is_empty() {
-            let Some(blocks) = note_blocks(&display.data.blocks, fragment) else {
+            let Some(blocks) = note_blocks(&display.data.blocks, &fragment, &reference) else {
                 return false;
             };
             self.show_note(target, at, blocks, window, cx);
@@ -119,7 +173,7 @@ impl Shell {
         };
         self.preview.inspection.notes.close(window, cx);
         let previews = Arc::clone(&self.app.previews);
-        let (target, fragment) = (target.to_owned(), fragment.to_owned());
+        let target = target.to_owned();
         self.preview.inspection.notes.asked.ask(
             &self.app,
             self.app.lifetime(),
@@ -135,7 +189,7 @@ impl Shell {
                     .inspect(&request, &chapter, cancel)
                     .ok()
                     .flatten()
-                    .and_then(|data| note_blocks(&data.blocks, &fragment));
+                    .and_then(|data| note_blocks(&data.blocks, &fragment, &reference));
                 Reply { target, at, blocks }
             },
         );
@@ -316,12 +370,57 @@ mod tests {
             block("A plain paragraph", &["p9"], None),
         ];
         let texts = |fragment| {
-            note_blocks(&blocks, fragment)
+            note_blocks(&blocks, fragment, &Reference::Marked)
                 .map(|found| found.into_iter().map(|b| b.text).collect::<Vec<_>>())
         };
         assert_eq!(texts("n1").unwrap(), ["First", "Second"]);
         assert_eq!(texts("n2").unwrap(), ["Other"]);
         assert_eq!(texts("p9").unwrap(), ["A plain paragraph"]);
         assert!(texts("missing").is_none());
+    }
+
+    fn linking(mut block: Block, link: &str) -> Block {
+        block.runs.push(skwir_core::inspection::Run {
+            range: 0..1,
+            link: Some(link.into()),
+            ..Default::default()
+        });
+        block
+    }
+
+    /// A link set as plain text opens what it leads to as a note only when
+    /// that links back to the link's own name: a note in a book without the
+    /// marks, never a paragraph that does not, nor a chapter's title.
+    #[test]
+    fn a_named_link_opens_a_note_that_links_back() {
+        let mut blocks = [
+            linking(
+                block("1 A note.", &["ftn1"], None),
+                "Text/../Text/one.xhtml#bodyftn1",
+            ),
+            linking(block("2 Escaped.", &["ftn2"], None), "#caf%C3%A9"),
+            block("A paragraph", &["p9"], None),
+            linking(block("Chapter", &["c1"], None), "contents.xhtml#bodyftn1"),
+            linking(block("Elsewhere", &["x1"], None), "two.xhtml#someone-else"),
+        ];
+        blocks[3].heading = 1;
+        let named = |fragment, name: &str| {
+            note_blocks(&blocks, fragment, &Reference::Named(name.into()))
+                .map(|found| found.into_iter().map(|b| b.text).collect::<Vec<_>>())
+        };
+        assert_eq!(named("ftn1", "bodyftn1").unwrap(), ["1 A note."]);
+        assert_eq!(named("ftn2", "café").unwrap(), ["2 Escaped."]);
+        assert!(named("p9", "bodyftn1").is_none(), "no way back");
+        assert!(named("c1", "bodyftn1").is_none(), "a heading");
+        assert!(named("x1", "bodyftn1").is_none(), "back to another link");
+        assert_eq!(
+            Reference::of(&serde_json::json!({"note": false, "name": "r1"})),
+            Some(Reference::Named("r1".into()))
+        );
+        assert_eq!(
+            Reference::of(&serde_json::json!({"note": true, "name": "r1"})),
+            Some(Reference::Marked)
+        );
+        assert_eq!(Reference::of(&serde_json::json!({"note": false})), None);
     }
 }

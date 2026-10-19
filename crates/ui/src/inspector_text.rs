@@ -341,6 +341,8 @@ pub(crate) struct Link {
     pub(crate) block: std::ops::Range<usize>,
     pub(crate) target: String,
     pub(crate) note: bool,
+    /// The link's own name, which a note may link back to (`Run::name`).
+    pub(crate) name: Option<String>,
     found: bool,
 }
 
@@ -367,6 +369,7 @@ pub(crate) fn links_in(block: &Block, range: std::ops::Range<usize>) -> Vec<Link
             block: clipped,
             target: target.clone(),
             note: run.note,
+            name: run.name.clone(),
             found: run.found,
         });
     }
@@ -472,6 +475,7 @@ pub fn part(
                             "action": "link",
                             "target": link.target,
                             "note": link.note,
+                            "name": link.name,
                             "tab": held.shift,
                             "x": under.map(|at| f32::from(at.x)),
                             "y": under.map(|at| f32::from(at.y)),
