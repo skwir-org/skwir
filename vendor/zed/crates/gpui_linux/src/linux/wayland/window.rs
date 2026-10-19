@@ -2255,9 +2255,13 @@ impl PlatformWindow for WaylandWindow {
         true
     }
 
-    fn prepare_mesh(&self, mesh: &std::sync::Arc<gpui::Mesh>) -> gpui::MeshPreparation {
+    fn prepare_mesh(
+        &self,
+        mesh: &std::sync::Arc<gpui::Mesh>,
+        smooth: bool,
+    ) -> gpui::MeshPreparation {
         match self.borrow_mut().renderer.as_mut() {
-            Some(renderer) => renderer.prepare_mesh(mesh),
+            Some(renderer) => renderer.prepare_mesh(mesh, smooth),
             // Drawn once there is a renderer.
             None => gpui::MeshPreparation::Pending,
         }

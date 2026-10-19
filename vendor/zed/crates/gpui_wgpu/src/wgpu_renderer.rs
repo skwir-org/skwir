@@ -1104,10 +1104,11 @@ impl WgpuRenderer {
         self.max_texture_size
     }
 
-    /// Make `mesh` ready to draw (`PlatformWindow::prepare_mesh`).
-    pub fn prepare_mesh(&mut self, mesh: &Arc<gpui::Mesh>) -> gpui::MeshPreparation {
+    /// Make `mesh` ready to draw, with its normals when `smooth`
+    /// (`PlatformWindow::prepare_mesh`).
+    pub fn prepare_mesh(&mut self, mesh: &Arc<gpui::Mesh>, smooth: bool) -> gpui::MeshPreparation {
         match self.core_mut() {
-            Some(core) => core.resources.meshes.prepare_mesh(mesh),
+            Some(core) => core.resources.meshes.prepare_mesh(mesh, smooth),
             // Drawn again once the device is found again.
             None => gpui::MeshPreparation::Pending,
         }
@@ -2887,6 +2888,7 @@ mod tests {
                 [0., 0., 0.5, 1.],
             ],
             perspective: false,
+            smooth: false,
             color: [0.5, 0.5, 0.5],
             ambient: 0.2,
             lights: [
@@ -2906,12 +2908,14 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn upload(renderer: &mut WgpuHeadlessRenderer, mesh: &std::sync::Arc<gpui::Mesh>) {
         loop {
-            match renderer.core.resources.meshes.prepare_mesh(mesh) {
+            match renderer.core.resources.meshes.prepare_mesh(mesh, false) {
                 gpui::MeshPreparation::Ready => return,
                 gpui::MeshPreparation::Started(uploaded) => {
                     gpui::block_on(uploaded).expect("uploaded");
                 }
-                gpui::MeshPreparation::Pending => std::thread::yield_now(),
+                gpui::MeshPreparation::Pending | gpui::MeshPreparation::Flat(_) => {
+                    std::thread::yield_now();
+                }
                 gpui::MeshPreparation::Never => panic!("never drawn"),
             }
         }
@@ -3104,6 +3108,67 @@ mod tests {
                 times[times.len() - 1]
             );
         }
+        Ok(())
+    }
+
+    /// Smooth shading: flat while the normals are made, then lit across a
+    /// roof's slopes as their ridge's normal says. Lit from the camera and
+    /// from the right, the left slope is darker than the right; smoothly,
+    /// the ridge is as bright as a face turned to the camera.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_shades_smoothly_once_normals_are_made() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let positions = vec![
+            [-0.8, -0.6, 0.],
+            [0., -0.6, 0.5],
+            [0.8, -0.6, 0.],
+            [-0.8, 0.6, 0.],
+            [0., 0.6, 0.5],
+            [0.8, 0.6, 0.],
+        ];
+        let indices = vec![0, 1, 4, 0, 4, 3, 1, 2, 5, 1, 5, 4];
+        let roof = std::sync::Arc::new(gpui::Mesh::new(positions, indices).unwrap());
+        upload(&mut renderer, &roof);
+        let all = scaled_bounds(0., 0., 100., 40.);
+        let mut view = straight_ahead();
+        view.lights[1].strength = 0.5;
+        view.smooth = true;
+        let draw = |renderer: &mut WgpuHeadlessRenderer| {
+            let mut scene = Scene::default();
+            scene.insert_primitive(gpui::PaintMesh {
+                view,
+                ..paint_mesh(&roof, all, all)
+            });
+            scene.finish();
+            renderer.render_scene_to_image(&scene, device_size(100, 40))
+        };
+        // x = -0.75 and -0.05 on the left slope, 0.05 on the right.
+        let (outer, ridge, right) = ((12, 20), (47, 20), (53, 20));
+        // Asked for smooth, drawn flat while its normals are made.
+        let gpui::MeshPreparation::Flat(Some(made)) =
+            renderer.core.resources.meshes.prepare_mesh(&roof, true)
+        else {
+            panic!("drawn flat while the normals are made");
+        };
+        let flat = draw(&mut renderer)?;
+        assert_eq!(
+            flat.get_pixel(outer.0, outer.1),
+            flat.get_pixel(ridge.0, ridge.1)
+        );
+        assert!(flat.get_pixel(ridge.0, ridge.1)[0] < flat.get_pixel(right.0, right.1)[0]);
+        gpui::block_on(made).expect("normals made");
+        assert!(matches!(
+            renderer.core.resources.meshes.prepare_mesh(&roof, true),
+            gpui::MeshPreparation::Ready
+        ));
+        let smooth = draw(&mut renderer)?;
+        // The outer edge's normal is its slope's; the ridge's points at the
+        // camera, lit 0.2 + 0.6: as bright as a face turned to it.
+        let lit = |image: &image::RgbaImage, (x, y): (u32, u32)| image.get_pixel(x, y)[0];
+        assert!(lit(&smooth, outer).abs_diff(lit(&flat, outer)) <= 6);
+        assert!(lit(&smooth, ridge) > lit(&flat, ridge) + 8);
+        assert!(lit(&smooth, ridge).abs_diff(lit(&smooth, right)) <= 6);
         Ok(())
     }
 

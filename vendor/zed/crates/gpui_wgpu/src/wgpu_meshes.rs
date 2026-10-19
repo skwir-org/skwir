@@ -35,7 +35,8 @@ struct MeshParams {
     light1: [f32; 4],
     ambient: f32,
     perspective: u32,
-    pad: [u32; 2],
+    smooth: u32,
+    pad: u32,
 }
 
 #[repr(C)]
@@ -57,14 +58,25 @@ struct Pipelines {
 struct Buffers {
     positions: wgpu::Buffer,
     indices: wgpu::Buffer,
+    /// Made once a frame shades the mesh smoothly.
+    normals: Option<wgpu::Buffer>,
     count: u32,
     /// Whether the frame being drawn draws it.
     drawn: bool,
 }
 
+/// `mesh`'s normals for smooth shading, made and filled.
+fn normals_of(device: &wgpu::Device, mesh: &Mesh) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("mesh_normals"),
+        contents: bytemuck::cast_slice(&mesh.smooth_normals()),
+        usage: wgpu::BufferUsages::VERTEX,
+    })
+}
+
 impl Buffers {
-    /// `mesh`'s, made and filled.
-    fn of(device: &wgpu::Device, mesh: &Mesh) -> Self {
+    /// `mesh`'s, made and filled, with its normals when `normals`.
+    fn of(device: &wgpu::Device, mesh: &Mesh, normals: bool) -> Self {
         Buffers {
             positions: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("mesh_positions"),
@@ -76,23 +88,40 @@ impl Buffers {
                 contents: bytemuck::cast_slice(mesh.indices()),
                 usage: wgpu::BufferUsages::INDEX,
             }),
+            normals: normals.then(|| normals_of(device, mesh)),
             count: mesh.indices().len() as u32,
             drawn: false,
         }
     }
 }
 
+/// What an upload makes: a mesh's buffers, with its normals or not, or
+/// the normals of a mesh already there.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Making {
+    Mesh { normals: bool },
+    Normals,
+}
+
 /// A mesh to upload, and what tells the window that asked once it is.
 struct Upload {
     mesh: Arc<Mesh>,
+    making: Making,
     uploaded: MeshUploaded,
 }
 
+/// What the uploader made, for a mesh (nothing for one no one held any
+/// more).
+enum Made {
+    Mesh(MeshId, Option<Buffers>),
+    Normals(MeshId, Option<wgpu::Buffer>),
+}
+
 /// The thread that uploads meshes, one after another: what it is given,
-/// and what it made (nothing for a mesh no one held any more).
+/// and what it made.
 struct Uploader {
     uploads: mpsc::Sender<Upload>,
-    made: mpsc::Receiver<(MeshId, Option<Buffers>)>,
+    made: mpsc::Receiver<Made>,
 }
 
 impl Uploader {
@@ -102,14 +131,26 @@ impl Uploader {
         std::thread::Builder::new()
             .name("gpui-meshes".into())
             .spawn(move || {
-                for Upload { mesh, uploaded } in asked {
+                for Upload {
+                    mesh,
+                    making,
+                    uploaded,
+                } in asked
+                {
                     // Held by nothing else: no frame will draw it.
-                    let buffers =
-                        (Arc::strong_count(&mesh) > 1).then(|| Buffers::of(&device, &mesh));
-                    let wanted = buffers.is_some();
+                    let wanted = Arc::strong_count(&mesh) > 1;
+                    let id = mesh.id();
+                    let made = match making {
+                        Making::Mesh { normals } => {
+                            Made::Mesh(id, wanted.then(|| Buffers::of(&device, &mesh, normals)))
+                        }
+                        Making::Normals => {
+                            Made::Normals(id, wanted.then(|| normals_of(&device, &mesh)))
+                        }
+                    };
                     // Handed over before the window hears of it, so the frame it
                     // draws finds it.
-                    if made_by.send((mesh.id(), buffers)).is_err() {
+                    if made_by.send(made).is_err() {
                         break;
                     }
                     if wanted {
@@ -155,6 +196,8 @@ pub(crate) struct MeshPass {
     uploader: Option<Uploader>,
     /// The meshes being uploaded.
     uploading: FxHashSet<MeshId>,
+    /// The meshes whose normals are being made.
+    smoothing: FxHashSet<MeshId>,
     /// The last mesh too large for this device, said once.
     refused: Option<MeshId>,
 }
@@ -176,17 +219,33 @@ impl MeshPass {
             target: None,
             uploader: None,
             uploading: FxHashSet::default(),
+            smoothing: FxHashSet::default(),
             refused: None,
         }
     }
 
     /// Make `mesh` ready to draw, uploading it unless it is there or on its
-    /// way. Asked by the window before it paints the mesh.
-    pub(crate) fn prepare_mesh(&mut self, mesh: &Arc<Mesh>) -> MeshPreparation {
+    /// way, its normals with it when `smooth`. Asked by the window before it
+    /// paints the mesh. A mesh there already, its normals asked for, is drawn
+    /// flat until they are made.
+    pub(crate) fn prepare_mesh(&mut self, mesh: &Arc<Mesh>, smooth: bool) -> MeshPreparation {
         self.take_uploaded();
         let id = mesh.id();
-        if self.buffers.contains_key(&id) {
-            return MeshPreparation::Ready;
+        if let Some(buffers) = self.buffers.get(&id) {
+            if !smooth || buffers.normals.is_some() {
+                return MeshPreparation::Ready;
+            }
+            if self.smoothing.contains(&id) {
+                return MeshPreparation::Flat(None);
+            }
+            let (preparation, uploaded) = MeshPreparation::flat_until();
+            return match self.send(mesh, Making::Normals, uploaded) {
+                Ok(()) => {
+                    self.smoothing.insert(id);
+                    preparation
+                }
+                Err(()) => MeshPreparation::Flat(None),
+            };
         }
         if self.uploading.contains(&id) {
             return MeshPreparation::Pending;
@@ -205,40 +264,60 @@ impl MeshPass {
             }
             return MeshPreparation::Never;
         }
+        let (preparation, uploaded) = MeshPreparation::start();
+        match self.send(mesh, Making::Mesh { normals: smooth }, uploaded) {
+            Ok(()) => {
+                self.uploading.insert(id);
+                preparation
+            }
+            Err(()) => MeshPreparation::Never,
+        }
+    }
+
+    /// Give the uploader `mesh` to make, starting it with the first.
+    fn send(&mut self, mesh: &Arc<Mesh>, making: Making, uploaded: MeshUploaded) -> Result<(), ()> {
         if self.uploader.is_none() {
             match Uploader::start(Arc::clone(&self.device)) {
                 Ok(uploader) => self.uploader = Some(uploader),
                 Err(error) => {
                     log::error!("no thread to upload meshes: {error}");
-                    return MeshPreparation::Never;
+                    return Err(());
                 }
             }
         }
-        let (preparation, uploaded) = MeshPreparation::start();
         let upload = Upload {
             mesh: Arc::clone(mesh),
+            making,
             uploaded,
         };
         match self.uploader.as_ref().map(|u| u.uploads.send(upload)) {
-            Some(Ok(())) => {
-                self.uploading.insert(id);
-                preparation
-            }
-            _ => MeshPreparation::Never,
+            Some(Ok(())) => Ok(()),
+            _ => Err(()),
         }
     }
 
-    /// Take the buffers the uploader made.
+    /// Take what the uploader made.
     fn take_uploaded(&mut self) {
         let Some(uploader) = &self.uploader else {
             return;
         };
-        while let Ok((id, buffers)) = uploader.made.try_recv() {
-            self.uploading.remove(&id);
-            if let Some(mut buffers) = buffers {
-                // Kept through the frame being painted, which asked for it.
-                buffers.drawn = true;
-                self.buffers.insert(id, buffers);
+        while let Ok(made) = uploader.made.try_recv() {
+            match made {
+                Made::Mesh(id, buffers) => {
+                    self.uploading.remove(&id);
+                    if let Some(mut buffers) = buffers {
+                        // Kept through the frame being painted, which asked
+                        // for it.
+                        buffers.drawn = true;
+                        self.buffers.insert(id, buffers);
+                    }
+                }
+                Made::Normals(id, normals) => {
+                    self.smoothing.remove(&id);
+                    if let (Some(buffers), Some(normals)) = (self.buffers.get_mut(&id), normals) {
+                        buffers.normals = Some(normals);
+                    }
+                }
             }
         }
     }
@@ -281,7 +360,10 @@ impl MeshPass {
         }
         let shown_size = ((right - left) as u32, (bottom - top) as u32);
         let id = paint.mesh.id();
-        self.buffers.get_mut(&id)?.drawn = true;
+        let buffers = self.buffers.get_mut(&id)?;
+        buffers.drawn = true;
+        // Flat until its normals are made.
+        let smooth = paint.view.smooth && buffers.normals.is_some();
         let largest = device.limits().max_texture_dimension_2d;
         let step = |side: u32| {
             side.div_ceil(TARGET_STEP)
@@ -327,7 +409,8 @@ impl MeshPass {
             light1,
             ambient: view.ambient,
             perspective: u32::from(view.perspective),
-            pad: [0; 2],
+            smooth: u32::from(smooth),
+            pad: 0,
         };
         let composite = CompositeParams {
             origin: [left, top],
@@ -417,6 +500,9 @@ impl MeshPass {
         pass.set_pipeline(&pipelines.draw);
         pass.set_bind_group(0, &prepared.draw, &[]);
         pass.set_vertex_buffer(0, buffers.positions.slice(..));
+        // Without normals the shader reads none: the positions stand in.
+        let normals = buffers.normals.as_ref().unwrap_or(&buffers.positions);
+        pass.set_vertex_buffer(1, normals.slice(..));
         pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
         pass.draw_indexed(0..buffers.count, 0, 0..1);
     }
@@ -563,15 +649,25 @@ impl MeshPass {
             vertex: wgpu::VertexState {
                 module: &module,
                 entry_point: Some("vs_mesh"),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: 12,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 0,
-                        shader_location: 0,
-                    }],
-                })],
+                buffers: &[0, 1].map(|location| {
+                    Some(wgpu::VertexBufferLayout {
+                        array_stride: 12,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: if location == 0 {
+                            &[wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x3,
+                                offset: 0,
+                                shader_location: 0,
+                            }]
+                        } else {
+                            &[wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x3,
+                                offset: 0,
+                                shader_location: 1,
+                            }]
+                        },
+                    })
+                }),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {

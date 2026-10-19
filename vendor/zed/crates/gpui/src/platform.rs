@@ -1380,8 +1380,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         false
     }
     /// Make `mesh` ready to draw, off the main thread, unless it is, or is
-    /// being made so.
-    fn prepare_mesh(&self, _mesh: &Arc<Mesh>) -> MeshPreparation {
+    /// being made so; with its normals when `smooth`.
+    fn prepare_mesh(&self, _mesh: &Arc<Mesh>, _smooth: bool) -> MeshPreparation {
         MeshPreparation::Never
     }
 

@@ -15,7 +15,9 @@ struct MeshParams {
     light1: vec4<f32>,
     ambient: f32,
     perspective: u32,
-    pad: vec2<u32>,
+    // Whether `normal` holds the surface's normals, else faces are flat.
+    shaded_smooth: u32,
+    pad: u32,
 }
 
 @group(0) @binding(0) var<uniform> mesh: MeshParams;
@@ -23,10 +25,11 @@ struct MeshParams {
 struct MeshVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) eye: vec3<f32>,
+    @location(1) normal: vec3<f32>,
 }
 
 @vertex
-fn vs_mesh(@location(0) position: vec3<f32>) -> MeshVarying {
+fn vs_mesh(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>) -> MeshVarying {
     let eye = mesh.model_view * vec4<f32>(position, 1.0);
     let clip = mesh.projection * eye;
     var out: MeshVarying;
@@ -36,6 +39,9 @@ fn vs_mesh(@location(0) position: vec3<f32>) -> MeshVarying {
         clip.w,
     );
     out.eye = eye.xyz;
+    // Turned as the mesh is: the model-view only turns, moves and scales
+    // evenly.
+    out.normal = (mesh.model_view * vec4<f32>(normal, 0.0)).xyz;
     return out;
 }
 
@@ -64,6 +70,15 @@ fn fs_mesh(input: MeshVarying) -> @location(0) vec4<f32> {
     }
     if (dot(normal, toward) < 0.0) {
         normal = -normal;
+    }
+    // Smooth: the surface's own normal, on the side of the face seen.
+    let smooth_length = dot(input.normal, input.normal);
+    if (mesh.shaded_smooth != 0u && smooth_length > 1e-30) {
+        var surface = input.normal * inverseSqrt(smooth_length);
+        if (dot(surface, normal) < 0.0) {
+            surface = -surface;
+        }
+        normal = surface;
     }
     let light = mesh.ambient
         + mesh.light0.w * max(dot(normal, mesh.light0.xyz), 0.0)

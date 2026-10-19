@@ -115,6 +115,42 @@ impl Mesh {
         (std::mem::size_of_val(self.positions.as_slice())
             + std::mem::size_of_val(self.indices.as_slice())) as u64
     }
+
+    /// A normal for each position, for smooth shading: the normals of the
+    /// triangles around it, each weighted by its area, averaged. A
+    /// position no triangle with an area touches gets straight up (Z).
+    pub fn smooth_normals(&self) -> Vec<[f32; 3]> {
+        let mut sums = vec![[0f32; 3]; self.positions.len()];
+        for t in self.indices.chunks_exact(3) {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| self.positions[i as usize]);
+            let (u, v) = (sub(b, a), sub(c, a));
+            // Twice the triangle's area along its normal.
+            let n = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            for &i in t {
+                let sum = &mut sums[i as usize];
+                for axis in 0..3 {
+                    sum[axis] += n[axis];
+                }
+            }
+        }
+        for sum in &mut sums {
+            let length = (sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]).sqrt();
+            *sum = if length > 0. && length.is_finite() {
+                sum.map(|v| v / length)
+            } else {
+                [0., 0., 1.]
+            };
+        }
+        sums
+    }
+}
+
+fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
 impl fmt::Debug for Mesh {
@@ -140,6 +176,10 @@ pub enum MeshPreparation {
     Started(oneshot::Receiver<()>),
     /// It is being uploaded, since an earlier ask.
     Pending,
+    /// It can be drawn, but shaded flat while the normals smooth shading
+    /// asked for are made: on the first ask, the receiver resolves when
+    /// they are there.
+    Flat(Option<oneshot::Receiver<()>>),
     /// It will not be drawn: the window draws no meshes, or this one is
     /// larger than its GPU's buffers.
     Never,
@@ -150,6 +190,13 @@ impl MeshPreparation {
     pub fn start() -> (MeshPreparation, MeshUploaded) {
         let (sender, receiver) = oneshot::channel();
         (MeshPreparation::Started(receiver), MeshUploaded(sender))
+    }
+
+    /// Normals being made now for a mesh drawn flat meanwhile, and what
+    /// tells the window they are there.
+    pub fn flat_until() -> (MeshPreparation, MeshUploaded) {
+        let (sender, receiver) = oneshot::channel();
+        (MeshPreparation::Flat(Some(receiver)), MeshUploaded(sender))
     }
 }
 
@@ -176,9 +223,12 @@ pub struct MeshLight {
 /// How a mesh is seen and lit. Matrices are column-major: `matrix[i]` is the
 /// i-th column, as WGSL, Metal and HLSL take them.
 ///
-/// Each face is shaded flat, lit on whichever side faces the camera: the
-/// colour times `ambient` plus, for each light, its strength times the
-/// cosine of the angle between the face and the light, clamped at zero.
+/// Each face is shaded flat, or smoothly (`smooth`), lit on whichever side
+/// faces the camera: the colour times `ambient` plus, for each light, its
+/// strength times the cosine of the angle between the surface and the
+/// light, clamped at zero. Smooth shading turns the mesh's normals
+/// (`Mesh::smooth_normals`) by `model_view`, which should then only turn,
+/// move and scale evenly.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeshView {
     /// From the mesh's coordinates to the camera's: x right, y up, z toward
@@ -189,8 +239,13 @@ pub struct MeshView {
     /// to 1 (far).
     pub projection: [[f32; 4]; 4],
     /// Whether `projection` has perspective: a face is then lit as seen
-    /// from the camera's position, else from straight ahead.
+    /// from the camera's position (the origin of the camera's coordinates),
+    /// else from straight ahead.
     pub perspective: bool,
+    /// Whether the surface is shaded smoothly across its faces, by normals
+    /// the renderer makes once asked (flat until then), else each face
+    /// flat.
+    pub smooth: bool,
     /// The surface's colour, in linear RGB.
     pub color: [f32; 3],
     /// Light from all around, as a share of the colour.
@@ -234,5 +289,37 @@ mod tests {
             Mesh::new(broken, vec![0, 1, 2]).err(),
             Some(MeshError::NotFinite { position: 2 })
         );
+    }
+
+    /// A ridge's normal is its two slopes', weighted by their areas; a
+    /// position only flat triangles touch points straight up.
+    #[test]
+    fn smooth_normals_average_the_faces_around() {
+        let roof = Mesh::new(
+            vec![
+                [-1., 0., 0.],
+                [0., 0., 1.],
+                [3., 0., 0.],
+                [-1., 1., 0.],
+                [0., 1., 1.],
+                [3., 1., 0.],
+                [9., 9., 9.],
+            ],
+            vec![0, 1, 4, 0, 4, 3, 1, 2, 5, 1, 5, 4, 6, 6, 6],
+        )
+        .unwrap();
+        let normals = roof.smooth_normals();
+        let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-5);
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        // The left slope rises at 45°; the right one, three times as wide,
+        // at under 20°.
+        assert!(near(normals[0], [-half, 0., half]));
+        let right = [1. / 10f32.sqrt(), 0., 3. / 10f32.sqrt()];
+        assert!(near(normals[2], right));
+        // The ridge: one triangle of the left slope, (-1, 0, 1) of area
+        // √2/2, and two of the right, (1, 0, 3) of area √10/2 each.
+        let ridge = 50f32.sqrt();
+        assert!(near(normals[1], [1. / ridge, 0., 7. / ridge]));
+        assert_eq!(normals[6], [0., 0., 1.]);
     }
 }

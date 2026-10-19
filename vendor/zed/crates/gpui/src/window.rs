@@ -5206,15 +5206,21 @@ impl Window {
     ) -> bool {
         self.invalidator.debug_assert_paint();
 
-        match self.platform_window.prepare_mesh(&mesh) {
-            MeshPreparation::Ready => {}
-            MeshPreparation::Started(uploaded) => {
-                self.spawn(cx, async move |cx| {
+        let refresh_when = |uploaded: oneshot::Receiver<()>, window: &Self, cx: &mut App| {
+            window
+                .spawn(cx, async move |cx| {
                     if uploaded.await.is_ok() {
                         cx.update(|window, _| window.refresh()).ok();
                     }
                 })
                 .detach();
+        };
+        match self.platform_window.prepare_mesh(&mesh, view.smooth) {
+            MeshPreparation::Ready | MeshPreparation::Flat(None) => {}
+            // Drawn flat now, smooth once its normals are there.
+            MeshPreparation::Flat(Some(normals)) => refresh_when(normals, self, cx),
+            MeshPreparation::Started(uploaded) => {
+                refresh_when(uploaded, self, cx);
                 return false;
             }
             MeshPreparation::Pending | MeshPreparation::Never => return false,

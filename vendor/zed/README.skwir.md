@@ -409,6 +409,12 @@ in its preview (ADR-067).
   - each face shaded flat from the screen-space derivatives of its
     position, so no normals are sent, and lit on whichever side faces the
     camera; the colour encoded to sRGB as gpui's other colours are;
+  - or smoothly (`MeshView::smooth`), by normals the upload thread makes
+    when a frame first asks for them (`Mesh::smooth_normals`: each
+    position's faces' normals weighted by their areas), oriented to the
+    side of the face seen; until they are there the mesh is drawn flat
+    and the window drawn again when they arrive (`MeshPreparation::Flat`).
+    Without normals the positions' buffer stands in for theirs, unread;
   - then composited into the frame pixel for pixel, premultiplied.
 - **What it holds:** a mesh's buffers are let go of in the first frame
   that does not draw it; the target goes when no mesh is drawn. An upload
@@ -419,7 +425,10 @@ in its preview (ADR-067).
 The tests are the renderer's, on the headless renderer (lavapipe will do):
 `headless_renderer_draws_a_mesh_lit_and_in_depth` (nothing drawn before
 the upload, the light's values, the nearer face over the farther drawn
-after it, the buffers and target let go of), `headless_renderer_clips_a_mesh_and_keeps_its_order` (what a mask
+after it, the buffers and target let go of),
+`headless_renderer_shades_smoothly_once_normals_are_made` (flat while they
+are made, then a roof's ridge lit as its normal says), gpui's
+`smooth_normals_average_the_faces_around`, `headless_renderer_clips_a_mesh_and_keeps_its_order` (what a mask
 shows of a mesh is where the whole is drawn, under a quad painted after),
 and `the_mesh_shader_reads_what_is_written` (the shader validates, its
 parameters' layout matches the Rust side's). `mesh_frame_times` (ignored)

@@ -37,6 +37,8 @@ RUNS = [
         # The accessibility tree (0030) and what an element writes into it
         # (0031).
         "window::a11y", "elements::div::tests::test_write_a11y_info",
+        # A mesh and its normals (0033).
+        "mesh::",
     ]),
     # All of them: the atlas (an upload to a removed texture), the context
     # and the renderer.
