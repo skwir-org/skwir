@@ -168,11 +168,14 @@ impl SettingsView {
                 );
             }
             let selected = !searching && page == self.page;
-            let modified = self
-                .rows
-                .iter()
-                .filter(|row| row.page() == page && row.modified())
-                .count();
+            let modified = if page == Page::Changed {
+                self.changed_count()
+            } else {
+                self.rows
+                    .iter()
+                    .filter(|row| row.page() == page && row.modified())
+                    .count()
+            };
             let title = self.page_title(&page);
             let target = page.clone();
             let hover = theme.hover;
@@ -712,7 +715,9 @@ impl SettingsView {
         }
     }
 
-    /// The editable settings shown on a page, grouped by section.
+    /// The editable settings shown on a page, grouped by section: while
+    /// it is folded, its essentials and what it reveals (ADR-072), then the
+    /// fold. Returns how many settings the page has.
     fn page_rows(
         &mut self,
         page: &Page,
@@ -721,12 +726,82 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> usize {
+        let folds = self
+            .rows
+            .iter()
+            .any(|row| row.spec.essential && row.page() == *page);
+        let folded = self.folded(page);
+        let mut count = 0;
         let rows: Vec<Snapshot> = self
             .rows
             .iter()
             .filter(|row| row.page() == *page)
+            .inspect(|_| count += 1)
+            .filter(|row| !folded || row.spec.essential || self.revealed.contains(&row.spec.key))
             .map(|row| Snapshot::of(row, self))
             .collect();
+        self.section_rows(&rows, items, theme, window, cx);
+        let hidden = count - rows.len();
+        if folds && (!folded || hidden > 0) {
+            self.fold_row(page, folded, hidden, items, theme, cx);
+        }
+        count
+    }
+
+    /// The fold at a page's end: More settings while it shows only its
+    /// essentials, Fewer settings once unfolded.
+    fn fold_row(
+        &mut self,
+        page: &Page,
+        folded: bool,
+        hidden: usize,
+        items: &mut Vec<AnyElement>,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) {
+        let item = items.len();
+        let word = page.word();
+        let focus = self.handle(&format!("fold:{word}"), cx);
+        self.stop(&focus, Some(item), None);
+        let (label, icon) = if folded {
+            (format!("More settings ({hidden})"), "chevron-right")
+        } else {
+            ("Fewer settings".to_owned(), "chevron")
+        };
+        let page = page.clone();
+        items.push(
+            div()
+                .flex_none()
+                .pt_4()
+                .flex()
+                .child(
+                    controls::button(
+                        format!("settings-fold-{word}"),
+                        label,
+                        Some(icon),
+                        ButtonStyle::Plain,
+                        &focus,
+                        theme,
+                    )
+                    .aria_expanded(!folded)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.fold(&page, !folded, cx);
+                    })),
+                )
+                .into_any_element(),
+        );
+    }
+
+    /// Settings grouped under their sections' captions, as a page shows
+    /// them.
+    fn section_rows(
+        &mut self,
+        rows: &[Snapshot],
+        items: &mut Vec<AnyElement>,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut start = 0;
         while start < rows.len() {
             let section = rows[start].spec.section.clone();
@@ -754,7 +829,41 @@ impl SettingsView {
             }
             start = end;
         }
-        rows.len()
+    }
+
+    /// Settings from several pages, each group under its page's title and
+    /// section, in the pages' order: what a search finds, what was
+    /// changed.
+    fn grouped_rows(
+        &mut self,
+        rows: Vec<Snapshot>,
+        items: &mut Vec<AnyElement>,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut groups: Vec<((Page, String), Vec<Snapshot>)> = Vec::new();
+        for row in rows {
+            let at = (Page::of_spec(&row.spec), row.spec.section.clone());
+            match groups.last_mut() {
+                Some((last, rows)) if *last == at => rows.push(row),
+                _ => groups.push((at, vec![row])),
+            }
+        }
+        for ((page, section), rows) in groups {
+            let mut caption = self.page_title(&page);
+            if !section.is_empty() {
+                caption = format!("{caption} › {section}");
+            }
+            Self::caption(items, caption, theme);
+            for (index, row) in rows.iter().enumerate() {
+                let edge = Edge {
+                    first: index == 0,
+                    last: index + 1 == rows.len(),
+                };
+                self.setting_row(row, edge, items, theme, window, cx);
+            }
+        }
     }
 
     fn plugin_row(
@@ -893,7 +1002,7 @@ impl SettingsView {
                 theme,
                 Edge {
                     first: true,
-                    last: false,
+                    last: true,
                 },
             )
             .child(Self::texts("Edit as text", location, theme))
@@ -911,6 +1020,50 @@ impl SettingsView {
             )
             .into_any_element(),
         );
+    }
+
+    /// Changed by you: what a page reached revealed (every setting that
+    /// differed from its default, every plugin switched from how skwir
+    /// comes), then Restore all.
+    fn page_changed(
+        &mut self,
+        items: &mut Vec<AnyElement>,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let rows: Vec<Snapshot> = self
+            .rows
+            .iter()
+            .filter(|row| self.revealed.contains(&row.spec.key))
+            .map(|row| Snapshot::of(row, self))
+            .collect();
+        let plugins: Vec<PluginInfo> = self
+            .plugins
+            .iter()
+            .filter(|plugin| self.revealed_plugins.contains(plugin.id))
+            .cloned()
+            .collect();
+        if rows.is_empty() && plugins.is_empty() {
+            Self::note(
+                items,
+                "Every setting has its default value, and every plugin is as skwir comes.",
+                theme,
+            );
+            return;
+        }
+        self.grouped_rows(rows, items, theme, window, cx);
+        if !plugins.is_empty() {
+            Self::caption(items, "Plugins", theme);
+            for (index, plugin) in plugins.iter().enumerate() {
+                let edge = Edge {
+                    first: index == 0,
+                    last: index + 1 == plugins.len(),
+                };
+                self.plugin_row(plugin, true, edge, items, theme, cx);
+            }
+        }
+        items.push(div().flex_none().h(px(24.)).into_any_element());
         let item = items.len();
         let modified = self.rows.iter().filter(|row| row.modified()).count();
         let reset = self.handle("reset-all", cx);
@@ -927,7 +1080,7 @@ impl SettingsView {
         let mut row = card_row(
             theme,
             Edge {
-                first: false,
+                first: true,
                 last: true,
             },
         )
@@ -992,37 +1145,21 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        let mut found = 0;
-        // Under their page and section, as the pages stand.
-        let mut groups: Vec<((Page, String), Vec<Snapshot>)> = Vec::new();
-        for row in &self.rows {
-            let page = row.page();
-            let titles = [self.page_title(&page), self.plugin_title(row.spec.owner())];
-            if !spec_matches(query, &row.spec, [&titles[0], &titles[1]]) {
-                continue;
-            }
-            let at = (page, row.spec.section.clone());
-            let snapshot = Snapshot::of(row, self);
-            match groups.last_mut() {
-                Some((last, rows)) if *last == at => rows.push(snapshot),
-                _ => groups.push((at, vec![snapshot])),
-            }
-        }
-        for ((page, section), rows) in groups {
-            found += rows.len();
-            let mut caption = self.page_title(&page);
-            if !section.is_empty() {
-                caption = format!("{caption} › {section}");
-            }
-            Self::caption(items, caption, theme);
-            for (index, row) in rows.iter().enumerate() {
-                let edge = Edge {
-                    first: index == 0,
-                    last: index + 1 == rows.len(),
-                };
-                self.setting_row(row, edge, items, theme, window, cx);
-            }
-        }
+        // Every setting, folded or not, under its page and section.
+        let rows: Vec<Snapshot> = self
+            .rows
+            .iter()
+            .filter(|row| {
+                let titles = [
+                    self.page_title(&row.page()),
+                    self.plugin_title(row.spec.owner()),
+                ];
+                spec_matches(query, &row.spec, [&titles[0], &titles[1]])
+            })
+            .map(|row| Snapshot::of(row, self))
+            .collect();
+        let mut found = rows.len();
+        self.grouped_rows(rows, items, theme, window, cx);
         let plugins: Vec<PluginInfo> = self
             .plugins
             .iter()
@@ -1089,6 +1226,7 @@ impl Render for SettingsView {
             let subtitle = page.builtin().map_or("", |b| b.intro);
             match &page {
                 Page::General => self.page_general(&mut items, &theme, window, cx),
+                Page::Changed => self.page_changed(&mut items, &theme, window, cx),
                 Page::Plugins => {
                     for category in Category::ALL {
                         let mut plugins: Vec<PluginInfo> = self

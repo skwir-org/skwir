@@ -31,6 +31,15 @@ the reasoning.
   its settings as they were first declared (`SettingSpec::order`).
   Declared again, or by a plugin turned on again, a setting keeps its
   place. Never sort a page by key or title.
+- **Essential or folded (ADR-072).** A setting is folded under its page's
+  More settings unless its owner marks it `SettingSpec::essential`:
+  people are divided on its value (the theme, dates, autoplay), it
+  decides what other programs or machines see (where notes are kept,
+  private folders), or it acts on files without asking (a drop). Not
+  when Automatic suits nearly everyone (an engine), it tunes resources
+  (memory, history), it is a detail of the look, or it is changed where
+  it is used. `crates/skwir/tests/settings.rs` keeps them to four a page
+  and twenty in all: a new essential takes another's place.
 - Titles are sentence case, without the plugin's name. Descriptions say
   what changes for the user, not what the key is called, in sentences.
   Choice labels are a word or two; the description explains them.
@@ -123,6 +132,19 @@ The key is the owner's; the page is the subject's (ADR-072).
   control. A choice is segmented buttons only while they fit beside that
   (`elements::adaptive::Fit` measures both forms; no character counts),
   else a dropdown. A text field narrows before the texts do.
+- **The fold.** A page with essentials shows them, under their sections,
+  and folds the rest under More settings (N) at its end; unfolded, it
+  shows all, in order, and stays so (`ui.settings_unfolded`, the
+  window's state) until folded again. A page without essentials folds
+  nothing. What a page reached shows whether folded or not, until
+  another page is reached (`SettingsView::revealed`): every setting that
+  differs from its default, the one a link pointed at, a plugin's
+  settings reached from its Settings button. The search finds every
+  setting, folded or not. Never hide a setting a mode or a link would
+  then not find.
+- **Changed by you** lists what differed from its default when it was
+  reached, settings and plugins (`PluginInfo::enabled_by_default`), each
+  with its way back, then Restore all; its count in the sidebar is live.
 - A change moves nothing. The revert button has its place in every row,
   empty while the value is the default (`settings_view::revert_slot`, the
   Keyboard page's rows too), and the save's status follows the page's

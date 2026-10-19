@@ -204,6 +204,8 @@ pub struct PluginInfo {
     pub description: String,
     pub category: Category,
     pub enabled: bool,
+    /// Whether skwir comes with it on (`Plugin::enabled_by_default`).
+    pub enabled_by_default: bool,
     /// What it may do (`Plugin::capabilities`).
     pub capabilities: crate::permissions::Capabilities,
     /// Where it comes from, for one from outside skwir.
@@ -344,6 +346,7 @@ impl PluginHost {
                 description: p.description().into(),
                 category: p.category(),
                 enabled: *e,
+                enabled_by_default: p.enabled_by_default(),
                 capabilities: p.capabilities(),
                 origin: p.origin(),
             })

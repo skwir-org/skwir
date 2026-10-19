@@ -61,6 +61,9 @@ pub const DATES_KEY: &str = "ui.date_format";
 pub const GRID_FILL_KEY: &str = "ui.grid_fill";
 /// How a drag of several files is drawn (`dragicon::Layout`).
 pub const DRAG_IMAGE_KEY: &str = "ui.drag_image";
+/// The dialog's pages unfolded to show all their settings (ADR-072), by
+/// their words: the window's state, kept until folded again.
+pub const UNFOLDED_KEY: &str = "ui.settings_unfolded";
 /// Whether a folder has the Narrow by bar above its files (`narrow.rs`).
 pub const NARROW_FOLDERS_KEY: &str = "ui.narrow_folders";
 /// Whether the tab strip shows for a window that has only one tab.
@@ -437,6 +440,11 @@ pub fn declare(app: &App) {
         .section("3D models"),
     );
     app.settings.declare(SettingSpec::state(
+        UNFOLDED_KEY,
+        "The settings pages unfolded to show all their settings",
+        toml::Value::Array(Vec::new()),
+    ));
+    app.settings.declare(SettingSpec::state(
         crate::shortcuts::HINTS_KEY,
         "Commands whose shortcut hint was already shown",
         toml::Value::Array(Vec::new()),
@@ -594,6 +602,7 @@ pub enum Page {
     Privacy,
     Plugins,
     Keyboard,
+    Changed,
     Plugin(String),
 }
 
@@ -618,7 +627,7 @@ pub(crate) struct Builtin {
 
 /// The dialog's own pages, by subject, in the sidebar's order; plugins'
 /// follow.
-static BUILTIN: [Builtin; 10] = [
+static BUILTIN: [Builtin; 11] = [
     Builtin {
         page: Page::General,
         name: page::GENERAL,
@@ -733,6 +742,16 @@ static BUILTIN: [Builtin; 10] = [
         when_used: false,
         sections: &[],
     },
+    Builtin {
+        page: Page::Changed,
+        name: "changed",
+        owner: None,
+        title: "Changed by you",
+        icon: "revert",
+        intro: "Every setting that differs from its default and every plugin turned on or off from how skwir comes, each with its way back.",
+        when_used: false,
+        sections: &[],
+    },
 ];
 
 impl Page {
@@ -765,6 +784,16 @@ impl Page {
     /// The dialog's own page this is; `None` for a plugin's.
     pub(crate) fn builtin(&self) -> Option<&'static Builtin> {
         BUILTIN.iter().find(|b| &b.page == self)
+    }
+
+    /// The word it is named by: one of the dialog's, else its plugin's id.
+    pub(crate) fn word(&self) -> String {
+        match self {
+            Page::Plugin(id) => id.clone(),
+            page => page
+                .builtin()
+                .map_or_else(String::new, |b| b.name.to_owned()),
+        }
     }
 }
 
@@ -863,6 +892,15 @@ pub struct SettingsView {
     pub(crate) dropdown: Option<String>,
     /// Setting to point out after `ui.settings {key}`.
     pub(crate) highlight: Option<String>,
+    /// The pages unfolded to show all their settings, by their words
+    /// (`UNFOLDED_KEY`); a page without essentials is never folded.
+    pub(crate) unfolded: std::collections::BTreeSet<String>,
+    /// What the page reached shows whether folded or not, until another is
+    /// reached: the settings that differed from their defaults when it was
+    /// (and the one a link pointed at), the plugins switched from their
+    /// own. Restoring one moves nothing.
+    pub(crate) revealed: std::collections::BTreeSet<String>,
+    pub(crate) revealed_plugins: std::collections::BTreeSet<String>,
     scroll_to: Option<String>,
     /// The record edited, per records setting (`settings_records`).
     pub(crate) drafts: BTreeMap<String, crate::settings_records::Draft>,
@@ -905,6 +943,12 @@ impl SettingsView {
                 InputEvent::Submit => this.step_focus(1, window, cx),
             },
         )];
+        let app_unfolded = app
+            .settings
+            .get::<Vec<String>>(UNFOLDED_KEY)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
         let mut view = SettingsView {
             plugins: app.plugins.list(),
             settings_revision: app.settings.revision(),
@@ -937,10 +981,14 @@ impl SettingsView {
             reset_armed: false,
             dropdown: None,
             highlight: None,
+            unfolded: app_unfolded,
+            revealed: std::collections::BTreeSet::new(),
+            revealed_plugins: std::collections::BTreeSet::new(),
             scroll_to: None,
             _subscriptions: subscriptions,
         };
         view.rebuild(window, cx);
+        view.reveal();
         view.read_keys();
         view.probe_requirements();
         list_icon_themes(&view.app);
@@ -1484,7 +1532,79 @@ impl SettingsView {
         self.keys.editor = None;
         self.keys.new = None;
         self.scroll.set_offset(gpui::Point::default());
+        self.reveal();
         cx.notify();
+    }
+
+    /// What a page reached shows whether folded or not (`revealed`).
+    fn reveal(&mut self) {
+        self.revealed = self
+            .rows
+            .iter()
+            .filter(|row| row.modified())
+            .map(|row| row.spec.key.clone())
+            .collect();
+        self.revealed_plugins = self
+            .plugins
+            .iter()
+            .filter(|plugin| plugin.enabled != plugin.enabled_by_default)
+            .map(|plugin| plugin.id.to_owned())
+            .collect();
+    }
+
+    /// Whether a page shows only its essentials: it has some, and was not
+    /// unfolded.
+    pub(crate) fn folded(&self, page: &Page) -> bool {
+        !self.unfolded.contains(&page.word())
+            && self
+                .rows
+                .iter()
+                .any(|row| row.spec.essential && row.page() == *page)
+    }
+
+    /// Fold or unfold a page, as the window's state remembers.
+    pub(crate) fn fold(&mut self, page: &Page, folded: bool, cx: &mut Context<Self>) {
+        let word = page.word();
+        if folded {
+            self.unfolded.remove(&word);
+        } else {
+            self.unfolded.insert(word);
+        }
+        self.app.settings.set(
+            UNFOLDED_KEY,
+            toml::Value::Array(
+                self.unfolded
+                    .iter()
+                    .cloned()
+                    .map(toml::Value::String)
+                    .collect(),
+            ),
+        );
+        let weak = self.app.weak();
+        self.app.scheduler.spawn(
+            skwir_core::scheduler::Priority::Background,
+            "settings-fold-save",
+            self.app.lifetime().child(),
+            move || {
+                if let Some(app) = weak.upgrade()
+                    && let Err(error) = app.settings.save()
+                {
+                    tracing::warn!("cannot save the window's state: {error:#}");
+                }
+            },
+        );
+        cx.notify();
+    }
+
+    /// How many settings differ from their defaults and plugins from how
+    /// skwir comes, as Changed by you lists them.
+    pub(crate) fn changed_count(&self) -> usize {
+        self.rows.iter().filter(|row| row.modified()).count()
+            + self
+                .plugins
+                .iter()
+                .filter(|plugin| plugin.enabled != plugin.enabled_by_default)
+                .count()
     }
 
     /// `{ "key": "plugin.option" }` or `{ "page": "plugins" }`; a plugin's
@@ -1505,6 +1625,8 @@ impl SettingsView {
             if self.row(key).is_some() {
                 self.highlight = Some(key.to_owned());
                 self.scroll_to = Some(key.to_owned());
+                // Shown whether its page is folded or not.
+                self.revealed.insert(key.to_owned());
             }
         } else if let Some(name) = text("page") {
             match Page::parse(name) {
@@ -1535,6 +1657,14 @@ impl SettingsView {
             return;
         };
         self.go(page, cx);
+        // All of them, whether their page is folded or not.
+        let owned: Vec<String> = self
+            .rows
+            .iter()
+            .filter(|row| row.spec.owner() == id)
+            .map(|row| row.spec.key.clone())
+            .collect();
+        self.revealed.extend(owned);
         self.scroll_to = Some(key);
     }
 

@@ -183,3 +183,41 @@ fn every_setting_is_on_the_page_of_its_subject() {
     assert_eq!(page("terminal.program"), page("shell.program"));
     assert_eq!(page("documents.backend"), page("reading.continuous"));
 }
+
+/// The short view stays short (ADR-072): a folded page shows its
+/// essentials, at most four a page and twenty in all, with every plugin
+/// on. A setting is folded unless its owner argues it in.
+#[test]
+fn few_settings_are_essential() {
+    use skwir_ui::settings::Page;
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+    for plugin in skwir::plugins() {
+        let id = plugin.id();
+        app.plugins.add(plugin, &app);
+        if !app.plugins.is_enabled(id) {
+            assert!(app.plugins.set_enabled(id, true, &app), "{id}: toggle on");
+        }
+    }
+    skwir_ui::settings::declare(&app);
+    let mut pages: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for spec in app
+        .settings
+        .schema()
+        .into_iter()
+        .filter(|spec| spec.editable() && spec.essential)
+    {
+        pages
+            .entry(format!("{:?}", Page::of_spec(&spec)))
+            .or_default()
+            .push(spec.key);
+    }
+    let crowded: Vec<String> = pages
+        .iter()
+        .filter(|(_, keys)| keys.len() > 4)
+        .map(|(page, keys)| format!("{page}: {keys:?}"))
+        .collect();
+    assert!(crowded.is_empty(), "more than four: {crowded:?}");
+    let all: usize = pages.values().map(Vec::len).sum();
+    assert!(all <= 20, "{all} essential settings: {pages:?}");
+}

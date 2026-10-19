@@ -369,6 +369,11 @@ a hint shows what can follow.
 ## Settings
 
 `Ctrl+,` opens them. A change applies at once; there is no Save button.
+Each page shows the few settings most people look for; **More settings**
+at its end shows the others, and stays open once opened. The search
+finds every setting, and a setting you changed always shows. **Changed
+by you** lists what differs from how Skwir comes, settings and plugins,
+each with its way back.
 
 Settings are grouped by subject, whichever plugin brings them:
 
