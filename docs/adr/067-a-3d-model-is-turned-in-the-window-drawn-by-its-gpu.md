@@ -1,7 +1,7 @@
 # ADR-067: A 3D model is turned in the window, drawn by its GPU
 
-Status: accepted, 2026-10-19. Built and checked on Linux (wgpu); macOS and
-Windows show the still, as before.
+Status: accepted, 2026-10-19. Built and checked on Linux (wgpu); Direct3D
+11's pass checked under Wine, Metal's compiled only.
 
 ## Context
 
@@ -32,7 +32,12 @@ Windows show the still, as before.
      colour, the ambient light and two lights fixed to the camera.
    - wgpu draws it in a pass of its own, as gpui draws paths: offscreen,
      multisampled, with a depth buffer the size of what is shown, then
-     composited in draw order and clipped like any primitive.
+     composited in draw order and clipped like any primitive. Direct3D 11
+     and Metal draw it alike, from naga's translations of the same WGSL,
+     kept beside their renderers and current by a test; the frame's
+     geometry and the shaders' parameters are gpui's, one for the three
+     (`PaintMesh::framed`). The translations are compiled when the first
+     mesh is asked for, so a build from Linux has them too.
    - Faces are shaded flat from the screen-space derivatives of their
      position, so no normals are sent, and lit on either side: a mesh's
      winding is not always kept.
@@ -47,11 +52,16 @@ Windows show the still, as before.
    - A mesh's buffers are made and filled on a thread of the renderer's
      own, never the window's: `Window::paint_mesh` draws a mesh once it is
      there, starts its upload otherwise, and draws the window again when it
-     arrives. The buffers are let go of in the first frame that does not
-     draw the mesh; the target goes when no mesh is drawn. The pipelines
-     are made when the first mesh is drawn, never at start.
-   - `Window::draws_meshes` says whether the window draws them: wgpu's
-     windows do; Metal and Direct3D 11 draw nothing yet and say so.
+     arrives (`gpui::MeshStore`, every renderer's). The buffers are let go
+     of in the first frame that does not draw the mesh; the target goes
+     when no mesh is drawn. The pipelines are made when the first mesh is
+     drawn or asked for, never at start. The thread ends with the
+     renderer.
+   - `Window::draws_meshes` says whether the window draws them: every
+     window on Linux, Windows and macOS does. `paint_mesh` says whether it
+     painted the mesh, is loading it, or will not (`MeshPainted`): a mesh
+     larger than the GPU holds, or one whose buffers it could not make,
+     says so in the preview.
 2. **The file is still read in the helper.** `skwir-model-worker --mesh`
    writes what it measures, then the positions and triangles as
    little-endian numbers, then a colour a position when the file gives
@@ -158,6 +168,17 @@ Windows show the still, as before.
   by Shift and the arrows, zoomed by the wheel, shown as it opened by
   Ctrl+0; on X11 (Xwayland): drawn and turned by a drag; on lavapipe, the
   still. **Not checked yet:** the window on NVIDIA (the user's session),
-  a screen reader. macOS and Windows compile the batch they skip.
-- **To decide before going further:** Metal and Direct3D 11 passes (the
-  same shader, translated), or the still there for good.
+  a screen reader.
+- **Direct3D 11 and Metal** (2026-10-19): Direct3D's pass drew two
+  squares in depth, in their colours, composited where their bounds are,
+  under Wine on X, its d3d11 on Mesa's llvmpipe through OpenGL and through
+  Vulkan (`just gpui-check-windows`). The test through gpui's renderer,
+  a quad under the mesh and one over it, skips under Wine, whose HLSL
+  compiler cannot compile gpui's own shaders; it is for a Windows machine,
+  as is any measure. Metal's pass is compiled only. On Windows, WARP gets
+  the still, as lavapipe does; macOS reports no adapter, and turns.
+- **The Wine run found a fault in the shared store:** its upload thread,
+  left to end alone, let go of the device while the process exited, and
+  Wine killed the process about four times in ten; elsewhere it went
+  unseen. The thread now ends with the renderer, which waits for the
+  upload under way.

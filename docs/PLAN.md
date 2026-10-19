@@ -1267,18 +1267,19 @@ key did the same.
 - Checked on Wayland and X11 (Xwayland) on a headless sway; Windows
   compiled, macOS's window not compiled.
 
-**3D models turned in the window (ADR-067), a prototype on Linux.** A
-mesh's preview was one still the helper drew on the CPU.
+**3D models turned in the window (ADR-067).** A mesh's preview was one
+still the helper drew on the CPU.
 
 - Vendored gpui patch 0033: `Window::paint_mesh` draws a triangle mesh
   in 3D. wgpu draws it offscreen, multisampled, with depth, faces shaded
   flat from their screen-space derivatives, then composites it in draw
   order. Uploads run on a thread of their own, never the window's. Metal
-  and Direct3D 11 draw nothing yet.
+  and Direct3D 11 drew nothing at first (see below).
 - `skwir-model-worker --mesh` writes the mesh itself; Skwir checks every
   count, index and coordinate before the GPU sees it. The preview asks
-  for it only where the window draws meshes on a GPU: lavapipe, macOS,
-  Windows, thumbnails and agents get the still.
+  for it only where the window draws meshes on a GPU: lavapipe,
+  thumbnails and agents get the still (macOS and Windows did too, until
+  their passes below).
 - The view opens as the still is drawn; a drag turns it, Shift or the
   middle button moves it, the wheel zooms; the arrows, Shift and the
   arrows, the zoom keys and Ctrl+0 do the same (`ModelPreview`).
@@ -1309,8 +1310,17 @@ mesh's preview was one still the helper drew on the CPU.
   by the window, the still and the thumbnails alike; not textures.
 - Checked on Wayland and on X11 (Xwayland), a headless sway rendering on
   the Intel GPU; on lavapipe, the still. Not checked: the window on
-  NVIDIA (the user's session), a screen reader; macOS and Windows
-  compiled only.
+  NVIDIA (the user's session), a screen reader.
+- Then Windows and macOS: Direct3D 11 and Metal draw the mesh as wgpu
+  does, from naga's translations of its WGSL (a test keeps them current),
+  compiled when the first mesh is asked for; the frame's geometry, the
+  shaders' parameters and the upload thread are gpui's, one for the three.
+  Direct3D's pass ran under Wine on Mesa (`just gpui-check-windows`),
+  which found the upload thread outliving its renderer (Wine killed the
+  process at exit): it now ends with it. Through gpui's renderer it is for
+  a Windows machine, Wine compiling none of gpui's own shaders; Metal is
+  compiled only. A mesh the GPU will not hold says so instead of loading
+  for good.
 
 ---
 

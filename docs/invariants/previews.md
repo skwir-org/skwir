@@ -168,6 +168,10 @@ A name that says nothing is not a binary file.
   - The window keeps the mesh while it shows it, the GPU while frames
     draw it: gpui lets go of its buffers in the first frame that does not
     (vendored patch 0033).
+  - A mesh the GPU will not hold (larger than its buffers, or buffers it
+    could not make) says so where it would be drawn
+    (`MeshPainted::Refused`), never "Loading…" for good; the 3D button
+    shows its still.
 - A drawing made from content (`circuits`: KiCad boards,
   footprints, schematics, symbol libraries; `models`: DXF) is SVG
   rasterized by `inspection::drawing`, the inert path of every drawing:

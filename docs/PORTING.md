@@ -378,6 +378,15 @@ Left:
   patch 0001), on macOS under the icons of the files' types. X11 and
   Windows hand no drag out yet. A drag's copy modifier is Ctrl; a Mac's
   is Option (step J, not done).
+- **3D models turned in the window** (ADR-067) are gpui patch 0033: wgpu's
+  pass on Linux, Direct3D 11's and Metal's from naga's translation of the
+  same shader. Direct3D's pass ran under Wine (its d3d11 on Mesa's
+  llvmpipe, `just gpui-check-windows`), but not through gpui's renderer,
+  whose own shaders Wine cannot compile; whether a model turns in the
+  window on a real GPU, and how fast, is for the machine **(5b)**. Metal's
+  is compiled only (gpui_apple, with an empty shader library standing in
+  for gpui's own) **(5b)**. WARP, Windows' software rasterizer, gets the
+  still, as lavapipe does.
 - **Agents and scripts** (ADR-043): on Windows the window listens on a named
   pipe in the user's name (`plugins/control/src/channel.rs`), tried under
   Wine (`tests/pipe.rs`), which keeps no accounts apart. Left for Phase 5b's
