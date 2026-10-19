@@ -5,6 +5,7 @@
 //! the names a copy, a move or a link found taken (ADR-054, `clashes.rs`).
 
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 use gpui::{
     AnyElement, Context, FocusHandle, UniformListScrollHandle, Window, div, prelude::*, px,
@@ -34,24 +35,47 @@ const ROWS: Rows = Rows {
     shown: 16,
 };
 
-/// A step's line: the change, a status label, and its kind.
-pub fn line(change: &Change, status: &StepStatus) -> (String, &'static str, LineKind) {
+/// A step's line: the change, its paths in `folder` written from there,
+/// a status label, and its kind.
+pub fn line(
+    change: &Change,
+    status: &StepStatus,
+    folder: Option<&Path>,
+) -> (String, &'static str, LineKind) {
+    let said = match folder {
+        Some(folder) => change.within(folder).to_string(),
+        None => change.to_string(),
+    };
     match status {
-        StepStatus::Pending { reversible: true } => {
-            (change.to_string(), "pending", LineKind::Pending)
+        StepStatus::Pending { reversible: true } => (said, "pending", LineKind::Pending),
+        StepStatus::Pending { reversible: false } => {
+            (said, "pending, not undoable", LineKind::Pending)
         }
-        StepStatus::Pending { reversible: false } => (
-            change.to_string(),
-            "pending, not undoable",
-            LineKind::Pending,
-        ),
-        StepStatus::AlreadyDone => (change.to_string(), "already done", LineKind::Done),
-        StepStatus::Conflict { reason } => (
-            format!("{change} — {reason}"),
-            "conflict",
-            LineKind::Conflict,
-        ),
+        StepStatus::AlreadyDone => (said, "already done", LineKind::Done),
+        StepStatus::Conflict { reason } => {
+            (format!("{said} — {reason}"), "conflict", LineKind::Conflict)
+        }
     }
+}
+
+/// The folder every step's paths are in, said once above the lines and
+/// left out of them: the deepest that holds each path's own folder, so no
+/// line says the folder itself as nothing. None at the root of a drive,
+/// where nothing would be left out.
+fn shared_folder(steps: &[(Change, StepStatus)]) -> Option<PathBuf> {
+    let mut folders = steps
+        .iter()
+        .flat_map(|(change, _)| change.paths())
+        .filter_map(Path::parent);
+    let mut shared = folders.next()?.to_path_buf();
+    for folder in folders {
+        while !folder.starts_with(&shared) {
+            if !shared.pop() {
+                return None;
+            }
+        }
+    }
+    shared.parent().is_some().then_some(shared)
 }
 
 /// A plan's dry run as the dialog shows it, kept from when it is done:
@@ -62,6 +86,9 @@ pub struct Checked {
     /// Its steps as it will be done (a folder merged is many), each with
     /// what its dry run found.
     steps: Vec<(Change, StepStatus)>,
+    /// The folder its steps' paths share (`shared_folder`), and how the
+    /// line above the steps writes it (`~/…`).
+    folder: Option<(PathBuf, String)>,
     applicable: bool,
     /// The names it finds taken that the user is asked about as it is
     /// applied (ADR-054): its lines show them settled as the defaults
@@ -71,11 +98,16 @@ pub struct Checked {
 
 impl Checked {
     fn of((diff, asked): (PlanDiff, usize)) -> Self {
+        let home = skwir_core::os_path::home();
         Checked {
             applicable: !diff
                 .steps
                 .iter()
                 .any(|(_, status)| matches!(status, StepStatus::Conflict { .. })),
+            folder: shared_folder(&diff.steps).map(|folder| {
+                let said = crate::complete::written(&folder, "~", home.as_deref());
+                (folder, said)
+            }),
             steps: diff.steps,
             asked,
         }
@@ -364,6 +396,17 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             )
         }
     };
+    // Where the steps' paths are, which their lines leave out.
+    let within = match review {
+        Review::Plan {
+            diff: Some(checked),
+            ..
+        } => checked
+            .folder
+            .as_ref()
+            .map(|(_, said)| format!("In {said}")),
+        _ => None,
+    };
     let panel = modal::panel("review", 720., &theme)
         .when(shell.a11y, |d| d.aria_label(title.clone()))
         .p_3()
@@ -380,6 +423,19 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         // What the plan left out, and why; what a question means.
         .when_some(note, |d, note| {
             d.child(div().text_xs().text_color(theme.text_muted).child(note))
+        })
+        .when_some(within, |d, within| {
+            d.child(clipped(
+                div()
+                    .id("review-folder")
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_middle(),
+                within,
+                shell.font.clone(),
+            ))
         })
         .child(list.text_xs().font_family(shell.mono_font.clone()))
         .child(modal::footer(
@@ -456,7 +512,8 @@ fn step_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec
     range
         .filter_map(|i| {
             let (change, status) = checked.steps.get(i)?;
-            let (text, status, kind) = line(change, status);
+            let folder = checked.folder.as_ref().map(|(folder, _)| folder.as_path());
+            let (text, status, kind) = line(change, status, folder);
             let color = match kind {
                 LineKind::Pending => theme.text,
                 LineKind::Done => theme.text_muted,
@@ -503,7 +560,80 @@ mod tests {
 
     use skwir_core::op::{Change, PlanDiff, StepStatus};
 
-    use super::{LineKind, line};
+    use super::{Checked, LineKind, line, shared_folder};
+
+    /// The lines leave out the folder the steps share, which is said once;
+    /// a step on that folder itself is said from the folder above.
+    #[test]
+    fn lines_are_said_from_the_folder_their_steps_share() {
+        let at = |path: &str| PathBuf::from(format!("/data/it's a café{path}"));
+        let pending = StepStatus::Pending { reversible: true };
+        let steps = vec![
+            (
+                Change::Rename {
+                    from: at("/sub/a  draft.txt"),
+                    to: at("/sub/b.txt"),
+                },
+                pending.clone(),
+            ),
+            (
+                Change::Move {
+                    from: at("/c.txt"),
+                    to: at("/archive/c.txt"),
+                },
+                pending.clone(),
+            ),
+        ];
+        let folder = shared_folder(&steps);
+        assert_eq!(folder, Some(at("")));
+        let said: Vec<_> = steps
+            .iter()
+            .map(|(c, s)| line(c, s, folder.as_deref()).0)
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "rename sub/a  draft.txt -> sub/b.txt",
+                "move c.txt -> archive/c.txt"
+            ]
+        );
+        // The folder itself made: said from its own folder.
+        let mut with_it = steps.clone();
+        with_it.push((
+            Change::Create {
+                path: at(""),
+                directory: true,
+                words: None,
+            },
+            pending.clone(),
+        ));
+        assert_eq!(shared_folder(&with_it), Some(PathBuf::from("/data")));
+        // Nothing shared but the root, or no step: every path whole.
+        let apart = vec![(
+            Change::Move {
+                from: PathBuf::from("/a/x"),
+                to: PathBuf::from("/b/x"),
+            },
+            pending,
+        )];
+        assert_eq!(shared_folder(&apart), None);
+        assert_eq!(shared_folder(&[]), None);
+        // The dry run says it as the address writes it.
+        let checked = Checked::of((
+            PlanDiff {
+                title: "t".into(),
+                note: None,
+                steps,
+            },
+            0,
+        ));
+        let (folder, said) = checked.folder.unwrap();
+        assert_eq!(folder, at(""));
+        assert_eq!(
+            said,
+            crate::complete::written(&at(""), "~", skwir_core::os_path::home().as_deref())
+        );
+    }
 
     #[test]
     fn diff_lines_carry_change_text_and_status() {
@@ -536,7 +666,7 @@ mod tests {
                 ),
             ],
         };
-        let l: Vec<_> = diff.steps.iter().map(|(c, s)| line(c, s)).collect();
+        let l: Vec<_> = diff.steps.iter().map(|(c, s)| line(c, s, None)).collect();
         assert_eq!(
             l[0],
             ("rename /a/x -> /a/y".into(), "pending", LineKind::Pending)

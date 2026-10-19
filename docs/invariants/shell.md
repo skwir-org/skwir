@@ -420,6 +420,13 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   count, nor clipped unsaid. What a deletion takes, a proposal's steps
   (each line cut in its middle, so it ends with what it comes to) and
   what a question to allow says.
+- **A proposal says once the folder its steps share** ("In ~/Projects"),
+  and its lines say their paths from there (`Change::within`: `rename
+  a.txt -> b.txt`, `move c.txt -> archive/c.txt`); a path outside it
+  stays whole. The folder is the deepest holding each path's own folder
+  (a step on a folder is said from the one above), none at a drive's
+  root. A `Change` said alone (`Display`, what agents read) keeps every
+  path whole.
 
 ## Keys
 

@@ -298,18 +298,76 @@ pub struct Words {
 
 impl fmt::Display for Change {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.said(f, None)
+    }
+}
+
+/// A [`Change`] said as it says itself, its paths under a folder written
+/// from there ([`Change::within`]).
+pub struct Within<'a> {
+    change: &'a Change,
+    folder: &'a Path,
+}
+
+impl fmt::Display for Within<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.change.said(f, Some(self.folder))
+    }
+}
+
+/// `path` as a change says it: from `folder` when it is inside it, whole
+/// otherwise.
+fn shown<'a>(path: &'a Path, folder: Option<&Path>) -> std::path::Display<'a> {
+    folder
+        .and_then(|folder| path.strip_prefix(folder).ok())
+        .filter(|rest| !rest.as_os_str().is_empty())
+        .unwrap_or(path)
+        .display()
+}
+
+impl Change {
+    /// Said as it says itself, each path under `folder` written from
+    /// there: a review that says the folder once lists `rename a.txt ->
+    /// b.txt`, not the folder on every line.
+    pub fn within<'a>(&'a self, folder: &'a Path) -> Within<'a> {
+        Within {
+            change: self,
+            folder,
+        }
+    }
+
+    /// Every path it says, in the order it says them.
+    pub fn paths(&self) -> impl Iterator<Item = &Path> {
+        let (first, second) = match self {
+            Change::Rename { from, to }
+            | Change::Move { from, to }
+            | Change::Copy { from, to }
+            | Change::Link { from, to } => (from, Some(to)),
+            Change::Swap { a, b } => (a, Some(b)),
+            Change::Trash { path }
+            | Change::Restore { path }
+            | Change::Delete { path }
+            | Change::Create { path, .. }
+            | Change::Remove { path }
+            | Change::Metadata { path, .. } => (path, None),
+        };
+        std::iter::once(first.as_path()).chain(second.map(PathBuf::as_path))
+    }
+
+    fn said(&self, f: &mut fmt::Formatter<'_>, folder: Option<&Path>) -> fmt::Result {
+        let p = |path| shown(path, folder);
         match self {
             Change::Rename { from, to } => {
-                write!(f, "rename {} -> {}", from.display(), to.display())
+                write!(f, "rename {} -> {}", p(from), p(to))
             }
-            Change::Move { from, to } => write!(f, "move {} -> {}", from.display(), to.display()),
-            Change::Copy { from, to } => write!(f, "copy {} -> {}", from.display(), to.display()),
+            Change::Move { from, to } => write!(f, "move {} -> {}", p(from), p(to)),
+            Change::Copy { from, to } => write!(f, "copy {} -> {}", p(from), p(to)),
             // As `ls -l` shows a link: where it is, then where it leads.
-            Change::Link { from, to } => write!(f, "link {} -> {}", to.display(), from.display()),
-            Change::Swap { a, b } => write!(f, "swap {} <-> {}", a.display(), b.display()),
-            Change::Trash { path } => write!(f, "trash {}", path.display()),
-            Change::Restore { path } => write!(f, "restore {}", path.display()),
-            Change::Delete { path } => write!(f, "delete {}", path.display()),
+            Change::Link { from, to } => write!(f, "link {} -> {}", p(to), p(from)),
+            Change::Swap { a, b } => write!(f, "swap {} <-> {}", p(a), p(b)),
+            Change::Trash { path } => write!(f, "trash {}", p(path)),
+            Change::Restore { path } => write!(f, "restore {}", p(path)),
+            Change::Delete { path } => write!(f, "delete {}", p(path)),
             // A step that says what it does says it best.
             Change::Create {
                 words: Some(words), ..
@@ -321,16 +379,16 @@ impl fmt::Display for Change {
                 path,
                 directory: true,
                 ..
-            } => write!(f, "mkdir {}", path.display()),
+            } => write!(f, "mkdir {}", p(path)),
             Change::Create {
                 path,
                 directory: false,
                 ..
-            } => write!(f, "create {}", path.display()),
+            } => write!(f, "create {}", p(path)),
             // An empty folder, or a file made empty and left so.
-            Change::Remove { path } => write!(f, "remove {}", path.display()),
+            Change::Remove { path } => write!(f, "remove {}", p(path)),
             Change::Metadata { path, field, .. } => {
-                write!(f, "set {field} on {}", path.display())
+                write!(f, "set {field} on {}", p(path))
             }
         }
     }
@@ -995,8 +1053,62 @@ impl Plan {
 
 #[cfg(test)]
 mod tests {
-    use super::{Change, Follow, Followed, Through, io_words, said};
+    use super::{Change, Follow, Followed, Through, Words, io_words, said};
     use std::path::{Path, PathBuf};
+
+    /// Said from a folder, a change writes what is inside it from there,
+    /// anything else whole; said alone, every path whole.
+    #[test]
+    fn a_change_is_said_from_the_folder_its_paths_share() {
+        let dir = Path::new("/data/it's a café");
+        let rename = Change::Rename {
+            from: dir.join("old  name.txt"),
+            to: dir.join("sub/new name.txt"),
+        };
+        assert_eq!(
+            rename.to_string(),
+            format!(
+                "rename {} -> {}",
+                dir.join("old  name.txt").display(),
+                dir.join("sub/new name.txt").display()
+            )
+        );
+        assert_eq!(
+            rename.within(dir).to_string(),
+            "rename old  name.txt -> sub/new name.txt"
+        );
+        // Where it leads, outside the folder, stays whole.
+        let link = Change::Link {
+            from: PathBuf::from("/elsewhere/target"),
+            to: dir.join("link"),
+        };
+        assert_eq!(
+            link.within(dir).to_string(),
+            "link link -> /elsewhere/target"
+        );
+        // The folder itself is not written as nothing.
+        let made = Change::Create {
+            path: dir.to_path_buf(),
+            directory: true,
+            words: None,
+        };
+        assert_eq!(made.within(dir).to_string(), "mkdir /data/it's a café");
+        // A step's own words are what it says.
+        let placed = Change::Metadata {
+            path: dir.join("a.jpg"),
+            field: "position".into(),
+            words: Some(Words {
+                will: "place “a.jpg” at 10, 20".into(),
+                did: "Placed “a.jpg” at 10, 20".into(),
+            }),
+        };
+        assert_eq!(placed.within(dir).to_string(), "place “a.jpg” at 10, 20");
+        let paths: Vec<_> = rename.paths().collect();
+        assert_eq!(
+            paths,
+            [dir.join("old  name.txt"), dir.join("sub/new name.txt")]
+        );
+    }
 
     #[test]
     fn a_failure_is_said_in_words_after_its_contexts() {
