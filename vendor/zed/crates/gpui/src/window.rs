@@ -11,18 +11,19 @@ use crate::{
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
-    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Mesh, MeshPreparation, MeshView,
+    Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent,
+    MouseUpEvent, PaintMesh, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
+    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
+    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
+    TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode,
+    TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -5187,6 +5188,52 @@ impl Window {
             opacity,
         });
         Ok(())
+    }
+
+    /// Paint `mesh` in 3D into the scene for the next frame at the current
+    /// z-index, seen through `view`: clip space spans `bounds`. Whether it is
+    /// painted: a mesh is first uploaded to the GPU off the main thread, and
+    /// the window drawn again once it is there. A window whose renderer has
+    /// no 3D pass never paints one ([`Window::draws_meshes`]).
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn paint_mesh(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        mesh: Arc<Mesh>,
+        view: MeshView,
+        cx: &mut App,
+    ) -> bool {
+        self.invalidator.debug_assert_paint();
+
+        match self.platform_window.prepare_mesh(&mesh) {
+            MeshPreparation::Ready => {}
+            MeshPreparation::Started(uploaded) => {
+                self.spawn(cx, async move |cx| {
+                    if uploaded.await.is_ok() {
+                        cx.update(|window, _| window.refresh()).ok();
+                    }
+                })
+                .detach();
+                return false;
+            }
+            MeshPreparation::Pending | MeshPreparation::Never => return false,
+        }
+        let bounds = self.snap_bounds(bounds);
+        let content_mask = self.snapped_content_mask();
+        self.next_frame.scene.insert_primitive(PaintMesh {
+            order: 0,
+            bounds,
+            content_mask,
+            mesh,
+            view,
+        });
+        true
+    }
+
+    /// Whether this window draws meshes ([`Window::paint_mesh`]).
+    pub fn draws_meshes(&self) -> bool {
+        self.platform_window.draws_meshes()
     }
 
     /// Paint a surface into the scene for the next frame at the current z-index.

@@ -821,6 +821,8 @@ impl MetalRenderer {
                     command_encoder,
                 ),
                 PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
+                // No 3D pass yet: the window says it draws no meshes.
+                PrimitiveBatch::Meshes(_) => {}
             }
         }
 

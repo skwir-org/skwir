@@ -39,10 +39,10 @@ use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
-    LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
-    hash, point, px, size,
+    LineLayout, Mesh, MeshPreparation, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput,
+    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window,
+    WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -1375,6 +1375,15 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
+    /// Whether the renderer draws meshes (`Window::paint_mesh`).
+    fn draws_meshes(&self) -> bool {
+        false
+    }
+    /// Make `mesh` ready to draw, off the main thread, unless it is, or is
+    /// being made so.
+    fn prepare_mesh(&self, _mesh: &Arc<Mesh>) -> MeshPreparation {
+        MeshPreparation::Never
+    }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 

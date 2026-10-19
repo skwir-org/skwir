@@ -2008,6 +2008,19 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().renderer.as_ref()?.gpu_specs()
     }
 
+    /// wgpu's renderer has a 3D pass for them.
+    fn draws_meshes(&self) -> bool {
+        true
+    }
+
+    fn prepare_mesh(&self, mesh: &std::sync::Arc<gpui::Mesh>) -> gpui::MeshPreparation {
+        match self.0.state.borrow_mut().renderer.as_mut() {
+            Some(renderer) => renderer.prepare_mesh(mesh),
+            // Drawn once there is a renderer.
+            None => gpui::MeshPreparation::Pending,
+        }
+    }
+
     fn play_system_bell(&self) {
         // Volume 0% means don't increase or decrease from system volume
         let _ = self.0.xcb.bell(0);

@@ -5,14 +5,15 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Mesh,
+    MeshView, Pixels, Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
 };
 use std::{
     fmt::Debug,
     iter::Peekable,
     ops::{Add, Range, Sub},
     slice,
+    sync::Arc,
 };
 
 #[allow(non_camel_case_types, unused)]
@@ -50,6 +51,7 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    pub meshes: Vec<PaintMesh>,
 }
 
 #[expect(missing_docs)]
@@ -66,6 +68,7 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.meshes.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -133,6 +136,10 @@ impl Scene {
                 surface.order = order;
                 self.surfaces.push(surface.clone());
             }
+            Primitive::Mesh(mesh) => {
+                mesh.order = order;
+                self.meshes.push(mesh.clone());
+            }
         }
         self.paint_operations
             .push(PaintOperation::Primitive(primitive));
@@ -160,6 +167,7 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
+        self.meshes.sort_by_key(|mesh| mesh.order);
     }
 
     #[cfg_attr(
@@ -187,6 +195,8 @@ impl Scene {
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+            meshes_start: 0,
+            meshes_iter: self.meshes.iter().peekable(),
         }
     }
 }
@@ -209,6 +219,7 @@ pub(crate) enum PrimitiveKind {
     SubpixelSprite,
     PolychromeSprite,
     Surface,
+    Mesh,
 }
 
 pub(crate) enum PaintOperation {
@@ -228,6 +239,7 @@ pub enum Primitive {
     SubpixelSprite(SubpixelSprite),
     PolychromeSprite(PolychromeSprite),
     Surface(PaintSurface),
+    Mesh(PaintMesh),
 }
 
 #[expect(missing_docs)]
@@ -242,6 +254,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+            Primitive::Mesh(mesh) => &mesh.bounds,
         }
     }
 
@@ -255,6 +268,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
+            Primitive::Mesh(mesh) => &mesh.content_mask,
         }
     }
 }
@@ -283,6 +297,8 @@ struct BatchIterator<'a> {
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
+    meshes_start: usize,
+    meshes_iter: Peekable<slice::Iter<'a, PaintMesh>>,
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
@@ -315,6 +331,10 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.surfaces_iter.peek().map(|s| s.order),
                 PrimitiveKind::Surface,
+            ),
+            (
+                self.meshes_iter.peek().map(|m| m.order),
+                PrimitiveKind::Mesh,
             ),
         ];
         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
@@ -461,6 +481,20 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.surfaces_start = surfaces_end;
                 Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
             }
+            PrimitiveKind::Mesh => {
+                let meshes_start = self.meshes_start;
+                let mut meshes_end = meshes_start + 1;
+                self.meshes_iter.next();
+                while self
+                    .meshes_iter
+                    .next_if(|mesh| (mesh.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    meshes_end += 1;
+                }
+                self.meshes_start = meshes_end;
+                Some(PrimitiveBatch::Meshes(meshes_start..meshes_end))
+            }
         }
     }
 }
@@ -493,6 +527,7 @@ pub enum PrimitiveBatch {
         range: Range<usize>,
     },
     Surfaces(Range<usize>),
+    Meshes(Range<usize>),
 }
 
 impl PrimitiveBatch {
@@ -525,6 +560,7 @@ impl PrimitiveBatch {
                 )
             }
             Self::Surfaces(range) => format!("surfaces ({})", range.len()),
+            Self::Meshes(range) => format!("meshes ({})", range.len()),
         }
     }
 }
@@ -776,6 +812,27 @@ pub struct PaintSurface {
 impl From<PaintSurface> for Primitive {
     fn from(surface: PaintSurface) -> Self {
         Primitive::Surface(surface)
+    }
+}
+
+/// A mesh drawn in 3D in its bounds ([`crate::Window::paint_mesh`]).
+#[derive(Clone, Debug)]
+pub struct PaintMesh {
+    /// Where it is drawn among the other primitives.
+    pub order: DrawOrder,
+    /// What clip space spans: x and y from -1 to 1.
+    pub bounds: Bounds<ScaledPixels>,
+    /// What of the bounds is shown.
+    pub content_mask: ContentMask<ScaledPixels>,
+    /// The mesh.
+    pub mesh: Arc<Mesh>,
+    /// How it is seen and lit.
+    pub view: MeshView,
+}
+
+impl From<PaintMesh> for Primitive {
+    fn from(mesh: PaintMesh) -> Self {
+        Primitive::Mesh(mesh)
     }
 }
 

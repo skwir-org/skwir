@@ -1,3 +1,4 @@
+use crate::wgpu_meshes::MeshPass;
 use crate::{CompositorGpuHint, DeviceErrorState, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
@@ -194,6 +195,7 @@ struct WgpuResources {
     path_intermediate_view: Option<wgpu::TextureView>,
     path_msaa_texture: Option<wgpu::Texture>,
     path_msaa_view: Option<wgpu::TextureView>,
+    meshes: MeshPass,
 }
 
 struct CachedTextureBindGroup {
@@ -1102,6 +1104,15 @@ impl WgpuRenderer {
         self.max_texture_size
     }
 
+    /// Make `mesh` ready to draw (`PlatformWindow::prepare_mesh`).
+    pub fn prepare_mesh(&mut self, mesh: &Arc<gpui::Mesh>) -> gpui::MeshPreparation {
+        match self.core_mut() {
+            Some(core) => core.resources.meshes.prepare_mesh(mesh),
+            // Drawn again once the device is found again.
+            None => gpui::MeshPreparation::Pending,
+        }
+    }
+
     pub fn draw(&mut self, scene: &Scene) -> bool {
         #[cfg(target_family = "wasm")]
         if self.device_lost() {
@@ -1335,6 +1346,11 @@ impl WgpuRendererCore {
                 path_intermediate_view: None,
                 path_msaa_texture: None,
                 path_msaa_view: None,
+                meshes: MeshPass::new(
+                    Arc::clone(&context.device),
+                    target_format,
+                    rendering_params.mesh_sample_count,
+                ),
             },
             atlas,
             path_globals_offset,
@@ -1450,7 +1466,7 @@ impl WgpuRendererCore {
             bytemuck::bytes_of(&gamma_params),
         );
 
-        self.record_frame(scene, target_view, clear_color)
+        self.record_frame(scene, target_view, size, clear_color)
             .inspect_err(|_| {
                 // Queue writes are staged before encoding; flush them even if the frame fails.
                 self.resources.queue.submit(std::iter::empty());
@@ -1461,6 +1477,7 @@ impl WgpuRendererCore {
         &mut self,
         scene: &Scene,
         frame_view: &wgpu::TextureView,
+        size: Size<DevicePixels>,
         clear_color: wgpu::Color,
     ) -> Result<wgpu::SubmissionIndex> {
         let mut instance_offset = 0;
@@ -1594,9 +1611,27 @@ impl WgpuRendererCore {
                     // Surfaces are macOS-only for video playback and are not
                     // implemented by the WGPU renderer.
                     PrimitiveBatch::Surfaces(_surfaces) => {}
+                    // Each mesh drawn offscreen, then composited where it is.
+                    PrimitiveBatch::Meshes(range) => {
+                        drop(pass);
+                        for paint in &scene.meshes[range] {
+                            let resources = &mut self.resources;
+                            let Some(prepared) =
+                                resources.meshes.prepare(&resources.device, paint, size)
+                            else {
+                                continue;
+                            };
+                            resources.meshes.draw(&mut encoder, &prepared);
+                            let mut composite =
+                                continue_frame(&mut encoder, frame_view, "mesh_composite_pass");
+                            resources.meshes.composite(&mut composite, &prepared);
+                        }
+                        pass = continue_frame(&mut encoder, frame_view, "main_pass_continued");
+                    }
                 }
             }
         }
+        self.resources.meshes.end_frame();
 
         let submission = self
             .resources()
@@ -2516,6 +2551,28 @@ impl gpui::PlatformHeadlessRenderer for WgpuHeadlessRenderer {
     }
 }
 
+/// A pass that draws on over what the frame holds.
+fn continue_frame<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    frame_view: &wgpu::TextureView,
+    label: &str,
+) -> wgpu::RenderPass<'a> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: frame_view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+            depth_slice: None,
+        })],
+        depth_stencil_attachment: None,
+        ..Default::default()
+    })
+}
+
 fn instance_range(range: Range<usize>) -> Range<u32> {
     range.start as u32..range.end as u32
 }
@@ -2583,6 +2640,7 @@ fn create_surface(
 
 struct RenderingParameters {
     path_sample_count: u32,
+    mesh_sample_count: u32,
     gamma_ratios: [f32; 4],
     grayscale_enhanced_contrast: f32,
     subpixel_enhanced_contrast: f32,
@@ -2619,6 +2677,7 @@ impl RenderingParameters {
 
         Self {
             path_sample_count,
+            mesh_sample_count: MeshPass::sample_count(adapter, surface_format),
             gamma_ratios,
             grayscale_enhanced_contrast,
             subpixel_enhanced_contrast,
@@ -2784,6 +2843,267 @@ mod tests {
         // Rejection must leave the renderer usable.
         let image = renderer.render_scene_to_image(&Scene::default(), device_size(4, 4))?;
         assert_eq!(image.dimensions(), (4, 4));
+        Ok(())
+    }
+
+    /// Two squares: one facing the camera at z = 0.5 on the left, the other
+    /// turned 45° about y behind it on the right, overlapping in the middle;
+    /// the turned one's triangles come last, so only depth keeps it behind.
+    #[cfg(target_os = "linux")]
+    fn overlapping_squares() -> std::sync::Arc<gpui::Mesh> {
+        let facing = [
+            [-0.9, -0.5, 0.5],
+            [0.3, -0.5, 0.5],
+            [0.3, 0.5, 0.5],
+            [-0.9, 0.5, 0.5],
+        ];
+        let turned = [
+            [-0.3, -0.5, 0.1],
+            [0.6, -0.5, -0.8],
+            [0.6, 0.5, -0.8],
+            [-0.3, 0.5, 0.1],
+        ];
+        let positions = facing.into_iter().chain(turned).collect();
+        let indices = vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7];
+        std::sync::Arc::new(gpui::Mesh::new(positions, indices).unwrap())
+    }
+
+    /// Seen straight ahead without perspective: x and y as they are, z from
+    /// 1 (near) to -1 (far). Lit from all around by 0.2 and by 0.6 from the
+    /// camera, a grey of 0.5.
+    #[cfg(target_os = "linux")]
+    fn straight_ahead() -> gpui::MeshView {
+        gpui::MeshView {
+            model_view: [
+                [1., 0., 0., 0.],
+                [0., 1., 0., 0.],
+                [0., 0., 1., 0.],
+                [0., 0., 0., 1.],
+            ],
+            projection: [
+                [1., 0., 0., 0.],
+                [0., 1., 0., 0.],
+                [0., 0., -0.5, 0.],
+                [0., 0., 0.5, 1.],
+            ],
+            perspective: false,
+            color: [0.5, 0.5, 0.5],
+            ambient: 0.2,
+            lights: [
+                gpui::MeshLight {
+                    direction: [0., 0., 1.],
+                    strength: 0.6,
+                },
+                gpui::MeshLight {
+                    direction: [1., 0., 0.],
+                    strength: 0.,
+                },
+            ],
+        }
+    }
+
+    /// `mesh` uploaded, as the window waits for it before painting it.
+    #[cfg(target_os = "linux")]
+    fn upload(renderer: &mut WgpuHeadlessRenderer, mesh: &std::sync::Arc<gpui::Mesh>) {
+        loop {
+            match renderer.core.resources.meshes.prepare_mesh(mesh) {
+                gpui::MeshPreparation::Ready => return,
+                gpui::MeshPreparation::Started(uploaded) => {
+                    gpui::block_on(uploaded).expect("uploaded");
+                }
+                gpui::MeshPreparation::Pending => std::thread::yield_now(),
+                gpui::MeshPreparation::Never => panic!("never drawn"),
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn paint_mesh(
+        mesh: &std::sync::Arc<gpui::Mesh>,
+        bounds: Bounds<ScaledPixels>,
+        mask: Bounds<ScaledPixels>,
+    ) -> gpui::PaintMesh {
+        gpui::PaintMesh {
+            order: 0,
+            bounds,
+            content_mask: ContentMask { bounds: mask },
+            mesh: mesh.clone(),
+            view: straight_ahead(),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn scaled_bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<ScaledPixels> {
+        Bounds {
+            origin: Point {
+                x: ScaledPixels(x),
+                y: ScaledPixels(y),
+            },
+            size: Size {
+                width: ScaledPixels(width),
+                height: ScaledPixels(height),
+            },
+        }
+    }
+
+    /// The facing square's grey: 0.5 × 0.8 in linear light, as sRGB. The
+    /// turned one's: 0.5 × (0.2 + 0.6 cos 45°).
+    #[cfg(target_os = "linux")]
+    const FACING: [u8; 4] = [170, 170, 170, 255];
+    #[cfg(target_os = "linux")]
+    const TURNED: [u8; 4] = [152, 152, 152, 255];
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_draws_a_mesh_lit_and_in_depth() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let mesh = overlapping_squares();
+        let all = scaled_bounds(0., 0., 100., 40.);
+        // Not uploaded yet: nothing is drawn, and it is not waited for.
+        let mut scene = Scene::default();
+        scene.insert_primitive(paint_mesh(&mesh, all, all));
+        scene.finish();
+        let image = renderer.render_scene_to_image(&scene, device_size(100, 40))?;
+        assert_pixel(&image, 20, 20, BLACK);
+        upload(&mut renderer, &mesh);
+        let mut scene = Scene::default();
+        scene.insert_primitive(paint_mesh(&mesh, all, all));
+        scene.finish();
+        let image = renderer.render_scene_to_image(&scene, device_size(100, 40))?;
+        // x = -0.6: the facing square alone; 0: both, the facing one nearer;
+        // 0.45: the turned one alone; 0.8: neither, the black behind.
+        assert_pixel(&image, 20, 20, FACING);
+        assert_pixel(&image, 50, 20, FACING);
+        assert_pixel(&image, 72, 20, TURNED);
+        assert_pixel(&image, 90, 20, BLACK);
+        assert_pixel(&image, 50, 3, BLACK);
+        assert_eq!(renderer.core.resources.meshes.held(), (1, true));
+        // A frame without it lets go of its buffers and the target.
+        renderer.render_scene_to_image(&Scene::default(), device_size(100, 40))?;
+        assert_eq!(renderer.core.resources.meshes.held(), (0, false));
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_clips_a_mesh_and_keeps_its_order() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let mesh = overlapping_squares();
+        upload(&mut renderer, &mesh);
+        let bounds = scaled_bounds(10., 0., 100., 40.);
+        let whole = {
+            let mut scene = Scene::default();
+            scene.insert_primitive(paint_mesh(&mesh, bounds, bounds));
+            scene.finish();
+            renderer.render_scene_to_image(&scene, device_size(120, 40))?
+        };
+        // Shown only from x = 45 on, and under a quad painted after it.
+        let mut scene = Scene::default();
+        scene.insert_primitive(paint_mesh(&mesh, bounds, scaled_bounds(45., 0., 75., 40.)));
+        scene.insert_primitive(solid_quad(70.0, 0.0, 10.0, 40.0, gpui::red()));
+        scene.finish();
+        let clipped = renderer.render_scene_to_image(&scene, device_size(120, 40))?;
+        assert_pixel(&whole, 30, 20, FACING);
+        assert_pixel(&clipped, 30, 20, BLACK);
+        assert_pixel(&clipped, 44, 20, BLACK);
+        // What is shown is where it is drawn whole, pixel for pixel.
+        for x in 45..70 {
+            assert_eq!(clipped.get_pixel(x, 20), whole.get_pixel(x, 20), "x = {x}");
+        }
+        assert_pixel(&clipped, 75, 20, RED);
+        assert_pixel(&clipped, 85, 20, TURNED);
+        Ok(())
+    }
+
+    /// Two interlocked tori, each `2 × major × minor` triangles between
+    /// shared positions, within a unit sphere.
+    #[cfg(target_os = "linux")]
+    fn tori(major: u32, minor: u32) -> std::sync::Arc<gpui::Mesh> {
+        let mut positions = Vec::new();
+        let mut indices = Vec::new();
+        for upright in [false, true] {
+            let base = positions.len() as u32;
+            for i in 0..major {
+                let u = std::f32::consts::TAU * i as f32 / major as f32;
+                for j in 0..minor {
+                    let v = std::f32::consts::TAU * j as f32 / minor as f32;
+                    let r = 0.5 + 0.13 * v.cos();
+                    let (x, y, z) = (r * u.cos(), r * u.sin(), 0.13 * v.sin());
+                    positions.push(if upright { [x + 0.5, z, y] } else { [x, y, z] });
+                }
+            }
+            for i in 0..major {
+                for j in 0..minor {
+                    let at = |i: u32, j: u32| base + (i % major) * minor + j % minor;
+                    indices.extend([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                    indices.extend([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+                }
+            }
+        }
+        std::sync::Arc::new(gpui::Mesh::new(positions, indices).unwrap())
+    }
+
+    /// Not a check: how long the mesh pass takes a frame on the adapter the
+    /// headless renderer takes, for tori of 225 600, a million and four
+    /// million triangles at 1000 × 800, turning a little each frame, and how
+    /// long their upload takes (on the pass's thread).
+    ///
+    ///     python3 tools/gpui/check.py gpui_wgpu -- -- --ignored mesh_frame_times --nocapture
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore]
+    fn mesh_frame_times() -> anyhow::Result<()> {
+        use std::time::Instant;
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let info = &renderer.core.adapter_info;
+        eprintln!(
+            "{} ({:?}), {} samples a pixel",
+            info.name, info.backend, renderer.core.rendering_params.mesh_sample_count
+        );
+        let size = device_size(1000, 800);
+        let bounds = scaled_bounds(0., 0., 1000., 800.);
+        for (major, minor) in [(300, 188), (625, 400), (1250, 800)] {
+            let mesh = tori(major, minor);
+            let start = Instant::now();
+            upload(&mut renderer, &mesh);
+            let uploaded = start.elapsed().as_secs_f64() * 1000.;
+            let mut frame = |angle: f32| -> anyhow::Result<f64> {
+                let (sin, cos) = angle.sin_cos();
+                let mut view = straight_ahead();
+                // Turned about the vertical, a little smaller than the view.
+                view.model_view = [
+                    [cos * 0.8, 0., -sin * 0.8, 0.],
+                    [0., 0.8, 0., 0.],
+                    [sin * 0.8, 0., cos * 0.8, 0.],
+                    [-0.2, 0., 0., 1.],
+                ];
+                let mut scene = Scene::default();
+                scene.insert_primitive(gpui::PaintMesh {
+                    view,
+                    ..paint_mesh(&mesh, bounds, bounds)
+                });
+                scene.finish();
+                let start = Instant::now();
+                renderer.render_scene(&scene, size)?;
+                renderer
+                    .core
+                    .resources
+                    .device
+                    .poll(wgpu::PollType::wait_indefinitely())?;
+                Ok(start.elapsed().as_secs_f64() * 1000.)
+            };
+            let first = frame(0.)?;
+            let mut times: Vec<f64> = (1..=40)
+                .map(|i| frame(i as f32 * 0.05))
+                .collect::<anyhow::Result<_>>()?;
+            times.sort_by(f64::total_cmp);
+            eprintln!(
+                "{:>9} triangles: uploaded in {uploaded:.0} ms, first frame {first:.1} ms, then median {:.2} ms, slowest {:.2} ms",
+                mesh.triangles(),
+                times[times.len() / 2],
+                times[times.len() - 1]
+            );
+        }
         Ok(())
     }
 

@@ -57,6 +57,7 @@ at the vendored commit.
 | `0030-active-descendant-for` | An element is said as focused while a focus handle beside it holds the focus (the combobox pattern) | — |
 | `0031-aria-states` | Live regions, modal dialogs, lists of many selected, disabled and read-only elements | — |
 | `0032-held-keys` | An action sees the key event it came from, held or not; X11 tells a held key from a press | — |
+| `0033-meshes` | A triangle mesh drawn in 3D (`Window::paint_mesh`), by wgpu | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -372,6 +373,57 @@ last pressed, not released since, as held, the one key the server repeats,
 and asks for XKB's detectable auto-repeat, as GTK and Qt do, so no release
 comes before each repeat. A test beside upstream's in `key_dispatch.rs`;
 X11 checked by hand on Xwayland.
+
+### 0033: Meshes
+
+gpui draws no 3D: its primitives are fixed, and the one that shows an
+outside image (`PaintSurface`) exists only on macOS. Skwir turns 3D models
+in its preview (ADR-067).
+
+- **`gpui::Mesh`** holds positions and the triangles between them, three
+  indices each. `Mesh::new` refuses one without triangles, an index past
+  the positions and a coordinate that is not finite. Each mesh has an id,
+  which a renderer keeps its buffers by.
+- **`Window::paint_mesh(bounds, mesh, view, cx)`** paints one, a
+  primitive of its own (`PaintMesh`) in draw order and clipped by the
+  content mask like any other, and says whether it did. Clip space spans
+  the bounds. `MeshView` gives the model-view and projection matrices
+  (column-major), whether the projection has perspective, the surface's
+  colour in linear RGB, the ambient light and two lights fixed to the
+  camera.
+- **A mesh is uploaded before it is painted, off the main thread.**
+  `paint_mesh` asks the platform window (`PlatformWindow::prepare_mesh`,
+  `MeshPreparation`): a mesh on the GPU is painted; one that is not starts
+  its upload and is not painted, and the window is drawn again once it
+  arrives (a task awaiting the upload refreshes it). The renderer uploads
+  on a thread of its own: NVIDIA's driver maps the memory uploads go
+  through uncached, and 72 MB took a second there.
+- **`Window::draws_meshes`** says whether the window draws them
+  (`PlatformWindow::draws_meshes`, false by default). The Wayland and X11
+  windows say yes; Metal and Direct3D 11 draw nothing yet and say no.
+- **wgpu** (`wgpu_meshes.rs`, `shaders_mesh.wgsl`) draws each mesh in a
+  pass of its own, as paths are drawn:
+  - into a target the size of what is shown of it, rounded up to 256
+    pixels, with a depth buffer (`Depth32Float`), multisampled as far as
+    both formats allow, up to four samples;
+  - each face shaded flat from the screen-space derivatives of its
+    position, so no normals are sent, and lit on whichever side faces the
+    camera; the colour encoded to sRGB as gpui's other colours are;
+  - then composited into the frame pixel for pixel, premultiplied.
+- **What it holds:** a mesh's buffers are let go of in the first frame
+  that does not draw it; the target goes when no mesh is drawn. An upload
+  no one waits for any more (nothing else holds the mesh) is skipped. The
+  pipelines are made when the first mesh is drawn, never at start. A
+  mesh larger than the device's buffers is never drawn (logged once).
+
+The tests are the renderer's, on the headless renderer (lavapipe will do):
+`headless_renderer_draws_a_mesh_lit_and_in_depth` (nothing drawn before
+the upload, the light's values, the nearer face over the farther drawn
+after it, the buffers and target let go of), `headless_renderer_clips_a_mesh_and_keeps_its_order` (what a mask
+shows of a mesh is where the whole is drawn, under a quad painted after),
+and `the_mesh_shader_reads_what_is_written` (the shader validates, its
+parameters' layout matches the Rust side's). `mesh_frame_times` (ignored)
+times the pass on the adapter the headless renderer takes.
 
 ## Adding or changing a patch
 

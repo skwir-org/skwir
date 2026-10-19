@@ -2250,6 +2250,19 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().renderer.as_ref()?.gpu_specs()
     }
 
+    /// wgpu's renderer has a 3D pass for them.
+    fn draws_meshes(&self) -> bool {
+        true
+    }
+
+    fn prepare_mesh(&self, mesh: &std::sync::Arc<gpui::Mesh>) -> gpui::MeshPreparation {
+        match self.borrow_mut().renderer.as_mut() {
+            Some(renderer) => renderer.prepare_mesh(mesh),
+            // Drawn once there is a renderer.
+            None => gpui::MeshPreparation::Pending,
+        }
+    }
+
     fn play_system_bell(&self) {
         let state = self.borrow();
         let surface = if state.surface_state.toplevel().is_some() {

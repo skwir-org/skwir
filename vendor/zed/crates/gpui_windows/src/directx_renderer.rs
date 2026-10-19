@@ -385,6 +385,8 @@ impl DirectXRenderer {
                     self.draw_polychrome_sprites(texture_id, range.start, range.len())
                 }
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
+                // No 3D pass yet: the window says it draws no meshes.
+                PrimitiveBatch::Meshes(_) => Ok(()),
             }
             .with_context(|| {
                 format!(
