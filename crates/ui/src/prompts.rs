@@ -102,6 +102,8 @@ pub struct PromptState {
 pub struct ConfirmState {
     pub message: String,
     pub then: Confirmed,
+    /// What a plan deletes, listed under the question (`deleting.rs`).
+    pub(crate) listed: Option<crate::deleting::Deleting>,
     pub focus: FocusHandle,
     cancel: FocusHandle,
     accept: FocusHandle,
@@ -489,6 +491,7 @@ impl Shell {
         self.confirm = Some(ConfirmState {
             message,
             then,
+            listed: None,
             focus,
             cancel: cx.focus_handle(),
             accept: cx.focus_handle(),
@@ -584,7 +587,8 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
         Confirmed::Quit => ("Quit", None),
     };
     // A question that asks before something is done says itself at once.
-    let panel = modal::panel("confirm", 560., &theme)
+    let width = if c.listed.is_some() { 640. } else { 560. };
+    let panel = modal::panel("confirm", width, &theme)
         .role(gpui::Role::AlertDialog)
         .when(shell.a11y, |d| d.aria_label(c.message.clone()))
         .p_3()
@@ -592,6 +596,11 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
         .track_focus(&c.focus)
         .key_context(keymap::CONFIRM)
         .child(div().child(c.message.clone()))
+        .children(
+            c.listed
+                .as_ref()
+                .map(|listed| crate::deleting::render(listed, shell, &theme, cx)),
+        )
         .child(modal::footer(
             "Enter to confirm, Escape to cancel",
             [

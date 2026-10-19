@@ -27,6 +27,7 @@ pub mod color;
 pub mod commands;
 mod complete;
 pub mod controls;
+mod deleting;
 pub mod dnd;
 pub mod dock;
 mod dragicon;

@@ -24,7 +24,8 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   (`Plan::items`), which the toast counts.
 - A step Undo cannot reverse (`Operation::undoable`: deleting for good)
   makes its plan ask before any gesture applies it
-  (`Shell::apply_user_plan`).
+  (`Shell::apply_user_plan`), listing what it deletes
+  ([shell.md](shell.md), "Asking the user").
 - **Room.** A plan the user asked for as one action
   (`Executor::execute_whole`) compares what it will write
   (`Operation::writes`: copies, cross-filesystem moves, a multi-name file

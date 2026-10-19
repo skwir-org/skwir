@@ -399,6 +399,19 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   shown) that the asker left out, as they are when it opens: Rename
   renames the file it was opened for, whatever is selected by the
   answer.
+- **A question before deleting lists what goes** (`deleting.rs`): each
+  item as the user knows it (an item of a trash by its own name, from
+  where it came, read from its record), what it is, what it weighs or a
+  folder holds, and the companion files that go with it; its folder on
+  each row only when they are not all in one, which the line under the
+  list says once with what they hold in all. The rows come from the
+  plan's paths at once and never wait for the disk: a worker reads the
+  rest, then counts each item as deleting it takes it
+  (`fs::count::count_each`: a link is itself, a file of several names
+  counts once), handing over what it has as it goes, stopped when the
+  question closes. The list draws only the rows on screen and scrolls
+  by the wheel and by Up, Down and the page keys; the question's height
+  is set when it opens.
 
 ## Keys
 

@@ -1718,19 +1718,8 @@ impl Shell {
     /// Shift+Delete, the trash's Delete, Empty Trash) asks first.
     pub fn apply_user_plan(&mut self, plan: Plan, window: &mut Window, cx: &mut Context<Self>) {
         if !plan.undoable() && !plan.is_empty() {
-            let n = plan.len();
-            let noun = if n == 1 { "item" } else { "items" };
-            // What stays on the disk, where its maker could tell (ADR-049).
-            let note = plan
-                .note
-                .as_ref()
-                .map_or(String::new(), |n| format!(" {n}."));
-            self.open_confirm(
-                format!("Delete {n} {noun} permanently? This cannot be undone.{note}"),
-                Confirmed::Apply(plan),
-                window,
-                cx,
-            );
+            // What it deletes is listed under the question (`deleting.rs`).
+            self.confirm_deleting(plan, window, cx);
             return;
         }
         self.app.apply_whole(plan);
@@ -1855,11 +1844,12 @@ impl Shell {
             }
             name if name.starts_with("menu_") => self.menu_command(name, window, cx),
             "palette" => self.open_palette(window, cx),
-            // Up and Down in whichever list has the keyboard: the palette,
-            // a choice, Jump, the tag editor, the address's suggestions.
+            // Up and Down in whichever list has the keyboard: what a
+            // question before deleting lists, the palette, a choice, Jump,
+            // the tag editor, the address's suggestions.
             "list_move" => {
                 let mv = crate::modal::ListMove::of(args);
-                if self.clashes_move(mv, cx) {
+                if self.confirm_move(mv, cx) || self.clashes_move(mv, cx) {
                 } else if self.palette.is_some() {
                     self.palette_move(mv, cx);
                 } else if self.choose.is_some() {

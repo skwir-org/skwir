@@ -251,29 +251,30 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // The lists one picks from while typing (the palette, a choice, Jump,
     // the tag editor, the address's suggestions): one command, the same
     // keys, the arrows round their ends, the page keys a page at a time.
+    // What a question lists before deleting scrolls by the same keys.
     (
         "up",
         "ui.list_move",
         r#"{"delta":-1}"#,
-        Some("palette|jump|choose|tag_editor|address|review"),
+        Some("palette|jump|choose|tag_editor|address|review|confirm"),
     ),
     (
         "down",
         "ui.list_move",
         r#"{"delta":1}"#,
-        Some("palette|jump|choose|tag_editor|address|review"),
+        Some("palette|jump|choose|tag_editor|address|review|confirm"),
     ),
     (
         "pageup",
         "ui.list_move",
         r#"{"to":"page_up"}"#,
-        Some("palette|jump|choose|tag_editor|address|review"),
+        Some("palette|jump|choose|tag_editor|address|review|confirm"),
     ),
     (
         "pagedown",
         "ui.list_move",
         r#"{"to":"page_down"}"#,
-        Some("palette|jump|choose|tag_editor|address|review"),
+        Some("palette|jump|choose|tag_editor|address|review|confirm"),
     ),
     // The cursor in the file list (`ui.cursor`): the arrows select what
     // they reach, Shift extends, Ctrl moves the cursor alone (and
