@@ -336,10 +336,16 @@ The player, in the panel or pinned at its foot:
   entities and blocks. A DXF over 32 MiB shows its stored picture, if
   any.
 - **Meshes** that store no picture (STL, OBJ, PLY, OFF, glTF and GLB, a
-  3MF its slicer did not picture) are drawn by `skwir-model-worker` from
-  the front, right and above, and measured: size, volume, whether they
-  are watertight, triangles and objects. An STL is read in millimetres,
-  as slicers read it.
+  3MF its slicer did not picture) are read by `skwir-model-worker` and
+  measured: size, volume, whether they are watertight, triangles and
+  objects. An STL is read in millimetres, as slicers read it.
+  - On Linux the panel turns them in 3D, drawn by the graphics card: drag
+    to turn, `Shift`+drag or the middle button to move, the wheel to
+    zoom. Once clicked, the arrows turn it, `Shift` and the arrows move
+    it, `Ctrl`+`+`/`-` zoom and `Ctrl+0` (Fit) shows it as it opened. A
+    mesh of over four million triangles is shown as a picture.
+  - Elsewhere (macOS, Windows, a machine without a graphics card), and in
+    the grid, they are drawn from the front, right and above.
 - **G-code** that stores no picture is drawn from its moves:
   - a print as a slicer previews it: extrusions from the front, right
     and above, in PrusaSlicer's colors for the features its slicer

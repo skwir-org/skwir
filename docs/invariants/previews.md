@@ -126,12 +126,35 @@ A name that says nothing is not a binary file.
   further: a Blender file's blocks before `TEST` (a compressed one
   stream-decoded that far), a package's named members, a G-code's first
   `TEXT_INPUT` and last `TAIL` bytes, a DWG's listed pictures.
-- Nothing is drawn in 3D in-process. A mesh without a stored picture
+- Nothing is read in 3D in-process. A mesh without a stored picture
   goes to `skwir-model-worker` (`skwir_platform::model`): it reads within
   `model::BYTES` and `model::TRIANGLES`, follows glTF buffers only below
   the model's folder, and returns a line of measures and a PNG. Without
   the helper the plugin declines the mesh, leaving it to a desktop
   thumbnailer.
+- **A window that draws meshes turns them** (ADR-067). The preview asks
+  for the mesh only where the window draws them on a GPU
+  (`Shell::draws_meshes`: `Window::draws_meshes`, and no software
+  rasterizer, whose frame grows with the mesh while the window waits;
+  `InspectRequest::meshes`). Thumbnails, an agent's preview, a window
+  without a 3D pass and one drawn by lavapipe get the still.
+  - The helper writes the mesh itself (`--mesh`, `Asked::Turned`) up to
+    `model::VIEW_TRIANGLES`, else its still, with a notice saying why.
+  - What it wrote is taken only as long and as large as it says
+    (`model::mesh_from`), every index naming a position and every
+    coordinate finite (`inspection::Mesh::new`), checked again on the way
+    to the GPU (`gpui::Mesh::new`).
+  - It is an `InspectionKind::Model`, framed once on the worker
+    (`Display::model`, `elements::model::Model`), never while painting.
+  - It opens as its still is drawn (the angle, no perspective, the
+    framing, the lights), so the thumbnail standing in gives way to it
+    without a jump. A change to either is made to both
+    (`elements/model.rs`, `model-worker/src/draw.rs`).
+  - Each input asks for one frame; nothing is drawn otherwise, and no
+    timer runs.
+  - The window keeps the mesh while it shows it, the GPU while frames
+    draw it: gpui lets go of its buffers in the first frame that does not
+    (vendored patch 0033).
 - A drawing made from content (`circuits`: KiCad boards,
   footprints, schematics, symbol libraries; `models`: DXF) is SVG
   rasterized by `inspection::drawing`, the inert path of every drawing:
@@ -901,6 +924,20 @@ is still to come are in `docs/preview-frame.md`.
 - The Background button chooses among the backgrounds the source's
   setting lists (`map_tiles::Backgrounds`, read once per source
   revision), applied through `settings.apply`.
+
+### Models
+
+- A 3D model (`model_preview.rs`, `elements/model.rs`, ADR-067) is an
+  inspection (`InspectionKind::Model`), so Properties and the way out of a
+  container are the frame's. No Find, no Source.
+- A drag turns it around its up axis and tilts it (to straight above or
+  below, no further); Shift and a drag, or the middle button, move it;
+  the wheel zooms around the pointer. Once clicked (or reached with F6),
+  the arrows go round it by 15°, Shift and the arrows move the view, the
+  zoom keys zoom it (`ModelPreview`). Ctrl+0 and Fit show it as it
+  opened.
+- The view belongs to the file: kept when it is read again, as it opened
+  for another.
 
 ### Rows
 

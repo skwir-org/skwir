@@ -11,6 +11,11 @@ pub struct InspectRequest {
     /// Container member or chapter, never a filesystem output path.
     pub target: Option<String>,
     pub query: Option<String>,
+    /// Whether the asker draws a 3D mesh itself (a window whose GPU has a
+    /// pass for it, ADR-067): a provider then hands over the mesh it read
+    /// (`Inspection::mesh`) rather than a picture of it.
+    #[serde(default)]
+    pub meshes: bool,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InspectionKind {
@@ -29,6 +34,8 @@ pub enum InspectionKind {
     Mail,
     /// Places on a map (`Inspection::geo`): tracks, routes, waypoints.
     Map,
+    /// A 3D model the asker turns (`Inspection::mesh`).
+    Model,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Inspection {
@@ -66,6 +73,64 @@ pub struct Inspection {
     /// The file it is the text of, read where it is shown (ADR-051): its
     /// blocks are only its first rows, and the view reads the rest.
     pub text: Option<TextFile>,
+    /// What an [`InspectionKind::Model`] shows.
+    pub mesh: Option<std::sync::Arc<Mesh>>,
+}
+
+/// A 3D mesh as a provider read it (ADR-067): positions, in the file's
+/// unit with Z up, and the triangles between them, three indices each.
+/// Checked when made, so a view hands it to the GPU as it is: it has
+/// triangles, every index names a position, every coordinate is finite.
+#[derive(Clone, PartialEq)]
+pub struct Mesh {
+    positions: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+}
+
+impl Mesh {
+    pub fn new(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> anyhow::Result<Self> {
+        anyhow::ensure!(!indices.is_empty(), "the mesh has no triangles");
+        anyhow::ensure!(
+            indices.len().is_multiple_of(3),
+            "the mesh's indices are not whole triangles"
+        );
+        let count = positions.len();
+        if let Some(index) = indices.iter().find(|&&i| i as usize >= count) {
+            anyhow::bail!("the mesh's index {index} names no position (it has {count})");
+        }
+        anyhow::ensure!(
+            positions.iter().flatten().all(|v| v.is_finite()),
+            "the mesh has a position that is not finite"
+        );
+        Ok(Mesh { positions, indices })
+    }
+
+    pub fn positions(&self) -> &[[f32; 3]] {
+        &self.positions
+    }
+
+    /// Three indices into the positions a triangle.
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+
+    pub fn triangles(&self) -> usize {
+        self.indices.len() / 3
+    }
+
+    /// Its positions and indices, for a view to hand on.
+    pub fn into_parts(self) -> (Vec<[f32; 3]>, Vec<u32>) {
+        (self.positions, self.indices)
+    }
+}
+
+impl std::fmt::Debug for Mesh {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mesh")
+            .field("positions", &self.positions.len())
+            .field("triangles", &self.triangles())
+            .finish_non_exhaustive()
+    }
 }
 
 /// A text file a view reads where it shows it, a few rows at a time

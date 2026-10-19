@@ -1,11 +1,13 @@
 //! Meshes that carry no picture of their own (STL, OBJ, PLY, OFF, glTF, a
 //! 3MF its slicer did not picture), drawn and measured by
-//! `skwir-model-worker` (`skwir_platform::model`). Properties says what a
-//! print needs: its size, whether it is watertight and what it holds.
+//! `skwir-model-worker` (`skwir_platform::model`), or read whole for a
+//! window that draws and turns them (ADR-067). Properties says what a print
+//! needs: its size, whether it is watertight and what it holds.
 use crate::Found;
 use skwir_core::CancelToken;
-use skwir_platform::model::{self, Asked, Measures, MeshFormat};
+use skwir_platform::model::{self, Asked, Measures, MeshFormat, Shown};
 use std::path::Path;
+use std::sync::Arc;
 
 /// The unit's volume as it is usually said, from a length unit cubed.
 fn volume(value: f64, unit: &str) -> Option<String> {
@@ -71,11 +73,27 @@ pub fn read(
     cancel: &CancelToken,
 ) -> anyhow::Result<Found> {
     let drawn = model::draw(path, format, side, asked, cancel)?;
-    Ok(Found {
-        title: title(format).into(),
-        picture: Some(drawn.picture),
-        details: details(format, &drawn.measures),
-        notice: None,
+    let details = details(format, &drawn.measures);
+    Ok(match drawn.shown {
+        Shown::Mesh(mesh) => Found {
+            title: title(format).into(),
+            mesh: Some(Arc::new(mesh)),
+            details,
+            ..Found::default()
+        },
+        Shown::Picture(picture) => Found {
+            title: title(format).into(),
+            picture: Some(picture),
+            details,
+            // Asked whole, and too large to turn.
+            notice: (asked == Asked::Turned).then(|| {
+                format!(
+                    "Shown as a picture: a model turned has at most {} million triangles",
+                    model::VIEW_TRIANGLES / 1_000_000
+                )
+            }),
+            ..Found::default()
+        },
     })
 }
 

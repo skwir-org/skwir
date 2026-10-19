@@ -52,6 +52,7 @@ mod media;
 mod members;
 pub mod menu;
 pub mod modal;
+mod model_preview;
 pub mod narrow;
 mod nav_menu;
 mod note_popover;

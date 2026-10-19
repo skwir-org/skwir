@@ -12,6 +12,7 @@ pub mod edge;
 pub mod halo;
 pub mod map;
 pub mod marquee;
+pub mod model;
 pub mod picture;
 pub mod pill;
 pub mod popover;

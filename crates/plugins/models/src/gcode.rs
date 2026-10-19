@@ -259,7 +259,7 @@ pub fn text(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Foun
         title: "G-code".into(),
         picture,
         details,
-        notice: None,
+        ..Found::default()
     })
 }
 
@@ -334,7 +334,7 @@ pub fn binary(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Fo
         title: "Binary G-code".into(),
         picture: best.and_then(|(_, bytes)| crate::decoded(&bytes, side)),
         details: facts.into_details(),
-        notice: None,
+        ..Found::default()
     })
 }
 

@@ -1,0 +1,129 @@
+# ADR-067: A 3D model is turned in the window, drawn by its GPU
+
+Status: accepted, 2026-10-19. Built and checked on Linux (wgpu); macOS and
+Windows show the still, as before.
+
+## Context
+
+- `skwir-model-worker` reads STL, OBJ, PLY, OFF, glTF and 3MF meshes in a
+  process of its own and draws one still on the CPU: 35° right of the
+  front, 28° above, without perspective, two lights. The preview shows
+  that picture. A model cannot be turned.
+- ADR-064 moved Skwir to Zed's gpui partly for this: wgpu on Linux, Metal
+  on macOS, Direct3D 11 on Windows. gpui has no hook for drawing of one's
+  own: its primitives are fixed, and the one that shows an outside image
+  (`PaintSurface`) exists only on macOS.
+- Frames drawn on the CPU by a helper (proposed 2026-10-17) measured 12 ms
+  a frame at 800 px for 225k triangles on 20 cores, 22 ms on 4, 58 ms for
+  a million on 4. Dragging would keep every core busy, a model over a
+  million triangles would need a simplified copy while it moves, and a
+  screen at scale 2 costs four times the pixels.
+- The previews' rule was that nothing is drawn in 3D in-process. What
+  that rule protects is the window from the file: parsing stays in the
+  helper.
+
+## Decision
+
+1. **The window draws a mesh on its GPU.** Vendored patch 0033:
+   - `gpui::Mesh` holds positions and the triangles between them, checked
+     when it is made (every index names a position, every coordinate is
+     finite). `Window::paint_mesh` draws it in bounds, seen through a
+     `MeshView`: the model-view and projection matrices, the surface's
+     colour, the ambient light and two lights fixed to the camera.
+   - wgpu draws it in a pass of its own, as gpui draws paths: offscreen,
+     multisampled, with a depth buffer the size of what is shown, then
+     composited in draw order and clipped like any primitive.
+   - Faces are shaded flat from the screen-space derivatives of their
+     position, so no normals are sent, and lit on either side: a mesh's
+     winding is not always kept.
+   - A mesh's buffers are made and filled on a thread of the renderer's
+     own, never the window's: `Window::paint_mesh` draws a mesh once it is
+     there, starts its upload otherwise, and draws the window again when it
+     arrives. The buffers are let go of in the first frame that does not
+     draw the mesh; the target goes when no mesh is drawn. The pipelines
+     are made when the first mesh is drawn, never at start.
+   - `Window::draws_meshes` says whether the window draws them: wgpu's
+     windows do; Metal and Direct3D 11 draw nothing yet and say so.
+2. **The file is still read in the helper.** `skwir-model-worker --mesh`
+   writes what it measures, then the positions and triangles as
+   little-endian numbers. Skwir checks the counts against what it asked,
+   every index against the positions and every coordinate before anything
+   reaches the GPU (`inspection::Mesh::new`, then `gpui::Mesh::new`). The
+   rule becomes: nothing is read in-process; the window draws what the
+   helper read.
+3. **The preview asks for what the window can draw.** Where it draws
+   meshes on a GPU, the preview asks for the mesh
+   (`InspectRequest::meshes`); elsewhere for the still, as before.
+   - A window drawn by a software rasterizer (lavapipe, where there is no
+     GPU) gets the still: its frame grows with the mesh, and the window's
+     thread waits for it. Decided by what the adapter is
+     (`GpuSpecs::is_software_emulated`), not by a measured threshold.
+   - Thumbnails stay stills. An agent's or a script's preview asks for the
+     still.
+4. **The view opens as the still is drawn:** the same angle, no
+   perspective, the same framing. The thumbnail that stands in while the
+   mesh is read gives way to it without a jump.
+   - Drag turns the model around its up axis and tilts it; Shift+drag or
+     the middle button moves it; the wheel zooms at the pointer.
+   - Once clicked, the arrows turn it, Shift and the arrows move it, the
+     zoom keys zoom, Ctrl+0 (Fit) shows it as it opened.
+   - Nothing is drawn unless asked: each input asks for one frame.
+5. **Bounds.** A mesh of up to `model::VIEW_TRIANGLES` triangles is
+   turned. A larger one, up to `model::TRIANGLES`, shows its still and
+   says why.
+
+## Alternatives
+
+- **Frames drawn on the CPU by a helper** (2026-10-17): no GPU code of
+  ours, but every core busy while dragging, a simplified copy above a
+  million triangles, and four times the work at scale 2.
+- **wgpu in a helper:** 4 to 8 MB more, a GPU device per helper (100 to
+  300 ms and about 100 MB on NVIDIA), and the frames copied back to the
+  window anyway.
+- **A viewer of its own (f3d, VTK):** over 100 MB, and its window cannot
+  be embedded.
+- **Parsing in the window:** a crash or a crafted file in a format reader
+  would reach the window.
+
+## Consequences
+
+- **The pass, measured** (`mesh_frame_times`, the headless renderer,
+  release; 1000 × 800 pixels at four samples each; two tori turning, of
+  225,600, a million and four million triangles; 2026-10-19):
+
+  | Adapter | A frame (median) | The upload |
+  | --- | --- | --- |
+  | NVIDIA GTX 1060 (Vulkan) | 0.72, 1.08, 2.47 ms | 50 ms, 0.23 s, 0.94 s |
+  | Intel Iris Xe, Alder Lake (Vulkan) | 2.23, 2.62, 4.98 ms | 1, 6, 31 ms |
+  | lavapipe, 20 threads | 84 ms, 0.56 s, 2.6 s | 2, 15, 50 ms |
+
+  - lavapipe without multisampling still took 80 ms, 0.16 s and 0.52 s:
+    hence the still for a software rasterizer (decision 3).
+  - NVIDIA's driver maps the memory uploads go through uncached: 72 MB
+    took 0.49 s to allocate and 0.46 s to fill (158 MB/s, no page fault),
+    each way wgpu offers. Hence the uploads off the window's thread
+    (decision 1). The Intel GPU filled the same in 28 ms.
+- **The window, measured** (release; headless sway rendering on the Intel
+  GPU; the app on its Vulkan driver; the panel 320 pixels wide):
+  - a model shows 0.19, 0.49 and 2.0 s after the click; the helper alone
+    takes 0.07, 0.37 and 1.47 s to read them;
+  - the window's own share grows by its copy of the mesh: 5, 19 and
+    72 MB, given back with the preview. The GPU's copy is the driver's;
+  - turning the largest for three seconds drew a frame for each of the
+    101 pointer moves, gpui's frame time 4.7 ms (median), 8.6 ms (90th
+    percentile), at 23% of a core; at rest, not a tick in five seconds.
+- **The window keeps the mesh while it shows it,** besides the GPU's
+  copy, so a device lost and found again uploads it anew. Giving it back
+  once uploaded would halve a large model's cost to the window.
+- **Checked** on Wayland: drawn, turned by a drag and the arrows, moved
+  by Shift and the arrows, zoomed by the wheel, shown as it opened by
+  Ctrl+0; on X11 (Xwayland): drawn and turned by a drag; on lavapipe, the
+  still. **Not checked yet:** the window on NVIDIA (the user's session),
+  a screen reader. macOS and Windows compile the batch they skip.
+- **To decide before going further:**
+  - Metal and Direct3D 11 passes (the same shader, translated), or the
+    still there for good;
+  - perspective as a choice; smooth shading for scans; a model's own
+    colours and textures (glTF, 3MF, PLY);
+  - turning a 3MF that stores a picture, which today shows the picture;
+  - reading faster in the helper, which most of a large model's wait is.

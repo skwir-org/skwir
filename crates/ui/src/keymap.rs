@@ -32,6 +32,9 @@ pub const PREVIEW_FIND: &str = "PreviewFind";
 pub const IMAGE: &str = "ImagePreview";
 /// A map preview, once clicked: arrows move it, the zoom keys zoom it.
 pub const MAP: &str = "MapPreview";
+/// A 3D model's preview, once clicked: arrows turn it, Shift and the
+/// arrows move it, the zoom keys zoom it.
+pub const MODEL: &str = "ModelPreview";
 /// The pinned player's dock.
 pub const PLAYER: &str = "Player";
 pub const REVIEW: &str = "Review";
@@ -707,6 +710,46 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // Its places one by one, as the Map view's go (`PaneView::nav`).
     ("pagedown", "ui.map_point", r#"{"delta":1}"#, Some("map")),
     ("pageup", "ui.map_point", r#"{"delta":-1}"#, Some("map")),
+    // A model turns under the arrows, as under a drag; Shift moves it, as
+    // with the pointer.
+    (
+        "left",
+        "ui.model_turn",
+        r#"{"dx":-1,"dy":0}"#,
+        Some("model"),
+    ),
+    (
+        "right",
+        "ui.model_turn",
+        r#"{"dx":1,"dy":0}"#,
+        Some("model"),
+    ),
+    ("up", "ui.model_turn", r#"{"dx":0,"dy":-1}"#, Some("model")),
+    ("down", "ui.model_turn", r#"{"dx":0,"dy":1}"#, Some("model")),
+    (
+        "shift-left",
+        "ui.model_pan",
+        r#"{"dx":-1,"dy":0}"#,
+        Some("model"),
+    ),
+    (
+        "shift-right",
+        "ui.model_pan",
+        r#"{"dx":1,"dy":0}"#,
+        Some("model"),
+    ),
+    (
+        "shift-up",
+        "ui.model_pan",
+        r#"{"dx":0,"dy":-1}"#,
+        Some("model"),
+    ),
+    (
+        "shift-down",
+        "ui.model_pan",
+        r#"{"dx":0,"dy":1}"#,
+        Some("model"),
+    ),
     // A text read where it is shown goes row by row; Alt+Z wraps its lines
     // or not. Every structured preview goes a screen at a time, or to
     // either end.
@@ -958,11 +1001,12 @@ const ZOOM_KEYS: [(&str, &str); 6] = [
 
 /// What zooms, where: the pane's view anywhere, what a preview shows where
 /// it has the keyboard. The inspector's text is sized in steps of its own.
-const ZOOMS: [(&str, &str, Option<&str>); 5] = [
+const ZOOMS: [(&str, &str, Option<&str>); 6] = [
     ("ui.zoom", "dir", None),
     ("ui.preview_zoom", "dir", Some("reader")),
     ("ui.preview_zoom", "dir", Some("image")),
     ("ui.preview_zoom", "dir", Some("map")),
+    ("ui.preview_zoom", "dir", Some("model")),
     ("ui.inspect", "action", Some("inspector")),
 ];
 
@@ -1050,6 +1094,7 @@ pub(crate) const PLACES: &[Place] = &[
     ),
     place("image", IMAGE, "Picture preview"),
     place("map", MAP, "Map preview"),
+    place("model", MODEL, "3D model preview"),
     place("media", MEDIA, "Media player"),
     place("fullscreen", FULLSCREEN, "Preview on the whole screen"),
     place("slideshow", SLIDESHOW, "Picture on the whole screen"),
@@ -2221,6 +2266,10 @@ mod tests {
             assert_eq!(name(keys, &members).as_deref(), Some("ui.inspect"));
             let map = [ROOT, PREVIEW, INSPECTOR, MAP];
             assert_eq!(name(keys, &map).as_deref(), Some("ui.map_pan"));
+            let model = [ROOT, PREVIEW, INSPECTOR, super::MODEL];
+            assert_eq!(name(keys, &model).as_deref(), Some("ui.model_turn"));
+            let shifted = format!("shift-{keys}");
+            assert_eq!(name(&shifted, &model).as_deref(), Some("ui.model_pan"));
             assert_eq!(name(keys, &[ROOT, PEEK]).as_deref(), Some("ui.cursor"));
         }
         assert_eq!(

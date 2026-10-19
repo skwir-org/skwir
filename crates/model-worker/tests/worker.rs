@@ -320,3 +320,72 @@ fn what_is_too_large_or_not_a_model_is_refused_with_a_reason() {
     );
     assert!(run(&path, "ply", &[]).unwrap_err().contains("ends early"));
 }
+
+/// What `--mesh` wrote after its line: the positions and the triangles.
+fn mesh_after(stdout: &[u8]) -> (Vec<[f32; 3]>, Vec<[u32; 3]>) {
+    let word = |at: usize| u32::from_le_bytes(stdout[at..at + 4].try_into().unwrap());
+    let (positions, triangles) = (word(0) as usize, word(4) as usize);
+    assert_eq!(
+        stdout.len(),
+        8 + positions * 12 + triangles * 12,
+        "all, nothing more"
+    );
+    let float = |at: usize| f32::from_le_bytes(stdout[at..at + 4].try_into().unwrap());
+    let points = (0..positions)
+        .map(|p| [0, 1, 2].map(|axis| float(8 + p * 12 + axis * 4)))
+        .collect();
+    let faces = (0..triangles)
+        .map(|t| [0, 1, 2].map(|corner| word(8 + positions * 12 + t * 12 + corner * 4)))
+        .collect();
+    (points, faces)
+}
+
+#[test]
+fn a_mesh_asked_for_is_written_whole_up_to_the_triangles_asked() {
+    let dir = tempfile::tempdir().unwrap();
+    let (points, faces) = cuboid(20., 10., 5.);
+    let path = write(dir.path(), "a part’s box.stl", &binary_stl(&points, &faces));
+    let output = Command::new(env!("CARGO_BIN_EXE_skwir-model-worker"))
+        .arg(&path)
+        .args(["--format", "stl", "--side", "256", "--mesh", "12"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let line = output.stdout.iter().position(|b| *b == b'\n').unwrap();
+    let said: serde_json::Value = serde_json::from_slice(&output.stdout[..line]).unwrap();
+    assert_eq!(said["mesh"], true);
+    assert_eq!(said["triangles"], 12);
+    assert_eq!(said["closed"], true);
+    let (positions, triangles) = mesh_after(&output.stdout[line + 1..]);
+    // The box's eight corners, each once, and its twelve faces between them.
+    assert_eq!(positions.len(), 8);
+    assert_eq!(triangles.len(), 12);
+    assert!(
+        triangles
+            .iter()
+            .flatten()
+            .all(|&i| (i as usize) < positions.len())
+    );
+    let mut corners: Vec<[f32; 3]> = positions.clone();
+    corners.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mut expected = points.clone();
+    expected.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(corners, expected);
+    // Past the triangles asked, it is drawn.
+    let answer = run(&path, "stl", &["--mesh", "11"]).unwrap();
+    assert_eq!(answer.facts["mesh"], false);
+    assert_eq!(answer.size.0.max(answer.size.1), 256);
+    // A point no face uses is not written.
+    let obj = "v 0 0 0\nv 9 9 9\nv 1 0 0\nv 0 1 0\nf 1 3 4\n";
+    let path = write(dir.path(), "stray.obj", obj.as_bytes());
+    let output = Command::new(env!("CARGO_BIN_EXE_skwir-model-worker"))
+        .arg(&path)
+        .args(["--format", "obj", "--mesh", "1"])
+        .output()
+        .unwrap();
+    let line = output.stdout.iter().position(|b| *b == b'\n').unwrap();
+    let (positions, triangles) = mesh_after(&output.stdout[line + 1..]);
+    assert_eq!(triangles, [[0, 1, 2]]);
+    // OBJ stands on Y: turned to stand on Z.
+    assert_eq!(positions, [[0., 0., 0.], [1., 0., 0.], [0., 0., 1.]]);
+}

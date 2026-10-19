@@ -6,9 +6,10 @@
 //! its entities (`dxf`), which most never picture, and G-code that stores
 //! none from its moves (`toolpath`). A mesh that carries none (STL, OBJ, PLY,
 //! OFF, glTF, a 3MF its slicer did not picture) is drawn by a helper of its
-//! own, `skwir-model-worker`, and measured. The same pictures are the
-//! grid's thumbnails, after any thumbnailer the desktop installed for
-//! these files.
+//! own, `skwir-model-worker`, and measured; a window that draws meshes gets
+//! the mesh to turn instead (ADR-067). The same pictures are the grid's
+//! thumbnails, after any thumbnailer the desktop installed for these
+//! files.
 mod blend;
 mod cad;
 mod dxf;
@@ -175,6 +176,8 @@ struct Found {
     /// What it is, for the toolbar.
     title: String,
     picture: Option<Image>,
+    /// The mesh itself, read for a window that turns it (`Asked::Turned`).
+    mesh: Option<Arc<skwir_core::inspection::Mesh>>,
     /// Facts in the order they are shown.
     details: Vec<(String, String)>,
     /// What was left out, and why.
@@ -248,13 +251,29 @@ impl PreviewProvider for Provider {
             Format::Mesh(_) | Format::ThreeMf => MESH_SIDE,
             _ => limits::IMAGE_DISPLAY_SIDE,
         };
-        let found = format.read(&path, side, Asked::Preview, cancel)?;
+        // A window that draws meshes turns them.
+        let asked = if view.meshes {
+            Asked::Turned
+        } else {
+            Asked::Preview
+        };
+        let found = format.read(&path, side, asked, cancel)?;
         let notice = found.notice.unwrap_or_default();
         let details = found
             .details
             .into_iter()
             .map(|(label, value)| skwir_core::inspection::Detail::new(label, value))
             .collect();
+        if let Some(mesh) = found.mesh {
+            return Ok(Some(Inspection {
+                kind: InspectionKind::Model,
+                title: found.title,
+                mesh: Some(mesh),
+                details,
+                notice,
+                ..Inspection::default()
+            }));
+        }
         Ok(Some(match found.picture {
             Some(picture) => Inspection {
                 kind: InspectionKind::Text,
@@ -574,6 +593,40 @@ mod tests {
             .unwrap();
         assert!(data.image.is_none());
         assert_eq!(data.notice, "Not a Wavefront OBJ model");
+    }
+
+    #[test]
+    fn a_window_that_draws_meshes_gets_the_mesh_to_turn() {
+        if !with_model_worker() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a part’s cube.stl");
+        std::fs::write(&path, cube_stl()).unwrap();
+        let turned = InspectRequest {
+            meshes: true,
+            ..InspectRequest::default()
+        };
+        let data = Provider
+            .inspect(&request(&path), &turned, &CancelToken::new())
+            .unwrap()
+            .unwrap();
+        assert_eq!(data.kind, InspectionKind::Model);
+        assert!(data.image.is_none(), "no picture is drawn");
+        let mesh = data.mesh.expect("the mesh");
+        assert_eq!((mesh.positions().len(), mesh.triangles()), (8, 12));
+        assert_eq!(data.details[0].value, "10 × 10 × 10 mm");
+        assert!(data.notice.is_empty());
+        // Asked for a picture, it is still drawn.
+        let data = Provider
+            .inspect(
+                &request(&path),
+                &InspectRequest::default(),
+                &CancelToken::new(),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(data.mesh.is_none() && data.image.is_some());
     }
 
     #[test]

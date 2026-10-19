@@ -641,6 +641,9 @@ pub struct PreviewState {
     /// Where a map preview is moved and zoomed to: the file's, kept when
     /// it is read again, dropped with it (`cancel_preview`).
     pub(crate) map: crate::map_preview::MapState,
+    /// How a 3D model is turned, moved and zoomed: the file's, dropped
+    /// with it (`cancel_preview`).
+    pub(crate) model: crate::model_preview::ModelState,
     /// Whether the hexadecimal provider is registered, keyed by the preview
     /// registry revision it was read at (see `preview_toolbar::hex_available`).
     pub(crate) hex_provider: std::cell::Cell<Option<(u64, bool)>>,
@@ -847,6 +850,7 @@ impl Default for PreviewState {
             properties_scroll: gpui::ScrollHandle::new(),
             image_focus: None,
             map: crate::map_preview::MapState::default(),
+            model: crate::model_preview::ModelState::default(),
             hex_provider: std::cell::Cell::new(None),
             here: None,
         }
@@ -2204,6 +2208,8 @@ impl Shell {
             fit: None,
         };
         let mut inspection = self.preview.inspection.request.clone();
+        // A window that draws meshes turns a model (ADR-067).
+        inspection.meshes = self.draws_meshes;
         let source_types = self.preview.source_types.clone();
         let tx = self.preview.tx.clone();
         let nested = self.preview.nested.last().cloned();
@@ -3230,6 +3236,7 @@ impl Shell {
         self.preview.picture_side = 0;
         self.preview.text_size = None;
         self.preview.map = crate::map_preview::MapState::default();
+        self.preview.model = crate::model_preview::ModelState::default();
     }
 
     pub fn preview_page(&mut self, delta: i32, window: &mut Window, cx: &mut Context<Self>) {
@@ -3854,7 +3861,7 @@ impl Shell {
     /// size and lay it out again, while a chosen zoom or fit still zooms its
     /// pages.
     pub fn preview_zoom(&mut self, direction: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if self.map_zoom(direction, cx) {
+        if self.map_zoom(direction, cx) || self.model_zoom(direction, cx) {
             return;
         }
         if matches!(direction, "in" | "out" | "reset") && self.reader_reflows() {

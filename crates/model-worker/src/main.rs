@@ -3,11 +3,19 @@
 //! this exits, and a reader that fails takes nothing else with it.
 //!
 //! `skwir-model-worker <path> --format stl|obj|ply|off|gltf|3mf --side N
-//! --triangles N --bytes N` writes one line of JSON (what the mesh
-//! measures) then the picture as PNG, at most `side` pixels on its longer
-//! side, on standard output. A file larger than `bytes`, or a mesh of more
-//! than `triangles`, is refused. Anything else is an exit status of 1 and
-//! a reason on standard error. Pure Rust; nothing is written.
+//! --triangles N --bytes N [--mesh N]` writes one line of JSON (what the
+//! mesh measures) then the picture as PNG, at most `side` pixels on its
+//! longer side, on standard output. A file larger than `bytes`, or a mesh
+//! of more than `triangles`, is refused. Anything else is an exit status
+//! of 1 and a reason on standard error. Pure Rust; nothing is written.
+//!
+//! With `--mesh N`, a mesh of at most N triangles is written instead of its
+//! picture, for a window that draws it itself (ADR-067): the line says
+//! `"mesh": true`, then come the number of positions and of triangles
+//! (each a little-endian `u32`), the positions (three little-endian `f32`
+//! each) and the triangles (three little-endian `u32` indices each). Only
+//! the positions a triangle uses are written. A larger mesh is drawn, and
+//! the line says `"mesh": false`.
 mod draw;
 mod gltf_mesh;
 mod mesh;
@@ -23,6 +31,8 @@ struct Arguments {
     side: u32,
     triangles: usize,
     bytes: u64,
+    /// The triangles a mesh written whole may have (`--mesh`).
+    mesh: Option<usize>,
 }
 
 fn arguments() -> Result<Arguments, String> {
@@ -34,6 +44,7 @@ fn arguments() -> Result<Arguments, String> {
         side: 1024,
         triangles: 4_000_000,
         bytes: 256 * 1024 * 1024,
+        mesh: None,
     };
     while let Some(flag) = args.next() {
         let value = args
@@ -54,6 +65,7 @@ fn arguments() -> Result<Arguments, String> {
                 parsed.triangles = usize::try_from(number()?).unwrap_or(usize::MAX);
             }
             Some("--bytes") => parsed.bytes = number()?,
+            Some("--mesh") => parsed.mesh = Some(usize::try_from(number()?).unwrap_or(usize::MAX)),
             _ => return Err(format!("unknown flag {}", flag.to_string_lossy())),
         }
     }
@@ -107,6 +119,7 @@ fn run() -> Result<(), String> {
     let (lo, hi) = mesh.bounds().ok_or("the model has no triangles")?;
     let size: Vec<f32> = (0..3).map(|axis| hi[axis] - lo[axis]).collect();
     let volume = mesh.closed_volume();
+    let whole = args.mesh.is_some_and(|most| mesh.triangles.len() <= most);
     let facts = serde_json::json!({
         "triangles": mesh.triangles.len(),
         "objects": mesh.objects,
@@ -114,7 +127,15 @@ fn run() -> Result<(), String> {
         "unit": mesh.unit,
         "closed": volume.is_some(),
         "volume": volume,
+        "mesh": whole,
     });
+    if whole {
+        let mut out = std::io::BufWriter::with_capacity(1 << 20, std::io::stdout().lock());
+        return writeln!(out, "{facts}")
+            .and_then(|()| mesh.compacted().write(&mut out))
+            .and_then(|()| out.flush())
+            .map_err(|e| format!("writing the mesh: {e}"));
+    }
     let picture = draw::draw(mesh, args.side);
     let mut png = Vec::new();
     {

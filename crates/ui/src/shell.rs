@@ -393,6 +393,12 @@ pub struct Shell {
     /// place in the list) is built only then
     /// (`docs/invariants/accessibility.md`).
     pub(crate) a11y: bool,
+    /// Whether the window turns 3D models (ADR-067): it draws meshes
+    /// (`Window::draws_meshes`) on a GPU, not a software rasterizer, whose
+    /// frame grows with the mesh while the window's thread waits on it. A
+    /// model's preview then asks for its mesh, else for its still. Read at
+    /// each render: the renderer may come after the shell.
+    pub(crate) draws_meshes: bool,
     /// What the window's title was last set from: the active pane's
     /// location's title.
     title: gpui::SharedString,
@@ -649,6 +655,7 @@ impl Shell {
             started,
             first_frame_logged: false,
             a11y: false,
+            draws_meshes: turns_models(window),
             title: gpui::SharedString::default(),
             clipboard_holds: crate::clipboard::Held::Nothing,
             _subscriptions: subs,
@@ -2179,6 +2186,20 @@ impl Shell {
                 let delta = args.get("delta").and_then(serde_json::Value::as_i64);
                 self.map_point(delta.map_or(1, |d| d.clamp(-1, 1) as isize), cx);
             }
+            "model_turn" | "model_pan" => {
+                let step = |key| {
+                    args.get(key)
+                        .and_then(serde_json::Value::as_f64)
+                        .filter(|v| v.is_finite())
+                        .map_or(0., |v| v.clamp(-10., 10.) as f32)
+                };
+                let (dx, dy) = (step("dx"), step("dy"));
+                if name == "model_turn" {
+                    self.model_turn(dx, dy, cx);
+                } else {
+                    self.model_pan(dx, dy, cx);
+                }
+            }
             "map_open" => self.map_open_external(cx),
             "map_view_fit" => self.map_view_fit(cx),
             "map_view_spread" => self.map_view_spread(cx),
@@ -2743,6 +2764,14 @@ pub(crate) const SPLIT_SHARE: f32 = 0.5;
 pub struct SplitResize;
 
 /// The draggable edge a split's second pane has at its start: its left edge
+/// Whether `window` turns 3D models (`Shell::draws_meshes`).
+fn turns_models(window: &Window) -> bool {
+    window.draws_meshes()
+        && !window
+            .gpu_specs()
+            .is_some_and(|specs| specs.is_software_emulated)
+}
+
 /// side by side, its top edge stacked, over the border that tells the panes
 /// apart.
 fn split_edge(stacked: bool, cx: &mut Context<Shell>) -> gpui::AnyElement {
@@ -2768,6 +2797,7 @@ impl Render for Shell {
             );
         }
         self.a11y = window.is_a11y_active();
+        self.draws_meshes = turns_models(window);
         self.sync(window, cx);
         // One frame of map tiles per window frame, whatever maps it draws:
         // what the last frame's maps asked for is kept, the rest cancelled

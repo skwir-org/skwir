@@ -112,7 +112,7 @@ pub fn three_mf(
             title: "3MF".into(),
             picture,
             details,
-            notice: None,
+            ..Found::default()
         });
     }
     // No picture stored: the model drawn, and measured, by the helper.
@@ -127,6 +127,7 @@ pub fn three_mf(
                 "Install {} to draw models that store no picture",
                 skwir_platform::model::WORKER.executable
             )),
+            ..Found::default()
         });
     }
     match crate::mesh::read(path, format, side, asked, cancel) {
@@ -145,6 +146,7 @@ pub fn three_mf(
             picture: None,
             details,
             notice: Some(format!("{error:#}")),
+            ..Found::default()
         }),
     }
 }
@@ -274,7 +276,7 @@ pub fn freecad(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<F
         title: "FreeCAD document".into(),
         picture,
         details,
-        notice: None,
+        ..Found::default()
     })
 }
 

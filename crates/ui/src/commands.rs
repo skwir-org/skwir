@@ -547,6 +547,8 @@ const SHOWS: &[&str] = &[
     "ui.player_volume",
     "ui.map_pan",
     "ui.map_point",
+    "ui.model_turn",
+    "ui.model_pan",
     "ui.map_view_fit",
     "ui.map_view_spread",
     "ui.map_view_search_area",
@@ -816,6 +818,14 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
     ("ui.map_pan", r#"{"dx":0,"dy":1}"#, "Map: move down"),
     ("ui.map_point", r#"{"delta":1}"#, "Map: next place"),
     ("ui.map_point", r#"{"delta":-1}"#, "Map: previous place"),
+    ("ui.model_turn", r#"{"dx":-1,"dy":0}"#, "Model: turn left"),
+    ("ui.model_turn", r#"{"dx":1,"dy":0}"#, "Model: turn right"),
+    ("ui.model_turn", r#"{"dx":0,"dy":-1}"#, "Model: turn up"),
+    ("ui.model_turn", r#"{"dx":0,"dy":1}"#, "Model: turn down"),
+    ("ui.model_pan", r#"{"dx":-1,"dy":0}"#, "Model: move left"),
+    ("ui.model_pan", r#"{"dx":1,"dy":0}"#, "Model: move right"),
+    ("ui.model_pan", r#"{"dx":0,"dy":-1}"#, "Model: move up"),
+    ("ui.model_pan", r#"{"dx":0,"dy":1}"#, "Model: move down"),
     (
         "ui.terminal_paste",
         r#"{"from":"primary"}"#,
@@ -948,7 +958,9 @@ fn repeats_of(name: &str) -> Option<Repeats> {
         | "ui.fullscreen_step"
         | "ui.player_volume"
         | "ui.map_pan"
-        | "ui.map_point" => always,
+        | "ui.map_point"
+        | "ui.model_turn"
+        | "ui.model_pan" => always,
         // Pick, then the next: held, it picks a run of files.
         "ui.cursor_pick" => {
             |args| args.get("advance").and_then(serde_json::Value::as_bool) != Some(false)
@@ -1815,6 +1827,19 @@ pub fn declare_all(app: &App) {
     );
     // The map.
     declare::<Pan>(app, "ui.map_pan", "Map: pan", "Move the map");
+    // A 3D model (ADR-067).
+    declare::<Pan>(
+        app,
+        "ui.model_turn",
+        "Model: turn",
+        "Go round the 3D model shown, by steps right (dx) and down (dy)",
+    );
+    declare::<Pan>(
+        app,
+        "ui.model_pan",
+        "Model: move",
+        "Move the view of the 3D model shown, by steps right (dx) and down (dy)",
+    );
     declare::<Delta>(
         app,
         "ui.map_point",

@@ -122,6 +122,51 @@ impl Mesh {
         }))
     }
 
+    /// The same mesh with only the positions its triangles use, in the
+    /// order they are first used.
+    pub fn compacted(self) -> Mesh {
+        let mut renumbered = vec![u32::MAX; self.positions.len()];
+        let mut positions = Vec::new();
+        let triangles = self
+            .triangles
+            .iter()
+            .map(|t| {
+                t.map(|i| {
+                    let new = &mut renumbered[i as usize];
+                    if *new == u32::MAX {
+                        *new = u32::try_from(positions.len()).unwrap_or(u32::MAX);
+                        positions.push(self.positions[i as usize]);
+                    }
+                    *new
+                })
+            })
+            .collect();
+        Mesh {
+            positions,
+            triangles,
+            ..self
+        }
+    }
+
+    /// The positions and triangles as `--mesh` writes them: their counts,
+    /// then each, little-endian.
+    pub fn write(&self, out: &mut impl std::io::Write) -> std::io::Result<()> {
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX).to_le_bytes();
+        out.write_all(&count(self.positions.len()))?;
+        out.write_all(&count(self.triangles.len()))?;
+        for p in &self.positions {
+            for v in p {
+                out.write_all(&v.to_le_bytes())?;
+            }
+        }
+        for t in &self.triangles {
+            for i in t {
+                out.write_all(&i.to_le_bytes())?;
+            }
+        }
+        Ok(())
+    }
+
     /// Whether every edge joins exactly two triangles, the points welded
     /// where they are the same, and if so the volume enclosed.
     pub fn closed_volume(&self) -> Option<f64> {

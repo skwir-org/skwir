@@ -33,6 +33,9 @@ pub struct Display {
     pub map: Option<Arc<crate::elements::map::Shapes>>,
     /// Its lines' altitudes over distance, when they have some.
     pub profile: Option<Arc<crate::elements::profile::Profile>>,
+    /// A 3D model's mesh, ready for the GPU and framed, here on the worker
+    /// (`model_preview`).
+    pub model: Option<Arc<crate::elements::model::Model>>,
     /// The background its code was colored for, when the theme chosen
     /// brings one (`code_preview::Palette`): the code view's, and a code
     /// block's in a document.
@@ -172,9 +175,19 @@ impl Display {
             .as_deref()
             .and_then(crate::elements::profile::Profile::of)
             .map(Arc::new);
+        // The mesh moves on to the GPU's side whole: its only holder here.
+        let model = data.mesh.take().and_then(|mesh| {
+            let (positions, indices) = Arc::try_unwrap(mesh)
+                .unwrap_or_else(|shared| (*shared).clone())
+                .into_parts();
+            crate::elements::model::Model::new(positions, indices)
+                .ok()
+                .map(Arc::new)
+        });
         Self {
             map,
             profile,
+            model,
             table,
             data: Arc::new(data),
             images,
@@ -2205,6 +2218,9 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
     if data.kind == InspectionKind::Map {
         crate::map_preview::tools(&mut bar, shell);
     }
+    if data.kind == InspectionKind::Model {
+        crate::model_preview::tools(&mut bar, shell);
+    }
     if data.kind == InspectionKind::Hex {
         bar.push(Item::button(
             Slot::View,
@@ -2337,8 +2353,8 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         }));
     }
 
-    // A map has no text to find.
-    if data.kind != InspectionKind::Map {
+    // A map and a model have no text to find.
+    if !matches!(data.kind, InspectionKind::Map | InspectionKind::Model) {
         bar.push(
             Item::button(
                 Slot::Tools,
@@ -2510,6 +2526,9 @@ pub fn content(
     let (display, state) = (view.display, view.state);
     if display.data.kind == InspectionKind::Map {
         return crate::map_preview::content(shell, display, theme);
+    }
+    if display.data.kind == InspectionKind::Model {
+        return crate::model_preview::content(shell, display, theme);
     }
     let data = display.data.clone();
     let shape = display.table.clone();

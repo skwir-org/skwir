@@ -478,7 +478,8 @@ dates, measurements and what is left.
     Blender, 3MF, FreeCAD, DWG, DXF and G-code files store, with print
     facts; `skwir-model-worker` (pure Rust, 1 MB) draws meshes without
     one (STL, OBJ, PLY, OFF, glTF): 3DBenchy (225,706 triangles) in
-    140 ms, volume 15.55 cm³ as published. STEP and IGES stay with f3d
+    140 ms, volume 15.55 cm³ as published. Since 2026-10-19 a window that
+    draws meshes on a GPU turns them instead (ADR-067). STEP and IGES stay with f3d
     (nixpkgs' f3d names STEP `application/vnd.step`, which this MIME
     database lacks); OpenCASCADE would be a helper of its own.
     SketchUp, LayOut and Rhino pictures checked on two SketchUp 2021
@@ -1265,6 +1266,39 @@ key did the same.
   X11 reports a held key, which it never did.
 - Checked on Wayland and X11 (Xwayland) on a headless sway; Windows
   compiled, macOS's window not compiled.
+
+**3D models turned in the window (ADR-067), a prototype on Linux.** A
+mesh's preview was one still the helper drew on the CPU.
+
+- Vendored gpui patch 0033: `Window::paint_mesh` draws a triangle mesh
+  in 3D. wgpu draws it offscreen, multisampled, with depth, faces shaded
+  flat from their screen-space derivatives, then composites it in draw
+  order. Uploads run on a thread of their own, never the window's. Metal
+  and Direct3D 11 draw nothing yet.
+- `skwir-model-worker --mesh` writes the mesh itself; Skwir checks every
+  count, index and coordinate before the GPU sees it. The preview asks
+  for it only where the window draws meshes on a GPU: lavapipe, macOS,
+  Windows, thumbnails and agents get the still.
+- The view opens as the still is drawn; a drag turns it, Shift or the
+  middle button moves it, the wheel zooms; the arrows, Shift and the
+  arrows, the zoom keys and Ctrl+0 do the same (`ModelPreview`).
+- Measured (release, 1000 × 800, four samples a pixel; tori of 225,600,
+  a million and four million triangles):
+  - a frame takes 0.7, 1.1 and 2.5 ms on an NVIDIA GTX 1060; 2.2, 2.6
+    and 5.0 ms on an Intel Iris Xe; 84 ms, 0.56 s and 2.6 s on lavapipe
+    (the reason it gets the still);
+  - uploading them takes 1, 6 and 31 ms on the Intel GPU, but 50 ms,
+    0.23 s and 0.94 s on NVIDIA, whose driver maps upload memory
+    uncached (158 MB/s): the reason uploads left the window's thread;
+  - in the window, on the Intel GPU, a model shows 0.19, 0.49 and 2.0 s
+    after the click, most of it the helper reading the file (0.07, 0.37
+    and 1.47 s), and costs the window its copy of the mesh (5, 19 and
+    72 MB). Turning the largest drew a frame per pointer move, 4.7 ms
+    each (median), at 23% of a core; at rest, nothing.
+- Checked on Wayland and on X11 (Xwayland), a headless sway rendering on
+  the Intel GPU; on lavapipe, the still. Not checked: the window on
+  NVIDIA (the user's session), a screen reader; macOS and Windows
+  compiled only.
 
 ---
 

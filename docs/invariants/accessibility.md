@@ -135,6 +135,7 @@ like `AGENTS.md`.
 | a document in the reader | document of the page's text, a run a line | the file; the page shown |
 | a map (a track, places) | figure; its places a list, the one PageDown reached said as it is reached | "Map: ‹file›"; what it holds and its keys; each place its name and where it is |
 | the Map view | figure; its status a line; its files' places as a map's | "Map"; what is placed |
+| a 3D model | figure | "3D model: ‹file›"; its triangles and its keys |
 | the hex view | document of lines | the file; each line its offset, bytes and characters |
 | text, Markdown, structured previews | document of its lines | the file |
 | an archive's members, a message's parts, a table's rows | tree, list box; the row the arrows reach said as focused | the file; each row its first cell, the others after their columns' names ("Size: 6 B") |
