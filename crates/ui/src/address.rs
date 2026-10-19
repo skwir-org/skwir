@@ -1001,6 +1001,12 @@ fn pane_row(
             .child(omni_anchor.marker())
             .into_any_element(),
     };
+    // Tab completes while there is something to complete (`completes`).
+    let mut context = gpui::KeyContext::default();
+    context.add(keymap::ADDRESS);
+    if shell.omnibox_completes(cx) {
+        context.add("completes");
+    }
     let mut field = div()
         .id(("address-field", pane.0 as usize))
         .flex_1()
@@ -1012,7 +1018,7 @@ fn pane_row(
         .border_1()
         .border_color(row.edge)
         .bg(theme.bg)
-        .key_context(keymap::ADDRESS)
+        .key_context(context)
         .child(address);
     // Keep what the pane shows in the sidebar, a folder as a bookmark or a
     // search as a saved search, while a plugin keeps such locations:

@@ -134,10 +134,41 @@ of bars, split or not.
   Ctrl+L edits the path; over a search, both edit the search.
 - Edited text opens a dropdown saying what Enter does: go to a path or a
   scheme; search where the pill says (Enter) or home (Alt+Enter); search
-  contents (`query.refine`, facet `content`); a place Jump knows; `>` hands
-  the rest to the palette.
+  contents (`query.refine`, facet `content`); a place Jump knows or a
+  scheme the words start (`tr`: the trash); `>` hands the rest to the
+  palette.
 - The keyboard never leaves the field (Up/Down are bound in its context).
-  Rows run on press with `prevent_default`.
+  Rows run on press with `prevent_default`. The rows are a list box
+  (`modal::options`); the row the arrows reach is the field's active
+  descendant, so typing still reads back the field's text and caret.
+- **Completion (ADR-070, `complete.rs`).** A path lists the names of the
+  folder typed that go on with the name typed: folders, then files, at
+  most eight, matched as `complete.rs` says (case ignored unless a
+  capital is typed; whole, start, a word's start, anywhere; hidden names
+  only for a dot or where they are shown), ranked by `jump.scores`. Go is
+  first only while no name is typed or none matches: otherwise Enter goes
+  to the first name, whose rest is drawn after the text
+  (`TextInput::set_hint`).
+  - The folder typed is read on a worker, once while the field is typed
+    in, the one read before stopped; a folder a pane lists gives its
+    listing's names. Never on the UI thread: matching is in memory.
+    `./` and `../` are the folder shown's, never the process's.
+  - A folder part that names no folder is taken a name's start at a
+    time (`~/w/sk/`), each level ranked, at most four folders: the rows
+    then say which folder, and nothing is drawn after the text.
+  - A place's text completes through its provider
+    (`LocationProvider::complete`), matched the same way.
+  - Tab (`ui.omnibox_complete`, bound in `address completes`): a row
+    chosen with the arrows; else words leaving one name shown become its
+    path; else the part the names share; else the highlighted row; else
+    the first is highlighted. A folder taken ends with its separator and is
+    listed in turn. Taking is an edit (Ctrl+Z). Right or End at the end
+    takes what is drawn. Where nothing completes, Tab walks on.
+  - A row keeps its exact path: a name that is not UTF-8 goes where it
+    says, though the field can only write it approximately.
+- Enter on a path stats it on a worker (`reveal_path`): a folder is gone
+  to, a file shown selected in its folder (hidden files then shown, and
+  said), one not there said. Shift+Enter opens a file (`open`).
 - A search is `query.search` with `expr` and `root`: the UI knows no query
   syntax.
 - Words typed over a folder filter it at once (the core's `filter`,

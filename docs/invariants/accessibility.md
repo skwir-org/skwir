@@ -38,8 +38,10 @@ like `AGENTS.md`.
   cursor's item whatever has the focus.
 - **A picker's field keeps the keyboard; its highlighted option is said
   as focused** (`aria_active_descendant_for`, patch 0030): the palette,
-  Jump, Choose and the tag editor build their lists with `modal::options`
-  and `modal::option`. A field typed in and a list beside it are the
+  Jump, Choose, the tag editor and the address's suggestions build their
+  lists with `modal::options` and `modal::option`. The address's is said
+  once the arrows reach it: while a path is typed, the field reads back
+  its text and caret. A field typed in and a list beside it are the
   web's combobox: a reader hears the option the keys reach, and echoes
   what is typed.
 - **Every part takes the keyboard** without the pointer: F6 goes round

@@ -523,6 +523,13 @@ impl App {
             .map(|(_, p)| Arc::clone(p))
     }
 
+    /// The schemes a provider opens, the plain paths' among them, sorted.
+    pub fn schemes(&self) -> Vec<Arc<str>> {
+        let mut schemes: Vec<Arc<str>> = self.providers.read().keys().cloned().collect();
+        schemes.sort();
+        schemes
+    }
+
     /// Withdraw everything a plugin contributed.
     pub fn unregister_owner(&self, owner: &str) {
         self.commands.unregister_owner(owner);

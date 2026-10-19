@@ -83,7 +83,8 @@ pub struct PaneUi {
     pub(crate) anchor: Option<(skwir_core::EntryId, usize, f32)>,
     /// What it will show first, still waiting for metadata.
     pub(crate) warm: Vec<skwir_core::EntryId>,
-    _sub: Subscription,
+    /// The address field's events, and its hint taken.
+    _sub: (Subscription, Subscription),
 }
 
 impl PaneUi {
@@ -792,7 +793,7 @@ impl Shell {
                 // What the field does is the omnibox's (`omnibox.rs`).
                 InputEvent::Submit => {
                     this.activate_pane(id, cx);
-                    this.omnibox_submit(false, window, cx);
+                    this.omnibox_submit(false, false, window, cx);
                 }
                 InputEvent::Cancel => {
                     this.activate_pane(id, cx);
@@ -804,6 +805,10 @@ impl Shell {
                 }
             },
         );
+        let hint = cx.subscribe(&address, move |this, _, _: &crate::input::HintTaken, cx| {
+            this.activate_pane(id, cx);
+            this.omnibox_take_rest(cx);
+        });
         // Read the revision before the descriptors: a registration landing
         // between the two reads is then picked up by the next sync_views.
         let views_revision = self.app.registry.views.revision();
@@ -837,7 +842,7 @@ impl Shell {
             returning: true,
             anchor: None,
             warm: Vec::new(),
-            _sub: sub,
+            _sub: (sub, hint),
         }
     }
 
@@ -1123,12 +1128,20 @@ impl Shell {
             return;
         };
         let pane = reveal.pane;
+        let name = reveal.name.to_string_lossy().into_owned();
         self.reveal = None;
-        {
-            let mut ws = self.app.workspace.write();
-            if let Some(pane) = ws.pane_mut(pane) {
-                pane.selection.set([id]);
-            }
+        let unhidden = self
+            .app
+            .workspace
+            .write()
+            .pane_mut(pane)
+            .is_some_and(|pane| pane.select_revealed(id));
+        if unhidden {
+            self.set_status(
+                format!("Hidden files are shown, “{name}” among them"),
+                false,
+                cx,
+            );
         }
         self.with_pane(pane, |shell| {
             if let Some(index) = shell.cursor_index() {
@@ -1972,10 +1985,12 @@ impl Shell {
             // text to start from (`content:`) typed after.
             "search" => self.omnibox_begin(true, arg("text"), window, cx),
             "omnibox_submit" => {
-                let everywhere =
-                    args.get("everywhere").and_then(serde_json::Value::as_bool) == Some(true);
-                self.omnibox_submit(everywhere, window, cx);
+                let flag =
+                    |name: &str| args.get(name).and_then(serde_json::Value::as_bool) == Some(true);
+                self.omnibox_submit(flag("everywhere"), flag("open"), window, cx);
             }
+            // Tab in the address field: what is typed completed.
+            "omnibox_complete" => self.omnibox_complete(cx),
             "tags_prompt" => {
                 let entries = args
                     .get("entries")

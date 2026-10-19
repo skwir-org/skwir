@@ -422,6 +422,13 @@ def run(w):
     w.keys("End", "BackSpace", "Left")
     check("what is typed and where the caret goes are read back",
           reads(w, (shown[:-1], len(shown) - 2)))
+    check("the names that go on with it are a list box beside the field",
+          until(lambda: w.files.name in options_of(w, "Suggestions"))
+          or print("  read:", options_of(w, "Suggestions")))
+    w.keys("Down")
+    check("Down: the suggestion reached, said as focused",
+          until(lambda: said(w.focused()).startswith(f"list item {w.files.name!r}")
+                and has(w.focused(), "selected")))
     w.keys("Escape")
     check("Escape: back to the files", hears(w, f"list item {second!r} 2 of 4 selected focused"))
 

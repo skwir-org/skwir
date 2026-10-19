@@ -24,6 +24,7 @@ pub mod clashes;
 mod clipboard;
 mod code_preview;
 pub mod commands;
+mod complete;
 pub mod controls;
 pub mod dnd;
 pub mod dock;

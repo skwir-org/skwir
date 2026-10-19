@@ -386,6 +386,44 @@ pub trait LocationProvider: Send + Sync {
     fn verbs(&self, _location: &Location) -> Verbs {
         Verbs::default()
     }
+
+    /// What `rest`, the text after the scheme being typed in the address
+    /// field, can go on with (ADR-070): the name being typed, and every
+    /// place it can be at that depth (a tag's tags, for `tags:/Places/Fr`).
+    /// The address matches them as it matches a folder's names. `None` for
+    /// a scheme whose text is not typed a name at a time (a search).
+    /// Called on a worker.
+    fn complete(&self, _rest: &str) -> Option<Completions> {
+        None
+    }
+}
+
+/// What a location's text being typed can go on with
+/// (`LocationProvider::complete`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Completions {
+    /// The part of the text after the scheme being typed: what a
+    /// completion's `text` replaces.
+    pub range: std::ops::Range<usize>,
+    /// That part as a name reads (its escapes undone): what the names are
+    /// matched against.
+    pub typed: String,
+    pub items: Vec<Completion>,
+}
+
+/// A place a location's text being typed can go on with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Completion {
+    /// Its name as it reads: what is matched and shown.
+    pub label: String,
+    /// What replaces the part being typed, as the location's text writes
+    /// it (escaped).
+    pub text: String,
+    /// Where it leads.
+    pub location: Location,
+    /// What follows it once taken when it holds places of its own, so the
+    /// typing goes on inside it (`/`).
+    pub inside: Option<char>,
 }
 
 /// One place of a trail: its words, and where it leads.

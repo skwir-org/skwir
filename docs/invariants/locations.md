@@ -26,6 +26,7 @@ the others with no UI branch.
 | F5 in a view; its own empty state | `PaneView::refresh`, `draws_empty` |
 | a place's kind | `keys::PLACE_KIND` |
 | what an open location holds | `OpenLocation::holds` |
+| what its text typed goes on with | `LocationProvider::complete` (ADR-070) |
 
 A folder is a location like the others: its trail is a `Trail`, its
 chevrons list `App::places_in`, and Shift+F5/F6 give the selection to the

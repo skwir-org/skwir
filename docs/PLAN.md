@@ -1374,6 +1374,38 @@ not know; a Rhino model showed only its stored picture.
   no face missing, in 0.02 to 0.18 s; files whose trimmed surfaces sit in
   a group (two old EUCLID files) are refused by ogeom, left to it.
 
+**Address completion (ADR-070).** A path typed in the address offered
+only "Go to …"; the user asked for what Dolphin's location bar offers, or
+better.
+
+- The folder typed is read once on a worker (a pane's listing when one
+  shows it), and its names matched in memory at each key: case ignored
+  unless a capital is typed, whole name, start, a word's start, anywhere;
+  folders then files, ranked by Jump's new `jump.scores` (zoxide within a
+  folder, recent files); hidden names for a dot. Eight rows; what the
+  first adds drawn muted after the text, and Enter goes there.
+- Tab: the part the names share, else the row highlighted, a folder then
+  listed; words leaving one name shown become its path. Right or End
+  takes the rest drawn. `./` and `../` from the folder shown. A folder
+  part naming nothing is abbreviated, fish-like (`~/w/sk/`). A place's
+  text completes through `LocationProvider::complete` (tags answers);
+  words starting a scheme offer its place.
+- Enter on a file shows it selected in its folder (hidden files then
+  shown, and said); Shift+Enter opens it. The rows are a list box heard
+  by a screen reader.
+- Checked: unit tests (matching, ranking, sharing, the rest drawn, paths
+  resolved, a tag's text split); in a window on Xvfb (debug build) with a
+  synthetic home: `~/Do` and Tab, a file revealed, a hidden one shown,
+  `~/w/sk/` abbreviated and taken, Ctrl+Z, words to a path, `tr`, a tag
+  completed, `../sk` from inside, Down then Right, zoxide's ranking, and
+  `bench-data/flat100k` (100,000 names) typed into. Matching those names
+  takes 1.8 to 4.4 ms a key in release, 6 to 65 ms in a debug build.
+  Over AT-SPI (`just a11y-check`): the rows a list box, the row the
+  arrows reach said as focused, the typed text and caret still read.
+  Not checked: Shift+Enter in the window (it would open an application
+  on the test display), a slow disk's "Reading…" line, a screen reader
+  itself (Orca), Windows and macOS (compiled only).
+
 ---
 
 ## Maps

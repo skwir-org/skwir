@@ -102,6 +102,39 @@ pub fn rank(
     out
 }
 
+/// How much the user goes to a name of a folder (`jump.scores`).
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct Score {
+    #[serde(with = "skwir_core::os_path")]
+    pub path: PathBuf,
+    pub score: f64,
+}
+
+/// What zoxide and the recent files say of the names in `folder`: a
+/// folder's score is zoxide's for it and for every folder within it, so
+/// the way to where the user goes ranks first; a file's is how recently
+/// it was used. Names neither knows are left out.
+pub fn scores_in(folder: &Path, dirs: &[zoxide::ZEntry], files: &[xbel::Recent]) -> Vec<Score> {
+    let now = SystemTime::now();
+    let mut by: HashMap<PathBuf, f64> = HashMap::new();
+    for d in dirs {
+        if let Ok(within) = d.path.strip_prefix(folder)
+            && let Some(std::path::Component::Normal(name)) = within.components().next()
+        {
+            *by.entry(folder.join(name)).or_default() += d.score;
+        }
+    }
+    for r in files.iter().filter(|r| r.path.parent() == Some(folder)) {
+        let days = now
+            .duration_since(r.visited)
+            .map_or(f64::MAX, |d| d.as_secs_f64() / 86_400.0);
+        *by.entry(r.path.clone()).or_default() += 1.0 / (1.0 + days);
+    }
+    by.into_iter()
+        .map(|(path, score)| Score { path, score })
+        .collect()
+}
+
 /// What the candidates are ranked from, gathered on a worker: ranking must
 /// be quick, and asking zoxide runs a process and checking recent files
 /// stats each one.
@@ -200,6 +233,12 @@ struct CandidatesArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ScoresArgs {
+    /// The folder whose names are scored.
+    folder: PathArg,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ToArgs {
     path: PathArg,
     #[serde(default)]
@@ -291,6 +330,25 @@ impl Plugin for JumpPlugin {
                 };
                 refresh(&index, &lifetime, app);
                 Ok(Outcome::Value(serde_json::to_value(ranked)?))
+            },
+        )
+        .data();
+        let index = Arc::clone(&self.index);
+        let gathered = Arc::clone(&self.gathered);
+        let lifetime = self.lifetime.lock().clone();
+        app.commands.register::<ScoresArgs, _>(
+            ID,
+            "jump.scores",
+            "Jump scores in a folder",
+            "How much the user goes to each name of a folder, from what zoxide and the recent files list said last: a folder counts the folders within it",
+            move |a, app| {
+                first_need(&gathered, &index, &lifetime, app);
+                let scores = {
+                    let ix = index.lock();
+                    scores_in(&a.folder.into_inner(), &ix.dirs, &ix.files)
+                };
+                refresh(&index, &lifetime, app);
+                Ok(Outcome::Value(serde_json::to_value(scores)?))
             },
         )
         .data();
@@ -493,6 +551,40 @@ mod tests {
 
     fn app(root: &Path) -> Arc<App> {
         App::new(AppConfig::ephemeral(root)).unwrap()
+    }
+
+    #[test]
+    fn a_folder_scores_what_zoxide_knows_within_it_and_a_file_its_recency() {
+        let z = |score, path: &str| zoxide::ZEntry {
+            score,
+            path: path.into(),
+        };
+        let dirs = vec![
+            z(40.0, "/w/proj/app"),
+            z(2.0, "/w/proj"),
+            z(10.0, "/w/proj/lib/deep"),
+            z(7.0, "/w/notes"),
+            z(99.0, "/elsewhere"),
+            z(5.0, "/w"),
+        ];
+        let files = vec![
+            xbel::Recent {
+                path: "/w/todo.txt".into(),
+                mime: None,
+                visited: SystemTime::now(),
+            },
+            xbel::Recent {
+                path: "/w/proj/readme.md".into(),
+                mime: None,
+                visited: SystemTime::now(),
+            },
+        ];
+        let mut scores = scores_in(Path::new("/w"), &dirs, &files);
+        scores.sort_by(|a, b| a.path.cmp(&b.path));
+        let paths: Vec<_> = scores.iter().map(|s| s.path.to_str().unwrap()).collect();
+        assert_eq!(paths, ["/w/notes", "/w/proj", "/w/todo.txt"]);
+        assert!((scores[1].score - 52.0).abs() < 1e-9, "its own and within");
+        assert!((scores[2].score - 1.0).abs() < 0.01, "used just now");
     }
 
     #[test]

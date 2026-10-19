@@ -27,8 +27,9 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::command::Invocation;
 use skwir_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
 use skwir_core::location::{
-    Crumb, EmptyState, EventSink, ListingEvent, Location, LocationProvider, Narrowing, OpenContext,
-    OpenLocation, Toggle, Trail, Verb, Verbs, escape, unescape,
+    Completion, Completions, Crumb, EmptyState, EventSink, ListingEvent, Location,
+    LocationProvider, Narrowing, OpenContext, OpenLocation, Toggle, Trail, Verb, Verbs, escape,
+    unescape,
 };
 use skwir_core::metadata::{
     TagRef, clean_tag, same_tag, tag_leaf, tag_parent, tag_under, tag_within,
@@ -1218,6 +1219,36 @@ impl LocationProvider for Provider {
             .unwrap_or(plain);
         vec![Crumb::new("Tags", tags.location())]
     }
+
+    /// A tag's tags, for the name typed after it (`tags:/Places/Fr`): what
+    /// `places` lists of the tag before it, in its folder and narrowed as
+    /// the text says.
+    fn complete(&self, rest: &str) -> Option<Completions> {
+        let (range, parent) = completing(rest);
+        let items = self
+            .places(&Address::parse(&parent).location())
+            .into_iter()
+            .map(|crumb| Completion {
+                text: escape(crumb.label.as_bytes()),
+                label: crumb.label,
+                location: crumb.location,
+                inside: Some('/'),
+            })
+            .collect();
+        Some(Completions {
+            typed: String::from_utf8_lossy(&unescape(&rest[range.clone()])).into_owned(),
+            range,
+            items,
+        })
+    }
+}
+
+/// Where in a tag location's text the name being typed is (the last of
+/// its tag's, before what narrows it), and the text of the tag it is in.
+fn completing(rest: &str) -> (std::ops::Range<usize>, String) {
+    let end = rest.find('?').unwrap_or(rest.len());
+    let start = rest[..end].rfind('/').map_or(0, |slash| slash + 1);
+    (start..end, format!("{}{}", &rest[..start], &rest[end..]))
 }
 
 #[cfg(test)]
@@ -1237,6 +1268,23 @@ mod tests {
             tag: tag.map(str::to_owned),
             ..Address::default()
         }
+    }
+
+    // Unix's paths.
+    #[cfg(unix)]
+    #[test]
+    fn the_name_completed_is_the_last_of_the_tag_and_what_narrows_it_stays() {
+        assert_eq!(completing(""), (0..0, String::new()));
+        assert_eq!(completing("/Pla"), (1..4, "/".to_owned()));
+        assert_eq!(completing("/Places/Fr"), (8..10, "/Places/".to_owned()));
+        assert_eq!(
+            completing("/Places/Fr?in=/srv/photos&with=family"),
+            (8..10, "/Places/?in=/srv/photos&with=family".to_owned())
+        );
+        let (_, parent) = completing("/Places/Fr?in=/srv/photos");
+        let parent = Address::parse(&parent);
+        assert_eq!(parent.tag.as_deref(), Some("Places"));
+        assert_eq!(parent.scope, Some(PathBuf::from("/srv/photos")));
     }
 
     // Unix's paths.

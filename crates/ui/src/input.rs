@@ -107,6 +107,10 @@ pub enum InputEvent {
     Changed,
 }
 
+/// Right or End at the end of the text while a hint follows it: the hint
+/// is taken (`TextInput::set_hint`). Only a field given hints sends it.
+pub struct HintTaken;
+
 /// The text and selection an edit started from.
 type Snapshot = (SharedString, Range<usize>);
 
@@ -190,9 +194,14 @@ pub struct TextInput {
     is_selecting: bool,
     /// Kept only for text that is not masked: a passphrase leaves no trail.
     history: History,
+    /// What the text may go on with, drawn muted after it while the cursor
+    /// is at its end (`set_hint`).
+    hint: Option<SharedString>,
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
+
+impl EventEmitter<HintTaken> for TextInput {}
 
 impl TextInput {
     pub fn new(placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
@@ -210,6 +219,7 @@ impl TextInput {
             scroll_x: px(0.),
             is_selecting: false,
             history: History::default(),
+            hint: None,
         }
     }
 
@@ -275,6 +285,43 @@ impl TextInput {
         cx.notify();
     }
 
+    /// Replace the whole text as an edit, the cursor at its end: Ctrl+Z
+    /// takes it back (a completion taken).
+    pub fn replace_all(&mut self, text: &str, cx: &mut Context<Self>) {
+        if !self.masked {
+            let before = (self.content.clone(), self.selected_range.clone());
+            self.history.record(before, None);
+        }
+        self.content = text.to_owned().into();
+        let end = self.content.len();
+        self.selected_range = end..end;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        cx.emit(InputEvent::Changed);
+        cx.notify();
+    }
+
+    /// What the text may go on with (a completion): drawn muted after it
+    /// while the cursor is at its end with nothing selected, taken by
+    /// Right or End there (`HintTaken`). The hint is not the text: what
+    /// the field holds stays what was typed.
+    pub fn set_hint(&mut self, hint: Option<String>, cx: &mut Context<Self>) {
+        let hint = hint.filter(|h| !h.is_empty()).map(SharedString::from);
+        if hint != self.hint {
+            self.hint = hint;
+            cx.notify();
+        }
+    }
+
+    /// The hint, when it shows: the cursor at the end, nothing selected or
+    /// being composed.
+    fn hint_shown(&self) -> Option<&SharedString> {
+        let end = self.content.len();
+        (self.selected_range == (end..end) && self.marked_range.is_none() && !self.masked)
+            .then_some(self.hint.as_ref())
+            .flatten()
+    }
+
     pub fn select_all_now(&mut self, cx: &mut Context<Self>) {
         self.selected_range = 0..self.content.len();
         self.selection_reversed = false;
@@ -319,7 +366,9 @@ impl TextInput {
     }
 
     fn right(&mut self, _: &Right, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_range.is_empty() {
+        if self.hint_shown().is_some() {
+            cx.emit(HintTaken);
+        } else if self.selected_range.is_empty() {
             self.move_to(self.next_boundary(self.selected_range.end), cx);
         } else {
             self.move_to(self.selected_range.end, cx);
@@ -360,7 +409,11 @@ impl TextInput {
     }
 
     fn end(&mut self, _: &End, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(self.content.len(), cx);
+        if self.hint_shown().is_some() {
+            cx.emit(HintTaken);
+        } else {
+            self.move_to(self.content.len(), cx);
+        }
     }
 
     fn select_home(&mut self, _: &SelectHome, _: &mut Window, cx: &mut Context<Self>) {
@@ -832,9 +885,19 @@ impl Element for TextElement {
         } else {
             (content, style.color)
         };
+        // A hint follows the text, muted, only where it shows.
+        let hint = input
+            .hint_shown()
+            .filter(|_| !input.content.is_empty() && input.focus_handle.is_focused(window))
+            .cloned();
+        let typed_len = display_text.len();
+        let display_text: SharedString = match &hint {
+            Some(hint) => format!("{display_text}{hint}").into(),
+            None => display_text,
+        };
 
         let run = TextRun {
-            len: display_text.len(),
+            len: typed_len,
             font: style.font(),
             color: text_color,
             background_color: None,
@@ -858,13 +921,20 @@ impl Element for TextElement {
                     ..run.clone()
                 },
                 TextRun {
-                    len: display_text.len() - marked.end,
+                    len: typed_len - marked.end,
                     ..run
                 },
             ]
             .into_iter()
             .filter(|r| r.len > 0)
             .collect()
+        } else if hint.is_some() {
+            let muted = TextRun {
+                len: display_text.len() - typed_len,
+                color: theme.text_muted,
+                ..run.clone()
+            };
+            vec![run, muted]
         } else {
             vec![run]
         };

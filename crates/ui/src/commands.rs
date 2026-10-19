@@ -212,6 +212,10 @@ mod args {
         /// Search the home folder instead of where the pill says.
         #[serde(default)]
         everywhere: bool,
+        /// Open the file the address names, rather than show it in its
+        /// folder.
+        #[serde(default)]
+        open: bool,
     }
 
     #[derive(Deserialize, JsonSchema)]
@@ -628,6 +632,11 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
         "ui.omnibox_submit",
         r#"{"everywhere":true}"#,
         "Search everywhere",
+    ),
+    (
+        "ui.omnibox_submit",
+        r#"{"open":true}"#,
+        "Open the file named",
     ),
     ("ui.about", r#"{"close":true}"#, "Close About"),
     // The sidebar, walked as the file list's rows.
@@ -1304,7 +1313,12 @@ pub fn declare_all(app: &App) {
         app,
         "ui.omnibox_submit",
         "Go",
-        "Run the address's suggestion, or search the home folder",
+        "Run the address's suggestion, search the home folder, or open the file it names",
+    );
+    none(
+        "ui.omnibox_complete",
+        "Complete",
+        "Complete what the address is typed: the part the names typed share, else the suggestion highlighted, a folder then listed",
     );
     declare::<Object>(
         app,

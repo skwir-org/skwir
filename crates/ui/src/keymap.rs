@@ -152,6 +152,9 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("escape", "ui.focus_pane", Some("sidebar")),
     ("tab", "ui.toolbar_next", None),
     ("shift-tab", "ui.toolbar_prev", None),
+    // Tab completes a path or a place typed in the address, while there
+    // is something to complete; else it walks on, as everywhere.
+    ("tab", "ui.omnibox_complete", Some("address completes")),
     ("enter", "ui.toolbar_activate", Some("toolbar_button")),
     ("space", "ui.toolbar_activate", Some("toolbar_button")),
     ("escape", "ui.toolbar_close", Some("toolbar_popup")),
@@ -389,6 +392,12 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "alt-enter",
         "ui.omnibox_submit",
         r#"{"everywhere":true}"#,
+        Some("address"),
+    ),
+    (
+        "shift-enter",
+        "ui.omnibox_submit",
+        r#"{"open":true}"#,
         Some("address"),
     ),
     // The sidebar's keys, its places walked as the file list's rows.
@@ -1190,6 +1199,7 @@ pub(crate) fn condition(flag: &str) -> String {
         "creates" => "where new places can be made",
         "restores" => "in the trash",
         "filtered" => "filtered by name",
+        "completes" => "while what is typed can be completed",
         "labelling" => "while links are labelled",
         other => other,
     }
