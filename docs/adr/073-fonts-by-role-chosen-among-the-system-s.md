@@ -96,15 +96,17 @@ while Skwir runs).
    terminal's cells. macOS and Windows list every family for code until
    they say (`docs/PORTING.md`).
 6. **A long list narrows as you type.** A choice of more than
-   `settings_view::FILTERED` entries (fonts, icon themes, bat's themes)
-   opens with a field above its list that keeps the entries holding what
-   is typed, the list drawn a row at a time as it scrolls; the arrows on
-   its control open it rather than step through it, which would apply,
-   and load, each font passed. A font's
-   entries are written in the interface font; a line beneath them shows
-   the entry pointed at, or else the one chosen, in its own family: a
-   family drawn is loaded and kept by the text system, so only the one
-   looked at is. The closed control writes the family chosen in itself.
+   `settings_view::FILTERED` entries (icon themes, bat's themes), and a
+   font's however few (`settings_view::narrows`: the code font's
+   monospaced families may be under the count), opens with a field above
+   its list that keeps the entries holding what is typed, the list drawn
+   a row at a time as it scrolls; the arrows on its control open it
+   rather than step through it, which would apply, and load, each font
+   passed. A font's entries are written in the interface font; a line
+   beneath them shows the entry pointed at, or else the one chosen, in
+   its own family: a family drawn is loaded and kept by the text system,
+   so only the one looked at is. The closed control writes the family
+   chosen in itself.
 7. **Where they are shown (ADR-072).** The interface font on Appearance,
    after Desktop colors, folded; the reading font on Reading's Text,
    essential (people are divided on it: serif or sans, a face made for

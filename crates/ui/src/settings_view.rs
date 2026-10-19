@@ -33,7 +33,7 @@ const TEXTS_MIN: f32 = 240.;
 const TABLE_CHOICE: f32 = 210.;
 
 /// A dropdown of more choices than this opens with a field that narrows
-/// them (`settings::Narrowed`): the fonts, the icon themes, bat's themes.
+/// them (`settings::Narrowed`): the icon themes, bat's themes.
 pub(crate) const FILTERED: usize = 12;
 /// The rows a long dropdown shows at once; the rest scroll.
 const LONG_ROWS: usize = 12;
@@ -42,6 +42,16 @@ const CHOICE_ROW: f32 = 26.;
 /// code the shapes that tell characters apart.
 const SPECIMEN: &str = "Sphinx of black quartz, judge my vow. 0123456789";
 const SPECIMEN_CODE: &str = "if (x != 0O) { l1 = I[i]; } // => <=";
+
+/// Whether `spec`'s dropdown opens as a list that narrows
+/// (`settings::Narrowed`): one of more than `FILTERED` choices, and a
+/// font's however few the system has, for the specimen its list writes
+/// (ADR-073): the code font is offered only the monospaced families, often
+/// fewer.
+pub(crate) fn narrows(spec: &SettingSpec) -> bool {
+    spec.constraints.choices.len() > FILTERED
+        || crate::settings::FONT_KEYS.contains(&spec.key.as_str())
+}
 
 /// The family a font setting's control and specimen are written in when
 /// it says Automatic: what its role resolved to (`Theme::font`…).
@@ -606,7 +616,7 @@ impl SettingsView {
     ) -> AnyElement {
         let key = row.spec.key.clone();
         let open = self.dropdown.as_deref() == Some(key.as_str());
-        let long = row.spec.constraints.choices.len() > FILTERED;
+        let long = narrows(&row.spec);
         let toggle = key.clone();
         // A font's control is written in the font it gives.
         let written_in = font_role(&key, theme);
@@ -772,9 +782,14 @@ impl SettingsView {
             ),
         )
         .track_scroll(&narrowed.scroll)
-        .h(px(CHOICE_ROW * count.clamp(1, LONG_ROWS) as f32));
+        .h_full();
+        // Up to `LONG_ROWS` rows, fewer where the popover leaves less
+        // under the row (`popover::hang`): the list gives way, never the
+        // field nor the specimen, which would run past the window's foot.
         let list = crate::modal::options("choices-list", "Choices", count, a11y)
             .relative()
+            .h(px(CHOICE_ROW * count.clamp(1, LONG_ROWS) as f32))
+            .min_h_0()
             .child(rows)
             .when(count == 0, |d| {
                 d.child(
@@ -807,6 +822,7 @@ impl SettingsView {
                 .font_id(&gpui::font(family.clone()))
                 .is_ok();
             div()
+                .flex_none()
                 .border_t_1()
                 .border_color(theme.border)
                 .mt_1()
@@ -830,6 +846,7 @@ impl SettingsView {
                 .id(SharedString::from(format!("choices-{key}")))
                 .key_context("SettingChoices")
                 .w(px(300.))
+                .min_h_0()
                 .p_1()
                 .flex()
                 .flex_col()
@@ -847,14 +864,14 @@ impl SettingsView {
                     this.close_choices(window, cx);
                 }))
                 // The field has the keyboard as long as the list is open.
-                .child(controls::field(
+                .child(div().flex_none().flex().child(controls::field(
                     &narrowed.field,
                     None,
                     true,
                     false,
                     Some("search"),
                     theme,
-                ))
+                )))
                 .child(list)
                 .children(specimen)
                 .into_any_element(),

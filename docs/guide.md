@@ -408,7 +408,7 @@ code in documents, the byte view and the terminal, which offers the fonts
 whose letters are all one width. Automatic is the font your desktop's
 settings name for each (its interface, document and monospace fonts)
 while Desktop colors is on, else Skwir's own. A change shows at once. A
-long list of choices, like the fonts, opens with a field that narrows it
+long list of choices, and a font's, opens with a field that narrows it
 as you type, and a font's list writes the one you point at in itself.
 
 If the settings file cannot be read (edited by hand into something that

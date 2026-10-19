@@ -137,17 +137,20 @@ The key is the owner's; the page is the subject's (ADR-072).
   (`elements::adaptive::Fit` measures both forms; no character counts),
   else a dropdown. A text field narrows before the texts do.
 - **A long list narrows.** A dropdown of more than
-  `settings_view::FILTERED` choices (the fonts, the icon themes, bat's
-  themes) opens with a field that keeps the choices holding every word
-  typed, its list drawn a row at a time as it scrolls
-  (`settings::Narrowed`); Up, Down and the page keys move its highlight
-  (`ui.list_move`, which the dialog lets through), the pointer too, Enter
-  takes it, Escape closes the list alone. The arrows on its control open
-  it rather than step: each step would apply its choice (a font loaded
-  for each one passed). A font's list writes the choice highlighted in
-  itself, beneath it, and only that one (ADR-073): a family drawn is
-  loaded and kept by the text system. Choices listed on a worker while
-  the list is open replace its own, what is typed kept.
+  `settings_view::FILTERED` choices (the icon themes, bat's themes), and
+  a font's however few (the code font's monospaced families may be),
+  opens with a field that keeps the choices holding every word typed,
+  its list drawn a row at a time as it scrolls (`settings::Narrowed`),
+  twelve rows or fewer where the popover leaves less under the row: the
+  list gives way, never the field nor a font's specimen; Up, Down and
+  the page keys move its highlight (`ui.list_move`, which the dialog
+  lets through), the pointer too, Enter takes it, Escape closes the list
+  alone. The arrows on its control open it rather than step: each step
+  would apply its choice (a font loaded for each one passed). A font's
+  list writes the choice highlighted in itself, beneath it, and only
+  that one (ADR-073): a family drawn is loaded and kept by the text
+  system. Choices listed on a worker while the list is open replace its
+  own, what is typed kept.
 - **The fold.** A page with essentials shows them, under their sections,
   and folds the rest under More settings (N) at its end; unfolded, it
   shows all, in order, and stays so (`ui.settings_unfolded`, the

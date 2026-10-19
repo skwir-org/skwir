@@ -51,6 +51,8 @@ pub const DESKTOP_COLORS_KEY: &str = "ui.desktop_colors";
 pub const FONT_KEY: &str = "ui.font";
 pub const READING_FONT_KEY: &str = "reading.font";
 pub const CODE_FONT_KEY: &str = "ui.code_font";
+/// The three, in that order.
+pub const FONT_KEYS: [&str; 3] = [FONT_KEY, READING_FONT_KEY, CODE_FONT_KEY];
 /// The fonts' Automatic.
 pub const FONT_AUTO: &str = "auto";
 /// The icon theme skwir draws with, by its folder's name; Automatic is the
@@ -236,7 +238,7 @@ pub(crate) fn list_fonts(app: &Arc<App>, text: Arc<gpui::TextSystem>) {
         move || {
             let installed = crate::fonts::Installed::read(&text);
             let Some(app) = weak.upgrade() else { return };
-            for key in [FONT_KEY, READING_FONT_KEY, CODE_FONT_KEY] {
+            for key in FONT_KEYS {
                 app.settings
                     .declare(font_spec(key, &font_chosen(&app, key), Some(&installed)));
             }
@@ -1017,9 +1019,10 @@ pub(crate) struct Stop {
     pub key: Option<String>,
 }
 
-/// A long dropdown open (`settings_view::FILTERED` choices or more: the
-/// fonts, the icon themes, bat's themes): a field above its list keeps the
-/// choices holding what is typed, and only the rows on screen are drawn.
+/// A long dropdown open (`settings_view::narrows`: more than
+/// `settings_view::FILTERED` choices, the icon themes, bat's themes, and
+/// every font's): a field above its list keeps the choices holding what is
+/// typed, and only the rows on screen are drawn.
 pub(crate) struct Narrowed {
     pub(crate) key: String,
     pub(crate) field: Entity<TextInput>,
@@ -1583,8 +1586,7 @@ impl SettingsView {
         // A long list opens rather than step: each step would apply its
         // choice, a font loaded for each one passed.
         let long = self.row(&key).is_some_and(|row| {
-            row.spec.kind == SettingKind::Choice
-                && row.spec.constraints.choices.len() > crate::settings_view::FILTERED
+            row.spec.kind == SettingKind::Choice && crate::settings_view::narrows(&row.spec)
         });
         if long {
             self.open_choices(&key, window, cx);
@@ -1607,9 +1609,9 @@ impl SettingsView {
                 narrowed.narrow(&query);
             }
         } else if let Some(key) = &self.dropdown
-            && self.row(key).is_some_and(|row| {
-                row.spec.constraints.choices.len() > crate::settings_view::FILTERED
-            })
+            && self
+                .row(key)
+                .is_some_and(|row| crate::settings_view::narrows(&row.spec))
         {
             self.dropdown = None;
         }
@@ -2194,6 +2196,17 @@ mod tests {
         // Code is offered the monospaced ones, reading every one.
         let code = font_spec(CODE_FONT_KEY, "auto", Some(&installed));
         assert_eq!(code.constraints.choices, ["auto", "Hack"]);
+        // However few, a font's list is the one that narrows and writes
+        // the family highlighted in itself; a short choice of another
+        // kind stays a plain dropdown.
+        assert!(crate::settings_view::narrows(&code));
+        assert!(!crate::settings_view::narrows(&SettingSpec::choice(
+            "a.look",
+            "Look",
+            "Looks.",
+            "one",
+            &[("one", "One"), ("two", "Two")],
+        )));
         let reading = font_spec(READING_FONT_KEY, "Noto Serif", Some(&installed));
         assert_eq!(reading.constraints.choices.len(), 4);
         assert!(reading.essential, "people are divided on it");
