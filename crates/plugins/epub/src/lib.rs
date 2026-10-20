@@ -724,8 +724,12 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<(r
 /// not its contents. `rbook::Epub::toc` iterates all of them.
 fn table_of_contents(book: &rbook::Epub) -> Vec<Row> {
     let mut rows = Vec::new();
+    // The root is the `nav` (or the `navMap`) itself, its label the
+    // contents' own heading: its entries are the book's.
     if let Some(root) = book.toc().contents() {
-        contents(root, 0, 0, &mut rows);
+        for entry in root {
+            contents(entry, 0, 1, &mut rows);
+        }
     }
     rows
 }
@@ -769,25 +773,28 @@ fn printed_pages(book: &rbook::Epub, keys: &[Option<String>]) -> Vec<PrintedPage
     pages
 }
 
-/// Flatten a contents tree. Wrapper entries without a target (such as the
-/// root nav element) contribute no row and no indentation.
+/// Flatten a contents tree. An entry that leads nowhere but is named (an
+/// EPUB 3 heading over the chapters below it: a part) is a row without a
+/// target, its entries nested under it; one with neither a target nor a
+/// name only wraps its entries: no row, no indentation.
 fn contents(
     entry: rbook::epub::toc::EpubTocEntry<'_>,
     depth: usize,
     level: usize,
     rows: &mut Vec<Row>,
 ) {
-    // `depth` counts the entries shown; `level` every one walked, those
-    // without a target too, so a contents nested deep in entries without
-    // one is not walked as deep as it goes.
+    // `depth` counts the entries shown; `level` every one walked, wrappers
+    // too, so a contents nested deep in wrappers is not walked as deep as
+    // it goes.
     if depth > limits::NESTING || level > limits::XML_DEPTH || rows.len() >= limits::BLOCKS {
         return;
     }
     let mut child_depth = depth;
-    if let Some(href) = entry.href() {
+    let target = entry.href().map(|href| href.as_str().to_owned());
+    if target.is_some() || !entry.label().trim().is_empty() {
         rows.push(Row {
             cells: vec![entry.label().into()],
-            target: Some(href.as_str().into()),
+            target,
             depth,
             ..Row::default()
         });
@@ -942,6 +949,54 @@ mod tests {
         .unwrap();
         assert_eq!(third.position, 2);
         assert!(third.plain_text().contains("Another needle"));
+    }
+
+    /// A part's heading, which leads nowhere, is in the contents and its
+    /// chapters under it; an entry with neither a link nor a name nests
+    /// nothing; the contents' own heading is not an entry.
+    #[test]
+    fn a_heading_over_chapters_holds_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic book in parts.epub");
+        let nav = r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><h1>Contents</h1><ol>
+<li><span>Part one</span><ol><li><a href="one.xhtml">Start</a><ol><li><a href="one.xhtml#s">Section</a></li></ol></li></ol></li>
+<li><a>Part two</a><ol><li><a href="two.xhtml">Middle</a></li></ol></li>
+<li><ol><li><a href="sub/caf%C3%A9%20three.xhtml">End</a></li></ol></li>
+</ol></nav></body></html>"#;
+        write(
+            &path,
+            &[
+                ("mimetype", b"application/epub+zip"),
+                ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+                ("EPUB/book.opf", OPF.as_bytes()),
+                ("EPUB/nav.xhtml", nav.as_bytes()),
+                (
+                    "EPUB/one.xhtml",
+                    br#"<html><body><p>One.</p><h2 id="s">Section</h2></body></html>"#,
+                ),
+                ("EPUB/two.xhtml", br"<html><body><p>Two.</p></body></html>"),
+                (
+                    "EPUB/sub/café three.xhtml",
+                    br"<html><body><p>Three.</p></body></html>",
+                ),
+            ],
+        );
+        let first = inspect(&path, &InspectRequest::default()).unwrap();
+        assert_eq!(
+            first
+                .rows
+                .iter()
+                .map(|r| (r.cells[0].as_str(), r.depth, r.target.is_some(), r.section))
+                .collect::<Vec<_>>(),
+            [
+                ("Part one", 0, false, None),
+                ("Start", 1, true, Some(0)),
+                ("Section", 2, true, Some(0)),
+                ("Part two", 0, false, None),
+                ("Middle", 1, true, Some(1)),
+                ("End", 0, true, Some(2)),
+            ]
+        );
     }
 
     /// Contents are the table of contents: not the landmarks, not the list

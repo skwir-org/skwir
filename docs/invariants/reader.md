@@ -172,6 +172,16 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
 - PDFium reads labels without loading pages (`FPDF_GetPageLabel`); MuPDF
   through its PDF document.
 
+## Outlines
+
+- A document's outline is its entries in reading order, each at the depth
+  its tree gives it (`DocumentInfo::outlines`), walked from child to
+  sibling by every engine; an entry that leads nowhere is kept, without a
+  page. PDFium's is never counted through a bookmark's `parent`, which
+  pdfium-render knows one level up only: the third level read as the
+  second. `tools/pdf/check.py` asserts three levels and an entry without
+  a destination for each engine.
+
 ## Measuring
 
 - Separate renderer time from full UI latency, and include child PSS, not

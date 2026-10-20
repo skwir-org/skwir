@@ -116,19 +116,28 @@ fn document_info(document: &PdfDocument<'_>, first_page: bool) -> DocumentInfo {
             labels: Vec::new(),
         };
     }
-    let outlines = document
-        .bookmarks()
-        .iter()
-        .take(4096)
-        .map(|bookmark| {
-            let mut depth = 0;
-            let mut parent = bookmark.parent();
-            while let Some(p) = parent {
-                depth += 1;
-                if depth >= 32 {
-                    break;
-                }
-                parent = p.parent();
+    DocumentInfo {
+        pages: u32::from(document.pages().len()),
+        outlines: outlines(document),
+        reflowable: false,
+        labels: labels(document),
+    }
+}
+
+/// The outline in reading order, each entry at its depth, walked as the
+/// tree it is: a bookmark's `parent` from pdfium-render knows no parent of
+/// its own, so depth counted through parents stopped at one.
+fn outlines(document: &PdfDocument<'_>) -> Vec<Outline> {
+    /// Entries kept, and nesting.
+    const ENTRIES: usize = 4096;
+    const DEPTH: u32 = 32;
+    fn walk(first: Option<PdfBookmark<'_>>, depth: u32, out: &mut Vec<Outline>) {
+        let mut next = first;
+        while let Some(bookmark) = next {
+            // Each turn keeps an entry, so an outline whose links go round
+            // ends here too.
+            if out.len() >= ENTRIES {
+                return;
             }
             let page = bookmark
                 .destination()
@@ -142,19 +151,20 @@ fn document_info(document: &PdfDocument<'_>, first_page: bool) -> DocumentInfo {
                         .page_index()
                         .ok()
                 });
-            Outline {
+            out.push(Outline {
                 title: bookmark.title().unwrap_or_default(),
                 depth,
                 page: page.map(|p| u32::from(p) + 1),
+            });
+            if depth + 1 < DEPTH {
+                walk(bookmark.first_child(), depth + 1, out);
             }
-        })
-        .collect();
-    DocumentInfo {
-        pages: u32::from(document.pages().len()),
-        outlines,
-        reflowable: false,
-        labels: labels(document),
+            next = bookmark.next_sibling();
+        }
     }
+    let mut out = Vec::new();
+    walk(document.bookmarks().root(), 0, &mut out);
+    out
 }
 
 /// Each page's label, read from the document without loading its pages.

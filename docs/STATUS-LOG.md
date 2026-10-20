@@ -1890,3 +1890,43 @@ scratch folder; nothing of it committed.
 - Not checked: anything on Windows or a Mac, so neither Direct3D's,
   Media Foundation's, VideoToolbox's nor AudioToolbox's decoders; the
   helper's memory there; how the installer could run without Wine.
+
+**Contents listed once, and nested as their sources nest** (the user's
+report: a book's contents named its chapters twice; some books' and PDFs'
+had no indentation between parts, chapters and paragraphs). Three causes,
+each fixed where it was:
+- A book's drawer listed the chapter shown's headings above the book's
+  contents, which name the same chapters. Now a book shows its contents
+  alone, the headings standing in only for a file with no contents of its
+  own (`inspector::outline_drawer`). What the contents leave out of a
+  chapter (an `h2` they do not name) is no longer listed.
+- An EPUB 3 heading over a group of chapters (`<li><span>Part one</span>
+  <ol>…`), which leads nowhere, was dropped with the depth it gave: its
+  chapters stood level with the parts around them. rbook keeps it (a
+  label, no href); `epub::contents` now makes it a row without a target,
+  a label in the drawer, its chapters under it. An entry with neither a
+  link nor a name still only wraps. The `nav`'s own heading is not an
+  entry (the walk starts at its children).
+- PDFium's outline counted each bookmark's depth through `parent()`; a
+  parent from pdfium-render knows no parent of its own, so the third
+  level and below read as the second. The outline is now walked from
+  child to sibling, depth carried, as Poppler's and MuPDF's walks do,
+  within the same bounds (4,096 entries, 32 deep).
+- A file's headings were indented by level less one: an `h4` under an
+  `h2` two steps in, a file starting at `h2` one step in throughout.
+  `inspector::heading_depths` counts the headings above each one it
+  falls under.
+- Tests: `tools/pdf/check.py`'s fixture outline is three deep with an
+  entry without a destination, and the check asserts each entry's title,
+  depth and page. The PDFium helper built before the change failed it
+  ("First paragraph" at depth 1); the new one passed, Poppler and MuPDF
+  (built before) passed unchanged. `a_heading_over_chapters_holds_them`
+  (a part as a span, a part as an `a` without href, a nameless wrapper,
+  the `nav`'s `h1`), `headings_are_indented_by_what_they_fall_under`.
+- In a window (debug build, Xvfb, synthetic files): the EPUB in two parts
+  listed Part one, Chapter 1 and its two sections, Chapter 2, Part two,
+  Chapter 3, each nested, none twice, Chapter 1 then Chapter 2
+  highlighted as the next chapter came; the PDF listed Introduction ›
+  First section › First paragraph and Second chapter › Notes; the
+  Markdown file (`##`, `####`, `###`, `##`) indented 0, 1, 1, 0. Not
+  checked: a real book or PDF, DjVu (its helpers already walk a tree).

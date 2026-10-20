@@ -415,7 +415,10 @@ A text document is read as its structure, or laid out as pages.
   and copy. They are the table of contents alone
   (`epub::table_of_contents`: the EPUB 3 `toc` nav, else the NCX
   `navMap`), never the landmarks, the printed page list or the NCX's
-  copy of the chapters, which `rbook::Epub::toc` also iterates.
+  copy of the chapters, which `rbook::Epub::toc` also iterates. An
+  entry that leads nowhere but is named (an EPUB 3 heading over a group
+  of chapters: a part) is a row without a target, its entries nested
+  under it; one with neither only wraps them, and adds no depth.
 - **A book counts chapters or printed pages** (`Inspection::printed_pages`,
   from `page-list` or NCX `pageList`; the `ui.printed_pages` preference,
   chosen in the count's own picker, `preview_bar::unit_popup`).
@@ -860,6 +863,12 @@ is still to come are in `docs/preview-frame.md`.
   included.
 - **Contents** is one drawer (`outline.rs`) for a document's outline, a
   file's headings and a book's chapters, offered where there are some.
+  - **What it lists**: a book's own contents alone, never the headings of
+    the chapter shown above them, which named its chapters twice; a file
+    without contents of its own, its headings, indented by the headings
+    before them they fall under (`inspector::heading_depths`), never by
+    their level, so a level skipped is one step in. An entry without a
+    target is a label.
   - **Open until closed** (its button, Contents, `ui.preview_contents`):
     a new section of the file (a book's next chapter) keeps it open; a
     new file closes it, but while pinned.

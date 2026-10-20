@@ -94,7 +94,10 @@ def main():
                                   stdout=subprocess.PIPE, text=True) as process:
                 info = reply(process, 0)["Ready"]
                 assert info["pages"] == 3
-                assert [entry["page"] for entry in info["outlines"]] == [1, 2]
+                # The outline's entries in order, each at its depth.
+                assert [(entry["title"], entry["depth"], entry["page"]) for entry in info["outlines"]] == [
+                    ("Introduction", 0, 1), ("First section", 1, 1), ("First paragraph", 2, 2),
+                    ("Second chapter", 0, 2), ("Notes", 1, None)], info["outlines"]
                 # Pages named otherwise than by their number carry their names.
                 assert info["labels"] == (["i", "1", "2"] if labelled else []), info["labels"]
                 hits = send(process, {"Search": {"query": "needle"}})["Matches"]

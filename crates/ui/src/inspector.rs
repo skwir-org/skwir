@@ -706,15 +706,15 @@ impl State {
             }
         }
     }
-    /// The printed page at the top of the view: the last to start at or
-    /// before it in this section, else the last of the sections before;
-    /// `None` before the first (a book's front matter).
     /// The block at the top of the view, read from the list's scroll: the
     /// first while the inspection's picture, the list's first item, is.
     fn top_block(&self, data: &Inspection) -> usize {
         let top = self.list.logical_scroll_top().item_ix.saturating_sub(1);
         top.min(data.blocks.len().saturating_sub(1))
     }
+    /// The printed page at the top of the view: the last to start at or
+    /// before it in this section, else the last of the sections before;
+    /// `None` before the first (a book's front matter).
     pub(crate) fn printed_page(&self, data: &Inspection) -> Option<usize> {
         let top = self.list.logical_scroll_top().item_ix.saturating_sub(1);
         self.page_starts
@@ -2541,8 +2541,10 @@ fn has_contents(data: &Inspection) -> bool {
     data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book
 }
 
-/// Headings of what is shown, and a book's chapters, in the shared
-/// contents, while they are open and there are some.
+/// What is shown in the shared contents, while they are open and there
+/// are some: a book's own contents, else the headings of what is shown (a
+/// book's would list again, above its chapters, the names its contents
+/// give them).
 pub fn outline_drawer(
     shell: &Shell,
     view: View<'_>,
@@ -2553,17 +2555,27 @@ pub fn outline_drawer(
     if !view.state.outline || !has_contents(data) {
         return None;
     }
-    let headings: Vec<usize> = data
-        .blocks
-        .iter()
-        .enumerate()
-        .filter(|(_, block)| block.heading > 0)
-        .map(|(index, _)| index)
-        .collect();
+    let chapters: Vec<&skwir_core::inspection::Row> = if data.kind == InspectionKind::Book {
+        data.rows.iter().collect()
+    } else {
+        Vec::new()
+    };
+    let headings: Vec<usize> = if chapters.is_empty() {
+        data.blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| block.heading > 0)
+            .map(|(index, _)| index)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let depths = heading_depths(headings.iter().map(|&index| data.blocks[index].heading));
     let mut entries: Vec<crate::outline::Entry> = headings
         .iter()
-        .map(|&index| crate::outline::Entry {
-            depth: usize::from(data.blocks[index].heading).saturating_sub(1),
+        .zip(depths)
+        .map(|(&index, depth)| crate::outline::Entry {
+            depth,
             title: data.blocks[index].text.clone().into(),
             command: Some((
                 "ui.inspect",
@@ -2571,21 +2583,16 @@ pub fn outline_drawer(
             )),
         })
         .collect();
-    let chapters: Vec<&skwir_core::inspection::Row> = if data.kind == InspectionKind::Book {
-        data.rows
-            .iter()
-            .filter(|row| row.target.is_some())
-            .collect()
-    } else {
-        Vec::new()
-    };
+    // A row without a target (a part's heading) is only a label.
     entries.extend(chapters.iter().map(|row| crate::outline::Entry {
         depth: row.depth,
         title: row.cells.join(" ").into(),
-        command: Some((
-            "ui.inspect",
-            serde_json::json!({"action":"target","target":row.target}),
-        )),
+        command: row.target.as_ref().map(|target| {
+            (
+                "ui.inspect",
+                serde_json::json!({"action":"target","target":target}),
+            )
+        }),
     }));
     let top = view.state.top_block(data);
     let current = current_chapter(data, &chapters, top)
@@ -2600,6 +2607,24 @@ pub fn outline_drawer(
         theme,
         cx,
     ))
+}
+
+/// Each heading's depth in the contents, from its level (1 to 6): how many
+/// of the headings before it it falls under, so a level skipped (2 after
+/// 1, then 4) is one step in, not two, and headings that start at level 2
+/// start at the margin.
+fn heading_depths(levels: impl IntoIterator<Item = u8>) -> Vec<usize> {
+    let mut above: Vec<u8> = Vec::new();
+    levels
+        .into_iter()
+        .map(|level| {
+            while above.last().is_some_and(|&over| over >= level) {
+                above.pop();
+            }
+            above.push(level);
+            above.len() - 1
+        })
+        .collect()
 }
 
 /// The heading of the part shown: the last at or above `top`, the block at
@@ -3531,6 +3556,24 @@ mod tests {
         assert_eq!(current_heading(&headings, 4), Some(1));
         assert_eq!(current_heading(&headings, 8), Some(1));
         assert_eq!(current_heading(&headings, 20), Some(2));
+    }
+
+    #[test]
+    fn headings_are_indented_by_what_they_fall_under() {
+        use super::heading_depths;
+        assert_eq!(heading_depths([1, 2, 3, 2, 1]), [0, 1, 2, 1, 0]);
+        assert_eq!(
+            heading_depths([1, 3, 3, 2]),
+            [0, 1, 1, 1],
+            "a level skipped"
+        );
+        assert_eq!(heading_depths([2, 3, 2]), [0, 1, 0], "no level 1");
+        assert_eq!(
+            heading_depths([3, 1, 2]),
+            [0, 0, 1],
+            "one above all before it"
+        );
+        assert!(heading_depths([]).is_empty());
     }
 
     #[test]

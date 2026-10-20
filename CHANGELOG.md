@@ -10,7 +10,13 @@
   chapter, a heading) and follow you as you read. They no longer close
   when a book moves to its next chapter, and the new pin at their top
   keeps them open beside the text, which narrows to make room; the pin is
-  remembered. A book's sections are indented under their chapters.
+  remembered. A book's sections are indented under their chapters, and
+  its parts are in its contents with their chapters under them; a PDF's
+  outline nests as deep as it goes (with PDFium, all below its second
+  level stood at the second); a file's headings are indented by the
+  headings they fall under, never two steps for a level skipped. A
+  book's contents no longer list the chapter's own headings again above
+  its chapters.
 - **A search of the whole disk** that plocate answers says how old its
   answer is ("as of Yesterday 03:00", plocate's database at its last
   update): a file made or renamed since is not in it. Agents and scripts

@@ -58,10 +58,16 @@ def reader(path, kind="text", crop=False, angle=90, named=False, labelled=False)
     local = len(objects)
     for page in page_ids:
         objects[page - 1] = objects[page - 1][:-2] + f" /Annots [{web} 0 R {local} 0 R] >>".encode()
+    # An outline three deep, as a book's chapters, sections and paragraphs,
+    # and an entry that leads nowhere (a heading over the ones below it).
     outline = len(objects) + 1
-    objects.append(f"<< /Type /Outlines /First {outline + 1} 0 R /Last {outline + 2} 0 R /Count 2 >>".encode())
-    objects.append(f"<< /Title (Introduction) /Parent {outline} 0 R /Next {outline + 2} 0 R /Dest [{page_ids[0]} 0 R /Fit] >>".encode())
-    objects.append(f"<< /Title (Second chapter) /Parent {outline} 0 R /Prev {outline + 1} 0 R /Dest {destination} >>".encode())
+    first, section, paragraph, second, notes = range(outline + 1, outline + 6)
+    objects.append(f"<< /Type /Outlines /First {first} 0 R /Last {second} 0 R /Count 5 >>".encode())
+    objects.append(f"<< /Title (Introduction) /Parent {outline} 0 R /Next {second} 0 R /First {section} 0 R /Last {section} 0 R /Count 2 /Dest [{page_ids[0]} 0 R /Fit] >>".encode())
+    objects.append(f"<< /Title (First section) /Parent {first} 0 R /First {paragraph} 0 R /Last {paragraph} 0 R /Count 1 /Dest [{page_ids[0]} 0 R /Fit] >>".encode())
+    objects.append(f"<< /Title (First paragraph) /Parent {section} 0 R /Dest [{page_ids[1]} 0 R /Fit] >>".encode())
+    objects.append(f"<< /Title (Second chapter) /Parent {outline} 0 R /Prev {first} 0 R /First {notes} 0 R /Last {notes} 0 R /Count 1 /Dest {destination} >>".encode())
+    objects.append(f"<< /Title (Notes) /Parent {second} 0 R >>".encode())
     names = f" /Dests << /chapter2 [{page_ids[1]} 0 R /Fit] >>" if named else ""
     if labelled:
         names += " /PageLabels << /Nums [0 << /S /r >> 1 << /S /D >>] >>"
