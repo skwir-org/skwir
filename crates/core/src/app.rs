@@ -940,12 +940,14 @@ impl App {
             .collect();
         let complete = listing.is_complete();
         open.close();
-        Ok(Outcome::Value(serde_json::json!({
+        let mut answer = serde_json::json!({
             "location": location,
             "complete": complete,
             "total": order.len(),
             "entries": entries,
-        })))
+        });
+        say_as_of(&mut answer, listing.as_of());
+        Ok(Outcome::Value(answer))
     }
 
     /// Block until the active pane's listing is complete (tests and CLI only).
@@ -1716,6 +1718,22 @@ struct EntryInfo {
     selected: bool,
 }
 
+/// An `entries` answer that is an index's says so, and as of when
+/// (`Listing::as_of`); one that is the files as they are says nothing.
+fn say_as_of(answer: &mut serde_json::Value, as_of: Option<&crate::location::AsOf>) {
+    let (Some(as_of), Some(answer)) = (as_of, answer.as_object_mut()) else {
+        return;
+    };
+    let updated = as_of
+        .updated
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    answer.insert(
+        "as_of".into(),
+        serde_json::json!({ "by": as_of.by, "updated": updated }),
+    );
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SelectArgs {
     #[serde(default)]
@@ -2403,7 +2421,7 @@ mod builtin {
             "core",
             "entries",
             "List entries",
-            "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again",
+            "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it",
             |a, app| {
                 use crate::entry::keys;
                 let info = |id: EntryId, e: &crate::entry::Entry, path: Option<PathBuf>, selected: bool| EntryInfo {
@@ -2447,14 +2465,16 @@ mod builtin {
                         Some(info(id, p.entry(id)?, p.path_of(id), p.selection.contains(id)))
                     })
                     .collect();
-                Ok(Outcome::Value(serde_json::json!({
+                let mut answer = serde_json::json!({
                     "pane": pane,
                     "location": p.shown(),
                     "complete": p.listing.is_complete(),
                     "total": order.len(),
                     "selected": p.selection.iter().filter(|id| !withheld.contains(id)).count(),
                     "entries": entries,
-                })))
+                });
+                say_as_of(&mut answer, p.listing.as_of());
+                Ok(Outcome::Value(answer))
             },
         )
         .data();

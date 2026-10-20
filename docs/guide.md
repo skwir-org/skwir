@@ -222,7 +222,11 @@ the text can be typed as is:
   within, the files' kinds and years), each with a count. Over a folder,
   View › Narrow by shows the same bar.
 - A search uses the desktop's indexes where they run (Baloo, plocate) to
-  go faster, and always checks the files themselves.
+  go faster, and always checks the files themselves. A search of `/` by
+  name alone is plocate's answer where it is installed, as its database
+  was at its last update: the footer says when (`as of Yesterday 03:00`),
+  and a file made or renamed since is not found. Search a folder to walk
+  it.
 
 ## Tags, ratings and comments
 

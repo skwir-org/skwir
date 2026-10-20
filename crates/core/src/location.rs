@@ -183,6 +183,19 @@ impl fmt::Display for Location {
     }
 }
 
+/// What a listing's answer rests on when it is not the files as they are
+/// now: an index as it stood when it was last brought up to date
+/// (ADR-050). A search of `/` that plocate answers is as of its database's
+/// update, so what was made, renamed or removed since is not in it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AsOf {
+    /// What answered, in the user's words: "plocate's database".
+    pub by: String,
+    /// When it was last brought up to date; `None` when that cannot be
+    /// told.
+    pub updated: Option<std::time::SystemTime>,
+}
+
 /// What an open location streams. Every variant is a batch.
 #[derive(Clone, Debug)]
 pub enum ListingEvent {
@@ -209,6 +222,11 @@ pub enum ListingEvent {
     /// permissions, times or attributes (its tags). Whoever describes the
     /// location reads it again (`Listing::itself_version`).
     Changed,
+    /// What the answer rests on: an index as of its last update, or
+    /// `None` for the files as they are (a walk). Said by each run of a
+    /// listing that may rest on either, so a run that walks takes back
+    /// what an earlier one said.
+    AsOf(Option<AsOf>),
 }
 
 /// Called after events are queued so a sleeping UI can wake and pump.
@@ -884,6 +902,9 @@ pub struct Listing {
     entries: IndexMap<EntryId, Slot>,
     complete: bool,
     error: Option<String>,
+    /// What the answer rests on, when not the files as they are
+    /// (`ListingEvent::AsOf`).
+    as_of: Option<AsOf>,
     /// Incremented on every change, so views know when to recompute. An
     /// event that changes nothing (a stat that found what the listing
     /// already had) leaves it alone, so work keyed on it cannot loop.
@@ -927,6 +948,7 @@ impl Default for Listing {
             entries: IndexMap::new(),
             complete: false,
             error: None,
+            as_of: None,
             version: id,
             names_version: id,
             order_version: id,
@@ -1075,6 +1097,10 @@ impl Listing {
             ListingEvent::Changed => {
                 self.itself_version = stamp();
                 delta.any = true;
+            }
+            ListingEvent::AsOf(as_of) => {
+                delta.any = self.as_of != as_of;
+                self.as_of = as_of;
             }
         }
         for (moved, version) in [
@@ -1500,6 +1526,12 @@ impl Listing {
         self.error.as_deref()
     }
 
+    /// What the answer rests on when it is an index's as of its last
+    /// update, not the files as they are now.
+    pub fn as_of(&self) -> Option<&AsOf> {
+        self.as_of.as_ref()
+    }
+
     pub fn get(&self, id: EntryId) -> Option<&Entry> {
         self.entries.get(&id).map(|s| &s.entry)
     }
@@ -1532,6 +1564,30 @@ impl Listing {
 mod tests {
     use super::*;
     use crate::entry::EntryKind;
+
+    #[test]
+    fn what_an_answer_rests_on_is_kept_until_a_run_says_otherwise() {
+        let mut listing = Listing::default();
+        assert_eq!(listing.as_of(), None, "the files as they are");
+        let as_of = AsOf {
+            by: "an index".into(),
+            updated: Some(std::time::SystemTime::UNIX_EPOCH),
+        };
+        let before = listing.version();
+        assert!(listing.apply(ListingEvent::AsOf(Some(as_of.clone()))));
+        assert_eq!(listing.as_of(), Some(&as_of));
+        assert_ne!(listing.version(), before, "who draws it sees it");
+        let said = listing.version();
+        assert!(!listing.apply(ListingEvent::AsOf(Some(as_of.clone()))));
+        assert_eq!(listing.version(), said, "said again, nothing changed");
+        assert!(listing.apply(ListingEvent::Complete));
+        assert_eq!(listing.as_of(), Some(&as_of), "complete keeps it");
+        assert!(
+            listing.apply(ListingEvent::AsOf(None)),
+            "a walk takes it back"
+        );
+        assert_eq!(listing.as_of(), None);
+    }
 
     #[test]
     fn a_folder_is_the_same_place_by_its_path_anything_else_as_written() {

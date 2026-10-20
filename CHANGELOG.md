@@ -1,5 +1,12 @@
 # Changes
 
+## Unreleased
+
+- **A search of the whole disk** that plocate answers says how old its
+  answer is ("as of Yesterday 03:00", plocate's database at its last
+  update): a file made or renamed since is not in it. Agents and scripts
+  are told too (`entries` answers `as_of`).
+
 ## 0.2.0 (2026-10-20)
 
 Skwir 0.2.0 turns 3D models in the preview, opens DjVu books, takes the

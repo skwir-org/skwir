@@ -7,6 +7,7 @@
 //! Messages are toasts (`set_status`), never a footer's.
 
 use gpui::{AnyElement, Context, div, prelude::*, px};
+use skwir_core::location::AsOf;
 
 use crate::format;
 use crate::shell::Shell;
@@ -84,15 +85,38 @@ impl Shell {
 /// A pane footer's height.
 pub const HEIGHT: f32 = 26.;
 
+/// What the footer says of an answer that is an index's (`Listing::as_of`),
+/// and its tooltip: `as of Today 03:00`, then what answered and what that
+/// leaves out.
+fn as_of_said(as_of: &AsOf, now: &jiff::Zoned) -> (String, String) {
+    match as_of.updated {
+        Some(updated) => (
+            format!("as of {}", format::friendly_time(updated, now)),
+            format!(
+                "Found in {}, last brought up to date {}: what was made, renamed or removed since is not in this answer.",
+                as_of.by,
+                format::exact_time(updated)
+            ),
+        ),
+        None => (
+            format!("as of {}", as_of.by),
+            format!(
+                "Found in {}, whose last update cannot be told: what was made, renamed or removed since is not in this answer.",
+                as_of.by
+            ),
+        ),
+    }
+}
+
 /// The footer of the pane being rendered; `window` adds the window's own
 /// state at its end (the last pane's).
 pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let selection = shell.selection_ctx();
-    let (count, complete, error, is_query, sweep, total) = {
+    let (count, complete, error, is_query, sweep, total, as_of) = {
         let ws = shell.app.workspace.read();
         let pane = ws.pane(shell.pane);
-        pane.map_or((0, true, None, false, None, None), |p| {
+        pane.map_or((0, true, None, false, None, None, None), |p| {
             (
                 shell.ui().list.sorted.len(),
                 p.listing.is_complete(),
@@ -101,6 +125,7 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
                 p.selection.sweeping(),
                 // Filtered by name or narrowed: how many there are in all.
                 p.is_filtered().then(|| p.listing.sorted(p.sort).len()),
+                p.listing.as_of().cloned(),
             )
         })
     };
@@ -132,9 +157,15 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         Some(bytes) => format!("{items} · {}", format::size(bytes)),
         None => items,
     };
+    // An index's answer says as of when (ADR-050): what was made, renamed
+    // or removed since is not in it.
+    let as_of = as_of.map(|as_of| as_of_said(&as_of, &jiff::Zoned::now()));
     // What it says is the status line a screen reader reads when asked,
     // never announced: it changes with every key.
-    let mut said = shell.a11y.then(|| items.clone());
+    let mut said = shell.a11y.then(|| match &as_of {
+        Some((text, _)) => format!("{items}, {text}"),
+        None => items.clone(),
+    });
     let mut bar = div()
         .id(("pane-footer", shell.pane.0 as usize))
         .role(gpui::Role::Status)
@@ -154,6 +185,16 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         .bg(theme.surface)
         .text_color(theme.text_muted)
         .child(items);
+    if let Some((text, tip)) = as_of {
+        let tip: gpui::SharedString = tip.into();
+        bar = bar.child(
+            div()
+                .id("listing-as-of")
+                .flex_none()
+                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+                .child(text),
+        );
+    }
     if selection.count > 0 {
         let mut text = format!("{} selected", format::thousands(selection.count));
         // A part of the size is never said as the whole: until every
@@ -303,4 +344,36 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         );
     }
     bar.into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_index_s_answer_says_as_of_when_and_what_it_leaves_out() {
+        let now = jiff::Timestamp::from_second(1_800_000_007)
+            .unwrap()
+            .to_zoned(jiff::tz::TimeZone::UTC);
+        let an_hour_before = std::time::SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(1_800_000_007 - 3600);
+        let as_of = AsOf {
+            by: "plocate's database".into(),
+            updated: Some(an_hour_before),
+        };
+        let (text, tip) = as_of_said(&as_of, &now);
+        assert_eq!(text, "as of Today 07:00");
+        assert!(tip.starts_with("Found in plocate's database, last brought up to date "));
+        assert!(tip.ends_with("is not in this answer."), "{tip}");
+
+        let (text, tip) = as_of_said(
+            &AsOf {
+                updated: None,
+                ..as_of
+            },
+            &now,
+        );
+        assert_eq!(text, "as of plocate's database");
+        assert!(tip.contains("whose last update cannot be told"), "{tip}");
+    }
 }

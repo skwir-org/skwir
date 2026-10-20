@@ -1713,3 +1713,39 @@ the desktop" as each was built.
   on the long list, the session's own display.
 
 ---
+
+## 2026-10-20
+
+**The plan and this log.** `docs/PLAN.md` had grown to 2,600 lines, half
+of them the day-by-day record now above (from "Built beyond the plan, by
+area"); it keeps the phases, their status and a "What is left" gathered
+from these notes (1,248 lines). New entries go here.
+
+**plocate's answer dated** (ADR-050's amendment, step C of "Names indexed
+by skwird"). A search of `/` that plocate answers skipped the walk without
+saying so: a file made or renamed since the last `updatedb`, usually a
+day, was not found, and nothing told. Now a listing keeps what its
+answer rests on (`location::AsOf`, sent by each run of a search as
+`ListingEvent::AsOf`, `None` for a walk); plocate's time is the oldest
+modification time of the databases it reads (its help's default, then
+`LOCATE_PATH`'s). The footer adds "as of Yesterday 03:00", its tooltip
+what answered and what that leaves out; `entries` answers `as_of`.
+- Tests: the help's default (`the_default_database_is_the_one_the_help_names`),
+  the oldest database (`an_answer_is_as_of_its_oldest_database`), the
+  listing keeping it and a walk taking it back
+  (`what_an_answer_rests_on_is_kept_until_a_run_says_otherwise`), a search
+  through the app with a stand-in plocate on `PATH`, its listing and its
+  `entries`, then a search of a folder saying nothing
+  (`a_search_plocate_answers_is_as_of_its_database`), the footer's words
+  (`an_index_s_answer_says_as_of_when_and_what_it_leaves_out`).
+- plocate 1.1.25 (nixpkgs), with a database its `updatedb` made of a
+  synthetic tree: its help writes `(default is /var/cache/locatedb)` on
+  standard output, it reads `LOCATE_PATH`'s databases after its default,
+  and a missing default fails it (exit 1, a message), so the search walks.
+- In a window (debug build, Xvfb, a synthetic home, a stand-in plocate
+  whose database was dated the day before at 03:00): `skwir cmd
+  query.search` over `/` showed "1 result · as of Yesterday 03:00" with
+  the tooltip "Found in plocate's database, last brought up to date
+  2026-10-19 03:00:00: …", and `entries` answered `as_of` with that time;
+  F5 kept it; a search of a folder showed "2 results" alone. Not checked:
+  Orca reading the status line, a real system database.

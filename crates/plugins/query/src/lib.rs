@@ -919,7 +919,10 @@ mod tests {
                 }
                 ListingEvent::Complete => break,
                 ListingEvent::Error(e) => panic!("{expr}: {e}"),
-                ListingEvent::Removed(_) | ListingEvent::Renamed(_) | ListingEvent::Changed => {}
+                ListingEvent::Removed(_)
+                | ListingEvent::Renamed(_)
+                | ListingEvent::Changed
+                | ListingEvent::AsOf(_) => {}
             }
         }
         names
@@ -1667,6 +1670,93 @@ mod tests {
             plocate::locate_with(&bin.join("empty"), &["x".into()], false, &never),
             Some(Vec::new())
         );
+    }
+
+    /// A search of `/` that plocate answers is as of its database's last
+    /// update, in the listing and to whoever asks `entries`; a search that
+    /// walks says nothing (ADR-050).
+    #[cfg(unix)]
+    #[test]
+    #[allow(unsafe_code)]
+    fn a_search_plocate_answers_is_as_of_its_database() {
+        use skwir_core::location::AsOf;
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let db = tmp.path().join("plocate db");
+        let updated = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_007);
+        std::fs::File::create(&db)
+            .unwrap()
+            .set_modified(updated)
+            .unwrap();
+        let hit = tmp.path().join("q3 report.txt");
+        std::fs::write(&hit, "x").unwrap();
+        // Its help as plocate's says it, on standard output.
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1\" = --help ]; then\n  echo '  -d, --database DBPATH  search for files in DBPATH'\n  echo '                         (default is {db})'\n  exit 0\nfi\nprintf '%s\\0' '{hit}'\n",
+            db = db.display(),
+            hit = hit.display(),
+        );
+        std::fs::write(bin.join("plocate"), script).unwrap();
+        std::fs::set_permissions(bin.join("plocate"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin.clone()];
+        paths.extend(std::env::split_paths(&path));
+        // SAFETY: one test per process under nextest, set before the app
+        // starts any thread.
+        unsafe {
+            std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+            std::env::remove_var("LOCATE_PATH");
+        }
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        let search = |root: &Path| {
+            app.dispatch(&Invocation::with_args(
+                "query.search",
+                // The temporary folder may be under a hidden one.
+                &serde_json::json!({"expr": "report hidden:yes", "root": root}),
+            ))
+            .unwrap();
+            assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+            let Outcome::Value(answer) = app
+                .dispatch(&Invocation::with_args("entries", &serde_json::json!({})))
+                .unwrap()
+            else {
+                panic!("entries answers a value");
+            };
+            let as_of = app
+                .workspace
+                .read()
+                .pane(pane)
+                .unwrap()
+                .listing
+                .as_of()
+                .cloned();
+            (as_of, answer)
+        };
+
+        let (as_of, answer) = search(Path::new("/"));
+        assert_eq!(
+            as_of,
+            Some(AsOf {
+                by: plocate::BY.into(),
+                updated: Some(updated),
+            })
+        );
+        assert_eq!(
+            answer["as_of"],
+            serde_json::json!({"by": "plocate's database", "updated": 1_800_000_007})
+        );
+        assert_eq!(answer["total"], 1);
+        assert_eq!(answer["entries"][0]["path"], hit.to_str().unwrap());
+
+        let (as_of, answer) = search(tmp.path());
+        assert_eq!(as_of, None, "a walk is the files as they are");
+        assert!(answer.get("as_of").is_none(), "{answer}");
+        assert_eq!(answer["entries"][0]["path"], hit.to_str().unwrap());
     }
 
     #[test]

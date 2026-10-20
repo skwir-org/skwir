@@ -15,7 +15,8 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::entry::{Entry, EntryId, EntryKind};
 use skwir_core::fs::Statter;
 use skwir_core::location::{
-    EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
+    AsOf, EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext,
+    OpenLocation,
 };
 use skwir_core::op::Change;
 use skwir_core::scheduler::Priority;
@@ -636,6 +637,16 @@ impl Shared {
         }
     }
 
+    /// Say what this run's answer rests on (`ListingEvent::AsOf`): an
+    /// index as of its last update, or the files as the walk finds them.
+    /// Each run says it, so a walk takes back what plocate said before.
+    fn rests_on(&self, cancel: &CancelToken, as_of: Option<AsOf>) {
+        let _walk = self.walk.lock();
+        if !cancel.is_cancelled() {
+            self.tx.send(ListingEvent::AsOf(as_of));
+        }
+    }
+
     fn run(&self, q: &Query, cancel: &CancelToken) {
         if !q.root.is_dir() {
             let _walk = self.walk.lock();
@@ -661,9 +672,16 @@ impl Shared {
             batcher.flush();
             hinted
         };
-        if let Some(paths) = crate::plocate::try_locate(q, cancel) {
+        if let Some(located) = crate::plocate::try_locate(q, cancel) {
+            self.rests_on(
+                cancel,
+                Some(AsOf {
+                    by: crate::plocate::BY.to_owned(),
+                    updated: located.updated,
+                }),
+            );
             let mut statter = Statter::default();
-            for p in paths {
+            for p in located.paths {
                 if cancel.is_cancelled() {
                     return;
                 }
@@ -677,6 +695,7 @@ impl Shared {
                 consider(q, &p, (name, known), &batcher, &deferred, &mut statter);
             }
         } else {
+            self.rests_on(cancel, None);
             let mut builder = ignore::WalkBuilder::new(&q.root);
             builder
                 .hidden(!q.hidden)
@@ -1022,7 +1041,10 @@ mod tests {
                 ListingEvent::Removed(ids) => removed += ids.len(),
                 ListingEvent::Complete => return (added, removed),
                 ListingEvent::Error(e) => panic!("{e}"),
-                ListingEvent::Updated(_) | ListingEvent::Renamed(_) | ListingEvent::Changed => {}
+                ListingEvent::Updated(_)
+                | ListingEvent::Renamed(_)
+                | ListingEvent::Changed
+                | ListingEvent::AsOf(_) => {}
             }
         }
     }

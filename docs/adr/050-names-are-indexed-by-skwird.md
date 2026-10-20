@@ -1,8 +1,10 @@
 # ADR-050: Names are indexed by skwird
 
-Status: accepted, 2026-10-10. Not built. Amends ADR-026 (an index that
-proves its coverage answers) and the last point of ADR-003 (Skwir may
-start skwird for the session).
+Status: accepted, 2026-10-10. Built in part: a search that plocate
+answers says as of when (2026-10-20, amendment below); skwird, coverage
+and its provider are not built. Amends ADR-026 (an index that proves its
+coverage answers) and the last point of ADR-003 (Skwir may start skwird
+for the session).
 
 ## Context
 
@@ -68,13 +70,13 @@ start skwird for the session).
 
 - Under a covered root (live or just checked), a home name search
   answers from the index without walking; elsewhere it hints and walks.
-- A plocate-answered search of `/` still skips the walk but will say its
-  answer is as of the last update (not built). skwird's system service,
-  where it covers `/`, replaces plocate.
+- A plocate-answered search of `/` still skips the walk but says its
+  answer is as of the last update (built 2026-10-20, amendment below).
+  skwird's system service, where it covers `/`, replaces plocate.
 - Possible later uses, each a decision of its own: the address field as
   one types, Usage of a whole tree from folder totals, "recently
   changed", the tags index's checks, a file's other names.
-- **Nothing is built.** Order:
+- **Built:** plocate's answer dated (2026-10-20). The rest, in order:
   1. skwird phase 0: measure on the reference home, warm and cold, and
      fanotify on btrfs as root;
   2. skwird phase 1: a Linux user engine, started on demand;
@@ -82,3 +84,38 @@ start skwird for the session).
      by skwird").
 
   Release 0.1 ships without it.
+
+## Amendments
+
+### 2026-10-20: plocate's answer is dated
+
+The Consequences' "will say its answer is as of the last update", built
+(`docs/PLAN.md`, "Names indexed by skwird", step C):
+
+- **In the core,** a listing keeps what its answer rests on:
+  `location::AsOf` (what answered, in the user's words, and when it was
+  last brought up to date) through `ListingEvent::AsOf(Option<AsOf>)`,
+  read with `Listing::as_of`. Each run of a search says it, `None` for a
+  walk, so a refresh that walks takes back what plocate said. Point 3's
+  coverage (live, checked) is to extend this, not to add another way of
+  saying it.
+- **The time** is the oldest modification time of the databases plocate
+  read: its default, which its help names (`(default is
+  /var/lib/plocate/plocate.db)`; NixOS's is `/var/cache/locatedb`), then
+  those `LOCATE_PATH` adds, as plocate reads them. `updatedb` writes a
+  database whole, so its time is the update's. When none can be stat-ed
+  the answer is as of a time that cannot be told, and says so. A missing
+  default makes plocate fail, and the search walks.
+- **Said:** the pane's footer adds "as of Yesterday 03:00" after the
+  count, its tooltip what answered and what that leaves out; the status
+  line a screen reader reads says it too; `entries` answers `as_of`
+  (`by`, `updated` in seconds), to scripts and agents.
+- **Checked:** unit tests (the help's default, the oldest of several
+  databases, the listing keeping and taking it back, the footer's words);
+  a search through the app with a stand-in plocate on `PATH`, its
+  listing and its `entries`, then a walk saying nothing; plocate 1.1.25's
+  help and its reading of `LOCATE_PATH` (a missing default fails, exit 1).
+  In a window on Xvfb (debug build, a stand-in plocate whose database was
+  dated the day before at 03:00): the footer and its tooltip, kept by F5,
+  gone in a search of a folder. Not checked: Orca reading the status
+  line; a real system database (the reference machine has no plocate).

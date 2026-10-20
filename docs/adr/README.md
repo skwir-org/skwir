@@ -63,7 +63,7 @@ them by topic.
 | [047](047-previews-from-outside-are-files-skwir-shows.md) | A preview from outside is a file Skwir shows | built |
 | [048](048-archives-are-extracted-by-libarchive-in-its-sandbox.md) | Archives extracted by libarchive, sandboxed, as a step | built |
 | [049](049-a-file-and-its-names.md) | A file and its names are two identities | built |
-| [050](050-names-are-indexed-by-skwird.md) | Names are indexed by skwird | not built |
+| [050](050-names-are-indexed-by-skwird.md) | Names are indexed by skwird | plocate's answer dated (2026-10-20); skwird and coverage not built |
 | [051](051-text-is-read-where-it-is-shown.md) | Text is read where it is shown | built |
 | [052](052-portable-appimage.md) | A portable AppImage built in a distribution root, and its tree as a tarball | built and tried on x86-64 Linux |
 | [053](053-local-releases-minimal-ci.md) | Local Linux releases; minimal routine GitHub CI | implemented; upload tested with a fake GitHub CLI |

@@ -116,6 +116,7 @@ A claim still never skips the walk; a proof does. Not built.
   link followed, every mount below reported. It may name more files
   than match, never fewer.
 - **plocate proves nothing**: a search of `/` it answers keeps skipping
-  the walk, as before, but dates its answer to the database's update.
+  the walk, as before, but dates its answer to the database's update
+  (built 2026-10-20, ADR-050's amendment).
 - `HintProvider` gains coverage; skwird is the first provider; the tags
   count could be a second.

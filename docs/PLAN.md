@@ -85,7 +85,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Phase 5: Cross-platform](#phase-5-cross-platform) | 5a gate passed 2026-10-06; 5b waits for machines | ~6 weeks |
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
-| [Names indexed by skwird](#names-indexed-by-skwird) | planned (ADR-050) | — |
+| [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; A, B and D wait for skwird (ADR-050) | — |
 | [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A, B and the fonts by role built 2026-10-19; C to E planned (ADR-071, ADR-073) | — |
 | [Phase 7: AI](#phase-7-ai) | planned, after Release 0.1 | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
@@ -1104,7 +1104,8 @@ what is left.
 
 ## Names indexed by skwird
 
-ADR-050. Planned; nothing is built.
+ADR-050. Step C built 2026-10-20; A, B and D wait for skwird's phase 1
+(its repository; its phase 0, the measurements, done 2026-10-11).
 
 **Goal:** name searches that answer from an index where it proves it is
 current, and walk only where it does not. skwird is a project of its
@@ -1123,7 +1124,11 @@ after Release 0.1 and after skwird's phase 1.
   a fake skwird on a socket of the test's own, plus the real engine
   where it is installed.
 - **C. plocate as of its time.** A search of `/` that plocate answers
-  says when its database was last updated.
+  says when its database was last updated. **Built 2026-10-20**
+  (ADR-050's amendment): a listing keeps what its answer rests on
+  (`ListingEvent::AsOf`), the footer says "as of Yesterday 03:00" with a
+  tooltip, `entries` answers `as_of`. Not checked: Orca reading the
+  footer; a real system database (none on the reference machine).
 - **D. Then, each decided on its own:** the address field searching as
   one types, Usage of a tree from skwird's folder totals, "recently
   changed", the tags index's checks.

@@ -136,3 +136,9 @@ and `notes.agree` are core `notes.*` commands.
 - **Hints (ADR-026):** a search asks indexes first (`skwir_core::hints`:
   Baloo, the tags index), checks what they name, and still walks: the
   index hints, the walk answers.
+- **An answer that is an index's says so (ADR-050).** A search of `/`
+  that plocate answers does not walk; each run says what its answer
+  rests on (`ListingEvent::AsOf`: the index and when it was last brought
+  up to date, or `None` for a walk), and the footer and `entries` say it.
+  A provider that answers from an index without walking says it the same
+  way; the shell shows it whatever the scheme.
