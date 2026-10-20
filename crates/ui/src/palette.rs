@@ -202,6 +202,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.model_smooth", "{}", "Model: smooth shading"),
     ("ui.wrap_lines", "{}", "Preview: wrap lines"),
     ("ui.preview_contents", "{}", "Preview: contents"),
+    ("ui.contents_pin", "{}", "Preview: keep contents open"),
     ("ui.preview_copy", "{}", "Preview: copy"),
     ("ui.preview_select_all", "{}", "Preview: select all"),
     ("ui.preview_close", "{}", "Preview: close"),

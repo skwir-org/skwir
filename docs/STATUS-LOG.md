@@ -1766,3 +1766,34 @@ alternated three times: own share 107.5–107.7 MiB against 107.3–107.6,
 first frame 77.8–89.0 ms against 76.9–80.3 (one later run at load 15 read
 102–399 ms). Not checked: Plasma, Xfce, Cinnamon or MATE sessions, the
 session's own display.
+
+**Contents that follow the reader** (the user's request and design). A
+book's contents closed whenever its next chapter came: a new section reset
+the inspection's state, the drawer's flag with it (a PDF's survived page
+turns, its reader's state was kept). Now the flag is kept from section to
+section; a new file closes the contents unless pinned. The pin, at the
+contents' top (`ui.contents_pin`, `reading.contents_pinned`, remembered
+as Full width is), makes them a column beside the content, which narrows,
+open until closed; unpinned they stay a drawer that choosing closes, as
+before. The part shown is highlighted and kept in view: a document's by
+the page its reader counts, a book's by the section shown
+(`Row::section`, which the EPUB plugin sets from the spine as it does for
+printed pages) and where its fragments are, else the heading at the top
+of the view. A book's rows are indented by their depth (all were at 0).
+- Tests: `the_contents_stay_open_from_chapter_to_chapter`,
+  `the_part_shown_is_the_chapter_then_the_heading_at_the_top` (fragments
+  placed and not, a section the contents do not name, none),
+  `the_part_shown_is_the_last_entry_at_or_before_the_page`, the EPUB's
+  rows knowing their chapters (an escaped name included).
+- In a window (debug build, Xvfb, a synthetic EPUB with a cover, a
+  chapter of two parts and two more, and a synthetic 8-page PDF with a
+  nested outline): the next chapter kept the drawer open, its row
+  highlighted; scrolling past a part's anchor moved the highlight to it;
+  choosing a chapter unpinned closed the drawer; the pin made a column,
+  the text reflowing narrower, and was saved; choosing kept it open; the
+  PDF, selected next, opened with its outline beside it, the highlight
+  following the reader's page (Results on page 7; the reader counts the
+  page at the middle of the view, so page 3 at the top read as 4, Runs);
+  after a restart the contents opened pinned; unpinning made a drawer
+  again and was saved. Not checked: a screen reader (the contents' rows
+  have no role yet), the parked view of a container, a real book.

@@ -460,7 +460,12 @@ pub struct State {
     pub(crate) selection: Option<crate::inspector_text::Selection>,
     dragging: bool,
     font_size: f32,
-    outline: bool,
+    /// The contents are open: kept from section to section of a file (a
+    /// book's chapters), and to the next file while pinned
+    /// (`Shell::keep_contents`).
+    pub(crate) outline: bool,
+    /// The contents' list, following the part shown.
+    contents: crate::outline::Follow,
     /// The find field, open under its button like the document reader's.
     find: Option<crate::preview_bar::Field>,
     /// What the find looked for last and the match it is on (a block or
@@ -518,6 +523,7 @@ impl Default for State {
             dragging: false,
             font_size: TEXT_SIZE,
             outline: false,
+            contents: crate::outline::Follow::default(),
             find: None,
             sought: None,
             section_input: None,
@@ -608,13 +614,14 @@ impl State {
         self.list.remeasure_items(0..self.list.item_count());
     }
 
+    /// Another section of the file came (a book's next chapter): what was
+    /// of the last goes, the contents stay open as they were.
     pub fn reset(&mut self, data: &Inspection) {
         self.labels = None;
         self.collapsed = Arc::default();
         self.selected = None;
         self.selection = None;
         self.dragging = false;
-        self.outline = false;
         self.sideways.set_offset(gpui::point(px(0.), px(0.)));
         self.reindex(data);
     }
@@ -702,6 +709,12 @@ impl State {
     /// The printed page at the top of the view: the last to start at or
     /// before it in this section, else the last of the sections before;
     /// `None` before the first (a book's front matter).
+    /// The block at the top of the view, read from the list's scroll: the
+    /// first while the inspection's picture, the list's first item, is.
+    fn top_block(&self, data: &Inspection) -> usize {
+        let top = self.list.logical_scroll_top().item_ix.saturating_sub(1);
+        top.min(data.blocks.len().saturating_sub(1))
+    }
     pub(crate) fn printed_page(&self, data: &Inspection) -> Option<usize> {
         let top = self.list.logical_scroll_top().item_ix.saturating_sub(1);
         self.page_starts
@@ -2108,16 +2121,19 @@ pub fn parked(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
         .child(bar(shell, view, theme, cx))
         .children(notice(view.display).map(|text| crate::preview::notice_strip(text, theme)))
         // What is read is on paper, as the panel's own is (`preview::body`).
-        .child(
+        .child(crate::outline::around(
             div()
                 .flex_1()
                 .min_h_0()
                 .flex()
                 .flex_col()
                 .bg(theme.bg)
-                .child(content(shell, view, theme, cx)),
-        )
-        .children(outline_drawer(shell, view, theme, cx))
+                .child(content(shell, view, theme, cx))
+                .into_any_element(),
+            outline_drawer(shell, view, theme, cx),
+            shell,
+            theme,
+        ))
         .into_any_element()
 }
 
@@ -2520,51 +2536,117 @@ pub fn notice(display: &Display) -> Option<String> {
     (!data.notice.is_empty()).then(|| data.notice.clone())
 }
 
-/// Headings of what is shown, and a book's chapters, in the shared drawer.
+/// Whether what is shown has contents: headings, or a book's chapters.
+fn has_contents(data: &Inspection) -> bool {
+    data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book
+}
+
+/// Headings of what is shown, and a book's chapters, in the shared
+/// contents, while they are open and there are some.
 pub fn outline_drawer(
     shell: &Shell,
     view: View<'_>,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
-    if !view.state.outline {
+    let data = &view.display.data;
+    if !view.state.outline || !has_contents(data) {
         return None;
     }
-    let data = &view.display.data;
-    let mut entries: Vec<crate::outline::Entry> = data
+    let headings: Vec<usize> = data
         .blocks
         .iter()
         .enumerate()
         .filter(|(_, block)| block.heading > 0)
-        .map(|(index, block)| crate::outline::Entry {
-            depth: usize::from(block.heading).saturating_sub(1),
-            title: block.text.clone().into(),
+        .map(|(index, _)| index)
+        .collect();
+    let mut entries: Vec<crate::outline::Entry> = headings
+        .iter()
+        .map(|&index| crate::outline::Entry {
+            depth: usize::from(data.blocks[index].heading).saturating_sub(1),
+            title: data.blocks[index].text.clone().into(),
             command: Some((
                 "ui.inspect",
                 serde_json::json!({"action":"block","index":index}),
             )),
         })
         .collect();
-    if data.kind == InspectionKind::Book {
-        entries.extend(data.rows.iter().filter_map(|row| {
-            let target = row.target.as_ref()?;
-            Some(crate::outline::Entry {
-                depth: 0,
-                title: row.cells.join(" ").into(),
-                command: Some((
-                    "ui.inspect",
-                    serde_json::json!({"action":"target","target":target}),
-                )),
-            })
-        }));
-    }
-    Some(crate::outline::drawer(
+    let chapters: Vec<&skwir_core::inspection::Row> = if data.kind == InspectionKind::Book {
+        data.rows
+            .iter()
+            .filter(|row| row.target.is_some())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    entries.extend(chapters.iter().map(|row| crate::outline::Entry {
+        depth: row.depth,
+        title: row.cells.join(" ").into(),
+        command: Some((
+            "ui.inspect",
+            serde_json::json!({"action":"target","target":row.target}),
+        )),
+    }));
+    let top = view.state.top_block(data);
+    let current = current_chapter(data, &chapters, top)
+        .map(|chapter| headings.len() + chapter)
+        .or_else(|| current_heading(&headings, top));
+    Some(crate::outline::contents(
         entries,
+        current,
+        &view.state.contents,
         ("ui.preview_contents", serde_json::json!({})),
         shell,
         theme,
         cx,
     ))
+}
+
+/// The heading of the part shown: the last at or above `top`, the block at
+/// the top of the view.
+fn current_heading(headings: &[usize], top: usize) -> Option<usize> {
+    headings.iter().rposition(|&block| block <= top)
+}
+
+/// A book's chapter shown, among its contents' `chapters`: of those that
+/// open the section shown, the last starting at or above `top` (where its
+/// fragment points, else the section's start; one whose fragment the
+/// section does not hold is not placed), else its first; for a section the
+/// contents do not name (a cover, a chapter split in files), the last of
+/// those before it.
+fn current_chapter(
+    data: &Inspection,
+    chapters: &[&skwir_core::inspection::Row],
+    top: usize,
+) -> Option<usize> {
+    let shown = data.position;
+    let here: Vec<usize> = (0..chapters.len())
+        .filter(|&i| chapters[i].section == Some(shown))
+        .collect();
+    if let Some(&first) = here.first() {
+        let starts = |i: usize| match chapters[i]
+            .target
+            .as_deref()
+            .and_then(|target| target.split_once('#'))
+        {
+            None => Some(0),
+            Some((_, fragment)) => data
+                .blocks
+                .iter()
+                .position(|block| block.anchors.iter().any(|name| name == fragment)),
+        };
+        return Some(
+            here.iter()
+                .copied()
+                .rfind(|&i| starts(i).is_some_and(|block| block <= top))
+                .unwrap_or(first),
+        );
+    }
+    let before = chapters
+        .iter()
+        .filter_map(|row| row.section.filter(|&section| section < shown))
+        .max()?;
+    chapters.iter().rposition(|row| row.section == Some(before))
 }
 
 /// Whether `kind` is read, its running text in the reading font: Markdown
@@ -3350,6 +3432,107 @@ fn hex_cell(text: &str, column: usize, theme: &Theme) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
+    /// The contents stay open when the next section comes, as when the
+    /// same one is read again; a new file starts from a new state.
+    #[test]
+    fn the_contents_stay_open_from_chapter_to_chapter() {
+        use super::*;
+        let chapter = |position| {
+            Display::new(
+                Inspection {
+                    kind: InspectionKind::Book,
+                    position,
+                    blocks: vec![Block {
+                        text: "Text".into(),
+                        ..Block::default()
+                    }],
+                    ..Inspection::default()
+                },
+                &crate::code_preview::CodeTheme::own(false),
+            )
+        };
+        let mut state = State {
+            outline: true,
+            ..State::default()
+        };
+        state.arrived(&chapter(0), false);
+        state.arrived(&chapter(1), false);
+        assert!(state.outline, "the next chapter keeps them open");
+        state.arrived(&chapter(1), true);
+        assert!(state.outline, "the chapter read again too");
+    }
+
+    /// The part shown: a book's chapter by the section shown and where in
+    /// it the view is, else the heading at the top of the view.
+    #[test]
+    fn the_part_shown_is_the_chapter_then_the_heading_at_the_top() {
+        use super::*;
+        use skwir_core::inspection::Row;
+        let row = |target: &str, section| Row {
+            cells: vec![target.into()],
+            target: Some(target.into()),
+            section,
+            ..Row::default()
+        };
+        let rows = [
+            row("cover.xhtml", Some(0)),
+            row("one.xhtml", Some(2)),
+            row("one.xhtml#later", Some(2)),
+            row("one.xhtml#gone", Some(2)),
+            row("two.xhtml#start", Some(3)),
+            row("elsewhere.xhtml", None),
+        ];
+        let chapters: Vec<&Row> = rows.iter().collect();
+        let anchored = |name: &str| Block {
+            anchors: vec![name.into()],
+            ..Block::default()
+        };
+        let book = |position, blocks: Vec<Block>| Inspection {
+            kind: InspectionKind::Book,
+            position,
+            blocks,
+            ..Inspection::default()
+        };
+        let one = book(
+            2,
+            vec![Block::default(), Block::default(), anchored("later")],
+        );
+        assert_eq!(current_chapter(&one, &chapters, 0), Some(1));
+        assert_eq!(
+            current_chapter(&one, &chapters, 2),
+            Some(2),
+            "where its fragment points; one the chapter does not hold, nowhere"
+        );
+        let two = book(
+            3,
+            vec![Block::default(), Block::default(), anchored("start")],
+        );
+        assert_eq!(
+            current_chapter(&two, &chapters, 0),
+            Some(4),
+            "above its fragment, its first row still"
+        );
+        let between = book(1, vec![Block::default()]);
+        assert_eq!(
+            current_chapter(&between, &chapters, 0),
+            Some(0),
+            "a section the contents do not name is the one before's"
+        );
+        let first = Inspection {
+            position: 0,
+            ..between.clone()
+        };
+        assert_eq!(current_chapter(&first, &chapters, 0), Some(0));
+        let none: Vec<&Row> = Vec::new();
+        assert_eq!(current_chapter(&one, &none, 0), None);
+
+        let headings = [1, 4, 9];
+        assert_eq!(current_heading(&headings, 0), None, "before the first");
+        assert_eq!(current_heading(&headings, 4), Some(1));
+        assert_eq!(current_heading(&headings, 8), Some(1));
+        assert_eq!(current_heading(&headings, 20), Some(2));
+    }
+
     #[test]
     fn a_section_turns_only_when_the_wheel_pushes_on_from_its_edge() {
         use super::edge_step;

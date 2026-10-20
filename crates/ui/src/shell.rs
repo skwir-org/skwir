@@ -160,6 +160,9 @@ pub struct Preferences {
     /// `ui.model_perspective` and `ui.model_smooth`: how a 3D model is
     /// drawn.
     pub model_look: crate::elements::model::Look,
+    /// `reading.contents_pinned`: the contents stay open beside what is
+    /// read (`outline.rs`).
+    pub contents_pinned: bool,
     /// `core.close_split`: which pane closing the split takes away.
     pub close_split: crate::layout::CloseSplit,
     /// How audio and video play.
@@ -179,6 +182,7 @@ impl Default for Preferences {
             read_ahead: true,
             drag_image: crate::dragicon::Layout::Fan,
             model_look: crate::elements::model::Look::default(),
+            contents_pinned: false,
             close_split: crate::layout::CloseSplit::Other,
             player: crate::player::PlayerPrefs::default(),
         }
@@ -1481,6 +1485,22 @@ impl Shell {
         }
     }
 
+    /// `ui.contents_pin`: the contents stay open beside what is read, or
+    /// close once an entry is chosen. A preference, through
+    /// `settings.apply` like the dialog's switch.
+    fn set_contents_pinned(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.prefs.contents_pinned = on;
+        cx.notify();
+        if let Err(error) = self.app.dispatch(&Invocation::with_args(
+            "settings.apply",
+            &serde_json::json!({
+                "changes": { crate::settings::CONTENTS_PINNED_KEY: on.to_string() }
+            }),
+        )) {
+            self.set_status(format!("{error:#}"), true, cx);
+        }
+    }
+
     /// `ui.model_perspective`, `ui.model_smooth`: how a 3D model is drawn.
     /// Preferences, through `settings.apply` like the dialog's switches.
     fn set_model_look(&mut self, look: crate::elements::model::Look, cx: &mut Context<Self>) {
@@ -2131,6 +2151,13 @@ impl Shell {
                     .unwrap_or(!self.prefs.wrap_lines);
                 self.set_wrap_lines(on, cx);
             }
+            "contents_pin" => {
+                let on = args
+                    .get("on")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(!self.prefs.contents_pinned);
+                self.set_contents_pinned(on, cx);
+            }
             "model_perspective" | "model_smooth" => {
                 let mut look = self.prefs.model_look;
                 let switch = if name == "model_perspective" {
@@ -2523,6 +2550,11 @@ impl Shell {
                     .get::<bool>(crate::settings::MODEL_SMOOTH_KEY)
                     .unwrap_or(false),
             };
+            self.prefs.contents_pinned = self
+                .app
+                .settings
+                .get::<bool>(crate::settings::CONTENTS_PINNED_KEY)
+                .unwrap_or(false);
             self.read_player_prefs();
             self.columns = crate::views::list::PerColumn(
                 crate::views::list::COLUMNS.each_ref().map(|column| {

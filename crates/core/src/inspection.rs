@@ -401,6 +401,9 @@ pub struct Row {
     pub branch: bool,
     /// Provider-local member key; only activated by a user command.
     pub target: Option<String>,
+    /// For a book's contents, the section the row opens (its offset, among
+    /// `Inspection::sections`): how the contents tell where the reader is.
+    pub section: Option<u64>,
 }
 impl Inspection {
     pub fn text(title: impl Into<String>, text: impl Into<String>) -> Self {

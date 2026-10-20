@@ -286,6 +286,11 @@ archives, and the bytes of any file.
 - Once clicked, a preview takes the arrows, as a PDF reader does: Up and
   Down scroll, Left and Right scroll sideways when it is wider than the
   panel, or else turn the page or the chapter.
+- **Contents** (the bar's first button) lists a document's outline, a
+  book's chapters or a file's headings, the part you are in highlighted
+  as you read. Choosing a part goes there and closes them; the pin keeps
+  them open beside the text instead, from chapter to chapter and file to
+  file, and is remembered.
 - `F` shows a picture, a document, text or a film on the whole screen;
   the arrows go to the next picture or page, and `Space` plays the
   folder's pictures as a slideshow.

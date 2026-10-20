@@ -458,7 +458,8 @@ it left is in [What is left](#what-is-left).
   (2026-10-15 and 16); a film's one picture, posters at the size shown
   (2026-10-16 and 17); 3D models turned on the GPU, STEP, IGES and Rhino
   (ADR-067, 069); Full preview (ADR-068); pictures read ahead
-  (2026-10-19).
+  (2026-10-19); contents that highlight the part shown and pin beside it
+  (2026-10-20).
 - **The window:** settings (ADR-010), by subject (ADR-072); Usage
   (ADR-007); huge folders drawn as they stream (2026-09-25); tabs
   (ADR-018); the terminal (ADR-019); keys and key schemes (ADR-024), a

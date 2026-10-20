@@ -3382,7 +3382,15 @@ impl Shell {
         );
     }
 
+    /// Whether the contents open now stay open for the next file shown:
+    /// while pinned (`reading.contents_pinned`), until closed.
+    fn contents_kept(&self) -> bool {
+        self.prefs.contents_pinned
+            && (self.preview.inspection.outline || self.preview.reader.outlines)
+    }
+
     fn cancel_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let contents = self.contents_kept();
         self.cancel_pending_preview();
         // Everything that can hold the keyboard goes with the preview: its
         // menu, its find fields, its content. Keys held there go back to
@@ -3422,6 +3430,10 @@ impl Shell {
         self.clear_document_pages(window, cx);
         self.preview.reader = crate::reader::ReaderState::default();
         self.preview.inspection = crate::inspector::State::default();
+        // Pinned, the contents are part of how files are read: the next
+        // one's show where it has some (`outline_drawer`).
+        self.preview.reader.outlines = contents;
+        self.preview.inspection.outline = contents;
         self.preview_ascend(0, window, cx);
         self.preview.phase = PreviewPhase::Idle;
 
@@ -4788,8 +4800,9 @@ pub(crate) fn content(
                 // widths measured its rows again twice a frame, and each
                 // copy's pictures cancelled the other's.
                 .when(interactive, |d| {
-                    d.child(crate::inspector::content(shell, view, theme, cx))
-                        .children(crate::inspector::outline_drawer(shell, view, theme, cx))
+                    let content = crate::inspector::content(shell, view, theme, cx);
+                    let contents = crate::inspector::outline_drawer(shell, view, theme, cx);
+                    d.child(crate::outline::around(content, contents, shell, theme))
                 })
                 .into_any_element()
         }
@@ -4938,7 +4951,7 @@ pub(crate) fn content(
                         }))
                     },
                 )
-                .child(
+                .child(crate::outline::around(
                     div()
                         .relative()
                         .flex()
@@ -4954,10 +4967,15 @@ pub(crate) fn content(
                                 cx,
                             ))
                         })
-                        .when(document.is_some() && interactive, |d| {
-                            d.children(crate::reader::outline_drawer(shell, theme, cx))
-                        }),
-                )
+                        .into_any_element(),
+                    if document.is_some() && interactive {
+                        crate::reader::outline_drawer(shell, theme, cx)
+                    } else {
+                        None
+                    },
+                    shell,
+                    theme,
+                ))
                 .into_any_element()
         }
         Some(PreviewContent::Error(error)) => failure(error, theme.error),

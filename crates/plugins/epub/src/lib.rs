@@ -322,6 +322,15 @@ impl PreviewProvider for Provider {
                 })
                 .collect();
         }
+        // Each row knows the chapter it opens, so the contents show where
+        // the reader is: a row naming no chapter of the spine knows none.
+        for row in &mut rows {
+            let key = row.target.as_deref().and_then(member_key);
+            row.section = keys
+                .iter()
+                .position(|k| k.is_some() && *k == key)
+                .map(|section| section as u64);
+        }
         // What the package says about the book, for the panel's Properties.
         let metadata = book.metadata();
         let people = |names: Vec<&str>| names.join(", ");
@@ -900,9 +909,14 @@ mod tests {
             first
                 .rows
                 .iter()
-                .map(|r| (r.cells[0].as_str(), r.depth))
+                .map(|r| (r.cells[0].as_str(), r.depth, r.section))
                 .collect::<Vec<_>>(),
-            [("Start", 0), ("Middle", 1), ("End", 0)]
+            // Each knows the chapter it opens, its name escaped included.
+            [
+                ("Start", 0, Some(0)),
+                ("Middle", 1, Some(1)),
+                ("End", 0, Some(2))
+            ]
         );
         // What the package says about the book reaches the panel's Properties;
         // a field the book leaves blank (no author here) is not a row.

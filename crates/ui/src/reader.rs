@@ -53,6 +53,8 @@ pub struct ReaderState {
     pub focus: Option<FocusHandle>,
     pub selection: Option<(usize, usize)>,
     pub outlines: bool,
+    /// The contents' list, following the page shown.
+    pub(crate) contents: crate::outline::Follow,
     find: Option<Field>,
     pub page_input: Option<Field>,
     pub(crate) hits: Vec<SearchHit>,
@@ -79,6 +81,7 @@ impl Default for ReaderState {
             focus: None,
             selection: None,
             outlines: false,
+            contents: crate::outline::Follow::default(),
             find: None,
             page_input: None,
             hits: Vec::new(),
@@ -993,16 +996,21 @@ fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
     ))
 }
 
+/// The document's outline, while it is open and the document has one: the
+/// part shown is the last entry at or before the page shown.
 pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let reader = &shell.preview.reader;
     if !reader.outlines {
         return None;
     }
-    let entries = reader
-        .session
-        .as_ref()?
-        .info()
-        .outlines
+    let session = reader.session.as_ref()?;
+    let outlines = &session.info().outlines;
+    if outlines.is_empty() {
+        return None;
+    }
+    let current =
+        crate::outline::at_page(outlines.iter().map(|entry| entry.page), shell.preview.page);
+    let entries = outlines
         .iter()
         .map(|entry| crate::outline::Entry {
             depth: entry.depth as usize,
@@ -1012,8 +1020,10 @@ pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> 
                 .map(|page| ("ui.reader_page", serde_json::json!({"page":page}))),
         })
         .collect();
-    Some(crate::outline::drawer(
+    Some(crate::outline::contents(
         entries,
+        current,
+        &reader.contents,
         ("ui.preview_contents", serde_json::json!({})),
         shell,
         theme,

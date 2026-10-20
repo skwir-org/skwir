@@ -187,6 +187,7 @@ fn member_rows(members: &[archive::Member], cancel: &CancelToken) -> anyhow::Res
                 branch: directory,
                 target: (!directory && member.regular && !member.encrypted)
                     .then(|| member.index.to_string()),
+                section: None,
             });
         }
     }

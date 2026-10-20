@@ -532,6 +532,7 @@ const SHOWS: &[&str] = &[
     "ui.reader_page_cancel",
     "ui.preview_select_all",
     "ui.preview_contents",
+    "ui.contents_pin",
     "ui.preview_find",
     "ui.preview_find_close",
     "ui.preview_match",
@@ -1727,6 +1728,12 @@ pub fn declare_all(app: &App) {
         "ui.preview_contents",
         "Preview: contents",
         "Show or hide the contents: a document's, a structured preview's headings",
+    );
+    declare::<On>(
+        app,
+        "ui.contents_pin",
+        "Preview: keep contents open",
+        "Keep the contents open beside what is read, the content narrowed, or let choosing a part close them",
     );
     none(
         "ui.preview_find",

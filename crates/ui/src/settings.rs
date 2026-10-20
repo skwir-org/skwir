@@ -82,6 +82,8 @@ pub const READER_CONTINUOUS_KEY: &str = "reading.continuous";
 pub const READING_WIDTH_KEY: &str = "reading.width";
 /// Whether a book's position counts its printed pages (`ui.printed_pages`).
 pub const PRINTED_PAGES_KEY: &str = "reading.printed_pages";
+/// Whether the contents stay open beside what is read (`ui.contents_pin`).
+pub const CONTENTS_PINNED_KEY: &str = "reading.contents_pinned";
 /// Whether a text's long lines wrap to the panel (`ui.wrap_lines`).
 pub const WRAP_LINES_KEY: &str = "reading.wrap_lines";
 /// Whether a 3D model is drawn in perspective (`ui.model_perspective`).
@@ -451,6 +453,15 @@ pub fn declare(app: &App) {
             PRINTED_PAGES_KEY,
             "Printed page numbers",
             "Count where you are by the page numbers a book's printed edition lists, or a PDF's pages are printed with. That is page 47 of 312 rather than chapter 3 of 12; a book without them counts chapters.",
+            false,
+        )
+        .section("Pages"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            CONTENTS_PINNED_KEY,
+            "Keep contents open",
+            "Keep a document's or a book's contents open beside it while you read, the text or the pages narrowed to make room. Off, they open over what you read and close once you choose a part. The pin at the top of the contents changes it too.",
             false,
         )
         .section("Pages"),

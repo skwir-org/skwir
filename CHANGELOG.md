@@ -6,6 +6,11 @@
   elsewhere the colors of the GTK theme your desktop names (adw-gtk3,
   Materia and most others), each with your accent, and follows them as
   you change them. Appearance › Desktop colors turns it off.
+- **Contents** highlight the part you are in (a PDF's section, a book's
+  chapter, a heading) and follow you as you read. They no longer close
+  when a book moves to its next chapter, and the new pin at their top
+  keeps them open beside the text, which narrows to make room; the pin is
+  remembered. A book's sections are indented under their chapters.
 - **A search of the whole disk** that plocate answers says how old its
   answer is ("as of Yesterday 03:00", plocate's database at its last
   update): a file made or renamed since is not in it. Agents and scripts

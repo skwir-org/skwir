@@ -759,6 +759,7 @@ mod tests {
             depth,
             branch: target.is_none(),
             target: target.map(str::to_owned),
+            section: None,
         };
         let rows = [
             row("docs", 0, None),

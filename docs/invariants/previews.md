@@ -859,7 +859,24 @@ is still to come are in `docs/preview-frame.md`.
   (`State::find_from`): from match to match, several in a block or a row
   included.
 - **Contents** is one drawer (`outline.rs`) for a document's outline, a
-  file's headings and a book's chapters.
+  file's headings and a book's chapters, offered where there are some.
+  - **Open until closed** (its button, Contents, `ui.preview_contents`):
+    a new section of the file (a book's next chapter) keeps it open; a
+    new file closes it, but while pinned.
+  - **Pinned** (`reading.contents_pinned`, its pin, `ui.contents_pin`):
+    a column beside the content, which narrows to make room
+    (`outline::around`), open from file to file where there are contents
+    (`Shell::contents_kept`); choosing an entry keeps it open. Unpinned,
+    a drawer over the content's left that choosing closes.
+  - **The part shown is highlighted** in the selection's colors, the
+    keys' place a ring apart, and brought into view as it changes, never
+    against the user's own scrolling of the list (`outline::Follow`). It
+    is read from what is shown, never measured: a document's, the last
+    entry at or before the page the reader counts (`outline::at_page`);
+    a book's, its row for the section shown, the last whose fragment is
+    at or above the top of the view (`Row::section`, set by the book's
+    provider), else the last row before the section; else the last
+    heading at or above the top of the view.
 - What a preview says about itself (how it is shown, what was left out)
   is one strip under the toolbar, never a grey sentence in the content.
 - **Keys** mean the same wherever they apply: Ctrl+F, Ctrl+C, Ctrl++ and
