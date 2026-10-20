@@ -86,11 +86,27 @@ impl Trashes {
                         )
                     })
             };
+            // A remote's file is never carried to this machine's trash to be
+            // trashed (ADR-077): a share keeps a trash of its own, if any.
+            let remote = crate::fs::reach::of(&path);
             let trash = if known.home.as_ref().map(|(_, top)| top) == Some(&top) {
                 home()?
+            } else if remote.as_ref().is_some_and(|remote| !remote.by_kernel()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "a network folder a program mounts keeps no trash: delete it instead",
+                ));
             } else {
                 match volume_trash(&top) {
                     Ok(trash) => trash,
+                    Err(error)
+                        if error.kind() == io::ErrorKind::PermissionDenied && remote.is_some() =>
+                    {
+                        return Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "the network share keeps no trash you may use: delete it instead",
+                        ));
+                    }
                     // Refused a trash folder of its own: the home trash, as
                     // the crate and the specification have it.
                     Err(error) if error.kind() == io::ErrorKind::PermissionDenied => home()?,

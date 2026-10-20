@@ -2620,9 +2620,47 @@ mod builtin {
             "Move to trash",
             "Trash the selection, or the entries given (plan)",
             |a, app| {
-                targets_plan(app, a.pane, a.entries, "move to trash", |e| {
-                    Box::new(op::Trash { entry: e })
-                })
+                // A folder a program mounts across a network (sshfs, rclone,
+                // GVfs) keeps no trash: what is there is deleted for good,
+                // asked first as any deletion is (ADR-077).
+                let without = |e: &EntryRef| {
+                    crate::fs::reach::of(&e.path).is_some_and(|remote| !remote.by_kernel())
+                };
+                let refs = app.targets(a.pane, a.entries)?;
+                let deleted = refs.iter().filter(|e| without(e)).count();
+                let steps: Vec<Box<dyn op::Operation>> = refs
+                    .into_iter()
+                    .map(|e| -> Box<dyn op::Operation> {
+                        if without(&e) {
+                            Box::new(op::Delete { entry: e })
+                        } else {
+                            Box::new(op::Trash { entry: e })
+                        }
+                    })
+                    .collect();
+                let all = steps.len();
+                let plan = Plan::with_steps(
+                    if deleted == all && all > 0 {
+                        "delete permanently"
+                    } else {
+                        "move to trash"
+                    },
+                    steps,
+                );
+                Ok(Outcome::Plan(match deleted {
+                    0 => plan,
+                    1 if all == 1 => plan.with_note(
+                        "It is in a network folder, which keeps no trash: it is deleted for good.",
+                    ),
+                    n => plan.with_note(format!(
+                        "{} in network folders, which keep no trash: deleted for good.",
+                        if n == 1 {
+                            "1 item is".to_owned()
+                        } else {
+                            format!("{n} items are")
+                        }
+                    )),
+                }))
             },
         )
         .plans();

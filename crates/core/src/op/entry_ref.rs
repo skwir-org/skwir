@@ -105,6 +105,7 @@ impl EntryRef {
     pub fn resolve(&self) -> Result<PathBuf, ResolveError> {
         match id_of(&self.path) {
             Some(id) if id == self.id => return Ok(self.path.clone()),
+            Some(found) if self.remounted(found) => return Ok(self.path.clone()),
             Some(found) => {
                 if let Some(p) = self.renamed() {
                     return Ok(p);
@@ -119,6 +120,17 @@ impl EntryRef {
         }
         self.renamed()
             .ok_or_else(|| ResolveError::Gone(self.path.clone()))
+    }
+
+    /// Whether the file at the hint is on a remote mounted again since the
+    /// reference was made, whose program makes its inodes up for as long
+    /// as it is mounted (sshfs, rclone, GVfs): its identity cannot be
+    /// told across mounts, so the hint is taken (ADR-077).
+    fn remounted(&self, found: crate::entry::FileId) -> bool {
+        found.dev != self.id.dev
+            && crate::fs::reach::of(&self.path).is_some_and(|remote| {
+                !remote.by_kernel() && remote.device.is_none_or(|d| d == found.dev)
+            })
     }
 
     /// The file's new name in the hint's folder, when that can be told:

@@ -199,7 +199,11 @@ impl UnderWay {
             }
             drop(note);
             let folder = PathBuf::from(crate::os_path::from_bytes(bytes));
-            if folder.is_absolute() && folder.is_dir() {
+            if crate::fs::reach::of(&folder).is_some() {
+                // Never swept on a network (`only_here`), nor looked at: a
+                // server may not answer (ADR-077).
+                let _ = std::fs::remove_file(&path);
+            } else if folder.is_absolute() && folder.is_dir() {
                 sweep(&folder);
                 let _ = std::fs::remove_file(&path);
             } else if !folder.is_absolute() {
