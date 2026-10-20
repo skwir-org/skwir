@@ -49,9 +49,13 @@
 //!   (a pane's row, the sidebar's header, the tab strip: their edges meet).
 //!
 //! A look is derived (`Theme::derive`, ADR-071) from a few colors, its
-//! `Base`: skwir's own (`Base::own`), wearing the accent and the contrast
-//! the desktop lends it (`Desktop`, `Theme::of`, `desktop_style`), or
-//! later what a desktop's scheme names. The other grounds and lines (`zebra`, `code_bg`, `hover`,
+//! `Base`: what the desktop's scheme names for that look (Plasma's, a
+//! GTK3 theme's: `Desktop::schemes`), else skwir's own (`Base::own`)
+//! wearing the desktop's accent; either way in the contrast the desktop
+//! asks for (`Desktop`, `Theme::of`, `desktop_style`). A scheme is one
+//! look's: the other look is skwir's own, and Automatic takes the
+//! scheme's look when it has one look's (`Theme::look`). The other
+//! grounds and lines (`zebra`, `code_bg`, `hover`,
 //! `border`, a derived selection) are `Steps` in Oklab from `bg` towards
 //! `text`, tinted by the accent; the marks of the accent (`band`,
 //! `handle`, `chart`…) are it, fainter. Then the contrast is guarded:
@@ -202,17 +206,50 @@ impl Contrast {
 }
 
 /// What a look takes from the desktop (ADR-071, `desktop_style::colors`):
-/// its accent, and the contrast it asks for.
+/// its accent, the contrast it asks for, and the scheme the user chose
+/// there, a look's each.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Desktop {
+    /// The accent a look without a scheme of its own wears.
     pub accent: Option<Hsla>,
     pub contrast: Contrast,
+    pub schemes: Schemes,
+}
+
+/// The desktop's schemes (Plasma's, a GTK3 theme's), a look's each: what
+/// that look is made of in place of skwir's own colors.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Schemes {
+    pub light: Option<Base>,
+    pub dark: Option<Base>,
+}
+
+impl Schemes {
+    /// The scheme of the look `dark` names.
+    pub fn of(&self, dark: bool) -> Option<&Base> {
+        if dark {
+            self.dark.as_ref()
+        } else {
+            self.light.as_ref()
+        }
+    }
+
+    /// Whether the look is dark when only one look has a scheme: the
+    /// scheme's look (Plasma's, a theme without a dark variant), which
+    /// `ui.theme`'s Automatic takes. `None` for both or neither.
+    pub fn one_look(&self) -> Option<bool> {
+        match (self.light, self.dark) {
+            (Some(_), None) => Some(false),
+            (None, Some(_)) => Some(true),
+            _ => None,
+        }
+    }
 }
 
 /// The colors a look is made of: skwir's own (`Base::own`), or what a
 /// desktop's scheme names (ADR-071). The other tokens are derived from
 /// them (`Theme::derive`), and so is each left `None`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Base {
     pub dark: bool,
     pub bg: Hsla,
@@ -529,8 +566,8 @@ impl Theme {
             terminal: kept.terminal,
             is_dark: base.dark,
             desktop: Desktop {
-                accent: None,
                 contrast,
+                ..Desktop::default()
             },
             code: crate::code_preview::CodeTheme::own(base.dark),
             font: crate::fonts::Families::default().ui,
@@ -644,10 +681,12 @@ impl Theme {
         {
             return theme.clone();
         }
-        let base = Base {
+        // The desktop's scheme of this look, else skwir's own wearing the
+        // desktop's accent.
+        let base = desktop.schemes.of(dark).copied().unwrap_or_else(|| Base {
             accent: desktop.accent.unwrap_or(Base::own(dark).accent),
             ..Base::own(dark)
-        };
+        });
         let mut theme = Theme::derive(&base, desktop.contrast);
         theme.desktop = desktop;
         // The two looks of what the desktop says now.
@@ -656,6 +695,21 @@ impl Theme {
         }
         made.push(theme.clone());
         theme
+    }
+
+    /// Whether the look is dark: as `ui.theme` says (`chosen`), Automatic
+    /// taking the look of the desktop's scheme when it has one look's (a
+    /// scheme is that look's: the other look is skwir's own, ADR-071),
+    /// else the desktop's `appearance`.
+    pub fn look(chosen: Option<&str>, desktop: &Desktop, appearance: WindowAppearance) -> bool {
+        match chosen {
+            Some("light") => false,
+            Some("dark") => true,
+            _ => desktop.schemes.one_look().unwrap_or(matches!(
+                appearance,
+                WindowAppearance::Dark | WindowAppearance::VibrantDark
+            )),
+        }
     }
 
     /// The families it writes in.
@@ -673,27 +727,24 @@ impl Theme {
         self.code_font = families.code;
     }
 
-    /// The `ui.theme` preference, falling back to the desktop's appearance,
-    /// in what the desktop's style lends it (`desktop_style::colors`), and
-    /// its fonts as `text` draws them (`fonts::resolve`).
+    /// The `ui.theme` preference, else the look of the desktop's scheme
+    /// when it has one look's, else the desktop's appearance; in what the
+    /// desktop's style lends it (`desktop_style::colors`), and its fonts
+    /// as `text` draws them (`fonts::resolve`).
     pub fn resolve(
         app: &skwir_core::App,
         appearance: WindowAppearance,
         text: &gpui::TextSystem,
     ) -> Self {
-        let dark = match app
-            .settings
-            .get::<String>(crate::settings::THEME_KEY)
-            .as_deref()
-        {
-            Some("light") => false,
-            Some("dark") => true,
-            _ => matches!(
-                appearance,
-                WindowAppearance::Dark | WindowAppearance::VibrantDark
-            ),
-        };
-        let mut theme = Theme::of(dark, crate::desktop_style::colors(&app.settings));
+        let desktop = crate::desktop_style::colors(&app.settings);
+        let dark = Self::look(
+            app.settings
+                .get::<String>(crate::settings::THEME_KEY)
+                .as_deref(),
+            &desktop,
+            appearance,
+        );
+        let mut theme = Theme::of(dark, desktop);
         theme.code = crate::code_preview::CodeTheme::chosen(app, theme.is_dark);
         theme.set_fonts(crate::fonts::resolve(app, text));
         theme
@@ -853,6 +904,103 @@ mod tests {
         }
         // The selection takes the accent's hue, a little bluer than it was.
         assert!(near(dark.selection_bg, 0x2c4f8a, 5.));
+    }
+
+    #[test]
+    fn real_schemes_read_in_either_contrast() {
+        // As read 2026-10-20 from Breeze 6.7.5's schemes, adw-gtk3 6.5 and
+        // Materia 20210322 (`kde_scheme`, `gtk_theme`): bg, surface, text,
+        // text_muted, zebra, border, accent, selection, error, warning,
+        // success; 0 where the scheme says none.
+        let schemes: [(&str, [u32; 12]); 6] = [
+            (
+                "Breeze Light",
+                [
+                    0xffffff, 0xeff0f1, 0x232629, 0x707d8a, 0xf7f7f7, 0, 0x3daee9, 0x3daee9,
+                    0xffffff, 0xda4453, 0xf67400, 0x27ae60,
+                ],
+            ),
+            (
+                "Breeze Dark",
+                [
+                    0x141618, 0x202326, 0xfcfcfc, 0xa1a9b1, 0x1d1f22, 0, 0x3daee9, 0x3daee9,
+                    0xfcfcfc, 0xda4453, 0xf67400, 0x27ae60,
+                ],
+            ),
+            (
+                "adw-gtk3",
+                [
+                    0xffffff, 0xfafafb, 0x333334, 0, 0, 0, 0x3584e4, 0x3584e4, 0xffffff, 0xba161e,
+                    0xbe8908, 0x26a169,
+                ],
+            ),
+            (
+                "adw-gtk3 dark",
+                [
+                    0x1d1d20, 0x222226, 0xffffff, 0, 0, 0, 0x3584e4, 0x3584e4, 0xffffff, 0xd9777e,
+                    0xefc96c, 0x7dc7a5,
+                ],
+            ),
+            (
+                "Materia",
+                [
+                    0xffffff, 0xf9f9f9, 0x212121, 0, 0, 0xe0e0e0, 0x1967d2, 0x1967d2, 0xffffff,
+                    0xd93025, 0xf9ab00, 0x1e8e3e,
+                ],
+            ),
+            (
+                "Materia dark",
+                [
+                    0x1e1e1e, 0x121212, 0xe2e2e2, 0, 0, 0x393939, 0x8ab4f8, 0x8ab4f8, 0x000000,
+                    0xf28b82, 0xfdd663, 0x81c995,
+                ],
+            ),
+        ];
+        for (
+            name,
+            [
+                bg,
+                surface,
+                text,
+                muted,
+                zebra,
+                border,
+                accent,
+                sel_bg,
+                sel_text,
+                error,
+                warning,
+                success,
+            ],
+        ) in schemes
+        {
+            let color = |value: u32| Hsla::from(rgb(value));
+            let some = |value: u32| (value != 0).then(|| color(value));
+            let base = Base {
+                dark: name.contains("Dark") || name.contains("dark"),
+                bg: color(bg),
+                surface: color(surface),
+                text: color(text),
+                text_muted: some(muted),
+                zebra: some(zebra),
+                border: some(border),
+                accent: color(accent),
+                selection: Some((color(sel_bg), color(sel_text))),
+                error: color(error),
+                warning: color(warning),
+                success: color(success),
+            };
+            for contrast in [Contrast::Normal, Contrast::More] {
+                let theme = Theme::derive(&base, contrast);
+                for g in groups(&theme, contrast) {
+                    assert!(
+                        color::reads(g.fg, &g.grounds, g.ratio),
+                        "{} of {name}, {contrast:?}",
+                        g.name
+                    );
+                }
+            }
+        }
     }
 
     #[test]

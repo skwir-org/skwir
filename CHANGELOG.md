@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Your desktop's colors**: on Plasma, Skwir wears your color scheme;
+  elsewhere the colors of the GTK theme your desktop names (adw-gtk3,
+  Materia and most others), each with your accent, and follows them as
+  you change them. Appearance › Desktop colors turns it off.
 - **A search of the whole disk** that plocate answers says how old its
   answer is ("as of Yesterday 03:00", plocate's database at its last
   update): a file made or renamed since is not in it. Agents and scripts

@@ -1749,3 +1749,20 @@ what answered and what that leaves out; `entries` answers `as_of`.
   2026-10-19 03:00:00: …", and `entries` answered `as_of` with that time;
   F5 kept it; a search of a folder showed "2 results" alone. Not checked:
   Orca reading the status line, a real system database.
+
+**Plasma's scheme and GTK3 themes** (ADR-071 steps 3 and 4, its amendment
+of 2026-10-20; built by a second agent in the same tree). Tests on
+synthetic fixtures (references, GTK's five functions, imports within the
+theme and out of it, a cycle, a compiled theme, a dark variant,
+`kdeglobals` replaced and rewritten the same, the portal naming the
+theme); the contrast guard on six real schemes as read, in both
+contrasts: Breeze Light and Dark, adw-gtk3 and its dark, Materia and its
+dark. Arc (20221218) names none. In windows (debug, Xvfb, no portal): a
+synthetic `kdeglobals` worn, replaced by a dark one and followed live, its
+`AccentColor` on a switch; `GTK_THEME=Materia` and `adw-gtk3-dark` worn,
+pixels matching the colors read. Release builds on headless sway (pixman,
+lavapipe, the session's portal naming adw-gtk3), HEAD c2c51365 and this
+alternated three times: own share 107.5–107.7 MiB against 107.3–107.6,
+first frame 77.8–89.0 ms against 76.9–80.3 (one later run at load 15 read
+102–399 ms). Not checked: Plasma, Xfce, Cinnamon or MATE sessions, the
+session's own display.

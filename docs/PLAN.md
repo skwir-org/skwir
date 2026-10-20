@@ -86,7 +86,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
 | [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; A, B and D wait for skwird (ADR-050) | — |
-| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A, B and the fonts by role built 2026-10-19; C to E planned (ADR-071, ADR-073) | — |
+| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E planned (ADR-071, ADR-073) | — |
 | [Phase 7: AI](#phase-7-ai) | planned, after Release 0.1 | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
 
@@ -1137,9 +1137,9 @@ after Release 0.1 and after skwird's phase 1.
 
 ## Colors and font from the desktop
 
-ADR-071, ADR-073. Steps A and B built 2026-10-19: Linux's portal is read;
-Plasma's scheme, GTK3 themes, macOS and Windows not yet (C to E). The
-fonts by role (ADR-073) built the same day. How each step was built and
+ADR-071, ADR-073. Steps A and B built 2026-10-19 (Linux's portal), C and
+D on 2026-10-20 (Plasma's scheme, GTK3 themes); macOS and Windows not yet
+(E). The fonts by role (ADR-073) built 2026-10-19. How each step was built and
 checked: `docs/STATUS-LOG.md`, "Colors and font from the desktop".
 
 **Goal:** Skwir wears what the user chose on their desktop (the accent,
@@ -1158,11 +1158,21 @@ its own, every color readable on what it is drawn on.
   switch. **Built 2026-10-19.** Not checked: Xfce, Cinnamon, MATE and
   Plasma reading the font (their tests read the files and programs
   alone).
-- **C. Plasma's color scheme** from `kdeglobals`, watched; tested on
-  synthetic schemes.
-- **D. GTK3 themes**, found as the icon theme is; `@define-color`s,
-  `@import`s and GTK's color functions read from synthetic themes, then
-  real ones (adw-gtk3, Arc, Materia).
+- **C. Plasma's color scheme** from `kdeglobals`, watched. **Built
+  2026-10-20** (ADR-071's amendment): the user's `kdeglobals` over the
+  system's, the scheme it names filling in, Breeze's when it names none;
+  followed as Plasma replaces the file, an unchanged rewrite waking
+  nothing.
+- **D. GTK3 themes**, found as the icon theme is. **Built 2026-10-20**:
+  the theme `GTK_THEME`, the desktop or the portal names, its
+  `@define-color`s after its `@import`s within the theme, GTK's color
+  functions evaluated; read again when the portal names another. A
+  compiled theme (Arc) names none. Read from synthetic themes, then
+  adw-gtk3, Materia and Breeze's schemes. Automatic takes a scheme's look
+  when it has only one look's.
+- Left of C and D: a real Plasma, Xfce, Cinnamon or MATE session; changes
+  made in GSettings, xfconf or `settings.ini` themselves, which are not
+  followed.
 - **E. macOS and Windows:** the accent, more contrast, Windows' contrast
   themes; read again on appearance changes and activation. Windows tried
   under Wine for what it answers; macOS compiled only.

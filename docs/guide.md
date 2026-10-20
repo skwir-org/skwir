@@ -397,12 +397,20 @@ Settings are grouped by subject, whichever plugin brings them:
 A plugin from outside Skwir with options of its own has a page of its
 own, listed under the others.
 
-On Linux, Skwir wears the accent color your desktop's settings name
-(GNOME's, or any desktop whose settings portal says one), and follows it
-when you change it there; Appearance › **Desktop colors** turns that off.
-When your desktop asks for more contrast, Skwir's colors give it,
-whatever these say. Skwir's own controls stay as they are: it takes your
-colors, not another toolkit's look (ADR-071).
+On Linux, Skwir wears the colors your desktop's settings name: on
+Plasma its color scheme, elsewhere the colors of the GTK theme your
+desktop names (adw-gtk3, Materia and most others; a theme whose styles
+are compiled into a resource file, as Arc's are, names none Skwir can
+read), with the accent color your desktop's settings name (GNOME's, or
+any desktop whose settings portal says one). It follows Plasma's scheme,
+the accent and a theme your desktop's portal names when you change them
+there; Appearance › **Desktop colors** turns that off. A scheme is one
+look's: with **Theme** on Automatic, Skwir takes the look of a scheme
+that has only one (Breeze Dark is dark), and the other look, chosen,
+is Skwir's own with your accent. When your desktop asks for more
+contrast, Skwir's colors give it, whatever these say. Skwir's own
+controls stay as they are: it takes your colors, not another toolkit's
+look (ADR-071).
 
 Skwir writes in three fonts, each **Automatic** or a family installed on
 your system (ADR-073): **Font** on Appearance, for its menus, lists, bars

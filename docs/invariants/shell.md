@@ -1,9 +1,9 @@
 # Shell invariants: the window
 
-Read this before changing the window in `crates/ui`: toolbars, popups,
-the top rows, menus, drops, feedback, the sidebar, keys, tabs, the
-terminal panel, the player. Binding, like `AGENTS.md`. Views are in
-[views.md](views.md); what locations decide, in
+Read this before changing the window in `crates/ui`: toolbars, colors
+and fonts, popups, the top rows, menus, drops, feedback, the sidebar,
+keys, tabs, the terminal panel, the player. Binding, like `AGENTS.md`.
+Views are in [views.md](views.md); what locations decide, in
 [locations.md](locations.md).
 
 ## Toolbars and buttons
@@ -26,6 +26,28 @@ terminal panel, the player. Binding, like `AGENTS.md`. Views are in
   (`preview_bar.rs`): a kind lists tools in slots, never builds a row
   ([previews.md](previews.md), "The preview frame"). Preview menus close
   when the content is replaced by another file or its presentation closes.
+
+## Colors and fonts (ADR-071, ADR-073)
+
+- Every token of a look is derived from its `Base` (`Theme::derive`):
+  the desktop's scheme for that look (Plasma's `kdeglobals`, a GTK3
+  theme's colors: `Desktop::schemes`), else Skwir's own (`Base::own`)
+  wearing the desktop's accent. Text, the accent and the outcomes are
+  guarded to their contrast (7:1 when the desktop asks for more); a
+  token no desktop changes is `Kept`. Never a color beside the tokens.
+- A scheme is one look's. A forced other look is Skwir's palette with
+  the desktop's accent; Automatic takes the scheme's look when the
+  desktop has one look's (`Theme::look`). An accent the system names
+  replaces a scheme's, and the selection is then derived, unless it is
+  the scheme's own said again.
+- What the desktop says is read on `desktop_style`'s thread, never while
+  drawing; the first frame draws what was read last (the cache). A
+  reading that differs from what was said wakes the window; one that
+  does not, nothing. It follows the portal's signals and `kdeglobals`
+  replaced (its folder watched, access dropped), never a timer. Toolkits
+  are never loaded: a GTK theme is read as the colors its sheet names.
+- The fonts are the theme's tokens (`font`, `reading_font`,
+  `code_font`), resolved with it, read where they are drawn.
 
 ## Popups and focus
 

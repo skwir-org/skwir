@@ -347,7 +347,7 @@ pub fn declare(app: &App) {
         app.settings.declare(SettingSpec::toggle(
             DESKTOP_COLORS_KEY,
             "Desktop colors",
-            "Draw with the accent color chosen in your desktop's settings, and write in its fonts where a font says Automatic. Off, skwir keeps its own blue and fonts. More contrast, when your desktop asks for it, is followed either way.",
+            "Draw with the colors chosen in your desktop's settings, and write in its fonts where a font says Automatic. The colors are Plasma's color scheme, or your GTK theme's, with your desktop's accent. Off, skwir keeps its own colors and fonts. More contrast, when your desktop asks for it, is followed either way.",
             true,
         )
         .essential());

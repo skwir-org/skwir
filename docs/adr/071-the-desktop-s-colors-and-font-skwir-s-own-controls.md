@@ -2,10 +2,12 @@
 
 Status: accepted, 2026-10-19. Steps 1 and 2 built 2026-10-19: the
 derivation and the guard, Skwir's palettes through them; Linux's portal
-read and followed (the accent, more contrast, the font). Plasma's scheme,
-GTK3 themes, macOS and Windows are not read yet. Amended 2026-10-19 (two
-switches, the font at the window's opening), and again by ADR-073 (the
-font a choice among the system's, three of them, followed live).
+read and followed (the accent, more contrast, the font). Steps 3 and 4
+built 2026-10-20: Plasma's scheme, followed, and GTK3 themes' colors.
+macOS and Windows are not read yet. Amended 2026-10-19 (two switches,
+the font at the window's opening), again by ADR-073 (the font a choice
+among the system's, three of them, followed live), and 2026-10-20 (steps
+3 and 4).
 
 ## Context
 
@@ -205,7 +207,7 @@ font a choice among the system's, three of them, followed live).
   macOS compiled only.
 - Once built, `theme.rs`'s header and `docs/invariants/shell.md` state
   the derivation and the guard, and the guide the switches.
-- **Steps 1 and 2 are built.** Order (`docs/PLAN.md`, "Colors and font
+- **Steps 1 to 4 are built.** Order (`docs/PLAN.md`, "Colors and font
   from the desktop"):
   1. the derivation and the guard in `theme.rs`, Skwir's palettes
      through them, the stricter contrast;
@@ -238,3 +240,57 @@ font a choice among the system's, three of them, followed live).
   for the reading and code fonts (point 3), and the fonts are tokens of
   the theme, so a change, the desktop's or the user's, shows at once
   (points 8 and 9) rather than at the next start.
+- 2026-10-20, steps 3 and 4: Plasma's scheme and GTK3 themes, read as
+  points 3 and 4 say, with these decisions where they said less.
+  - **Where Plasma's colors are.** `kdeglobals`, the user's before the
+    system's (`XDG_CONFIG_DIRS`), key by key; what they leave out comes
+    from the scheme they name (`[General] ColorScheme`, its
+    `color-schemes/<name>.colors` in the data folders), `BreezeLight`
+    then `Breeze` when they name none: "Breeze's by default" read from
+    the installed file, never written in Skwir (`kde_scheme.rs`).
+  - **A GTK3 theme** (`gtk_theme.rs`) is found as GTK 3 finds it: the
+    user's data folder, `~/.themes`, the system's, in the newest
+    `gtk-3.N` (even N, 24 down to 0) holding a `gtk.css`. Its imports
+    are followed within the theme's folder by name (`..` resolved
+    lexically, so a profile's links into other packages still read);
+    `resource://` is not. A name defined by its own name takes its
+    definition before (adw-gtk3 writes `@define-color warning_color
+    @warning_color;` after defining it; GTK itself finds a loop there);
+    other loops, `currentColor` (adw-gtk3's `borders`) and names never
+    defined give none, and the token is derived. A color with
+    transparency is laid over `bg`, as drawn; the grounds are taken
+    opaque. `GTK_THEME=Name:dark` reads `gtk-dark.css` alone.
+  - **Which look.** A scheme is put in the look its colors make (its
+    text lighter than its ground: dark). Automatic takes the scheme's
+    look when the desktop has one look's (Plasma's; a theme without
+    `gtk-dark.css`), else the appearance (point 7 said only what a forced
+    look does): Xfce's dark theme is dark though no portal says so.
+  - **The accent.** The portal's replaces a scheme's, its selection then
+    derived, only when it differs at eight bits a channel: Plasma's
+    portal says the scheme's own, whose selection is kept. A look
+    without a scheme wears the portal's accent, else the scheme's.
+  - **Followed.** `kdeglobals` through `fs::Settled` on its folder (its
+    name alone, access dropped, writes let settle 200 ms): a thread of
+    its own on Plasma only. A GTK theme is read again when the portal
+    says `gtk-theme` changed; GSettings', xfconf's and `settings.ini`'s
+    own changes are not followed. A reading that says what was said
+    wakes nothing, and what it freed (a theme's sheets) is given back
+    before the thread waits again (`scheduler::release_now`).
+  - **Checked:** synthetic fixtures (references, the five functions,
+    `rgb()`, `hsl()`, imports within the theme and outside it, a cycle,
+    a missing name, a compiled theme, a dark variant, `kdeglobals`
+    replaced and rewritten the same); the guard on six real schemes as
+    read (Breeze Light and Dark, adw-gtk3 and its dark, Materia and its
+    dark), in both contrasts. Arc (nixpkgs' 20221218) names none: its
+    sheet is compiled. In windows (debug build, Xvfb, no portal): a
+    synthetic `kdeglobals` worn, replaced by a dark one while Skwir ran
+    and followed at once (the look turned dark by itself), its
+    `AccentColor` on a switch; `GTK_THEME=Materia` and `adw-gtk3-dark`
+    worn. Release builds on headless sway (pixman, lavapipe, the
+    session's portal naming adw-gtk3), HEAD and this alternated three
+    times: own share 107.5 to 107.7 MiB against 107.3 to 107.6, first
+    frame 77.8 to 89.0 ms against 76.9 to 80.3 (one run of this at load
+    average 15 read 102 to 399 ms).
+  - **Not checked:** a Plasma, Xfce, Cinnamon or MATE session; the
+    session's own display. macOS and Windows compile the scheme's types
+    and read none (step 5).

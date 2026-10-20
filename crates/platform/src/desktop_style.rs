@@ -1,11 +1,15 @@
 //! What the user chose on their desktop for how applications look
-//! (ADR-071): an accent, a preference for more contrast, the families of
-//! its fonts (the interface's, documents', monospace: ADR-073). Skwir's
-//! own controls wear them; it never imitates a desktop's palette.
+//! (ADR-071): an accent, a preference for more contrast, a color scheme,
+//! the families of its fonts (the interface's, documents', monospace:
+//! ADR-073). Skwir's own controls wear them; it never imitates a
+//! desktop's palette.
 //!
 //! On Linux the accent and the contrast are the settings portal's
-//! (`org.freedesktop.appearance`, over D-Bus). The fonts are read where
-//! the desktop keeps them (`desktop_settings`: `GSettings`, `kdeglobals`,
+//! (`org.freedesktop.appearance`, over D-Bus). The color scheme is
+//! Plasma's (`kde_scheme`: `kdeglobals`, followed as Plasma replaces it)
+//! on Plasma, elsewhere the GTK3 theme the desktop names (`gtk_theme`),
+//! read again when it names another. The fonts are read where the
+//! desktop keeps them (`desktop_settings`: `GSettings`, `kdeglobals`,
 //! xfconf), the interface's then in GTK's `settings.ini`, then from the
 //! portal (`org.gnome.desktop.interface`, which it answers outside GNOME
 //! too); a fontconfig alias among them (`Monospace`) is the family
@@ -19,12 +23,15 @@ use skwir_core::CancelToken;
 /// in a later step (ADR-071).
 pub const READ: bool = cfg!(target_os = "linux");
 
+/// A color as sRGB channels from 0 to 1.
+pub type Rgb = [f32; 3];
+
 /// What the desktop says of how applications look; `Default` when it
 /// says nothing.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DesktopStyle {
-    /// The accent, as sRGB channels from 0 to 1.
-    pub accent: Option<[f32; 3]>,
+    /// The accent the system names (the portal's), apart from any scheme.
+    pub accent: Option<Rgb>,
     /// The desktop asks for more contrast.
     pub more_contrast: bool,
     /// The interface font's family (`Noto Sans`), without its size or
@@ -37,6 +44,101 @@ pub struct DesktopStyle {
     /// `fixed`).
     #[serde(default)]
     pub monospace_font: Option<String>,
+    /// The colors of the scheme the user chose, a look's each.
+    #[serde(default)]
+    pub schemes: Schemes,
+}
+
+/// The colors a desktop's scheme names for the base of a look (ADR-071,
+/// point 4): what is read on (`bg`, `text`), chrome (`surface`), and what
+/// it says of the rest, each `None` it does not say derived from these. A
+/// color with transparency is laid over `bg`, as it would be drawn.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Scheme {
+    pub bg: Rgb,
+    pub surface: Rgb,
+    pub text: Rgb,
+    #[serde(default)]
+    pub text_muted: Option<Rgb>,
+    #[serde(default)]
+    pub zebra: Option<Rgb>,
+    #[serde(default)]
+    pub border: Option<Rgb>,
+    #[serde(default)]
+    pub accent: Option<Rgb>,
+    /// The selection's background and its text.
+    #[serde(default)]
+    pub selection: Option<(Rgb, Rgb)>,
+    #[serde(default)]
+    pub error: Option<Rgb>,
+    #[serde(default)]
+    pub warning: Option<Rgb>,
+    #[serde(default)]
+    pub success: Option<Rgb>,
+}
+
+impl Scheme {
+    /// Whether it is a dark look's: its text lighter than what it is read
+    /// on.
+    pub fn is_dark(&self) -> bool {
+        luminance(self.bg) < luminance(self.text)
+    }
+}
+
+/// The schemes a desktop names, one a look at most: Plasma's is one look's,
+/// a GTK3 theme may have a dark variant beside it (`gtk-dark.css`).
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Schemes {
+    #[serde(default)]
+    pub light: Option<Scheme>,
+    #[serde(default)]
+    pub dark: Option<Scheme>,
+}
+
+impl Schemes {
+    /// Keep `scheme` as its look's, unless that look has one already.
+    pub fn add(&mut self, scheme: Scheme) {
+        let slot = if scheme.is_dark() {
+            &mut self.dark
+        } else {
+            &mut self.light
+        };
+        if slot.is_none() {
+            *slot = Some(scheme);
+        }
+    }
+
+    /// The scheme of the look `dark` names.
+    pub fn of(&self, dark: bool) -> Option<&Scheme> {
+        if dark {
+            self.dark.as_ref()
+        } else {
+            self.light.as_ref()
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.light.is_none() && self.dark.is_none()
+    }
+}
+
+/// `color`'s relative luminance (WCAG 2).
+fn luminance(color: Rgb) -> f32 {
+    let linear = color.map(|c| {
+        if c <= 0.040_45 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    });
+    0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+}
+
+/// `color` (with its opacity, from 0 to 1) laid over `ground`, as it is
+/// drawn: mixed in sRGB.
+pub fn over(color: [f32; 4], ground: Rgb) -> Rgb {
+    let a = color[3].clamp(0., 1.);
+    [0, 1, 2].map(|i| (color[i] * a + ground[i] * (1. - a)).clamp(0., 1.))
 }
 
 /// What the desktop says now. It asks the session's bus and may run a
@@ -126,11 +228,15 @@ pub fn qt_family(font: &str) -> Option<String> {
 
 #[cfg(target_os = "linux")]
 mod imp {
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex, PoisonError};
+    use std::time::Duration;
+
     use skwir_core::CancelToken;
     use zbus::blocking::Connection;
     use zbus::zvariant::{OwnedValue, Value};
 
-    use super::DesktopStyle;
+    use super::{DesktopStyle, Schemes};
     use crate::desktop_settings::{self as desktop, Chosen};
 
     const DESTINATION: &str = "org.freedesktop.portal.Desktop";
@@ -138,16 +244,16 @@ mod imp {
     const SETTINGS: &str = "org.freedesktop.portal.Settings";
     const APPEARANCE: &str = "org.freedesktop.appearance";
     const INTERFACE: &str = "org.gnome.desktop.interface";
+    /// How long Plasma's writes of `kdeglobals` are let settle before it
+    /// is read again: choosing a scheme writes it more than once.
+    const SETTLE: Duration = Duration::from_millis(200);
 
     pub(super) fn read() -> DesktopStyle {
         let bus = Connection::session().ok();
-        read_from(bus.as_ref(), own_fonts())
+        read_from(bus.as_ref(), &TheDesktop)
     }
 
-    pub(super) fn follow(
-        mut changed: impl FnMut(DesktopStyle) + Send + 'static,
-        stop: CancelToken,
-    ) {
+    pub(super) fn follow(changed: impl FnMut(DesktopStyle) + Send + 'static, stop: CancelToken) {
         let thread = std::thread::Builder::new()
             .name("skwir-desktop-style".into())
             .spawn(move || {
@@ -155,7 +261,7 @@ mod imp {
                 if let Err(error) = &bus {
                     tracing::debug!("the desktop's style is not followed: {error}");
                 }
-                follow_on(bus.as_ref().ok(), own_fonts, &mut changed, &stop);
+                follow_on(bus.ok(), Arc::new(TheDesktop), changed, &stop);
             });
         if let Err(error) = thread {
             tracing::debug!("the desktop's style is not followed: {error}");
@@ -170,45 +276,170 @@ mod imp {
         pub(super) monospace: Option<String>,
     }
 
+    /// What the desktop's own settings and files say beside the portal,
+    /// read again at each change.
+    pub(super) trait Own: Send + Sync + 'static {
+        /// The fonts its settings name.
+        fn fonts(&self) -> Named;
+        /// Its color scheme: Plasma's, or the GTK3 theme its settings name,
+        /// else `portal_theme`, the theme the portal names.
+        fn schemes(&self, portal_theme: &dyn Fn() -> Option<String>) -> Schemes;
+        /// The file it says a change in by being replaced (Plasma's
+        /// `kdeglobals`), followed in its folder.
+        fn followed(&self) -> Option<PathBuf>;
+    }
+
+    /// This session's desktop.
+    struct TheDesktop;
+
+    impl Own for TheDesktop {
+        fn fonts(&self) -> Named {
+            own_fonts()
+        }
+
+        fn schemes(&self, portal_theme: &dyn Fn() -> Option<String>) -> Schemes {
+            let mut schemes = Schemes::default();
+            if desktop::chosen() == Some(Chosen::Kde) {
+                if let Some(scheme) = crate::kde_scheme::read() {
+                    schemes.add(scheme);
+                }
+                return schemes;
+            }
+            desktop::gtk_theme()
+                .or_else(portal_theme)
+                .map(|theme| crate::gtk_theme::schemes(&theme, &crate::gtk_theme::folders()))
+                .unwrap_or(schemes)
+        }
+
+        fn followed(&self) -> Option<PathBuf> {
+            (desktop::chosen() == Some(Chosen::Kde))
+                .then(crate::kde_scheme::user_file)
+                .flatten()
+        }
+    }
+
     /// The portal's keys of the fonts, in `INTERFACE`.
     const FONT_KEYS: [&str; 3] = ["font-name", "document-font-name", "monospace-font-name"];
 
-    /// What the desktop says, each font as `own` found it where the
-    /// desktop keeps it, else as the portal on `bus` names it.
-    pub(super) fn read_from(bus: Option<&Connection>, own: Named) -> DesktopStyle {
+    /// What the desktop says: each font as `own` names it where the
+    /// desktop keeps it, else as the portal on `bus` names it; its scheme
+    /// as `own` finds it.
+    pub(super) fn read_from(bus: Option<&Connection>, own: &dyn Own) -> DesktopStyle {
         let portal =
             |namespace: &str, key: &str| bus.and_then(|bus| portal_read(bus, namespace, key));
+        let portal_string = |namespace: &str, key: &str| {
+            portal(namespace, key).and_then(|value| String::try_from(value).ok())
+        };
         let font = |own: Option<String>, key: &str| {
             own.or_else(|| {
-                portal(INTERFACE, key)
-                    .and_then(|value| String::try_from(value).ok())
-                    .and_then(|name| super::pango_family(&name))
+                portal_string(INTERFACE, key).and_then(|name| super::pango_family(&name))
             })
             .map(|family| crate::fonts::unalias(&family))
         };
+        let named = own.fonts();
         let [interface, document, monospace] = FONT_KEYS;
         DesktopStyle {
             accent: portal(APPEARANCE, "accent-color").and_then(accent),
             more_contrast: portal(APPEARANCE, "contrast")
                 .and_then(|value| u32::try_from(value).ok())
                 == Some(1),
-            font: font(own.interface, interface),
-            document_font: font(own.document, document),
-            monospace_font: font(own.monospace, monospace),
+            font: font(named.interface, interface),
+            document_font: font(named.document, document),
+            monospace_font: font(named.monospace, monospace),
+            schemes: own.schemes(&|| {
+                portal_string(INTERFACE, "gtk-theme").filter(|theme| !theme.is_empty())
+            }),
         }
     }
 
-    /// Read on `bus`, tell `changed`, then again at each change of what
-    /// is read, until the bus goes or a change comes after `stop`.
+    /// What was said last, and whom to tell of a change: read again from
+    /// the bus's thread and the file's alike.
+    struct Following {
+        bus: Option<Connection>,
+        own: Arc<dyn Own>,
+        said: Mutex<Option<DesktopStyle>>,
+        changed: Mutex<Box<dyn FnMut(DesktopStyle) + Send>>,
+    }
+
+    impl Following {
+        /// Read again, and tell what differs from what was said. What the
+        /// reading freed (a theme's sheets) is given back before the
+        /// thread waits again, which may be for hours.
+        fn read_again(&self) {
+            let now = read_from(self.bus.as_ref(), &*self.own);
+            let mut said = self.said.lock().unwrap_or_else(PoisonError::into_inner);
+            if said.as_ref() != Some(&now) {
+                *said = Some(now.clone());
+                (self.changed.lock().unwrap_or_else(PoisonError::into_inner))(now);
+            }
+            drop(said);
+            skwir_core::scheduler::release_now();
+        }
+    }
+
+    /// Read, tell `changed`, then again at each change of what is read:
+    /// a setting the portal on `bus` says changed, the file `own` follows
+    /// replaced. Ends once the bus goes and nothing is followed, or with
+    /// `stop`. Never wakes on a timer.
     pub(super) fn follow_on(
-        bus: Option<&Connection>,
-        own_fonts: impl Fn() -> Named,
-        changed: &mut dyn FnMut(DesktopStyle),
+        bus: Option<Connection>,
+        own: Arc<dyn Own>,
+        changed: impl FnMut(DesktopStyle) + Send + 'static,
         stop: &CancelToken,
     ) {
-        let mut said = read_from(bus, own_fonts());
-        changed(said.clone());
-        let Some(bus) = bus else { return };
+        let following = Arc::new(Following {
+            bus,
+            own,
+            said: Mutex::new(None),
+            changed: Mutex::new(Box::new(changed)),
+        });
+        following.read_again();
+        let file = following
+            .own
+            .followed()
+            .and_then(|file| follow_file(&following, &file, stop));
+        if let Some(bus) = &following.bus {
+            listen(bus, &following, stop);
+        }
+        if file.is_some() {
+            // The bus gone or never there, the file is followed still.
+            let _ = stop.subscribe().receiver().recv();
+        }
+    }
+
+    /// Follow `file` being replaced in its folder (access dropped, as
+    /// `fs::Settled` does), reading again once its writes settle.
+    fn follow_file(
+        following: &Arc<Following>,
+        file: &std::path::Path,
+        stop: &CancelToken,
+    ) -> Option<skwir_core::fs::Settled> {
+        let folder = file.parent()?.to_path_buf();
+        let name = file.file_name()?.to_owned();
+        let weak = Arc::downgrade(following);
+        let stop = stop.clone();
+        let mut settled = skwir_core::fs::Settled::start(
+            "skwir-desktop-files",
+            SETTLE,
+            move |path| path.file_name() == Some(name.as_os_str()),
+            move || {
+                let Some(following) = weak.upgrade().filter(|_| !stop.is_cancelled()) else {
+                    return false;
+                };
+                following.read_again();
+                true
+            },
+        )?;
+        let followed = settled.watch(&folder);
+        if !followed {
+            tracing::debug!("{} is read, not followed", file.display());
+        }
+        followed.then_some(settled)
+    }
+
+    /// Read again at each change the portal on `bus` says of what is read,
+    /// until the bus goes or a change comes after `stop`.
+    fn listen(bus: &Connection, following: &Following, stop: &CancelToken) {
         let rule = zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .interface(SETTINGS)
@@ -235,16 +466,13 @@ mod imp {
             };
             let read = match key.as_str() {
                 "accent-color" | "contrast" => namespace == APPEARANCE,
-                key if FONT_KEYS.contains(&key) => namespace.ends_with(".interface"),
+                key if FONT_KEYS.contains(&key) || key == "gtk-theme" => {
+                    namespace.ends_with(".interface")
+                }
                 _ => false,
             };
-            if !read {
-                continue;
-            }
-            let now = read_from(Some(bus), own_fonts());
-            if now != said {
-                said = now.clone();
-                changed(now);
+            if read {
+                following.read_again();
             }
         }
     }
@@ -395,6 +623,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     mod portal {
         use std::collections::HashMap;
+        use std::path::{Path, PathBuf};
         use std::sync::{Arc, Mutex, mpsc};
         use std::time::Duration;
 
@@ -403,7 +632,7 @@ mod tests {
         use zbus::object_server::SignalEmitter;
         use zbus::zvariant::{OwnedValue, Value};
 
-        use super::super::{DesktopStyle, imp};
+        use super::super::{DesktopStyle, Schemes, imp};
 
         type Values = Arc<Mutex<HashMap<(String, String), OwnedValue>>>;
 
@@ -493,6 +722,54 @@ mod tests {
         }
 
         const APPEARANCE: &str = "org.freedesktop.appearance";
+        const INTERFACE: &str = "org.gnome.desktop.interface";
+
+        /// A desktop of the test's own: the fonts its settings name, its
+        /// `kdeglobals` when it is Plasma (followed), else the GTK3 themes
+        /// in a folder of the test's own, named by the portal.
+        struct Fixed {
+            fonts: fn() -> imp::Named,
+            kdeglobals: Option<PathBuf>,
+            themes: Vec<PathBuf>,
+        }
+
+        impl Fixed {
+            fn fonts(fonts: fn() -> imp::Named) -> Arc<Self> {
+                Arc::new(Fixed {
+                    fonts,
+                    kdeglobals: None,
+                    themes: Vec::new(),
+                })
+            }
+        }
+
+        impl imp::Own for Fixed {
+            fn fonts(&self) -> imp::Named {
+                (self.fonts)()
+            }
+
+            fn schemes(&self, portal_theme: &dyn Fn() -> Option<String>) -> Schemes {
+                let mut schemes = Schemes::default();
+                if let Some(file) = &self.kdeglobals {
+                    let text = std::fs::read_to_string(file).unwrap_or_default();
+                    if let Some(scheme) = crate::kde_scheme::scheme_of(&[text], &[]) {
+                        schemes.add(scheme);
+                    }
+                    return schemes;
+                }
+                portal_theme()
+                    .map(|theme| crate::gtk_theme::schemes(&theme, &self.themes))
+                    .unwrap_or(schemes)
+            }
+
+            fn followed(&self) -> Option<PathBuf> {
+                self.kdeglobals.clone()
+            }
+        }
+
+        fn nothing_named() -> imp::Named {
+            imp::Named::default()
+        }
 
         #[test]
         fn what_the_portal_answers_is_the_desktop_s_style() {
@@ -509,15 +786,10 @@ mod tests {
                 ("document-font-name", "Noto Serif 11"),
                 ("monospace-font-name", "Hack Bold 10"),
             ] {
-                set(
-                    &values,
-                    "org.gnome.desktop.interface",
-                    key,
-                    &Value::from(font),
-                );
+                set(&values, INTERFACE, key, &Value::from(font));
             }
             let (bus, _server) = portal(&values);
-            let style = imp::read_from(Some(&bus), imp::Named::default());
+            let style = imp::read_from(Some(&bus), &*Fixed::fonts(nothing_named));
             assert_eq!(
                 style,
                 DesktopStyle {
@@ -526,20 +798,49 @@ mod tests {
                     font: Some("Noto Sans".into()),
                     document_font: Some("Noto Serif".into()),
                     monospace_font: Some("Hack".into()),
+                    schemes: Schemes::default(),
                 }
             );
             // The desktop's own settings name a font before the portal.
             let own = imp::read_from(
                 Some(&bus),
-                imp::Named {
+                &*Fixed::fonts(|| imp::Named {
                     interface: Some("Cantarell".into()),
                     monospace: Some("Source Code Pro".into()),
                     ..imp::Named::default()
-                },
+                }),
             );
             assert_eq!(own.font.as_deref(), Some("Cantarell"));
             assert_eq!(own.document_font.as_deref(), Some("Noto Serif"));
             assert_eq!(own.monospace_font.as_deref(), Some("Source Code Pro"));
+        }
+
+        #[test]
+        fn the_gtk_theme_the_portal_names_gives_its_colors() {
+            let themes = tempfile::tempdir().unwrap();
+            let sheet = themes.path().join("Named/gtk-3.0/gtk.css");
+            std::fs::create_dir_all(sheet.parent().unwrap()).unwrap();
+            std::fs::write(
+                &sheet,
+                "@define-color theme_base_color #fdf6e3;\n\
+                 @define-color theme_bg_color #eee8d5;\n\
+                 @define-color theme_text_color #586e75;\n",
+            )
+            .unwrap();
+            let values = Values::default();
+            set(&values, INTERFACE, "gtk-theme", &Value::from("Named"));
+            let (bus, _server) = portal(&values);
+            let desktop = Arc::new(Fixed {
+                fonts: nothing_named,
+                kdeglobals: None,
+                themes: vec![themes.path().to_path_buf()],
+            });
+            let style = imp::read_from(Some(&bus), &*desktop);
+            let light = style.schemes.light.expect("the theme's colors");
+            assert!((light.bg[0] - 253. / 255.).abs() < 1e-6);
+            assert_eq!(style.schemes.dark, None);
+            // No portal to name it: none.
+            assert!(imp::read_from(None, &*desktop).schemes.is_empty());
         }
 
         #[test]
@@ -555,7 +856,7 @@ mod tests {
             let (bus, _server) = serve(OldPortal {
                 values: Arc::clone(&values),
             });
-            let style = imp::read_from(Some(&bus), imp::Named::default());
+            let style = imp::read_from(Some(&bus), &*Fixed::fonts(nothing_named));
             assert_eq!(style.accent, Some([0.2, 0.4, 0.6]));
             assert!(style.more_contrast);
         }
@@ -570,15 +871,13 @@ mod tests {
                 &Value::from((-1_f64, -1., -1.)),
             );
             let (bus, _server) = portal(&values);
+            let nothing = Fixed::fonts(nothing_named);
             assert_eq!(
-                imp::read_from(Some(&bus), imp::Named::default()),
+                imp::read_from(Some(&bus), &*nothing),
                 DesktopStyle::default()
             );
             // No bus at all: skwir's own.
-            assert_eq!(
-                imp::read_from(None, imp::Named::default()),
-                DesktopStyle::default()
-            );
+            assert_eq!(imp::read_from(None, &*nothing), DesktopStyle::default());
         }
 
         #[test]
@@ -595,9 +894,9 @@ mod tests {
             let stop = CancelToken::new();
             let following = std::thread::spawn(move || {
                 imp::follow_on(
-                    Some(&bus),
-                    imp::Named::default,
-                    &mut |style| sent.send(style).unwrap(),
+                    Some(bus),
+                    Fixed::fonts(nothing_named),
+                    move |style| sent.send(style).unwrap(),
                     &stop,
                 );
             });
@@ -628,16 +927,15 @@ mod tests {
             assert!(got.recv_timeout(Duration::from_millis(300)).is_err());
 
             // A font the desktop names for code, followed as the rest is.
-            let interface = "org.gnome.desktop.interface";
             set(
                 &values,
-                interface,
+                INTERFACE,
                 "monospace-font-name",
                 &Value::from("Hack 10"),
             );
             say(
                 &server,
-                interface,
+                INTERFACE,
                 "monospace-font-name",
                 Value::from("Hack 10"),
             );
@@ -645,6 +943,60 @@ mod tests {
 
             // The portal gone, the thread ends.
             drop(server);
+            following.join().unwrap();
+        }
+
+        /// Write `text` to `file` as Plasma does: beside it, then over it.
+        fn replace(file: &Path, text: &str) {
+            let staged = file.with_extension("new");
+            std::fs::write(&staged, text).unwrap();
+            std::fs::rename(&staged, file).unwrap();
+        }
+
+        const PLASMA: &str = "[Colors:View]\nBackgroundNormal=255,255,255\nForegroundNormal=35,38,41\n\
+                              [Colors:Window]\nBackgroundNormal=239,240,241\n";
+
+        #[test]
+        fn plasma_s_scheme_is_followed_as_kdeglobals_is_replaced() {
+            let config = tempfile::tempdir().unwrap();
+            let kdeglobals = config.path().join("kdeglobals");
+            replace(&kdeglobals, PLASMA);
+            let desktop = Arc::new(Fixed {
+                fonts: nothing_named,
+                kdeglobals: Some(kdeglobals.clone()),
+                themes: Vec::new(),
+            });
+            let (sent, got) = mpsc::channel();
+            let stop = CancelToken::new();
+            let following = {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    imp::follow_on(None, desktop, move |style| sent.send(style).unwrap(), &stop);
+                })
+            };
+            let next = || got.recv_timeout(Duration::from_secs(10)).unwrap();
+            let first = next().schemes;
+            assert!(first.light.is_some() && first.dark.is_none());
+
+            // Another file of the folder, and kdeglobals written again the
+            // same: nothing. Then a dark scheme.
+            std::fs::write(config.path().join("other"), "x").unwrap();
+            replace(&kdeglobals, PLASMA);
+            assert!(got.recv_timeout(Duration::from_millis(800)).is_err());
+            let dark = PLASMA
+                .replace("BackgroundNormal=255,255,255", "BackgroundNormal=35,38,41")
+                .replace("ForegroundNormal=35,38,41", "ForegroundNormal=252,252,252")
+                .replace("BackgroundNormal=239,240,241", "BackgroundNormal=32,35,38");
+            replace(&kdeglobals, &dark);
+            let changed = next().schemes;
+            assert!(changed.light.is_none() && changed.dark.is_some());
+            assert!(
+                got.recv_timeout(Duration::from_millis(800)).is_err(),
+                "once"
+            );
+
+            // No bus, the file followed still; stopped, the thread ends.
+            stop.cancel();
             following.join().unwrap();
         }
     }
