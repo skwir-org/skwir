@@ -57,7 +57,7 @@ beside Windows' on each release's page: `skwir-<version>-macos-arm64.dmg`, a dis
 `skwir-<version>-macos-arm64.zip`; for macOS 11 or later. It is signed ad hoc but not notarized, so macOS refuses
 it at first: open it once from System Settings, Privacy & Security ("Open
 Anyway"), or run `xattr -dr com.apple.quarantine skwir.app`. It reads PDFs,
-DjVu and 3D models; archives, audio and video, and the Poppler and MuPDF
+DjVu, 3D models and archives; audio and video, and the Poppler and MuPDF
 readers are not in it yet. It has never run anywhere: everything below is
 new. Intel Macs have no build yet.
 
@@ -78,24 +78,31 @@ new. Intel Macs have no build yet.
 4. **Types and pictures** (try). Files show the right kind and icon (UTType,
    `NSWorkspace`); thumbnails come from Quick Look (PORTING sections 7, 8).
    Report which files look wrong.
-5. **Keys** (try). Cmd is the standard modifier; Ctrl where macOS keeps Cmd
+5. **Archives** (try). Open a ZIP, a 7z, a RAR and a tar.gz in the preview;
+   extract one, and one downloaded, whose files should stay in quarantine
+   (Gatekeeper asks before a program from it first runs); compress a
+   folder in each format and open what is made in Archive Utility. Names
+   with accents and other scripts should come through both ways. The
+   helper carries its libarchive, built on Linux and never run (PORTING
+   section 8).
+6. **Keys** (try). Cmd is the standard modifier; Ctrl where macOS keeps Cmd
    for itself (PORTING "10–15"). Report shortcuts that do the wrong thing.
    A drag's copy modifier should be Option (not done).
-6. **Isolation** (code). Converters (LibreOffice, Pandoc, ImageMagick) and
+7. **Isolation** (code). Converters (LibreOffice, Pandoc, ImageMagick) and
    plugins from outside run under `sandbox-exec` with Skwir's profile
    (`platform/src/sandbox.rs`, ADR-039). Find what the profile must let
    through for each to start; without it they are refused.
-7. **What is not written** (code): ejecting a volume (DiskArbitration);
+8. **What is not written** (code): ejecting a volume (DiskArbitration);
    audio and video through AVFoundation (a helper of its own, ADR-041); the
    trash's listing (`~/.Trash` records no origin); Finder's favorites as
    bookmarks; media keys (Now Playing). PORTING sections 4, 6, 8, "10–15".
-8. **The package** (code). `tools/package/macos.sh` makes `skwir.app` on
+9. **The package** (code). `tools/package/macos.sh` makes `skwir.app` on
    Linux (ADR-075); try it on a fresh account, and moved to Applications.
-   An Intel build, the helpers that link libraries (libarchive,
-   AVFoundation's player, Poppler, MuPDF) and a disk image are not done.
+   An Intel build and the helpers that link libraries (AVFoundation's
+   player, Poppler, MuPDF) are not done.
    Notarization needs an Apple developer identity: the project decides that
    with you.
-9. **CI** (code). The `native` job in `.github/workflows/ci.yml` builds,
+10. **CI** (code). The `native` job in `.github/workflows/ci.yml` builds,
    lints and tests on `macos-latest`. It does not block merging until it
    passes.
 
@@ -107,9 +114,9 @@ page (the first are on 0.2.0's, built from the changes since): a zip,
 `skwir.exe` from, or an installer, `skwir-<version>-windows-x86_64.msi`,
 which puts it in `%LocalAppData%\Programs\skwir` with a Start menu entry
 and asks no administrator. Neither is signed: Windows warns first ("Windows
-protected your PC": More info, then Run anyway). It reads PDFs, DjVu and 3D
-models; archives, audio and video, and the Poppler and MuPDF readers are not
-in it yet. Wine started its programs and installed it, but cannot draw its
+protected your PC": More info, then Run anyway). It reads PDFs, DjVu, 3D
+models and archives; audio and video, and the Poppler and MuPDF readers are
+not in it yet. Wine started its programs and installed it, but cannot draw its
 window: everything below is new.
 
 1. **It opens** (try). The window draws, a folder lists, the drives are in
@@ -126,27 +133,31 @@ window: everything below is new.
    name instead (PORTING section 3).
 4. **The terminal** (try). The terminal panel (ConPTY) starts, takes keys,
    and follows the folder shown (PORTING section 9).
-5. **Control channel security** (code). Agents and scripts reach the window
+5. **Archives** (try). Open a ZIP, a 7z, a RAR and a tar.gz in the preview;
+   extract one; compress a folder in each format and open what is made in
+   Explorer or 7-Zip. Names with accents and other scripts should come
+   through both ways, a tar made on Linux included (PORTING section 8).
+6. **Control channel security** (code). Agents and scripts reach the window
    through a named pipe with Windows' default security, which lets other
    accounts open it, and the client does not check the server's account.
    Before Control can be turned on there, the pipe needs a DACL of the user
    alone and the client a check of the server
    (`plugins/control/src/channel.rs`, PORTING "10–15").
-6. **Isolation** (code). Windows has none yet (ADR-039): converters that
+7. **Isolation** (code). Windows has none yet (ADR-039): converters that
    need it are refused, and plugins from outside that run as programs do
    not run. The plan is an AppContainer (`platform/src/sandbox.rs`).
-7. **What is not written** (code): ejecting a drive; drives plugged in
+8. **What is not written** (code): ejecting a drive; drives plugged in
    appearing at once (`WM_DEVICECHANGE`); audio and video through Media
    Foundation (a helper of its own); owners by SID; Quick Access as
    bookmarks; Windows Search for hints; media keys (SMTC). PORTING sections
    6, 7, 8, "10–15".
-8. **The package** (code). `tools/package/windows.sh` makes the zip and the
+9. **The package** (code). `tools/package/windows.sh` makes the zip and the
    installer on Linux (ADR-074); try the installer on a fresh account:
    installing, the Start menu entry, updating over an older one, removing.
-   The helpers that link libraries (libarchive, Media Foundation's player,
-   Poppler, MuPDF) need those built for Windows. Signing needs a
+   The helpers that link libraries (Media Foundation's player, Poppler,
+   MuPDF) need those built for Windows. Signing needs a
    code-signing certificate: the project decides that with you.
-9. **CI** (code). The `native` job runs on `windows-latest` too.
+10. **CI** (code). The `native` job runs on `windows-latest` too.
 
 ## When a system is ready
 

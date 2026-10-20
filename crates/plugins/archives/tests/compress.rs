@@ -25,7 +25,10 @@ fn with_archive_worker() -> bool {
         .map(PathBuf::from)
         .or_else(|| {
             let exe = std::env::current_exe().ok()?;
-            let built = exe.parent()?.parent()?.join("skwir-archive-worker");
+            let built = exe.parent()?.parent()?.join(format!(
+                "skwir-archive-worker{}",
+                std::env::consts::EXE_SUFFIX
+            ));
             built.is_file().then_some(built)
         });
     let Some(worker) = worker else {
@@ -227,7 +230,11 @@ fn a_folder_made_an_archive_of_each_format_is_extracted_back_as_it_was() {
         }
     }
 
-    // Undone to the trash, as a copy is; redone.
+    // Undone to the trash, as a copy is; redone. Wine's shell trashes
+    // nothing: that needs Windows.
+    if skwir_core::system::under_wine("trashing through the shell") {
+        return;
+    }
     let archive = tmp
         .path()
         .join("made tar")
@@ -620,12 +627,16 @@ fn an_extraction_onto_a_name_taken_asks_and_keeps_both_or_replaces() {
         std::fs::read_to_string(fresh.join("project-1.0/README")).unwrap(),
         "read me"
     );
-    let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
-    assert!(undone.error.is_none(), "{:?}", undone.error);
-    assert_eq!(std::fs::read_dir(&fresh).unwrap().count(), 0);
-    let redone = app.executor.redo_blocking(app.lifetime()).unwrap();
-    assert!(redone.error.is_none(), "{:?}", redone.error);
-    assert!(fresh.join("project-1.0/README").is_file());
+    // Undone to the trash (Wine's shell trashes nothing: that needs
+    // Windows).
+    if !skwir_core::system::under_wine("trashing through the shell") {
+        let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
+        assert!(undone.error.is_none(), "{:?}", undone.error);
+        assert_eq!(std::fs::read_dir(&fresh).unwrap().count(), 0);
+        let redone = app.executor.redo_blocking(app.lifetime()).unwrap();
+        assert!(redone.error.is_none(), "{:?}", redone.error);
+        assert!(fresh.join("project-1.0/README").is_file());
+    }
     assert!(!fresh.join("v1.0").exists(), "no folder around it");
 
     let extract = || {
@@ -667,7 +678,11 @@ fn an_extraction_onto_a_name_taken_asks_and_keeps_both_or_replaces() {
     );
     assert!(dest.join("project-1.0/mine.txt").is_file());
 
-    // Replaced: what was there goes to the trash.
+    // Replaced: what was there goes to the trash, which Wine's shell
+    // does not.
+    if skwir_core::system::under_wine("trashing through the shell") {
+        return;
+    }
     std::fs::remove_dir_all(dest.join("project-1.0 (2)")).unwrap();
     let replaced = whole(&app, extract(), |app| {
         let question = clashes_asked(app);
@@ -784,11 +799,27 @@ fn compress_is_offered_for_files_and_folders_in_their_menu() {
     );
 }
 
-/// `path`'s modification time moved `by` from now, later or earlier.
+/// `path`'s modification time moved `by` from now, later or earlier: a
+/// file's or a folder's.
 fn touch(path: &Path, later: bool, by: Duration) {
     let now = std::time::SystemTime::now();
     let at = if later { now + by } else { now - by };
-    std::fs::File::open(path).unwrap().set_modified(at).unwrap();
+    #[cfg(not(windows))]
+    let held = std::fs::File::open(path).unwrap();
+    // Windows sets a time through a handle allowed to write attributes,
+    // and opens a folder only with backup semantics.
+    #[cfg(windows)]
+    let held = {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        std::fs::File::options()
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)
+            .unwrap()
+    };
+    held.set_modified(at).unwrap();
 }
 
 /// A file's text changed, its size kept, its time later: what a copy and
@@ -889,6 +920,11 @@ fn replace_if_newer_reads_the_files_a_folder_holds() {
     edit_in_place(&deep.join("inner/file.txt"), "again");
     touch(&deep.join("inner"), false, Duration::from_secs(3600));
     touch(&deep, false, Duration::from_secs(3600));
+    // The archive replaced goes to the trash, which Wine's shell does not
+    // do: that needs Windows.
+    if skwir_core::system::under_wine("trashing through the shell") {
+        return;
+    }
     let replaced = whole(&app, plan(&app), |_| {});
     assert!(
         matches!(replaced, ExecEvent::Finished { error: None, .. }),

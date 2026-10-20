@@ -78,7 +78,8 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
   Anyway (macOS 15), or `xattr -dr com.apple.quarantine skwir.app`.
   Notarizing needs an Apple developer account: a decision of its own.
 - **No archives, player, Poppler, MuPDF or DjVuLibre**, as on Windows: their
-  helpers link libraries not built for macOS here. Mermaid's is left out as
+  helpers link libraries not built for macOS here (archives since,
+  amendments below). Mermaid's is left out as
   Linux's packages leave it (ADR-041).
 - **Nothing here can run it.** What it does on a Mac, PORTING's macOS
   items included, is for people with one.
@@ -92,3 +93,8 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
   SDK), and `just release-upload` puts them on the release's page, said
   there to be builds to try (the user's decision, as for Windows,
   ADR-074).
+- 2026-10-20 (ADR-041): the archive helper is in the bundle, libarchive
+  built through xmac's CMake toolchain and linked into it statically, with
+  macOS's own zlib, bzip2, iconv and Expat (`tools/package/libarchive.sh`);
+  the check refuses a helper linked to the system's libarchive, whose
+  formats vary with macOS. Never run.

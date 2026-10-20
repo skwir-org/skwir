@@ -2,9 +2,10 @@
 # What tools/package/windows.sh made, tried under Wine (ADR-074): the zip
 # unpacked into a folder whose name has a space and an apostrophe, each
 # program answering (`--version`, a helper's `--probe`: PDFium loaded from
-# beside it), every file it should hold; then the installer, per user,
-# quietly: the programs where it puts them, its Start menu entry, and
-# nothing of them left once it is removed.
+# beside it), every file it should hold; the archive helper making and
+# reading archives with the libarchive linked into it; then the
+# installer, per user, quietly: the programs where it puts them, its Start
+# menu entry, and nothing of them left once it is removed.
 #
 # Wine is not Windows. It cannot draw skwir's window (its DirectWrite has
 # no font sets; Direct Manipulation and DirectComposition are missing), so
@@ -70,7 +71,8 @@ folder = into / name
 wanted = [f"{p}.exe" for p in programs] + [
     "pdfium.dll", "share/mime/globs2", "share/mime/magic", "share/mime/COPYING",
     "licenses/LICENSE", "licenses/THIRD-PARTY-NOTICES", "licenses/mingw-w64/COPYING",
-    "licenses/pdfium/LICENSE"]
+    "licenses/pdfium/LICENSE", "licenses/libarchive/COPYING", "licenses/libarchive/VERSIONS",
+    "licenses/zstd/LICENSE"]
 missing = [w for w in wanted if not (folder / w).is_file()]
 assert not missing, f"missing from the zip: {missing}"
 top = {p.name for p in folder.iterdir()}
@@ -87,6 +89,57 @@ for program in $programs; do
     fi
 done
 echo "ok: no program names a folder of the machine that built it"
+
+# The archive helper, libarchive and its compressors linked in: each
+# format skwir makes, of members whose names are not ASCII, made in a
+# folder whose name is not either and listed again; a ZIP made here names
+# its members in UTF-8, flagged so; and a GNU tar's names, UTF-8 without a
+# header saying so, are read as UTF-8 (libarchive's default on Windows is
+# the OEM code page).
+python3 - "$unpacked/$name/skwir-archive-worker.exe" "$scratch/archives d'été" <<'EOF'
+import io, json, pathlib, subprocess, sys, tarfile, zipfile
+helper, work = sys.argv[1], pathlib.Path(sys.argv[2])
+work.mkdir(parents=True)
+def windows(path):
+    return subprocess.run(["winepath", "-w", str(path)], check=True, capture_output=True, text=True).stdout.strip()
+def run(*args, stdin=b""):
+    done = subprocess.run(["wine", helper, *args], input=stdin, capture_output=True)
+    assert done.returncode == 0, f"{args[1:]}: {done.stderr.decode(errors='replace')}"
+    return done.stdout
+names = ["dossier d'essai/", "dossier d'essai/café — note.txt", "日本語.txt"]
+wanted = sorted(n.rstrip("/") for n in names)
+body = b"bonjour\n" * 1000
+def listed(path):
+    said = json.loads(run(windows(path), "--members", "100", "--names", "100000"))
+    assert said["complete"], said
+    return sorted(m["name"].rstrip("/") for m in said["members"])
+for kind in ["zip", "7z", "tar", "tar.gz", "tar.bz2", "tar.xz", "tar.zst"]:
+    made, stdin = work / f"made.{kind}", b""
+    for n in names:
+        header = {"name": n.rstrip("/").encode().hex(), "mode": 0o755, "mtime": [1700000000, 0]}
+        if n.endswith("/"):
+            stdin += json.dumps({**header, "kind": "dir"}).encode() + b"\n"
+        else:
+            stdin += json.dumps({**header, "kind": "file", "size": len(body)}).encode() + b"\n" + body
+    run(windows(made), "--create", kind, stdin=stdin + b'{"end": true}\n')
+    assert listed(made) == wanted, (kind, listed(made))
+with zipfile.ZipFile(work / "made.zip") as zipped:
+    assert sorted(i.filename.rstrip("/") for i in zipped.infolist()) == wanted
+    assert all(i.flag_bits & 0x800 for i in zipped.infolist() if not i.filename.isascii()), "unflagged"
+print("ok: the archive helper makes and lists ZIP, 7z, tar, tar.gz, tar.bz2, tar.xz and tar.zst; a ZIP's names are flagged UTF-8")
+gnu = work / "gnu.tar"
+with tarfile.open(gnu, "w", format=tarfile.GNU_FORMAT, encoding="utf-8") as tar:
+    for n in names:
+        member = tarfile.TarInfo(n.rstrip("/"))
+        if n.endswith("/"):
+            member.type = tarfile.DIRTYPE
+            tar.addfile(member)
+        else:
+            member.size = len(body)
+            tar.addfile(member, io.BytesIO(body))
+assert listed(gnu) == wanted, listed(gnu)
+print("ok: a GNU tar's names, UTF-8 without a PAX header, read as UTF-8")
+EOF
 
 # The installer, per user, then removed.
 user="$(wine cmd /c 'echo %USERNAME%' 2>/dev/null | tr -d '\r')"

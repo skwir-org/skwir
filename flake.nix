@@ -82,6 +82,28 @@
           libiconv
         ];
 
+      # libarchive and the compressors it links, as nixpkgs patches them
+      # (its security fixes included), for the static libarchive that
+      # Windows' and macOS's packages build and carry
+      # (tools/package/libarchive.sh, ADR-041): a folder of each, and
+      # their versions. The flake's lock pins them.
+      libarchiveSources = let
+        libraries = with pkgs; [libarchive zlib bzip2 xz zstd lz4];
+      in
+        pkgs.linkFarm "skwir-libarchive-sources" (
+          map (p: {
+            name = p.pname;
+            path = pkgs.srcOnly p;
+          })
+          libraries
+          ++ [
+            {
+              name = "versions";
+              path = pkgs.writeText "versions" (lib.concatMapStrings (p: "${p.pname} ${p.version}\n") libraries);
+            }
+          ]
+        );
+
       # Optional native workers link these; skwir itself does not.
       mediaPlugins = with pkgs.gst_all_1; [
         gst-plugins-base
@@ -239,6 +261,7 @@
         nativeBuildInputs =
           old.nativeBuildInputs
           ++ lib.optionals stdenv.hostPlatform.isLinux [pkgs.wine64Packages.stable pkgs.llvmPackages.llvm pkgs.msitools pkgs.icoutils];
+        SKWIR_LIBARCHIVE_SOURCES = libarchiveSources;
       });
 
       # xmac (github.com/Jarred-Sumner/xmac, MIT or Apache-2.0) downloads
@@ -289,6 +312,7 @@
       devShells.macos = self.devShells.${system}.default.overrideAttrs (old: {
         XMAC_CLANG = "${pkgs.llvmPackages.clang-unwrapped}/bin/clang";
         XMAC_LLD = "${pkgs.lld}/bin/ld64.lld";
+        SKWIR_LIBARCHIVE_SOURCES = libarchiveSources;
         # What tools/package/macos.sh also needs: llvm-ar and llvm-otool,
         # rsvg-convert for the icon, rcodesign to sign the bundle ad hoc,
         # mkfs.hfsplus and libdmg-hfsplus for the disk image.

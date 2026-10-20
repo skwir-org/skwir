@@ -48,7 +48,8 @@ for program in programs:
 for wanted in ["Frameworks/libpdfium.dylib", "Resources/skwir.icns", "Resources/share/mime/globs2",
                "Resources/share/mime/magic", "Resources/licenses/LICENSE",
                "Resources/licenses/THIRD-PARTY-NOTICES", "Resources/licenses/pdfium/LICENSE",
-               "_CodeSignature/CodeResources"]:
+               "Resources/licenses/libarchive/COPYING", "Resources/licenses/libarchive/VERSIONS",
+               "Resources/licenses/zstd/LICENSE", "_CodeSignature/CodeResources"]:
     assert (app / wanted).is_file(), f"missing: {wanted}"
 info = plistlib.loads((app / "Info.plist").read_bytes())
 assert info["CFBundleExecutable"] == "skwir" and info["CFBundleIdentifier"] == "org.skwir.skwir", info
@@ -99,6 +100,13 @@ for program in $programs; do
     fi
     echo "ok: $program: arm64, macOS 11 or later, the system's libraries alone, no build folder"
 done
+# The archive helper carries its libarchive (tools/package/libarchive.sh):
+# built without it, it would link the system's, whose formats vary.
+if llvm-otool -L "$app/MacOS/skwir-archive-worker" | grep -q libarchive; then
+    echo "skwir-archive-worker links the system's libarchive, not its own" >&2
+    exit 1
+fi
+echo "ok: skwir-archive-worker carries its own libarchive"
 # The seal, checked here as macOS checks it (rcodesign's `verify` reads no
 # bundle): the main program's signature binds Info.plist and the list of
 # resources; that list holds each file's digest, and each program and

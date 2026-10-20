@@ -160,9 +160,9 @@ lint-all: && check-cross
 # Compile and lint the Windows and macOS builds from Linux.
 check-cross: check-windows check-macos
 
-# Compile and lint the Windows build (default members, tests included).
+# Compile and lint the Windows build (default members and the archive helper, which its package carries; tests included).
 check-windows:
-    CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings
+    CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target x86_64-pc-windows-gnu --all-targets --workspace --exclude skwir-poppler-worker --exclude skwir-mupdf-worker --exclude skwir-djvulibre-worker --exclude skwir-media-worker -- -D warnings
 
 # xmac (the flake's `.#macos` shell) downloads the SDK from Apple's servers
 # into ~/.local/share/skwir-build/macos-sdk; it is never committed or
@@ -177,7 +177,7 @@ macos-sdk *args:
 
 # Compile and lint the macOS build, but for the crates built on gpui.
 check-macos:
-    CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target aarch64-apple-darwin --all-targets --workspace --exclude skwir-ui --exclude skwir --exclude skwir-poppler-worker --exclude skwir-mupdf-worker --exclude skwir-djvulibre-worker --exclude skwir-media-worker --exclude skwir-archive-worker -- -D warnings
+    CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target aarch64-apple-darwin --all-targets --workspace --exclude skwir-ui --exclude skwir --exclude skwir-poppler-worker --exclude skwir-mupdf-worker --exclude skwir-djvulibre-worker --exclude skwir-media-worker -- -D warnings
 
 # Run the Windows build's tests under Wine (args go to nextest: `-p skwir-core`).
 test-windows *args:

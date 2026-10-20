@@ -7,10 +7,11 @@
 # under Wine.
 #
 # What the folder holds: tools/package/windows/programs (skwir and the
-# helpers that carry no library of their own), PDFium beside them
-# (ADR-041), the type database (ADR-037) in share\mime, and in licenses
-# skwir's licence, its crates' notices (tools/package/notices/windows),
-# PDFium's and MinGW-w64's.
+# helpers that carry no library of their own, and the archive helper, with
+# libarchive linked in), PDFium beside them (ADR-041), the type database
+# (ADR-037) in share\mime, and in licenses skwir's licence, its crates'
+# notices (tools/package/notices/windows), PDFium's, libarchive's and its
+# compressors' (tools/package/libarchive.sh) and MinGW-w64's.
 #
 #     tools/package/windows.sh [version]      # into target/package/windows/
 set -eu
@@ -41,6 +42,10 @@ export CFLAGS_x86_64_pc_windows_gnu="-Wno-error=date-time -ffile-prefix-map=$car
 # and gpui's manifest (vendor patch 0027).
 RC_x86_64_pc_windows_gnu="$(command -v llvm-rc)"
 export RC_x86_64_pc_windows_gnu
+# libarchive, static, which the archive helper links (its build.rs):
+# built here once for each version.
+SKWIR_LIBARCHIVE_STATIC="$(tools/package/libarchive.sh "$target")"
+export SKWIR_LIBARCHIVE_STATIC
 # shellcheck disable=SC2046,SC2086 # one `-p name` per program
 cargo-zigbuild build --profile dist --target "$target" $(printf -- '-p %s ' $programs)
 
@@ -55,6 +60,7 @@ done
 tools/package/pdfium.sh win-x64 "$out/work/pdfium"
 cp "$out/work/pdfium/pdfium.dll" "$folder/"
 cp -R "$out/work/pdfium/licenses/pdfium" "$folder/licenses/"
+cp -R "$SKWIR_LIBARCHIVE_STATIC/licenses/." "$folder/licenses/"
 cp LICENSE "$folder/licenses/"
 cp tools/package/notices/windows/skwir/THIRD-PARTY-NOTICES "$folder/licenses/"
 # MinGW-w64's runtime, built into each program by Zig, asks for its notice

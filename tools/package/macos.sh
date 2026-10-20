@@ -7,10 +7,12 @@
 # nothing here can run them.
 #
 # What the bundle holds: tools/package/macos/programs in Contents/MacOS
-# (skwir and the helpers that carry no library of their own), PDFium in
+# (skwir and the helpers that carry no library of their own, and the
+# archive helper, with libarchive linked in), PDFium in
 # Contents/Frameworks (ADR-041), and in Contents/Resources the icon, the
 # type database (ADR-037) in share/mime, and in licenses skwir's licence,
-# its crates' notices (tools/package/notices/macos) and PDFium's.
+# its crates' notices (tools/package/notices/macos), PDFium's, and
+# libarchive's and its compressors' (tools/package/libarchive.sh).
 #
 #     tools/package/macos.sh [version]      # into target/package/macos/
 set -eu
@@ -50,6 +52,11 @@ export AR_aarch64_apple_darwin
 # The dev shell's pkg-config answers with Linux's libraries: for macOS, a
 # library is the SDK's (SQLite's), found by the linker.
 export PKG_CONFIG_aarch64_apple_darwin=false
+# libarchive, static, which the archive helper links (its build.rs) with
+# the system's zlib, bzip2, iconv and Expat: built here once for each
+# version.
+SKWIR_LIBARCHIVE_STATIC="$(tools/package/libarchive.sh "$target")"
+export SKWIR_LIBARCHIVE_STATIC
 # shellcheck disable=SC2046,SC2086 # one `-p name` per program
 cargo build --profile dist --target "$target" $(printf -- '-p %s ' $programs)
 
@@ -64,6 +71,7 @@ done
 tools/package/pdfium.sh mac-arm64 "$out/work/pdfium"
 cp "$out/work/pdfium/libpdfium.dylib" "$app/Contents/Frameworks/"
 cp -R "$out/work/pdfium/licenses/pdfium" "$app/Contents/Resources/licenses/"
+cp -R "$SKWIR_LIBARCHIVE_STATIC/licenses/." "$app/Contents/Resources/licenses/"
 cp LICENSE "$app/Contents/Resources/licenses/"
 cp tools/package/notices/macos/skwir/THIRD-PARTY-NOTICES "$app/Contents/Resources/licenses/"
 tools/package/mime-database.sh "$app/Contents/Resources/share/mime" >/dev/null

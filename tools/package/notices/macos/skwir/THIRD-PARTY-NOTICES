@@ -1,9 +1,10 @@
 Third-party software in skwir for macOS
 
 The programs of this package (skwir, skwir-pdf-worker,
-skwir-djvu-worker, skwir-model-worker, skwir-module-worker) are built
-from skwir's own code, under the package's licence, and the crates
-below, each under the licence it is listed with, whose text follows.
+skwir-djvu-worker, skwir-model-worker, skwir-module-worker,
+skwir-archive-worker) are built from skwir's own code, under the
+package's licence, and the crates below, each under the licence it is
+listed with, whose text follows.
 
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)

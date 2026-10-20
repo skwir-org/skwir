@@ -48,7 +48,9 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   (ADR-074, `just package-windows`, 2026-10-20): a zip and a per-user
   installer, tried under Wine, its window never drawn there. A macOS
   build to try is made on Linux too (ADR-075, `just package-macos`):
-  skwir.app for Apple silicon, looked over, never run. Both were added
+  skwir.app for Apple silicon, looked over, never run. Both carry the
+  archive helper, libarchive built on Linux and linked in statically
+  (2026-10-20, `tools/package/libarchive.sh`). Both were added
   to 0.2.0's release page (built from 5a0bb2b); from the next release,
   `release-build` makes them with the Linux packages. The user reports
   hosted CI is too slow; routine CI is reduced to essentials, with full
@@ -883,9 +885,10 @@ ran there, in a prefix of its own.
   the pinned `pdfium.dll` under Wine. The manual full workflow's `native`
   job for macOS and Windows (not blocking until 5b) and the Linux package
   containers remain fallbacks; their hosted results have not been verified
-  here. Left for the machines: audio and
-  video through AVFoundation and Media Foundation, libarchive linked
-  statically, everything run.
+  here. The archive helper is in both packages since 2026-10-20,
+  libarchive built on Linux and linked statically (ADR-041's amendment).
+  Left for the machines: audio and video through AVFoundation and Media
+  Foundation, everything run.
 - **L. Budgets per system.** *Decided 2026-10-05* (ADR-038): the own
   share is `phys_footprint` on macOS and the private working set on
   Windows, 100 MiB each until 5b measures. `just idle-pss` says it

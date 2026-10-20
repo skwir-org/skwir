@@ -75,3 +75,15 @@ features.
 - Point 4 has not run on the machines: Quick Look and the packages are
   compiled only. Under Wine, the Windows shell drew no thumbnails and
   the PDF helper loaded the pinned `pdfium.dll` beside it.
+
+## Amendments
+
+- 2026-10-20 (ADR-074, ADR-075): the archive helper's libarchive is built
+  on Linux, as Windows' and macOS's packages are, not on the machines
+  (`tools/package/libarchive.sh`): static, from nixpkgs' sources as
+  nixpkgs patches them, pinned by the flake's lock, with xz's liblzma,
+  zstd and lz4, and on Windows zlib and bzip2. macOS gives its own zlib,
+  bzip2, iconv and Expat, Windows its cryptography (CNG) and XmlLite; the
+  helper reads what Linux's libarchive reads, LZO aside. Its security
+  updates are ours, as PDFium's: they come with nixpkgs' (`nix flake
+  update`).

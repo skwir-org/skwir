@@ -1797,3 +1797,57 @@ of the view. A book's rows are indented by their depth (all were at 0).
   after a restart the contents opened pinned; unpinning made a drawer
   again and was saved. Not checked: a screen reader (the contents' rows
   have no role yet), the parked view of a container, a real book.
+
+**Archives in Windows' and macOS's builds** (ADR-041's amendment; the
+user's go-ahead after an exploration of what those builds lack). The
+archive helper is in both packages, libarchive built on Linux and linked
+into it statically (`tools/package/libarchive.sh`): nixpkgs' sources as
+nixpkgs patches them (bzip2's and lz4's CVE fixes among them; the
+`windows` and `macos` shells name them, `SKWIR_LIBARCHIVE_SOURCES`), with
+liblzma, zstd and lz4, and for Windows zlib and bzip2, built by Zig;
+for macOS through xmac's CMake toolchain, with the system's zlib, bzip2,
+iconv and Expat. The helper's build script links what the folder's `link`
+names (`SKWIR_LIBARCHIVE_STATIC`), else the system's libarchive as before.
+- Build time: 146 s for Windows, 84 s for macOS, from nothing, kept in
+  `~/.cache/skwir-build/libarchive` by target, sources and recipe. A first
+  trial's configure took 927.6 s: the dev shell's environment (225 KB,
+  `NIX_CFLAGS_COMPILE` 58 KB of it) makes each CMake check about 2.4 s
+  instead of 0.18 s (30 checks: 73.7 s against 5.45 s with `env -i`; Zig
+  itself compiles and links one in 0.33 s). The recipe runs CMake in a
+  clean environment, which also keeps Linux's flags out of these builds.
+- Windows: libarchive reads a name an archive does not say the charset of
+  in the OEM code page, so a GNU tar's UTF-8 names came out as
+  `caf├® ÔÇö` (Wine, French locale). The helper now opens archives by
+  their UTF-16 path, sets `LC_CTYPE` (2 there, it was 0: `LC_ALL`) to
+  `.UTF-8`, reads tar's and cpio's names as UTF-8 and writes a ZIP's in
+  UTF-8 with its flag; a ZIP's or a RAR's unflagged names keep the OEM
+  code page, as Windows' archivers write them. Linux and macOS read as
+  before (macOS now asks for `UTF-8` after `C.UTF-8`).
+- Under Wine (`just test-windows -p skwir-archive-worker -p
+  skwir-plugin-archives`, the static libarchive named): 40 tests pass, the
+  helper's damaged and encrypted ZIPs (ZipCrypto, AES through CNG) and
+  the plugin's making, extracting, clashes and pauses; five skip their
+  trash steps, which Wine's shell lacks (`under_wine`). Four tests needed
+  porting: `HOME` (now `home_dir`), the helper's `.exe` name, a folder's
+  time set through a handle allowed to write attributes with backup
+  semantics, `/` between a tree's names.
+- `just package-windows`: under Wine the check makes each format skwir
+  makes (ZIP, 7z, tar and its gzip, bzip2, xz and zstd), of names with an
+  apostrophe, accents, a dash and Japanese, in a folder named `archives
+  d'été`, lists them back, finds the ZIP's names flagged UTF-8 (Python's
+  zipfile), and lists a GNU tar's raw UTF-8 names right. The helper is
+  2,105,856 bytes; the zip 40.2 MB (39.2 before), the installer 42.6 MB
+  (41.4); it imports Windows' own DLLs alone (the UCRT, bcrypt, XmlLite,
+  ole32).
+- `just package-macos`: the helper is 1,906,576 bytes, arm64, for macOS
+  11, linked to `/usr/lib`'s libz, libbz2, libiconv, libexpat and
+  libSystem; the check refuses one linked to the system's libarchive. The
+  system functions it calls are all in macOS 10.13 or earlier
+  (`futimens`, `utimensat` the latest). Disk image 36.7 MB (35.9), zip
+  38.1 MB (37.2).
+- Not checked: anything on Windows or a Mac; RAR, CAB or ISO read there
+  (the formats listed are those skwir makes and a GNU tar); a link
+  extracted on Windows without the right to make one; lz4 (built, its
+  config found, not exercised); Skwir's own preview tests under Wine
+  (`crates/skwir/tests/extended_previews.rs`, not built for Windows: the
+  disk was near full).

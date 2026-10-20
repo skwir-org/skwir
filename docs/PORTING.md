@@ -315,10 +315,23 @@ Left:
   run **(5b)**. gpui makes its Metal bindings for the target and compiles
   its shaders as the renderer starts (vendor patch 0035). Everything above
   marked "compiled only" for macOS is now linked as well.
+- Archives (ADR-041): the archive helper is in both packages, libarchive
+  linked into it statically (`tools/package/libarchive.sh`, nixpkgs'
+  sources built with the packages' compilers: Zig for Windows, xmac's
+  clang for macOS, which gives its own zlib, bzip2, iconv and Expat). On
+  Windows it opens an archive by its path's UTF-16 (libarchive's `_w`
+  calls), asks the C library for UTF-8 (`.UTF-8`, `LC_CTYPE` 2), reads a
+  tar's and a cpio's names as UTF-8 and writes a ZIP's in UTF-8, flagged
+  so; a ZIP's or a RAR's unflagged names are read in the OEM code page, as
+  Windows' archivers write them. Under Wine its tests and the archives
+  plugin's pass (their trash steps skipped), and the package's check makes
+  and lists each format skwir makes. macOS's is linked, never run: which
+  of its system libraries' symbols macOS 11 lacks, if any, is unknown
+  **(5b)**.
 - Left for the machines (ADR-041): audio and video through AVFoundation and
-  Media Foundation (a helper per system, not GStreamer bundled); the archive
-  helper with libarchive linked statically; LibreOffice on macOS under
-  `sandbox-exec` (found where it installs itself, `process::required`).
+  Media Foundation (a helper per system, not GStreamer bundled); LibreOffice
+  on macOS under `sandbox-exec` (found where it installs itself,
+  `process::required`).
 
 ## 9. Processes, terminal, editors (step H)
 
@@ -374,7 +387,6 @@ Left:
   is offered every family. Neither names a font of the desktop's
   (ADR-071).
 - `alloc/lib.rs` ELF constructor (Linux); `skwir/gpu.rs` sysfs **(c)**.
-- `archive-worker/main.rs`: `LC_CTYPE` value and `C.UTF-8` **(c)**.
 - **Keys** (step J, done): the standard shortcuts are `secondary` (Cmd on a
   Mac, Ctrl elsewhere; Linux unchanged); bindings are compared as GPUI reads
   them (`keymap::normal_keys`); key caps say ⌘ and ⌥ on a Mac; the

@@ -93,7 +93,7 @@ written on Linux and never run.
   Wine with Microsoft's compiler, would win it back.
 - **No archives, player, Poppler, MuPDF or DjVuLibre:** their helpers link
   libraries not built for Windows here, and skwir says the engine is not
-  installed. Mermaid's helper is left out as Linux's packages leave it
+  installed (archives since, amendments below). Mermaid's helper is left out as Linux's packages leave it
   (ADR-041).
 - **Windows warns before either runs** (SmartScreen: "Windows protected
   your PC", More info, Run anyway), since nothing is signed. Signing needs
@@ -126,3 +126,12 @@ written on Linux and never run.
   puts them on the release's page, said there to be builds to try (the
   user's decision). The first ones, from 5a0bb2b, were added to 0.2.0's
   page, with a section of its notes saying so.
+- 2026-10-20 (ADR-041): the archive helper is in the package, libarchive
+  built with Zig and linked into it statically
+  (`tools/package/libarchive.sh`: about 2.5 minutes, once for each
+  version, kept in the build cache). Windows' libarchive reads a name no
+  archive says the charset of in the OEM code page: the helper reads a
+  tar's and a cpio's as UTF-8, as Unix's tools write them, and writes a
+  ZIP's in UTF-8, flagged so. The check makes and lists, under Wine, each
+  format skwir makes; the helper's tests and the archives plugin's pass
+  there, but for the trash's steps.

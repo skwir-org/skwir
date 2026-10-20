@@ -21,7 +21,8 @@ mod native {
     type Mode = u32;
     /// What libarchive calls to learn a passphrase.
     type PassphraseCallback = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *const c_char;
-    #[link(name = "archive")]
+    // libarchive, linked by the build script: the system's, or the one a
+    // package carries, static.
     unsafe extern "C" {
         fn archive_read_new() -> *mut c_void;
         fn archive_read_support_filter_all(a: *mut c_void) -> c_int;
@@ -29,7 +30,12 @@ mod native {
         fn archive_read_support_format_raw(a: *mut c_void) -> c_int;
         fn archive_format(a: *mut c_void) -> c_int;
         fn archive_filter_count(a: *mut c_void) -> c_int;
+        #[cfg(not(windows))]
         fn archive_read_open_filename(a: *mut c_void, path: *const c_char, block: usize) -> c_int;
+        #[cfg(windows)]
+        fn archive_read_open_filename_w(a: *mut c_void, path: *const u16, block: usize) -> c_int;
+        #[cfg(windows)]
+        fn archive_read_set_options(a: *mut c_void, options: *const c_char) -> c_int;
         fn archive_read_next_header(a: *mut c_void, entry: *mut *mut c_void) -> c_int;
         fn archive_entry_pathname_utf8(e: *mut c_void) -> *const c_char;
         fn archive_entry_pathname(e: *mut c_void) -> *const c_char;
@@ -97,7 +103,10 @@ mod native {
         fn archive_write_add_filter_zstd(a: *mut c_void) -> c_int;
         fn archive_write_set_options(a: *mut c_void, options: *const c_char) -> c_int;
         fn archive_write_set_passphrase(a: *mut c_void, passphrase: *const c_char) -> c_int;
+        #[cfg(not(windows))]
         fn archive_write_open_filename(a: *mut c_void, path: *const c_char) -> c_int;
+        #[cfg(windows)]
+        fn archive_write_open_filename_w(a: *mut c_void, path: *const u16) -> c_int;
         fn archive_write_data(a: *mut c_void, buf: *const c_void, size: usize) -> isize;
         fn archive_entry_new() -> *mut c_void;
         fn archive_entry_free(e: *mut c_void);
@@ -115,7 +124,10 @@ mod native {
     unsafe extern "C" {
         fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
     }
+    /// `LC_CTYPE`: 0 in glibc and musl, 2 in Apple's, the BSDs' and
+    /// Windows' C libraries (where 0 is `LC_ALL`).
     #[cfg(any(
+        windows,
         target_vendor = "apple",
         target_os = "freebsd",
         target_os = "netbsd",
@@ -124,6 +136,7 @@ mod native {
     ))]
     const LC_CTYPE: c_int = 2;
     #[cfg(not(any(
+        windows,
         target_vendor = "apple",
         target_os = "freebsd",
         target_os = "netbsd",
@@ -131,6 +144,26 @@ mod native {
         target_os = "dragonfly"
     )))]
     const LC_CTYPE: c_int = 0;
+    /// UTF-8, as each C library names it: glibc's and musl's, then Apple's
+    /// and the BSDs'; Windows' (its UCRT, from Windows 10's 1803) keeps the
+    /// user's language, whose OEM code page libarchive reads a name in when
+    /// an archive does not say its charset (`READ_OPTIONS`).
+    #[cfg(not(windows))]
+    const UTF8_LOCALES: [&CStr; 3] = [c"C.UTF-8", c"C.utf8", c"UTF-8"];
+    #[cfg(windows)]
+    const UTF8_LOCALES: [&CStr; 1] = [c".UTF-8"];
+    /// What libarchive's defaults get wrong on Windows. A name an archive
+    /// does not say the charset of is read in the OEM code page there, as
+    /// Windows' own archivers write a ZIP's or a RAR's; but a tar or a cpio
+    /// archive comes from Unix's tools, whose names are UTF-8 (GNU tar's,
+    /// without a PAX header saying so), as they are read elsewhere.
+    #[cfg(windows)]
+    const READ_OPTIONS: &CStr = c"tar:hdrcharset=UTF-8,cpio:hdrcharset=UTF-8";
+    /// And a ZIP made on Windows would name its members in the OEM code
+    /// page, unflagged, where a name outside it is lost: in UTF-8, flagged
+    /// so, as made elsewhere.
+    #[cfg(windows)]
+    const ZIP_OPTIONS: &CStr = c"zip:hdrcharset=UTF-8";
 
     const ARCHIVE_OK: c_int = 0;
     const ARCHIVE_EOF: c_int = 1;
@@ -172,11 +205,38 @@ mod native {
     /// process starts in the "C" locale, where any non-ASCII name fails to
     /// convert, so ask for UTF-8 first and the environment's locale after.
     fn utf8_locale() {
-        for locale in [c"C.UTF-8", c""] {
+        for locale in UTF8_LOCALES.into_iter().chain([c""]) {
             if !unsafe { setlocale(LC_CTYPE, locale.as_ptr()) }.is_null() {
                 return;
             }
         }
+    }
+
+    /// A path as libarchive opens it: its bytes; on Windows, UTF-16 for
+    /// its wide calls, which take any path (a narrow one is read in the
+    /// locale's code page).
+    #[cfg(not(windows))]
+    type NativePath = CString;
+    #[cfg(windows)]
+    type NativePath = Vec<u16>;
+    #[cfg(not(windows))]
+    use self::{
+        archive_read_open_filename as open_read, archive_write_open_filename as open_write,
+    };
+    #[cfg(windows)]
+    use self::{
+        archive_read_open_filename_w as open_read, archive_write_open_filename_w as open_write,
+    };
+    #[cfg(not(windows))]
+    fn native_path(path: &std::ffi::OsStr) -> anyhow::Result<NativePath> {
+        Ok(CString::new(path.as_encoded_bytes())?)
+    }
+    #[cfg(windows)]
+    fn native_path(path: &std::ffi::OsStr) -> anyhow::Result<NativePath> {
+        use std::os::windows::ffi::OsStrExt;
+        let wide: Vec<u16> = path.encode_wide().collect();
+        anyhow::ensure!(!wide.contains(&0), "a path with a NUL");
+        Ok(wide.into_iter().chain([0]).collect())
     }
 
     struct Reader(*mut c_void);
@@ -754,13 +814,17 @@ mod native {
     /// `xattrs`, pairs in hexadecimal), and a file's `size` bytes after it;
     /// then `{"end": true}`. Input that ends before says the caller
     /// stopped: nothing written is whole.
-    fn create(output: &CStr, format: &str, encrypt: bool) -> anyhow::Result<()> {
+    fn create(output: &NativePath, format: &str, encrypt: bool) -> anyhow::Result<()> {
         let writer = Writer(unsafe { archive_write_new() });
         let w = writer.0;
         anyhow::ensure!(!w.is_null(), "libarchive allocation failed");
         unsafe {
             match format {
-                "zip" => check(w, archive_write_set_format_zip(w))?,
+                "zip" => {
+                    check(w, archive_write_set_format_zip(w))?;
+                    #[cfg(windows)]
+                    check(w, archive_write_set_options(w, ZIP_OPTIONS.as_ptr()))?;
+                }
                 "7z" => {
                     check(w, archive_write_set_format_7zip(w))?;
                     check(
@@ -798,9 +862,7 @@ mod native {
             }
             passphrase = Some(given);
         }
-        check(w, unsafe {
-            archive_write_open_filename(w, output.as_ptr())
-        })?;
+        check(w, unsafe { open_write(w, output.as_ptr()) })?;
         let mut buffer = vec![0u8; 256 * 1024];
         loop {
             let header = line(&mut input)?.ok_or_else(|| anyhow::anyhow!("stopped"))?;
@@ -937,13 +999,7 @@ mod native {
             .map(std::path::PathBuf::from)
             .or_else(|| std::path::Path::new(&path).file_stem().map(Into::into))
             .map_or_else(|| "data".into(), |s| s.to_string_lossy().into_owned());
-        #[cfg(unix)]
-        let path = {
-            use std::os::unix::ffi::OsStrExt;
-            CString::new(path.as_bytes())?
-        };
-        #[cfg(not(unix))]
-        let path = CString::new(path.to_string_lossy().as_bytes())?;
+        let path = native_path(&path)?;
         if let Some(format) = creating {
             return create(&path, &format, encrypt);
         }
@@ -965,11 +1021,9 @@ mod native {
                     Some(asked_passphrase),
                 ))?;
             }
-            reader.check(archive_read_open_filename(
-                reader.0,
-                path.as_ptr(),
-                64 * 1024,
-            ))?;
+            #[cfg(windows)]
+            reader.check(archive_read_set_options(reader.0, READ_OPTIONS.as_ptr()))?;
+            reader.check(open_read(reader.0, path.as_ptr(), 64 * 1024))?;
         }
         if extracting {
             return extract(&reader, &tickets, &stem, passwords);

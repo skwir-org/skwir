@@ -21,7 +21,10 @@ fn with_archive_worker() -> bool {
         .map(PathBuf::from)
         .or_else(|| {
             let exe = std::env::current_exe().ok()?;
-            let built = exe.parent()?.parent()?.join("skwir-archive-worker");
+            let built = exe.parent()?.parent()?.join(format!(
+                "skwir-archive-worker{}",
+                std::env::consts::EXE_SUFFIX
+            ));
             built.is_file().then_some(built)
         });
     let Some(worker) = worker else {
@@ -96,11 +99,15 @@ fn tree(root: &Path) -> Vec<(String, Option<String>)> {
     while let Some(folder) = folders.pop() {
         for entry in std::fs::read_dir(&folder).unwrap() {
             let path = entry.unwrap().path();
+            // Its parts joined by `/` on every system, as an archive
+            // names them.
             let name = path
                 .strip_prefix(root)
                 .unwrap()
-                .to_string_lossy()
-                .into_owned();
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
             if path.is_dir() {
                 folders.push(path);
                 found.push((name, None));
@@ -172,7 +179,11 @@ fn an_archive_is_extracted_as_a_folder_again_undone_and_redone() {
     assert!(again.error.is_none(), "{:?}", again.error);
     assert_eq!(again.applied, 0);
 
-    // Undone to the trash, as a copy is; redone from it.
+    // Undone to the trash, as a copy is; redone from it. Wine's shell
+    // trashes nothing: that needs Windows.
+    if skwir_core::system::under_wine("trashing through the shell") {
+        return;
+    }
     let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
     assert!(undone.error.is_none(), "{:?}", undone.error);
     assert!(!made.exists());
@@ -238,13 +249,16 @@ fn an_archive_of_one_folder_or_one_file_is_that_folder_or_file() {
         app.executor.execute_blocking(&plan, app.lifetime()).applied,
         0
     );
-    // Undone to the trash, redone as it was.
-    let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
-    assert!(undone.error.is_none(), "{:?}", undone.error);
-    assert!(!made.exists());
-    let redone = app.executor.redo_blocking(app.lifetime()).unwrap();
-    assert!(redone.error.is_none(), "{:?}", redone.error);
-    assert!(made.join("README").is_file());
+    // Undone to the trash, redone as it was (Wine's shell trashes
+    // nothing: that needs Windows).
+    if !skwir_core::system::under_wine("trashing through the shell") {
+        let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
+        assert!(undone.error.is_none(), "{:?}", undone.error);
+        assert!(!made.exists());
+        let redone = app.executor.redo_blocking(app.lifetime()).unwrap();
+        assert!(redone.error.is_none(), "{:?}", redone.error);
+        assert!(made.join("README").is_file());
+    }
     assert!(!tmp.path().join("v1.0 l'été").exists());
 
     // One file, whatever the archive is called, is that file.

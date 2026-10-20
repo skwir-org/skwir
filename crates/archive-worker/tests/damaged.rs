@@ -16,7 +16,7 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new(name: &str) -> Self {
-        let home = std::env::var_os("HOME").expect("HOME");
+        let home = std::env::home_dir().expect("a home folder");
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

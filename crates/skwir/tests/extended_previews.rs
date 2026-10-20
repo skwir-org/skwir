@@ -705,7 +705,10 @@ fn archive_worker() -> Option<std::path::PathBuf> {
         return Some(path.into());
     }
     let exe = std::env::current_exe().ok()?;
-    let built = exe.parent()?.parent()?.join("skwir-archive-worker");
+    let built = exe.parent()?.parent()?.join(format!(
+        "skwir-archive-worker{}",
+        std::env::consts::EXE_SUFFIX
+    ));
     built.is_file().then_some(built)
 }
 
