@@ -87,3 +87,6 @@ features.
   helper reads what Linux's libarchive reads, LZO aside. Its security
   updates are ours, as PDFium's: they come with nixpkgs' (`nix flake
   update`).
+- 2026-10-20: ADR-076, proposed, would replace point 4's helpers per
+  system for audio and video by the GStreamer helper Linux has, with a
+  trimmed GStreamer carried.

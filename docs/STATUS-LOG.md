@@ -1851,3 +1851,42 @@ names (`SKWIR_LIBARCHIVE_STATIC`), else the system's libarchive as before.
   config found, not exercised); Skwir's own preview tests under Wine
   (`crates/skwir/tests/extended_previews.rs`, not built for Windows: the
   disk was near full).
+
+**A trimmed GStreamer for Windows and macOS, tried** (ADR-076, proposed;
+the exploration's second step). GStreamer 1.28.8's own builds, each
+checked against its published SHA-256: Windows' MinGW installer (1,014.7
+MB, Inno Setup 6.7, which innoextract 1.9 cannot open: installed under
+nixpkgs' WoW64 Wine 11.0 on an Xvfb display of its own, 2.5 GB with the
+development files), macOS's universal framework (runtime and development
+packages opened with xar, pbzx and cpio, 4 GB). Kept in the session's
+scratch folder; nothing of it committed.
+- The media helper, unchanged, built against each in about a minute
+  (pkg-config pointed at their relocatable `.pc` files); macOS's loads
+  GStreamer's libraries by `@rpath`.
+- Under Wine (`tools/media/check.py`'s check, its process started by Wine
+  with Windows' paths, audio to a clocked fakesink), the whole Windows
+  set: VP9 and Opus, AV1 and Vorbis, H.264 and AAC (gst-libav) passed;
+  30.0–30.3 frames a second delivered, 0–1 dropped, lateness p95 3.0–3.5
+  ms, 25–38 % CPU; one H.264 run of four stalled where subtitles are
+  turned off while paused.
+- The trimmed set (ADR-076's, 38 plugins, their libraries followed through
+  the imports, the plugin scanner), stripped by MinGW's strip (llvm-strip
+  refused libstdc++: "invalid SymbolTableIndex"): with pango 90 files,
+  49.7 MB, 16.7 MB zipped (-9), 12.1 MB xz; with DirectWrite 79 files,
+  43.7 MB, 14.3 MB zipped, 10.3 MB xz. Unstripped 72.5 and 66.5 MB
+  (libstdc++-6.dll 26.6 MB, 4.7 stripped). Under Wine: VP9 and Opus, AV1
+  and Vorbis, VP9 and MP3 (mpg123) passed with pango, though turning
+  subtitles off while paused stalled in 2 runs of 3 (never with
+  `GST_DEBUG` on; 5 of 5 passed on Linux with Linux's helper); AAC and
+  H.264 found no decoder (Wine's `d3d11` registers no element, its
+  `mediafoundation` no decoder). DirectWrite's overlay has rank none, so
+  playbin's subtitle bin never takes it; ranked primary
+  (`GST_PLUGIN_FEATURE_RANK`) it stalled when subtitles were turned on.
+- macOS, the same set for arm64 (thinned with llvm-lipo): 85 files, 46.9
+  MB, 14.6 MB zipped, 10.1 MB xz; MoltenVK 7.4 MB of it, which
+  `applemedia` loads through GStreamer's Vulkan library. Not run.
+- Licences: GStreamer's tree holds each library's (`share/licenses`, 88
+  folders) and `versions.txt`.
+- Not checked: anything on Windows or a Mac, so neither Direct3D's,
+  Media Foundation's, VideoToolbox's nor AudioToolbox's decoders; the
+  helper's memory there; how the installer could run without Wine.

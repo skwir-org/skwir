@@ -121,6 +121,10 @@ nothing built (ADR-021: mounts listed and opened first, rclone later).
 - Media (2026-09-19, ADR-008): audible lip sync not assessed; native 4K
   output, GPU buffer sharing, external subtitle files, a second backend;
   full-file waveforms.
+- Audio and video on Windows and macOS (2026-10-20): ADR-076 proposes a
+  trimmed GStreamer for the helper Linux has (tried on Linux, Windows'
+  under Wine); the user's decision, then its packaging. Under Wine,
+  turning subtitles off while paused stalled in 3 of about 10 runs.
 - Archives: 7z and RAR decryption (libarchive has none), passwords for
   agents, Merge for an extraction onto a folder (2026-10-13); a Mac's
   `__MACOSX` beside an archive's one folder still makes a folder around
