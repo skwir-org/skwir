@@ -79,7 +79,7 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
   Notarizing needs an Apple developer account: a decision of its own.
 - **No archives, player, Poppler, MuPDF or DjVuLibre**, as on Windows: their
   helpers link libraries not built for macOS here (archives since,
-  amendments below). Mermaid's is left out as
+  and the player since, amendments below). Mermaid's is left out as
   Linux's packages leave it (ADR-041).
 - **Nothing here can run it.** What it does on a Mac, PORTING's macOS
   items included, is for people with one.
@@ -98,3 +98,7 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
   macOS's own zlib, bzip2, iconv and Expat (`tools/package/libarchive.sh`);
   the check refuses a helper linked to the system's libarchive, whose
   formats vary with macOS. Never run.
+- 2026-10-20 (ADR-076): the media helper is in the bundle, GStreamer in
+  `Contents/Frameworks/GStreamer` (`tools/package/gstreamer.py`); the
+  check looks over each of its files (Apple silicon's, loading the
+  system's or GStreamer's own, signed). Never run.

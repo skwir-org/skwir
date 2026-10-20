@@ -93,7 +93,7 @@ written on Linux and never run.
   Wine with Microsoft's compiler, would win it back.
 - **No archives, player, Poppler, MuPDF or DjVuLibre:** their helpers link
   libraries not built for Windows here, and skwir says the engine is not
-  installed (archives since, amendments below). Mermaid's helper is left out as Linux's packages leave it
+  installed (archives and the player since, amendments below). Mermaid's helper is left out as Linux's packages leave it
   (ADR-041).
 - **Windows warns before either runs** (SmartScreen: "Windows protected
   your PC", More info, Run anyway), since nothing is signed. Signing needs
@@ -135,3 +135,7 @@ written on Linux and never run.
   ZIP's in UTF-8, flagged so. The check makes and lists, under Wine, each
   format skwir makes; the helper's tests and the archives plugin's pass
   there, but for the trash's steps.
+- 2026-10-20 (ADR-076): the media helper is in the package, in
+  `gstreamer\bin` among the libraries of the GStreamer it carries
+  (`tools/package/gstreamer.py`); the check plays an H.264 and AAC clip
+  and a VP9 and Opus one through it under Wine.

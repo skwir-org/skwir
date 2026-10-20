@@ -7,12 +7,15 @@
 # nothing here can run them.
 #
 # What the bundle holds: tools/package/macos/programs in Contents/MacOS
-# (skwir and the helpers that carry no library of their own, and the
-# archive helper, with libarchive linked in), PDFium in
-# Contents/Frameworks (ADR-041), and in Contents/Resources the icon, the
-# type database (ADR-037) in share/mime, and in licenses skwir's licence,
-# its crates' notices (tools/package/notices/macos), PDFium's, and
-# libarchive's and its compressors' (tools/package/libarchive.sh).
+# (skwir and the helpers that carry no library of their own, the archive
+# helper, with libarchive linked in, and the media helper), PDFium in
+# Contents/Frameworks (ADR-041) and GStreamer, cut down to what the media
+# helper plays with, a framework in Contents/Frameworks (ADR-076), and in
+# Contents/Resources the icon, the type database (ADR-037) in share/mime,
+# and in licenses skwir's licence, its crates' notices
+# (tools/package/notices/macos), PDFium's, libarchive's and its
+# compressors' (tools/package/libarchive.sh), and GStreamer's and its
+# components' (tools/package/gstreamer.py).
 #
 #     tools/package/macos.sh [version]      # into target/package/macos/
 set -eu
@@ -49,9 +52,15 @@ export CC_aarch64_apple_darwin="$xmac/bin/arm64-apple-darwin-cc"
 export CXX_aarch64_apple_darwin="$xmac/bin/arm64-apple-darwin-c++"
 AR_aarch64_apple_darwin="$(command -v llvm-ar)"
 export AR_aarch64_apple_darwin
-# The dev shell's pkg-config answers with Linux's libraries: for macOS, a
-# library is the SDK's (SQLite's), found by the linker.
-export PKG_CONFIG_aarch64_apple_darwin=false
+# GStreamer's own build, cut down (tools/package/gstreamer.py), which the
+# media helper is linked against. pkg-config is asked for macOS of its
+# files alone, not the dev shell's, which would answer with Linux's
+# libraries: a library it has none of is the SDK's (SQLite's), found by
+# the linker.
+gstreamer="$(tools/package/gstreamer.py "$target")"
+export PKG_CONFIG_ALLOW_CROSS=1
+export PKG_CONFIG_PATH_aarch64_apple_darwin="$gstreamer/link/lib/pkgconfig"
+export PKG_CONFIG_LIBDIR_aarch64_apple_darwin="$gstreamer/link/lib/pkgconfig"
 # libarchive, static, which the archive helper links (its build.rs) with
 # the system's zlib, bzip2, iconv and Expat: built here once for each
 # version.
@@ -72,6 +81,8 @@ tools/package/pdfium.sh mac-arm64 "$out/work/pdfium"
 cp "$out/work/pdfium/libpdfium.dylib" "$app/Contents/Frameworks/"
 cp -R "$out/work/pdfium/licenses/pdfium" "$app/Contents/Resources/licenses/"
 cp -R "$SKWIR_LIBARCHIVE_STATIC/licenses/." "$app/Contents/Resources/licenses/"
+cp -R "$gstreamer/runtime/GStreamer.framework" "$app/Contents/Frameworks/"
+cp -R "$gstreamer/licenses/." "$app/Contents/Resources/licenses/"
 cp LICENSE "$app/Contents/Resources/licenses/"
 cp tools/package/notices/macos/skwir/THIRD-PARTY-NOTICES "$app/Contents/Resources/licenses/"
 tools/package/mime-database.sh "$app/Contents/Resources/share/mime" >/dev/null
@@ -118,15 +129,20 @@ PLIST
 # PDFium, and the bundle's resources sealed.
 rcodesign sign "$app" >/dev/null
 
-# The zip: the bundle, its entries sorted, programs executable, dated by
-# the commit.
+# The zip: the bundle, its entries sorted, programs executable, links
+# kept as links (the GStreamer framework's), dated by the commit.
 python3 - "$out" "$name" "$(git log -1 --format=%ct)" <<'EOF'
 import pathlib, sys, time, zipfile
 out, name, stamp = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 when = time.gmtime(max(stamp, 315532800))[:6]
 with zipfile.ZipFile(out / f"{name}.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zipped:
     for path in sorted((out / "skwir.app").rglob("*")):
-        if path.is_file():
+        if path.is_symlink():
+            entry = zipfile.ZipInfo(str(path.relative_to(out)), when)
+            entry.create_system = 3
+            entry.external_attr = 0o120755 << 16
+            zipped.writestr(entry, str(path.readlink()))
+        elif path.is_file():
             entry = zipfile.ZipInfo(str(path.relative_to(out)), when)
             entry.compress_type = zipfile.ZIP_DEFLATED
             entry.create_system = 3

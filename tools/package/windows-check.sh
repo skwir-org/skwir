@@ -3,7 +3,9 @@
 # unpacked into a folder whose name has a space and an apostrophe, each
 # program answering (`--version`, a helper's `--probe`: PDFium loaded from
 # beside it), every file it should hold; the archive helper making and
-# reading archives with the libarchive linked into it; then the
+# reading archives with the libarchive linked into it; the media helper
+# playing clips with the GStreamer beside it (H.264 and AAC by FFmpeg's
+# decoders: Wine has no Direct3D or Media Foundation decoders); then the
 # installer, per user, quietly: the programs where it puts them, its Start
 # menu entry, and nothing of them left once it is removed.
 #
@@ -42,6 +44,10 @@ system32="$WINEPREFIX/drive_c/windows/system32"
 zig cc -target x86_64-windows-gnu -shared -O2 -o "$scratch/icuuc.dll" tools/package/windows/icuuc-for-wine.c
 cp "$scratch/icuuc.dll" "$system32/icuuc.dll"
 
+# Where a program is in the folder: beside skwir, but the media helper
+# among GStreamer's libraries (as windows.sh puts it).
+place() { case "$1" in skwir-media-worker) echo gstreamer/bin ;; *) echo . ;; esac; }
+
 # Its programs, as found in `folder`.
 answer() {
     folder="$1"
@@ -52,7 +58,7 @@ answer() {
     esac
     for program in $programs; do
         [ "$program" = skwir ] && continue
-        wine "$folder/$program.exe" --probe >/dev/null 2>&1 || { echo "$program.exe --probe failed" >&2; exit 1; }
+        wine "$folder/$(place "$program")/$program.exe" --probe >/dev/null 2>&1 || { echo "$program.exe --probe failed" >&2; exit 1; }
         echo "ok: $program.exe --probe"
     done
 }
@@ -68,22 +74,28 @@ with zipfile.ZipFile(archive) as zipped:
     assert {n.split("/")[0] for n in names} == {name}, "the zip holds one folder"
     zipped.extractall(into)
 folder = into / name
-wanted = [f"{p}.exe" for p in programs] + [
+# The media helper among GStreamer's libraries; the others beside skwir.
+at = lambda p: f"gstreamer/bin/{p}.exe" if p == "skwir-media-worker" else f"{p}.exe"
+wanted = [at(p) for p in programs] + [
     "pdfium.dll", "share/mime/globs2", "share/mime/magic", "share/mime/COPYING",
     "licenses/LICENSE", "licenses/THIRD-PARTY-NOTICES", "licenses/mingw-w64/COPYING",
     "licenses/pdfium/LICENSE", "licenses/libarchive/COPYING", "licenses/libarchive/VERSIONS",
-    "licenses/zstd/LICENSE"]
+    "licenses/zstd/LICENSE", "gstreamer/bin/libgstreamer-1.0-0.dll",
+    "gstreamer/lib/gstreamer-1.0/libgstplayback.dll", "gstreamer/lib/gstreamer-1.0/libgstlibav.dll",
+    "gstreamer/libexec/gstreamer-1.0/gst-plugin-scanner.exe", "licenses/gstreamer/VERSIONS",
+    "licenses/gstreamer/SOURCES", "licenses/gstreamer/ffmpeg/LGPL-2.1-or-later.txt"]
 missing = [w for w in wanted if not (folder / w).is_file()]
 assert not missing, f"missing from the zip: {missing}"
 top = {p.name for p in folder.iterdir()}
-assert top == {f"{p}.exe" for p in programs} | {"pdfium.dll", "share", "licenses"}, top
+beside = {f"{p}.exe" for p in programs if "/" not in at(p)}
+assert top == beside | {"pdfium.dll", "share", "licenses", "gstreamer"}, top
 print(f"ok: the zip holds {len(names)} files in {name}/")
 EOF
 answer "$unpacked/$name"
 # Nothing names a folder of the machine that built it (windows.sh's
 # remapping).
 for program in $programs; do
-    if strings "$unpacked/$name/$program.exe" | grep -qE "$HOME|/nix/store/[a-z0-9]{32}-"; then
+    if strings "$unpacked/$name/$(place "$program")/$program.exe" | grep -qE "$HOME|/nix/store/[a-z0-9]{32}-"; then
         echo "$program.exe names a folder of the machine that built it" >&2
         exit 1
     fi
@@ -140,6 +152,19 @@ with tarfile.open(gnu, "w", format=tarfile.GNU_FORMAT, encoding="utf-8") as tar:
 assert listed(gnu) == wanted, listed(gnu)
 print("ok: a GNU tar's names, UTF-8 without a PAX header, read as UTF-8")
 EOF
+
+# The media helper, the GStreamer beside it: a clip of two audio tracks and
+# subtitles played, sought, its tracks and subtitles changed, its rate,
+# its end (tools/media/check.py). H.264 and AAC, then VP9 and Opus.
+for codecs in h264-aac vp9-opus; do
+    said="$(python3 tools/media/check.py --wine --codecs "$codecs" --size 1280x720 \
+        --worker "$unpacked/$name/gstreamer/bin/skwir-media-worker.exe" --fixtures "$scratch/clips" 2>&1)" || {
+        echo "$said" | tail -n 20 >&2
+        echo "the media helper could not play $codecs" >&2
+        exit 1
+    }
+    echo "ok: the media helper plays $codecs: $(echo "$said" | tail -n 1)"
+done
 
 # The installer, per user, then removed.
 user="$(wine cmd /c 'echo %USERNAME%' 2>/dev/null | tr -d '\r')"

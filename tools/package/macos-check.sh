@@ -29,18 +29,23 @@ rm -rf "${scratch:?}"
 unpacked="$scratch/a traveller's apps"
 mkdir -p "$unpacked"
 
-# The zip, unpacked as a Mac's Archive Utility would, modes kept; its
-# Info.plist and icon read.
+# The zip, unpacked as a Mac's Archive Utility would, modes and links
+# kept; its Info.plist and icon read.
 # shellcheck disable=SC2086 # one argument per program
 python3 - "$made/$name.zip" "$unpacked" "$version" $programs <<'EOF'
-import pathlib, plistlib, struct, sys, zipfile
+import pathlib, plistlib, stat, struct, sys, zipfile
 archive, into, version, programs = sys.argv[1], pathlib.Path(sys.argv[2]), sys.argv[3], sys.argv[4:]
 with zipfile.ZipFile(archive) as zipped:
     entries = zipped.infolist()
     assert {e.filename.split("/")[0] for e in entries} == {"skwir.app"}, "the zip holds skwir.app alone"
     for entry in entries:
-        zipped.extract(entry, into)
-        (into / entry.filename).chmod((entry.external_attr >> 16) & 0o777)
+        mode, target = entry.external_attr >> 16, into / entry.filename
+        if stat.S_ISLNK(mode):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(zipped.read(entry).decode())
+        else:
+            zipped.extract(entry, into)
+            target.chmod(mode & 0o777)
 app = into / "skwir.app/Contents"
 for program in programs:
     path = app / "MacOS" / program
@@ -49,7 +54,14 @@ for wanted in ["Frameworks/libpdfium.dylib", "Resources/skwir.icns", "Resources/
                "Resources/share/mime/magic", "Resources/licenses/LICENSE",
                "Resources/licenses/THIRD-PARTY-NOTICES", "Resources/licenses/pdfium/LICENSE",
                "Resources/licenses/libarchive/COPYING", "Resources/licenses/libarchive/VERSIONS",
-               "Resources/licenses/zstd/LICENSE", "_CodeSignature/CodeResources"]:
+               "Resources/licenses/zstd/LICENSE", "_CodeSignature/CodeResources",
+               "Frameworks/GStreamer.framework/Versions/1.0/lib/libgstreamer-1.0.0.dylib",
+               "Frameworks/GStreamer.framework/Versions/1.0/lib/gstreamer-1.0/libgstplayback.dylib",
+               "Frameworks/GStreamer.framework/Versions/1.0/lib/gstreamer-1.0/libgstlibav.dylib",
+               "Frameworks/GStreamer.framework/Versions/1.0/libexec/gstreamer-1.0/gst-plugin-scanner",
+               "Frameworks/GStreamer.framework/Resources/Info.plist",
+               "Frameworks/GStreamer.framework/GStreamer",
+               "Resources/licenses/gstreamer/VERSIONS", "Resources/licenses/gstreamer/SOURCES"]:
     assert (app / wanted).is_file(), f"missing: {wanted}"
 info = plistlib.loads((app / "Info.plist").read_bytes())
 assert info["CFBundleExecutable"] == "skwir" and info["CFBundleIdentifier"] == "org.skwir.skwir", info
@@ -68,7 +80,7 @@ print(f"ok: the zip holds skwir.app, {len(entries)} files; Info.plist and its ic
 EOF
 
 # The disk image, opened with the tools that made it: the same bundle, each
-# file's bytes and mode, and the link to Applications.
+# file's bytes and mode and each link, and the link to Applications.
 volume="$scratch/from the disk image"
 mkdir -p "$volume"
 dmg extract "$made/$name.dmg" "$scratch/skwir.hfs" >/dev/null
@@ -79,8 +91,9 @@ zipped, volume = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 assert {p.name for p in volume.iterdir()} == {"skwir.app", "Applications"}, sorted(volume.iterdir())
 assert os.readlink(volume / "Applications") == "/Applications", "no link to Applications"
 def tree(root):
-    return {str(p.relative_to(root)): (p.stat().st_mode & 0o111 != 0, hashlib.sha256(p.read_bytes()).hexdigest())
-            for p in root.rglob("*") if p.is_file()}
+    return {str(p.relative_to(root)): ("link", os.readlink(p)) if p.is_symlink() else
+            (p.stat().st_mode & 0o111 != 0, hashlib.sha256(p.read_bytes()).hexdigest())
+            for p in root.rglob("*") if p.is_symlink() or p.is_file()}
 ours, theirs = tree(zipped), tree(volume / "skwir.app")
 assert ours == theirs, f"the disk image's bundle differs: {sorted(set(ours.items()) ^ set(theirs.items()))[:5]}"
 print(f"ok: the disk image holds the same skwir.app ({len(ours)} files, modes kept) beside a link to Applications")
@@ -92,14 +105,47 @@ for program in $programs; do
     file -b "$binary" | grep -q '^Mach-O 64-bit arm64 executable' || { echo "$program: not an arm64 program" >&2; exit 1; }
     minos="$(llvm-otool -l "$binary" | sed -n '/LC_BUILD_VERSION/,/ntools/s/^ *minos //p')"
     [ "$minos" = 11.0 ] || { echo "$program: for macOS $minos" >&2; exit 1; }
-    foreign="$(llvm-otool -L "$binary" | tail -n +2 | awk '{print $1}' | grep -vE '^/usr/lib/|^/System/Library/' || true)"
-    [ -z "$foreign" ] || { echo "$program links $foreign" >&2; exit 1; }
+    # The system's libraries, or GStreamer's in the bundle (by @rpath).
+    foreign=""
+    for library in $(llvm-otool -L "$binary" | tail -n +2 | awk '{print $1}'); do
+        case "$library" in
+        /usr/lib/* | /System/Library/*) ;;
+        @rpath/*) [ -f "$app/Frameworks/GStreamer.framework/Versions/1.0/lib/${library#@rpath/}" ] || foreign="$foreign $library" ;;
+        *) foreign="$foreign $library" ;;
+        esac
+    done
+    [ -z "$foreign" ] || { echo "$program links$foreign" >&2; exit 1; }
     if strings "$binary" | grep -qE "$HOME|/nix/store/[a-z0-9]{32}-"; then
         echo "$program names a folder of the machine that built it" >&2
         exit 1
     fi
-    echo "ok: $program: arm64, macOS 11 or later, the system's libraries alone, no build folder"
+    echo "ok: $program: arm64, macOS 11 or later, the system's libraries (and the bundle's GStreamer) alone, no build folder"
 done
+# GStreamer in the bundle (tools/package/gstreamer.py, ADR-076), a
+# framework whose main binary is libgstreamer: each library, plugin and
+# the scanner Apple silicon's alone, and what each loads the system's or
+# GStreamer's own beside it.
+python3 - "$app/Frameworks/GStreamer.framework" <<'EOF'
+import os, pathlib, plistlib, subprocess, sys
+framework = pathlib.Path(sys.argv[1])
+root = framework / "Versions/1.0"
+info = plistlib.loads((framework / "Resources/Info.plist").read_bytes())
+assert info["CFBundleExecutable"] == "GStreamer" and info["CFBundlePackageType"] == "FMWK", info
+assert os.readlink(root / "GStreamer") == "lib/libgstreamer-1.0.0.dylib", "the framework's main binary"
+macho = lambda p: p.read_bytes()[:4] in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
+files = sorted(p for p in root.rglob("*") if p.is_file() and not p.is_symlink() and macho(p))
+for path in files:
+    archs = subprocess.run(["llvm-lipo", "-archs", str(path)], capture_output=True, text=True).stdout.split()
+    assert archs == ["arm64"], f"{path.relative_to(root)}: {archs}"
+    said = subprocess.run(["llvm-otool", "-L", str(path)], check=True, capture_output=True, text=True).stdout
+    for library in [line.split()[0] for line in said.splitlines()[1:] if line.strip()]:
+        name = library.removeprefix("@rpath/")
+        if library.startswith(("/usr/lib/", "/System/Library/")) or name == path.name:
+            continue
+        assert library.startswith("@rpath/") and (root / "lib" / name).is_file(), \
+            f"{path.relative_to(root)} loads {library}"
+print(f"ok: GStreamer in the bundle, a framework of {len(files)} programs and libraries: arm64, loading the system's or its own")
+EOF
 # The archive helper carries its libarchive (tools/package/libarchive.sh):
 # built without it, it would link the system's, whose formats vary.
 if llvm-otool -L "$app/MacOS/skwir-archive-worker" | grep -q libarchive; then
@@ -110,17 +156,18 @@ echo "ok: skwir-archive-worker carries its own libarchive"
 # The seal, checked here as macOS checks it (rcodesign's `verify` reads no
 # bundle): the main program's signature binds Info.plist and the list of
 # resources; that list holds each file's digest, and each program and
-# PDFium is signed in turn.
-for code in "$app"/MacOS/* "$app"/Frameworks/*; do
-    rcodesign print-signature-info "$code" > "$scratch/$(basename "$code").signature"
-done
+# library (PDFium, GStreamer's) is signed in turn.
 python3 - "$app" "$scratch" <<'EOF'
-import base64, hashlib, pathlib, plistlib, re, sys
+import base64, hashlib, pathlib, plistlib, re, subprocess, sys
 app, scratch = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-for code in [*(app / "MacOS").iterdir(), *(app / "Frameworks").iterdir()]:
-    info = (scratch / f"{code.name}.signature").read_text()
-    assert "CodeSignatureFlags(ADHOC)" in info, f"{code.name}: not signed"
-main = (scratch / "skwir.signature").read_text()
+macho = lambda p: p.read_bytes()[:4] in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
+codes = [p for p in [*(app / "MacOS").rglob("*"), *(app / "Frameworks").rglob("*")]
+         if p.is_file() and not p.is_symlink() and macho(p)]
+signature = lambda code: subprocess.run(["rcodesign", "print-signature-info", str(code)],
+                                        check=True, capture_output=True, text=True).stdout
+for code in codes:
+    assert "CodeSignatureFlags(ADHOC)" in signature(code), f"{code.relative_to(app)}: not signed"
+main = signature(app / "MacOS/skwir")
 slots = dict(re.findall(r"'(Info|Resources) \(\d\): ([0-9a-f]{64})'", main))
 sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
 assert "identifier: org.skwir.skwir" in main, "the main program is not org.skwir.skwir"
@@ -133,7 +180,7 @@ for path, entry in listed.items():
     if isinstance(entry, dict) and "hash2" in entry:
         assert entry["hash2"] == hashlib.sha256((app / path).read_bytes()).digest(), f"{path} changed"
         checked += 1
-print(f"ok: signed ad hoc; Info.plist and {checked} resources as sealed, each program signed")
+print(f"ok: signed ad hoc; Info.plist and {checked} resources as sealed, each of {len(codes)} programs and libraries signed")
 EOF
 echo "$name: looked over (not run: that needs a Mac)"
 # What passed, where a release collects it (SKWIR_PACKAGE_OUT, as try.sh).

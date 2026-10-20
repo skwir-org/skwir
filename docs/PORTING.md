@@ -328,10 +328,20 @@ Left:
   and lists each format skwir makes. macOS's is linked, never run: which
   of its system libraries' symbols macOS 11 lacks, if any, is unknown
   **(5b)**.
-- Left for the machines (ADR-041): audio and video through AVFoundation and
-  Media Foundation (a helper per system, not GStreamer bundled); LibreOffice
-  on macOS under `sandbox-exec` (found where it installs itself,
-  `process::required`).
+- Audio and video (ADR-076): the media helper Linux has, with GStreamer's
+  own build of 1.28.8 carried, cut down to what it plays with
+  (`tools/package/gstreamer.py`): every decoder of FFmpeg's (gst-libav, 211
+  of them) behind the system's (Direct3D 11, VideoToolbox), and GStreamer
+  kept apart from any the user installed (`carried_gstreamer`: its plugins,
+  scanner and registry). Windows: the helper in `gstreamer\bin` among the
+  libraries (`helper_folders`); under Wine the package's check plays H.264
+  and AAC, VP9 and Opus through it (FFmpeg's decoders: Wine has no
+  Direct3D or Media Foundation decoder). macOS: GStreamer a framework in
+  the bundle's Frameworks, the helper's rpath; looked over, never run
+  **(5b)**. Turning subtitles off while paused stalled in some runs under
+  Wine, never on Linux **(5b)**.
+- Left for the machines (ADR-041): LibreOffice on macOS under
+  `sandbox-exec` (found where it installs itself, `process::required`).
 
 ## 9. Processes, terminal, editors (step H)
 

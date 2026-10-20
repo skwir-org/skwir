@@ -3,6 +3,9 @@
 
 Run in the dev shell after building skwir-media-worker. No personal media used.
 Audio uses a clocked fakesink by default; --audio exercises the real audio sink.
+--codecs chooses the clip's (H.264 and AAC by default); --wine runs a Windows
+build of the worker under Wine (Windows' package check, ADR-076), with the
+paths it is given in Windows' form.
 """
 import argparse
 import json
@@ -15,11 +18,21 @@ import threading
 import time
 
 
-def generate(root, size="1920x1080"):
+CODECS = {
+    "h264-aac": (["-c:v", "libx264", "-preset", "ultrafast", "-crf", "25"], ["-c:a", "aac"]),
+    "vp9-opus": (["-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-b:v", "2M"],
+                 ["-c:a", "libopus"]),
+    "av1-vorbis": (["-c:v", "libsvtav1", "-preset", "12"], ["-c:a", "libvorbis"]),
+}
+
+
+def generate(root, size="1920x1080", codecs="h264-aac"):
     root.mkdir(parents=True, exist_ok=True)
     subtitles = root / "synthetic.srt"
     subtitles.write_text("1\n00:00:00,000 --> 00:00:12,000\nSynthetic subtitles\n")
-    clip = root / ("Synthetic clip's " + size + ".mkv")
+    suffix = "" if codecs == "h264-aac" else f" {codecs}"
+    clip = root / ("Synthetic clip's " + size + suffix + ".mkv")
+    video, audio = CODECS[codecs]
     if not clip.exists():
         subprocess.run([
             "ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i",
@@ -27,16 +40,20 @@ def generate(root, size="1920x1080"):
             "sine=frequency=440:sample_rate=48000", "-f", "lavfi", "-i",
             "sine=frequency=660:sample_rate=48000", "-i", str(subtitles),
             "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s",
-            "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "25",
-            "-threads", "2", "-c:a", "aac", "-c:s", "srt",
+            "-t", "12", *video, "-threads", "2", *audio, "-c:s", "srt",
             "-metadata:s:a:0", "language=eng", "-metadata:s:a:1", "language=fra",
             "-metadata:s:s:0", "language=eng", str(clip),
         ], check=True)
     return clip
 
 
+def windows_path(path):
+    return subprocess.run(["winepath", "-w", str(path)], check=True, capture_output=True,
+                          text=True).stdout.strip()
+
+
 class Worker:
-    def __init__(self, executable, clip, audio=False):
+    def __init__(self, executable, clip, audio=False, wine=False):
         self.scratch = tempfile.TemporaryDirectory(prefix="skwir-media-check-", dir="/dev/shm")
         self.slot = Path(self.scratch.name) / "video.bgra"
         with self.slot.open("wb") as out:
@@ -48,7 +65,10 @@ class Worker:
             env.pop("SKWIR_MEDIA_TEST_AUDIO", None)
         else:
             env["SKWIR_MEDIA_TEST_AUDIO"] = "1"
-        self.process = subprocess.Popen([executable, str(clip), self.scratch.name],
+        command = [executable, str(clip), self.scratch.name]
+        if wine:
+            command = ["wine", executable, windows_path(clip), windows_path(self.scratch.name)]
+        self.process = subprocess.Popen(command,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=None if os.environ.get("GST_DEBUG") else subprocess.DEVNULL, text=True, env=env)
         self.messages = queue.Queue()
@@ -64,7 +84,9 @@ class Worker:
 
     def read(self):
         for line in self.process.stdout:
-            self.messages.put(json.loads(line))
+            # Wine may write lines of its own; the worker's are JSON.
+            if line.lstrip().startswith("{"):
+                self.messages.put(json.loads(line))
         self.messages.put({"Error": "worker exited"})
 
     def send(self, command):
@@ -142,8 +164,8 @@ def ticks(pid):
     return int(stat[13]) + int(stat[14])
 
 
-def check(executable, clip, audio=False):
-    worker = Worker(executable, clip, audio)
+def check(executable, clip, audio=False, wine=False):
+    worker = Worker(executable, clip, audio, wine)
     try:
         worker.until(lambda: worker.frames and worker.state.get("duration"))
         startup = time.monotonic() - worker.started
@@ -246,9 +268,11 @@ if __name__ == "__main__":
     parser.add_argument("--fixtures", type=Path)
     parser.add_argument("--size", default="1920x1080")
     parser.add_argument("--audio", action="store_true")
+    parser.add_argument("--codecs", choices=sorted(CODECS), default="h264-aac")
+    parser.add_argument("--wine", action="store_true")
     parser.add_argument("--generate-only", action="store_true")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="skwir-synthetic-video-") as temporary:
-        clip = generate(args.fixtures or Path(temporary), args.size)
+        clip = generate(args.fixtures or Path(temporary), args.size, args.codecs)
         if not args.generate_only:
-            check(args.worker, clip, args.audio)
+            check(args.worker, clip, args.audio, args.wine)

@@ -67,7 +67,7 @@ It then runs the existing packagers with separate fresh output directories:
 | `just package-try ubuntu` | Ubuntu 24.04 build, its revision naming the release (`-1ubuntu24.04`); the same installations |
 | `just package-try fedora` | Fedora 44 build; fresh installation of main package alone, then optional packages |
 | `just package-try arch` | Arch build; fresh installation of main package alone, then optional packages |
-| `just package-windows` | Windows build to try (ADR-074), made with cargo-zigbuild: a zip and a per-user installer, tried under Wine (programs answering, the archive helper making and listing each format, installing and removing) |
+| `just package-windows` | Windows build to try (ADR-074), made with cargo-zigbuild: a zip and a per-user installer, tried under Wine (programs answering, the archive helper making and listing each format, the media helper playing H.264 and VP9 clips, installing and removing); GStreamer's own build is fetched and installed once into the build cache (ADR-076) |
 | `just package-macos` | macOS build to try for Apple silicon (ADR-075): skwir.app, zipped and in a disk image, looked over (architecture, libraries, seal); nothing runs it here |
 
 The final bundle is `target/releases/v0.1.0/`. It contains the lowercase

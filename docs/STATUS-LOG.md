@@ -1986,3 +1986,57 @@ middle as the views cut names (`text_ellipsis_middle`), so its extension
 shows. In a window (debug build, Xvfb, the same files): in one folder and
 across two, the long names kept their beginning and their end
 ("….jpg"), still before "+".
+
+**Audio and video in Windows' and macOS's builds** (ADR-076, the user's
+choice among the alternatives researched the same day). Before choosing,
+five research threads with sources (a helper per system, an engine of our
+own on FFmpeg or in Rust, libmpv and libVLC, GStreamer built by us),
+measured where they could be: FFmpeg 9.0.2 cross-built for both systems
+(a trimmed set without H.264, HEVC or AAC: 8.2 MB on Windows, 5.2 MB on
+macOS), the Rust crates' sizes (symphonia, rav1d and the rest: +4.65 MB);
+GStreamer's floor (no subtitles, no software VP9 or AV1) 29.3 MB, 9.6 MB
+zipped. AVFoundation opens no Matroska, WebM or Ogg; Microsoft's H.264
+decoder falls back to software, which GStreamer does not wrap. The user
+chose GStreamer's own builds aligned with the AppImage: gst-libav's
+decoders included, no GPL plugin.
+- `tools/package/gstreamer.py` (pinned by `tools/package/gstreamer.lock`):
+  Windows' installer (1,014.7 MB, Inno Setup 6.7) installed by nixpkgs'
+  WoW64 Wine on an Xvfb display of its own in 98–110 s; macOS's two
+  packages (156.6 and 808.6 MB) opened with xar, pbzx and cpio in 56–66 s,
+  static libraries left out. The set's libraries follow from imports;
+  Windows' stripped by MinGW's strip (llvm-strip refused libstdc++),
+  macOS's thinned and rewritten by llvm-objcopy (MoltenVK carried LunarG's
+  signature with the hardened-runtime and library-validation flags, which
+  rcodesign kept). The link tree holds the pkg-config files of what the
+  helper links alone (the tree has a SQLite's, which rusqlite would take),
+  without macOS's rpath to the build machine, and Windows' import
+  libraries under the name Zig's linker looks for. Every carried library
+  is claimed by a component whose notice is copied, or the recipe stops.
+- The helper, finding GStreamer beside it (`carried_gstreamer`), sets its
+  plugin path, scanner and registry (in skwir's cache), and on Windows its
+  folder first on `PATH` for the scanner; `helper_folders` looks in
+  `gstreamer\bin` on Windows. macOS's GStreamer is a framework bundle
+  (`GStreamer.framework`, libgstreamer its main binary): a plain folder in
+  `Frameworks` made rcodesign stop ("Info.plist not found").
+- The set: 67.1 MB on Windows (24.4 MB zipped), 62.4 MB on macOS (21.5
+  MB zipped); libavcodec 14.8 and 12.9 MB, MoltenVK 7.4, the dav1d plugin
+  5.1. GStreamer's registry lists 211 FFmpeg decoders (H.264, HEVC, AAC,
+  AC-3, E-AC-3, DTS, TrueHD, WMA, WMV, VC-1, MPEG-2, MPEG-4, ALAC, ProRes
+  among them).
+- `just package-windows` under Wine: the media helper answers `--probe`
+  from `gstreamer\bin`, and `tools/media/check.py --wine` passes with it
+  on H.264 and AAC (30.3 frames a second, none dropped, first frame 207
+  and 467 ms in two builds) and VP9 and Opus (30.3, none dropped); it
+  installs and uninstalls, 213 files. Zip 40.2 → 65.2 MB, installer 42.6
+  → 68.6 MB.
+- `just package-macos`: 209 files, links kept as links in the zip and the
+  disk image; GStreamer's 92 files arm64, each loading the system's or its
+  own; 100 programs and libraries signed ad hoc. Disk image 36.7 → 58.6
+  MB, zip 38.1 → 60.5 MB. Never run.
+- Lint of the helper for Windows and macOS against the link trees, by
+  hand (check-cross leaves it out: it would need GStreamer's 2 GB of
+  downloads); `helpers_are_beside_skwir_or_where_a_package_keeps_them`
+  on Linux and under Wine.
+- Not checked: anything on Windows or a Mac (Direct3D's and VideoToolbox's
+  decoders, Core Audio, WASAPI's output, DirectWrite), the stall when
+  subtitles are turned off while paused (seen under Wine in the trial).

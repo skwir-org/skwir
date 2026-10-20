@@ -50,7 +50,8 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   build to try is made on Linux too (ADR-075, `just package-macos`):
   skwir.app for Apple silicon, looked over, never run. Both carry the
   archive helper, libarchive built on Linux and linked in statically
-  (2026-10-20, `tools/package/libarchive.sh`). Both were added
+  (2026-10-20, `tools/package/libarchive.sh`), and the media helper with
+  GStreamer's own build beside it (ADR-076, `tools/package/gstreamer.py`). Both were added
   to 0.2.0's release page (built from 5a0bb2b); from the next release,
   `release-build` makes them with the Linux packages. The user reports
   hosted CI is too slow; routine CI is reduced to essentials, with full
@@ -121,10 +122,11 @@ nothing built (ADR-021: mounts listed and opened first, rclone later).
 - Media (2026-09-19, ADR-008): audible lip sync not assessed; native 4K
   output, GPU buffer sharing, external subtitle files, a second backend;
   full-file waveforms.
-- Audio and video on Windows and macOS (2026-10-20): ADR-076 proposes a
-  trimmed GStreamer for the helper Linux has (tried on Linux, Windows'
-  under Wine); the user's decision, then its packaging. Under Wine,
-  turning subtitles off while paused stalled in 3 of about 10 runs.
+- Audio and video on Windows and macOS (2026-10-20, ADR-076): under
+  Wine, turning subtitles off while paused stalled in some runs; nothing
+  played on the machines; lighter later: applemedia without Vulkan
+  (MoltenVK, 7.4 MB), dav1d linked into the helper (5.1 MB), GStreamer
+  built by us.
 - Archives: 7z and RAR decryption (libarchive has none), passwords for
   agents, Merge for an extraction onto a folder (2026-10-13); a Mac's
   `__MACOSX` beside an archive's one folder still makes a folder around
@@ -891,8 +893,8 @@ ran there, in a prefix of its own.
   containers remain fallbacks; their hosted results have not been verified
   here. The archive helper is in both packages since 2026-10-20,
   libarchive built on Linux and linked statically (ADR-041's amendment).
-  Left for the machines: audio and video through AVFoundation and Media
-  Foundation, everything run.
+  The media helper plays on both since 2026-10-20, GStreamer's own build
+  carried (ADR-076). Left for the machines: everything run.
 - **L. Budgets per system.** *Decided 2026-10-05* (ADR-038): the own
   share is `phys_footprint` on macOS and the private working set on
   Windows, 100 MiB each until 5b measures. `just idle-pss` says it

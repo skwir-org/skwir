@@ -1,110 +1,123 @@
 # ADR-076: Audio and video off Linux through a trimmed GStreamer
 
-Status: proposed, 2026-10-20, after a trial on Linux: GStreamer 1.28.8's
-own builds for Windows and macOS, the media helper built against them,
-Windows' tried under Wine (`docs/STATUS-LOG.md`). It awaits the user's
-decision: it grows each download by about 15 MB and carries LGPL
-libraries. Amends ADR-041, point 4.
+Status: accepted, 2026-10-20, the user's choice among the alternatives
+below; built the same day: Windows' package plays under Wine, macOS's is
+looked over, never run. Amends ADR-041, point 4.
 
 ## Context
 
 - **ADR-041 chose a helper per system** for audio and video off Linux,
   AVFoundation's on macOS and Media Foundation's on Windows, "not a bundled
   GStreamer (100-200 MB, codec licensing)", to be written on the machines.
-  Nothing of them is written; Windows' and macOS's builds to try (ADR-074,
-  ADR-075) have no player.
+  None was written; Windows' and macOS's builds to try (ADR-074, ADR-075)
+  had no player.
 - **The helper Skwir has is GStreamer's** (`crates/media-worker`), with
-  its rules (`docs/invariants/media.md`): playbin3's tracks chosen again
-  through a return to READY behind a fence, subtitles drawn into the
-  frame, ReplayGain (`rgvolume`, `rglimiter`), the tempo kept at another
-  rate (`scaletempo`), the spectrum (`spectrum`), BGRA frames through one
-  slot. A helper per system would build each of these again, twice:
-  - AVFoundation opens no Matroska, WebM or Ogg, and its frame output
-    (`AVPlayerItemVideoOutput`) leaves subtitles out.
-  - Media Foundation has no simple way to the audio for the spectrum
-    (an effect transform of its own) nor to subtitles.
-  - Neither can be tried here: Wine's Media Foundation is itself built on
-    GStreamer.
-- **GStreamer can decode through the system**, which answers both of
-  ADR-041's objections where they bite: on Windows, Direct3D 11's
-  decoders (the GPU's: H.264, HEVC, VP8, VP9, AV1, MPEG-2) and Media
-  Foundation's (AAC, MP3); on macOS, VideoToolbox's (H.264, HEVC, MPEG-2,
-  ProRes) and AudioToolbox's (AAC, MP3). What remains in software is free
-  of royalties: VP8, VP9 (libvpx), AV1 (dav1d), Opus, Vorbis, FLAC,
-  Theora, MP3 (mpg123; its patents ran out in 2017), WavPack.
-- **The trial, 2026-10-20**, with GStreamer's own builds of 1.28.8, each
-  checked against its published SHA-256:
-  - Windows (MinGW, x86-64): the helper, unchanged, built against it in a
-    minute. Under Wine, with the whole of it, `tools/media/check.py`
-    (play, seek both ways, change audio track, subtitles on and off, rate,
-    end, again) passed on VP9 and Opus, AV1 and Vorbis, H.264 and AAC
-    (the last by gst-libav, which the set below leaves out): 30 frames a
-    second, none dropped.
-  - The set below, stripped: 43.7 MB, 14.3 MB zipped (DirectWrite's
-    subtitles), or 49.7 MB, 16.7 MB zipped (pango's). Under Wine it played
-    VP9, AV1 and MP3; AAC and H.264 found no decoder, since Wine registers
-    no Direct3D decoder and no Media Foundation audio decoder. Pango drew
-    the subtitles; DirectWrite's overlay has no rank, and given one it
-    stalled under Wine, whose DirectWrite lacks what it needs.
-  - Turning subtitles off while paused stalled in 3 of about 10 runs
-    under Wine (once with the whole set), never on Linux (5 of 5): a
-    preroll after a return to READY that does not come.
-  - macOS (the framework, universal): the helper links against its
-    libraries by `@rpath`. The set below, arm64 alone: 46.9 MB, 14.6 MB
-    zipped; MoltenVK, which VideoToolbox's plugin loads through
-    GStreamer's Vulkan library, is 7.4 MB of it. Nothing run.
-  - The packages today: Windows' zip 40.2 MB, macOS's disk image 36.7 MB.
+  its rules (`docs/invariants/media.md`): tracks chosen again through a
+  return to READY behind a fence, subtitles drawn into the frame,
+  ReplayGain, the tempo kept at another rate, the spectrum, BGRA frames
+  through one slot.
+- **The alternatives, researched on 2026-10-20** (`docs/STATUS-LOG.md`),
+  each a size added to a package, zipped:
+  - **A helper per system** (1–2 MB) would build those rules again,
+    twice. AVFoundation opens no Matroska, WebM or Ogg in any macOS, and
+    Apple offers no Vorbis decoder to apps; Media Foundation's formats
+    depend on the Store extensions a machine has. Neither can be run here.
+  - **A player of our own** on a trimmed FFmpeg or in Rust, with the
+    system's decoders, as Firefox has (3–7 MB): months of work, an engine
+    Linux would not share.
+  - **libmpv** (8–9 MB) hands out no samples for the spectrum; **libVLC**
+    is not lighter.
+  - **GStreamer built by us** (gst-full, 7–9 MB, estimated): a build to
+    keep for each release, its macOS build from Linux never done by
+    anyone.
+  - **GStreamer's own builds, trimmed, without FFmpeg** (14–17 MB,
+    measured): no H.264, HEVC or AAC but the system's, so no 10-bit H.264,
+    no H.264 on a Windows machine without a GPU decoder, no MPEG-2, DivX,
+    AC-3, DTS, WMV.
+  - **GStreamer's own builds with FFmpeg's decoders** (gst-libav), as
+    Linux's distributions and Skwir's AppImage carry them: every format
+    Linux plays.
+- **Skwir already ships FFmpeg's H.264, HEVC and AAC decoders**: its
+  AppImage carries Ubuntu's gst-libav. Keeping them out of Windows and
+  macOS would not change what Skwir distributes, only where formats play.
+- **What was tried here** with GStreamer 1.28.8's own builds: under Wine,
+  the media check (`tools/media/check.py`: play, seek both ways, change
+  audio track, subtitles on and off, rate, end, again) passed with the
+  whole of it on VP9 and Opus, AV1 and Vorbis, H.264 and AAC; a set
+  without FFmpeg played no H.264 or AAC there, Wine having no Direct3D
+  and no Media Foundation decoder.
 
 ## Decision
 
-1. **Windows' and macOS's packages carry GStreamer**, trimmed, for the
-   media helper Linux has: one engine, one set of rules, on every system.
-   The helpers per system of ADR-041 are not written.
-2. **GStreamer's own builds**, one version pinned with each file's SHA-256
-   (as `tools/package/pdfium.lock` pins PDFium), updated with Skwir's
-   releases: its security updates are ours. Built on Linux as the
-   packages are: Windows' installer (Inno Setup 6.7, which innoextract
-   cannot open) run under Wine on a display of its own, macOS's package
-   opened with xar, pbzx and cpio; the libraries stripped of debug
-   information (MinGW's `strip`: GStreamer's keep theirs, libstdc++ 26.6
-   MB of it, 4.7 without) and macOS's thinned to arm64.
-3. **The set:**
-   - Core: `coreelements`, `typefindfunctions`, `playback`, `app`,
-     `videoconvertscale`, `audioconvert`, `audioresample`, `volume`,
-     `autodetect`, `pbtypes`, `subparse`; the helper's own `replaygain`,
-     `audiofx`, `spectrum`.
-   - Containers: `matroska`, `isomp4`, `ogg`, `avi`, `flv`, `wavparse`,
-     `mpegtsdemux`, `mpegpsdemux`, `audioparsers`, `videoparsersbad`,
-     `id3demux`, `apetag`.
-   - Software decoders: `vpx`, `dav1d`, `opus`, `vorbis`, `flac`,
-     `theora`, `mpg123`, `wavpack`.
-   - The system's: `d3d11`, `mediafoundation`, `wasapi2` on Windows;
-     `applemedia`, `osxaudio` on macOS.
-   - Subtitles: `pango`, until DirectWrite's (`dwrite`, smaller, the
-     system's fonts) is tried on Windows.
-   - Never gst-libav, openh264, nor a GPL or "restricted" plugin: no
-     software decoder of H.264, HEVC or AAC is carried.
-4. **Kept apart from any GStreamer the user installed:** its plugins
-   found where the package puts them (`GST_PLUGIN_SYSTEM_PATH_1_0`), its
-   registry in Skwir's cache, its scanner its own; on Windows its DLLs in
-   a folder of their own, on macOS in `Contents/Frameworks`, reached by
-   the helper's rpath.
-5. **Its licences are carried**, those of each library in the set
-   (GStreamer's tree holds them, `share/licenses`), with where GStreamer's
-   sources for that version are; the libraries stay separate files, as the
-   LGPL asks.
+1. **Windows' and macOS's packages carry GStreamer** for the media helper
+   Linux has: one engine, one set of rules, on every system. The helpers
+   per system of ADR-041 are not written.
+2. **GStreamer's own builds, aligned with the AppImage**: every decoder
+   FFmpeg has (gst-libav), H.264, HEVC and AAC in software among them, so
+   a file plays where it plays on Linux. GStreamer ranks the system's
+   decoders above FFmpeg's (Direct3D 11's on Windows, VideoToolbox's on
+   macOS), so the GPU decodes where it can. No GPL plugin: what they
+   decode (AC-3, MPEG-2), FFmpeg does too. This reverses ADR-041's
+   "codec licensing": H.264 has US patents to about 2030 and HEVC and AAC
+   pools are active; the project ships those decoders knowingly, as its
+   AppImage and Linux's distributions do.
+3. **One release pinned** (`tools/package/gstreamer.lock`, each file's
+   SHA-256 as GStreamer publishes it), updated with Skwir's releases: its
+   security updates are ours. `tools/package/gstreamer.py` makes it on
+   Linux, kept in the build cache:
+   - Windows' installer (Inno Setup 6.7, which innoextract cannot open)
+     runs under a WoW64 Wine on an Xvfb display of its own; macOS's
+     packages are opened with xar, pbzx and cpio.
+   - The set: the core and playback; the containers (Matroska, MP4,
+     Ogg, AVI, FLV, ASF, WAV, AIFF, MPEG-TS and PS); gst-libav, dav1d,
+     Opus, Vorbis, FLAC; the subtitle renderers (pango, libass, DVD and
+     DVB bitmaps); the helper's own (ReplayGain, tempo, spectrum); the
+     system's decoders and audio output (Direct3D 11, WASAPI;
+     VideoToolbox, AudioToolbox, Core Audio). The libraries they load
+     follow from their imports.
+   - Windows' libraries stripped of their debug information (MinGW's
+     strip: GStreamer's keep it, libstdc++ 26.6 MB of it, 4.7 without),
+     macOS's thinned to Apple silicon.
+4. **Kept apart from any GStreamer the user installed**: the helper,
+   finding GStreamer beside it, plays with its plugins alone, its own
+   scanner and a registry in Skwir's cache (`carried_gstreamer`). On
+   Windows it sits among GStreamer's libraries (`gstreamer\bin`), as
+   Windows finds a program's libraries beside it; on macOS GStreamer is
+   a framework bundle, `Contents/Frameworks/GStreamer.framework`, as a
+   bundle's Frameworks holds code to be signed, its main binary
+   libgstreamer (GStreamer's own re-exports libraries the set leaves
+   out), found by the helper's rpath, its libraries by their own relative
+   ones. Linux's packages keep the system's GStreamer.
+5. **The licences carried**: each component's notice from GStreamer's
+   tree (a library no component claims stops the recipe), the versions
+   of those carried, where their sources are; the libraries stay
+   GStreamer's files, as built, which a user may replace.
 
 ## Consequences
 
-- **The downloads grow by about 15 MB**: Windows' zip from 40 to about
-  55 MB, macOS's disk image from 37 to about 51 MB.
-- **H.264 and HEVC play only through the GPU**: not on a Windows machine
-  without a hardware decoder (a virtual one, an old GPU); AAC not on
-  Windows' N editions without the Media Feature Pack. There, a still frame
-  from FFmpeg, if installed, stands in (`media.backend`, automatic).
-- **What decodes differs by system**, though the helper does not: a file
-  may play on one and not another. The decoder is GStreamer's choice by
-  rank, as on Linux (`docs/invariants/media.md`).
-- **Not yet known:** whether anything plays on Windows or a Mac; the
-  stall when subtitles are turned off, under Wine; DirectWrite's
-  subtitles; the helper's memory there.
+- **Every format the AppImage plays, on both systems** (gst-libav's 211
+  decoders in GStreamer's build, read from the registry): 10-bit H.264,
+  H.264 and HEVC without a GPU decoder, AAC on Windows' N editions,
+  MPEG-2, DivX, AC-3, E-AC-3, DTS, WMV and WMA, styled ASS subtitles.
+- **The downloads grow**: the GStreamer carried is 67.1 MB on Windows
+  (24.4 MB zipped) and 62.4 MB on macOS (21.5 MB zipped); Windows' zip
+  went from 40.2 to 65.2 MB and its installer from 42.6 to 68.6 MB,
+  macOS's disk image from 36.7 to 58.6 MB and its zip from 38.1 to 60.5
+  MB. Of it,
+  FFmpeg's libavcodec is 14.8 and 12.9 MB; MoltenVK, which VideoToolbox's
+  plugin loads through GStreamer's Vulkan library, 7.4 MB on macOS; the
+  dav1d plugin, with its own copy of Rust's runtime, 5.1 MB on Windows.
+  Lighter, later and apart: applemedia built without Vulkan, dav1d
+  linked into the helper, or GStreamer built by us.
+- **The patent stance is now one**: Windows, macOS and the AppImage ship
+  the same decoders. The AppImage still carries Ubuntu's GPL plugins
+  (ugly's); these packages do not.
+- **Wine plays what software decodes**: the package's check plays H.264
+  and AAC, VP9 and Opus through the helper; Direct3D's and
+  VideoToolbox's decoders, DirectWrite, Core Audio and anything on a Mac
+  are for people with the machines (`docs/HELP-WANTED.md`).
+- **Under Wine, turning subtitles off while paused stalled** in some runs
+  (3 of about 10 in the trial), never on Linux: a preroll after a return
+  to READY that does not come. To look into on Windows.
+- **Building the packages needs** about 2 GB of GStreamer's downloads,
+  kept in the build cache, and WoW64 Wine in the `windows` shell.

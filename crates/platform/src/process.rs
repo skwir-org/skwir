@@ -221,9 +221,15 @@ fn ask_build(path: &Path) -> Said {
 /// it (a build, `just dist`, a Mac's bundle, Windows' installer, the Nix
 /// package), else where a Linux package keeps a program's private
 /// helpers, `/usr/bin/skwir` beside `/usr/lib/skwir/` (Debian, Arch) or
-/// `/usr/libexec/skwir/` (Fedora) (ADR-040).
+/// `/usr/libexec/skwir/` (Fedora) (ADR-040). On Windows, a helper that
+/// loads the libraries the package carries for it sits among them, in
+/// their folder (the media helper in `gstreamer\bin`, ADR-076): Windows
+/// finds a program's libraries beside it.
 fn helper_folders(bin: &Path) -> Vec<PathBuf> {
     let mut folders = vec![bin.to_owned()];
+    if cfg!(windows) {
+        folders.push(bin.join("gstreamer").join("bin"));
+    }
     if let Some(prefix) = bin.parent() {
         folders.push(prefix.join("lib").join("skwir"));
         folders.push(prefix.join("libexec").join("skwir"));
@@ -1032,16 +1038,21 @@ mod tests {
 
     #[test]
     fn helpers_are_beside_skwir_or_where_a_package_keeps_them() {
-        let bin = Path::new("/usr/bin");
-        assert_eq!(
-            helper_folders(bin),
-            [
-                PathBuf::from("/usr/bin"),
-                PathBuf::from("/usr/lib/skwir"),
-                PathBuf::from("/usr/libexec/skwir"),
-            ]
-        );
-        assert_eq!(helper_folders(Path::new("/")), [PathBuf::from("/")]);
+        // On Windows, the media helper among GStreamer's libraries too.
+        let among = |bin: &str| {
+            let mut folders = vec![PathBuf::from(bin)];
+            if cfg!(windows) {
+                folders.push(Path::new(bin).join("gstreamer").join("bin"));
+            }
+            folders
+        };
+        let mut expected = among("/usr/bin");
+        expected.extend([
+            PathBuf::from("/usr/lib/skwir"),
+            PathBuf::from("/usr/libexec/skwir"),
+        ]);
+        assert_eq!(helper_folders(Path::new("/usr/bin")), expected);
+        assert_eq!(helper_folders(Path::new("/")), among("/"));
     }
 
     // A POSIX shell runs the scripts.

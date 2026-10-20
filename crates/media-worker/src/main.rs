@@ -865,6 +865,77 @@ fn handle_message(
     }
     Ok(())
 }
+/// The `GStreamer` carried beside this helper, where Windows' and macOS's
+/// packages put it (ADR-076), is the one it plays with, apart from any the
+/// user installed: its plugins alone (none from `GST_PLUGIN_PATH`), its
+/// own plugin scanner, and its registry in skwir's cache rather than the
+/// one an installed `GStreamer` keeps. On Windows the helper sits among
+/// its libraries (`gstreamer\bin`), which its scanner, a program of its
+/// own, finds on `PATH`; on macOS it is in the bundle's `MacOS`,
+/// `GStreamer` a framework in its `Frameworks`. Linux's packages use the
+/// system's, and the `AppImage`'s wrapper names its own
+/// (tools/package/appimage/media-worker).
+///
+/// Setting an environment variable is unsafe in edition 2024 because other
+/// threads may be reading the environment; this runs first thing in `main`,
+/// before any thread exists, which is the one situation where it is sound.
+#[cfg(any(windows, target_os = "macos"))]
+#[allow(unsafe_code)]
+fn carried_gstreamer() {
+    let Some(here) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_owned))
+    else {
+        return;
+    };
+    #[cfg(windows)]
+    let (root, scanner) = (
+        here.parent().map(std::path::Path::to_owned),
+        "gst-plugin-scanner.exe",
+    );
+    #[cfg(target_os = "macos")]
+    let (root, scanner) = (
+        here.parent()
+            .map(|contents| contents.join("Frameworks/GStreamer.framework/Versions/1.0")),
+        "gst-plugin-scanner",
+    );
+    let Some(root) = root.filter(|root| root.join("lib/gstreamer-1.0").is_dir()) else {
+        return;
+    };
+    let mut vars: Vec<(&str, std::ffi::OsString)> = vec![
+        (
+            "GST_PLUGIN_SYSTEM_PATH_1_0",
+            root.join("lib/gstreamer-1.0").into(),
+        ),
+        ("GST_PLUGIN_PATH_1_0", std::ffi::OsString::new()),
+        (
+            "GST_PLUGIN_SCANNER_1_0",
+            root.join("libexec/gstreamer-1.0").join(scanner).into(),
+        ),
+    ];
+    if let Some(cache) = skwir_core::folders::cache().map(|cache| cache.join("gstreamer")) {
+        let _ = std::fs::create_dir_all(&cache);
+        vars.push((
+            "GST_REGISTRY_1_0",
+            cache
+                .join(format!("registry-{}.bin", std::env::consts::ARCH))
+                .into(),
+        ));
+    }
+    #[cfg(windows)]
+    {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let paths = std::iter::once(here.clone()).chain(std::env::split_paths(&path));
+        if let Ok(joined) = std::env::join_paths(paths) {
+            vars.push(("PATH", joined));
+        }
+    }
+    for (name, value) in vars {
+        // SAFETY: called first in `main`, before any thread is spawned.
+        unsafe { std::env::set_var(name, value) };
+    }
+}
+
 fn main() {
     // `--build`, skwir asking which build of it this helper is, when a
     // call of it failed (`platform::process::explain`).
@@ -875,6 +946,8 @@ fn main() {
         println!("{}", env!("SKWIR_BUILD"));
         return;
     }
+    #[cfg(any(windows, target_os = "macos"))]
+    carried_gstreamer();
     // `--probe`, skwir's settings asking whether this helper works here
     // (`platform::process::probe`): GStreamer and its playback plugins.
     if std::env::args_os()

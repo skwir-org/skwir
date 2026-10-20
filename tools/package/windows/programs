@@ -1,8 +1,9 @@
 # The programs skwir's Windows package carries (tools/package/windows.sh,
 # ADR-074): skwir, the helpers that link no library the package would
-# have to carry for them, and the archive helper, libarchive linked in
-# statically (tools/package/libarchive.sh, ADR-041). Those that link
-# another (Poppler, MuPDF, DjVuLibre, GStreamer) wait for their libraries;
+# have to carry for them, the archive helper, libarchive linked in
+# statically (tools/package/libarchive.sh, ADR-041), and the media helper,
+# with GStreamer beside it (tools/package/gstreamer.py, ADR-076). Those
+# that link another (Poppler, MuPDF, DjVuLibre) wait for their libraries;
 # skwir says the engine is not installed. Their notices are
 # tools/package/notices/windows.
 skwir
@@ -11,3 +12,4 @@ skwir-djvu-worker
 skwir-model-worker
 skwir-module-worker
 skwir-archive-worker
+skwir-media-worker

@@ -257,11 +257,27 @@
       # and the package's programs and installer, never for the shell's
       # behaviour. Kept out of the default shell, whose closure it would
       # grow by about 1.5 GB.
+      #
+      # GStreamer's own build for Windows (tools/package/gstreamer.py,
+      # ADR-076) comes as an installer of Inno Setup 6.7, a 32-bit program
+      # innoextract cannot open: it is installed by a WoW64 Wine
+      # (`SKWIR_WINE_WOW64`, named rather than on PATH, where the tests'
+      # Wine is) on an Xvfb display of its own, and its libraries stripped
+      # of their debug information by MinGW's binutils (llvm-strip refuses
+      # its libstdc++).
       devShells.windows = self.devShells.${system}.default.overrideAttrs (old: {
         nativeBuildInputs =
           old.nativeBuildInputs
-          ++ lib.optionals stdenv.hostPlatform.isLinux [pkgs.wine64Packages.stable pkgs.llvmPackages.llvm pkgs.msitools pkgs.icoutils];
+          ++ lib.optionals stdenv.hostPlatform.isLinux [
+            pkgs.wine64Packages.stable
+            pkgs.llvmPackages.llvm
+            pkgs.msitools
+            pkgs.icoutils
+            pkgs.xvfb
+            pkgs.pkgsCross.mingwW64.buildPackages.binutils-unwrapped
+          ];
         SKWIR_LIBARCHIVE_SOURCES = libarchiveSources;
+        SKWIR_WINE_WOW64 = lib.optionalString stdenv.hostPlatform.isLinux "${pkgs.wineWow64Packages.stable}/bin";
       });
 
       # xmac (github.com/Jarred-Sumner/xmac, MIT or Apache-2.0) downloads
@@ -315,7 +331,8 @@
         SKWIR_LIBARCHIVE_SOURCES = libarchiveSources;
         # What tools/package/macos.sh also needs: llvm-ar and llvm-otool,
         # rsvg-convert for the icon, rcodesign to sign the bundle ad hoc,
-        # mkfs.hfsplus and libdmg-hfsplus for the disk image.
+        # mkfs.hfsplus and libdmg-hfsplus for the disk image, and xar,
+        # pbzx and cpio to open GStreamer's packages (ADR-076).
         nativeBuildInputs =
           old.nativeBuildInputs
           ++ [
@@ -325,6 +342,9 @@
             pkgs.librsvg
             pkgs.rcodesign
             pkgs.hfsprogs
+            pkgs.xar
+            pkgs.pbzx
+            pkgs.cpio
           ];
         shellHook =
           old.shellHook

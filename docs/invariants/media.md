@@ -9,6 +9,13 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 
 - GStreamer loads only in `skwir-media-worker`. The media provider owns the
   runtime setting; the session interface stays independent of GPUI.
+- Linux's packages use the system's GStreamer. Windows' and macOS's carry
+  GStreamer's own build, cut down (ADR-076, `tools/package/gstreamer.py`),
+  and the worker, finding it beside itself, plays with it alone
+  (`carried_gstreamer`): its plugins, its scanner, its registry in
+  skwir's cache, never the plugins or registry of a GStreamer the user
+  installed. A plugin the worker needs is added to the recipe's set,
+  whose check plays clips under Wine (`tools/package/windows-check.sh`).
 - One plugin, `media`, registers the audio and video providers and
   declares every playback preference. Audio and video share one player, so
   no player preference belongs to one kind; with the plugin off there is no

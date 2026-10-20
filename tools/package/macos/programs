@@ -1,13 +1,15 @@
 # The programs skwir's macOS package carries (tools/package/macos.sh,
 # ADR-075): skwir, the helpers that link no library the bundle would
-# have to carry for them, and the archive helper, libarchive linked in
-# statically (tools/package/libarchive.sh, ADR-041). Those that link
-# another (Poppler, MuPDF, DjVuLibre, GStreamer) wait for their libraries;
-# skwir says the engine is not installed. Their notices are
-# tools/package/notices/macos.
+# have to carry for them, the archive helper, libarchive linked in
+# statically (tools/package/libarchive.sh, ADR-041), and the media helper,
+# GStreamer in the bundle's Frameworks (tools/package/gstreamer.py,
+# ADR-076). Those that link another (Poppler, MuPDF, DjVuLibre) wait for
+# their libraries; skwir says the engine is not installed. Their notices
+# are tools/package/notices/macos.
 skwir
 skwir-pdf-worker
 skwir-djvu-worker
 skwir-model-worker
 skwir-module-worker
 skwir-archive-worker
+skwir-media-worker

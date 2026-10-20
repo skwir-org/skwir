@@ -7,11 +7,14 @@
 # under Wine.
 #
 # What the folder holds: tools/package/windows/programs (skwir and the
-# helpers that carry no library of their own, and the archive helper, with
-# libarchive linked in), PDFium beside them (ADR-041), the type database
-# (ADR-037) in share\mime, and in licenses skwir's licence, its crates'
-# notices (tools/package/notices/windows), PDFium's, libarchive's and its
-# compressors' (tools/package/libarchive.sh) and MinGW-w64's.
+# helpers that carry no library of their own, the archive helper, with
+# libarchive linked in, and the media helper, in gstreamer\bin among
+# GStreamer's libraries), PDFium beside them (ADR-041), GStreamer cut down
+# to what the media helper plays with in gstreamer (ADR-076), the type
+# database (ADR-037) in share\mime, and in licenses skwir's licence, its
+# crates' notices (tools/package/notices/windows), PDFium's, libarchive's
+# and its compressors' (tools/package/libarchive.sh), GStreamer's and its
+# components' (tools/package/gstreamer.py) and MinGW-w64's.
 #
 #     tools/package/windows.sh [version]      # into target/package/windows/
 set -eu
@@ -46,6 +49,13 @@ export RC_x86_64_pc_windows_gnu
 # built here once for each version.
 SKWIR_LIBARCHIVE_STATIC="$(tools/package/libarchive.sh "$target")"
 export SKWIR_LIBARCHIVE_STATIC
+# GStreamer's own build, cut down (tools/package/gstreamer.py): the media
+# helper is linked against it, pkg-config asked for Windows of its files
+# alone.
+gstreamer="$(tools/package/gstreamer.py "$target")"
+export PKG_CONFIG_ALLOW_CROSS=1
+export PKG_CONFIG_PATH_x86_64_pc_windows_gnu="$gstreamer/link/lib/pkgconfig"
+export PKG_CONFIG_LIBDIR_x86_64_pc_windows_gnu="$gstreamer/link/lib/pkgconfig"
 # shellcheck disable=SC2046,SC2086 # one `-p name` per program
 cargo-zigbuild build --profile dist --target "$target" $(printf -- '-p %s ' $programs)
 
@@ -53,14 +63,20 @@ name="skwir-$version-windows-x86_64"
 out="$root/target/package/windows"
 folder="$out/$name"
 rm -rf "${folder:?}" "$out/$name.zip" "$out/$name.msi" "$out/work"
-mkdir -p "$folder/licenses/mingw-w64" "$out/work"
+mkdir -p "$folder/licenses/mingw-w64" "$folder/gstreamer" "$out/work"
+cp -R "$gstreamer/runtime/." "$folder/gstreamer/"
+# Where a program goes: beside skwir, but the media helper among
+# GStreamer's libraries, where Windows finds a program's (as
+# windows-check.sh and skwir's `helper_folders` look for it).
+place() { case "$1" in skwir-media-worker) echo gstreamer/bin ;; *) echo . ;; esac; }
 for program in $programs; do
-    cp "$CARGO_TARGET_DIR/$target/dist/$program.exe" "$folder/"
+    cp "$CARGO_TARGET_DIR/$target/dist/$program.exe" "$folder/$(place "$program")/"
 done
 tools/package/pdfium.sh win-x64 "$out/work/pdfium"
 cp "$out/work/pdfium/pdfium.dll" "$folder/"
 cp -R "$out/work/pdfium/licenses/pdfium" "$folder/licenses/"
 cp -R "$SKWIR_LIBARCHIVE_STATIC/licenses/." "$folder/licenses/"
+cp -R "$gstreamer/licenses/." "$folder/licenses/"
 cp LICENSE "$folder/licenses/"
 cp tools/package/notices/windows/skwir/THIRD-PARTY-NOTICES "$folder/licenses/"
 # MinGW-w64's runtime, built into each program by Zig, asks for its notice
