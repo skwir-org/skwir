@@ -27,6 +27,7 @@ fn built_in() -> Vec<Arc<dyn Plugin>> {
         Arc::new(skwir_plugin_ops_basic::OpsBasicPlugin::default()),
         Arc::new(skwir_plugin_open_with::OpenWithPlugin::default()),
         Arc::new(skwir_plugin_places::PlacesPlugin::default()),
+        Arc::new(skwir_plugin_remote::RemotePlugin::default()),
         Arc::new(skwir_plugin_thumbnails::ThumbnailsPlugin::default()),
         // Phase 4 power features, each a plugin with a runtime toggle.
         Arc::new(skwir_plugin_query::QueryPlugin::default()),

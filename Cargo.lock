@@ -7498,6 +7498,7 @@ dependencies = [
  "skwir-plugin-places",
  "skwir-plugin-playlists",
  "skwir-plugin-query",
+ "skwir-plugin-remote",
  "skwir-plugin-rename-bulk",
  "skwir-plugin-shelf",
  "skwir-plugin-shell",
@@ -8161,6 +8162,24 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rustix",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "skwir-plugin-remote"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "dirs 7.0.0",
+ "parking_lot",
  "schemars",
  "serde",
  "serde_json",

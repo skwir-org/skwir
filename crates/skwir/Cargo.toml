@@ -25,6 +25,7 @@ skwir-alloc.workspace = true
 skwir-core.workspace = true
 skwir-platform.workspace = true
 skwir-plugin-places.workspace = true
+skwir-plugin-remote.workspace = true
 skwir-plugin-open-with.workspace = true
 skwir-plugin-ops-basic.workspace = true
 skwir-plugin-thumbnails.workspace = true

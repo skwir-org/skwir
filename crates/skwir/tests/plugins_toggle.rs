@@ -20,6 +20,8 @@ struct Snapshot {
     menu_sources: usize,
     property_sources: usize,
     places: usize,
+    /// What plugins know of the remotes mounted (ADR-077).
+    remotes: usize,
     /// What keeps a kind of location in the sidebar (bookmarks, searches).
     keepers: Vec<String>,
     /// Other ways to see a folder, each a button of its address (its tags).
@@ -74,6 +76,7 @@ fn snapshot(app: &App) -> Snapshot {
         menu_sources: app.registry.menu_sources.all().len(),
         property_sources: app.registry.property_sources.all().len(),
         places: app.registry.places.all().len(),
+        remotes: app.registry.remotes.all().len(),
         keepers: app
             .registry
             .keepers
@@ -90,10 +93,13 @@ fn snapshot(app: &App) -> Snapshot {
             .collect(),
         views: app.registry.views.all().len(),
         panels: app.registry.panels.all().len(),
-        providers: ["path", "query", "shelf", "recent", "tags", "trash"]
-            .into_iter()
-            .filter(|s| app.provider(s).is_some())
-            .collect(),
+        providers: [
+            "path", "query", "shelf", "recent", "tags", "trash", "sftp", "ssh", "smb", "cifs",
+            "dav", "davs", "webdav", "webdavs", "ftp", "ftps", "nfs", "afp", "rclone",
+        ]
+        .into_iter()
+        .filter(|s| app.provider(s).is_some())
+        .collect(),
         metadata: app.metadata.ids(),
         fields: app.fields.ids(),
         hints: app.hints.ids(),

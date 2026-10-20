@@ -1,0 +1,430 @@
+//! GVfs, the desktop's own remotes (ADR-077): `gio mount` connects, its
+//! questions answered by the window; each mount is a folder of GVfs's FUSE
+//! bridge, shared with every other program of the session. Linux only:
+//! GVfs runs nowhere else.
+
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use skwir_core::cancel::CancelToken;
+use skwir_core::fs::reach::Remote;
+
+use crate::address::{Address, Scheme};
+use crate::connector::{Ask, Connected, Connector, Recognised};
+use crate::gvfs_spec::Spec;
+
+/// The FUSE bridge's type in the mount table.
+pub const BRIDGE: &str = "fuse.gvfsd-fuse";
+
+/// How long connecting may take once nothing is asked: a server that
+/// does not answer.
+const PATIENCE: Duration = Duration::from_secs(60);
+
+pub struct Gvfs;
+
+impl Connector for Gvfs {
+    fn id(&self) -> &'static str {
+        "gvfs"
+    }
+
+    fn title(&self) -> &'static str {
+        "GVfs"
+    }
+
+    fn schemes(&self) -> &'static [Scheme] {
+        &[
+            Scheme::Sftp,
+            Scheme::Smb,
+            Scheme::Dav,
+            Scheme::Davs,
+            Scheme::Ftp,
+            Scheme::Ftps,
+            Scheme::Nfs,
+            Scheme::Afp,
+        ]
+    }
+
+    fn unavailable(&self) -> Option<String> {
+        if !cfg!(target_os = "linux") {
+            return Some("GVfs runs on Linux only".to_owned());
+        }
+        if skwir_core::os_path::find_program("gio").is_none() {
+            return Some("gio (GLib) is not installed".to_owned());
+        }
+        if bridge().is_none() {
+            return Some("GVfs's FUSE bridge (gvfsd-fuse) is not running".to_owned());
+        }
+        None
+    }
+
+    fn connect(
+        &self,
+        address: &Address,
+        ask: &Arc<dyn Ask>,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Connected> {
+        let top = address.top();
+        let gio = skwir_core::os_path::find_program("gio")
+            .ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
+        mount(&gio, &top, ask, cancel)?;
+        skwir_core::fs::reach::changed();
+        let point = find_mount(&top)
+            .ok_or_else(|| anyhow::anyhow!("GVfs mounted {top} but its folder is not there"))?;
+        Ok(Connected {
+            point,
+            address: top,
+        })
+    }
+
+    fn recognises(&self, remote: &Remote) -> Option<Recognised> {
+        if remote.fstype != BRIDGE {
+            return None;
+        }
+        let name = remote.point.file_name()?.to_str()?;
+        let spec = Spec::parse(name)?;
+        Some(Recognised {
+            address: spec.address(),
+            label: spec.label(),
+            ours: false,
+        })
+    }
+
+    fn disconnect(
+        &self,
+        _remote: &Remote,
+        recognised: &Recognised,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<()> {
+        let address = recognised
+            .address
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("GVfs says no address for this mount"))?;
+        let gio = skwir_core::os_path::find_program("gio")
+            .ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
+        let mut command = Command::new(gio);
+        command.arg("mount").arg("-u").arg(address.uri());
+        english(&mut command);
+        let finished = skwir_platform::process::run_to_exit(&mut command, None, cancel, PATIENCE)?;
+        skwir_core::fs::reach::changed();
+        if finished.status.success() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("{}", said(&finished.stderr)))
+        }
+    }
+}
+
+/// GVfs's FUSE bridge: where every mount of it is a folder.
+pub fn bridge() -> Option<PathBuf> {
+    skwir_core::fs::reach::bridges(BRIDGE).into_iter().next()
+}
+
+/// The folder of the bridge that holds `top`'s mount: its spec says the
+/// same server. Reads the bridge's folder, which GVfs answers from its
+/// list of mounts, never from a server.
+fn find_mount(top: &Address) -> Option<PathBuf> {
+    let bridge = bridge()?;
+    std::fs::read_dir(&bridge)
+        .ok()?
+        .filter_map(Result::ok)
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .and_then(Spec::parse)
+                .and_then(|spec| spec.address())
+                .is_some_and(|mounted| mounted.below(top).is_some())
+        })
+        .map(|entry| bridge.join(entry.file_name()))
+}
+
+/// `gio`'s own words in English, which its questions are read in; what
+/// GVfs's daemon says stays in the user's language.
+fn english(command: &mut Command) {
+    command
+        .env_remove("LC_ALL")
+        .env_remove("LANGUAGE")
+        .env("LC_MESSAGES", "C");
+}
+
+/// What `gio` said on failing, without its prefix (`gio: sftp://h/: `).
+fn said(stderr: &str) -> String {
+    let line = stderr
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or(stderr);
+    let line = line.strip_prefix("gio: ").unwrap_or(line);
+    // The address it names is the one the user typed.
+    match line.split_once(": ") {
+        Some((first, rest)) if first.contains("://") => rest.to_owned(),
+        _ => line.to_owned(),
+    }
+}
+
+/// What `gio mount` asks on its standard output, a question at a time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Asked {
+    /// `User [default]: `, after what the server said.
+    User {
+        message: String,
+        default: Option<String>,
+    },
+    Domain {
+        message: String,
+        default: Option<String>,
+    },
+    Password {
+        message: String,
+    },
+    /// A question and its choices, numbered as `gio` reads them back.
+    Choice {
+        message: String,
+        choices: Vec<(u32, String)>,
+    },
+}
+
+/// Reads `gio mount`'s output as it comes; a question is whole once its
+/// prompt (`Password: `) ends what was said.
+#[derive(Default)]
+pub struct Prompts {
+    said: String,
+}
+
+impl Prompts {
+    pub fn feed(&mut self, text: &str) -> Option<Asked> {
+        self.said.push_str(text);
+        let at = self.said.rfind('\n').map_or(0, |at| at + 1);
+        let last = &self.said[at..];
+        let prompt = last.strip_suffix(": ")?;
+        let (word, default) = match prompt.split_once(" [") {
+            Some((word, rest)) => (word, rest.strip_suffix(']').map(ToOwned::to_owned)),
+            None => (prompt, None),
+        };
+        if !matches!(word, "User" | "Domain" | "Password" | "Choice") {
+            return None;
+        }
+        let word = word.to_owned();
+        let before = self.said[..at].to_owned();
+        self.said.clear();
+        let mut message = Vec::new();
+        let mut choices = Vec::new();
+        for line in before.lines() {
+            if let Some((number, choice)) = line
+                .strip_prefix('[')
+                .and_then(|l| l.split_once("] "))
+                .and_then(|(n, c)| Some((n.parse::<u32>().ok()?, c)))
+            {
+                choices.push((number, choice.to_owned()));
+            } else if !line.trim().is_empty() {
+                message.push(line);
+            }
+        }
+        let message = message.join("\n");
+        Some(match word.as_str() {
+            "User" => Asked::User { message, default },
+            "Domain" => Asked::Domain { message, default },
+            "Password" => Asked::Password { message },
+            _ => Asked::Choice { message, choices },
+        })
+    }
+}
+
+/// Mount `top` with `gio mount`, answering what it asks: the address's
+/// user and domain, the window's password, the window's choice to go on
+/// where GVfs cannot vouch for the server (the first choice; Cancel
+/// otherwise).
+fn mount(
+    gio: &Path,
+    top: &Address,
+    ask: &Arc<dyn Ask>,
+    cancel: &CancelToken,
+) -> anyhow::Result<()> {
+    let mut command = Command::new(gio);
+    command
+        .arg("mount")
+        .arg(top.uri())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    english(&mut command);
+    let mut child = command.spawn()?;
+    let (said_tx, said_rx) = crossbeam_channel::unbounded::<Option<String>>();
+    let mut stdout = child.stdout.take().expect("piped");
+    std::thread::Builder::new()
+        .name("skwir-gio".into())
+        .spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match stdout.read(&mut buf) {
+                    Ok(0) | Err(_) => {
+                        let _ = said_tx.send(None);
+                        return;
+                    }
+                    Ok(n) => {
+                        let _ = said_tx.send(Some(String::from_utf8_lossy(&buf[..n]).into_owned()));
+                    }
+                }
+            }
+        })?;
+    let mut stderr = child.stderr.take().expect("piped");
+    let errors = std::thread::Builder::new()
+        .name("skwir-gio".into())
+        .spawn(move || {
+            let mut text = String::new();
+            let _ = stderr.read_to_string(&mut text);
+            text
+        })?;
+    let mut stdin = child.stdin.take();
+    let mut prompts = Prompts::default();
+    let mut since = Instant::now();
+    let mut ended = false;
+    let outcome = loop {
+        if cancel.is_cancelled() {
+            break Err(anyhow::anyhow!("cancelled"));
+        }
+        if since.elapsed() > PATIENCE {
+            break Err(anyhow::anyhow!(
+                "{} did not answer within {} seconds",
+                top.host,
+                PATIENCE.as_secs()
+            ));
+        }
+        if !ended {
+            match said_rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(Some(text)) => {
+                    if let Some(asked) = prompts.feed(&text) {
+                        let Some(answer) = answer(top, &asked, ask, cancel) else {
+                            break Err(anyhow::anyhow!("cancelled"));
+                        };
+                        if let Some(stdin) = stdin.as_mut() {
+                            // Written without a trace: it may be a password.
+                            let _ = stdin.write_all(answer.as_bytes());
+                            let _ = stdin.write_all(b"\n");
+                            let _ = stdin.flush();
+                        }
+                        since = Instant::now();
+                    }
+                    continue;
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+                Ok(None) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => ended = true,
+            }
+        }
+        match child.try_wait()? {
+            Some(status) => break Ok(status),
+            None => std::thread::sleep(Duration::from_millis(50)),
+        }
+    };
+    drop(stdin);
+    let status = match outcome {
+        Ok(status) => status,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
+    let errors = errors.join().unwrap_or_default();
+    if status.success() || errors.contains("already mounted") {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("{}", said(&errors)))
+    }
+}
+
+/// What to answer `asked`: `None` to cancel.
+fn answer(
+    top: &Address,
+    asked: &Asked,
+    ask: &Arc<dyn Ask>,
+    cancel: &CancelToken,
+) -> Option<String> {
+    match asked {
+        Asked::User { default, .. } => Some(
+            top.user
+                .clone()
+                .or_else(|| default.clone())
+                .unwrap_or_default(),
+        ),
+        Asked::Domain { default, .. } => Some(
+            top.domain
+                .clone()
+                .or_else(|| default.clone())
+                .unwrap_or_default(),
+        ),
+        Asked::Password { message } => {
+            let title = if message.is_empty() {
+                format!("Password for {}", top.label())
+            } else {
+                message.clone()
+            };
+            ask.secret(&title, "Connect", cancel)
+        }
+        Asked::Choice { message, choices } => {
+            // GVfs asks to go on where it cannot vouch for the server: its
+            // first choice goes on, the last cancels.
+            let (go_on, _) = choices.first()?;
+            ask.confirm(&format!("Connect to {}?", top.host), message, cancel)
+                .then(|| go_on.to_string())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gio_mounts_questions_are_read_whole() {
+        let mut prompts = Prompts::default();
+        assert_eq!(
+            prompts.feed("Enter password for ssh as me on example.com\nUs"),
+            None
+        );
+        assert_eq!(
+            prompts.feed("er [me]: "),
+            Some(Asked::User {
+                message: "Enter password for ssh as me on example.com".into(),
+                default: Some("me".into()),
+            })
+        );
+        assert_eq!(
+            prompts.feed("Password: "),
+            Some(Asked::Password {
+                message: String::new()
+            })
+        );
+        let question = "The identity of the remote computer (example.com) is unknown.\n\
+            This happens when you log in to a computer the first time.\n\n\
+            The identity sent by the remote computer is SHA256:abc. If you want to be \
+            absolutely sure it is safe to continue, contact the system administrator.\n\
+            [1] Log In Anyway\n[2] Cancel Login\nChoice: ";
+        match prompts.feed(question) {
+            Some(Asked::Choice { message, choices }) => {
+                assert!(message.contains("SHA256:abc"));
+                assert_eq!(
+                    choices,
+                    [(1, "Log In Anyway".into()), (2, "Cancel Login".into())]
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            prompts.feed("Mounted sftp://h/ at x: "),
+            None,
+            "not a question"
+        );
+    }
+
+    #[test]
+    fn what_gio_says_on_failing_loses_its_prefix() {
+        assert_eq!(
+            said("gio: sftp://example.com/: Connection refused\n"),
+            "Connection refused"
+        );
+        assert_eq!(said("gio: Permission denied"), "Permission denied");
+    }
+}

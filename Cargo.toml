@@ -65,6 +65,7 @@ skwir-platform = { path = "crates/platform" }
 skwir-alloc = { path = "crates/alloc" }
 skwir-ui = { path = "crates/ui" }
 skwir-plugin-places = { path = "crates/plugins/places" }
+skwir-plugin-remote = { path = "crates/plugins/remote" }
 skwir-plugin-open-with = { path = "crates/plugins/open-with" }
 skwir-plugin-ops-basic = { path = "crates/plugins/ops-basic" }
 skwir-plugin-thumbnails = { path = "crates/plugins/thumbnails" }

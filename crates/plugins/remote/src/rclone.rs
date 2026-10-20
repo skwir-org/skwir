@@ -1,0 +1,350 @@
+//! rclone (ADR-077): the remotes of its configuration (`rclone://gdrive/`,
+//! seventy kinds of storage), and SFTP, SMB, WebDAV and FTP addresses it
+//! can open without a password of Skwir's (SFTP through the user's own
+//! ssh). Mounted so that a file written is on the server once closed
+//! (`--vfs-cache-mode minimal`: a file opened to write only goes straight
+//! up; one opened to read and write, as an editor does, is kept on the
+//! disk and sent after).
+
+use std::fmt::Write as _;
+use std::path::Path;
+use std::process::Command;
+use std::sync::Arc;
+use std::time::Duration;
+
+use skwir_core::cancel::CancelToken;
+use skwir_core::fs::reach::Remote;
+
+use crate::address::{Address, Scheme};
+use crate::connector::{Ask, Connected, Connector, Recognised, Server};
+use crate::mounter;
+
+/// Its type in the mount table.
+pub const FSTYPE: &str = "fuse.rclone";
+
+/// How long connecting may take: a cloud's first listing, a password.
+const PATIENCE: Duration = Duration::from_secs(120);
+
+pub struct Rclone;
+
+impl Connector for Rclone {
+    fn id(&self) -> &'static str {
+        "rclone"
+    }
+
+    fn title(&self) -> &'static str {
+        "rclone"
+    }
+
+    fn schemes(&self) -> &'static [Scheme] {
+        &[
+            Scheme::Rclone,
+            Scheme::Sftp,
+            Scheme::Smb,
+            Scheme::Dav,
+            Scheme::Davs,
+            Scheme::Ftp,
+            Scheme::Ftps,
+        ]
+    }
+
+    fn unavailable(&self) -> Option<String> {
+        if skwir_core::os_path::find_program("rclone").is_none() {
+            return Some("rclone is not installed".to_owned());
+        }
+        #[cfg(target_os = "linux")]
+        if ["fusermount3", "fusermount"]
+            .iter()
+            .all(|p| skwir_core::os_path::find_program(p).is_none())
+        {
+            return Some("FUSE (fusermount3) is not installed".to_owned());
+        }
+        None
+    }
+
+    fn connect(
+        &self,
+        address: &Address,
+        ask: &Arc<dyn Ask>,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Connected> {
+        let top = address.top();
+        let rclone = skwir_core::os_path::find_program("rclone")
+            .ok_or_else(|| anyhow::anyhow!("rclone is not installed"))?;
+        let remote = remote_of(&top)?;
+        let point = mounter::point_for(self.id(), &top)?;
+        let mut command = Command::new(rclone);
+        command.args(mount_arguments(&remote, &point));
+        if top.scheme == Scheme::Sftp {
+            command.arg("--sftp-ssh").arg(ssh_command(&top));
+        }
+        // A configuration kept encrypted asks its password of the window.
+        let askpass = mounter::Askpass::serve(ask, cancel)?;
+        askpass.give(&mut command);
+        command
+            .arg("--password-command")
+            .arg(std::env::current_exe()?);
+        mounter::mount(&mut command, &point, cancel, PATIENCE)
+            .map_err(|error| anyhow::anyhow!("{}", words(&error.to_string())))?;
+        Ok(Connected {
+            point,
+            address: top,
+        })
+    }
+
+    fn recognises(&self, remote: &Remote) -> Option<Recognised> {
+        if remote.fstype != FSTYPE {
+            return None;
+        }
+        if let Some(ours) = mounter::ours(self.id(), &remote.point) {
+            return Some(ours);
+        }
+        // Mounted by the user: `gdrive:Photos`, or `:sftp{hash}:` for an
+        // address, whose parts rclone does not say.
+        let source = remote.source.to_string_lossy();
+        let address = source
+            .split_once(':')
+            .filter(|(name, _)| !name.is_empty())
+            .and_then(|(name, path)| {
+                Address::parse(&format!("rclone://{name}/{}", path.trim_start_matches('/'))).ok()
+            });
+        Some(Recognised {
+            label: remote.point.file_name().map_or_else(
+                || source.clone().into_owned(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+            address,
+            ours: false,
+        })
+    }
+
+    fn disconnect(
+        &self,
+        remote: &Remote,
+        recognised: &Recognised,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<()> {
+        mounter::unmount(&remote.point, recognised.ours, cancel)
+    }
+
+    fn servers(&self, cancel: &CancelToken) -> Vec<Server> {
+        let Some(rclone) = skwir_core::os_path::find_program("rclone") else {
+            return Vec::new();
+        };
+        let mut command = Command::new(rclone);
+        command.args(["listremotes", "--long"]);
+        // An encrypted configuration is not opened to list it.
+        command.arg("--ask-password=false");
+        match skwir_platform::process::run(&mut command, cancel, Duration::from_secs(10)) {
+            Ok(out) => remotes(&String::from_utf8_lossy(&out)),
+            Err(error) => {
+                tracing::debug!("rclone listremotes: {error:#}");
+                Vec::new()
+            }
+        }
+    }
+}
+
+/// The remotes `rclone listremotes --long` names: `gdrive: drive`.
+fn remotes(listed: &str) -> Vec<Server> {
+    listed
+        .lines()
+        .filter_map(|line| {
+            let (name, kind) = line.split_once(':')?;
+            let name = name.trim();
+            let address = Address::parse(&format!("rclone://{name}/")).ok()?;
+            let kind = kind.trim();
+            Some(Server {
+                label: if kind.is_empty() {
+                    name.to_owned()
+                } else {
+                    format!("{name} ({kind})")
+                },
+                address,
+            })
+        })
+        .collect()
+}
+
+/// What rclone mounts for `top`: a remote of its configuration, or one it
+/// is given by its parts (a connection string, `:sftp,host=…:`), a value
+/// quoted where it holds what would end it.
+fn remote_of(top: &Address) -> anyhow::Result<String> {
+    let path = String::from_utf8_lossy(&top.path)
+        .trim_start_matches('/')
+        .to_owned();
+    let quoted = |value: &str| format!("'{}'", value.replace('\'', "''"));
+    let mut parts = Vec::new();
+    let kind = match top.scheme {
+        Scheme::Rclone => return Ok(format!("{}:{path}", top.host)),
+        // Through the user's ssh: the host and user go to it, not here.
+        Scheme::Sftp => "sftp",
+        Scheme::Smb => {
+            parts.push(format!("host={}", quoted(top.bare_host())));
+            "smb"
+        }
+        Scheme::Dav | Scheme::Davs => {
+            let scheme = if top.scheme == Scheme::Davs {
+                "https"
+            } else {
+                "http"
+            };
+            let port = top.port.map(|p| format!(":{p}")).unwrap_or_default();
+            parts.push(format!(
+                "url={}",
+                quoted(&format!("{scheme}://{}{port}", top.host))
+            ));
+            "webdav"
+        }
+        Scheme::Ftp | Scheme::Ftps => {
+            parts.push(format!("host={}", quoted(top.bare_host())));
+            if top.scheme == Scheme::Ftps {
+                parts.push("tls=true".to_owned());
+            }
+            "ftp"
+        }
+        Scheme::Nfs | Scheme::Afp => {
+            anyhow::bail!("rclone does not open {} addresses", top.scheme.title())
+        }
+    };
+    if top.scheme != Scheme::Sftp {
+        if let Some(user) = &top.user {
+            parts.push(format!("user={}", quoted(user)));
+        }
+        if let (Some(port), false) = (top.port, matches!(top.scheme, Scheme::Dav | Scheme::Davs)) {
+            parts.push(format!("port={port}"));
+        }
+        if let Some(domain) = &top.domain {
+            parts.push(format!("domain={}", quoted(domain)));
+        }
+    }
+    let mut remote = format!(":{kind}");
+    for part in parts {
+        remote.push(',');
+        remote.push_str(&part);
+    }
+    // WebDAV's path is the server's after its address.
+    let path = match top.scheme {
+        Scheme::Dav | Scheme::Davs => String::from_utf8_lossy(&top.path).into_owned(),
+        _ => path,
+    };
+    Ok(format!("{remote}:{path}"))
+}
+
+/// The ssh rclone runs for an SFTP address: the user's own, its
+/// configuration and agent, a server gone told within a minute.
+fn ssh_command(top: &Address) -> String {
+    let mut ssh = String::from("ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=3");
+    if let Some(port) = top.port {
+        let _ = write!(ssh, " -p {port}");
+    }
+    ssh.push(' ');
+    if let Some(user) = &top.user {
+        ssh.push_str(user);
+        ssh.push('@');
+    }
+    ssh.push_str(top.bare_host());
+    ssh
+}
+
+/// `rclone mount`'s arguments for `remote` at `point`.
+fn mount_arguments(remote: &str, point: &Path) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = vec!["mount".into(), remote.into(), point.into()];
+    args.extend(
+        [
+            "--daemon",
+            "--daemon-wait",
+            "60s",
+            "--vfs-cache-mode",
+            "minimal",
+            // What the server changed is seen within a minute where it
+            // says (and on F5 and focus everywhere).
+            "--dir-cache-time",
+            "1m",
+            "--log-level",
+            "ERROR",
+        ]
+        .map(std::ffi::OsString::from),
+    );
+    args
+}
+
+/// What rclone says on failing, in the user's words where it can be told.
+fn words(said: &str) -> String {
+    let said = said.trim();
+    let line = said
+        .lines()
+        .rev()
+        .find(|l| l.contains("CRITICAL") || l.contains("ERROR"))
+        .unwrap_or_else(|| said.lines().last().unwrap_or(said));
+    // `2026/10/21 00:00:00 CRITICAL: Failed to create file system for …: …`
+    let line = line.split_once(": ").map_or(line, |(head, rest)| {
+        if head.contains("CRITICAL") || head.contains("ERROR") {
+            rest
+        } else {
+            line
+        }
+    });
+    if line.contains("didn't find section in config file") {
+        "rclone's configuration names no such remote".to_owned()
+    } else if line.contains("connection refused") {
+        "the server refused the connection".to_owned()
+    } else if line.contains("no such host") {
+        "the server's name was not found".to_owned()
+    } else {
+        line.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rclone_is_given_an_address_by_its_parts() {
+        let top = |text: &str| Address::parse(text).unwrap().top();
+        assert_eq!(
+            remote_of(&top("rclone://gdrive/Photos")).unwrap(),
+            "gdrive:"
+        );
+        assert_eq!(
+            remote_of(&top("smb://WORK;me@nas/photos/2024")).unwrap(),
+            ":smb,host='nas',user='me',domain='WORK':photos/"
+        );
+        assert_eq!(
+            remote_of(&top("davs://cloud.example.com:8443/remote.php/webdav")).unwrap(),
+            ":webdav,url='https://cloud.example.com:8443':/"
+        );
+        assert_eq!(remote_of(&top("sftp://me@h:2222/x")).unwrap(), ":sftp:");
+        assert_eq!(
+            ssh_command(&top("sftp://me@h:2222/x")),
+            "ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -p 2222 me@h"
+        );
+        assert!(remote_of(&top("nfs://h/export")).is_err());
+        assert_eq!(
+            remote_of(&top("ftp://o'brien@h/")).unwrap(),
+            ":ftp,host='h',user='o''brien':",
+            "a quote doubled"
+        );
+    }
+
+    #[test]
+    fn the_configurations_remotes_are_servers() {
+        let servers = remotes("gdrive:     drive\nnas:        sftp\n");
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0].address.to_string(), "rclone://gdrive/");
+        assert_eq!(servers[0].label, "gdrive (drive)");
+    }
+
+    #[test]
+    fn rclone_mounts_so_a_copy_is_on_the_server_once_closed() {
+        let args = mount_arguments("gdrive:", Path::new("/m"));
+        let args: Vec<_> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let at = args.iter().position(|a| a == "--vfs-cache-mode").unwrap();
+        assert_eq!(args[at + 1], "minimal");
+        assert_eq!(args[..3], ["mount", "gdrive:", "/m"]);
+    }
+}
