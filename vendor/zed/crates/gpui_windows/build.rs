@@ -1,6 +1,16 @@
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 
 fn main() {
+    // SKWIR: built for Windows on another system (cargo-zigbuild on Linux),
+    // where no fxc.exe compiles the shaders ahead, the renderer compiles
+    // them as it starts, from their source, with the system's own compiler
+    // (D3DCompile, d3dcompiler_47.dll, on every Windows 10 and 11).
+    println!("cargo::rustc-check-cfg=cfg(gpui_shaders_at_start)");
+    if !cfg!(target_os = "windows")
+        && std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+    {
+        println!("cargo::rustc-cfg=gpui_shaders_at_start");
+    }
     #[cfg(not(all(target_os = "windows", not(debug_assertions))))]
     println!("cargo:rerun-if-changed=build.rs");
     #[cfg(target_os = "windows")]

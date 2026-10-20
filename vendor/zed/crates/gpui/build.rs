@@ -28,13 +28,31 @@ fn main() {
         println!("cargo::rustc-cfg=gpui_hot_reload");
     }
 
-    // SKWIR: embedded when built on Windows, whose resource compiler it needs,
-    // as gpui 0.2.2 did: a check from another system (`check-cross`, Wine's
-    // tests) leaves it out rather than fail without MinGW's `windres`.
-    if target_os == "windows" && cfg!(windows) {
+    // SKWIR: embedded where a resource compiler is at hand: on Windows, as
+    // gpui 0.2.2 did, or where one is named as embed-resource reads it
+    // (`RC`, `RC_<target>`: llvm-rc for a package built on Linux). A check
+    // from another system (`check-cross`, Wine's tests) names none, and
+    // leaves it out rather than fail without MinGW's `windres`.
+    if target_os == "windows" && (cfg!(windows) || resource_compiler_named()) {
         #[cfg(feature = "windows-manifest")]
         embed_resource();
     }
+}
+
+/// SKWIR: whether a resource compiler is named for the target, as
+/// embed-resource reads it.
+fn resource_compiler_named() -> bool {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    let mut named = false;
+    for name in [
+        format!("RC_{target}"),
+        format!("RC_{}", target.replace('-', "_")),
+        "RC".to_owned(),
+    ] {
+        println!("cargo::rerun-if-env-changed={name}");
+        named |= std::env::var_os(&name).is_some();
+    }
+    named
 }
 
 #[cfg(feature = "windows-manifest")]

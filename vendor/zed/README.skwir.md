@@ -56,13 +56,14 @@ at the vendored commit.
 | `0024-clipboard-files` | Files on the Linux clipboard, read off the main thread; X11 sends large data in pieces (0021) | — |
 | `0025-vulkan-alone` | GL only where Vulkan offers no GPU, or none that can draw to the window | — |
 | `0026-hide-cursor-until-mouse-moves` | `App::hide_cursor_until_mouse_moves` public | — |
-| `0027-manifest-built-on-windows` | The Windows manifest embedded only when built on Windows | — |
+| `0027-manifest-with-a-resource-compiler` | The Windows manifest embedded where a resource compiler is at hand: on Windows, or named (`RC`) | — |
 | `0028-gpui-not-published` | gpui unpublished, as Skwir's path dependency | Skwir's only |
 | `0029-gpu-context-on-a-thread` | Vulkan starts on a thread of its own while the platform sets up (0014, on wgpu) | — |
 | `0030-active-descendant-for` | An element is said as focused while a focus handle beside it holds the focus (the combobox pattern) | — |
 | `0031-aria-states` | Live regions, modal dialogs, lists of many selected, disabled and read-only elements | — |
 | `0032-held-keys` | An action sees the key event it came from, held or not; X11 tells a held key from a press | — |
 | `0033-meshes` | A triangle mesh drawn in 3D (`Window::paint_mesh`), by wgpu, Direct3D 11 and Metal | — |
+| `0034-windows-shaders-at-start` | Built for Windows on another system, the shaders are compiled as the renderer starts | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -310,11 +311,15 @@ pointer with its controls (`crates/ui/src/fullscreen.rs`). Elsewhere Skwir
 sets `CursorHideMode::OnTyping`: a key that types a character hides the
 pointer, and a key that only moves (the arrows through files) leaves it.
 
-### 0027: Windows manifest built on Windows
+### 0027: Windows manifest with a resource compiler
 
-gpui's build script embeds a Windows manifest with MinGW's `windres`. It now
-does so only when built on Windows, as 0.2.2 did, so `check-cross` and Wine's
-tests build from Linux without it.
+gpui's build script embeds a Windows manifest (per-monitor DPI awareness,
+Common Controls 6, the segment heap) with a resource compiler, MinGW's
+`windres` unless one is named. It does so where one is at hand: built on
+Windows, as 0.2.2 did, or where one is named as embed-resource reads it
+(`RC`, `RC_<target>`). Skwir's Windows package names llvm-rc
+(`tools/package/windows.sh`, ADR-074); `check-cross` and Wine's tests name
+none and build from Linux without it.
 
 ### 0028: gpui not published
 
@@ -488,6 +493,24 @@ go of) and `the_renderer_draws_a_mesh_among_other_primitives` (a quad
 under it and one over it, through `DirectXRenderer`; it skips under Wine,
 whose HLSL compiler cannot compile gpui's own shaders). Metal is compiled
 only.
+
+### 0034: Windows shaders at start
+
+gpui compiles its HLSL shaders ahead with the Windows SDK's `fxc.exe`, in
+its build script, and only when the build runs on Windows: built elsewhere,
+a release build lacks the bytes it includes, and a debug build compiles
+them from the source file's path on the build machine. Built for Windows on
+another system (`cfg(gpui_shaders_at_start)`, set by the build script), the
+renderer compiles them as it starts, from the source the program carries
+(`alpha_correction.hlsl` put in place of its `#include`), with the system's
+own compiler, `D3DCompile` in d3dcompiler_47.dll (Windows 10 and 11),
+optimized as fxc's `/O3` (debugging flags in a debug build). Built on
+Windows, nothing changes.
+
+It costs each start the compiling of eighteen shaders: about 0.28 s under
+Wine with Microsoft's d3dcompiler_47 (winetricks), not yet measured on
+Windows. Wine's own compiler, vkd3d's, stops on the shadow shader ("struct
+store rhs is not HLSL_IR_LOAD"), as it does for the renderer's test above.
 
 ## Adding or changing a patch
 
