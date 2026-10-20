@@ -26,7 +26,18 @@ const PATIENCE: Duration = Duration::from_secs(300);
 /// rather than hangs.
 const ALIVE: &[&str] = &["ServerAliveInterval=15", "ServerAliveCountMax=3"];
 
-pub struct Sshfs;
+/// sshfs, as the plugin runs it.
+#[derive(Default)]
+pub struct Sshfs {
+    /// The program ssh asks through: the `skwir` executable running, unless
+    /// a test names it.
+    pub askpass: Option<std::path::PathBuf>,
+    /// ssh options given beside the plugin's (`UserKnownHostsFile=…`): a
+    /// test's, so it touches no file of the user's.
+    pub ssh_options: Vec<String>,
+    /// An ssh configuration file in place of the user's (`-F`): a test's.
+    pub ssh_config: Option<std::path::PathBuf>,
+}
 
 impl Connector for Sshfs {
     fn id(&self) -> &'static str {
@@ -62,7 +73,16 @@ impl Connector for Sshfs {
         let point = mounter::point_for(self.id(), &top)?;
         let mut command = Command::new(sshfs);
         command.args(arguments(&top, &point));
-        let askpass = mounter::Askpass::serve(ask, cancel)?;
+        for option in &self.ssh_options {
+            command.arg("-o").arg(option);
+        }
+        if let Some(config) = &self.ssh_config {
+            command.arg("-F").arg(config);
+        }
+        let askpass = match &self.askpass {
+            Some(program) => mounter::Askpass::serve_with(program.clone(), ask, cancel)?,
+            None => mounter::Askpass::serve(ask, cancel)?,
+        };
         askpass.give(&mut command);
         mounter::mount(&mut command, &point, cancel, PATIENCE)
             .map_err(|error| anyhow::anyhow!("{}", words(&error.to_string())))?;

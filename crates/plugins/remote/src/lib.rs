@@ -87,7 +87,7 @@ pub struct Remotes {
 impl Default for Remotes {
     fn default() -> Self {
         Remotes::with(vec![
-            Arc::new(sshfs::Sshfs),
+            Arc::new(sshfs::Sshfs::default()),
             Arc::new(gvfs::Gvfs),
             Arc::new(rclone::Rclone),
             Arc::new(fstab::Fstab),
