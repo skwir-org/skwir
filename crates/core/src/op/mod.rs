@@ -661,7 +661,8 @@ pub struct Made {
     /// Where it lands.
     pub target: PathBuf,
     /// What it is made from (the archive extracted), or, for what is made
-    /// of several, the first: shown beside what is there.
+    /// of several, the first: the path of what comes in its clash, which
+    /// says what is made (`clash::Side`).
     pub from: PathBuf,
     /// Everything it reads to make it (the archive; what an archive is
     /// made of): never put in the trash to make room for it, and what

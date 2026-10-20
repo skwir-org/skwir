@@ -649,6 +649,14 @@ fn an_extraction_onto_a_name_taken_asks_and_keeps_both_or_replaces() {
         );
         assert!(!clash.folders(), "what is made is never merged");
         assert_eq!(clash.there.path, dest.join("project-1.0"));
+        // What comes is the folder it makes, not the archive it reads: no
+        // size yet, as new as the archive.
+        assert!(clash.source.folder, "{:?}", clash.source);
+        assert_eq!(clash.source.size, None);
+        assert_eq!(
+            clash.source.modified,
+            std::fs::metadata(&archive).unwrap().modified().ok()
+        );
         assert!(app.answer_clashes(question.id, Some(Answer::all(Policy::default()))));
     });
     assert!(matches!(kept, ExecEvent::Finished { error: None, .. }));
@@ -923,6 +931,45 @@ fn replace_if_newer_reads_the_files_a_folder_holds() {
 }
 
 #[test]
+fn a_name_taken_by_an_archive_made_of_a_folder_is_asked_about_the_archive() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    app.set_window_shown();
+    let deep = tmp.path().join("deep");
+    std::fs::create_dir_all(deep.join("inner")).unwrap();
+    std::fs::write(deep.join("inner/file.txt"), "first").unwrap();
+    let compress = || plan_of(&app, "archive.compress", &json!({ "entries": [deep] }));
+    applied(&app, &compress());
+    edit_in_place(&deep.join("inner/file.txt"), "again");
+    let skipped = whole(&app, compress(), |app| {
+        let question = clashes_asked(app);
+        // What comes is an archive, not the folder it is made of, as new
+        // as the file deep in it.
+        let source = &question.clashes[0].source;
+        assert!(!source.folder && source.size.is_none(), "{source:?}");
+        assert_eq!(
+            source.modified,
+            std::fs::metadata(deep.join("inner/file.txt"))
+                .unwrap()
+                .modified()
+                .ok()
+        );
+        let skip = Answer::all(Policy {
+            files: FileChoice::Skip,
+            ..Policy::default()
+        });
+        assert!(app.answer_clashes(question.id, Some(skip)));
+    });
+    assert!(
+        matches!(skipped, ExecEvent::Finished { error: None, .. }),
+        "{skipped:?}"
+    );
+}
+
+#[test]
 fn replace_never_puts_in_the_trash_what_it_reads() {
     if !with_archive_worker() {
         return;
@@ -1044,6 +1091,9 @@ fn a_one_file_archive_kept_beside_keeps_the_files_extension() {
         ),
         |app| {
             let question = clashes_asked(app);
+            // The file it makes, of no size until it is made.
+            let source = &question.clashes[0].source;
+            assert!(!source.folder && source.size.is_none(), "{source:?}");
             assert!(app.answer_clashes(question.id, Some(Answer::all(Policy::default()))));
         },
     );

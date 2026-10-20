@@ -135,7 +135,8 @@ impl Answer {
 pub struct Side {
     pub path: PathBuf,
     pub folder: bool,
-    /// A file's size; a folder's is not counted.
+    /// A file's size; a folder's is not counted, nor what a step has not
+    /// made yet.
     pub size: Option<u64>,
     pub modified: Option<SystemTime>,
 }
@@ -497,17 +498,24 @@ impl Walk<'_> {
             return self.push(op.clone_box());
         }
         let (verb, done) = made.words;
+        // What comes is what the step makes, not what it reads (the
+        // archive extracted, the first file compressed): a folder or a
+        // file, of no size yet, as new as the latest change among what it
+        // reads, a file deep in a folder as well as the folder.
         let clash = Clash {
             step,
             inside: None,
             act: Act::Make { verb, done },
-            source: Side::of(&made.from),
+            source: Side {
+                path: made.from.clone(),
+                folder: made.folder,
+                size: None,
+                modified: newest(&made.inputs, self.ctx),
+            },
             there: Side::of(target),
         };
         let choice = self.answer.choice(&clash);
-        // Newer: anything it is made of changed after what is there, a
-        // file deep in a folder as well as the folder.
-        let newer = matches!((newest(&made.inputs, self.ctx), clash.there.modified),
+        let newer = matches!((clash.source.modified, clash.there.modified),
             (Some(source), Some(there)) if source > there);
         self.clashes.push(clash);
         self.changed = true;

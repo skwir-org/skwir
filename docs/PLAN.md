@@ -38,11 +38,8 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   is much that no phase planned
   ([Built beyond the plan](#built-beyond-the-plan)).
 - **Next:** skwird's steps (ADR-050) and Phase 7, which the user put
-  after the release (2026-10-07). Seen while releasing 0.2.0, not yet
-  looked into: the question when an archive's folder is extracted onto
-  a name taken gave the incoming folder as "Yours: 153 B", seemingly
-  the archive's own size. The release page's notes were shortened by
-  hand, linking to the changelog for the rest (the user's request).
+  after the release (2026-10-07). From 0.3 a release's page is its
+  changelog section above `### All changes` (docs/RELEASING.md).
 - **Blocked:** Phase 5b needs a Mac and a Windows machine
   (`docs/HELP-WANTED.md`). The user reports hosted CI is too slow;
   routine CI is now reduced to essentials, with full checks and package
