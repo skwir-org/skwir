@@ -24,7 +24,8 @@
 - **Deleting permanently**: a file's sidecars (XMP, a Mac's `._` files,
   TagSpaces' notes) show as a small "+ metadata" mark after its name, and
   where they are when you point at it. A long name keeps the room: a
-  sidecar's name no longer cuts it to "…".
+  sidecar's name no longer cuts it to "…", and it is cut in its middle,
+  keeping its extension, as in the file views.
 - **A search of the whole disk** that plocate answers says how old its
   answer is ("as of Yesterday 03:00", plocate's database at its last
   update): a file made or renamed since is not in it. Agents and scripts

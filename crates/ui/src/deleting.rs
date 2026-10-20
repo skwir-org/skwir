@@ -672,11 +672,17 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
 /// A row's name and, when companion files go with it, a mark after it
 /// that says where they are when pointed at (`with`): "+ metadata" while
 /// the whole name fits beside it, else "+", the name taking the room and
-/// cut only once the mark is that small.
+/// cut only once the mark is that small, in its middle as the views cut
+/// names (the extension tells files apart).
 fn name(at: usize, name: &SharedString, with: Option<SharedString>, theme: &Theme) -> AnyElement {
     let named = || {
         clipped(
-            div().id(("deleting-name", at)).min_w_0().truncate(),
+            div()
+                .id(("deleting-name", at))
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis_middle(),
             name.clone(),
         )
     };

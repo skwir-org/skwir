@@ -1980,3 +1980,9 @@ TagSpaces companions): in one folder, short names wore "+ metadata" and a
 two long names were cut before "+" and "short.jpg" kept "+ metadata";
 pointed at, the marks listed one and three full paths. Not checked: what
 a screen reader says of a row (`just a11y-check`).
+
+Then, asked by the user, a name too long for its row is cut in its
+middle as the views cut names (`text_ellipsis_middle`), so its extension
+shows. In a window (debug build, Xvfb, the same files): in one folder and
+across two, the long names kept their beginning and their end
+("….jpg"), still before "+".
