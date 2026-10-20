@@ -64,6 +64,7 @@ at the vendored commit.
 | `0032-held-keys` | An action sees the key event it came from, held or not; X11 tells a held key from a press | — |
 | `0033-meshes` | A triangle mesh drawn in 3D (`Window::paint_mesh`), by wgpu, Direct3D 11 and Metal | — |
 | `0034-windows-shaders-at-start` | Built for Windows on another system, the shaders are compiled as the renderer starts | — |
+| `0035-apple-shaders-at-start` | Built for macOS on another system, the shader bindings are made and the shaders compiled as the renderer starts | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -514,6 +515,20 @@ store rhs is not HLSL_IR_LOAD"), as it does for the renderer's test above.
 
 It serves builds to try only (ADR-074): once a Windows environment builds
 the releases, drop it, and the shaders are compiled ahead again.
+
+### 0035: Apple shaders at start
+
+gpui's Apple build script makes the shaders' C bindings with cbindgen, then
+compiles them ahead with `xcrun metal`; it was compiled, and its cbindgen
+taken, only when the build ran on a Mac, so a build for macOS from Linux
+had neither. It now runs for the target (`CARGO_CFG_TARGET_OS`), cbindgen
+an unconditional build dependency. Built on another system
+(`cfg(gpui_shaders_at_start)`), the shaders are stitched to their bindings
+and compiled as the renderer starts by macOS's own Metal compiler, the
+`runtime_shaders` path. Built on a Mac, nothing changes.
+
+Like 0034, it serves builds to try only (ADR-075): once a Mac builds the
+releases, drop it.
 
 ## Adding or changing a patch
 

@@ -57,7 +57,9 @@ pathfinder_geometry = { workspace = true, optional = true }
 smallvec.workspace = true
 thiserror.workspace = true
 
-[target.'cfg(any(target_os = "macos", target_os = "ios"))'.build-dependencies]
+# SKWIR: a build script's dependencies follow the system building, and the
+# shader bindings are made for macOS on Linux too.
+[build-dependencies]
 cbindgen.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dev-dependencies]

@@ -1,11 +1,18 @@
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 
 fn main() {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    apple_build::run();
+    // SKWIR: what the target is, not the system building: built for macOS
+    // on another system (cargo-zigbuild on Linux, with Apple's SDK), the
+    // shader bindings are made all the same.
+    println!("cargo::rustc-check-cfg=cfg(gpui_shaders_at_start)");
+    if matches!(
+        std::env::var("CARGO_CFG_TARGET_OS").as_deref(),
+        Ok("macos" | "ios")
+    ) {
+        apple_build::run();
+    }
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
 mod apple_build {
     use std::{
         env,
@@ -17,10 +24,18 @@ mod apple_build {
     pub fn run() {
         let header_path = generate_shader_bindings();
 
-        #[cfg(feature = "runtime_shaders")]
-        emit_stitched_shaders(&header_path);
-        #[cfg(not(feature = "runtime_shaders"))]
-        compile_metal_shaders(&header_path);
+        // SKWIR: built on another system, where no `xcrun metal` compiles
+        // them ahead, the shaders are compiled as the renderer starts, by
+        // the system's own Metal compiler, as `runtime_shaders` asks.
+        let at_start = !cfg!(any(target_os = "macos", target_os = "ios"));
+        if at_start {
+            println!("cargo::rustc-cfg=gpui_shaders_at_start");
+        }
+        if cfg!(feature = "runtime_shaders") || at_start {
+            emit_stitched_shaders(&header_path);
+        } else {
+            compile_metal_shaders(&header_path);
+        }
     }
 
     fn generate_shader_bindings() -> PathBuf {
@@ -105,7 +120,6 @@ mod apple_build {
 
     /// To enable runtime compilation, we need to "stitch" the shaders file with the generated header
     /// so that it is self-contained.
-    #[cfg(feature = "runtime_shaders")]
     fn emit_stitched_shaders(header_path: &Path) {
         fn stitch_header(header: &Path, shader_path: &Path) -> std::io::Result<PathBuf> {
             let header_contents = std::fs::read_to_string(header)?;
@@ -122,7 +136,6 @@ mod apple_build {
         println!("cargo:rerun-if-changed={shader_source_path}");
     }
 
-    #[cfg(not(feature = "runtime_shaders"))]
     fn compile_metal_shaders(header_path: &Path) {
         use std::process::{self, Command};
 
