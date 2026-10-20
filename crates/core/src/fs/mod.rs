@@ -5,6 +5,7 @@ pub mod dir;
 pub mod file;
 mod hydrate;
 mod path_provider;
+pub mod reach;
 pub mod stat;
 pub mod volume;
 pub(crate) mod watch;

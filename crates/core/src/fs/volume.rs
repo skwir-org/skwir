@@ -201,6 +201,9 @@ pub struct Mounted {
     pub fstype: String,
     /// What is mounted (`/dev/sdb1`, `user@host:/`), as the kernel says.
     pub source: std::ffi::OsString,
+    /// The device its files are on (`major:minor`), what a stat of them
+    /// says; `None` where the line gives none.
+    pub device: Option<u64>,
 }
 
 /// Every mount `mountinfo` (the bytes of `/proc/self/mountinfo`) lists,
@@ -217,7 +220,8 @@ pub fn mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mounted> {
             let at = line.windows(3).position(|w| w == b" - ")?;
             let (own, rest) = (&line[..at], &line[at + 3..]);
             let mut own = own.split(|b| *b == b' ');
-            let root = own.nth(3)?;
+            let device = own.nth(2).and_then(device_number);
+            let root = own.next()?;
             let point = own.next()?;
             let mut rest = rest.split(|b| *b == b' ');
             Some(Mounted {
@@ -225,6 +229,7 @@ pub fn mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mounted> {
                 point: PathBuf::from(unescape(point)),
                 fstype: String::from_utf8_lossy(rest.next()?).into_owned(),
                 source: unescape(rest.next().unwrap_or_default()),
+                device,
             })
         })
         .collect()
@@ -379,6 +384,19 @@ fn mount_of(path: &Path, mountinfo: &(impl AsRef<[u8]> + ?Sized)) -> Option<Moun
 fn source_of(path: &Path, mountinfo: &(impl AsRef<[u8]> + ?Sized)) -> Option<PathBuf> {
     let source = PathBuf::from(mount_of(path, mountinfo)?.source);
     source.starts_with("/dev/").then_some(source)
+}
+
+/// A mount's device as mountinfo writes it, `major:minor`, as a stat's
+/// device number (glibc's `makedev`).
+fn device_number(field: &[u8]) -> Option<u64> {
+    let (major, minor) = std::str::from_utf8(field).ok()?.split_once(':')?;
+    let (major, minor): (u64, u64) = (major.parse().ok()?, minor.parse().ok()?);
+    Some(
+        ((major & 0xffff_f000) << 32)
+            | ((major & 0x0000_0fff) << 8)
+            | ((minor & 0xffff_ff00) << 12)
+            | (minor & 0x0000_00ff),
+    )
 }
 
 /// mountinfo writes a space, a tab, a newline and a backslash as `\040`…

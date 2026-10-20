@@ -1,0 +1,3 @@
+# Names clippy takes as words in doc comments, beside its own (`..`):
+# GVfs, the desktop's remote file systems (ADR-077).
+doc-valid-idents = ["GVfs", ".."]

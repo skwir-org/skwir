@@ -127,15 +127,19 @@ mod imp {
     struct State {
         next: u64,
         by_wd: HashMap<WatchDescriptor, Vec<Subscriber>>,
+        /// Watches being added, outside the lock: a descriptor whose last
+        /// subscriber leaves meanwhile is kept, with none, since the
+        /// kernel may be giving it to one of them (an orphan), and removed
+        /// once no add runs.
+        adding: usize,
     }
 
     struct Hub {
-        /// Held while a watch is added or removed, and only then: adding
-        /// resolves a path, which a sleeping drive can hold, and the
-        /// thread reading events never waits for it. Adding and removing
-        /// one after the other, a descriptor removed for its last
-        /// subscriber is never one a new subscriber was just given.
-        watches: Mutex<Watches>,
+        /// The instance's watches, cloned to add one: adding resolves a
+        /// path, which a sleeping drive or a server that stopped answering
+        /// can hold, so no lock is held while it does (ADR-077), and no
+        /// other folder waits behind it.
+        watches: Watches,
         state: Mutex<State>,
     }
 
@@ -155,7 +159,7 @@ mod imp {
         // not be (descriptors used up for now).
         let inotify = Inotify::init()?;
         let hub: &'static Hub = Box::leak(Box::new(Hub {
-            watches: Mutex::new(inotify.watches()),
+            watches: inotify.watches(),
             state: Mutex::new(State::default()),
         }));
         std::thread::Builder::new()
@@ -172,21 +176,48 @@ mod imp {
         deliver: Deliver,
     ) -> std::io::Result<WatchHandle> {
         let hub = hub()?;
-        let mut watches = hub.watches.lock();
-        let wd = watches.add(dir, MASK)?;
+        hub.state.lock().adding += 1;
+        let added = hub.watches.clone().add(dir, MASK);
         let mut state = hub.state.lock();
-        let id = state.next;
-        state.next += 1;
-        state.by_wd.entry(wd.clone()).or_default().push(Subscriber {
-            id,
-            window,
-            deliver,
-            cancel: cancel.clone(),
-            pending: None,
+        state.adding -= 1;
+        let added = added.map(|wd| {
+            let id = state.next;
+            state.next += 1;
+            state.by_wd.entry(wd.clone()).or_default().push(Subscriber {
+                id,
+                window,
+                deliver,
+                cancel: cancel.clone(),
+                pending: None,
+            });
+            (wd, id)
         });
+        if state.adding == 0 {
+            hub.remove_orphans(&mut state);
+        }
+        drop(state);
+        let (wd, id) = added?;
         Ok(WatchHandle {
             _inner: Box::new(Unsubscribe { hub, wd, id }),
         })
+    }
+
+    impl Hub {
+        /// Remove the descriptors left with no subscriber while watches
+        /// were added. Under the state's lock, so no add starts and is
+        /// given one before it is gone; by descriptor, which reads no path.
+        fn remove_orphans(&self, state: &mut State) {
+            let orphans: Vec<WatchDescriptor> = state
+                .by_wd
+                .iter()
+                .filter(|(_, subscribers)| subscribers.is_empty())
+                .map(|(wd, _)| wd.clone())
+                .collect();
+            for wd in orphans {
+                state.by_wd.remove(&wd);
+                let _ = self.watches.clone().remove(wd);
+            }
+        }
     }
 
     struct Unsubscribe {
@@ -197,17 +228,15 @@ mod imp {
 
     impl Drop for Unsubscribe {
         fn drop(&mut self) {
-            let mut watches = self.hub.watches.lock();
             let mut state = self.hub.state.lock();
             // Gone already when the folder was (its descriptor ignored).
             let Some(subscribers) = state.by_wd.get_mut(&self.wd) else {
                 return;
             };
             subscribers.retain(|s| s.id != self.id);
-            if subscribers.is_empty() {
+            if subscribers.is_empty() && state.adding == 0 {
                 state.by_wd.remove(&self.wd);
-                drop(state);
-                let _ = watches.remove(self.wd.clone());
+                let _ = self.hub.watches.clone().remove(self.wd.clone());
             }
         }
     }

@@ -15,7 +15,7 @@ use crate::entry::{Entry, EntryId, EntryKind, FileId};
 use crate::location::{
     EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation, PATH_SCHEME,
 };
-use crate::scheduler::Priority;
+use crate::scheduler::{Lane, Priority};
 
 use super::dir::Dir;
 use super::stat::stat_entry;
@@ -57,6 +57,9 @@ struct Shared {
     tx: EventSink,
     ctx: OpenContext,
     watcher: Mutex<Option<watch::WatchHandle>>,
+    /// Where its work runs: its remote's lane, told by the folder's path or
+    /// its device once opened (ADR-077), the shared one on this machine.
+    lane: Lane,
     /// Changes the watcher told and not applied yet, and whether a worker
     /// applies them: a worker at a time, changes told meanwhile taken as
     /// one when it is done with the ones before.
@@ -186,7 +189,11 @@ impl PathLocation {
         let tx = self.tx.clone();
         let slot = Arc::clone(&self.shared);
         let opening = Arc::clone(&self.opening);
-        self.ctx.scheduler.spawn(
+        // A remote that stopped answering holds its own lane (ADR-077):
+        // told by the path here, by the folder's device once opened.
+        let lane = super::reach::lane(&dir);
+        self.ctx.scheduler.spawn_in(
+            lane,
             Priority::Visible,
             "fs.open",
             ctx.cancel.clone(),
@@ -202,6 +209,11 @@ impl PathLocation {
                     if ctx.cancel.is_cancelled() {
                         return Ok(());
                     }
+                    let lane = if lane.is_shared() {
+                        super::reach::of_device(id.dev).map_or(lane, |remote| remote.lane())
+                    } else {
+                        lane
+                    };
                     let shared = Arc::new(Shared {
                         dir: RwLock::new(dir.clone()),
                         folder,
@@ -211,6 +223,7 @@ impl PathLocation {
                         tx: tx.clone(),
                         ctx: ctx.clone(),
                         watcher: Mutex::new(None),
+                        lane,
                         changes: Mutex::new((None, false)),
                     });
                     // Watched before it is listed, so nothing changed
@@ -251,11 +264,15 @@ impl PathLocation {
             return;
         };
         let cancel = self.ctx.cancel.child();
-        self.ctx
-            .scheduler
-            .spawn(Priority::Visible, "fs.list", cancel.clone(), move || {
+        self.ctx.scheduler.spawn_in(
+            s.lane,
+            Priority::Visible,
+            "fs.list",
+            cancel.clone(),
+            move || {
                 s.list(&cancel, previous);
-            });
+            },
+        );
     }
 }
 
@@ -354,7 +371,8 @@ impl Shared {
         self.tx.send(ListingEvent::Complete);
         if !stayed.is_empty() {
             let s = Arc::clone(self);
-            self.ctx.scheduler.spawn(
+            self.ctx.scheduler.spawn_in(
+                self.lane,
                 Priority::Background,
                 "fs.restat",
                 cancel.clone(),
@@ -473,7 +491,8 @@ impl Shared {
             }
         }
         let s = Arc::clone(self);
-        self.ctx.scheduler.spawn(
+        self.ctx.scheduler.spawn_in(
+            self.lane,
             Priority::Visible,
             "fs.changes",
             self.ctx.cancel.clone(),
@@ -613,11 +632,15 @@ impl OpenLocation for PathLocation {
         };
         for chunk in ids.chunks(self.ctx.batch_size.max(1)) {
             let (s, ids) = (Arc::clone(&s), chunk.to_vec());
-            self.ctx
-                .scheduler
-                .spawn(priority, "fs.stat", self.ctx.cancel.child(), move || {
+            self.ctx.scheduler.spawn_in(
+                s.lane,
+                priority,
+                "fs.stat",
+                self.ctx.cancel.child(),
+                move || {
                     s.hydrate(&ids);
-                });
+                },
+            );
         }
     }
 
@@ -636,7 +659,8 @@ impl OpenLocation for PathLocation {
         self.ctx.cancel.cancel();
         if let Some(shared) = self.shared.lock().take() {
             // Native watcher and directory descriptor cleanup stays off the UI.
-            self.ctx.scheduler.spawn(
+            self.ctx.scheduler.spawn_in(
+                shared.lane,
                 Priority::Background,
                 "fs.close",
                 CancelToken::new(),
