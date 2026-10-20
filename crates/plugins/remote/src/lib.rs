@@ -88,7 +88,7 @@ impl Default for Remotes {
     fn default() -> Self {
         Remotes::with(vec![
             Arc::new(sshfs::Sshfs::default()),
-            Arc::new(gvfs::Gvfs),
+            Arc::new(gvfs::Gvfs::default()),
             Arc::new(rclone::Rclone),
             Arc::new(fstab::Fstab),
         ])

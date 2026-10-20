@@ -289,3 +289,167 @@ fn sshfs_asks_the_window_for_a_password_and_an_unknown_host_through_skwir() {
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// A GVfs of the test's own: a session bus of its own, from which GVfs's
+/// daemon starts, its FUSE bridge in a runtime folder of the test's, its
+/// ssh's home the test's. `SKWIR_TEST_GVFS` names GVfs's package (its
+/// `libexec`, `share` and `lib/gio/modules`); without it the test is
+/// skipped, and the session's GVfs is never asked.
+struct PrivateGvfs {
+    bus: Child,
+    env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    runtime: PathBuf,
+    /// Short, as a real one is (`/run/user/1000`): ssh's control socket
+    /// GVfs makes in it must fit a socket's path (108 bytes). Sockets and
+    /// a mount point only, nothing that needs the home's file system.
+    _runtime: tempfile::TempDir,
+}
+
+impl PrivateGvfs {
+    fn start(package: &Path, base: &Path) -> PrivateGvfs {
+        use std::io::BufRead;
+        let home = base.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let held = tempfile::Builder::new().prefix("g").tempdir().unwrap();
+        let runtime = held.path().to_path_buf();
+        std::fs::set_permissions(
+            &runtime,
+            std::os::unix::fs::PermissionsExt::from_mode(0o700),
+        )
+        .unwrap();
+        let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = vec![
+            ("HOME".into(), home.into()),
+            ("XDG_RUNTIME_DIR".into(), runtime.clone().into()),
+            ("XDG_DATA_DIRS".into(), package.join("share").into()),
+            (
+                "GIO_EXTRA_MODULES".into(),
+                package.join("lib/gio/modules").into(),
+            ),
+            ("GIO_USE_VOLUME_MONITOR".into(), "unix".into()),
+        ];
+        // A bus that starts GVfs's services alone: nothing of the user's
+        // session (a keyring, the portals) is started on it.
+        let services = package.join("share/dbus-1/services");
+        let config = base.join("bus.conf");
+        std::fs::write(
+            &config,
+            format!(
+                r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:dir={}</listen>
+  <servicedir>{}</servicedir>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"#,
+                runtime.display(),
+                services.display()
+            ),
+        )
+        .unwrap();
+        let mut bus = Command::new("dbus-daemon")
+            .arg(format!("--config-file={}", config.display()))
+            .args(["--nofork", "--print-address=1"])
+            .envs(env.iter().map(|(k, v)| (k, v)))
+            .stdout(Stdio::piped())
+            .stderr(std::fs::File::create(base.join("bus.log")).unwrap())
+            .spawn()
+            .expect("start a session bus");
+        let mut address = String::new();
+        std::io::BufReader::new(bus.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        env.push((
+            "DBUS_SESSION_BUS_ADDRESS".into(),
+            address.trim().to_owned().into(),
+        ));
+        PrivateGvfs {
+            bus,
+            env,
+            runtime,
+            _runtime: held,
+        }
+    }
+}
+
+impl Drop for PrivateGvfs {
+    fn drop(&mut self) {
+        let _ = self.bus.kill();
+        let _ = self.bus.wait();
+        // Its daemon goes with its bus; its bridge, if it lingers, too.
+        let _ = Command::new("fusermount3")
+            .arg("-uz")
+            .arg(self.runtime.join("gvfs"))
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+#[test]
+fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
+    let Some(package) = std::env::var_os("SKWIR_TEST_GVFS").map(PathBuf::from) else {
+        eprintln!("skipped: SKWIR_TEST_GVFS names no GVfs package");
+        return;
+    };
+    if let Some(why) = Rclone.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("gvfs");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    std::fs::write(served_root.join("through gvfs.txt"), "hi").unwrap();
+    let served = Served::start(
+        "sftp",
+        &served_root,
+        &["--user", "tester", "--pass", "a test password"],
+    );
+    let private = PrivateGvfs::start(&package, &base);
+    let gvfs = skwir_plugin_remote::gvfs::Gvfs {
+        env: private.env.clone(),
+        runtime: Some(private.runtime.clone()),
+    };
+    let answers = Arc::new(Answers {
+        password: "a test password".to_owned(),
+        ..Answers::default()
+    });
+    let ask: Arc<dyn Ask> = answers.clone();
+    let address = Address::parse(&format!("sftp://tester@127.0.0.1:{}/", served.port)).unwrap();
+    // GVfs starts its bridge as its daemon starts: a moment after the bus.
+    let connected = gvfs
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect");
+    let asked = answers.asked.lock().unwrap().clone();
+    assert!(
+        asked.iter().any(|q| q.starts_with("secret:")),
+        "its password was asked for: {asked:?}"
+    );
+    assert!(
+        connected.point.starts_with(private.runtime.join("gvfs")),
+        "{}",
+        connected.point.display()
+    );
+    let names: Vec<String> = std::fs::read_dir(&connected.point)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(names.contains(&"through gvfs.txt".to_owned()), "{names:?}");
+    let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
+    assert_eq!(
+        remote.point, connected.point,
+        "a GVfs mount is a remote of its own"
+    );
+    let recognised = gvfs.recognises(&remote).expect("GVfs's");
+    assert_eq!(recognised.address, Some(address.top()));
+    assert_eq!(recognised.label, "tester@127.0.0.1");
+    gvfs.disconnect(&remote, &recognised, &CancelToken::new())
+        .expect("disconnect");
+    drop(private);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}

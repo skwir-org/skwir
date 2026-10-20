@@ -23,7 +23,64 @@ pub const BRIDGE: &str = "fuse.gvfsd-fuse";
 /// does not answer.
 const PATIENCE: Duration = Duration::from_secs(60);
 
-pub struct Gvfs;
+/// GVfs, as the plugin asks it.
+#[derive(Default)]
+pub struct Gvfs {
+    /// Variables `gio` runs with beside skwir's own: a test's private
+    /// session bus and runtime folder, never the user's session.
+    pub env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    /// The runtime folder whose `gvfs` folder is the bridge, when not the
+    /// user's (a test's).
+    pub runtime: Option<PathBuf>,
+}
+
+impl Gvfs {
+    /// `gio`, its words in English, run as asked.
+    fn gio(&self, gio: &Path) -> Command {
+        let mut command = Command::new(gio);
+        english(&mut command);
+        command.envs(self.env.iter().map(|(k, v)| (k, v)));
+        command
+    }
+
+    /// GVfs's FUSE bridge: the session's own (`$XDG_RUNTIME_DIR/gvfs`),
+    /// else the first the mount table lists (the user's alone: never
+    /// another's for a test's).
+    pub fn bridge(&self) -> Option<PathBuf> {
+        let bridges = skwir_core::fs::reach::bridges(BRIDGE);
+        let own = self
+            .runtime
+            .clone()
+            .or_else(skwir_core::xdg::runtime_dir)
+            .map(|dir| dir.join("gvfs"));
+        if let Some(own) = own.filter(|own| bridges.contains(own)) {
+            return Some(own);
+        }
+        if self.runtime.is_some() {
+            return None;
+        }
+        bridges.into_iter().next()
+    }
+
+    /// The folder of the bridge that holds `top`'s mount: its spec says
+    /// the same server. Reads the bridge's folder, which GVfs answers from
+    /// its list of mounts, never from a server.
+    fn find_mount(&self, top: &Address) -> Option<PathBuf> {
+        let bridge = self.bridge()?;
+        std::fs::read_dir(&bridge)
+            .ok()?
+            .filter_map(Result::ok)
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .and_then(Spec::parse)
+                    .and_then(|spec| spec.address())
+                    .is_some_and(|mounted| mounted.below(top).is_some())
+            })
+            .map(|entry| bridge.join(entry.file_name()))
+    }
+}
 
 impl Connector for Gvfs {
     fn id(&self) -> &'static str {
@@ -54,7 +111,7 @@ impl Connector for Gvfs {
         if skwir_core::os_path::find_program("gio").is_none() {
             return Some("gio (GLib) is not installed".to_owned());
         }
-        if bridge().is_none() {
+        if self.bridge().is_none() {
             return Some("GVfs's FUSE bridge (gvfsd-fuse) is not running".to_owned());
         }
         None
@@ -69,9 +126,10 @@ impl Connector for Gvfs {
         let top = address.top();
         let gio = skwir_core::os_path::find_program("gio")
             .ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
-        mount(&gio, &top, ask, cancel)?;
+        mount(self.gio(&gio), &top, ask, cancel)?;
         skwir_core::fs::reach::changed();
-        let point = find_mount(&top)
+        let point = self
+            .find_mount(&top)
             .ok_or_else(|| anyhow::anyhow!("GVfs mounted {top} but its folder is not there"))?;
         Ok(Connected {
             point,
@@ -104,9 +162,8 @@ impl Connector for Gvfs {
             .ok_or_else(|| anyhow::anyhow!("GVfs says no address for this mount"))?;
         let gio = skwir_core::os_path::find_program("gio")
             .ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
-        let mut command = Command::new(gio);
+        let mut command = self.gio(&gio);
         command.arg("mount").arg("-u").arg(address.uri());
-        english(&mut command);
         let finished = skwir_platform::process::run_to_exit(&mut command, None, cancel, PATIENCE)?;
         skwir_core::fs::reach::changed();
         if finished.status.success() {
@@ -115,30 +172,6 @@ impl Connector for Gvfs {
             Err(anyhow::anyhow!("{}", said(&finished.stderr)))
         }
     }
-}
-
-/// GVfs's FUSE bridge: where every mount of it is a folder.
-pub fn bridge() -> Option<PathBuf> {
-    skwir_core::fs::reach::bridges(BRIDGE).into_iter().next()
-}
-
-/// The folder of the bridge that holds `top`'s mount: its spec says the
-/// same server. Reads the bridge's folder, which GVfs answers from its
-/// list of mounts, never from a server.
-fn find_mount(top: &Address) -> Option<PathBuf> {
-    let bridge = bridge()?;
-    std::fs::read_dir(&bridge)
-        .ok()?
-        .filter_map(Result::ok)
-        .find(|entry| {
-            entry
-                .file_name()
-                .to_str()
-                .and_then(Spec::parse)
-                .and_then(|spec| spec.address())
-                .is_some_and(|mounted| mounted.below(top).is_some())
-        })
-        .map(|entry| bridge.join(entry.file_name()))
 }
 
 /// `gio`'s own words in English, which its questions are read in; what
@@ -237,19 +270,17 @@ impl Prompts {
 /// where GVfs cannot vouch for the server (the first choice; Cancel
 /// otherwise).
 fn mount(
-    gio: &Path,
+    mut command: Command,
     top: &Address,
     ask: &Arc<dyn Ask>,
     cancel: &CancelToken,
 ) -> anyhow::Result<()> {
-    let mut command = Command::new(gio);
     command
         .arg("mount")
         .arg(top.uri())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    english(&mut command);
     let mut child = command.spawn()?;
     let (said_tx, said_rx) = crossbeam_channel::unbounded::<Option<String>>();
     let mut stdout = child.stdout.take().expect("piped");
