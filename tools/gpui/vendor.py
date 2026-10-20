@@ -36,6 +36,9 @@ TOP_FILES = ["LICENSE-APACHE", "rust-toolchain.toml"]
 BASELINE = "the gpui crates, vendored"
 # Skwir's own, beside the tree: kept when the tree is replaced.
 README = "README.skwir.md"
+# What an editor's build of the vendored workspace leaves there, which git
+# ignores: kept too, rather than built again.
+KEPT = {README, "target", "Cargo.lock"}
 
 
 def git(cwd, *args, capture=False):
@@ -217,8 +220,14 @@ def export(dir):
     if not (VENDOR / "UPSTREAM-COMMIT").is_file():
         sys.exit(f"{VENDOR} is not a vendored Zed tree")
     readme = (VENDOR / README).read_text()
-    shutil.rmtree(VENDOR)
-    shutil.copytree(dir, VENDOR, ignore=shutil.ignore_patterns(".git"))
+    for entry in VENDOR.iterdir():
+        if entry.name in KEPT:
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+    shutil.copytree(dir, VENDOR, ignore=shutil.ignore_patterns(".git"), dirs_exist_ok=True)
     (VENDOR / README).write_text(readme)
     print(f"replaced {VENDOR.relative_to(ROOT)}")
 
