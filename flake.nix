@@ -261,10 +261,19 @@
         };
 
       # For building for macOS from Linux: xmac, its downloads kept in the
-      # cache rather than the folder it runs in (its default). Kept out of
-      # the default shell, which needs no Bun.
+      # cache rather than the folder it runs in (its default), and the
+      # compiler and linker its wrappers call (`XMAC_CLANG`, `XMAC_LLD`):
+      # clang itself, not Nix's wrapper, which adds Linux's flags, and
+      # LLVM's Mach-O linker. Named, not on PATH, so Linux's builds keep
+      # theirs. Kept out of the default shell, which needs no Bun.
       devShells.macos = self.devShells.${system}.default.overrideAttrs (old: {
-        nativeBuildInputs = old.nativeBuildInputs ++ [self.packages.${system}.xmac];
+        XMAC_CLANG = "${pkgs.llvmPackages.clang-unwrapped}/bin/clang";
+        XMAC_LLD = "${pkgs.lld}/bin/ld64.lld";
+        # What tools/package/macos.sh also needs: llvm-ar and llvm-otool,
+        # rsvg-convert for the icon, rcodesign to sign the bundle ad hoc.
+        nativeBuildInputs =
+          old.nativeBuildInputs
+          ++ [self.packages.${system}.xmac pkgs.llvmPackages.llvm pkgs.librsvg pkgs.rcodesign];
         shellHook =
           old.shellHook
           + ''

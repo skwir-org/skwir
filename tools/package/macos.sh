@@ -1,57 +1,92 @@
 #!/bin/sh
-# Package skwir for macOS (Phase 5, step K): `skwir.app` with its helpers
-# beside the program, where it finds them, and a disk image of it. Run on
-# a Mac, with Xcode's command line tools; written on Linux, never run yet
-# (ADR-035: 5b runs it). Unsigned: signing and notarization need an Apple
-# developer identity, a decision of its own.
+# skwir for macOS, made on Linux (ADR-075): its programs built for Apple
+# silicon against Apple's SDK, which `just macos-sdk` downloads, compiled
+# by clang and linked by LLVM's ld64.lld through xmac's wrappers; then
+# `skwir.app`, signed ad hoc, zipped. Not notarized: macOS asks before it
+# opens. tools/package/macos-check.sh looks it over; nothing here can run
+# it.
 #
-#     tools/package/macos.sh [version]      # into target/package/
+# What the bundle holds: tools/package/macos/programs in Contents/MacOS
+# (skwir and the helpers that carry no library of their own), PDFium in
+# Contents/Frameworks (ADR-041), and in Contents/Resources the icon, the
+# type database (ADR-037) in share/mime, and in licenses skwir's licence,
+# its crates' notices (tools/package/notices/macos) and PDFium's.
+#
+#     tools/package/macos.sh [version]      # into target/package/macos/
 set -eu
-version="${1:-0.1.0}"
+if [ -z "${XMAC_CLANG:-}" ] || ! command -v rcodesign >/dev/null; then
+    exec nix develop "$(cd "$(dirname "$0")/../.." && pwd)#macos" --command "$0" "$@"
+fi
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-out="$root/target/package"
-app="$out/skwir.app"
-# The helpers a bundle carries (ADR-041): Mermaid and MuPDF are left out,
-# as Linux's packages only suggest them.
-helpers="skwir-pdf-worker skwir-djvu-worker skwir-model-worker skwir-module-worker"
-
 cd "$root"
-# The helpers that link native libraries (Poppler, MuPDF, DjVuLibre,
-# GStreamer, libarchive) need those libraries in the bundle too: not done
-# yet. DjVu is read by djvu-rs, in Rust (ADR-061).
-# shellcheck disable=SC2046 # one `-p name` per helper
-cargo build --profile dist -p skwir $(for h in $helpers; do printf -- '-p %s ' "$h"; done)
+version="${1:-$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)}"
+target=aarch64-apple-darwin
+programs="$(grep -v '^#' tools/package/macos/programs)"
 
-rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp target/dist/skwir "$app/Contents/MacOS/"
-for h in $helpers; do cp "target/dist/$h" "$app/Contents/MacOS/"; done
-# PDFium, which the PDF helper finds in the bundle's Frameworks (ADR-041):
-# the release tools/package/pdfium.lock pins, checked against its sum.
-case "$(uname -m)" in
-arm64) platform=mac-arm64 ;;
-*) platform=mac-x64 ;;
-esac
-tools/package/pdfium.sh "$platform" "$out/pdfium"
-mkdir -p "$app/Contents/Frameworks" "$app/Contents/Resources/licenses"
-cp "$out/pdfium/libpdfium.dylib" "$app/Contents/Frameworks/"
-cp -R "$out/pdfium/licenses/pdfium" "$app/Contents/Resources/licenses/"
-cp LICENSE "$app/Contents/Resources/licenses/"
-# The type database, the fallback of the system's types (ADR-037), where
-# skwir looks for it in a bundle: compiled from vendor/shared-mime-info
-# (with Homebrew's update-mime-database: brew install shared-mime-info).
-mkdir -p "$app/Contents/Resources/share"
-tools/package/mime-database.sh "$app/Contents/Resources/share/mime"
-# The icon (the UI's own, crates/ui/assets/org.skwir.skwir.svg) at every
-# side an .icns holds, drawn by librsvg (brew install librsvg).
-iconset="$out/skwir.iconset"
-rm -rf "$iconset"
-mkdir -p "$iconset"
-for side in 16 32 128 256 512; do
-    rsvg-convert -w "$side" -h "$side" -o "$iconset/icon_${side}x${side}.png" crates/ui/assets/org.skwir.skwir.svg
-    rsvg-convert -w "$((side * 2))" -h "$((side * 2))" -o "$iconset/icon_${side}x${side}@2x.png" crates/ui/assets/org.skwir.skwir.svg
+# The SDK and xmac's wrappers, as `just macos-sdk` left them.
+xmac="${XDG_DATA_HOME:-$HOME/.local/share}/skwir-build/macos-sdk"
+if [ ! -f "$xmac/env.sh" ]; then
+    echo "No macOS SDK in $xmac: run \`just macos-sdk\` (Apple's licence is yours to accept)" >&2
+    exit 1
+fi
+# shellcheck disable=SC2016 # env.sh's own words, `$_xmac_root` in them
+SDKROOT="$xmac/$(sed -n 's/^export SDKROOT="\$_xmac_root\/\(.*\)"$/\1/p' "$xmac/env.sh")"
+export SDKROOT MACOSX_DEPLOYMENT_TARGET=11.0
+export CARGO_TARGET_DIR="$root/target/macos" CARGO_INCREMENTAL=0
+# What a program says of where it was built (a panic's location, C's
+# __FILE__) names no folder of this machine: the crates' sources are under
+# /cargo, Rust's own under /rust, the tree under /skwir.
+cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+sysroot="$(rustc --print sysroot)"
+CARGO_ENCODED_RUSTFLAGS="$(printf -- '--remap-path-prefix=%s=/cargo\037--remap-path-prefix=%s=/rust\037--remap-path-prefix=%s=/skwir' \
+    "$cargo_home" "$sysroot" "$root")"
+export CARGO_ENCODED_RUSTFLAGS
+export CFLAGS_aarch64_apple_darwin="-ffile-prefix-map=$cargo_home=/cargo -ffile-prefix-map=$root=/skwir"
+export CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$xmac/bin/arm64-apple-darwin-cc"
+export CC_aarch64_apple_darwin="$xmac/bin/arm64-apple-darwin-cc"
+export CXX_aarch64_apple_darwin="$xmac/bin/arm64-apple-darwin-c++"
+AR_aarch64_apple_darwin="$(command -v llvm-ar)"
+export AR_aarch64_apple_darwin
+# The dev shell's pkg-config answers with Linux's libraries: for macOS, a
+# library is the SDK's (SQLite's), found by the linker.
+export PKG_CONFIG_aarch64_apple_darwin=false
+# shellcheck disable=SC2046,SC2086 # one `-p name` per program
+cargo build --profile dist --target "$target" $(printf -- '-p %s ' $programs)
+
+out="$root/target/package/macos"
+name="skwir-$version-macos-arm64"
+app="$out/skwir.app"
+rm -rf "${app:?}" "$out/$name.zip" "$out/work"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources/licenses" "$out/work"
+for program in $programs; do
+    cp "$CARGO_TARGET_DIR/$target/dist/$program" "$app/Contents/MacOS/"
 done
-iconutil -c icns -o "$app/Contents/Resources/skwir.icns" "$iconset"
+tools/package/pdfium.sh mac-arm64 "$out/work/pdfium"
+cp "$out/work/pdfium/libpdfium.dylib" "$app/Contents/Frameworks/"
+cp -R "$out/work/pdfium/licenses/pdfium" "$app/Contents/Resources/licenses/"
+cp LICENSE "$app/Contents/Resources/licenses/"
+cp tools/package/notices/macos/skwir/THIRD-PARTY-NOTICES "$app/Contents/Resources/licenses/"
+tools/package/mime-database.sh "$app/Contents/Resources/share/mime" >/dev/null
+
+# The icon: the UI's own drawing (crates/ui/assets/org.skwir.skwir.svg) at
+# every side an .icns holds, each a PNG under its type.
+svg=crates/ui/assets/org.skwir.skwir.svg
+for side in 16 32 64 128 256 512 1024; do
+    rsvg-convert -w "$side" -h "$side" -o "$out/work/$side.png" "$svg"
+done
+python3 - "$out/work" "$app/Contents/Resources/skwir.icns" <<'EOF'
+import pathlib, struct, sys
+work, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+# Each type and the side of its picture: 16, 32 and 64 points, then the
+# larger ones and each at twice its side (Retina).
+types = [("icp4", 16), ("icp5", 32), ("icp6", 64), ("ic07", 128), ("ic08", 256),
+         ("ic09", 512), ("ic10", 1024), ("ic11", 32), ("ic12", 64), ("ic13", 256),
+         ("ic14", 512)]
+body = b"".join(kind.encode() + struct.pack(">I", 8 + len(png)) + png
+                for kind, png in ((k, (work / f"{s}.png").read_bytes()) for k, s in types))
+out.write_bytes(b"icns" + struct.pack(">I", 8 + len(body)) + body)
+EOF
+
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -71,6 +106,25 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-rm -f "$out/skwir-$version.dmg"
-hdiutil create -volname skwir -srcfolder "$app" -ov -format UDZO "$out/skwir-$version.dmg"
-echo "$out/skwir-$version.dmg"
+# Signed ad hoc, as Apple silicon asks of anything it runs: each program,
+# PDFium, and the bundle's resources sealed.
+rcodesign sign "$app" >/dev/null
+
+# The zip: the bundle, its entries sorted, programs executable, dated by
+# the commit.
+python3 - "$out" "$name" "$(git log -1 --format=%ct)" <<'EOF'
+import pathlib, sys, time, zipfile
+out, name, stamp = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+when = time.gmtime(max(stamp, 315532800))[:6]
+with zipfile.ZipFile(out / f"{name}.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zipped:
+    for path in sorted((out / "skwir.app").rglob("*")):
+        if path.is_file():
+            entry = zipfile.ZipInfo(str(path.relative_to(out)), when)
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.create_system = 3
+            entry.external_attr = (0o100755 if path.stat().st_mode & 0o111 else 0o100644) << 16
+            zipped.writestr(entry, path.read_bytes())
+EOF
+rm -rf "${out:?}/work"
+(cd "$out" && sha256sum "$name.zip" > "$name.zip.sha256")
+echo "made: $out/$name.zip"

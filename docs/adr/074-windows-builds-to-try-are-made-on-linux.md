@@ -116,3 +116,7 @@ written on Linux and never run.
   section in `vendor/zed/README.skwir.md`) and gpui compiles its shaders
   ahead with fxc, as upstream does: no compiling at each start (the
   user's decision).
+- 2026-10-20 (ADR-075): what is shipped names no folder of the machine
+  that built it (`/cargo`, `/rust`, `/skwir` in a panic's location and
+  C's `__FILE__`), which the check now looks for; the package is built in
+  `target/windows`, apart from `check-windows`.

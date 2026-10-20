@@ -78,6 +78,15 @@ assert top == {f"{p}.exe" for p in programs} | {"pdfium.dll", "share", "licenses
 print(f"ok: the zip holds {len(names)} files in {name}/")
 EOF
 answer "$unpacked/$name"
+# Nothing names a folder of the machine that built it (windows.sh's
+# remapping).
+for program in $programs; do
+    if strings "$unpacked/$name/$program.exe" | grep -qE "$HOME|/nix/store/[a-z0-9]{32}-"; then
+        echo "$program.exe names a folder of the machine that built it" >&2
+        exit 1
+    fi
+done
+echo "ok: no program names a folder of the machine that built it"
 
 # The installer, per user, then removed.
 user="$(wine cmd /c 'echo %USERNAME%' 2>/dev/null | tr -d '\r')"

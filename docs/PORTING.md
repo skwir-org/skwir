@@ -308,6 +308,13 @@ Left:
   and leaves nothing once removed. Its window is not drawn there (Wine's
   DirectWrite has no font sets) **(5b)**. Built on Linux, gpui compiles its
   shaders as the renderer starts (vendor patch 0034).
+- The macOS package (ADR-075) is made on Linux too, for Apple silicon,
+  against Apple's SDK (`just macos-sdk`): `skwir.app`, signed ad hoc,
+  zipped (`tools/package/macos.sh`), looked over by
+  `tools/package/macos-check.sh` (its programs, libraries and seal); never
+  run **(5b)**. gpui makes its Metal bindings for the target and compiles
+  its shaders as the renderer starts (vendor patch 0035). Everything above
+  marked "compiled only" for macOS is now linked as well.
 - Left for the machines (ADR-041): audio and video through AVFoundation and
   Media Foundation (a helper per system, not GStreamer bundled); the archive
   helper with libarchive linked statically; LibreOffice on macOS under

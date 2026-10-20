@@ -168,10 +168,12 @@ check-windows:
 # into ~/.local/share/skwir-build/macos-sdk; it is never committed or
 # shipped. It is under Apple's licence, which xmac shows and asks you to
 # accept (or pass --accept-license yourself; `xmac license` prints it in
-# full). Arguments go to `xmac splat` (`--sdk 15`, `--arch arm64`).
+# full). Arguments go to `xmac splat` (`--arch arm64`). The SDK is 26.5
+# unless `--sdk` says another: LLVM's linker (21 to 23) cannot read 27's
+# stubs, which name an architecture it does not know (arm64e.x1).
 # Apple's macOS SDK, for building for macOS from Linux (you accept Apple's licence).
 macos-sdk *args:
-    nix develop '{{justfile_directory()}}#macos' --command sh -c 'xmac splat --output "${XDG_DATA_HOME:-$HOME/.local/share}/skwir-build/macos-sdk" "$@"' xmac {{args}}
+    nix develop '{{justfile_directory()}}#macos' --command sh -c 'case " $* " in *" --sdk "*) ;; *) set -- --sdk 26.5 "$@" ;; esac; xmac splat --output "${XDG_DATA_HOME:-$HOME/.local/share}/skwir-build/macos-sdk" "$@"' xmac {{args}}
 
 # Compile and lint the macOS build, but for the crates built on gpui.
 check-macos:
@@ -235,6 +237,13 @@ package-try distribution:
 package-windows:
     tools/package/windows.sh
     tools/package/windows-check.sh
+
+# macOS's build to try, made on Linux (ADR-075): skwir.app for Apple silicon,
+# signed ad hoc, zipped into target/package/macos, then looked over (nothing
+# here runs it). Needs Apple's SDK: `just macos-sdk` first.
+package-macos:
+    tools/package/macos.sh
+    tools/package/macos-check.sh
 
 # A portable x86-64 AppImage, and the same tree as a tarball, built in Ubuntu
 # 22.04 and checked in a separate runtime-only root; builds on NixOS too. Into

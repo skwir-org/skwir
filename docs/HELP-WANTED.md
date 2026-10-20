@@ -51,10 +51,22 @@ called `taxes 2026` can be `folder a`.
 
 ## macOS
 
+A build to try is made on Linux for Apple silicon (ADR-075, `just
+package-macos`): `skwir-<version>-macos-arm64.zip`, holding `skwir.app`, for
+macOS 11 or later. It is signed ad hoc but not notarized, so macOS refuses
+it at first: open it once from System Settings, Privacy & Security ("Open
+Anyway"), or run `xattr -dr com.apple.quarantine skwir.app`. It reads PDFs,
+DjVu and 3D models; archives, audio and video, and the Poppler and MuPDF
+readers are not in it yet. It has never run anywhere: everything below is
+new. Intel Macs have no build yet.
+
 1. **It opens** (try). The window draws, a folder lists, the sidebar shows
    the home folder's places and the volumes under `/Volumes`, scrolling a
    large folder stays smooth, and idle CPU returns to about 0% (Activity
-   Monitor). PORTING sections 1, 6.
+   Monitor). The window compiles its shaders as it starts: say how long it
+   takes to appear (`first frame … after start` in the log, run
+   `skwir.app/Contents/MacOS/skwir` from a terminal to see it). PORTING
+   sections 1, 6.
 2. **Tests** (try). The tests above pass natively. PORTING "Tests that run
    on Linux alone" lists what is skipped and why.
 3. **Files** (try). Copy, move, rename, swap two names (rename each to the
@@ -76,12 +88,12 @@ called `taxes 2026` can be `folder a`.
    audio and video through AVFoundation (a helper of its own, ADR-041); the
    trash's listing (`~/.Trash` records no origin); Finder's favorites as
    bookmarks; media keys (Now Playing). PORTING sections 4, 6, 8, "10–15".
-8. **The package** (code). `tools/package/macos.sh` builds `skwir.app` and a
-   disk image; it has never run. It must also carry the crates' notices
-   in `Contents/Resources/licenses`, made for macOS's targets by
-   `tools/package/notices.py` and kept in `tools/package/notices` as the
-   Linux packages' are (ADR-063). Signing and notarization need an Apple
-   developer identity: the project decides that with you.
+8. **The package** (code). `tools/package/macos.sh` makes `skwir.app` on
+   Linux (ADR-075); try it on a fresh account, and moved to Applications.
+   An Intel build, the helpers that link libraries (libarchive,
+   AVFoundation's player, Poppler, MuPDF) and a disk image are not done.
+   Notarization needs an Apple developer identity: the project decides that
+   with you.
 9. **CI** (code). The `native` job in `.github/workflows/ci.yml` builds,
    lints and tests on `macos-latest`. It does not block merging until it
    passes.

@@ -461,6 +461,7 @@ just deny / notices        dependency licences and advisories; the packages' not
 just plugins               build the plugins from outside as modules (target/plugins)
 just package-nix/deb/rpm/aur, package-try <distro>   Linux packages (ADR-040)
 just package-windows       Windows' zip and installer, made on Linux, tried under Wine (ADR-074)
+just package-macos         skwir.app for Apple silicon, made on Linux, looked over (ADR-075)
 just ci-check              cheap routine GitHub CI (core/API, formatting, release tools)
 just release-check         full required checks, locally or on demand (ADR-053)
 just release-build/upload <tag>   verified Linux bundle / GitHub draft (docs/RELEASING.md)
@@ -487,7 +488,7 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
   `tools/package/optional` when a package of its own holds it), in the
   packages' file lists (`crates/skwir/Cargo.toml`'s metadata, the
   PKGBUILDs: `skwir-git`'s functions stay the release's, which
-  `release-tools-check` compares), in `tools/package/macos.sh` and
+  `release-tools-check` compares), in `tools/package/macos/programs` and
   `tools/package/windows/programs` where it ships, and its notices are made
   (`just notices`). It answers
   `--probe` (ADR-040, ADR-041) and `--build` (its `build.rs` includes

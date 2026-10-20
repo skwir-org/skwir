@@ -23,12 +23,20 @@ version="${1:-$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)}"
 target=x86_64-pc-windows-gnu
 programs="$(grep -v '^#' tools/package/windows/programs)"
 
-# As `just check-windows` builds, in its folder: what one compiles, the
-# other reuses.
-export CARGO_TARGET_DIR="$root/target/cross" CARGO_INCREMENTAL=0
+# As `just check-windows` builds, but in a folder of its own: its flags
+# below would have each rebuild what the other built.
+export CARGO_TARGET_DIR="$root/target/windows" CARGO_INCREMENTAL=0
+# What a program says of where it was built (a panic's location, C's
+# __FILE__) names no folder of this machine: the crates' sources are under
+# /cargo, Rust's own under /rust, the tree under /skwir.
+cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+sysroot="$(rustc --print sysroot)"
+CARGO_ENCODED_RUSTFLAGS="$(printf -- '--remap-path-prefix=%s=/cargo\037--remap-path-prefix=%s=/rust\037--remap-path-prefix=%s=/skwir' \
+    "$cargo_home" "$sysroot" "$root")"
+export CARGO_ENCODED_RUSTFLAGS
 # Zig's clang refuses __DATE__ and __TIME__, which mimalloc reads, for the
 # sake of reproducible builds: here a warning.
-export CFLAGS_x86_64_pc_windows_gnu=-Wno-error=date-time
+export CFLAGS_x86_64_pc_windows_gnu="-Wno-error=date-time -ffile-prefix-map=$cargo_home=/cargo -ffile-prefix-map=$root=/skwir"
 # The resource compiler that embeds skwir.exe's icon (crates/skwir/build.rs)
 # and gpui's manifest (vendor patch 0027).
 RC_x86_64_pc_windows_gnu="$(command -v llvm-rc)"

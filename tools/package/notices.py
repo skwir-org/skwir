@@ -25,7 +25,9 @@ a package of its own (`skwir-<name>-worker` in `skwir-<name>`), the others
 Arch's keeps apart only the packages its PKGBUILD names, so its `skwir`
 has notices of its own (arch/skwir). Windows' package holds the programs
 tools/package/windows/programs lists, built for Windows, whose crates
-differ (windows/skwir, ADR-074).
+differ (windows/skwir, ADR-074); macOS's those of
+tools/package/macos/programs, built for Apple silicon (macos/skwir,
+ADR-075).
 """
 
 import functools
@@ -41,8 +43,10 @@ CONFIG = ROOT / "tools/package/about.toml"
 OUT = ROOT / "tools/package/notices"
 PKGBUILD = ROOT / "tools/package/aur/PKGBUILD"
 NAME = "THIRD-PARTY-NOTICES"
-# What Windows' package is built for (tools/package/windows.sh).
+# What Windows' and macOS's packages are built for (tools/package/windows.sh,
+# tools/package/macos.sh).
 WINDOWS = "x86_64-pc-windows-gnu"
+MACOS = "aarch64-apple-darwin"
 
 
 def lines(name):
@@ -78,7 +82,8 @@ def files():
     """Each notices file, under OUT, and the package, programs and target
     it is for (`None`: about.toml's, Linux's): the packages Debian, Fedora
     and the AppImage ship, then those of Arch's that hold other programs,
-    under arch/, then Windows' package, under windows/."""
+    under arch/, then Windows' and macOS's packages, under windows/ and
+    macos/."""
     split = packages(set(lines("optional")))
     out = {pathlib.Path(name) / NAME: (name, programs, None) for name, programs in split.items()}
     for name, programs in packages(arch_apart()).items():
@@ -86,6 +91,8 @@ def files():
             out[pathlib.Path("arch") / name / NAME] = (name, programs, None)
     out[pathlib.Path("windows/skwir") / NAME] = (
         "skwir for Windows", lines("windows/programs"), WINDOWS)
+    out[pathlib.Path("macos/skwir") / NAME] = (
+        "skwir for macOS", lines("macos/programs"), MACOS)
     return out
 
 

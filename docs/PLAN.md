@@ -43,8 +43,9 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 - **Blocked:** Phase 5b needs a Mac and a Windows machine
   (`docs/HELP-WANTED.md`). A Windows build to try is made on Linux
   (ADR-074, `just package-windows`, 2026-10-20): a zip and a per-user
-  installer, tried under Wine, its window never drawn there. For macOS
-  the user offered Apple's SDK (2026-10-20). The user reports hosted CI is too slow;
+  installer, tried under Wine, its window never drawn there. A macOS
+  build to try is made on Linux too (ADR-075, `just package-macos`):
+  skwir.app for Apple silicon, looked over, never run. The user reports hosted CI is too slow;
   routine CI is now reduced to essentials, with full checks and package
   builds retained as manual fallbacks. Remote runs were not inspected.
 - **Budgets:** idle own share 92.5 MiB of 100 on Zed's gpui (session
