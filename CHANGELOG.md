@@ -16,7 +16,8 @@
   level stood at the second); a file's headings are indented by the
   headings they fall under, never two steps for a level skipped. A
   book's contents no longer list the chapter's own headings again above
-  its chapters.
+  its chapters: those its contents leave out stand under the chapter
+  you are reading.
 - **Scripts and agents**: a file selected, a folder opened or a sort
   changed by `skwir cmd` or an agent shows in the window at once, not at
   the next move of the mouse.

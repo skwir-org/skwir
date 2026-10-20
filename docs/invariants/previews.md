@@ -863,12 +863,17 @@ is still to come are in `docs/preview-frame.md`.
   included.
 - **Contents** is one drawer (`outline.rs`) for a document's outline, a
   file's headings and a book's chapters, offered where there are some.
-  - **What it lists**: a book's own contents alone, never the headings of
-    the chapter shown above them, which named its chapters twice; a file
-    without contents of its own, its headings, indented by the headings
-    before them they fall under (`inspector::heading_depths`), never by
-    their level, so a level skipped is one step in. An entry without a
-    target is a label.
+  - **What it lists**: a book's own contents, never the headings of the
+    chapter shown above them, which named its chapters twice. The
+    headings of the section shown that its rows do not name stand under
+    the row they fall under (`inspector::book_entries`), the one the
+    highlight would mark there; a heading is named by a row when it
+    stands where the row points or its words hold the row's, or are held
+    by them (`named_headings`, within the row's part of the section). A
+    file without contents of its own lists its headings. Headings are
+    indented by the headings before them they fall under
+    (`inspector::heading_depths`), never by their level, so a level
+    skipped is one step in. An entry without a target is a label.
   - **Open until closed** (its button, Contents, `ui.preview_contents`):
     a new section of the file (a book's next chapter) keeps it open; a
     new file closes it, but while pinned.

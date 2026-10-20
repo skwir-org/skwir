@@ -2542,9 +2542,9 @@ fn has_contents(data: &Inspection) -> bool {
 }
 
 /// What is shown in the shared contents, while they are open and there
-/// are some: a book's own contents, else the headings of what is shown (a
-/// book's would list again, above its chapters, the names its contents
-/// give them).
+/// are some: a book's own contents, with the headings of the section shown
+/// that they do not name under its rows; else the headings of what is
+/// shown.
 pub fn outline_drawer(
     shell: &Shell,
     view: View<'_>,
@@ -2555,49 +2555,12 @@ pub fn outline_drawer(
     if !view.state.outline || !has_contents(data) {
         return None;
     }
-    let chapters: Vec<&skwir_core::inspection::Row> = if data.kind == InspectionKind::Book {
-        data.rows.iter().collect()
-    } else {
-        Vec::new()
-    };
-    let headings: Vec<usize> = if chapters.is_empty() {
-        data.blocks
-            .iter()
-            .enumerate()
-            .filter(|(_, block)| block.heading > 0)
-            .map(|(index, _)| index)
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let depths = heading_depths(headings.iter().map(|&index| data.blocks[index].heading));
-    let mut entries: Vec<crate::outline::Entry> = headings
-        .iter()
-        .zip(depths)
-        .map(|(&index, depth)| crate::outline::Entry {
-            depth,
-            title: data.blocks[index].text.clone().into(),
-            command: Some((
-                "ui.inspect",
-                serde_json::json!({"action":"block","index":index}),
-            )),
-        })
-        .collect();
-    // A row without a target (a part's heading) is only a label.
-    entries.extend(chapters.iter().map(|row| crate::outline::Entry {
-        depth: row.depth,
-        title: row.cells.join(" ").into(),
-        command: row.target.as_ref().map(|target| {
-            (
-                "ui.inspect",
-                serde_json::json!({"action":"target","target":target}),
-            )
-        }),
-    }));
     let top = view.state.top_block(data);
-    let current = current_chapter(data, &chapters, top)
-        .map(|chapter| headings.len() + chapter)
-        .or_else(|| current_heading(&headings, top));
+    let (entries, current) = if data.kind == InspectionKind::Book && !data.rows.is_empty() {
+        book_entries(data, top)
+    } else {
+        heading_entries(data, top)
+    };
     Some(crate::outline::contents(
         entries,
         current,
@@ -2607,6 +2570,89 @@ pub fn outline_drawer(
         theme,
         cx,
     ))
+}
+
+/// The entry leading to the heading at `index` among the blocks shown.
+fn heading_entry(data: &Inspection, index: usize, depth: usize) -> crate::outline::Entry {
+    crate::outline::Entry {
+        depth,
+        title: data.blocks[index].text.clone().into(),
+        command: Some((
+            "ui.inspect",
+            serde_json::json!({"action":"block","index":index}),
+        )),
+    }
+}
+
+/// The headings of what is shown, and the one of the part at `top`.
+fn heading_entries(data: &Inspection, top: usize) -> (Vec<crate::outline::Entry>, Option<usize>) {
+    let headings: Vec<usize> = data
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| block.heading > 0)
+        .map(|(index, _)| index)
+        .collect();
+    let depths = heading_depths(headings.iter().map(|&index| data.blocks[index].heading));
+    let entries = headings
+        .iter()
+        .zip(depths)
+        .map(|(&index, depth)| heading_entry(data, index, depth))
+        .collect();
+    (entries, current_heading(&headings, top))
+}
+
+/// A book's contents, and the entry of the part at `top`. The headings of
+/// the section shown that its rows do not name are listed under the row
+/// they fall under (`chapter_at`), a step in and indented among themselves,
+/// and the part shown is the last of that row's at or above `top`, else the
+/// row. A row without a target (a part's heading) is only a label.
+fn book_entries(data: &Inspection, top: usize) -> (Vec<crate::outline::Entry>, Option<usize>) {
+    let starts = section_starts(data);
+    let named = named_headings(data, &starts);
+    let shown = chapter_at(data, &starts, top);
+    // A section the contents do not name falls under one row, found once.
+    let place = |block| {
+        if starts.is_empty() {
+            shown
+        } else {
+            chapter_at(data, &starts, block)
+        }
+    };
+    let mut under: Vec<Vec<usize>> = vec![Vec::new(); data.rows.len()];
+    for (index, block) in data.blocks.iter().enumerate() {
+        if block.heading > 0
+            && !named.contains(&index)
+            && let Some(row) = place(index)
+        {
+            under[row].push(index);
+        }
+    }
+    let mut entries = Vec::with_capacity(data.rows.len());
+    let mut current = None;
+    for (row, (chapter, headings)) in data.rows.iter().zip(&under).enumerate() {
+        if shown == Some(row) {
+            current = Some(entries.len());
+        }
+        entries.push(crate::outline::Entry {
+            depth: chapter.depth,
+            title: chapter.cells.join(" ").into(),
+            command: chapter.target.as_ref().map(|target| {
+                (
+                    "ui.inspect",
+                    serde_json::json!({"action":"target","target":target}),
+                )
+            }),
+        });
+        let depths = heading_depths(headings.iter().map(|&index| data.blocks[index].heading));
+        for (&index, depth) in headings.iter().zip(depths) {
+            if shown == Some(row) && index <= top {
+                current = Some(entries.len());
+            }
+            entries.push(heading_entry(data, index, chapter.depth + 1 + depth));
+        }
+    }
+    (entries, current)
 }
 
 /// Each heading's depth in the contents, from its level (1 to 6): how many
@@ -2633,45 +2679,91 @@ fn current_heading(headings: &[usize], top: usize) -> Option<usize> {
     headings.iter().rposition(|&block| block <= top)
 }
 
-/// A book's chapter shown, among its contents' `chapters`: of those that
-/// open the section shown, the last starting at or above `top` (where its
-/// fragment points, else the section's start; one whose fragment the
-/// section does not hold is not placed), else its first; for a section the
-/// contents do not name (a cover, a chapter split in files), the last of
-/// those before it.
-fn current_chapter(
-    data: &Inspection,
-    chapters: &[&skwir_core::inspection::Row],
-    top: usize,
-) -> Option<usize> {
-    let shown = data.position;
-    let here: Vec<usize> = (0..chapters.len())
-        .filter(|&i| chapters[i].section == Some(shown))
-        .collect();
-    if let Some(&first) = here.first() {
-        let starts = |i: usize| match chapters[i]
-            .target
-            .as_deref()
-            .and_then(|target| target.split_once('#'))
-        {
-            None => Some(0),
-            Some((_, fragment)) => data
-                .blocks
-                .iter()
-                .position(|block| block.anchors.iter().any(|name| name == fragment)),
-        };
+/// The rows of a book's contents that open the section shown, each with
+/// the block it starts at: where its fragment points, else the section's
+/// start (`None`: a fragment the section does not hold).
+fn section_starts(data: &Inspection) -> Vec<(usize, Option<usize>)> {
+    data.rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.section == Some(data.position))
+        .map(|(index, row)| {
+            let start = match row
+                .target
+                .as_deref()
+                .and_then(|target| target.split_once('#'))
+            {
+                None => Some(0),
+                Some((_, fragment)) => data
+                    .blocks
+                    .iter()
+                    .position(|block| block.anchors.iter().any(|name| name == fragment)),
+            };
+            (index, start)
+        })
+        .collect()
+}
+
+/// The row of a book's contents that `block` of the section shown falls
+/// under: of the rows that open the section (`starts`), the last starting
+/// at or above it (one whose fragment the section does not hold is not
+/// placed), else the first; for a section the contents do not name (a
+/// cover, a chapter split in files), the last of the rows before it.
+fn chapter_at(data: &Inspection, starts: &[(usize, Option<usize>)], block: usize) -> Option<usize> {
+    if let Some(&(first, _)) = starts.first() {
         return Some(
-            here.iter()
-                .copied()
-                .rfind(|&i| starts(i).is_some_and(|block| block <= top))
-                .unwrap_or(first),
+            starts
+                .iter()
+                .rfind(|(_, start)| start.is_some_and(|start| start <= block))
+                .map_or(first, |&(row, _)| row),
         );
     }
-    let before = chapters
+    let before = data
+        .rows
         .iter()
-        .filter_map(|row| row.section.filter(|&section| section < shown))
+        .filter_map(|row| row.section.filter(|&section| section < data.position))
         .max()?;
-    chapters.iter().rposition(|row| row.section == Some(before))
+    data.rows
+        .iter()
+        .rposition(|row| row.section == Some(before))
+}
+
+/// The headings of the section shown that the rows opening it name, not to
+/// be listed again under them: for each row, the first heading from where
+/// it starts to where the next one starts that stands where it points or
+/// whose words hold the row's, or are held by them ("II. The Storm" for
+/// "The Storm", "Chapter 2" for "Chapter 2: The Storm").
+fn named_headings(data: &Inspection, starts: &[(usize, Option<usize>)]) -> Vec<usize> {
+    fn words(text: &str) -> Vec<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .map(str::to_lowercase)
+            .collect()
+    }
+    fn holds(outer: &[String], inner: &[String]) -> bool {
+        !inner.is_empty() && outer.windows(inner.len()).any(|run| run == inner)
+    }
+    let mut named = Vec::new();
+    for &(row, start) in starts {
+        let Some(start) = start else { continue };
+        let end = starts
+            .iter()
+            .filter_map(|&(_, other)| other.filter(|&other| other > start))
+            .min()
+            .unwrap_or(data.blocks.len());
+        let title = words(&data.rows[row].cells.join(" "));
+        let heading = (start..end).find(|&index| {
+            let block = &data.blocks[index];
+            block.heading > 0
+                && !named.contains(&index)
+                && (index == start || {
+                    let heading = words(&block.text);
+                    holds(&heading, &title) || holds(&title, &heading)
+                })
+        });
+        named.extend(heading);
+    }
+    named
 }
 
 /// Whether `kind` is read, its running text in the reading font: Markdown
@@ -3499,7 +3591,7 @@ mod tests {
             section,
             ..Row::default()
         };
-        let rows = [
+        let rows = vec![
             row("cover.xhtml", Some(0)),
             row("one.xhtml", Some(2)),
             row("one.xhtml#later", Some(2)),
@@ -3507,7 +3599,6 @@ mod tests {
             row("two.xhtml#start", Some(3)),
             row("elsewhere.xhtml", None),
         ];
-        let chapters: Vec<&Row> = rows.iter().collect();
         let anchored = |name: &str| Block {
             anchors: vec![name.into()],
             ..Block::default()
@@ -3516,15 +3607,17 @@ mod tests {
             kind: InspectionKind::Book,
             position,
             blocks,
+            rows: rows.clone(),
             ..Inspection::default()
         };
+        let at = |data: &Inspection, top| chapter_at(data, &section_starts(data), top);
         let one = book(
             2,
             vec![Block::default(), Block::default(), anchored("later")],
         );
-        assert_eq!(current_chapter(&one, &chapters, 0), Some(1));
+        assert_eq!(at(&one, 0), Some(1));
         assert_eq!(
-            current_chapter(&one, &chapters, 2),
+            at(&one, 2),
             Some(2),
             "where its fragment points; one the chapter does not hold, nowhere"
         );
@@ -3533,13 +3626,13 @@ mod tests {
             vec![Block::default(), Block::default(), anchored("start")],
         );
         assert_eq!(
-            current_chapter(&two, &chapters, 0),
+            at(&two, 0),
             Some(4),
             "above its fragment, its first row still"
         );
         let between = book(1, vec![Block::default()]);
         assert_eq!(
-            current_chapter(&between, &chapters, 0),
+            at(&between, 0),
             Some(0),
             "a section the contents do not name is the one before's"
         );
@@ -3547,15 +3640,136 @@ mod tests {
             position: 0,
             ..between.clone()
         };
-        assert_eq!(current_chapter(&first, &chapters, 0), Some(0));
-        let none: Vec<&Row> = Vec::new();
-        assert_eq!(current_chapter(&one, &none, 0), None);
+        assert_eq!(at(&first, 0), Some(0));
+        let none = Inspection {
+            rows: Vec::new(),
+            ..one.clone()
+        };
+        assert_eq!(at(&none, 0), None);
 
         let headings = [1, 4, 9];
         assert_eq!(current_heading(&headings, 0), None, "before the first");
         assert_eq!(current_heading(&headings, 4), Some(1));
         assert_eq!(current_heading(&headings, 8), Some(1));
         assert_eq!(current_heading(&headings, 20), Some(2));
+    }
+
+    /// A book lists its contents once: the headings of the chapter shown
+    /// that its contents name are their rows, the others stand under the
+    /// row they fall under, and the part shown is the deepest.
+    #[test]
+    fn a_chapters_own_headings_stand_under_its_row() {
+        use super::*;
+        use skwir_core::inspection::Row;
+        let row = |title: &str, target: Option<&str>, depth, section| Row {
+            cells: vec![title.into()],
+            target: target.map(Into::into),
+            depth,
+            section,
+            ..Row::default()
+        };
+        let heading = |level, text: &str, anchor: Option<&str>| Block {
+            heading: level,
+            text: text.into(),
+            anchors: anchor.into_iter().map(Into::into).collect(),
+            ..Block::default()
+        };
+        let text = || Block {
+            text: "Text".into(),
+            ..Block::default()
+        };
+        let book = Inspection {
+            kind: InspectionKind::Book,
+            position: 1,
+            rows: vec![
+                row("Part one", None, 0, None),
+                row("Prologue", Some("zero.xhtml"), 1, Some(0)),
+                row("1. The Storm", Some("one.xhtml"), 1, Some(1)),
+                row("Ashore", Some("one.xhtml#ashore"), 2, Some(1)),
+                row("Chapter 2", Some("two.xhtml"), 1, Some(2)),
+            ],
+            blocks: vec![
+                text(),
+                heading(1, "The Storm", None),
+                heading(3, "At sea", None),
+                text(),
+                heading(4, "Night", None),
+                heading(2, "Some other words", Some("ashore")),
+                text(),
+                heading(3, "The beach", None),
+            ],
+            ..Inspection::default()
+        };
+        let listed = |top| {
+            let (entries, current) = book_entries(&book, top);
+            let entries: Vec<(String, usize)> = entries
+                .into_iter()
+                .map(|entry| (entry.title.to_string(), entry.depth))
+                .collect();
+            (entries, current)
+        };
+        let (entries, current) = listed(0);
+        let expected = [
+            ("Part one", 0),
+            ("Prologue", 1),
+            ("1. The Storm", 1),
+            ("At sea", 2),
+            ("Night", 3),
+            ("Ashore", 2),
+            ("The beach", 3),
+            ("Chapter 2", 1),
+        ];
+        assert_eq!(
+            entries,
+            expected.map(|(title, depth)| (title.to_owned(), depth)),
+            "the chapter's title and where a row points are named; the rest under their row"
+        );
+        assert_eq!(current, Some(2), "above its headings, the chapter");
+        assert_eq!(listed(3).1, Some(3), "under a heading of its own");
+        assert_eq!(listed(4).1, Some(4));
+        assert_eq!(listed(5).1, Some(5), "a row of its contents");
+        assert_eq!(listed(7).1, Some(6));
+
+        let titles = |data: &Inspection| {
+            book_entries(data, 0)
+                .0
+                .into_iter()
+                .skip(4)
+                .map(|entry| (entry.title.to_string(), entry.depth))
+                .collect::<Vec<_>>()
+        };
+        let two = |blocks| Inspection {
+            position: 2,
+            blocks,
+            ..book.clone()
+        };
+        assert_eq!(
+            titles(&two(vec![
+                text(),
+                heading(2, "Chapter 2: Rain", None),
+                heading(3, "Inside", None),
+            ])),
+            [("Chapter 2".to_owned(), 1), ("Inside".to_owned(), 2)],
+            "a heading whose words hold the row's"
+        );
+        assert_eq!(
+            titles(&two(vec![
+                heading(2, "Rain", None),
+                heading(3, "Inside", None)
+            ])),
+            [("Chapter 2".to_owned(), 1), ("Inside".to_owned(), 2)],
+            "the heading where the row points, whatever it says"
+        );
+        let after = Inspection {
+            position: 3,
+            blocks: vec![heading(2, "Afterword", None)],
+            ..book.clone()
+        };
+        assert_eq!(
+            titles(&after),
+            [("Chapter 2".to_owned(), 1), ("Afterword".to_owned(), 2)],
+            "a section the contents do not name, under the row before it"
+        );
     }
 
     #[test]

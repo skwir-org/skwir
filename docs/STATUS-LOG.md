@@ -1942,3 +1942,25 @@ as a signal that work they started finished (`settings.apply`'s tests
 wait for its save that way). Test:
 `a_command_that_changes_the_window_wakes_it`; in the window, select,
 contents, select, contents, each showed without input.
+
+**A chapter's own headings under its row** (the user's choice, after the
+contents were listed once): the headings of the section shown that the
+book's contents do not name stand under the row they fall under, a step
+in and indented among themselves, the part shown the deepest entry at or
+above the top of the view (`inspector::book_entries`). A row names a
+heading when, between where the row starts and where the next row of the
+section starts, the heading stands where the row points or its words hold
+the row's or are held by them (`named_headings`: "The Storm" for
+"1. The Storm", "Chapter 2: Rain" for "Chapter 2"); each row names one at
+most, so a chapter's title is not listed again under it. What a row
+points at is placed once per draw (`section_starts`), not once per
+heading. Test: `a_chapters_own_headings_stand_under_its_row` (a title
+named by its words, a heading at a fragment named whatever it says, a
+level skipped under a row, a section the contents do not name under the
+row before it, the highlight on each). In a window (debug build, Xvfb,
+synthetic EPUB): an `h3` under Section 1.1 stood under it, chapter 2's
+title after a `<p>CHAPTER TWO</p>` was named by "2. Rain" and its `h2`
+and `h3` stood under that row, choosing either one highlighted it; the
+Markdown file was listed as before. Not checked: a
+real book; a book whose contents name a chapter in words its heading
+does not share, whose title is then listed under its row.
