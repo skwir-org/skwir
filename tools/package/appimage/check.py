@@ -175,8 +175,12 @@ def check_window(app, work, launcher):
         window.start()
         smoke.run(window)
         archive = window.files / "a traveller's files.zip"
+        # Two members, so they go in a folder named after the archive: one
+        # alone is placed as itself (ADR-048), and the smoke run's notes/
+        # would make it a name taken, a question no script answers.
         with zipfile.ZipFile(archive, "w") as zipped:
             zipped.writestr("notes/café's draft.txt", "unpacked\n")
+            zipped.writestr("read me.txt", "kept beside\n")
         window.cmd("archive.extract", {"entries": [str(archive)]}, apply=True)
         unpacked = archive.with_suffix("") / "notes/café's draft.txt"
         assert smoke.until(unpacked.exists), "sandboxed archive extraction did not finish"
