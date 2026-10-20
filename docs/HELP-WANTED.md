@@ -88,9 +88,21 @@ called `taxes 2026` can be `folder a`.
 
 ## Windows
 
+A build to try is made on Linux (ADR-074, `just package-windows`): a zip,
+`skwir-<version>-windows-x86_64.zip`, to unpack anywhere and start
+`skwir.exe` from, or an installer, `skwir-<version>-windows-x86_64.msi`,
+which puts it in `%LocalAppData%\Programs\skwir` with a Start menu entry
+and asks no administrator. Neither is signed: Windows warns first ("Windows
+protected your PC": More info, then Run anyway). It reads PDFs, DjVu and 3D
+models; archives, audio and video, and the Poppler and MuPDF readers are not
+in it yet. Wine started its programs and installed it, but cannot draw its
+window: everything below is new.
+
 1. **It opens** (try). The window draws, a folder lists, the drives are in
    the sidebar, scrolling stays smooth, and idle CPU returns to about 0%
-   (Task Manager). PORTING sections 1, 6.
+   (Task Manager). The window compiles its shaders as it starts: say how
+   long it takes to appear (`first frame … after start` in the log), and
+   whether a console opens behind it (it should not). PORTING sections 1, 6.
 2. **Tests** (try). The tests pass natively, not only under Wine. Those that
    need what Wine lacks (the shell's Recycle Bin, alternate streams) run
    only here: PORTING sections 1, 3, 4.
@@ -114,13 +126,12 @@ called `taxes 2026` can be `folder a`.
    Foundation (a helper of its own); owners by SID; Quick Access as
    bookmarks; Windows Search for hints; media keys (SMTC). PORTING sections
    6, 7, 8, "10–15".
-8. **The package** (code). `tools/package/windows.ps1` builds what ships and
-   an installer from `tools/package/windows/skwir.wxs` (WiX); it has never
-   run. It must also carry the crates' notices, made for Windows' targets
-   by `tools/package/notices.py` and kept in `tools/package/notices` as
-   the Linux packages' are (ADR-063).
-   Signing needs a code-signing certificate: the project decides that with
-   you.
+8. **The package** (code). `tools/package/windows.sh` makes the zip and the
+   installer on Linux (ADR-074); try the installer on a fresh account:
+   installing, the Start menu entry, updating over an older one, removing.
+   The helpers that link libraries (libarchive, Media Foundation's player,
+   Poppler, MuPDF) need those built for Windows. Signing needs a
+   code-signing certificate: the project decides that with you.
 9. **CI** (code). The `native` job runs on `windows-latest` too.
 
 ## When a system is ready

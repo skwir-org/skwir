@@ -41,7 +41,10 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   after the release (2026-10-07). From 0.3 a release's page is its
   changelog section above `### All changes` (docs/RELEASING.md).
 - **Blocked:** Phase 5b needs a Mac and a Windows machine
-  (`docs/HELP-WANTED.md`). The user reports hosted CI is too slow;
+  (`docs/HELP-WANTED.md`). A Windows build to try is made on Linux
+  (ADR-074, `just package-windows`, 2026-10-20): a zip and a per-user
+  installer, tried under Wine, its window never drawn there. For macOS
+  the user offered Apple's SDK (2026-10-20). The user reports hosted CI is too slow;
   routine CI is now reduced to essentials, with full checks and package
   builds retained as manual fallbacks. Remote runs were not inspected.
 - **Budgets:** idle own share 92.5 MiB of 100 on Zed's gpui (session

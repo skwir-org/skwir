@@ -1,58 +1,43 @@
-<!-- skwir's Windows installer (Phase 5, step K), for WiX 5 or later:
-     `wix build skwir.wxs -d Version=0.1.0 -d Dist=..\..\..\target\dist`.
-     Written on Linux, never built yet (ADR-035: 5b builds it). The helpers
-     go beside skwir.exe, where it finds them. Unsigned. -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="skwir" Manufacturer="skwir" Version="$(Version)"
-           UpgradeCode="6f1c2b7e-3d9a-4c5e-9b8f-2a7d4e1c0b35" Scope="perUser">
+<?xml version="1.0" encoding="utf-8"?>
+<!-- skwir's Windows installer (ADR-074), made on Linux by msitools' wixl,
+     which reads WiX 3's format, from the folder tools/package/windows.sh
+     stages: `wixl -a x64 -D Version=… -D Dist=<folder> -D Icon=<.ico> -D Win64=yes
+     skwir.wxs files.wxs`.
+     files.wxs, made there by wixl-heat, holds every file of the folder
+     (the programs, PDFium, the licences, the type database), so nothing
+     here lists them again. Per user, in %LocalAppData%\Programs\skwir, no
+     administrator asked; a Start menu entry. Unsigned. -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="skwir" Manufacturer="skwir" Language="1033"
+           Version="$(var.Version)" UpgradeCode="6f1c2b7e-3d9a-4c5e-9b8f-2a7d4e1c0b35">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser"
+             Description="skwir, a file manager" />
     <MajorUpgrade DowngradeErrorMessage="A newer skwir is already installed." />
-    <MediaTemplate EmbedCab="yes" />
-    <!-- The icon skwir.exe carries (crates/skwir/build.rs), for its
-         shortcut and the list of installed programs. -->
-    <Icon Id="skwir.exe" SourceFile="$(Dist)\skwir.exe" />
-    <Property Id="ARPPRODUCTICON" Value="skwir.exe" />
-    <StandardDirectory Id="LocalAppDataFolder">
-      <Directory Id="Programs" Name="Programs">
-        <Directory Id="INSTALLFOLDER" Name="skwir">
-          <Component Id="Programs" Guid="*">
-            <File Source="$(Dist)\skwir.exe" KeyPath="yes">
-              <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="skwir"
-                        WorkingDirectory="INSTALLFOLDER" Icon="skwir.exe" Advertise="yes" />
-            </File>
-            <File Source="$(Dist)\skwir-pdf-worker.exe" />
-            <File Source="$(Dist)\skwir-djvu-worker.exe" />
-            <File Source="$(Dist)\skwir-model-worker.exe" />
-            <File Source="$(Dist)\skwir-module-worker.exe" />
-            <!-- PDFium, beside its helper (ADR-041). -->
-            <File Source="$(Dist)\pdfium.dll" />
-          </Component>
-          <!-- skwir's licence, and PDFium's with those of what it carries. -->
-          <Directory Id="Licenses" Name="licenses">
-            <Files Include="$(Dist)\licenses\**" />
-          </Directory>
-          <!-- The type database, beside skwir.exe (ADR-037): what
-               tools/package/mime-database.sh puts in it. -->
-          <Directory Id="Share" Name="share">
-            <Directory Id="MimeFolder" Name="mime">
-              <Component Id="MimeDatabase" Guid="*">
-                <File Source="$(Dist)\share\mime\globs2" KeyPath="yes" />
-                <File Source="$(Dist)\share\mime\aliases" />
-                <File Source="$(Dist)\share\mime\generic-icons" />
-                <File Source="$(Dist)\share\mime\icons" />
-                <File Source="$(Dist)\share\mime\magic" />
-                <File Source="$(Dist)\share\mime\subclasses" />
-                <File Source="$(Dist)\share\mime\COPYING" />
-                <File Source="$(Dist)\share\mime\README" />
-              </Component>
-            </Directory>
-          </Directory>
+    <Media Id="1" Cabinet="skwir.cab" EmbedCab="yes" />
+    <!-- The icon skwir.exe carries (crates/skwir/build.rs), taken out of
+         it, for its shortcut and the list of installed programs: an Icon
+         holds its whole file, which skwir.exe would double. -->
+    <Icon Id="skwir.ico" SourceFile="$(var.Icon)" />
+    <Property Id="ARPPRODUCTICON" Value="skwir.ico" />
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="LocalPrograms" Name="Programs">
+          <Directory Id="INSTALLDIR" Name="skwir" />
         </Directory>
       </Directory>
-    </StandardDirectory>
-    <StandardDirectory Id="ProgramMenuFolder" />
-    <Feature Id="Main">
-      <ComponentRef Id="Programs" />
-      <ComponentRef Id="MimeDatabase" />
+      <Directory Id="ProgramMenuFolder">
+        <Component Id="StartMenu" Guid="4b0a1e52-8c7d-4f3e-a6b9-1d2c5e8f7a40">
+          <Shortcut Id="StartMenuShortcut" Name="skwir" Target="[INSTALLDIR]skwir.exe"
+                    WorkingDirectory="INSTALLDIR" Icon="skwir.ico" />
+          <!-- What a per-user component is known by: a value of its own. -->
+          <RegistryValue Root="HKCU" Key="Software\skwir" Name="StartMenu" Type="integer"
+                         Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </Directory>
+    <Feature Id="Main" Level="1">
+      <ComponentRef Id="StartMenu" />
+      <ComponentGroupRef Id="Files" />
     </Feature>
-  </Package>
+  </Product>
 </Wix>

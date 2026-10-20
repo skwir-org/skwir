@@ -70,9 +70,16 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 serde_json.workspace = true
 
-# skwir.exe's icon, drawn from the UI's own and embedded when built on
-# Windows (build.rs).
-[target.'cfg(windows)'.build-dependencies]
+# A window of its own on Windows, with no console behind it, and the
+# console of a terminal it is started from (main.rs, `attach_console`).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_System_Console"] }
+
+# skwir.exe's icon, drawn from the UI's own and embedded where a resource
+# compiler is at hand (build.rs). Not under `cfg(windows)`: a build
+# script's dependencies follow the system it runs on, and a package for
+# Windows is built on Linux too.
+[build-dependencies]
 embed-resource = "3"
 resvg = { version = "0.46", default-features = false }
 

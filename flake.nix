@@ -227,12 +227,18 @@
           };
         };
 
-      # For running the Windows build's tests under Wine (Phase 5). Wine
-      # is not Windows: it answers for the logic (paths, identity, records),
-      # never for the shell's behaviour. Kept out of the default shell, whose
-      # closure it would grow by about 1.5 GB.
+      # For running the Windows build's tests under Wine (Phase 5), and
+      # making its package on Linux (ADR-074): llvm-rc embeds skwir.exe's
+      # icon and gpui's manifest, msitools' wixl makes the installer, and
+      # icoutils' wrestool takes the icon back out for it. Wine
+      # is not Windows: it answers for the logic (paths, identity, records)
+      # and the package's programs and installer, never for the shell's
+      # behaviour. Kept out of the default shell, whose closure it would
+      # grow by about 1.5 GB.
       devShells.windows = self.devShells.${system}.default.overrideAttrs (old: {
-        nativeBuildInputs = old.nativeBuildInputs ++ lib.optionals stdenv.hostPlatform.isLinux [pkgs.wine64Packages.stable];
+        nativeBuildInputs =
+          old.nativeBuildInputs
+          ++ lib.optionals stdenv.hostPlatform.isLinux [pkgs.wine64Packages.stable pkgs.llvmPackages.llvm pkgs.msitools pkgs.icoutils];
       });
 
       # The Home Manager module (`programs.skwir`), without building skwir:

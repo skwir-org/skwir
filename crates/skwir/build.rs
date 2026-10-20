@@ -3,23 +3,25 @@ include!("../../tools/build/identity.rs");
 
 fn main() {
     emit_build();
-    #[cfg(windows)]
     windows_icon::embed();
 }
 
 /// skwir.exe's icon, which Explorer, the Start menu and the taskbar show
 /// and gpui gives its windows (resource 1): the UI's own drawing
 /// (`crates/ui/assets/org.skwir.skwir.svg`) at each side Windows draws an
-/// application's icon at. Embedded when built on Windows, whose resource
-/// compiler it needs, as gpui embeds its manifest: a check from another
-/// system (`just check-cross`) leaves it out.
-#[cfg(windows)]
+/// application's icon at. Embedded where a resource compiler is at hand,
+/// as gpui embeds its manifest (vendor patch 0027): on Windows, or named
+/// as embed-resource reads it (`RC`, `RC_<target>`: llvm-rc, by
+/// `tools/package/windows-portable.sh`). A check from another system
+/// (`just check-cross`, Wine's tests) names none and leaves it out.
 mod windows_icon {
     const SVG: &str = "../ui/assets/org.skwir.skwir.svg";
     const SIDES: [u32; 8] = [16, 20, 24, 32, 40, 48, 64, 256];
 
     pub fn embed() {
-        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows")
+            || !(cfg!(windows) || compiler_named())
+        {
             return;
         }
         println!("cargo::rerun-if-changed={SVG}");
@@ -33,6 +35,22 @@ mod windows_icon {
         embed_resource::compile(&rc, embed_resource::NONE)
             .manifest_required()
             .unwrap();
+    }
+
+    /// Whether a resource compiler is named for the target, as
+    /// embed-resource reads it.
+    fn compiler_named() -> bool {
+        let target = std::env::var("TARGET").unwrap_or_default();
+        let mut named = false;
+        for name in [
+            format!("RC_{target}"),
+            format!("RC_{}", target.replace('-', "_")),
+            "RC".to_owned(),
+        ] {
+            println!("cargo::rerun-if-env-changed={name}");
+            named |= std::env::var_os(&name).is_some();
+        }
+        named
     }
 
     /// An .ico of `svg` at each of `SIDES`, each picture a PNG.

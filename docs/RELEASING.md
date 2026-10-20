@@ -126,6 +126,10 @@ bundle until publication is verified; GitHub cannot reproduce it from the
 manifest alone. Publishing the AUR's PKGBUILD and `.SRCINFO` is a separate
 step described below.
 macOS and Windows release packages are not included in this Linux command.
+A Windows build to try is made apart (ADR-074): `just package-windows`
+builds it with cargo-zigbuild into `target/package/windows` (a zip and an
+installer, each with its `.sha256`) and tries both under Wine. It is not
+part of the release bundle, and nothing uploads it.
 
 ## Publish on the AUR
 

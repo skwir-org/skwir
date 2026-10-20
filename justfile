@@ -220,6 +220,13 @@ aur-publish tag:
 package-try distribution:
     tools/package/try.sh {{distribution}}
 
+# Windows' build to try, made on Linux (ADR-074): skwir and its helpers
+# that carry no library, as a zip and a per-user installer (wixl), into
+# target/package/windows, then both tried under Wine.
+package-windows:
+    tools/package/windows.sh
+    tools/package/windows-check.sh
+
 # A portable x86-64 AppImage, and the same tree as a tarball, built in Ubuntu
 # 22.04 and checked in a separate runtime-only root; builds on NixOS too. Into
 # target/package/appimage.

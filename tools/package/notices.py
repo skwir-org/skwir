@@ -23,7 +23,9 @@ tools/package/programs: the ones shipped apart (tools/package/optional) each
 a package of its own (`skwir-<name>-worker` in `skwir-<name>`), the others
 `skwir`'s, as Debian's, Fedora's and the AppImage's packages hold them.
 Arch's keeps apart only the packages its PKGBUILD names, so its `skwir`
-has notices of its own (arch/skwir).
+has notices of its own (arch/skwir). Windows' package holds the programs
+tools/package/windows/programs lists, built for Windows, whose crates
+differ (windows/skwir, ADR-074).
 """
 
 import functools
@@ -39,6 +41,8 @@ CONFIG = ROOT / "tools/package/about.toml"
 OUT = ROOT / "tools/package/notices"
 PKGBUILD = ROOT / "tools/package/aur/PKGBUILD"
 NAME = "THIRD-PARTY-NOTICES"
+# What Windows' package is built for (tools/package/windows.sh).
+WINDOWS = "x86_64-pc-windows-gnu"
 
 
 def lines(name):
@@ -71,14 +75,17 @@ def arch_apart():
 
 
 def files():
-    """Each notices file, under OUT, and the package and programs it is
-    for: the packages Debian, Fedora and the AppImage ship, then those of
-    Arch's that hold other programs, under arch/."""
+    """Each notices file, under OUT, and the package, programs and target
+    it is for (`None`: about.toml's, Linux's): the packages Debian, Fedora
+    and the AppImage ship, then those of Arch's that hold other programs,
+    under arch/, then Windows' package, under windows/."""
     split = packages(set(lines("optional")))
-    out = {pathlib.Path(name) / NAME: (name, programs) for name, programs in split.items()}
+    out = {pathlib.Path(name) / NAME: (name, programs, None) for name, programs in split.items()}
     for name, programs in packages(arch_apart()).items():
         if split.get(name) != programs:
-            out[pathlib.Path("arch") / name / NAME] = (name, programs)
+            out[pathlib.Path("arch") / name / NAME] = (name, programs, None)
+    out[pathlib.Path("windows/skwir") / NAME] = (
+        "skwir for Windows", lines("windows/programs"), WINDOWS)
     return out
 
 
@@ -93,13 +100,15 @@ def manifest(program):
 
 
 @functools.cache
-def licences(program):
-    """cargo-about's reading of what `program` links: (id, name, text) ->
-    the crates that use it, as `name version`."""
+def licences(program, target=None):
+    """cargo-about's reading of what `program` links, built for `target`
+    (about.toml's where `None`): (id, name, text) -> the crates that use
+    it, as `name version`."""
     run = subprocess.run(
         [
             "cargo", "about", "generate", "--offline", "--fail",
             "--format", "json", "-c", str(CONFIG), "-m", str(manifest(program)),
+            *(["--target", target] if target else []),
         ],
         cwd=ROOT, capture_output=True, text=True,
     )
@@ -115,10 +124,10 @@ def licences(program):
     return found
 
 
-def notices(package, programs):
+def notices(package, programs, target):
     merged = {}
     for program in programs:
-        for key, crates in licences(program).items():
+        for key, crates in licences(program, target).items():
             merged.setdefault(key, set()).update(crates)
     ours = {c for crates in merged.values() for c in crates if c.split()[0].startswith("skwir")}
     out = [
@@ -150,7 +159,7 @@ def main():
     # below; nothing is downloaded once they are there.
     subprocess.run(["cargo", "fetch", "--locked", "--quiet"], cwd=ROOT, check=True)
     wanted = files()
-    made = {path: notices(name, programs) for path, (name, programs) in wanted.items()}
+    made = {path: notices(*wanted[path]) for path in wanted}
     kept = {p.relative_to(OUT) for p in OUT.rglob(NAME)}
     if check:
         stale = [p for p, text in made.items()

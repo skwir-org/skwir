@@ -299,8 +299,15 @@ Left:
   office pages are drawn by the engine (`document::first_page`); `pdftoppm`
   only where there is none.
 - DjVu (ADR-061): djvu-rs's helper, in Rust, is in the macOS and Windows
-  packages (compiled only **(5b)**); DjVuLibre's links a library those
-  packages do not carry, so it is Linux's alone.
+  packages (Windows': its `--probe` answers under Wine; macOS's compiled
+  only **(5b)**); DjVuLibre's links a library those packages do not carry,
+  so it is Linux's alone.
+- The Windows package (ADR-074) is made on Linux, a zip and a per-user
+  installer of one folder (`tools/package/windows.sh`), and tried under
+  Wine (`tools/package/windows-check.sh`): its programs answer, it installs
+  and leaves nothing once removed. Its window is not drawn there (Wine's
+  DirectWrite has no font sets) **(5b)**. Built on Linux, gpui compiles its
+  shaders as the renderer starts (vendor patch 0034).
 - Left for the machines (ADR-041): audio and video through AVFoundation and
   Media Foundation (a helper per system, not GStreamer bundled); the archive
   helper with libarchive linked statically; LibreOffice on macOS under

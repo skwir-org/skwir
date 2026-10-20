@@ -9,8 +9,8 @@
 #
 #     tools/package/mime-database.sh <out>
 #
-# Windows has no `update-mime-database`: make the folder on Linux or a
-# Mac, and hand it to `tools/package/windows.ps1 -MimeDatabase`.
+# Windows has no `update-mime-database`: its package is made on Linux,
+# where `tools/package/windows.sh` runs this (ADR-074).
 set -eu
 if [ $# -ne 1 ]; then
     echo "usage: $0 <out>" >&2

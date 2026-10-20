@@ -1,11 +1,36 @@
 //! The skwir binary. Wires the core, the plugins, and the UI shell (Phase 2).
 
+// What ships for Windows (ADR-074) is a program of the window subsystem: no
+// console opens behind it from Explorer or the Start menu. A debug build
+// keeps its console, for the tests' output under Wine.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod gpu;
 
 use std::time::Instant;
 
 use skwir_core::app::AppConfig;
 use skwir_core::{App, Location};
+
+/// A program of Windows' window subsystem starts without a console: one
+/// started from a terminal prints to it (`skwir --version`, `skwir cmd`),
+/// unless its output already goes elsewhere (a pipe, as an agent's `skwir
+/// mcp` has). Started from Explorer, there is none to take. The terminal
+/// does not wait for it: its prompt may come back before the output.
+#[cfg(all(windows, not(debug_assertions)))]
+#[allow(unsafe_code)]
+fn attach_console() {
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE,
+    };
+    // SAFETY: neither call takes a pointer; the handle asked for is only
+    // compared with null, before any other thread exists.
+    unsafe {
+        if GetStdHandle(STD_OUTPUT_HANDLE).is_null() {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
 
 fn main() -> anyhow::Result<()> {
     let started = Instant::now();
@@ -16,6 +41,8 @@ fn main() -> anyhow::Result<()> {
     // Which build this is, for a helper's failure to say when the helper
     // is of another (`process::explain`).
     skwir_platform::process::set_build(env!("SKWIR_BUILD"));
+    #[cfg(all(windows, not(debug_assertions)))]
+    attach_console();
     // `skwir mcp` and `skwir cmd` (ADR-043), before anything logs: their
     // standard output is the protocol, or the JSON a script reads.
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
