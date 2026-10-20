@@ -261,6 +261,7 @@ impl Shell {
                     let said = match question.asker {
                         Asker::Agent => "The agent stopped waiting: nothing was run",
                         Asker::Room => "The copy stopped waiting: nothing was copied",
+                        Asker::Connection => "It stopped waiting: nothing was connected",
                     };
                     self.set_status(said, false, cx);
                 }
@@ -296,6 +297,7 @@ impl Shell {
                 let said = match question.asker {
                     Asker::Agent => "Refused: the agent was told",
                     Asker::Room => "Cancelled: nothing was copied",
+                    Asker::Connection => "Cancelled: nothing was connected",
                 };
                 self.set_status(said, false, cx);
             }
@@ -378,6 +380,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     "Enter copies anyway, Escape cancels",
                     "Cancel",
                     "Copy anyway",
+                ),
+                Asker::Connection => (
+                    "Nothing is sent to the server until you answer.",
+                    "Enter connects, Escape cancels",
+                    "Cancel",
+                    "Connect",
                 ),
             };
             (

@@ -1952,7 +1952,8 @@ impl Shell {
             });
             let asked = path.clone();
             let app = std::sync::Arc::clone(&self.app);
-            self.off_thread(
+            self.off_thread_in(
+                skwir_core::fs::reach::lane(&path),
                 "preview-here",
                 move || {
                     (
@@ -2429,9 +2430,14 @@ impl Shell {
         // A desktop thumbnail represents the file, not the requested page or
         // timestamp. Only use it before this file has any preview content.
         let show_thumbnail = !is_dir && self.preview.content.is_none();
-        self.app
-            .scheduler
-            .spawn(Priority::Visible, "preview", cancel.clone(), move || {
+        // A remote's file is read in its lane (ADR-077).
+        let lane = skwir_core::fs::reach::lane(&request.entry.path);
+        self.app.scheduler.spawn_in(
+            lane,
+            Priority::Visible,
+            "preview",
+            cancel.clone(),
+            move || {
                 // What the bytes said, once they were asked.
                 let sniffed = std::cell::RefCell::new(None::<String>);
                 // Why the links of what is shown are closed, if they are.
@@ -2856,7 +2862,8 @@ impl Shell {
                     content => content,
                 };
                 send(content, true, None, None);
-            });
+            },
+        );
     }
 
     /// Read ahead picture `id` of the pane the panel previews, for the step
@@ -2925,6 +2932,15 @@ impl Shell {
         {
             return;
         }
+        // Read ahead on a remote only where its files show thumbnails
+        // unasked, whatever their size (ADR-077): elsewhere a picture is
+        // read across the network when it is stepped to.
+        if self.app.remote(&content.path).is_some()
+            && !self.app.shows_thumbnail(&content.path, Some(u64::MAX))
+        {
+            return;
+        }
+        let lane = skwir_core::fs::reach::lane(&content.path);
         let mime = mime.to_string();
         let request = PreviewRequest {
             entry: content,
@@ -2940,7 +2956,8 @@ impl Shell {
         let wake = self.app.waker_handle();
         let job = Arc::clone(&slot);
         let token = cancel.clone();
-        self.app.scheduler.spawn(
+        self.app.scheduler.spawn_in(
+            lane,
             Priority::Background,
             "preview-ahead",
             cancel.clone(),
@@ -3269,7 +3286,8 @@ impl Shell {
         let device = entry.file().dev;
         let volumes = Arc::clone(&self.preview.volume_cache);
         let app = Arc::clone(&self.app);
-        self.app.scheduler.spawn(
+        self.app.scheduler.spawn_in(
+            skwir_core::fs::reach::lane(&path),
             skwir_core::scheduler::Priority::Visible,
             "detail-fields",
             cancel.clone(),
@@ -3366,7 +3384,8 @@ impl Shell {
         let wake = self.app.waker_handle();
         let weak = self.app.weak();
         let target = skwir_core::op::EntryRef::new(entry.file(), path);
-        self.app.scheduler.spawn(
+        self.app.scheduler.spawn_in(
+            skwir_core::fs::reach::lane(&target.path),
             skwir_core::scheduler::Priority::Visible,
             "properties-sources",
             cancel,
@@ -3638,7 +3657,8 @@ impl Shell {
         };
         let entry = EntryRef::new(key.id.file, &key.path);
         let app = self.app.clone();
-        self.app.scheduler.spawn(
+        self.app.scheduler.spawn_in(
+            skwir_core::fs::reach::lane(&key.path),
             Priority::Visible,
             "preview-open",
             self.app.lifetime().child(),
@@ -3982,7 +4002,13 @@ impl Shell {
         });
         let tx = self.preview.count_tx.clone();
         let wake = self.app.waker_handle();
-        self.app.scheduler.spawn(
+        let lane = paths
+            .first()
+            .map_or(skwir_core::scheduler::Lane::SHARED, |p| {
+                skwir_core::fs::reach::lane(p)
+            });
+        self.app.scheduler.spawn_in(
+            lane,
             skwir_core::scheduler::Priority::Normal,
             "properties-count",
             cancel.clone(),

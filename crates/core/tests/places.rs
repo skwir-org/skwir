@@ -378,3 +378,102 @@ fn a_place_that_gives_no_trail_reads_as_one_place_by_its_name() {
     assert_eq!(app.trail(&Location::parse("nobody:")), None);
     assert_eq!(app.location_icon(&Location::from_path(tmp.path())), None);
 }
+
+/// `here:` is an address reached at a folder (ADR-077): opening it says
+/// so once (`ListingEvent::Redirect`), as a remote connected does.
+struct Here {
+    folder: PathBuf,
+}
+
+struct Reaching {
+    location: Location,
+    rx: Receiver<ListingEvent>,
+}
+
+impl LocationProvider for Here {
+    fn scheme(&self) -> &'static str {
+        "here"
+    }
+
+    fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
+        let (tx, rx) = ctx.channel();
+        let folder = self.folder.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            tx.send(ListingEvent::Redirect(Location::from_path(folder)));
+        });
+        Ok(Arc::new(Reaching {
+            location: location.clone(),
+            rx,
+        }))
+    }
+}
+
+impl OpenLocation for Reaching {
+    fn location(&self) -> &Location {
+        &self.location
+    }
+    fn events(&self) -> &Receiver<ListingEvent> {
+        &self.rx
+    }
+    fn hydrate(&self, _: &[EntryId], _: Priority) {}
+    fn path_of(&self, _: EntryId) -> Option<PathBuf> {
+        None
+    }
+    fn refresh(&self) {}
+    fn close(&self) {}
+}
+
+/// An address reached at a folder shows that folder, in its place in the
+/// pane's history: Back goes where the pane was before it, and a script
+/// listing the address lists the folder (ADR-077).
+#[test]
+fn an_address_reached_at_a_folder_shows_the_folder_in_its_place() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (before, folder) = (tmp.path().join("before"), tmp.path().join("there"));
+    std::fs::create_dir_all(&before).unwrap();
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("a.txt"), "a").unwrap();
+    let app = app(tmp.path());
+    app.register_provider(
+        "test",
+        Arc::new(Here {
+            folder: folder.clone(),
+        }),
+    );
+    navigate(&app, &before);
+    let pane = active(&app);
+    app.navigate(pane, &Location::parse("here://server/there"))
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        app.pump();
+        let shown = app.pane_location(pane);
+        if shown.as_ref().and_then(Location::path).as_deref() == Some(folder.as_path()) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "shown: {shown:?}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+    {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        assert_eq!(
+            p.history,
+            [Location::from_path(&before), Location::from_path(&folder)],
+            "the address's place in the history is the folder's"
+        );
+        assert_eq!(p.listing.len(), 1);
+    }
+    let listed = app
+        .dispatch(&Invocation::with_args(
+            "entries",
+            &serde_json::json!({ "location": "here://server/there" }),
+        ))
+        .unwrap();
+    let Outcome::Value(listed) = listed else {
+        panic!("{listed:?}")
+    };
+    assert_eq!(listed["total"], 1, "{listed}");
+}

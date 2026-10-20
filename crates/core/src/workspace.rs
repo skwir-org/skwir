@@ -697,6 +697,17 @@ impl Pane {
     /// cursor was on, is kept for the step left, and the entry the cursor
     /// was on when `pos` was left is selected again once the listing has
     /// it, as a link followed and gone back from expects.
+    /// Put `location` in place of the current step of `history`: where
+    /// the location shown said it is reached (`ListingEvent::Redirect`).
+    pub(crate) fn replace_here(&mut self, location: Location) {
+        if let Some(step) = self.history.get_mut(self.history_pos) {
+            *step = location;
+        } else {
+            self.history.push(location);
+            self.history_pos = self.history.len() - 1;
+        }
+    }
+
     pub(crate) fn go_to(&mut self, pos: usize, left: Option<EntryId>) {
         self.remember_left(self.history_pos, left);
         self.history_pos = pos;
@@ -1919,6 +1930,9 @@ impl Workspace {
                 r.applied += n;
                 r.panes_changed.push(p.id);
             }
+            if let Some(to) = p.listing.take_redirect() {
+                r.redirects.push((p.id, to));
+            }
             r.backlog |= p.backlog();
         }
         r
@@ -1938,6 +1952,9 @@ pub struct PumpReport {
     /// Events are still waiting: pump again soon, without waiting for the
     /// location to wake the caller (it already has).
     pub backlog: bool,
+    /// Panes whose location said it is reached at another
+    /// (`ListingEvent::Redirect`): `App::pump_report` shows it there.
+    pub redirects: Vec<(PaneId, Location)>,
 }
 
 #[cfg(test)]

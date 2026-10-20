@@ -227,6 +227,10 @@ pub enum ListingEvent {
     /// listing that may rest on either, so a run that walks takes back
     /// what an earlier one said.
     AsOf(Option<AsOf>),
+    /// The location is reached at another, which is shown instead, in
+    /// its place in the history: an address connected to a mount shows
+    /// the mounted folder (ADR-077). Sent once, as the last event.
+    Redirect(Location),
 }
 
 /// Called after events are queued so a sleeping UI can wake and pump.
@@ -938,6 +942,9 @@ pub struct Listing {
     /// Entries renamed since a holder last asked (`take_renamed`): each
     /// id before and after.
     renamed: Vec<(EntryId, EntryId)>,
+    /// Where the location said it is reached (`ListingEvent::Redirect`),
+    /// until its holder shows it (`take_redirect`).
+    redirect: Option<Location>,
 }
 
 impl Default for Listing {
@@ -962,6 +969,7 @@ impl Default for Listing {
             companions: None,
             owners: std::collections::HashSet::new(),
             renamed: Vec::new(),
+            redirect: None,
         }
     }
 }
@@ -1101,6 +1109,10 @@ impl Listing {
             ListingEvent::AsOf(as_of) => {
                 delta.any = self.as_of != as_of;
                 self.as_of = as_of;
+            }
+            ListingEvent::Redirect(location) => {
+                self.redirect = Some(location);
+                delta.any = true;
             }
         }
         for (moved, version) in [
@@ -1557,6 +1569,11 @@ impl Listing {
     /// selection) follows them.
     pub fn take_renamed(&mut self) -> Vec<(EntryId, EntryId)> {
         std::mem::take(&mut self.renamed)
+    }
+
+    /// Where the location said it is reached, once (`ListingEvent::Redirect`).
+    pub fn take_redirect(&mut self) -> Option<Location> {
+        self.redirect.take()
     }
 }
 

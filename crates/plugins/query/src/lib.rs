@@ -922,7 +922,8 @@ mod tests {
                 ListingEvent::Removed(_)
                 | ListingEvent::Renamed(_)
                 | ListingEvent::Changed
-                | ListingEvent::AsOf(_) => {}
+                | ListingEvent::AsOf(_)
+                | ListingEvent::Redirect(_) => {}
             }
         }
         names

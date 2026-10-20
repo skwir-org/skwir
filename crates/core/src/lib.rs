@@ -54,6 +54,7 @@ pub mod playing;
 pub mod plugin;
 pub mod preview;
 pub mod registry;
+pub mod remotes;
 pub mod scheduler;
 pub mod settings;
 pub mod system;

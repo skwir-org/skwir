@@ -255,7 +255,13 @@ impl Shell {
         let app = self.app.clone();
         let reading = of.clone();
         let along = current.clone();
-        self.off_thread(
+        let lane = of
+            .path()
+            .map_or(skwir_core::scheduler::Lane::SHARED, |path| {
+                skwir_core::fs::reach::lane(&path)
+            });
+        self.off_thread_in(
+            lane,
             "inside",
             move || app.places_in(&reading, along.as_ref(), hidden),
             move |shell, read, window, cx| {

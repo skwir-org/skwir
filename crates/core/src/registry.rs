@@ -578,6 +578,9 @@ pub struct Registry {
     pub schemes: Contributions<KeyBinding>,
     pub keepers: Contributions<Keeper>,
     pub aspects: Contributions<Aspect>,
+    /// What plugins know of the remotes mounted (ADR-077): each one's
+    /// address, name and thumbnails, by its mount point.
+    pub remotes: Contributions<crate::fs::reach::Known>,
     /// The names the user gave sidebar places (ADR-034), by group and
     /// `Place::key`: the sidebar publishes its arrangement's, so a tab, a
     /// toast and `tab.list` name a place as the sidebar does.
@@ -599,6 +602,7 @@ impl Default for Registry {
             schemes: Contributions::gated(Arc::clone(&gate)),
             keepers: Contributions::gated(Arc::clone(&gate)),
             aspects: Contributions::gated(Arc::clone(&gate)),
+            remotes: Contributions::gated(Arc::clone(&gate)),
             titles: RwLock::default(),
             gate,
         }
@@ -651,6 +655,7 @@ impl Registry {
         self.schemes.remove_owner(owner);
         self.keepers.remove_owner(owner);
         self.aspects.remove_owner(owner);
+        self.remotes.remove_owner(owner);
     }
 }
 

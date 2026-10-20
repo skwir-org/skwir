@@ -495,7 +495,12 @@ impl App {
                 if *id == tab.active {
                     active = panes.len();
                 }
-                panes.push(location.clone());
+                // A remote folder is kept as its address: a later start
+                // connects again (ADR-077).
+                panes.push(
+                    self.address_of(location)
+                        .unwrap_or_else(|| location.clone()),
+                );
             }
             if panes.is_empty() {
                 continue;

@@ -469,6 +469,13 @@ impl Shell {
             cx.notify();
         }));
         subs.push(cx.observe_pending_input(window, Self::on_pending_input));
+        // A server does not say what changed on it: the folders shown on a
+        // remote are read again as the window comes back (ADR-077).
+        subs.push(cx.observe_window_activation(window, |this, window, _| {
+            if window.is_window_active() {
+                this.app.refresh_remote();
+            }
+        }));
         // Anything else copied, here or in another application: Skwir's
         // own clipboard forgets the files it put on the system's.
         let shell = cx.entity().downgrade();
@@ -979,8 +986,55 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.off_thread_through(
+            skwir_core::scheduler::Lane::SHARED,
+            label,
+            cancel,
+            work,
+            then,
+            window,
+            cx,
+        );
+    }
+
+    /// [`Shell::off_thread`] for work that reads a path that may be a
+    /// remote's: in its lane (`fs::reach::lane`, ADR-077), so a server
+    /// that stopped answering holds only its own.
+    pub fn off_thread_in<T: Send + 'static>(
+        &self,
+        lane: skwir_core::scheduler::Lane,
+        label: &'static str,
+        work: impl FnOnce() -> T + Send + 'static,
+        then: impl FnOnce(&mut Shell, T, &mut Window, &mut Context<Shell>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.off_thread_through(
+            lane,
+            label,
+            self.app.lifetime().child(),
+            work,
+            then,
+            window,
+            cx,
+        );
+    }
+
+    /// [`Shell::off_thread_until`] in `lane`.
+    #[allow(clippy::too_many_arguments)] // reason: the lane beside off_thread_until's own
+    pub fn off_thread_through<T: Send + 'static>(
+        &self,
+        lane: skwir_core::scheduler::Lane,
+        label: &'static str,
+        cancel: skwir_core::CancelToken,
+        work: impl FnOnce() -> T + Send + 'static,
+        then: impl FnOnce(&mut Shell, T, &mut Window, &mut Context<Shell>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (tx, rx) = flume::bounded(1);
-        self.app.scheduler.spawn(
+        self.app.scheduler.spawn_in(
+            lane,
             skwir_core::scheduler::Priority::Visible,
             label,
             cancel,

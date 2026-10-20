@@ -53,6 +53,10 @@ pub enum Asker {
     /// A plan short of room where it writes (ADR-049): Cancel, or copy
     /// anyway.
     Room,
+    /// A connection to a server Skwir cannot vouch for (a host key never
+    /// seen, a certificate not trusted), or one an agent asked for
+    /// (ADR-077): Cancel, or connect.
+    Connection,
 }
 
 /// The names a plan found taken where it copies or moves (ADR-054), asked
@@ -835,12 +839,21 @@ impl App {
     /// Apply pending listing events on every pane. Returns the number applied.
     /// The UI calls this once per frame or on wake-up.
     pub fn pump(&self) -> usize {
-        self.workspace.write().pump()
+        self.pump_report().applied
     }
 
-    /// Like `pump`, and says which panes changed.
+    /// Like `pump`, and says which panes changed. A pane whose location
+    /// said it is reached at another (an address connected, ADR-077)
+    /// shows that one in its place.
     pub fn pump_report(&self) -> crate::workspace::PumpReport {
-        self.workspace.write().pump_report()
+        let report = self.workspace.write().pump_report();
+        for (pane, to) in &report.redirects {
+            let shown = self.show(*pane, to, |p| p.replace_here(to.clone()));
+            if let Err(error) = shown {
+                tracing::warn!(%to, "cannot show where a location leads: {error:#}");
+            }
+        }
+        report
     }
 
     /// Wait until `pane`'s listing is complete or failed, at most
@@ -892,7 +905,7 @@ impl App {
             !crate::scheduler::on_window_thread(),
             "a location is listed without showing it for a script or an agent, never in the window"
         );
-        let open = self.open_location(location)?;
+        let mut open = self.open_location(location)?;
         let deadline = std::time::Instant::now() + 3 * LISTED_WITHIN;
         let mut listing = Listing::default();
         while !listing.is_complete() && listing.error().is_none() {
@@ -900,6 +913,12 @@ impl App {
                 break;
             };
             listing.apply(event);
+            // An address connected lists the folder it is (ADR-077).
+            if let Some(to) = listing.take_redirect() {
+                open.close();
+                open = self.open_location(&to)?;
+                listing = Listing::default();
+            }
         }
         if let Some(error) = listing.error() {
             let error = error.to_owned();

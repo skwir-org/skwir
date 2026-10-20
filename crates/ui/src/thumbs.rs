@@ -183,6 +183,12 @@ impl Shell {
             let Some(path) = pane.path_of(id) else {
                 return ThumbView::Unavailable;
             };
+            // A remote's files are read for a picture only as its rule
+            // says (ADR-077): a picture made already is shown all the same.
+            let bytes = e.metadata.value(keys::SIZE).and_then(skwir_core::Value::as_u64);
+            if !self.app.shows_thumbnail(&path, bytes) {
+                return ThumbView::Unavailable;
+            }
             // A link's picture is its target's; a pipe or a device has none.
             let Some(content) = e.content(&path) else {
                 return ThumbView::Unavailable;
@@ -231,6 +237,9 @@ impl Shell {
         let key = req.key();
         if let Some(img) = self.thumbs.get(&key) {
             return ThumbView::Ready(img);
+        }
+        if !self.app.shows_thumbnail(&req.entry.path, None) {
+            return ThumbView::Unavailable;
         }
         self.thumb_asked(key, req)
     }

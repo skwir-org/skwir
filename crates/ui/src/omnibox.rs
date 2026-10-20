@@ -389,7 +389,8 @@ impl Shell {
             let app = Arc::clone(&self.app);
             let asked = folder.clone();
             let stop = cancel.clone();
-            self.off_thread_until(
+            self.off_thread_through(
+                skwir_core::fs::reach::lane(&folder),
                 "address-complete",
                 cancel,
                 move || complete::folders(&app, &asked, show_hidden, &stop),

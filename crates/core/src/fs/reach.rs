@@ -54,6 +54,49 @@ impl Remote {
     }
 }
 
+/// What a plugin knows of a remote that the mount table does not say
+/// (ADR-077): its address, its name, what is shown of it unasked. Kept by
+/// its mount point in `Registry::remotes`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Known {
+    /// Where its paths start (`Remote::point`).
+    pub point: PathBuf,
+    /// Its address (`sftp://me@example.com/`): what a folder there is
+    /// kept as (tabs, the session), and opened by again once let go of.
+    pub address: Option<crate::location::Location>,
+    /// What the user calls it: `me@example.com`, `photos on nas`.
+    pub label: String,
+    pub thumbnails: Thumbnails,
+}
+
+/// Which files of a remote show a thumbnail unasked, which reads them
+/// across the network: the user's choice for it, else what its plugin
+/// found (Always on the local network). A remote no plugin knows shows
+/// none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Thumbnails {
+    #[default]
+    Never,
+    /// Files up to [`Thumbnails::SMALL`].
+    Small,
+    Always,
+}
+
+impl Thumbnails {
+    /// The largest file a remote whose thumbnails are Small files shows
+    /// one of: a phone's photograph.
+    pub const SMALL: u64 = 4 << 20;
+
+    /// Whether a file of `size` bytes (`None`: not known yet) shows one.
+    pub fn shows(self, size: Option<u64>) -> bool {
+        match self {
+            Thumbnails::Never => false,
+            Thumbnails::Small => size.is_some_and(|size| size <= Thumbnails::SMALL),
+            Thumbnails::Always => true,
+        }
+    }
+}
+
 /// The remote holding `path`, if one does: by the path's text, so a path
 /// reached through a link elsewhere is told by its folder's device once
 /// opened ([`of_device`]).

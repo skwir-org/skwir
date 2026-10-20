@@ -24,7 +24,7 @@ use crate::entry::FileId;
 use crate::location::Waker;
 use crate::lru::ByteLru;
 use crate::op::EntryRef;
-use crate::scheduler::{Priority, Scheduler};
+use crate::scheduler::{Lane, Priority, Scheduler};
 
 /// A decoded RGBA8 image, straight rows, no padding.
 #[derive(Clone, Debug)]
@@ -201,6 +201,9 @@ struct Queued {
     key: Key,
     req: ThumbRequest,
     seq: u64,
+    /// Where its file is read: a remote's lane, or the shared one
+    /// (ADR-077). A worker takes requests of its own lane only.
+    lane: Lane,
     /// Where it goes on from once set aside ([`Busy`]): the provider that
     /// was busy, and whether one that makes thumbnails tried before it.
     /// What ran before is not asked again.
@@ -251,6 +254,9 @@ struct State {
     skipped: u64,
     /// Workers taking requests now (`RUNNING_AT_MOST`).
     running: usize,
+    /// Workers taking a remote's requests, by lane: one each, which
+    /// leaves the lane's other turn to its listing and previews.
+    remote: std::collections::HashMap<Lane, usize>,
     /// The memory the thumbnails shown may take, as set: what the UI
     /// keeps of what it draws. This keeps a quarter of it, what was made
     /// and not taken yet.
@@ -293,6 +299,7 @@ impl Thumbnails {
                 decoded: 0,
                 skipped: 0,
                 running: 0,
+                remote: std::collections::HashMap::new(),
                 budget: 64 << 20,
             }),
             scheduler,
@@ -454,14 +461,16 @@ impl Thumbnails {
         );
         s.seq += 1;
         let seq = s.seq;
+        let lane = crate::fs::reach::lane(&req.entry.path);
         s.queue.push(Queued {
             key,
             req,
             seq,
+            lane,
             resume: None,
         });
         drop(s);
-        self.spawn_worker(priority);
+        self.spawn_worker(priority, lane);
         ThumbState::Pending
     }
 
@@ -502,19 +511,28 @@ impl Thumbnails {
     /// One more worker taking requests, unless as many run as may: a
     /// thumbnailer can hold one for seconds (a video, a document), and a
     /// grid of them must leave some to list folders and read previews.
-    fn spawn_worker(self: &Arc<Self>, priority: Priority) {
+    fn spawn_worker(self: &Arc<Self>, priority: Priority, lane: Lane) {
         {
             let mut s = self.state.lock();
-            if s.running >= self.running_at_most() {
-                return;
+            if lane.is_shared() {
+                if s.running >= self.running_at_most() {
+                    return;
+                }
+                s.running += 1;
+            } else {
+                let running = s.remote.entry(lane).or_default();
+                if *running >= 1 {
+                    return;
+                }
+                *running += 1;
             }
-            s.running += 1;
         }
         let this = Arc::clone(self);
         self.scheduler
-            .spawn(priority, "thumb", self.lifetime.child(), move || {
-                // Every request queued meanwhile, one after the other.
-                while this.work_one() {}
+            .spawn_in(lane, priority, "thumb", self.lifetime.child(), move || {
+                // Every request of its lane queued meanwhile, one after the
+                // other.
+                while this.work_one(lane) {}
             });
     }
 
@@ -526,25 +544,25 @@ impl Thumbnails {
     /// Queue again what was set aside for a busy provider, which can run
     /// now, and have workers take it.
     fn unpark(self: &Arc<Self>) {
-        let priorities: Vec<Priority> = {
+        let priorities: Vec<(Priority, Lane)> = {
             let mut s = self.state.lock();
             let parked = std::mem::take(&mut s.parked);
             let priorities = parked
                 .iter()
-                .filter_map(|q| s.in_flight.get(&q.key).map(|f| f.priority))
+                .filter_map(|q| s.in_flight.get(&q.key).map(|f| (f.priority, q.lane)))
                 .collect();
             s.queue.extend(parked);
             priorities
         };
-        for priority in priorities {
-            self.spawn_worker(priority);
+        for (priority, lane) in priorities {
+            self.spawn_worker(priority, lane);
         }
     }
 
     /// Take the best live request (visible first, most recent first) and run
     /// the providers on it. False once nothing is queued: the worker stops
     /// taking requests.
-    fn work_one(self: &Arc<Self>) -> bool {
+    fn work_one(self: &Arc<Self>, lane: Lane) -> bool {
         let (key, req, cancel, generation, seq, resume) = {
             let mut s = self.state.lock();
             // The requests no frame asked for lately, or cancelled, go in
@@ -572,10 +590,18 @@ impl Thumbnails {
             let best = queue
                 .iter()
                 .enumerate()
+                .filter(|(_, q)| q.lane == lane)
                 .min_by_key(|(_, q)| (in_flight[&q.key].priority, std::cmp::Reverse(q.seq)))
                 .map(|(i, _)| i);
             let Some(i) = best else {
-                s.running = s.running.saturating_sub(1);
+                if lane.is_shared() {
+                    s.running = s.running.saturating_sub(1);
+                } else if let Some(running) = s.remote.get_mut(&lane) {
+                    *running = running.saturating_sub(1);
+                    if *running == 0 {
+                        s.remote.remove(&lane);
+                    }
+                }
                 return false;
             };
             let q = s.queue.swap_remove(i);
@@ -643,6 +669,7 @@ impl Thumbnails {
                 key,
                 req,
                 seq,
+                lane,
                 resume: Some(Resume {
                     provider,
                     providers: generation,
