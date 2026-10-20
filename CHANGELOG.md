@@ -17,6 +17,9 @@
   headings they fall under, never two steps for a level skipped. A
   book's contents no longer list the chapter's own headings again above
   its chapters.
+- **Scripts and agents**: a file selected, a folder opened or a sort
+  changed by `skwir cmd` or an agent shows in the window at once, not at
+  the next move of the mouse.
 - **A search of the whole disk** that plocate answers says how old its
   answer is ("as of Yesterday 03:00", plocate's database at its last
   update): a file made or renamed since is not in it. Agents and scripts

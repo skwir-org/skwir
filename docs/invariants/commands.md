@@ -96,6 +96,11 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   up applies nothing and says what is taken.
 - A path given from outside the window is absolute
   (`os_path::absolute`), never read against the window's working folder.
+- What a script's or an agent's command changes shows at once: it runs off
+  the window's thread, where nothing wakes the window, so the channel
+  wakes it (`App::wake`) after any command that does more than read
+  (`control::dispatched`). A `ui.*` command reaches the window through
+  `App::request_front`, which wakes it too.
 
 ## The permission layer (ADR-044)
 

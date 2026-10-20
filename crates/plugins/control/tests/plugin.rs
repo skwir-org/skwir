@@ -124,3 +124,41 @@ fn turned_on_where_it_cannot_listen_it_says_why() {
     );
     assert!(!runtime.path().join("skwir").join("control.sock").exists());
 }
+
+/// A script's or an agent's command that changes what the window shows
+/// wakes it, so the window shows it at once rather than at the next input;
+/// one that only reads does not.
+#[test]
+fn a_command_that_changes_the_window_wakes_it() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+    app.commands
+        .register::<NoArgs, _>("test", "test.show", "Show", "Shows", |_, _| {
+            Ok(Outcome::Done)
+        })
+        .shows();
+    app.commands
+        .register::<NoArgs, _>("test", "test.read", "Read", "Reads", |_, _| {
+            Ok(Outcome::Value(json!(42)))
+        })
+        .reads();
+    let woken = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&woken);
+    app.set_waker(Some(Arc::new(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+    })));
+    let run = |name: &str| {
+        skwir_plugin_control::run(
+            &app,
+            &skwir_core::command::Invocation::new(name),
+            PlanMode::Apply,
+            &|| false,
+        )
+        .unwrap()
+    };
+    run("test.read");
+    assert_eq!(woken.load(Ordering::SeqCst), 0, "a read draws nothing");
+    run("test.show");
+    assert_eq!(woken.load(Ordering::SeqCst), 1);
+}

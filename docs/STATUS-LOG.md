@@ -1930,3 +1930,15 @@ each fixed where it was:
   First section › First paragraph and Second chapter › Notes; the
   Markdown file (`##`, `####`, `###`, `##`) indented 0, 1, 1, 0. Not
   checked: a real book or PDF, DjVu (its helpers already walk a tree).
+
+**What a script selects shows at once.** In that check, a file selected by
+`skwir cmd select` showed only when the pointer next moved: a core command
+run by the control channel changes the workspace off the window's thread
+and nothing woke the window (a `ui.*` command is handed over through
+`App::request_front`, which wakes it). `control::dispatched` now wakes the
+window after any command that does more than read. Waking in
+`CommandRegistry::dispatch` instead was ruled out: callers wait on a wake
+as a signal that work they started finished (`settings.apply`'s tests
+wait for its save that way). Test:
+`a_command_that_changes_the_window_wakes_it`; in the window, select,
+contents, select, contents, each showed without input.

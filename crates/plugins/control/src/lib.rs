@@ -522,7 +522,19 @@ fn dispatched(
     mode: PlanMode,
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<Answer> {
-    let outcome = match app.dispatch(invocation) {
+    let outcome = app.dispatch(invocation);
+    // What it changed shows at once: run here, off the window's thread, a
+    // command that selects, goes somewhere or sorts changes what the window
+    // shows and wakes nothing, so the window showed it only at the next
+    // input. One that only reads costs no draw.
+    if app
+        .commands
+        .get(&invocation.name)
+        .is_some_and(|spec| spec.effect != Effect::Reads)
+    {
+        app.wake();
+    }
+    let outcome = match outcome {
         // The selection is the window's: a script or an agent names files.
         Err(error) if skwir_core::command::is_nothing_selected(&error) => {
             anyhow::bail!("nothing is selected: name the files in `entries`, by absolute path")
