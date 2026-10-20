@@ -239,8 +239,8 @@ package-windows:
     tools/package/windows-check.sh
 
 # macOS's build to try, made on Linux (ADR-075): skwir.app for Apple silicon,
-# signed ad hoc, zipped into target/package/macos, then looked over (nothing
-# here runs it). Needs Apple's SDK: `just macos-sdk` first.
+# signed ad hoc, zipped and in a disk image in target/package/macos, then
+# looked over (nothing here runs it). Needs Apple's SDK: `just macos-sdk`.
 package-macos:
     tools/package/macos.sh
     tools/package/macos-check.sh

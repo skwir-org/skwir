@@ -52,8 +52,9 @@ called `taxes 2026` can be `folder a`.
 ## macOS
 
 A build to try is made on Linux for Apple silicon (ADR-075, `just
-package-macos`): `skwir-<version>-macos-arm64.zip`, holding `skwir.app`, for
-macOS 11 or later. It is signed ad hoc but not notarized, so macOS refuses
+package-macos`): `skwir-<version>-macos-arm64.dmg`, a disk image to drag
+`skwir.app` from to Applications, or the same in a zip,
+`skwir-<version>-macos-arm64.zip`; for macOS 11 or later. It is signed ad hoc but not notarized, so macOS refuses
 it at first: open it once from System Settings, Privacy & Security ("Open
 Anyway"), or run `xattr -dr com.apple.quarantine skwir.app`. It reads PDFs,
 DjVu and 3D models; archives, audio and video, and the Poppler and MuPDF

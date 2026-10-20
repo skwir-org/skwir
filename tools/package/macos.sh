@@ -2,9 +2,9 @@
 # skwir for macOS, made on Linux (ADR-075): its programs built for Apple
 # silicon against Apple's SDK, which `just macos-sdk` downloads, compiled
 # by clang and linked by LLVM's ld64.lld through xmac's wrappers; then
-# `skwir.app`, signed ad hoc, zipped. Not notarized: macOS asks before it
-# opens. tools/package/macos-check.sh looks it over; nothing here can run
-# it.
+# `skwir.app`, signed ad hoc, zipped and in a disk image. Not notarized:
+# macOS asks before it opens. tools/package/macos-check.sh looks both over;
+# nothing here can run them.
 #
 # What the bundle holds: tools/package/macos/programs in Contents/MacOS
 # (skwir and the helpers that carry no library of their own), PDFium in
@@ -56,7 +56,7 @@ cargo build --profile dist --target "$target" $(printf -- '-p %s ' $programs)
 out="$root/target/package/macos"
 name="skwir-$version-macos-arm64"
 app="$out/skwir.app"
-rm -rf "${app:?}" "$out/$name.zip" "$out/work"
+rm -rf "${app:?}" "$out/$name.zip" "$out/$name.dmg" "$out/work"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources/licenses" "$out/work"
 for program in $programs; do
     cp "$CARGO_TARGET_DIR/$target/dist/$program" "$app/Contents/MacOS/"
@@ -125,6 +125,22 @@ with zipfile.ZipFile(out / f"{name}.zip", "w", zipfile.ZIP_DEFLATED, compresslev
             entry.external_attr = (0o100755 if path.stat().st_mode & 0o111 else 0o100644) << 16
             zipped.writestr(entry, path.read_bytes())
 EOF
+
+# The disk image: skwir.app beside a link to Applications, to drag it to,
+# on an HFS+ volume made here (hfsprogs' mkfs.hfsplus), filled by
+# libdmg-hfsplus's `hfsplus` (modes and links kept) and compressed by its
+# `dmg`, as Firefox's are made on Linux. The volume has a fifth to spare.
+mkdir -p "$out/work/volume"
+cp -a "$app" "$out/work/volume/"
+ln -s /Applications "$out/work/volume/Applications"
+size="$(du -sm "$out/work/volume" | cut -f1)"
+truncate -s "$((size + size / 5 + 16))M" "$out/work/skwir.hfs"
+mkfs.hfsplus -v skwir "$out/work/skwir.hfs" >/dev/null
+hfsplus "$out/work/skwir.hfs" addall "$out/work/volume/" --symlinks=clone_link >/dev/null
+dmg build "$out/work/skwir.hfs" "$out/$name.dmg" >/dev/null
 rm -rf "${out:?}/work"
-(cd "$out" && sha256sum "$name.zip" > "$name.zip.sha256")
-echo "made: $out/$name.zip"
+
+for artifact in "$name.zip" "$name.dmg"; do
+    (cd "$out" && sha256sum "$artifact" > "$artifact.sha256")
+    echo "made: $out/$artifact"
+done

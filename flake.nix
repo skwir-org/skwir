@@ -260,6 +260,26 @@
           text = ''exec bun ${src}/xmac.ts "$@"'';
         };
 
+      # libdmg-hfsplus, Mozilla's (github.com/mozilla/libdmg-hfsplus,
+      # GPL-3.0), which Firefox's macOS disk images are made with on Linux:
+      # `hfsplus` fills an HFS+ volume (made by hfsprogs' mkfs.hfsplus) with
+      # a folder, its modes and links kept, and `dmg build` compresses it
+      # into a disk image (tools/package/macos.sh). Built from the commit
+      # pinned here.
+      packages.libdmg-hfsplus = stdenv.mkDerivation {
+        pname = "libdmg-hfsplus";
+        version = "0-unstable-2026-10-14";
+        src = pkgs.fetchFromGitHub {
+          owner = "mozilla";
+          repo = "libdmg-hfsplus";
+          rev = "e18579b391950589b9ed16ee630c54ce4319bb29";
+          hash = "sha256-fQfGPNBNNRzAzhbfjDdk4rOa5tTA/cHsFo19YBKyzyU=";
+        };
+        nativeBuildInputs = [pkgs.cmake];
+        buildInputs = [pkgs.zlib pkgs.bzip2 pkgs.openssl pkgs.lzfse];
+        meta.license = lib.licenses.gpl3Only;
+      };
+
       # For building for macOS from Linux: xmac, its downloads kept in the
       # cache rather than the folder it runs in (its default), and the
       # compiler and linker its wrappers call (`XMAC_CLANG`, `XMAC_LLD`):
@@ -270,10 +290,18 @@
         XMAC_CLANG = "${pkgs.llvmPackages.clang-unwrapped}/bin/clang";
         XMAC_LLD = "${pkgs.lld}/bin/ld64.lld";
         # What tools/package/macos.sh also needs: llvm-ar and llvm-otool,
-        # rsvg-convert for the icon, rcodesign to sign the bundle ad hoc.
+        # rsvg-convert for the icon, rcodesign to sign the bundle ad hoc,
+        # mkfs.hfsplus and libdmg-hfsplus for the disk image.
         nativeBuildInputs =
           old.nativeBuildInputs
-          ++ [self.packages.${system}.xmac pkgs.llvmPackages.llvm pkgs.librsvg pkgs.rcodesign];
+          ++ [
+            self.packages.${system}.xmac
+            self.packages.${system}.libdmg-hfsplus
+            pkgs.llvmPackages.llvm
+            pkgs.librsvg
+            pkgs.rcodesign
+            pkgs.hfsprogs
+          ];
         shellHook =
           old.shellHook
           + ''

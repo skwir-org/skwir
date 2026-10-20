@@ -131,8 +131,8 @@ builds it with cargo-zigbuild into `target/package/windows` (a zip and an
 installer, each with its `.sha256`) and tries both under Wine. It is not
 part of the release bundle, and nothing uploads it. A macOS build to try
 (ADR-075) is made the same way: `just macos-sdk` once (Apple's licence is
-yours to accept), then `just package-macos`, into `target/package/macos`,
-looked over but never run.
+yours to accept), then `just package-macos`, into `target/package/macos` (a
+zip and a disk image, each with its `.sha256`), looked over but never run.
 
 ## Publish on the AUR
 

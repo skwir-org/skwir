@@ -111,11 +111,12 @@ written on Linux and never run.
 
 ## Amendments
 
-- 2026-10-20: vendor patch 0034 is for builds to try only. Once a Windows
-  environment builds the releases, the patch is dropped (with its row and
-  section in `vendor/zed/README.skwir.md`) and gpui compiles its shaders
-  ahead with fxc, as upstream does: no compiling at each start (the
-  user's decision).
+- 2026-10-20: vendor patch 0034 stays. It acts only where gpui is built
+  for Windows on another system (the build script sets
+  `gpui_shaders_at_start` only then); built on Windows, gpui compiles its
+  shaders ahead with fxc, as upstream does, and the patch's code is not
+  compiled. So a release built on Windows compiles nothing at each start,
+  and builds made on Linux keep working (the user's decision).
 - 2026-10-20 (ADR-075): what is shipped names no folder of the machine
   that built it (`/cargo`, `/rust`, `/skwir` in a panic's location and
   C's `__FILE__`), which the check now looks for; the package is built in

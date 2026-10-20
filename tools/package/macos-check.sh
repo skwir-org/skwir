@@ -1,7 +1,9 @@
 #!/bin/sh
 # What tools/package/macos.sh made, looked over on Linux (ADR-075). Nothing
 # here runs a Mac's program, so this reads what can be read: the zip holds
-# skwir.app alone, its programs executable; Info.plist names what is there;
+# skwir.app alone, its programs executable, and the disk image the same
+# bundle, file for file, beside a link to Applications; Info.plist names
+# what is there;
 # the icon holds every side; each program is arm64, for macOS 11 or later,
 # linked to the system's libraries alone; the bundle's seal verifies
 # (rcodesign); no program names a folder of the machine that built it.
@@ -9,7 +11,7 @@
 #
 #     tools/package/macos-check.sh [version]
 set -eu
-if ! command -v rcodesign >/dev/null || ! command -v llvm-otool >/dev/null; then
+if ! command -v rcodesign >/dev/null || ! command -v llvm-otool >/dev/null || ! command -v hfsplus >/dev/null; then
     exec nix develop "$(cd "$(dirname "$0")/../.." && pwd)#macos" --command "$0" "$@"
 fi
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -18,7 +20,9 @@ version="${1:-$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)}"
 name="skwir-$version-macos-arm64"
 made="$root/target/package/macos"
 programs="$(grep -v '^#' tools/package/macos/programs)"
-(cd "$made" && sha256sum --quiet -c "$name.zip.sha256")
+for artifact in "$name.zip" "$name.dmg"; do
+    (cd "$made" && sha256sum --quiet -c "$artifact.sha256")
+done
 
 scratch="$HOME/.cache/skwir-tests/macos-check"
 rm -rf "${scratch:?}"
@@ -60,6 +64,25 @@ while at < len(icns):
 missing = {"icp4", "icp5", "icp6", "ic07", "ic08", "ic09", "ic10", "ic11", "ic12", "ic13", "ic14"} - kinds
 assert not missing, f"the icon lacks {missing}"
 print(f"ok: the zip holds skwir.app, {len(entries)} files; Info.plist and its icon ({len(kinds)} sides) read")
+EOF
+
+# The disk image, opened with the tools that made it: the same bundle, each
+# file's bytes and mode, and the link to Applications.
+volume="$scratch/from the disk image"
+mkdir -p "$volume"
+dmg extract "$made/$name.dmg" "$scratch/skwir.hfs" >/dev/null
+hfsplus "$scratch/skwir.hfs" extractall / "$volume/" >/dev/null
+python3 - "$unpacked/skwir.app" "$volume" <<'EOF'
+import hashlib, os, pathlib, sys
+zipped, volume = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+assert {p.name for p in volume.iterdir()} == {"skwir.app", "Applications"}, sorted(volume.iterdir())
+assert os.readlink(volume / "Applications") == "/Applications", "no link to Applications"
+def tree(root):
+    return {str(p.relative_to(root)): (p.stat().st_mode & 0o111 != 0, hashlib.sha256(p.read_bytes()).hexdigest())
+            for p in root.rglob("*") if p.is_file()}
+ours, theirs = tree(zipped), tree(volume / "skwir.app")
+assert ours == theirs, f"the disk image's bundle differs: {sorted(set(ours.items()) ^ set(theirs.items()))[:5]}"
+print(f"ok: the disk image holds the same skwir.app ({len(ours)} files, modes kept) beside a link to Applications")
 EOF
 
 app="$unpacked/skwir.app/Contents"

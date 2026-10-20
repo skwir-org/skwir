@@ -310,7 +310,7 @@ Left:
   shaders as the renderer starts (vendor patch 0034).
 - The macOS package (ADR-075) is made on Linux too, for Apple silicon,
   against Apple's SDK (`just macos-sdk`): `skwir.app`, signed ad hoc,
-  zipped (`tools/package/macos.sh`), looked over by
+  zipped and in a disk image (`tools/package/macos.sh`), looked over by
   `tools/package/macos-check.sh` (its programs, libraries and seal); never
   run **(5b)**. gpui makes its Metal bindings for the target and compiles
   its shaders as the renderer starts (vendor patch 0035). Everything above

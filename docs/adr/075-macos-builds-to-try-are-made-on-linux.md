@@ -39,15 +39,22 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
 3. **No library of the building system's:** the target's `pkg-config` is
    `false`, so the dev shell's, which would hand over Linux's SQLite, is not
    asked; macOS's own is linked.
-4. **`skwir.app`, zipped** (`tools/package/macos.sh`, `just package-macos`):
+4. **`skwir.app`, zipped and in a disk image** (`tools/package/macos.sh`,
+   `just package-macos`):
    the programs of `tools/package/macos/programs` in `Contents/MacOS`,
    PDFium in `Contents/Frameworks` (ADR-041), in `Contents/Resources` the
    icon (an `.icns` of every side, drawn from the UI's own), the type
    database (ADR-037) and the licences: skwir's, the crates' notices for
    macOS (`tools/package/notices/macos`), PDFium's. Signed ad hoc by
    rcodesign, as Apple silicon asks of anything it runs; not notarized.
+   The disk image holds the bundle beside a link to Applications, an HFS+
+   volume made by hfsprogs' mkfs.hfsplus, filled and compressed by
+   Mozilla's libdmg-hfsplus (packaged in the flake), as Firefox's are made
+   on Linux (`hdiutil` is macOS's alone).
 5. **Looked over on Linux** (`tools/package/macos-check.sh`): the zip holds
-   the bundle alone, programs executable; Info.plist names what is there;
+   the bundle alone, programs executable; the disk image, opened by the
+   tools that made it, the same bundle file for file, modes kept, beside
+   its link; Info.plist names what is there;
    the icon holds every side; each program is arm64, for macOS 11, linked
    to the system's libraries alone; the seal holds (Info.plist and every
    resource as signed, each program signed).
@@ -62,8 +69,10 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
 
 - **Each start compiles gpui's shaders** from their source (Metal's
   compiler), as a Windows build to try does (ADR-074). Not measured: no
-  Mac. Patch 0035 serves builds to try only, as 0034 does: once a Mac
-  builds the releases, it is dropped and the shaders are compiled ahead.
+  Mac. Patch 0035 stays, as 0034 does: built on a Mac, gpui compiles its
+  shaders ahead as upstream does and the patch's code is not compiled, so
+  a release built there compiles nothing at each start (the user's
+  decision).
 - **macOS asks before opening it:** not notarized, it is "from an
   unidentified developer"; System Settings, Privacy & Security, Open
   Anyway (macOS 15), or `xattr -dr com.apple.quarantine skwir.app`.

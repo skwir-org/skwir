@@ -513,8 +513,9 @@ Wine with Microsoft's d3dcompiler_47 (winetricks), not yet measured on
 Windows. Wine's own compiler, vkd3d's, stops on the shadow shader ("struct
 store rhs is not HLSL_IR_LOAD"), as it does for the renderer's test above.
 
-It serves builds to try only (ADR-074): once a Windows environment builds
-the releases, drop it, and the shaders are compiled ahead again.
+It acts only where gpui is built on another system: built on Windows, the
+build script compiles the shaders ahead and the patch's code is not
+compiled. Kept for the Windows builds made on Linux (ADR-074).
 
 ### 0035: Apple shaders at start
 
@@ -527,8 +528,9 @@ an unconditional build dependency. Built on another system
 and compiled as the renderer starts by macOS's own Metal compiler, the
 `runtime_shaders` path. Built on a Mac, nothing changes.
 
-Like 0034, it serves builds to try only (ADR-075): once a Mac builds the
-releases, drop it.
+Like 0034, it acts only where gpui is built on another system: built on a
+Mac, the shaders are compiled ahead and the patch's code is not compiled.
+Kept for the macOS builds made on Linux (ADR-075).
 
 ## Adding or changing a patch
 
