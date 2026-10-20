@@ -95,4 +95,4 @@ macOS compiled.
 - Not done: completing a place in a search's text (its words are the
   query's); a provider other than tags (`trash:` and `recent:` hold no
   places to type).
-- Checked: see `docs/PLAN.md`, "Address completion".
+- Checked: see `docs/STATUS-LOG.md`, 2026-10-19, "Address completion".

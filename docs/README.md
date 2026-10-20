@@ -21,8 +21,9 @@
   people and agents alike; [invariants/](invariants/): the binding rules
   of each area.
 - [Decisions](adr/README.md): the ADRs, one per door closed.
-- [PLAN.md](PLAN.md): phases, gates and status;
-  [STATUS-LOG.md](STATUS-LOG.md): older status notes.
+- [PLAN.md](PLAN.md): phases, gates, status and what is left;
+  [STATUS-LOG.md](STATUS-LOG.md): the dated record of what was built,
+  measured and checked.
 - [PORTING.md](PORTING.md): what is still Linux-only;
   [HELP-WANTED.md](HELP-WANTED.md): helping with macOS and Windows.
 - Design records and measurements: [the preview frame](preview-frame.md),

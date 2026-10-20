@@ -9,9 +9,10 @@ working in an area, also read that area's rules (see
 
 ## Where to look
 
-- `docs/PLAN.md`: phases, gates, current status and recorded deviations.
-  It also describes planned work: check the source before assuming a
-  crate, command or API exists.
+- `docs/PLAN.md`: phases, gates, current status, recorded deviations and
+  what is left. It also describes planned work: check the source before
+  assuming a crate, command or API exists. `docs/STATUS-LOG.md` is the
+  dated record behind it: what was built, measured and checked.
 - `docs/adr/`: decisions that closed a door ([index](docs/adr/README.md)).
   ADR-000 holds the principles and budgets.
 - `docs/invariants/`: the binding rules of each area.
@@ -161,7 +162,9 @@ working in an area, also read that area's rules (see
   variable before threads exist). Never weaken the workspace lint.
 - **Decisions.** Anything that closes a door gets an ADR in `docs/adr/`.
   Every phase updates its status in `docs/PLAN.md`, deviations included,
-  honestly.
+  honestly, and what it leaves in PLAN.md's "What is left"; the detail
+  (measurements, what was checked and how) goes in a dated entry at the
+  end of `docs/STATUS-LOG.md`, not in the plan.
 
 ## Files and entries
 
