@@ -1964,3 +1964,19 @@ and `h3` stood under that row, choosing either one highlighted it; the
 Markdown file was listed as before. Not checked: a
 real book; a book whose contents name a chapter in words its heading
 does not share, whose title is then listed under its row.
+
+**A deletion's companions as a mark.** The question before a permanent
+deletion said a file's companion after its name in full ("+ IMG_….jpg.xmp",
+or "+ 2 companion files"), which never shrank: with each row's folder
+shown, the name it belonged to was cut to "…". Now a mark after the name
+says that companions go ("+ metadata" while the whole name fits beside
+it, else "+": `AdaptiveRow`, measured in prepaint), its tooltip each
+companion's path, and the name has the room first, cut only once the mark
+is "+" (`deleting::name`); a screen reader hears the companions' names.
+Test: `the_rows_say_what_each_is_and_holds` (the paths kept, the tooltip's
+text). In a window (debug build, Xvfb, synthetic files with XMP, `._` and
+TagSpaces companions): in one folder, short names wore "+ metadata" and a
+70-character name was cut before a "+"; across two folders (a search),
+two long names were cut before "+" and "short.jpg" kept "+ metadata";
+pointed at, the marks listed one and three full paths. Not checked: what
+a screen reader says of a row (`just a11y-check`).

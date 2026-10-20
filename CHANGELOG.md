@@ -21,6 +21,10 @@
 - **Scripts and agents**: a file selected, a folder opened or a sort
   changed by `skwir cmd` or an agent shows in the window at once, not at
   the next move of the mouse.
+- **Deleting permanently**: a file's sidecars (XMP, a Mac's `._` files,
+  TagSpaces' notes) show as a small "+ metadata" mark after its name, and
+  where they are when you point at it. A long name keeps the room: a
+  sidecar's name no longer cuts it to "…".
 - **A search of the whole disk** that plocate answers says how old its
   answer is ("as of Yesterday 03:00", plocate's database at its last
   update): a file made or renamed since is not in it. Agents and scripts

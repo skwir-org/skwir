@@ -427,7 +427,10 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 - **A question before deleting lists what goes** (`deleting.rs`): each
   item as the user knows it (an item of a trash by its own name, from
   where it came, read from its record), what it is, what it weighs or a
-  folder holds, and the companion files that go with it; its folder on
+  folder holds, and whether companion files go with it: a mark after its
+  name, "+ metadata" while the whole name fits beside it, else "+"
+  (`AdaptiveRow`), which says where they are when pointed at. The name
+  has the room first: a companion's name never cuts it. Its folder on
   each row only when they are not all in one, which the line under the
   list says once with what they hold in all. The rows come from the
   plan's paths at once and never wait for the disk: a worker reads the

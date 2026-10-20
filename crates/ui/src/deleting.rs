@@ -24,6 +24,7 @@ use skwir_core::{CancelToken, Plan};
 use skwir_platform::calendar::Calendar;
 
 use crate::controls;
+use crate::elements::adaptive::AdaptiveRow;
 use crate::elements::clip::clipped;
 use crate::format;
 use crate::modal::{ListMove, Rows};
@@ -84,7 +85,8 @@ struct Row {
     /// What a step that deletes nothing says it does: shown as it is.
     other: bool,
     kind: Option<Kind>,
-    companions: Vec<SharedString>,
+    /// The companion files deleted with it.
+    companions: Vec<PathBuf>,
     /// What a folder holds, its companions with it, counted so far.
     count: Option<Count>,
 }
@@ -223,7 +225,7 @@ impl Deleting {
                         row.folder = from.parent().map(|dir| written(dir, self.home.as_deref()));
                     }
                     row.kind = Some(facts.kind);
-                    row.companions = facts.companions.iter().map(|c| name_of(c)).collect();
+                    row.companions = facts.companions;
                 }
             }
             Found::Counted {
@@ -270,6 +272,21 @@ impl Deleting {
                 ),
             },
         }
+    }
+
+    /// What the mark after a row's name says when pointed at: the
+    /// companion files that go with it, each where it is, as the address
+    /// writes it. None when none goes.
+    fn deleted_with(&self, row: &Row) -> Option<SharedString> {
+        if row.companions.is_empty() {
+            return None;
+        }
+        let mut said = String::from("Deleted with it:");
+        for path in &row.companions {
+            said.push('\n');
+            said.push_str(&written(path, self.home.as_deref()));
+        }
+        Some(said.into())
     }
 
     /// Under the list: where the rows are, when one folder holds them all,
@@ -580,17 +597,16 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                 Some(Kind::Link) => Some("link"),
                 _ => None,
             };
-            let companions = match row.companions.as_slice() {
-                [] => None,
-                [one] => Some(format!("+ {one}")),
-                many => Some(format!("+ {}", format::count(many.len(), "companion file"))),
-            };
             let folder = row.folder.clone().filter(|_| listed.folders);
             let said = shell.a11y.then(|| {
+                let with = (!row.companions.is_empty()).then(|| {
+                    let names: Vec<_> = row.companions.iter().map(|c| name_of(c)).collect();
+                    format!("deleted with it: {}", names.join(", "))
+                });
                 [
                     Some(row.name.to_string()),
                     folder.as_ref().map(ToString::to_string),
-                    companions.clone(),
+                    with,
                     Some(weight.clone()),
                 ]
                 .into_iter()
@@ -622,25 +638,7 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                             .flex_none()
                             .children(glyph.map(|g| controls::glyph(g, theme.text_muted, 14.))),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .child(clipped(
-                                div().id(("deleting-name", at)).min_w_0().truncate(),
-                                row.name.clone(),
-                            ))
-                            .children(companions.map(|c| {
-                                div()
-                                    .flex_none()
-                                    .text_xs()
-                                    .text_color(theme.text_muted)
-                                    .child(c)
-                            })),
-                    )
+                    .child(name(at, &row.name, listed.deleted_with(row), theme))
                     .children(folder.map(|folder| {
                         clipped(
                             div()
@@ -669,6 +667,53 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
             )
         })
         .collect()
+}
+
+/// A row's name and, when companion files go with it, a mark after it
+/// that says where they are when pointed at (`with`): "+ metadata" while
+/// the whole name fits beside it, else "+", the name taking the room and
+/// cut only once the mark is that small.
+fn name(at: usize, name: &SharedString, with: Option<SharedString>, theme: &Theme) -> AnyElement {
+    let named = || {
+        clipped(
+            div().id(("deleting-name", at)).min_w_0().truncate(),
+            name.clone(),
+        )
+    };
+    let Some(with) = with else {
+        return div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .child(named())
+            .into_any_element();
+    };
+    let marked = |mark: &'static str| {
+        let with = with.clone();
+        div()
+            .w_full()
+            .h_full()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(named())
+            .child(
+                controls::badge(mark, theme.text_muted, theme)
+                    .id(("deleting-with", at))
+                    .tooltip(move |_, cx| crate::toolbar::tooltip(with.clone(), cx)),
+            )
+            .into_any_element()
+    };
+    div()
+        .flex_1()
+        .min_w_0()
+        .child(AdaptiveRow {
+            variants: vec![marked("+ metadata"), marked("+")],
+            height: ROWS.height,
+            chosen: None,
+        })
+        .into_any_element()
 }
 
 #[cfg(test)]
@@ -799,11 +844,19 @@ mod tests {
             weights,
             ["2.0 KB · 2 files", "500 B", "empty", "not there", "folder"]
         );
-        assert_eq!(listed.rows[1].companions, ["it's a photo.jpg.xmp"]);
+        let home = skwir_core::os_path::home();
+        let xmp = tmp.path().join("it's a photo.jpg.xmp");
+        assert_eq!(listed.rows[1].companions, std::slice::from_ref(&xmp));
+        assert_eq!(
+            listed.deleted_with(&listed.rows[1]).as_deref(),
+            Some(format!("Deleted with it:\n{}", written(&xmp, home.as_deref())).as_str()),
+            "the mark after its name says where its companions are"
+        );
+        assert_eq!(listed.deleted_with(&listed.rows[0]), None);
         // The companion goes too; the gone one is not there to count, so
         // the sum is no lower bound.
         assert_eq!(listed.summary(), "2.5 KB in 4 files and 3 folders");
-        let place = written(tmp.path(), skwir_core::os_path::home().as_deref());
+        let place = written(tmp.path(), home.as_deref());
         assert_eq!(listed.rows[1].folder.as_ref(), Some(&place));
         assert_eq!(listed.total.size, 2000 + 48 + 500 + 20);
     }
