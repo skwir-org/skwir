@@ -502,6 +502,25 @@ sys.exit(subprocess.call([service, os.path.join(os.environ['AUR_TEST_REMOTES'], 
         self.assertEqual(mutations[0][-1], "--notes=" + POSTED)
         self.assertEqual(mutations[-1][-1], "--notes=" + POSTED)
 
+    def test_the_page_shows_a_section_above_its_details_and_links_to_them(self):
+        changelog = self.root / "CHANGELOG.md"
+        changelog.write_text("# Changes\n\n## 1.2.3 (2026-10-11)\n\nSummary,\nwrapped.\n\n- One highlight.\n"
+                             "\n```\n### All changes\n```\n\n### All changes\n\n- Every change, in full.\n"
+                             "\n## 1.2.2 (2026-10-10)\nOld notes.\n")
+        self.git("commit", "-qam", "A release page")
+        self.git("tag", "-fa", "v1.2.3", "-m", "Synthetic tag")
+        self.cli("build")
+        self.assertIn("- Every change, in full.\n", (self.bundle / "notes.md").read_text())
+        self.cli("upload")
+        mutations = [c for c in self.calls("gh") if c[0] == "release"]
+        self.assertEqual(mutations[-1][-1], "--notes=Summary, wrapped.\n\n- One highlight.\n"
+                         "\n```\n### All changes\n```\n\n**Full details**: [CHANGELOG.md]"
+                         "(https://github.com/example/skwir/blob/v1.2.3/CHANGELOG.md#123-2026-10-11)\n")
+        # A page or details left empty stops the release.
+        for section in ("### All changes\n\n- Every change.\n", "Summary.\n\n### All changes\n"):
+            changelog.write_text("# Changes\n\n## 1.2.3 (2026-10-11)\n\n" + section)
+            self.assertIn("All changes", self.cli("metadata", ok=False))
+
     def test_update_draft_and_retry_failed_upload(self):
         self.cli("build")
         self.cli("upload", ok=False, EXISTING="1", FAIL_UPLOAD="1")

@@ -38,6 +38,8 @@ STARTS = re.compile(r"\s*$|\s*([-*+]|\d{1,9}[.)])(\s|$)"
                     r"| {0,3}(#{1,6}(\s|$)|>|\||<|[-*_=]+\s*$|\[[^\]\n]+\]:)")
 ENDS = re.compile(r"\s*$| {0,3}(#{1,6}(\s|$)|\||<|[-*_=]+\s*$|\[[^\]\n]+\]:)|.*( {2}|\\)$")
 FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
+# Where a section's release page ends: the details below it are the changelog's.
+DETAILS = re.compile(r"^### All changes[ \t]*$", re.M)
 
 
 def require(condition, message):
@@ -83,6 +85,10 @@ def metadata(tag):
     datetime.date.fromisoformat(date)
     notes = section[2].strip() + "\n"
     require(notes.strip(), "Release notes are empty")
+    split = details(notes)
+    require(split is None or notes[:split.start()].strip() and notes[split.end():].strip(),
+            f"CHANGELOG.md's {version} section needs its release page above “### All changes” "
+            "and the changes below it")
     for _, path, _, target in relative_links(notes):
         require(path is not None and (ROOT / path).exists(),
                 f"CHANGELOG.md's {version} notes link to a file not in the source: {target}")
@@ -145,6 +151,29 @@ def unwrapped(notes):
         else:
             lines.append(line)
     return "\n".join(lines) + "\n" * notes.endswith("\n")
+
+
+def details(notes):
+    """A section's `### All changes` heading, outside code, if it has one."""
+    code = [m.span() for m in CODE.finditer(notes)]
+    return next((m for m in DETAILS.finditer(notes) if not any(a <= m.start() < b for a, b in code)), None)
+
+
+def anchor(heading):
+    """GitHub's anchor for a heading: lowercase, its punctuation but hyphens and
+    underscores dropped, its spaces hyphens."""
+    return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
+
+
+def release_page(notes, heading):
+    """What a release's page shows of its changelog section: what is above its
+    `### All changes`, then a link to the section for the rest; a section
+    without it, whole."""
+    split = details(notes)
+    if split is None:
+        return notes
+    return (notes[:split.start()].rstrip() +
+            f"\n\n**Full details**: [CHANGELOG.md](CHANGELOG.md#{anchor(heading)})\n")
 
 
 def published(notes, repo, tag):
@@ -322,7 +351,7 @@ def remote_assets(repo, release):
     return [asset for page in pages for asset in page]
 
 
-def upload(tag, directory, commit, version, notes):
+def upload(tag, directory, commit, version, date, notes):
     files = verify(directory, tag, commit, version, notes)
     origin = git("remote", "get-url", "origin")
     match = re.fullmatch(r"(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/)"
@@ -331,8 +360,9 @@ def upload(tag, directory, commit, version, notes):
     repo = match[1]
     gh("auth", "status", "--hostname", "github.com", capture=True)
     require(remote_commit(repo, tag) == commit, "Push the exact release tag first; remote commit disagrees")
-    # The bundle's notes.md stays the changelog's; only the page gets joined lines and absolute links.
-    post = "--notes=" + published(notes, repo, tag)
+    # The bundle's notes.md stays the changelog's section; the page shows what is
+    # above its details, with joined lines and absolute links.
+    post = "--notes=" + published(release_page(notes, f"{version} ({date})"), repo, tag)
     release = remote_release(repo, tag)
     if release:
         require({a["name"] for a in remote_assets(repo, release)} <= {p.name for p in files},
@@ -382,7 +412,7 @@ def main():
                 verify(destination, args.tag, commit, version, notes)
                 print(f"Release bundle verified: {args.tag}")
             else:
-                upload(args.tag, destination, commit, version, notes)
+                upload(args.tag, destination, commit, version, date, notes)
     except (ValueError, KeyError, OSError, ET.ParseError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Release stopped: {error}\n")
 

@@ -20,7 +20,12 @@ workers, check performance or build packages.
    notes leave out, stops the release. Its links stay relative, as
    anywhere in the repository (`docs/HELP-WANTED.md`): on the release's
    page each leads to its file at the tag, and a link to no file of the
-   source stops the release. Only stable
+   source stops the release. The page shows what is above the section's
+   `### All changes` heading, if it has one, then **Full details**, a
+   link to the section: there go the summary, a line for each highlight
+   and what changed that a user of the last release would notice, and
+   below it every change in full. A short section without the heading
+   is shown whole. Only stable
    `v<major>.<minor>.<patch>` tags are currently supported.
 3. Run `just release-metadata v0.1.0`, review and commit the release source,
    then create its tag (`git tag -a v0.1.0 -m 'Release 0.1.0'`). Check out
@@ -97,7 +102,8 @@ The uploader rechecks source identity, the complete asset set and checksums,
 and resolves the remote tag, including annotated tags, to the recorded
 commit. It creates a draft if none exists, or replaces matching assets in
 an existing draft and updates its title and notes. The draft's notes are
-the bundle's `notes.md` with each paragraph and list item on one line
+the bundle's `notes.md` (what is above its `### All changes`, then the
+link to the rest) with each paragraph and list item on one line
 (GitHub breaks a release's notes at each line's end, where the changelog
 wraps its lines; fenced code keeps its own) and each relative link made
 absolute (`https://github.com/<repo>/blob/<tag>/<path>`, `tree/` for a
