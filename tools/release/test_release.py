@@ -536,6 +536,9 @@ if 'cd /src && tools/package/deb.sh' in args:
     made.mkdir(parents=True)
     for name in ['skwir', 'skwir-media']:
         (made / f'{name}_1.2.3-1_amd64.deb').write_bytes(b'synthetic package')
+if '/tools/package/linux/prepare.sh' in args:
+    with (root / 'prepared').open('a') as log:
+        log.write('prepared\n')
 if '/tools/package/linux/check.sh' in args and os.getenv('FAIL_PACKAGE_CHECK'):
     sys.exit(1)
 ''')
@@ -551,6 +554,9 @@ if '/tools/package/linux/check.sh' in args and os.getenv('FAIL_PACKAGE_CHECK'):
             self.assertFalse(stale.exists())
             self.assertEqual({p.name for p in output.iterdir()}, set() if fail else
                              {"skwir_1.2.3-1_amd64.deb", "skwir-media_1.2.3-1_amd64.deb"})
+        # The kept root was not unpacked again, and each try brought it up
+        # to date: a library added to the lists since reaches it.
+        self.assertEqual((builder / "prepared").read_text(), "prepared\n" * 2)
 
 
 if __name__ == "__main__":

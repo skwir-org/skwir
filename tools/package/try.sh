@@ -6,8 +6,9 @@
 # The distribution's root filesystem (images.linuxcontainers.org, checked
 # against the sums published beside it) is unpacked under
 # ~/.cache/skwir-tests/roots and entered as its root user in a user
-# namespace. The build's needs are installed there once
-# (tools/package/linux/prepare.sh); the tree's files are built into the
+# namespace. The build's needs are installed there on every try
+# (tools/package/linux/prepare.sh), so a library added to its lists
+# reaches a root kept from before; the tree's files are built into the
 # package (deb.sh, rpm.sh, aur/build.sh); then a fresh root installs the
 # package with the distribution's package manager, which brings what it
 # depends on and nothing it only recommends, and
@@ -107,7 +108,10 @@ rootless() {
     esac
 }
 
-# The build root, prepared once and kept: what the build needs.
+# The build root, unpacked once and kept. What the build needs is
+# installed on every try: prepare.sh passes over what is there in a
+# second or two, and a root kept from before gains what the lists gained
+# since (one prepared only once never had DjVuLibre, ADR-061).
 builder="$roots/$distribution-build"
 if [ ! -f "$builder/.skwir-prepared" ]; then
     unpack "$builder"
@@ -115,9 +119,9 @@ if [ ! -f "$builder/.skwir-prepared" ]; then
         enter "$builder" 0 sh -c 'pacman-key --init && pacman-key --populate archlinux' >/dev/null
     fi
     rootless "$builder"
-    enter "$builder" 0 /tools/package/linux/prepare.sh "$distribution"
     touch "$builder/.skwir-prepared"
 fi
+enter "$builder" 0 /tools/package/linux/prepare.sh "$distribution"
 
 # The tree's files, fresh; the build's target kept between tries.
 if [ -d "$builder/src" ]; then
