@@ -513,6 +513,56 @@ pub fn parse_bookmarks(text: &str) -> Vec<Bookmark> {
         .collect()
 }
 
+/// A bookmark of a remote folder: its address as written
+/// (`sftp://me@example.com/home/me`, `smb://nas/photos`) and its label, the
+/// address's last part when it has none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteBookmark {
+    pub title: String,
+    pub address: String,
+}
+
+/// The GTK bookmarks of remote folders, which another file manager wrote
+/// (ADR-077): what the remote plugin opens.
+pub fn remote_bookmarks() -> Vec<RemoteBookmark> {
+    let Some(file) = bookmarks_file() else {
+        return Vec::new();
+    };
+    parse_remote_bookmarks(&std::fs::read_to_string(file).unwrap_or_default())
+}
+
+/// The lines of `text` that bookmark an address of another scheme than
+/// `file://` (`sftp://host/path Label`).
+pub fn parse_remote_bookmarks(text: &str) -> Vec<RemoteBookmark> {
+    lines_of(text)
+        .into_iter()
+        .filter(|line| line.mark.is_none())
+        .filter_map(|line| {
+            let trimmed = line.raw.trim();
+            let (address, label) = match trimmed.split_once(' ') {
+                Some((address, label)) => (address, Some(label.trim()).filter(|l| !l.is_empty())),
+                None => (trimmed, None),
+            };
+            let (scheme, rest) = address.split_once("://")?;
+            if scheme.is_empty() || scheme.eq_ignore_ascii_case("file") || rest.is_empty() {
+                return None;
+            }
+            let title = label.map_or_else(
+                || {
+                    let named = rest.trim_end_matches('/');
+                    let last = named.rsplit('/').next().unwrap_or(named);
+                    String::from_utf8_lossy(&crate::uri::percent_decode(last)).into_owned()
+                },
+                str::to_owned,
+            );
+            Some(RemoteBookmark {
+                title,
+                address: address.to_owned(),
+            })
+        })
+        .collect()
+}
+
 /// A change to the bookmarks file, as data: what a command applies, and
 /// what [`edit_text`] hands back to take it back.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1186,6 +1236,30 @@ mod tests {
     }
 
     use super::*;
+
+    /// The bookmarks another file manager made of remote folders are
+    /// read as their addresses (ADR-077), named by their label or their
+    /// last part.
+    #[test]
+    fn remote_bookmarks_are_their_addresses() {
+        let text = "file:///home/example/Documents\n\
+            sftp://me@example.com/home/me Work\n\
+            smb://nas/photos/2024%20Summer\n\
+            \n";
+        assert_eq!(
+            parse_remote_bookmarks(text),
+            [
+                RemoteBookmark {
+                    title: "Work".into(),
+                    address: "sftp://me@example.com/home/me".into(),
+                },
+                RemoteBookmark {
+                    title: "2024 Summer".into(),
+                    address: "smb://nas/photos/2024%20Summer".into(),
+                },
+            ]
+        );
+    }
 
     #[test]
     fn user_dirs_parse() {

@@ -298,7 +298,21 @@ pub fn scan() -> Vec<Place> {
             ..folder(b.title, b.path, "folder", "bookmarks")
         });
     }
+    // A remote folder another file manager bookmarked opens by its address
+    // (ADR-077), when a plugin opens its scheme.
+    for b in skwir_platform::places::remote_bookmarks() {
+        out.push(Place::new(
+            "bookmarks",
+            b.title,
+            "folder-remote",
+            Location::parse(&b.address),
+        ));
+    }
     for m in skwir_platform::places::mounts() {
+        // A network's mount is the Network section's (the remote plugin).
+        if skwir_core::fs::reach::network(&m.fstype, std::ffi::OsStr::new(&m.source)) {
+            continue;
+        }
         let icon = if m.removable {
             "drive-removable-media"
         } else {
@@ -457,9 +471,12 @@ impl Places {
                                 .and_then(|path| skwir_platform::places::space(&path));
                         }
                         // A bookmark outlives its folder: it may have moved,
-                        // or live on a volume that is not mounted.
+                        // or live on a volume that is not mounted. A remote's
+                        // is not asked: its server may not answer (ADR-077).
                         if place.group == "bookmarks"
-                            && place.location.path().is_some_and(|path| !path.is_dir())
+                            && place.location.path().is_some_and(|path| {
+                                skwir_core::fs::reach::of(&path).is_none() && !path.is_dir()
+                            })
                         {
                             place.unavailable = Some(
                                 "Not found. It may have moved, or be on a volume that is not mounted."

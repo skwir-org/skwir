@@ -186,33 +186,35 @@ pub struct UsagePlugin {
     revision: Arc<AtomicU64>,
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct ScanArgs {
-    /// The folder; the pane's own when omitted.
-    pub path: Option<PathArg>,
-    pub pane: Option<PaneId>,
-    /// Ignore cached sizes in this subtree (manual Refresh).
-    #[serde(default)]
-    pub force: bool,
-}
-
 impl UsagePlugin {
-    fn start(&self, app: &App, pane: PaneId, path: PathBuf, force: bool) -> anyhow::Result<()> {
-        let (location_lifetime, open_panes) = {
-            let ws = app.workspace.read();
-            let lifetime = ws
-                .pane(pane)
-                .ok_or_else(|| anyhow::anyhow!("no such pane"))?
-                .location_lifetime();
-            let open: HashSet<PaneId> = ws.panes().iter().map(|p| p.id).collect();
-            (lifetime, open)
-        };
+    /// Say, for `pane` showing the remote folder `path`, that it is
+    /// measured once asked.
+    fn wait_to_be_asked(&self, app: &App, pane: PaneId, path: PathBuf) -> anyhow::Result<()> {
         let mut runtime = self.runtime.lock();
+        Self::ensure_runtime(app, &mut runtime, &self.revision)?;
+        let r = runtime.as_mut().expect("runtime started");
+        if let Some(previous) = r.requests.remove(&pane) {
+            previous.cancel();
+        }
+        r.shared
+            .statuses
+            .lock()
+            .insert(pane, Status::not_measured(path));
+        r.shared.changed();
+        Ok(())
+    }
+
+    /// The worker that measures, started on the first request.
+    fn ensure_runtime(
+        app: &App,
+        runtime: &mut Option<Runtime>,
+        revision: &Arc<AtomicU64>,
+    ) -> anyhow::Result<()> {
         if runtime.is_none() {
             let (tx, rx) = crossbeam_channel::unbounded();
             let shared = Arc::new(Shared {
                 statuses: Mutex::new(HashMap::new()),
-                revision: Arc::clone(&self.revision),
+                revision: Arc::clone(revision),
                 wake: app.waker_handle(),
             });
             let cancel = app.lifetime().child();
@@ -232,6 +234,53 @@ impl UsagePlugin {
                 generation: 0,
             });
         }
+        Ok(())
+    }
+}
+
+impl Status {
+    /// A remote folder not measured until asked.
+    fn not_measured(root: PathBuf) -> Status {
+        Status {
+            root: Some(root),
+            error: Some(
+                "A network folder: Refresh (F5) measures it, reading every folder of it across the network"
+                    .to_owned(),
+            ),
+            ..Status::default()
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ScanArgs {
+    /// The folder; the pane's own when omitted.
+    pub path: Option<PathArg>,
+    pub pane: Option<PaneId>,
+    /// Ignore cached sizes in this subtree (manual Refresh).
+    #[serde(default)]
+    pub force: bool,
+}
+
+impl UsagePlugin {
+    fn start(&self, app: &App, pane: PaneId, path: PathBuf, force: bool) -> anyhow::Result<()> {
+        // A remote folder is measured when asked (Refresh), never as it is
+        // shown: every folder of it would be read across the network
+        // (ADR-077).
+        if !force && skwir_core::fs::reach::of(&path).is_some() {
+            return self.wait_to_be_asked(app, pane, path);
+        }
+        let (location_lifetime, open_panes) = {
+            let ws = app.workspace.read();
+            let lifetime = ws
+                .pane(pane)
+                .ok_or_else(|| anyhow::anyhow!("no such pane"))?
+                .location_lifetime();
+            let open: HashSet<PaneId> = ws.panes().iter().map(|p| p.id).collect();
+            (lifetime, open)
+        };
+        let mut runtime = self.runtime.lock();
+        Self::ensure_runtime(app, &mut runtime, &self.revision)?;
         let r = runtime.as_mut().expect("runtime started");
         let cancel = r.cancel.linked(&location_lifetime);
         r.requests.retain(|_, token| !token.is_cancelled());

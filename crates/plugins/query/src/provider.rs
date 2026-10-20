@@ -705,7 +705,12 @@ impl Shared {
                 .ignore(false)
                 .parents(false)
                 .follow_links(false)
-                .max_depth(q.depth);
+                .max_depth(q.depth)
+                // A network mount below the folder searched is not entered:
+                // a search of one walks it from its own folder (ADR-077).
+                .filter_entry(|dent| {
+                    dent.depth() == 0 || !skwir_core::fs::reach::is_point(dent.path())
+                });
             let (hinted, deferred) = (&hinted, &deferred);
             builder.build_parallel().run(|| {
                 // The walking thread's stats, through the folder it is in.
