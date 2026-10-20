@@ -51,8 +51,8 @@ called `taxes 2026` can be `folder a`.
 
 ## macOS
 
-A build to try is made on Linux for Apple silicon (ADR-075, `just
-package-macos`): `skwir-<version>-macos-arm64.dmg`, a disk image to drag
+A build to try is made on Linux for Apple silicon (ADR-075), offered
+beside Windows' on each release's page: `skwir-<version>-macos-arm64.dmg`, a disk image to drag
 `skwir.app` from to Applications, or the same in a zip,
 `skwir-<version>-macos-arm64.zip`; for macOS 11 or later. It is signed ad hoc but not notarized, so macOS refuses
 it at first: open it once from System Settings, Privacy & Security ("Open
@@ -101,7 +101,8 @@ new. Intel Macs have no build yet.
 
 ## Windows
 
-A build to try is made on Linux (ADR-074, `just package-windows`): a zip,
+A build to try is made on Linux (ADR-074) and offered on each release's
+page (the first are on 0.2.0's, built from the changes since): a zip,
 `skwir-<version>-windows-x86_64.zip`, to unpack anywhere and start
 `skwir.exe` from, or an installer, `skwir-<version>-windows-x86_64.msi`,
 which puts it in `%LocalAppData%\Programs\skwir` with a Start menu entry

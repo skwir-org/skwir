@@ -121,3 +121,8 @@ written on Linux and never run.
   that built it (`/cargo`, `/rust`, `/skwir` in a panic's location and
   C's `__FILE__`), which the check now looks for; the package is built in
   `target/windows`, apart from `check-windows`.
+- 2026-10-20: from the next release, `just release-build` makes the zip
+  and the installer with the Linux packages, and `just release-upload`
+  puts them on the release's page, said there to be builds to try (the
+  user's decision). The first ones, from 5a0bb2b, were added to 0.2.0's
+  page, with a section of its notes saying so.

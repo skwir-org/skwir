@@ -20,7 +20,9 @@ workers, check performance or build packages.
    notes leave out, stops the release. Its links stay relative, as
    anywhere in the repository (`docs/HELP-WANTED.md`): on the release's
    page each leads to its file at the tag, and a link to no file of the
-   source stops the release. The page shows what is above the section's
+   source stops the release. The page also offers Windows' and macOS's
+   builds to try (below): the section says they are to try, never run on
+   either system. The page shows what is above the section's
    `### All changes` heading, if it has one, then **Full details**, a
    link to the section: there go the summary, a line for each highlight
    and what changed that a user of the last release would notice, and
@@ -38,7 +40,10 @@ the actual version and date; the examples do not declare 0.1.0 released.
 
 ## Build and inspect
 
-Enter `nix develop` (or use the direnv shell), then:
+Enter `nix develop` (or use the direnv shell). The macOS build needs
+Apple's SDK on this machine: run `just macos-sdk` once (ADR-075; Apple's
+licence is yours to accept); `release-build` stops at once without it.
+Then:
 
 ```sh
 just release-build v0.1.0
@@ -62,11 +67,15 @@ It then runs the existing packagers with separate fresh output directories:
 | `just package-try ubuntu` | Ubuntu 24.04 build, its revision naming the release (`-1ubuntu24.04`); the same installations |
 | `just package-try fedora` | Fedora 44 build; fresh installation of main package alone, then optional packages |
 | `just package-try arch` | Arch build; fresh installation of main package alone, then optional packages |
+| `just package-windows` | Windows build to try (ADR-074), made with cargo-zigbuild: a zip and a per-user installer, tried under Wine (programs answering, installing and removing) |
+| `just package-macos` | macOS build to try for Apple silicon (ADR-075): skwir.app, zipped and in a disk image, looked over (architecture, libraries, seal); nothing runs it here |
 
 The final bundle is `target/releases/v0.1.0/`. It contains the lowercase
 `skwir-0.1.0-x86_64.AppImage` and `skwir-0.1.0-linux-x86_64.tar.gz`, each
 with its companion checksum, all current-version Debian, Ubuntu, RPM and
-Arch split packages, `notes.md`, `manifest.json` and `SHA256SUMS`. The
+Arch split packages, Windows' `.msi` and `.zip` and macOS's `.dmg` and `.zip`
+(`skwir-0.1.0-windows-x86_64.*`, `skwir-0.1.0-macos-arm64.*`), each with its
+companion checksum, `notes.md`, `manifest.json` and `SHA256SUMS`. The
 package manifests supply the expected split package names. Missing,
 duplicate, unexpected or old-version assets fail the build. The manifest
 records the source commit, platform, checks and each asset's size and SHA256.
@@ -125,14 +134,10 @@ This workstation must be available to build a release. Keep the complete
 bundle until publication is verified; GitHub cannot reproduce it from the
 manifest alone. Publishing the AUR's PKGBUILD and `.SRCINFO` is a separate
 step described below.
-macOS and Windows release packages are not included in this Linux command.
-A Windows build to try is made apart (ADR-074): `just package-windows`
-builds it with cargo-zigbuild into `target/package/windows` (a zip and an
-installer, each with its `.sha256`) and tries both under Wine. It is not
-part of the release bundle, and nothing uploads it. A macOS build to try
-(ADR-075) is made the same way: `just macos-sdk` once (Apple's licence is
-yours to accept), then `just package-macos`, into `target/package/macos` (a
-zip and a disk image, each with its `.sha256`), looked over but never run.
+Windows' and macOS's builds in it are to try (ADR-074, ADR-075): made on
+Linux, Windows' tried under Wine, macOS's looked over, neither ever run on
+its system. `just package-windows` and `just package-macos` make them alone,
+into `target/package/windows` and `target/package/macos`.
 
 ## Publish on the AUR
 

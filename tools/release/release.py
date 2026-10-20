@@ -23,7 +23,9 @@ ROOT = Path(__file__).resolve().parents[2]
 CHECKS = ["lint-all", "deny", "notices-check", "test-all", "smoke", "a11y-check",
           "poppler-check", "mupdf-check", "djvu-check", "bench-check", "release-tools-check"]
 PACKAGES = [("appimage", ["package-appimage"]),
-            *[(d, ["package-try", d]) for d in ("debian", "ubuntu", "fedora", "arch")]]
+            *[(d, ["package-try", d]) for d in ("debian", "ubuntu", "fedora", "arch")],
+            # Builds to try, made here as well (ADR-074, ADR-075).
+            ("windows", ["package-windows"]), ("macos", ["package-macos"])]
 # Markdown link targets, inline (after its text's `]`) or defined by reference (not
 # a footnote), and code, where neither is one.
 LINK = re.compile(r"\]\((?P<inline><[^>\n]*>|[^\s()]+)"
@@ -209,11 +211,31 @@ def portable(version):
     return [f"skwir-{version}-x86_64.AppImage", f"skwir-{version}-linux-x86_64.tar.gz"]
 
 
+def tried(version):
+    """Windows' and macOS's builds to try, by system (ADR-074, ADR-075)."""
+    return {"windows": [f"skwir-{version}-windows-x86_64.msi", f"skwir-{version}-windows-x86_64.zip"],
+            "macos": [f"skwir-{version}-macos-arm64.dmg", f"skwir-{version}-macos-arm64.zip"]}
+
+
+def companioned(version):
+    """The assets each with its checksum beside it (`<name>.sha256`)."""
+    return [*portable(version), *(name for names in tried(version).values() for name in names)]
+
+
+def macos_sdk():
+    """Where `just macos-sdk` puts Apple's SDK, as tools/package/macos.sh
+    reads it."""
+    data = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share")
+    return Path(data) / "skwir-build/macos-sdk"
+
+
 def patterns(version):
     """Derive split package names from their owning manifests, not a second list."""
     package = tomllib.loads((ROOT / "crates/skwir/Cargo.toml").read_text())["package"]
     result = {"appimage": [rf"{re.escape(name)}{suffix}" for name in portable(version)
                            for suffix in ("", r"\.sha256")]}
+    for system, names in tried(version).items():
+        result[system] = [rf"{re.escape(name)}{suffix}" for name in names for suffix in ("", r"\.sha256")]
     for distro, key, template in (
         ("debian", "deb", r"{}_{version}-[0-9]+_amd64\.deb"),
         # Ubuntu's revision names the release it was made on (deb.sh).
@@ -276,7 +298,7 @@ def verify(directory, tag, commit, version, notes):
     require(assets == manifest["assets"], "An asset changed since the release build")
     require((directory / "notes.md").read_text() == notes, "Bundle notes disagree with the changelog")
     require((directory / "SHA256SUMS").read_text() == checksums(directory), "SHA256SUMS does not match")
-    for name in portable(version):
+    for name in companioned(version):
         require((directory / (name + ".sha256")).read_text().strip() == f"{digest(directory / name)}  {name}",
                 f"{name}'s companion checksum does not match")
     return files
@@ -288,6 +310,10 @@ def build(tag, destination, commit, version, date, notes):
     require(not destination.exists() and not destination.is_symlink(),
             "A bundle already exists; move it aside before rebuilding")
     expected = patterns(version)
+    # macOS's build needs Apple's SDK, which its user alone may fetch: said
+    # now, not after the hour of checks.
+    require((macos_sdk() / "env.sh").is_file(),
+            "No macOS SDK for its build: run `just macos-sdk` first (Apple's licence is yours to accept)")
     run("just", "release-check")
     require(source(tag) == commit, "Source changed during release checks")
     # A failed build never replaces a previous bundle or leaves an uploadable one.

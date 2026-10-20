@@ -84,3 +84,11 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
   items included, is for people with one.
 - Building needs the SDK on the machine (`just macos-sdk`); it is never
   committed or shipped.
+
+## Amendments
+
+- 2026-10-20: from the next release, `just release-build` makes the zip
+  and the disk image with the Linux packages (stopping at once without the
+  SDK), and `just release-upload` puts them on the release's page, said
+  there to be builds to try (the user's decision, as for Windows,
+  ADR-074).

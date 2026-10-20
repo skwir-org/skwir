@@ -128,3 +128,9 @@ for path, entry in listed.items():
 print(f"ok: signed ad hoc; Info.plist and {checked} resources as sealed, each program signed")
 EOF
 echo "$name: looked over (not run: that needs a Mac)"
+# What passed, where a release collects it (SKWIR_PACKAGE_OUT, as try.sh).
+if [ -n "${SKWIR_PACKAGE_OUT:-}" ]; then
+    for artifact in "$name.zip" "$name.dmg"; do
+        cp "$made/$artifact" "$made/$artifact.sha256" "$SKWIR_PACKAGE_OUT/"
+    done
+fi

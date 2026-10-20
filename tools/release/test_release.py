@@ -46,6 +46,14 @@ elif args == ['package-try', 'fedora']:
 elif args == ['package-try', 'arch']:
     for name in ['skwir', 'skwir-mermaid']:
         (out / f'{name}-1.2.3-1-x86_64.pkg.tar.zst').write_bytes(b'synthetic arch')
+elif args in (['package-windows'], ['package-macos']):
+    names = (['skwir-1.2.3-windows-x86_64.msi', 'skwir-1.2.3-windows-x86_64.zip']
+             if args == ['package-windows'] else
+             ['skwir-1.2.3-macos-arm64.dmg', 'skwir-1.2.3-macos-arm64.zip'])
+    for name in names:
+        (out / name).write_bytes(b'synthetic ' + name.encode())
+        sha = hashlib.sha256((out / name).read_bytes()).hexdigest()
+        (out / (name + '.sha256')).write_text(f'{sha}  {name}\n')
 else:
     sys.exit('unexpected just command')
 if os.getenv('EXTRA_ASSET'):
@@ -173,8 +181,14 @@ name = "skwir-media"
             program = self.bin / name
             program.write_text(text)
             program.chmod(0o755)
+        # A stand-in for the macOS SDK `just macos-sdk` downloads, where the
+        # release looks for it: never this machine's own.
+        data = Path(self.temp.name) / "data"
+        (data / "skwir-build/macos-sdk").mkdir(parents=True)
+        (data / "skwir-build/macos-sdk/env.sh").write_text("# xmac's, in a real SDK\n")
         self.env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}",
-                    "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+                    "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+                    "XDG_DATA_HOME": str(data)}
         self.git("init", "-q")
         self.git("config", "user.name", "Release Test")
         self.git("config", "user.email", "test@example.invalid")
@@ -401,12 +415,16 @@ sys.exit(subprocess.call([service, os.path.join(os.environ['AUR_TEST_REMOTES'], 
         stale.write_bytes(b"old release")
         self.cli("build")
         self.cli("verify")
-        self.assertEqual(len(list(self.bundle.iterdir())), 15)
+        # Linux's 15, then Windows' and macOS's builds to try with their sums.
+        self.assertEqual(len(list(self.bundle.iterdir())), 23)
+        for name in ["skwir-1.2.3-windows-x86_64.msi", "skwir-1.2.3-macos-arm64.dmg"]:
+            self.assertTrue((self.bundle / name).is_file() and (self.bundle / f"{name}.sha256").is_file())
         self.assertNotIn("Old notes", (self.bundle / "notes.md").read_text())
         self.assertTrue(stale.exists())
         self.assertEqual(self.calls("just"), [["release-check"], ["package-appimage"],
                                              ["package-try", "debian"], ["package-try", "ubuntu"],
-                                             ["package-try", "fedora"], ["package-try", "arch"]])
+                                             ["package-try", "fedora"], ["package-try", "arch"],
+                                             ["package-windows"], ["package-macos"]])
         self.cli("build", ok=False)
         self.cli("verify")
 
@@ -432,6 +450,12 @@ sys.exit(subprocess.call([service, os.path.join(os.environ['AUR_TEST_REMOTES'], 
             self.assertIn(f"not in the source: {target}", self.cli("metadata", ok=False))
         self.cli("metadata", ok=False, tag="v1.2.4")
         self.cli("metadata", ok=False, tag="v1.2.3;echo unsafe")
+
+    def test_no_macos_sdk_stops_before_the_checks(self):
+        (Path(self.env["XDG_DATA_HOME"]) / "skwir-build/macos-sdk/env.sh").unlink()
+        self.assertIn("just macos-sdk", self.cli("build", ok=False))
+        self.assertEqual(self.calls("just"), [])
+        self.assertFalse(self.bundle.exists())
 
     def test_failed_checks_do_not_package(self):
         self.cli("build", ok=False, FAIL_CHECK="1")

@@ -105,3 +105,9 @@ left="$(find "$installed" -type f 2>/dev/null | wc -l)"
 [ "$left" -eq 0 ] && [ ! -e "$shortcut" ] || { echo "removed, $left files and the entry left" >&2; exit 1; }
 echo "ok: removed, nothing of it left"
 echo "$name: passed under Wine"
+# What passed, where a release collects it (SKWIR_PACKAGE_OUT, as try.sh).
+if [ -n "${SKWIR_PACKAGE_OUT:-}" ]; then
+    for artifact in "$name.zip" "$name.msi"; do
+        cp "$made/$artifact" "$made/$artifact.sha256" "$SKWIR_PACKAGE_OUT/"
+    done
+fi
