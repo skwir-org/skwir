@@ -241,6 +241,37 @@
           ++ lib.optionals stdenv.hostPlatform.isLinux [pkgs.wine64Packages.stable pkgs.llvmPackages.llvm pkgs.msitools pkgs.icoutils];
       });
 
+      # xmac (github.com/Jarred-Sumner/xmac, MIT or Apache-2.0) downloads
+      # Apple's macOS SDK from Apple's software-update servers, for building
+      # for macOS from Linux (`just macos-sdk`). Run by Bun from the source
+      # of the commit pinned here: it talks to Apple's servers only and
+      # starts xz, gzip and bzip2.
+      packages.xmac = let
+        src = pkgs.fetchFromGitHub {
+          owner = "Jarred-Sumner";
+          repo = "xmac";
+          rev = "15a873d4b961b58ae812e6395e6b1636d02f88b5";
+          hash = "sha256-KtfWC4x6t9TtQmzabYFjdH+SvSWjfn6u32zfsRFVVxo=";
+        };
+      in
+        pkgs.writeShellApplication {
+          name = "xmac";
+          runtimeInputs = [pkgs.bun pkgs.xz pkgs.gzip pkgs.bzip2];
+          text = ''exec bun ${src}/xmac.ts "$@"'';
+        };
+
+      # For building for macOS from Linux: xmac, its downloads kept in the
+      # cache rather than the folder it runs in (its default). Kept out of
+      # the default shell, which needs no Bun.
+      devShells.macos = self.devShells.${system}.default.overrideAttrs (old: {
+        nativeBuildInputs = old.nativeBuildInputs ++ [self.packages.${system}.xmac];
+        shellHook =
+          old.shellHook
+          + ''
+            export XMAC_CACHE_DIR="''${XMAC_CACHE_DIR:-$HOME/.cache/xmac}"
+          '';
+      });
+
       # The Home Manager module (`programs.skwir`), without building skwir:
       # the merge of mutable settings run on a file as skwir writes it
       # (what is declared wins, the rest stays, a second activation changes

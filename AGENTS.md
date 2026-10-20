@@ -450,6 +450,7 @@ just build / test / lint   default members (no native workers); tests via nextes
 just workers               build the Poppler, MuPDF, DjVuLibre, GStreamer and libarchive workers
 just test-all / lint-all   every crate, workers included; lint-all adds check-cross
 just check-cross           clippy for Windows and macOS from Linux (ADR-035)
+just macos-sdk             Apple's macOS SDK, by xmac, for building for macOS (you accept Apple's licence)
 just test-windows          the Windows build's tests under Wine (args go to nextest)
 just bench-check           generate bench-data/ on demand and enforce budgets
 just idle-pss              idle memory and first frame on this display (ADR-033)

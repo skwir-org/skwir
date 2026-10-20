@@ -164,6 +164,15 @@ check-cross: check-windows check-macos
 check-windows:
     CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings
 
+# xmac (the flake's `.#macos` shell) downloads the SDK from Apple's servers
+# into ~/.local/share/skwir-build/macos-sdk; it is never committed or
+# shipped. It is under Apple's licence, which xmac shows and asks you to
+# accept (or pass --accept-license yourself; `xmac license` prints it in
+# full). Arguments go to `xmac splat` (`--sdk 15`, `--arch arm64`).
+# Apple's macOS SDK, for building for macOS from Linux (you accept Apple's licence).
+macos-sdk *args:
+    nix develop '{{justfile_directory()}}#macos' --command sh -c 'xmac splat --output "${XDG_DATA_HOME:-$HOME/.local/share}/skwir-build/macos-sdk" "$@"' xmac {{args}}
+
 # Compile and lint the macOS build, but for the crates built on gpui.
 check-macos:
     CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target aarch64-apple-darwin --all-targets --workspace --exclude skwir-ui --exclude skwir --exclude skwir-poppler-worker --exclude skwir-mupdf-worker --exclude skwir-djvulibre-worker --exclude skwir-media-worker --exclude skwir-archive-worker -- -D warnings
