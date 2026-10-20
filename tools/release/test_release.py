@@ -105,14 +105,22 @@ else:
 '''
 
 
-# Relative links stay so in the repository and the bundle; the release page gets the tag's files.
+# Relative links and wrapped lines stay so in the repository and the bundle; the
+# release page, which breaks at each line's end, gets the tag's files and a line
+# for each paragraph and list item.
 NOTES = ("Synthetic release: [help](docs/HELP.md#on-a-mac), ![icon](docs/icon.svg),\n"
          "[the docs](docs/), [site](https://skwir.org/), [above](#changes) and `[code](docs/none.md)`.\n"
+         "\n- A list item\n  wrapped,\n  - one in it\n    wrapped.\n"
+         "\n### Known\nlimits written\nhere.\n"
+         "\n```\nkept\nas written\n```\nBroken here  \nand there.\n"
          "\n[ref]: <docs/HELP.md>\n")
 POSTED = ("Synthetic release: [help](https://github.com/example/skwir/blob/v1.2.3/docs/HELP.md#on-a-mac), "
-          "![icon](https://github.com/example/skwir/raw/v1.2.3/docs/icon.svg),\n"
+          "![icon](https://github.com/example/skwir/raw/v1.2.3/docs/icon.svg), "
           "[the docs](https://github.com/example/skwir/tree/v1.2.3/docs), [site](https://skwir.org/), "
           "[above](#changes) and `[code](docs/none.md)`.\n"
+          "\n- A list item wrapped,\n  - one in it wrapped.\n"
+          "\n### Known\nlimits written here.\n"
+          "\n```\nkept\nas written\n```\nBroken here  \nand there.\n"
           "\n[ref]: https://github.com/example/skwir/blob/v1.2.3/docs/HELP.md\n")
 
 

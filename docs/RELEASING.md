@@ -97,10 +97,12 @@ The uploader rechecks source identity, the complete asset set and checksums,
 and resolves the remote tag, including annotated tags, to the recorded
 commit. It creates a draft if none exists, or replaces matching assets in
 an existing draft and updates its title and notes. The draft's notes are
-the bundle's `notes.md` with each relative link made absolute
-(`https://github.com/<repo>/blob/<tag>/<path>`, `tree/` for a folder,
-`raw/` for an image), so they lead to the files from the release's page.
-`notes.md` itself keeps them as the changelog has them.
+the bundle's `notes.md` with each paragraph and list item on one line
+(GitHub breaks a release's notes at each line's end, where the changelog
+wraps its lines; fenced code keeps its own) and each relative link made
+absolute (`https://github.com/<repo>/blob/<tag>/<path>`, `tree/` for a
+folder, `raw/` for an image), so they lead to the files from the
+release's page. `notes.md` itself keeps the changelog's lines and links.
 Unexpected assets already
 in the draft require manual review. Published or immutable releases are
 refused. The command never publishes a release or changes a tag.

@@ -30,6 +30,14 @@ LINK = re.compile(r"\]\((?P<inline><[^>\n]*>|[^\s()]+)"
                   r"|^ {0,3}\[(?!\^)[^\]\n]+\]:[ \t]*(?P<defined><[^>\n]*>|\S+)", re.M)
 CODE = re.compile(r"^ {0,3}(`{3,}|~{3,})[^\n]*\n.*?(?:^ {0,3}\1[`~]*[ \t]*$|\Z)"
                   r"|(`+).*?(?<!`)\2(?!`)", re.M | re.S)
+# A line that keeps its own on the release page: a blank one, a list item, a
+# heading, a quote, a table's row, HTML, a rule or a heading's underline, a link
+# defined by reference; and one after which the next keeps its own: those but a
+# list item or a quote, and a line ending in a break.
+STARTS = re.compile(r"\s*$|\s*([-*+]|\d{1,9}[.)])(\s|$)"
+                    r"| {0,3}(#{1,6}(\s|$)|>|\||<|[-*_=]+\s*$|\[[^\]\n]+\]:)")
+ENDS = re.compile(r"\s*$| {0,3}(#{1,6}(\s|$)|\||<|[-*_=]+\s*$|\[[^\]\n]+\]:)|.*( {2}|\\)$")
+FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
 
 
 def require(condition, message):
@@ -116,13 +124,38 @@ def relative_links(notes):
         yield (start, end), None if outside else path, image, target
 
 
+def unwrapped(notes):
+    """The notes with each paragraph and list item on one line.
+
+    GitHub breaks a release's notes at the end of each line, and the changelog
+    wraps its lines; fenced code keeps them (the changelog fences its code).
+    """
+    lines, fence = [], None
+    for line in notes.splitlines():
+        opening = FENCE.match(line)
+        if fence:
+            lines.append(line)
+            if re.fullmatch(rf" {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}\s*", line):
+                fence = None
+        elif opening:
+            fence = opening[1]
+            lines.append(line)
+        elif lines and not STARTS.match(line) and not ENDS.match(lines[-1]) and not FENCE.match(lines[-1]):
+            lines[-1] = lines[-1].rstrip() + " " + line.strip()
+        else:
+            lines.append(line)
+    return "\n".join(lines) + "\n" * notes.endswith("\n")
+
+
 def published(notes, repo, tag):
     """The notes for GitHub's release page, away from the files they link to.
 
-    The changelog keeps its links relative, read in the repository; on the page
-    each leads to its file at the tag (an image to the file itself). Paths that
-    leave the source never get here: metadata refuses them.
+    Each paragraph and list item is one line (`unwrapped`). The changelog keeps
+    its links relative, read in the repository; on the page each leads to its
+    file at the tag (an image to the file itself). Paths that leave the source
+    never get here: metadata refuses them.
     """
+    notes = unwrapped(notes)
     parts, last = [], 0
     for (start, end), path, image, target in relative_links(notes):
         kind = "raw" if image else "tree" if (ROOT / path).is_dir() else "blob"
@@ -298,7 +331,7 @@ def upload(tag, directory, commit, version, notes):
     repo = match[1]
     gh("auth", "status", "--hostname", "github.com", capture=True)
     require(remote_commit(repo, tag) == commit, "Push the exact release tag first; remote commit disagrees")
-    # The bundle's notes.md stays the changelog's; only the page gets absolute links.
+    # The bundle's notes.md stays the changelog's; only the page gets joined lines and absolute links.
     post = "--notes=" + published(notes, repo, tag)
     release = remote_release(repo, tag)
     if release:
