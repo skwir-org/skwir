@@ -108,3 +108,11 @@ written on Linux and never run.
   `vendor/zed` (`target`, `Cargo.lock`), which it used to delete.
 - macOS is not made here: the user offered Apple's SDK (2026-10-20), and a
   build with it is a decision of its own.
+
+## Amendments
+
+- 2026-10-20: vendor patch 0034 is for builds to try only. Once a Windows
+  environment builds the releases, the patch is dropped (with its row and
+  section in `vendor/zed/README.skwir.md`) and gpui compiles its shaders
+  ahead with fxc, as upstream does: no compiling at each start (the
+  user's decision).

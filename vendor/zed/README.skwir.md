@@ -512,6 +512,9 @@ Wine with Microsoft's d3dcompiler_47 (winetricks), not yet measured on
 Windows. Wine's own compiler, vkd3d's, stops on the shadow shader ("struct
 store rhs is not HLSL_IR_LOAD"), as it does for the renderer's test above.
 
+It serves builds to try only (ADR-074): once a Windows environment builds
+the releases, drop it, and the shaders are compiled ahead again.
+
 ## Adding or changing a patch
 
 Make the series, a git repository whose first commit is Zed's crates and whose
