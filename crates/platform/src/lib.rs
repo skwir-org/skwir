@@ -26,6 +26,7 @@ pub mod about;
 pub mod access;
 #[cfg(test)]
 mod any_input;
+pub mod askpass;
 pub mod bat;
 pub mod calendar;
 #[cfg(target_os = "linux")]

@@ -37,6 +37,17 @@ fn main() -> anyhow::Result<()> {
     // Before anything allocates much: freed memory goes back (ADR-011),
     // and a worker idle after its jobs gives back what they left.
     skwir_alloc::tune();
+    // Run by ssh (`SSH_ASKPASS`) or rclone (`--password-command`) while the
+    // window connects to a server (ADR-077): ask the window over the
+    // connection's socket, print the answer, and nothing else.
+    if let Some(socket) = std::env::var_os(skwir_platform::askpass::SOCKET_VAR) {
+        let prompt = std::env::args().nth(1);
+        let answered = skwir_platform::askpass::answer_as_askpass(
+            std::path::Path::new(&socket),
+            prompt.as_deref(),
+        );
+        std::process::exit(i32::from(!answered));
+    }
     skwir_core::scheduler::release_when_idle(skwir_alloc::collect);
     // Which build this is, for a helper's failure to say when the helper
     // is of another (`process::explain`).

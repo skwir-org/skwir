@@ -161,3 +161,43 @@ fn settings_are_checked_with_no_window_open() {
         "{wrong}"
     );
 }
+
+/// Run as ssh runs `SSH_ASKPASS` (ADR-077), skwir asks over the socket
+/// its environment names, prints the answer for ssh, and starts nothing
+/// else; with no one to answer, it fails, and ssh hears no password.
+#[test]
+fn as_askpass_skwir_asks_the_socket_and_prints_the_answer() {
+    use skwir_platform::askpass::{Kind, SOCKET_VAR, Server};
+    let tmp = home_tempdir();
+    let server = Server::start(tmp.path(), |question| match question.kind {
+        Kind::Secret => Some(format!("secret for {}", question.prompt.trim())),
+        Kind::Confirm => Some("yes".to_owned()),
+        Kind::Notice => None,
+    })
+    .unwrap();
+    let ask = |prompt: &str, socket: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_skwir"))
+            .arg(prompt)
+            .env(SOCKET_VAR, socket)
+            .env_remove("SSH_ASKPASS_PROMPT")
+            .env("XDG_RUNTIME_DIR", tmp.path())
+            .output()
+            .unwrap()
+    };
+    let asked = ask("me@example.com's password: ", server.path());
+    assert!(asked.status.success(), "{asked:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&asked.stdout),
+        "secret for me@example.com's password:\n"
+    );
+    let confirmed = ask(
+        "Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
+        server.path(),
+    );
+    assert_eq!(String::from_utf8_lossy(&confirmed.stdout), "yes\n");
+    let gone = server.path().to_owned();
+    drop(server);
+    let unanswered = ask("me@example.com's password: ", &gone);
+    assert!(!unanswered.status.success());
+    assert!(unanswered.stdout.is_empty());
+}

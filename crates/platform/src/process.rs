@@ -284,6 +284,9 @@ fn application(program: &str) -> Option<PathBuf> {
 /// On Windows its group is a job object holding it and what it starts.
 pub(crate) struct ChildGuard {
     pub(crate) child: Child,
+    /// What the child left running is left be once it ended well
+    /// (`run_leaving`): a mount's daemon.
+    leave: bool,
     #[cfg(windows)]
     job: Option<crate::windows::Job>,
 }
@@ -294,6 +297,7 @@ impl ChildGuard {
             #[cfg(windows)]
             job: crate::windows::Job::holding(&child),
             child,
+            leave: false,
         }
     }
 
@@ -349,15 +353,56 @@ impl ChildGuard {
         let _ = self.child.kill();
     }
 
-    /// Stop the group and reap the child, which has exited.
+    /// Stop the group and reap the child, which has exited; with `leave`,
+    /// leave what it started running when it ended well.
     pub(crate) fn finish(mut self) -> io::Result<ExitStatus> {
-        self.stop_group();
+        // Told before it is reaped: once reaped, its pid no longer names
+        // its group.
+        if self.leave && self.ended_well() {
+            #[cfg(windows)]
+            if let Some(job) = self.job.take() {
+                job.release();
+            }
+        } else {
+            self.leave = false;
+            self.stop_group();
+        }
         self.child.wait()
+    }
+
+    /// Whether the child exited, and with success, without reaping it.
+    fn ended_well(&mut self) -> bool {
+        #[cfg(unix)]
+        {
+            use rustix::process::{WaitId, WaitIdOptions, waitid};
+            self.pid()
+                .and_then(|pid| {
+                    waitid(
+                        WaitId::Pid(pid),
+                        WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+                    )
+                    .ok()
+                    .flatten()
+                })
+                .is_some_and(|status| status.exit_status() == Some(0))
+        }
+        #[cfg(not(unix))]
+        {
+            self.child
+                .try_wait()
+                .ok()
+                .flatten()
+                .is_some_and(|status| status.success())
+        }
     }
 }
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
+        if self.leave {
+            // Ended well, its daemon left running (`finish`): reaped there.
+            return;
+        }
         self.stop_group();
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -551,6 +596,41 @@ pub fn run_capped(
     timeout: Duration,
     output: u64,
 ) -> anyhow::Result<Finished> {
+    run_until_exit(command, input, cancel, timeout, output, false)
+}
+
+/// [`run_to_exit`] for a program that leaves another running when it
+/// ends well, which outlives skwir: a tool that mounts a remote and
+/// daemonizes, its ssh carrying the mount (sshfs, `rclone mount --daemon`,
+/// ADR-077). Cancelled, too long, or ended badly, it and what it started
+/// are stopped as `run_to_exit` stops them; ended well, nothing it left
+/// running is touched.
+///
+/// # Errors
+/// As [`run_to_exit`].
+pub fn run_leaving(
+    command: &mut Command,
+    cancel: &CancelToken,
+    timeout: Duration,
+) -> anyhow::Result<Finished> {
+    run_until_exit(
+        command,
+        None,
+        cancel,
+        timeout,
+        crate::inspection::limits::HELPER_OUTPUT,
+        true,
+    )
+}
+
+fn run_until_exit(
+    command: &mut Command,
+    input: Option<&[u8]>,
+    cancel: &CancelToken,
+    timeout: Duration,
+    output: u64,
+    leave: bool,
+) -> anyhow::Result<Finished> {
     let program = Path::new(command.get_program())
         .file_name()
         .unwrap_or(command.get_program())
@@ -583,6 +663,7 @@ pub fn run_capped(
             .spawn()
             .with_context(|| format!("start {program}"))?,
     );
+    child.leave = leave;
     // The pipe's write end was dropped above and the child holds the read
     // end: it sees the input, then end of file.
     let start = Instant::now();
@@ -1122,6 +1203,53 @@ mod tests {
             assert!(
                 Instant::now() < deadline,
                 "descendant survived cancellation"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// A tool that mounts and leaves its daemon running (ADR-077): ended
+    /// well, what it started runs on; ended badly, it is stopped as any.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_program_ended_well_leaves_what_it_started_running() {
+        let tmp = tempfile::tempdir().unwrap();
+        let started = |marker: &std::path::Path, code: u8| {
+            let finished = run_leaving(
+                Command::new("sh")
+                    .args([
+                        "-c",
+                        "sleep 30 & printf '%s' \"$!\" > \"$1\"; exit \"$2\"",
+                        "test",
+                    ])
+                    .arg(marker)
+                    .arg(code.to_string()),
+                &CancelToken::new(),
+                Duration::from_secs(5),
+            )
+            .unwrap();
+            let pid: i32 = std::fs::read_to_string(marker).unwrap().parse().unwrap();
+            (finished.status.success(), pid)
+        };
+        let alive = |pid: i32| {
+            std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .is_ok_and(|stat| stat.split_whitespace().nth(2) != Some("Z"))
+        };
+        let (ok, left) = started(&tmp.path().join("left"), 0);
+        assert!(ok);
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(alive(left), "what it started runs on");
+        let _ = rustix::process::kill_process(
+            rustix::process::Pid::from_raw(left).unwrap(),
+            rustix::process::Signal::KILL,
+        );
+        let (ok, stopped) = started(&tmp.path().join("stopped"), 3);
+        assert!(!ok);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while alive(stopped) {
+            assert!(
+                Instant::now() < deadline,
+                "a failed program's daemon survived"
             );
             std::thread::sleep(Duration::from_millis(5));
         }

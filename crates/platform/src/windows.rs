@@ -228,6 +228,30 @@ impl Job {
         (set != 0 && assigned != 0).then_some(job)
     }
 
+    /// Let go of the job, leaving what it holds running: a mount's
+    /// program that outlives skwir (`process::run_leaving`).
+    pub fn release(self) {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        };
+        // No limit: closing the job ends nothing.
+        let limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        let Ok(size) = u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()) else {
+            return;
+        };
+        // SAFETY: the job's handle, and the record of the size given.
+        unsafe {
+            SetInformationJobObject(
+                self.0.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                (&raw const limits).cast(),
+                size,
+            )
+        };
+    }
+
     /// End everything in the job.
     pub fn stop(&self) {
         use std::os::windows::io::AsRawHandle;
