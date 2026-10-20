@@ -66,6 +66,25 @@ pub fn ours(connector: &str, point: &Path) -> Option<Recognised> {
     })
 }
 
+/// The token of one attempt to connect, below the connection's: the user
+/// refusing a question ends it (`Askpass`), and what it ended says so.
+pub fn attempt(cancel: &CancelToken) -> CancelToken {
+    cancel.child()
+}
+
+/// Why an attempt ended: the user's refusal, said as such, else `error`.
+pub fn ended(
+    attempt: &CancelToken,
+    connection: &CancelToken,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    if attempt.is_cancelled() && !connection.is_cancelled() {
+        anyhow::anyhow!("you cancelled")
+    } else {
+        error
+    }
+}
+
 /// Run `command`, a tool that mounts at `point` and then runs on its own
 /// (sshfs daemonizes, `rclone mount --daemon`), until it has mounted: its
 /// exit, then the mount in the table. Cancelled or too long, the tool and
@@ -213,13 +232,19 @@ impl Askpass {
         let (ask, cancel) = (Arc::clone(ask), cancel.clone());
         let server = skwir_platform::askpass::Server::start(&folder, move |question| {
             let prompt = question.prompt.trim().trim_end_matches(':').trim();
-            match question.kind {
+            let answer = match question.kind {
                 Kind::Secret => ask.secret(prompt, "Connect", &cancel),
                 Kind::Confirm => ask
                     .confirm("Connect to this server?", prompt, &cancel)
                     .then(|| "yes".to_owned()),
-                Kind::Notice => None,
+                Kind::Notice => return None,
+            };
+            // Cancelled: the attempt ends, rather than ssh asking again (a
+            // refused password counts as a wrong one).
+            if answer.is_none() {
+                cancel.cancel();
             }
+            answer
         })?;
         Ok(Askpass { server, program })
     }

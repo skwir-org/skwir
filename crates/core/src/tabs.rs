@@ -542,12 +542,15 @@ pub fn remember(app: &App) {
     if settings.get::<String>(STARTUP).as_deref() != Some("last") {
         return;
     }
+    // A remote folder is kept by its tab's address, which connects
+    // again (ADR-077); its mount's path may name nothing next time.
     let folder = app
         .workspace
         .read()
         .active()
         .location()
-        .and_then(Location::path);
+        .and_then(Location::path)
+        .filter(|folder| crate::fs::reach::of(folder).is_none());
     let mut changed =
         folder.is_some_and(|folder| crate::settings::remember_location(settings, &folder));
     let saved = app.saved_tabs();

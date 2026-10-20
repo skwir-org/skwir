@@ -79,13 +79,16 @@ impl Connector for Sshfs {
         if let Some(config) = &self.ssh_config {
             command.arg("-F").arg(config);
         }
+        let attempt = mounter::attempt(cancel);
         let askpass = match &self.askpass {
-            Some(program) => mounter::Askpass::serve_with(program.clone(), ask, cancel)?,
-            None => mounter::Askpass::serve(ask, cancel)?,
+            Some(program) => mounter::Askpass::serve_with(program.clone(), ask, &attempt)?,
+            None => mounter::Askpass::serve(ask, &attempt)?,
         };
         askpass.give(&mut command);
-        mounter::mount(&mut command, &point, cancel, PATIENCE)
-            .map_err(|error| anyhow::anyhow!("{}", words(&error.to_string())))?;
+        mounter::mount(&mut command, &point, &attempt, PATIENCE).map_err(|error| {
+            let error = anyhow::anyhow!("{}", words(&error.to_string()));
+            mounter::ended(&attempt, cancel, error)
+        })?;
         Ok(Connected {
             point,
             address: top,

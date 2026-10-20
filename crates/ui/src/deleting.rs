@@ -107,6 +107,9 @@ pub struct Deleting {
     total: Count,
     counted: bool,
     home: Option<PathBuf>,
+    /// Each remote's mount and address: a folder there is said by its
+    /// address, not the mount's path (ADR-077).
+    remotes: Vec<(PathBuf, skwir_core::Location)>,
     scroll: UniformListScrollHandle,
     cancel: CancelToken,
 }
@@ -117,8 +120,20 @@ impl Drop for Deleting {
     }
 }
 
-/// `dir` written as the address takes it: the home folder as `~`.
-fn written(dir: &Path, home: Option<&Path>) -> SharedString {
+/// `dir` written as the address takes it: the home folder as `~`, a
+/// remote's folder as its address (`sftp://me@host/docs`).
+fn written(
+    dir: &Path,
+    home: Option<&Path>,
+    remotes: &[(PathBuf, skwir_core::Location)],
+) -> SharedString {
+    if let Some((point, address)) = remotes.iter().find(|(point, _)| dir.starts_with(point))
+        && let Ok(below) = dir.strip_prefix(point)
+    {
+        return skwir_core::remotes::address_below(address, below)
+            .to_string()
+            .into();
+    }
     crate::complete::written(dir, "~", home).into()
 }
 
@@ -132,7 +147,11 @@ fn name_of(path: &Path) -> SharedString {
 impl Deleting {
     /// The rows of `plan`, from its paths alone, and the paths the worker
     /// reads, by row.
-    fn of(plan: &Plan, cancel: CancelToken) -> (Self, Vec<(usize, PathBuf)>) {
+    fn of(
+        plan: &Plan,
+        remotes: Vec<(PathBuf, skwir_core::Location)>,
+        cancel: CancelToken,
+    ) -> (Self, Vec<(usize, PathBuf)>) {
         let home = skwir_core::os_path::home();
         let mut rows = Vec::with_capacity(plan.len());
         let mut paths = Vec::with_capacity(plan.len());
@@ -159,7 +178,7 @@ impl Deleting {
             let folder = path.parent().filter(|_| !trashed).map(|dir| match &last {
                 Some((was, said)) if was == dir => said.clone(),
                 _ => {
-                    let said = written(dir, home.as_deref());
+                    let said = written(dir, home.as_deref(), &remotes);
                     last = Some((dir.to_path_buf(), said.clone()));
                     said
                 }
@@ -195,6 +214,7 @@ impl Deleting {
             total: Count::default(),
             counted: paths.is_empty(),
             home,
+            remotes,
             scroll: UniformListScrollHandle::new(),
             cancel,
         };
@@ -222,7 +242,9 @@ impl Deleting {
                     let row = &mut self.rows[at];
                     if let Some(from) = &facts.from {
                         row.name = name_of(from);
-                        row.folder = from.parent().map(|dir| written(dir, self.home.as_deref()));
+                        row.folder = from
+                            .parent()
+                            .map(|dir| written(dir, self.home.as_deref(), &self.remotes));
                     }
                     row.kind = Some(facts.kind);
                     row.companions = facts.companions;
@@ -284,7 +306,7 @@ impl Deleting {
         let mut said = String::from("Deleted with it:");
         for path in &row.companions {
             said.push('\n');
-            said.push_str(&written(path, self.home.as_deref()));
+            said.push_str(&written(path, self.home.as_deref(), &self.remotes));
         }
         Some(said.into())
     }
@@ -475,7 +497,15 @@ impl Shell {
     /// what it deletes.
     pub fn confirm_deleting(&mut self, plan: Plan, window: &mut Window, cx: &mut Context<Self>) {
         let cancel = self.app.lifetime().child();
-        let (listed, paths) = Deleting::of(&plan, cancel.clone());
+        let remotes = self
+            .app
+            .registry
+            .remotes
+            .all()
+            .into_iter()
+            .filter_map(|known| Some((known.point, known.address?)))
+            .collect();
+        let (listed, paths) = Deleting::of(&plan, remotes, cancel.clone());
         let question = listed.question(plan.note.as_deref());
         let id = plan.id;
         self.open_confirm(question, Confirmed::Apply(plan), window, cx);
@@ -731,6 +761,25 @@ mod tests {
     use skwir_core::op::{Delete, EntryRef, Operation};
     use skwir_core::{CancelToken, FileId, Plan};
 
+    /// A remote's folder is said by its address, not its mount's path
+    /// (ADR-077).
+    #[test]
+    fn a_remote_folder_is_said_by_its_address() {
+        let point = PathBuf::from("/run/user/1000/skwir/remote/sshfs x");
+        let remotes = [(
+            point.clone(),
+            skwir_core::Location::new("sftp", "//me@example.com/"),
+        )];
+        assert_eq!(
+            written(&point.join("home/Two Words"), None, &remotes).as_ref(),
+            "sftp://me@example.com/home/Two Words"
+        );
+        assert_eq!(
+            written(std::path::Path::new("/data"), None, &remotes).as_ref(),
+            "/data"
+        );
+    }
+
     use super::{Deleting, Kind, read, written};
 
     /// `x.xmp` beside `x`.
@@ -769,7 +818,7 @@ mod tests {
     fn the_question_names_what_it_deletes() {
         let dir = PathBuf::from("/data/it's a café");
         let one = plan(vec![dir.join("notes  draft.txt")]);
-        let (listed, paths) = Deleting::of(&one, CancelToken::new());
+        let (listed, paths) = Deleting::of(&one, Vec::new(), CancelToken::new());
         assert_eq!(
             listed.question(None),
             "Delete “notes  draft.txt” permanently? This cannot be undone."
@@ -779,7 +828,7 @@ mod tests {
         assert!(!listed.folders);
 
         let several = plan(vec![dir.join("a"), dir.join("b")]);
-        let (listed, _) = Deleting::of(&several, CancelToken::new());
+        let (listed, _) = Deleting::of(&several, Vec::new(), CancelToken::new());
         assert_eq!(
             listed.question(Some("1 of these has other names: its file stays")),
             "Delete 2 items permanently? This cannot be undone. \
@@ -788,13 +837,13 @@ mod tests {
         assert!(!listed.folders, "one folder holds them");
 
         let apart = plan(vec![dir.join("a"), PathBuf::from("/elsewhere/b")]);
-        let (listed, _) = Deleting::of(&apart, CancelToken::new());
+        let (listed, _) = Deleting::of(&apart, Vec::new(), CancelToken::new());
         assert!(listed.folders && listed.one_folder.is_none());
 
         // Items of a trash: by count, their folders read from their records.
         let trash = PathBuf::from("/data/.Trash-1000/files");
         let trashed = plan(vec![trash.join("a.txt"), trash.join("b.txt")]);
-        let (listed, _) = Deleting::of(&trashed, CancelToken::new());
+        let (listed, _) = Deleting::of(&trashed, Vec::new(), CancelToken::new());
         assert_eq!(
             listed.question(None),
             "Delete 2 items from the trash permanently? This cannot be undone."
@@ -820,7 +869,7 @@ mod tests {
         // Inside the folder listed first: counted there.
         let inner = tmp.path().join("old  project/src");
         let all = plan(vec![folder, photo, empty, gone, inner]);
-        let (mut listed, paths) = Deleting::of(&all, CancelToken::new());
+        let (mut listed, paths) = Deleting::of(&all, Vec::new(), CancelToken::new());
         // Not all in one folder: each row says its own.
         assert!(listed.folders);
         assert_eq!(listed.summary(), "Counting…");
@@ -855,14 +904,14 @@ mod tests {
         assert_eq!(listed.rows[1].companions, std::slice::from_ref(&xmp));
         assert_eq!(
             listed.deleted_with(&listed.rows[1]).as_deref(),
-            Some(format!("Deleted with it:\n{}", written(&xmp, home.as_deref())).as_str()),
+            Some(format!("Deleted with it:\n{}", written(&xmp, home.as_deref(), &[])).as_str()),
             "the mark after its name says where its companions are"
         );
         assert_eq!(listed.deleted_with(&listed.rows[0]), None);
         // The companion goes too; the gone one is not there to count, so
         // the sum is no lower bound.
         assert_eq!(listed.summary(), "2.5 KB in 4 files and 3 folders");
-        let place = written(tmp.path(), home.as_deref());
+        let place = written(tmp.path(), home.as_deref(), &[]);
         assert_eq!(listed.rows[1].folder.as_ref(), Some(&place));
         assert_eq!(listed.total.size, 2000 + 48 + 500 + 20);
     }
@@ -883,7 +932,7 @@ mod tests {
             "[Trash Info]\nPath=docs/caf%C3%A9/it%27s%20a%20note.txt\nDeletionDate=2026-10-19T10:00:00\n",
         )
         .unwrap();
-        let (mut listed, paths) = Deleting::of(&plan(vec![item]), CancelToken::new());
+        let (mut listed, paths) = Deleting::of(&plan(vec![item]), Vec::new(), CancelToken::new());
         assert_eq!(
             listed.question(None),
             "Delete 1 item from the trash permanently? This cannot be undone."
@@ -900,6 +949,7 @@ mod tests {
         let from = written(
             &tmp.path().join("docs/café"),
             skwir_core::os_path::home().as_deref(),
+            &[],
         );
         assert_eq!(
             listed.summary(),

@@ -1175,6 +1175,8 @@ impl App {
     pub fn withdraw_secret(&self, id: u64) {
         self.secret_replies.lock().remove(&id);
         self.secrets.lock().retain(|q| q.id != id);
+        // The window closes its prompt if it shows it already.
+        self.wake();
     }
 
     /// Questions asked since the last call, oldest first.
@@ -1193,6 +1195,8 @@ impl App {
     pub fn withdraw(&self, id: u64) {
         self.answers.lock().remove(&id);
         self.questions.lock().retain(|q| q.id != id);
+        // The window lets go of one it shows already.
+        self.wake();
     }
 
     /// Whether anyone still waits for the answer to `id`.
@@ -2650,10 +2654,10 @@ mod builtin {
                 Ok(Outcome::Plan(match deleted {
                     0 => plan,
                     1 if all == 1 => plan.with_note(
-                        "It is in a network folder, which keeps no trash: it is deleted for good.",
+                        "It is in a network folder, which keeps no trash: it is deleted for good",
                     ),
                     n => plan.with_note(format!(
-                        "{} in network folders, which keep no trash: deleted for good.",
+                        "{} in network folders, which keep no trash: deleted for good",
                         if n == 1 {
                             "1 item is".to_owned()
                         } else {

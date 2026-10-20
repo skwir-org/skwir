@@ -328,7 +328,7 @@ fn mount(
                 Ok(Some(text)) => {
                     if let Some(asked) = prompts.feed(&text) {
                         let Some(answer) = answer(top, &asked, ask, cancel) else {
-                            break Err(anyhow::anyhow!("cancelled"));
+                            break Err(anyhow::anyhow!("you cancelled"));
                         };
                         if let Some(stdin) = stdin.as_mut() {
                             // Written without a trace: it may be a password.

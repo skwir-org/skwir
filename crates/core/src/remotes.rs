@@ -81,7 +81,7 @@ impl App {
 }
 
 /// The address of what is `below` the folder `address` is of.
-fn address_below(address: &Location, below: &Path) -> Location {
+pub fn address_below(address: &Location, below: &Path) -> Location {
     let mut rest = address.rest.trim_end_matches('/').to_owned();
     for part in below.components() {
         rest.push('/');

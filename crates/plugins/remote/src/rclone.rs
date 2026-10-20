@@ -79,13 +79,16 @@ impl Connector for Rclone {
             command.arg("--sftp-ssh").arg(ssh_command(&top));
         }
         // A configuration kept encrypted asks its password of the window.
-        let askpass = mounter::Askpass::serve(ask, cancel)?;
+        let attempt = mounter::attempt(cancel);
+        let askpass = mounter::Askpass::serve(ask, &attempt)?;
         askpass.give(&mut command);
         command
             .arg("--password-command")
             .arg(std::env::current_exe()?);
-        mounter::mount(&mut command, &point, cancel, PATIENCE)
-            .map_err(|error| anyhow::anyhow!("{}", words(&error.to_string())))?;
+        mounter::mount(&mut command, &point, &attempt, PATIENCE).map_err(|error| {
+            let error = anyhow::anyhow!("{}", words(&error.to_string()));
+            mounter::ended(&attempt, cancel, error)
+        })?;
         Ok(Connected {
             point,
             address: top,

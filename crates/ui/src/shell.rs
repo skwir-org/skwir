@@ -2633,6 +2633,17 @@ impl Shell {
         if !questions.is_empty() {
             self.add_questions(questions, cx);
         }
+        // A question whose asker stopped waiting (a connection cancelled
+        // meanwhile) is no longer asked.
+        let before = self.reviews.len();
+        let app = Arc::clone(&self.app);
+        self.reviews.retain(|review| match review {
+            crate::review::Review::Question(q) => app.awaited(q.id),
+            _ => true,
+        });
+        if self.reviews.len() != before {
+            cx.notify();
+        }
         let clashes = self.app.take_clash_questions();
         if !clashes.is_empty() {
             self.add_clash_questions(clashes, cx);

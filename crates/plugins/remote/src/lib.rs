@@ -619,15 +619,31 @@ impl Plugin for RemotePlugin {
                     ["automatic", "never", "small", "always"].contains(&args.rule.as_str()),
                     "a rule is automatic, never, small or always"
                 );
-                let mut chosen: toml::map::Map<String, toml::Value> =
-                    app.settings.get(CHOSEN).unwrap_or_default();
-                if args.rule == "automatic" {
-                    chosen.remove(&args.remote);
-                } else {
-                    chosen.insert(args.remote, toml::Value::String(args.rule));
-                }
-                app.settings.set(CHOSEN, toml::Value::Table(chosen));
-                remotes.refresh(app);
+                let (remotes, weak) = (remotes.clone(), app.weak());
+                // Kept in the settings file, written on a worker.
+                app.scheduler.spawn(
+                    skwir_core::scheduler::Priority::Normal,
+                    "remote.thumbnails",
+                    app.lifetime().child(),
+                    move || {
+                        let Some(app) = weak.upgrade() else { return };
+                        let mut chosen: toml::map::Map<String, toml::Value> =
+                            app.settings.get(CHOSEN).unwrap_or_default();
+                        if args.rule == "automatic" {
+                            chosen.remove(&args.remote);
+                        } else {
+                            chosen.insert(args.remote, toml::Value::String(args.rule));
+                        }
+                        app.settings.set(CHOSEN, toml::Value::Table(chosen));
+                        if let Err(error) = app.settings.save() {
+                            app.notify(
+                                NotifyLevel::Error,
+                                format!("The remote's thumbnails were not saved: {error:#}"),
+                            );
+                        }
+                        remotes.refresh(&app);
+                    },
+                );
                 Ok(Outcome::Done)
             },
         );
