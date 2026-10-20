@@ -102,6 +102,33 @@ impl Clashes {
         1 + usize::from(self.any_folders())
     }
 
+    /// What the choices for all are called. The first is every clash's
+    /// but a folder's onto a folder, named by what comes: a folder onto a
+    /// file, or one a step makes (never merged), takes a file's choices
+    /// and is a folder all the same. The second, a folder's onto a
+    /// folder, says so where the first names folders too.
+    fn head_names(&self) -> (&'static str, &'static str) {
+        let (mut files, mut folders) = (false, false);
+        for clash in self.question.clashes.iter().filter(|c| !c.folders()) {
+            if clash.source.folder {
+                folders = true;
+            } else {
+                files = true;
+            }
+        }
+        let first = match (files, folders) {
+            (true, true) => "Files and folders, for all",
+            (false, true) => "Folders, for all",
+            _ => "Files, for all",
+        };
+        let second = if folders {
+            "Folders onto folders, for all"
+        } else {
+            "Folders, for all"
+        };
+        (first, second)
+    }
+
     /// What becomes of clash `i`: as chosen for it, else as for all of its
     /// kind.
     fn choice(&self, i: usize) -> Choice {
@@ -359,9 +386,10 @@ pub fn render(
                 cx,
             ))
     };
+    let (first, second) = clashes.head_names();
     let mut heads = div().flex().flex_col().gap(px(2.)).child(head(
         0,
-        "Files, for all",
+        first,
         Row::Files,
         &FILES,
         clashes.files.into(),
@@ -370,7 +398,7 @@ pub fn render(
     if clashes.heads() == 2 {
         heads = heads.child(head(
             1,
-            "Folders, for all",
+            second,
             Row::Folders,
             &FOLDERS,
             clashes.folders.into(),
@@ -592,6 +620,47 @@ mod tests {
         assert_eq!(
             answer.each,
             HashMap::from([((0, PathBuf::from("/example/dest/a.txt")), Choice::Skip)])
+        );
+    }
+
+    #[test]
+    fn the_choices_for_all_are_named_by_what_comes() {
+        assert_eq!(
+            dialog().head_names(),
+            ("Files, for all", "Folders, for all")
+        );
+        // A folder an extraction makes takes a file's choices.
+        let made = |there: &str, folder: bool| Clash {
+            act: Act::Make {
+                verb: "Extract",
+                done: "extracted",
+            },
+            ..clash(there, folder, None, true)
+        };
+        let question = |clashes| {
+            Clashes::new(ClashQuestion {
+                id: 1,
+                title: "extract".into(),
+                clashes,
+            })
+        };
+        let folder = question(vec![made("/example/dest/notes", true)]);
+        assert_eq!(folder.heads(), 1);
+        assert_eq!(folder.head_names().0, "Folders, for all");
+        let both = question(vec![
+            made("/example/dest/notes", true),
+            made("/example/dest/report.pdf", false),
+        ]);
+        assert_eq!(both.head_names().0, "Files and folders, for all");
+        // Beside folders merged, each says which folders it is for.
+        let beside = question(vec![
+            made("/example/dest/notes", true),
+            clash("/example/dest/d", true, None, false),
+        ]);
+        assert_eq!(beside.heads(), 2);
+        assert_eq!(
+            beside.head_names(),
+            ("Folders, for all", "Folders onto folders, for all")
         );
     }
 

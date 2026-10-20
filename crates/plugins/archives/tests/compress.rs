@@ -1091,9 +1091,11 @@ fn a_one_file_archive_kept_beside_keeps_the_files_extension() {
         ),
         |app| {
             let question = clashes_asked(app);
-            // The file it makes, of no size until it is made.
+            // The file it makes, of the size the archive lists: the
+            // report as it was compressed, not as it is now.
             let source = &question.clashes[0].source;
-            assert!(!source.folder && source.size.is_none(), "{source:?}");
+            assert!(!source.folder, "{source:?}");
+            assert_eq!(source.size, Some("the report".len() as u64));
             assert!(app.answer_clashes(question.id, Some(Answer::all(Policy::default()))));
         },
     );

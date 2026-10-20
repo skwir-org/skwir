@@ -203,6 +203,8 @@ impl op::Effect for Compress {
                 .unwrap_or_default(),
             inputs: self.entries.iter().map(|e| e.path.clone()).collect(),
             folder: false,
+            // Not known until it is written.
+            size: None,
             words: ("Compress", "compressed"),
         })
     }

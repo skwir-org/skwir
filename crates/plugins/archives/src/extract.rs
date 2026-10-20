@@ -71,14 +71,14 @@ impl Extract {
     fn named(&self, listing: Option<&archive::Listing>) -> (OsString, bool) {
         let one = listing.and_then(one_member);
         let folder = match (&one, listing) {
-            (Some((_, folder)), _) => *folder,
+            (Some(one), _) => one.folder,
             (None, Some(_)) => true,
             (None, None) => !only_compressed(&self.entry.path),
         };
         let name = self
             .name
             .clone()
-            .or(one.map(|(name, _)| name))
+            .or(one.map(|one| one.name))
             .unwrap_or_else(|| extracted_name(&self.entry.path));
         (name, folder)
     }
@@ -211,7 +211,7 @@ impl op::Effect for Extract {
     /// Its name and kind as the archive's listing says, read here and
     /// kept for the check, the room and the extraction after: a file,
     /// whose name kept beside another keeps its extension last
-    /// (`report.pdf.zip` gives `report (2).pdf`).
+    /// (`report.pdf.zip` gives `report (2).pdf`), of the size listed.
     fn makes(&self, ctx: &StepContext) -> Option<Made> {
         let listing = self
             .entry
@@ -219,11 +219,16 @@ impl op::Effect for Extract {
             .ok()
             .and_then(|src| archive::list(&src, ctx.cancel_token()).ok());
         let (name, folder) = self.named(listing.as_deref());
+        let size = listing
+            .as_deref()
+            .and_then(one_member)
+            .and_then(|one| one.size);
         Some(Made {
             target: self.dest_dir.join(name),
             from: self.entry.path.clone(),
             inputs: vec![self.entry.path.clone()],
             folder,
+            size,
             words: ("Extract", "extracted"),
         })
     }
@@ -353,21 +358,39 @@ fn hidden(name: &OsStr) -> bool {
     name.as_encoded_bytes().starts_with(b".")
 }
 
-/// The one member the listed archive is extracted as, by its own name, and
-/// whether it is a folder: what extracting it leaves at its top (`left_by`)
-/// is one entry, not hidden. `None` for several, none, a hidden one, or an
-/// archive refused whole. A listing cut short tells a folder by what it
-/// listed (a source tree's thousands of files under one folder), a file
-/// only when it lists every member.
-fn one_member(listing: &archive::Listing) -> Option<(OsString, bool)> {
+/// The one member an archive is extracted as (`one_member`).
+struct One {
+    /// Its own name.
+    name: OsString,
+    folder: bool,
+    /// A file's size, as listed; `None` for a folder, a link, or a size
+    /// not said.
+    size: Option<u64>,
+}
+
+/// The one member the listed archive is extracted as: what extracting it
+/// leaves at its top (`left_by`) is one entry, not hidden. `None` for
+/// several, none, a hidden one, or an archive refused whole. A listing cut
+/// short tells a folder by what it listed (a source tree's thousands of
+/// files under one folder), a file only when it lists every member.
+fn one_member(listing: &archive::Listing) -> Option<One> {
     let left = left_by(listing)?;
     let mut top = left
         .iter()
         .filter(|(path, _)| path.components().count() == 1);
     let (path, what) = top.next()?;
     let folder = *what == Left::Folder;
-    (top.next().is_none() && !hidden(path.as_os_str()) && (folder || listing.complete))
-        .then(|| (path.as_os_str().to_owned(), folder))
+    let size = match what {
+        Left::File { size, .. } => *size,
+        _ => None,
+    };
+    (top.next().is_none() && !hidden(path.as_os_str()) && (folder || listing.complete)).then(|| {
+        One {
+            name: path.as_os_str().to_owned(),
+            folder,
+            size,
+        }
+    })
 }
 
 /// What extracting an archive leaves at a path, by its listing.
@@ -454,10 +477,10 @@ fn holds_extracted(listing: &archive::Listing, target: &Path, ctx: &StepContext)
     };
     // Its one member is the target. Else the target is the folder holding
     // them all.
-    let mut expected: std::collections::BTreeMap<PathBuf, Left> = if let Some((one, _)) =
+    let mut expected: std::collections::BTreeMap<PathBuf, Left> = if let Some(one) =
         one_member(listing)
     {
-        let own = Path::new(&one);
+        let own = Path::new(&one.name);
         std::mem::take(&mut left)
             .into_iter()
             .filter_map(|(path, what)| {
@@ -664,7 +687,7 @@ mod tests {
 
     fn one(names: &[&str], complete: bool) -> Option<(String, bool)> {
         one_member(&listing(names, complete))
-            .map(|(name, folder)| (name.to_string_lossy().into_owned(), folder))
+            .map(|one| (one.name.to_string_lossy().into_owned(), one.folder))
     }
 
     #[test]

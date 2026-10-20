@@ -139,7 +139,8 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   holds, what the step reads (`Made::inputs`): the step's check refuses
   instead. Replace if newer compares the latest change among the inputs,
   deep in a folder. The dialog says what comes as what the step makes, a
-  folder or a file of no size yet, as new as that latest change; never
+  folder or a file (of the size an archive lists for its one file; an
+  archive being made has none yet), as new as that latest change; never
   what it reads (the archive extracted, the first file compressed).
 - What such a step makes may depend on what it reads: an archive of one
   folder or file gives it under its own name, a one-file archive kept

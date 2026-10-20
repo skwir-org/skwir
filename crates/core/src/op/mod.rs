@@ -671,6 +671,9 @@ pub struct Made {
     /// Whether it is a folder: a name kept beside a file's keeps its
     /// extension last.
     pub folder: bool,
+    /// A file's size where the step knows it before making it (an
+    /// archive's one file, as listed): said beside what is there.
+    pub size: Option<u64>,
     /// What the question says of it: the verb on its button and what
     /// nothing is until it is answered ("Extract", "extracted").
     pub words: (&'static str, &'static str),

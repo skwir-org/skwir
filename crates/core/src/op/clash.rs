@@ -135,8 +135,8 @@ impl Answer {
 pub struct Side {
     pub path: PathBuf,
     pub folder: bool,
-    /// A file's size; a folder's is not counted, nor what a step has not
-    /// made yet.
+    /// A file's size; a folder's is not counted, and what a step makes
+    /// has one only where the step knows it beforehand (`Made::size`).
     pub size: Option<u64>,
     pub modified: Option<SystemTime>,
 }
@@ -500,8 +500,9 @@ impl Walk<'_> {
         let (verb, done) = made.words;
         // What comes is what the step makes, not what it reads (the
         // archive extracted, the first file compressed): a folder or a
-        // file, of no size yet, as new as the latest change among what it
-        // reads, a file deep in a folder as well as the folder.
+        // file, of the size the step foresees if it does, as new as the
+        // latest change among what it reads, a file deep in a folder as
+        // well as the folder.
         let clash = Clash {
             step,
             inside: None,
@@ -509,7 +510,7 @@ impl Walk<'_> {
             source: Side {
                 path: made.from.clone(),
                 folder: made.folder,
-                size: None,
+                size: made.size,
                 modified: newest(&made.inputs, self.ctx),
             },
             there: Side::of(target),
