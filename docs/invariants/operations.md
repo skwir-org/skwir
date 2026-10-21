@@ -120,9 +120,14 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   companion beside it, a tree of files of one name, folders and links,
   no kept attribute. Each step still checks, applies (placing the copy
   made: `StepContext::take_batched`) and gives its inverse; a copy a
-  batch did not take or finish is made by its step. A batch's bytes
-  are counted once, by the batch. Only a cancel ends the plan; a failed
-  batch is logged and left to the steps.
+  batch did not take or finish is made by its step. A file or link
+  under its own name, free in the destination's listing read once
+  before, the batch places itself beside what is there (never over
+  anything, partial bytes in the staging folder) and verifies (size and
+  time); its step's check and apply only say so
+  (`StepContext::placed_by_batch`). A batch's bytes are counted once, by
+  the batch. Only a cancel ends the plan, and takes back what the batch
+  placed; a failed batch is logged and left to the steps.
 - A step's own threads (a batch's, `op::ranges`'s) are given the plan's
   cancel token and a progress handle (`StepContext::progress`), never
   the context, which is the plan thread's alone.

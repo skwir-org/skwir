@@ -229,7 +229,8 @@ struct Unmounted(PathBuf);
 impl Drop for Unmounted {
     fn drop(&mut self) {
         if skwir_core::fs::reach::of(&self.0).is_some_and(|r| r.point == self.0) {
-            let _ = Command::new("fusermount3").arg("-u").arg(&self.0).status();
+            // Lazily: what the app still holds open there lets go after.
+            let _ = Command::new("fusermount3").arg("-uz").arg(&self.0).status();
         }
     }
 }
@@ -582,11 +583,7 @@ fn copies_to_and_from_an_sftp_server_go_through_rsync_in_one_batch() {
     app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
     let pane = app.workspace.read().active_id();
     let user = std::env::var("USER").expect("the user's name");
-    let address = format!(
-        "sftp://{user}@127.0.0.1:{}{}",
-        sshd.port,
-        served.display()
-    );
+    let address = format!("sftp://{user}@127.0.0.1:{}{}", sshd.port, served.display());
     app.navigate(pane, &Location::parse(&address)).unwrap();
     until(&app, 60, "the address led to its folder", || {
         app.pane_location(pane).is_some_and(|l| l.is_path())
@@ -595,19 +592,29 @@ fn copies_to_and_from_an_sftp_server_go_through_rsync_in_one_batch() {
     let point = skwir_core::fs::reach::of(&mounted).unwrap().point.clone();
     let left = Unmounted(point.clone());
 
-    // Up: one rsync for the whole paste, each step placing its own.
+    // Up: one rsync for the folder, staged, one for the files, placed
+    // beside, into a folder whose name the server's shell would split.
     let local = base.join("local");
     let entries = small_files(&local);
+    let into = mounted.join("it's a folder");
+    std::fs::create_dir(&into).unwrap();
     let up = app
         .executor
-        .execute_blocking(&copies(&entries, &mounted), app.lifetime());
+        .execute_blocking(&copies(&entries, &into), app.lifetime());
     assert!(up.error.is_none(), "{:?}", up.error);
     assert_eq!(up.applied, entries.len());
-    assert_eq!(sshfs.rsync().made(), 1, "one batch, by rsync");
+    assert_eq!(
+        sshfs.rsync().made(),
+        2,
+        "the folder staged, the files placed"
+    );
     for e in &entries {
-        same_tree(e, &served.join(e.file_name().unwrap()));
+        same_tree(
+            e,
+            &served.join("it's a folder").join(e.file_name().unwrap()),
+        );
     }
-    let left_on_server: Vec<_> = std::fs::read_dir(&served)
+    let left_on_server: Vec<_> = std::fs::read_dir(served.join("it's a folder"))
         .unwrap()
         .map(|e| e.unwrap().file_name())
         .filter(|n| n.to_string_lossy().starts_with(".skwir-copy-"))
@@ -619,13 +626,17 @@ fn copies_to_and_from_an_sftp_server_go_through_rsync_in_one_batch() {
     std::fs::create_dir(&down).unwrap();
     let there: Vec<PathBuf> = entries
         .iter()
-        .map(|e| mounted.join(e.file_name().unwrap()))
+        .map(|e| into.join(e.file_name().unwrap()))
         .collect();
     let back = app
         .executor
         .execute_blocking(&copies(&there, &down), app.lifetime());
     assert!(back.error.is_none(), "{:?}", back.error);
-    assert_eq!(sshfs.rsync().made(), 2, "one batch, by rsync");
+    assert_eq!(
+        sshfs.rsync().made(),
+        4,
+        "the folder staged, the files placed"
+    );
     for e in &entries {
         same_tree(e, &down.join(e.file_name().unwrap()));
     }

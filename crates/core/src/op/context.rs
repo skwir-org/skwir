@@ -637,6 +637,14 @@ impl StepContext {
         self.batched.borrow_mut().insert(src.to_path_buf(), what);
     }
 
+    /// Whether a batch placed the copy of `src` at `target` itself.
+    pub(super) fn placed_by_batch(&self, src: &Path, target: &Path) -> bool {
+        matches!(
+            self.batched.borrow().get(src),
+            Some(super::transfer::Batched::Placed(at)) if at == target
+        )
+    }
+
     /// What a batch did for the copy of `src`, taken by its step.
     pub(super) fn take_batched(&self, src: &Path) -> Option<super::transfer::Batched> {
         self.batched.borrow_mut().remove(src)

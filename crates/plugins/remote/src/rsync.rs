@@ -183,6 +183,7 @@ impl Transfer for Rsync {
         from: &Path,
         names: &[OsString],
         into: &Path,
+        temp: Option<&Path>,
         copied: &(dyn Fn(u64) + Sync),
         cancel: &CancelToken,
     ) -> anyhow::Result<()> {
@@ -219,6 +220,22 @@ impl Transfer for Rsync {
                 "-e",
             ])
             .arg(self.ssh(&address, &control));
+        // Beside what is there: nothing replaced, a file written in the
+        // staging folder until whole (on the destination's side).
+        if let Some(temp) = temp {
+            let temp = if upward {
+                on_server(&point, temp).ok_or_else(|| {
+                    anyhow::anyhow!("“{}” has a name rsync cannot be given", temp.display())
+                })?
+            } else {
+                temp.to_str()
+                    .ok_or_else(|| anyhow::anyhow!("“{}” is no text", temp.display()))?
+                    .to_owned()
+            };
+            command
+                .arg("--ignore-existing")
+                .arg(format!("--temp-dir={temp}"));
+        }
         if upward {
             command.arg(&local).arg(&remote);
         } else {

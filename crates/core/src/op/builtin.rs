@@ -662,6 +662,10 @@ impl super::Effect for Copy {
             Err(e) => return conflict(e.to_string()),
         };
         let target = self.target(&src);
+        // A batch placed it there, a moment ago, verified (ADR-078).
+        if ctx.placed_by_batch(&src, &target) {
+            return pending(true);
+        }
         if target == src {
             return conflict("it would be copied onto itself");
         }
@@ -811,6 +815,8 @@ fn copy_staged(
     // name of its own.
     let (staging, name) = ctx.staging_for(dest_dir)?;
     let (staged, made) = match batched {
+        // At its target already: nothing to place.
+        Some(super::transfer::Batched::Placed(at)) if at == target => return Ok(()),
         Some(super::transfer::Batched::Made(made)) => (made, true),
         _ => (staging.path().join(&name), false),
     };

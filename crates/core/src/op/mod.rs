@@ -16,6 +16,8 @@ mod order;
 mod pace;
 #[cfg(target_os = "linux")]
 mod put_trash;
+// Unix reads at offsets without moving a file's own (`read_at`).
+#[cfg(unix)]
 mod ranges;
 pub mod records;
 pub mod room;

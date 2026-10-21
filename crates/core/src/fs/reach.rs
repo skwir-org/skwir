@@ -124,7 +124,7 @@ static PRETENDED_REMOTES: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 /// Say, for this test's process (nextest runs each in one of its own),
 /// that an sshfs remote is mounted at `point`: [`of`] says so of every
 /// path below it.
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) fn pretend_remote(point: &Path) {
     PRETENDED_REMOTES.lock().push(point.to_path_buf());
 }

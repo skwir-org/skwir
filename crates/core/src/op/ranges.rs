@@ -29,17 +29,9 @@ const AT_ONCE: u64 = 8;
 /// Asked of the mount table in memory. A kernel's network share reads
 /// ahead as far as it needs (NFS, SMB).
 pub(super) fn wanted(meta: &std::fs::Metadata) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        meta.len() >= 2 * RANGE
-            && crate::fs::reach::of_device(meta.dev()).is_some_and(|remote| !remote.by_kernel())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = meta;
-        false
-    }
+    use std::os::unix::fs::MetadataExt;
+    meta.len() >= 2 * RANGE
+        && crate::fs::reach::of_device(meta.dev()).is_some_and(|remote| !remote.by_kernel())
 }
 
 /// Which ranges the readers may take: none more than [`AT_ONCE`] ahead of
@@ -57,7 +49,6 @@ struct Window {
 /// # Errors
 /// When a range cannot be read or written, the drive refuses the pace, or
 /// the copy is cancelled.
-#[cfg(unix)]
 pub(super) fn copy(
     sf: &File,
     mut df: &File,
@@ -130,7 +121,6 @@ pub(super) fn copy(
 }
 
 /// Up to `want` bytes of `file` from `at`: fewer where it ends first.
-#[cfg(unix)]
 fn read_at(file: &File, at: u64, want: usize) -> std::io::Result<Vec<u8>> {
     use std::os::unix::fs::FileExt;
     let mut bytes = vec![0; want];
@@ -147,7 +137,7 @@ fn read_at(file: &File, at: u64, want: usize) -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::cancel::CancelToken;

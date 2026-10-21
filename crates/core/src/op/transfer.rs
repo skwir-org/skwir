@@ -13,6 +13,15 @@
 //! time ([`copy_at_once`]). Each step then runs as any: its check, its
 //! apply placing the copy made (`builtin::copy_staged`), its undo. A copy
 //! the batch did not take or finish is made by its step.
+//!
+//! A file or a link copied under its own name, which the destination's
+//! listing shows free, the batch places itself ([`Batched::Placed`]),
+//! never over anything (`rsync --ignore-existing`, Skwir's own a
+//! no-replace rename), its partial bytes in the staging folder: placed
+//! by its step, it would cost a look and a rename across the network
+//! each, as many round trips as rsync's whole batch. What it placed is
+//! verified (the name was free; the file there has the source's size and
+//! time) and its step only says so.
 
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
@@ -41,19 +50,24 @@ pub trait Transfer: Send + Sync {
     fn serves(&self, from: &Path, into: &Path) -> bool;
 
     /// Copy the entries `names` of the folder `from` into the folder
-    /// `into`, under the same names, which `into` does not hold: folders
-    /// whole, links as links, files' and folders' modes and modification
-    /// times kept. `copied` is told the bytes copied so far, in all.
-    /// Blocking, on the plan's thread; stopped when `cancel` is.
+    /// `into`, under the same names: folders whole, links as links, files'
+    /// and folders' modes and modification times kept. Without `temp`,
+    /// `into` is a folder of the staging folder, empty. With it, `into`
+    /// holds other names: nothing there is replaced, a name taken
+    /// meanwhile is left as it is, and a file is written in `temp` (a
+    /// folder on `into`'s volume) until whole. `copied` is told the bytes
+    /// copied so far, in all. Blocking, on the plan's thread; stopped when
+    /// `cancel` is.
     ///
     /// # Errors
     /// When the copy could not be made whole, or was cancelled: what it
-    /// made is removed with the staging folder.
+    /// made in the staging folder goes with it.
     fn copy(
         &self,
         from: &Path,
         names: &[OsString],
         into: &Path,
+        temp: Option<&Path>,
         copied: &(dyn Fn(u64) + Sync),
         cancel: &CancelToken,
     ) -> anyhow::Result<()>;
@@ -95,6 +109,8 @@ impl Transfers {
 pub(super) enum Batched {
     /// Its copy, whole, in the staging folder.
     Made(PathBuf),
+    /// Its copy, whole, at its target: its step only says so.
+    Placed(PathBuf),
     /// Counted in the progress's total, not made: its step copies it
     /// without counting it again.
     Counted,
@@ -138,13 +154,16 @@ pub(super) fn batch_ahead(
         return Ok(());
     }
     let dest_remote = crate::fs::reach::of(&dest).is_some();
-    let mut groups: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+    let mut groups: BTreeMap<PathBuf, Vec<(PathBuf, Option<OsString>)>> = BTreeMap::new();
     for copy in run {
         // One that does not resolve says why in its own check.
         if let Ok(src) = copy.entry.resolve()
             && let Some(parent) = src.parent()
         {
-            groups.entry(parent.to_path_buf()).or_default().push(src);
+            groups
+                .entry(parent.to_path_buf())
+                .or_default()
+                .push((src, copy.new_name.clone()));
         }
     }
     for (from, sources) in groups {
@@ -169,32 +188,34 @@ fn copy_of(step: &dyn Operation) -> Option<&Copy> {
         .filter(|c| c.preserve_attributes)
 }
 
-/// An entry a batch takes: its source, its name, its bytes.
+/// An entry a batch takes: its source, its name, its bytes, and whether
+/// it is a folder, or copied under another name (a copy's "(copy)").
 struct Taken {
     src: PathBuf,
     name: OsString,
     bytes: u64,
     folder: bool,
+    renamed: bool,
 }
 
 /// What of `sources` (entries of the folder `from`) a batch takes
 /// (ADR-078, 2): a name no other of them has, no companion beside it, a
 /// tree of files, folders and links alone. Reads the folder's names once
 /// and walks each tree.
-fn takes(from: &Path, sources: &[PathBuf], ctx: &StepContext) -> Vec<Taken> {
+fn takes(from: &Path, sources: &[(PathBuf, Option<OsString>)], ctx: &StepContext) -> Vec<Taken> {
     let rules = ctx.companions();
     let Ok(listed) = std::fs::read_dir(from) else {
         return Vec::new();
     };
     let listed: Vec<OsString> = listed.flatten().map(|e| e.file_name()).collect();
     let mut names: HashMap<&OsStr, usize> = HashMap::new();
-    for src in sources {
+    for (src, _) in sources {
         if let Some(name) = src.file_name() {
             *names.entry(name).or_default() += 1;
         }
     }
     let mut taken = Vec::new();
-    for src in sources {
+    for (src, new_name) in sources {
         if ctx.cancel_token().is_cancelled() {
             return Vec::new();
         }
@@ -216,6 +237,7 @@ fn takes(from: &Path, sources: &[PathBuf], ctx: &StepContext) -> Vec<Taken> {
                 name: name.to_os_string(),
                 bytes,
                 folder,
+                renamed: new_name.as_deref().is_some_and(|n| n != name),
             });
         }
     }
@@ -269,8 +291,10 @@ fn names_of(meta: &std::fs::Metadata) -> u64 {
     }
 }
 
-/// Make the copies `taken` of the folder `from` at once, in a folder of
-/// the plan's staging folder in `dest`, and tell their steps.
+/// Make the copies `taken` of the folder `from` at once in `dest`, and
+/// tell their steps: those a batch places itself at their targets
+/// (module documentation), the rest in a folder of the plan's staging
+/// folder there.
 fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result<(), Cancelled> {
     #[cfg(test)]
     BATCHES.fetch_add(1, Ordering::Relaxed);
@@ -279,44 +303,123 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
     for t in taken {
         ctx.batched(&t.src, Batched::Counted);
     }
-    let names: Vec<OsString> = taken.iter().map(|t| t.name.clone()).collect();
+    // What the destination holds now: a name free there may be placed.
+    let held: std::collections::HashSet<OsString> = if taken.iter().any(|t| !t.folder) {
+        match std::fs::read_dir(dest) {
+            Ok(listed) => listed.flatten().map(|e| e.file_name()).collect(),
+            Err(_) => return Ok(()),
+        }
+    } else {
+        std::collections::HashSet::new()
+    };
+    let (placed, staged): (Vec<&Taken>, Vec<&Taken>) = taken
+        .iter()
+        .partition(|t| !t.folder && !t.renamed && !held.contains(&t.name));
+    let advance = ctx.progress();
+    let told = AtomicU64::new(0);
+    let copied = |so_far: u64| {
+        let before = told.fetch_max(so_far, Ordering::Relaxed);
+        if so_far > before {
+            advance(so_far - before);
+        }
+    };
     let made = (|| {
         let (staging, name) = ctx.staging_for(dest)?;
-        let into = staging.path().join(format!("batch-{name}"));
-        std::fs::create_dir(&into)?;
-        let advance = ctx.progress();
-        let told = AtomicU64::new(0);
-        let copied = |so_far: u64| {
-            let before = told.fetch_max(so_far, Ordering::Relaxed);
-            if so_far > before {
-                advance(so_far - before);
-            }
-        };
-        let cancel = ctx.cancel_token();
-        let by = ctx.transfers().and_then(|t| t.serving(from, &into));
-        let doer = by.as_ref().map_or("skwir", |t| t.name());
-        tracing::debug!(copies = taken.len(), total, by = doer, "a batch of copies");
-        match by {
-            Some(transfer) => transfer.copy(from, &names, &into, &copied, cancel),
-            None => copy_at_once(from, &names, &into, &copied, cancel),
-        }
-        .with_context(|| format!("{doer} copying {} entries", names.len()))?;
-        anyhow::Ok(into)
-    })();
-    match made {
-        Ok(into) => {
-            for t in taken {
+        if !staged.is_empty() {
+            let into = staging.path().join(format!("batch-{name}"));
+            std::fs::create_dir(&into)?;
+            run(from, &staged, &into, None, &copied, ctx)?;
+            for t in &staged {
                 ctx.batched(&t.src, Batched::Made(into.join(&t.name)));
             }
-            Ok(())
         }
+        if !placed.is_empty() {
+            let temp = staging.path().join(format!("temp-{name}"));
+            std::fs::create_dir(&temp)?;
+            let ran = run(from, &placed, dest, Some(&temp), &copied, ctx);
+            // What it placed, finished or not: the name was free, the
+            // file there is the source's, by its size and time. Listing
+            // the folder first answers each look of an sshfs mount from
+            // what sshfs read with it.
+            let _ = std::fs::read_dir(dest).map(Iterator::count);
+            let cancelled = ctx.cancel_token().is_cancelled();
+            for t in &placed {
+                let target = dest.join(&t.name);
+                if !same_file(&t.src, &target) {
+                    continue;
+                }
+                if cancelled {
+                    // Cancelled, a copy leaves nothing it made: its own,
+                    // made a moment ago.
+                    let _ = std::fs::remove_file(&target);
+                } else {
+                    ctx.batched(&t.src, Batched::Placed(target));
+                }
+            }
+            ran?;
+        }
+        anyhow::Ok(())
+    })();
+    match made {
+        Ok(()) => Ok(()),
         Err(_) if ctx.cancel_token().is_cancelled() => Err(Cancelled),
         // Each step copies its own, as without a batch.
         Err(error) => {
-            tracing::warn!("a batch of copies failed, copied one by one: {error:#}");
+            tracing::warn!("a batch of copies failed, the rest copied one by one: {error:#}");
             Ok(())
         }
     }
+}
+
+/// Copy `taken` of `from` into `into` (with `temp`, beside what it
+/// holds) by a plugin's transfer that serves the two folders, else by
+/// Skwir's own.
+fn run(
+    from: &Path,
+    taken: &[&Taken],
+    into: &Path,
+    temp: Option<&Path>,
+    copied: &(dyn Fn(u64) + Sync),
+    ctx: &StepContext,
+) -> anyhow::Result<()> {
+    let names: Vec<OsString> = taken.iter().map(|t| t.name.clone()).collect();
+    let cancel = ctx.cancel_token();
+    let by = ctx.transfers().and_then(|t| t.serving(from, into));
+    let doer = by.as_ref().map_or("skwir", |t| t.name());
+    tracing::debug!(
+        copies = names.len(),
+        beside = temp.is_some(),
+        by = doer,
+        "a batch of copies"
+    );
+    match by {
+        Some(transfer) => transfer.copy(from, &names, into, temp, copied, cancel),
+        None => copy_at_once(from, &names, into, temp, copied, cancel),
+    }
+    .with_context(|| format!("{doer} copying {} entries", names.len()))
+}
+
+/// Whether `copy` is a copy of the file or link `src` as a batch makes
+/// one: a link to the same place, or a file of its size and modification
+/// time (to the second: SFTP keeps no more).
+fn same_file(src: &Path, copy: &Path) -> bool {
+    let (Ok(a), Ok(b)) = (
+        std::fs::symlink_metadata(src),
+        std::fs::symlink_metadata(copy),
+    ) else {
+        return false;
+    };
+    if a.file_type().is_symlink() {
+        return b.file_type().is_symlink()
+            && std::fs::read_link(src).is_ok_and(|to| std::fs::read_link(copy).ok() == Some(to));
+    }
+    let seconds = |m: &std::fs::Metadata| {
+        m.modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+    };
+    b.is_file() && a.len() == b.len() && seconds(&a).is_some() && seconds(&a) == seconds(&b)
 }
 
 /// Skwir's own batch copy (the [`Transfer::copy`] it does where no
@@ -330,12 +433,17 @@ pub(super) fn copy_at_once(
     from: &Path,
     names: &[OsString],
     into: &Path,
+    temp: Option<&Path>,
     copied: &(dyn Fn(u64) + Sync),
     cancel: &CancelToken,
 ) -> anyhow::Result<()> {
     let (mut folders, mut files) = (Vec::new(), Vec::new());
     for name in names {
-        lay_out(&from.join(name), &into.join(name), &mut folders, &mut files)?;
+        match temp {
+            // Files and links alone are placed beside what is there.
+            Some(_) => files.push((from.join(name), into.join(name))),
+            None => lay_out(&from.join(name), &into.join(name), &mut folders, &mut files)?,
+        }
     }
     let next = AtomicUsize::new(0);
     let total = AtomicU64::new(0);
@@ -349,7 +457,23 @@ pub(super) fn copy_at_once(
                         return;
                     };
                     let wrote = |n: u64| copied(total.fetch_add(n, Ordering::Relaxed) + n);
-                    if let Err(error) = copy_one(src, dst, &wrote) {
+                    let made = match temp {
+                        // Made aside, then placed, never over anything.
+                        Some(temp) => {
+                            let aside = temp.join(dst.file_name().unwrap_or_default());
+                            copy_one(src, &aside, &wrote).and_then(|()| {
+                                match super::sys::rename_noreplace(&aside, dst) {
+                                    // Taken meanwhile: left to its step.
+                                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                                        Ok(())
+                                    }
+                                    placed => placed.map_err(Into::into),
+                                }
+                            })
+                        }
+                        None => copy_one(src, dst, &wrote),
+                    };
+                    if let Err(error) = made {
                         stop.store(true, Ordering::Relaxed);
                         failed.lock().get_or_insert(error);
                     }
@@ -577,6 +701,8 @@ mod tests {
         calls: Arc<Mutex<Vec<Vec<OsString>>>>,
         fails: bool,
         cancels: Option<CancelToken>,
+        /// Cancels once it placed files beside (its second call).
+        cancels_after: Option<CancelToken>,
     }
 
     impl Transfer for Fake {
@@ -591,6 +717,7 @@ mod tests {
             from: &Path,
             names: &[OsString],
             into: &Path,
+            temp: Option<&Path>,
             copied: &(dyn Fn(u64) + Sync),
             cancel: &CancelToken,
         ) -> anyhow::Result<()> {
@@ -599,15 +726,28 @@ mod tests {
                 cancel.cancel();
                 anyhow::bail!("cancelled");
             }
-            copy_at_once(from, &names[..names.len() / 2], into, copied, cancel)?;
+            copy_at_once(from, &names[..names.len() / 2], into, temp, copied, cancel)?;
             anyhow::ensure!(!self.fails, "the server went away");
-            copy_at_once(from, &names[names.len() / 2..], into, copied, cancel)
+            copy_at_once(from, &names[names.len() / 2..], into, temp, copied, cancel)?;
+            if let Some(cancel) = self.cancels_after.as_ref().filter(|_| temp.is_some()) {
+                cancel.cancel();
+                anyhow::bail!("cancelled");
+            }
+            Ok(())
         }
     }
 
     fn with_fake(
         fails: bool,
         cancels: Option<CancelToken>,
+    ) -> (Arc<Executor>, Arc<Mutex<Vec<Vec<OsString>>>>) {
+        with_fake_cancelling(fails, cancels, None)
+    }
+
+    fn with_fake_cancelling(
+        fails: bool,
+        cancels: Option<CancelToken>,
+        cancels_after: Option<CancelToken>,
     ) -> (Arc<Executor>, Arc<Mutex<Vec<Vec<OsString>>>>) {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let transfers = Arc::new(Transfers::default());
@@ -617,6 +757,7 @@ mod tests {
                 calls: Arc::clone(&calls),
                 fails,
                 cancels,
+                cancels_after,
             }),
         );
         let executor = Executor::new(Scheduler::new(2));
@@ -635,11 +776,20 @@ mod tests {
         let r = executor.execute_blocking(&copies(&entries, &dest), &CancelToken::new());
         assert!(r.error.is_none(), "{:?}", r.error);
         let calls = calls.lock();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].len(), entries.len());
+        // The folder staged, the files and the link placed beside.
+        assert_eq!(calls.len(), 2);
+        let mut taken: Vec<OsString> = calls.iter().flatten().cloned().collect();
+        taken.sort();
+        let mut all: Vec<OsString> = entries
+            .iter()
+            .map(|e| e.file_name().unwrap().into())
+            .collect();
+        all.sort();
+        assert_eq!(taken, all, "each once");
         for e in &entries {
             same(e, &dest.join(e.file_name().unwrap()));
         }
+        assert_eq!(names(&dest).len(), entries.len(), "nothing staged left");
     }
 
     #[test]
@@ -658,7 +808,7 @@ mod tests {
         let (executor, calls) = with_fake(false, None);
         let r = executor.execute_blocking(&copies(&entries, &dest), &CancelToken::new());
         assert!(r.error.is_none(), "{:?}", r.error);
-        let taken = calls.lock()[0].clone();
+        let taken: Vec<OsString> = calls.lock().iter().flatten().cloned().collect();
         assert!(
             !taken
                 .iter()
@@ -692,7 +842,7 @@ mod tests {
         let (executor, calls) = with_fake(true, None);
         let r = executor.execute_blocking(&copies(&entries, &dest), &CancelToken::new());
         assert!(r.error.is_none(), "{:?}", r.error);
-        assert_eq!(calls.lock().len(), 1);
+        assert!(!calls.lock().is_empty());
         for e in &entries {
             same(e, &dest.join(e.file_name().unwrap()));
         }
@@ -715,5 +865,25 @@ mod tests {
             names(&dest).is_empty(),
             "nothing placed, nothing staged left"
         );
+    }
+
+    #[test]
+    fn a_batch_cancelled_once_it_placed_files_takes_them_back() {
+        let tmp = home_tempdir();
+        let entries = served(tmp.path());
+        let dest = tmp.path().join("on the server");
+        std::fs::create_dir(&dest).unwrap();
+        crate::fs::reach::pretend_remote(&dest);
+        let cancel = CancelToken::new();
+        let (executor, calls) = with_fake_cancelling(false, None, Some(cancel.clone()));
+        let r = executor.execute_blocking(&copies(&entries, &dest), &cancel);
+        assert!(r.cancelled);
+        assert_eq!(r.applied, 0);
+        assert_eq!(
+            calls.lock().len(),
+            2,
+            "it placed its files, then was cancelled"
+        );
+        assert!(names(&dest).is_empty(), "what it placed taken back");
     }
 }

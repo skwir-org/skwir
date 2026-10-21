@@ -43,6 +43,14 @@ mounted the folder.
    the copy the batch made (the no-replace rename it makes anyway) rather
    than making it. A copy the batch did not take, or did not finish, is
    made by its step, as any other.
+   A file or a link copied under its own name, which the destination's
+   listing (read once, before) shows free, the batch places itself:
+   never over anything, its bytes written in the staging folder until
+   whole, then verified (the name was free; what is there has the
+   source's size and time). Its step only says so and gives its inverse:
+   placed by its step, each would cost a look and a rename across the
+   network, as many round trips as the whole batch. A batch cancelled
+   takes back what it placed.
 
 2. **What a batch takes.** An entry of the folder whose name no other of
    the batch has, with no companion beside it (by the folder's names,
@@ -64,12 +72,19 @@ mounted the folder.
    multiplexed on the connection sshfs holds (sshfs's ssh is started as
    the master of a control socket in the runtime folder,
    `ControlMaster=auto`), so nothing is asked again and no credential
-   passes through Skwir. rsync must be installed here and on the server;
-   a server without it is remembered for the mount and its copies go
-   through the mount. Its progress is read from `--info=progress2`.
+   passes through Skwir. What it places beside, `--ignore-existing` with
+   `--temp-dir` in the staging folder. rsync must be installed here and
+   on the server; a server without it is remembered for the mount and
+   its copies go through the mount. Its progress is read from
+   `--info=progress2`.
 
 ## Consequences
 
+- Measured after, the same way (20 ms; load 8 to 61): a 256 MiB file
+  down 6.4–6.6 s (23.9 before); 100 files of 16 KiB pasted one by one up
+  0.87 s, as one folder 0.81–0.91 s (16.6), down 0.26–0.45 s (4.6), by
+  rsync; without it, up 7.3 s as one folder and 15.2 one by one, down
+  0.58–0.75 s.
 - A paste of many small files onto or from an SFTP server goes at
   rsync's pace where rsync is on both ends, at twice the mount's pace
   elsewhere; a large file comes down in ranges.
@@ -82,4 +97,7 @@ mounted the folder.
 - Not yet: a cross-device move (its copy, then the removal) in batches;
   rclone's and GVfs's own transfers (`rclone copy`, `gio copy`); sshfs
   mounts Skwir did not make (no connection to share: their copies go
-  through the mount, eight at a time); Pause during a batch.
+  through the mount, eight at a time); Pause during a batch. Without
+  rsync, files pasted one by one onto a remote still cost a rename each
+  through FUSE, which the kernel takes one at a time under the folder's
+  lock (15 s for 100 at 20 ms).

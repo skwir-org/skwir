@@ -1262,7 +1262,18 @@ protocol is a scheme a connector maps, or a connector.
   real rclone mount let go of and mounted again (`just remote-check`);
   listings measured as fast as before. Before Linux 6.8 the mount's
   number is the table's, which a later mount may take again.
+- **Copies to and from a remote** (2026-10-21, ADR-078, the user's
+  choice of the levers measured): a large file on a FUSE remote read in
+  ranges at once; a mode made right not set again; copies in batches
+  before their steps, by rsync through the connection an sshfs mount
+  holds, else eight files at a time, plain files placed by the batch
+  itself. **Built**, checked against OpenSSH's own server on this
+  machine (`just remote-check`) and timed with a 20 ms round trip
+  (STATUS-LOG).
 - **G. Left** (each its own step):
+  - cross-device moves in batches; rclone's and GVfs's own transfers;
+    Pause during a batch; files pasted one by one without rsync still
+    renamed one at a time through FUSE;
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);
