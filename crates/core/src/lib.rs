@@ -37,6 +37,7 @@ pub mod fields;
 pub mod folders;
 pub mod fs;
 pub mod geo;
+pub mod hashing;
 pub mod hints;
 pub mod jsonl;
 pub mod keymap;

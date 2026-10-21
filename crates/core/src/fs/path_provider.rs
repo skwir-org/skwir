@@ -1,6 +1,5 @@
 //! The `path` scheme: stream a directory, stat lazily, watch for changes.
 
-use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,6 +11,7 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::cancel::CancelToken;
 use crate::entry::{Entry, EntryId, EntryKind, FileId};
+use crate::hashing;
 use crate::location::{
     EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation, PATH_SCHEME,
 };
@@ -79,15 +79,15 @@ struct Shared {
 /// keeps an alias, so a later re-listing uses the real id straight away.
 #[derive(Default)]
 struct Names {
-    by_id: HashMap<EntryId, OsString>,
-    by_name: HashMap<OsString, EntryId>,
+    by_id: hashing::Map<EntryId, OsString>,
+    by_name: hashing::Map<OsString, EntryId>,
     /// Provisional (device, `d_ino`) ids to the id a stat reports.
-    aliases: HashMap<EntryId, EntryId>,
+    aliases: hashing::Map<EntryId, EntryId>,
     /// The entries stat-ed since they were listed: what a listing again
     /// (F5, a watcher's rescan) stats again, its metadata kept meanwhile.
     /// The others were never asked for, and a refresh does not read the
     /// whole folder for them.
-    stated: HashSet<EntryId>,
+    stated: hashing::Set<EntryId>,
 }
 
 impl Names {
@@ -347,7 +347,7 @@ impl Shared {
         }
         let mut stayed = Vec::new();
         if let Some(prev) = previous {
-            let seen: HashSet<EntryId> = seen.into_iter().collect();
+            let seen: hashing::Set<EntryId> = seen.into_iter().collect();
             let (kept, gone): (Vec<EntryId>, Vec<EntryId>) =
                 prev.into_iter().partition(|id| seen.contains(id));
             // What was stat-ed is stat-ed again; the rest still waits to be
@@ -553,7 +553,7 @@ impl Shared {
                 removed.push(id);
             }
         }
-        let arrived: HashSet<EntryId> = added.iter().map(|e| e.id).collect();
+        let arrived: hashing::Set<EntryId> = added.iter().map(|e| e.id).collect();
         removed.retain(|id| !arrived.contains(id));
         // A file renamed within the folder is gone under its old name and
         // come under its new one: a rename, so its row keeps its place and
@@ -582,15 +582,16 @@ impl Shared {
 /// or gained several names at once is left as it is: which name became
 /// which cannot be told.
 fn renames(removed: &mut Vec<EntryId>, added: &mut Vec<Entry>) -> Vec<(EntryId, Entry)> {
-    let count = |files: &mut HashMap<FileId, usize>, file| *files.entry(file).or_default() += 1;
-    let (mut gone, mut came) = (HashMap::new(), HashMap::new());
+    let count =
+        |files: &mut hashing::Map<FileId, usize>, file| *files.entry(file).or_default() += 1;
+    let (mut gone, mut came) = (hashing::Map::default(), hashing::Map::default());
     for id in removed.iter() {
         count(&mut gone, id.file);
     }
     for e in added.iter() {
         count(&mut came, e.file());
     }
-    let one = |files: &HashMap<FileId, usize>, file| files.get(&file) == Some(&1);
+    let one = |files: &hashing::Map<FileId, usize>, file| files.get(&file) == Some(&1);
     let mut renamed = Vec::new();
     let mut i = 0;
     while i < added.len() {

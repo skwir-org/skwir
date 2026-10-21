@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crossbeam_channel::{Receiver, Sender};
-use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::cancel::CancelToken;
@@ -903,7 +902,7 @@ fn stamp() -> u64 {
 pub struct Listing {
     /// Which listing this is; see [`stamp`].
     id: u64,
-    entries: IndexMap<EntryId, Slot>,
+    entries: crate::hashing::IndexMap<EntryId, Slot>,
     complete: bool,
     error: Option<String>,
     /// What the answer rests on, when not the files as they are
@@ -938,7 +937,7 @@ pub struct Listing {
     companions: Option<Arc<crate::companions::Companions>>,
     /// The names companions listed belong to: one arriving re-sorts, so
     /// its companion is hidden.
-    owners: std::collections::HashSet<OsString>,
+    owners: crate::hashing::Set<OsString>,
     /// Entries renamed since a holder last asked (`take_renamed`): each
     /// id before and after.
     renamed: Vec<(EntryId, EntryId)>,
@@ -952,7 +951,7 @@ impl Default for Listing {
         let id = stamp();
         Listing {
             id,
-            entries: IndexMap::new(),
+            entries: crate::hashing::IndexMap::default(),
             complete: false,
             error: None,
             as_of: None,
@@ -967,7 +966,7 @@ impl Default for Listing {
             removed_version: id,
             sort_cache: parking_lot::Mutex::new(None),
             companions: None,
-            owners: std::collections::HashSet::new(),
+            owners: crate::hashing::Set::default(),
             renamed: Vec::new(),
             redirect: None,
         }
@@ -1063,7 +1062,7 @@ impl Listing {
                 if ids.len() > 1 {
                     // One pass instead of an O(n) shift per id: one id is
                     // one shift, as long as the pass.
-                    let gone: std::collections::HashSet<EntryId> = ids.into_iter().collect();
+                    let gone: crate::hashing::Set<EntryId> = ids.into_iter().collect();
                     self.entries.retain(|id, _| !gone.contains(id));
                 } else {
                     for id in ids {
@@ -1350,7 +1349,7 @@ impl Listing {
     fn shown(
         spec: SortSpec,
         slot: &Slot,
-        listed: Option<&std::collections::HashSet<&OsStr>>,
+        listed: Option<&crate::hashing::Set<&OsStr>>,
         companions: bool,
     ) -> bool {
         let with_file = match (&slot.beside, listed) {
@@ -1383,7 +1382,7 @@ impl Listing {
     }
 
     /// The names listed, when companions may hide: their files among them.
-    fn listed(&self) -> Option<std::collections::HashSet<&OsStr>> {
+    fn listed(&self) -> Option<crate::hashing::Set<&OsStr>> {
         (!self.owners.is_empty()).then(|| {
             self.entries
                 .values()

@@ -7574,6 +7574,7 @@ dependencies = [
  "chrono",
  "crossbeam-channel",
  "dirs 7.0.0",
+ "foldhash 0.2.0",
  "indexmap",
  "inotify",
  "libc",

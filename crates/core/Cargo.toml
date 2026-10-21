@@ -24,6 +24,7 @@ blake3.workspace = true
 trash.workspace = true
 tracing.workspace = true
 indexmap.workspace = true
+foldhash.workspace = true
 # Only for `testing`, which plugins ask for in their dev-dependencies.
 proptest = { workspace = true, optional = true }
 

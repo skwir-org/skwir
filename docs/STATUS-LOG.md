@@ -2300,3 +2300,24 @@ Asked by the user after the night's report ("Yes, go ahead").
 - Then, both commits in: `just lint-all` (Windows and macOS included),
   `just smoke` passed, and `just bench-check` met every budget (load
   average 10 to 20).
+
+### A listing's maps hash with foldhash (2026-10-21, morning)
+
+Asked by the user ("go ahead with the faster hash function for
+listings").
+
+- `skwir_core::hashing`: `Map`, `Set` and `IndexMap` with foldhash's
+  `fast::RandomState`, seeded per map from a secret of the process: a
+  folder's names, which anyone may choose, cannot be made to collide
+  without seeing what they hash to (foldhash's "minimal DoS resistance",
+  enough where no one sees the output). Used by the provider's maps of
+  names and ids (`fs::path_provider::Names`, a listing's sets of
+  arrivals and renames) and the listing's own entries
+  (`location::Listing`).
+- Measured (`skwir-bench list`, 5 runs each, alternated with the build
+  before, load average 3 to 15): flat100k's complete stream 48–62 ms
+  against 56–73 ms, images10k's 4.9–6.3 ms against 5.5–7.0 ms; the sorted
+  listing's hydration (0.49–0.64 s) and one change placed (1.4–1.8 ms)
+  as before: those copy orders of entries, which the hash does not touch.
+- foldhash 0.2 was in the tree already (hashbrown); the native workers'
+  notices now list it (`just notices`).
