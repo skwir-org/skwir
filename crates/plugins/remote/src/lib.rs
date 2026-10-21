@@ -86,6 +86,10 @@ struct State {
 pub struct Remotes {
     connectors: Arc<Vec<Arc<dyn Connector>>>,
     state: Arc<Mutex<State>>,
+    /// One connection at a time to each address's top: a second (two
+    /// tabs restored on one server) waits for the first, then finds its
+    /// mount, rather than asking the password twice and mounting twice.
+    connecting: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
 
 impl Default for Remotes {
@@ -105,6 +109,7 @@ impl Remotes {
         Remotes {
             connectors: Arc::new(connectors),
             state: Arc::default(),
+            connecting: Arc::default(),
         }
     }
 
@@ -194,6 +199,18 @@ impl Remotes {
         ask: &Arc<dyn Ask>,
         cancel: &CancelToken,
     ) -> anyhow::Result<PathBuf> {
+        let turn = Arc::clone(
+            self.connecting
+                .lock()
+                .entry(address.top().to_string())
+                .or_default(),
+        );
+        let _turn = loop {
+            if let Some(held) = turn.try_lock_for(Duration::from_millis(100)) {
+                break held;
+            }
+            anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+        };
         for mounted in self.mounted() {
             if let Some(below) = mounted
                 .recognised
@@ -843,5 +860,89 @@ impl Ask for WindowAsk {
                 Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return false,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::connector::Connected;
+
+    /// Connects nothing, slowly, counting how many connect at once.
+    #[derive(Default)]
+    struct Slow {
+        now: AtomicUsize,
+        most: AtomicUsize,
+    }
+
+    impl Connector for Slow {
+        fn id(&self) -> &'static str {
+            "slow"
+        }
+        fn title(&self) -> &'static str {
+            "slow"
+        }
+        fn schemes(&self) -> &'static [Scheme] {
+            &[Scheme::Sftp]
+        }
+        fn unavailable(&self) -> Option<String> {
+            None
+        }
+        fn connect(
+            &self,
+            address: &Address,
+            _: &Arc<dyn Ask>,
+            _: &CancelToken,
+        ) -> anyhow::Result<Connected> {
+            let now = self.now.fetch_add(1, Ordering::SeqCst) + 1;
+            self.most.fetch_max(now, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(150));
+            self.now.fetch_sub(1, Ordering::SeqCst);
+            Ok(Connected {
+                point: PathBuf::from("/nowhere"),
+                address: address.top(),
+            })
+        }
+        fn recognises(&self, _: &Remote) -> Option<Recognised> {
+            None
+        }
+        fn disconnect(&self, _: &Remote, _: &Recognised, _: &CancelToken) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct Nobody;
+
+    impl Ask for Nobody {
+        fn secret(&self, _: &str, _: &str, _: &CancelToken) -> Option<String> {
+            None
+        }
+        fn confirm(&self, _: &str, _: &str, _: &CancelToken) -> bool {
+            false
+        }
+    }
+
+    /// Two panes opening one server at once connect one after the other,
+    /// never together: the second would ask the password again and mount
+    /// over the first.
+    #[test]
+    fn connections_to_one_address_take_turns() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let slow = Arc::new(Slow::default());
+        let remotes = Remotes::with(vec![Arc::clone(&slow) as Arc<dyn Connector>]);
+        let ask: Arc<dyn Ask> = Arc::new(Nobody);
+        std::thread::scope(|scope| {
+            for path in ["/a", "/b"] {
+                let (remotes, app, ask) = (&remotes, &app, &ask);
+                scope.spawn(move || {
+                    let address = Address::parse(&format!("sftp://me@example.com{path}")).unwrap();
+                    remotes.reach(app, &address, ask, &CancelToken::new())
+                });
+            }
+        });
+        assert_eq!(slow.most.load(Ordering::SeqCst), 1);
     }
 }

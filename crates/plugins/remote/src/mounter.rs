@@ -26,10 +26,16 @@ pub fn point_for(connector: &str, top: &Address) -> anyhow::Result<PathBuf> {
     make_private(&folder)?;
     let point = folder.join(connector::point_name(connector, top));
     if skwir_core::fs::reach::of(&point).is_some_and(|remote| remote.point == point) {
-        // Mounted already: by an earlier connection whose program died, or
-        // alive and found again (`connect` asks the table first).
-        let _ = force_unmount(&point);
-        skwir_core::fs::reach::changed();
+        // Mounted already. A mount whose program died answers nothing and
+        // is let go of; a live one is never taken from under what uses it
+        // (connections to one address wait their turn, `Remotes::reach`).
+        match std::fs::symlink_metadata(&point) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotConnected => {
+                let _ = force_unmount(&point);
+                skwir_core::fs::reach::changed();
+            }
+            _ => anyhow::bail!("it is connected already"),
+        }
     }
     match std::fs::create_dir(&point) {
         Ok(()) => {}
@@ -204,6 +210,15 @@ fn remove_point(point: &Path) -> std::io::Result<()> {
 pub struct Askpass {
     server: skwir_platform::askpass::Server,
     program: PathBuf,
+    /// The attempt it answers for: ended as it is dropped, so a question
+    /// the window still shows is withdrawn once the tool is done.
+    attempt: CancelToken,
+}
+
+impl Drop for Askpass {
+    fn drop(&mut self) {
+        self.attempt.cancel();
+    }
 }
 
 impl Askpass {
@@ -229,6 +244,7 @@ impl Askpass {
             .and_then(|f| f.parent().map(Path::to_path_buf))
             .ok_or_else(|| anyhow::anyhow!("there is no runtime folder"))?;
         make_private(&folder)?;
+        let attempt = cancel.clone();
         let (ask, cancel) = (Arc::clone(ask), cancel.clone());
         let server = skwir_platform::askpass::Server::start(&folder, move |question| {
             let prompt = question.prompt.trim().trim_end_matches(':').trim();
@@ -246,7 +262,11 @@ impl Askpass {
             }
             answer
         })?;
-        Ok(Askpass { server, program })
+        Ok(Askpass {
+            server,
+            program,
+            attempt,
+        })
     }
 
     /// Have `command`'s ssh ask here.
