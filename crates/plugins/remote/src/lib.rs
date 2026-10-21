@@ -74,6 +74,9 @@ struct State {
     busy: HashMap<String, &'static str>,
     /// Points whose program is gone (`ENOTCONN`): drawn unavailable.
     lost: std::collections::HashSet<PathBuf>,
+    /// Each mount's free and whole space, as its server says (measured
+    /// in its lane).
+    space: HashMap<PathBuf, (u64, u64)>,
     /// Bumped by each refresh, so a slower one never wins.
     generation: u64,
 }
@@ -281,6 +284,9 @@ impl Remotes {
                     state
                         .lost
                         .retain(|point| mounted.iter().any(|m| m.remote.point == *point));
+                    state
+                        .space
+                        .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
                 }
                 let Some(app) = weak.upgrade() else {
                     return;
@@ -300,13 +306,25 @@ impl Remotes {
                         lifetime.clone(),
                         move || {
                             let gone = std::fs::symlink_metadata(&point).is_err_and(|e| lost(&e));
+                            // How full it is, as the server says: asked
+                            // here too, where waiting holds no one else.
+                            let space = if gone {
+                                None
+                            } else {
+                                skwir_platform::places::space(&point)
+                            };
                             let changed = {
                                 let mut state = this.state.lock();
-                                if gone {
-                                    state.lost.insert(point)
+                                let lost = if gone {
+                                    state.lost.insert(point.clone())
                                 } else {
                                     state.lost.remove(&point)
-                                }
+                                };
+                                let measured = match space {
+                                    Some(space) => state.space.insert(point, space) != Some(space),
+                                    None => state.space.remove(&point).is_some(),
+                                };
+                                lost || measured
                             };
                             if changed && let Some(app) = weak.upgrade() {
                                 this.publish(&app, &all);
@@ -368,6 +386,7 @@ impl Remotes {
                 .busy
                 .get(&point.display().to_string())
                 .map(|s| (*s).to_owned());
+            place.space = state.space.get(point).copied();
             place.menu = thumbnail_items(&key, rule);
             places.push(place);
         }

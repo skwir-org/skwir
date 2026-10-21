@@ -1246,7 +1246,6 @@ protocol is a scheme a connector maps, or a connector.
   - servers found on the local network (GVfs's `network:///`, Avahi);
   - a remote folder bookmarked by its address (Add to Bookmarks writes
     the mount's path); rename and forget of a remote GTK bookmark;
-  - the Network places' free space, measured in their lanes;
   - the sidebar's glyph for a remote where the icon theme has none
     (`folder-remote`, `network-server`);
   - Windows' shares (`smb://` as `\\server\share`) and macOS's own

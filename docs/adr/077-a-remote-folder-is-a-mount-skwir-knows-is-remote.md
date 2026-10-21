@@ -175,5 +175,4 @@ Revises ADR-021: its direction kept, its steps decided.
   on its thread, as the kernel waits; lanes keep the rest going.
 - Not built yet: Automatic's Small files where reads proved fast; servers
   found on the local network (GVfs's `network:///`); a remote folder
-  bookmarked by its address; the sidebar's free space of a remote;
-  Windows' and macOS's own connectors.
+  bookmarked by its address; Windows' and macOS's own connectors.
