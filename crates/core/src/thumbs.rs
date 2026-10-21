@@ -559,10 +559,7 @@ impl Thumbnails {
             .spawn_in(lane, priority, "thumb", self.lifetime.child(), move || {
                 // Ended by a panic, the worker is counted out all the same:
                 // its lane would otherwise never get another.
-                let leaving = Leaving {
-                    this: &this,
-                    lane,
-                };
+                let leaving = Leaving { this: &this, lane };
                 // Every request of its lane queued meanwhile, one after the
                 // other.
                 while this.work_one(lane) {}
@@ -919,14 +916,14 @@ mod tests {
         let decoder = Fake::new("decoder", Stage::Generate, true);
         *decoder.during.lock() = Some(Box::new(|| panic!("a decoder's bug")));
         t.register("core", decoder.clone());
-        assert!(matches!(
-            wait_ready(&t, &req(1)),
-            ThumbState::Unavailable
-        ));
+        assert!(matches!(wait_ready(&t, &req(1)), ThumbState::Unavailable));
         assert!(matches!(wait_ready(&t, &req(2)), ThumbState::Ready(_)));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while t.state.lock().running > 0 {
-            assert!(std::time::Instant::now() < deadline, "a worker never counted out");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "a worker never counted out"
+            );
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
     }

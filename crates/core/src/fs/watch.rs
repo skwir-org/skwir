@@ -413,7 +413,10 @@ mod imp {
             let later = state.begin_add();
             state.let_go(a.clone());
             assert!(state.end_add(since, Some(&a)), "let go of during the add");
-            assert!(!state.removed.is_empty(), "an add that began before still runs");
+            assert!(
+                !state.removed.is_empty(),
+                "an add that began before still runs"
+            );
             let again = state.begin_add();
             assert!(!state.end_add(again, Some(&a)), "let go of before it began");
             assert!(state.end_add(later, Some(&a)));

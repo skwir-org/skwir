@@ -857,13 +857,9 @@ impl App {
         let report = self.workspace.write().pump_report();
         for redirect in &report.redirects {
             let to = &redirect.to;
-            let shown = self.open_in(
-                redirect.pane,
-                to,
-                false,
-                Some(&redirect.from),
-                |p| p.replace_here(to.clone()),
-            );
+            let shown = self.open_in(redirect.pane, to, false, Some(&redirect.from), |p| {
+                p.replace_here(to.clone())
+            });
             if let Err(error) = shown {
                 tracing::warn!(%to, "cannot show where a location leads: {error:#}");
             }
@@ -2670,19 +2666,22 @@ mod builtin {
                     },
                     steps,
                 );
-                Ok(Outcome::Plan(match deleted {
-                    0 => plan,
-                    1 if all == 1 => plan.with_note(
-                        "It is in a network folder, which keeps no trash: it is deleted for good",
-                    ),
-                    n => plan.with_note(format!(
-                        "{} in network folders, which keep no trash: deleted for good",
-                        if n == 1 {
-                            "1 item is".to_owned()
-                        } else {
-                            format!("{n} items are")
-                        }
-                    )),
+                // Said after the question, which counts what is deleted
+                // (`deleting.rs`): where they are, and what goes to the
+                // trash beside them.
+                let kept = all - deleted;
+                let said = if deleted == 1 {
+                    "It is in a network folder, which keeps no trash"
+                } else {
+                    "They are in network folders, which keep no trash"
+                };
+                Ok(Outcome::Plan(match (deleted, kept) {
+                    (0, _) => plan,
+                    (_, 0) => plan.with_note(said),
+                    (_, 1) => plan.with_note(format!("{said}; the other item goes to the trash")),
+                    (_, kept) => {
+                        plan.with_note(format!("{said}; the other {kept} items go to the trash"))
+                    }
                 }))
             },
         )

@@ -850,15 +850,26 @@ mod tests {
         let ran = Arc::new(AtomicU64::new(0));
         for _ in 0..3 {
             let (held, ran) = (held.clone(), Arc::clone(&ran));
-            scheduler.spawn_in(lane, Priority::Visible, "held", CancelToken::new(), move || {
-                ran.fetch_add(1, AtomicOrdering::SeqCst);
-                let _ = held.recv();
-            });
+            scheduler.spawn_in(
+                lane,
+                Priority::Visible,
+                "held",
+                CancelToken::new(),
+                move || {
+                    ran.fetch_add(1, AtomicOrdering::SeqCst);
+                    let _ = held.recv();
+                },
+            );
         }
         let (tx, rx) = crossbeam_channel::bounded(1);
-        scheduler.spawn(Priority::Background, "here", CancelToken::new(), move || {
-            tx.send(()).unwrap();
-        });
+        scheduler.spawn(
+            Priority::Background,
+            "here",
+            CancelToken::new(),
+            move || {
+                tx.send(()).unwrap();
+            },
+        );
         rx.recv_timeout(STUCK / 2)
             .expect("a worker was left for this machine's work");
         assert_eq!(ran.load(AtomicOrdering::SeqCst), 1);
@@ -879,12 +890,18 @@ mod tests {
         let lane = Lane::keyed(7);
         let (step, steps) = crossbeam_channel::bounded::<()>(0);
         let (done, stepped) = crossbeam_channel::bounded::<()>(0);
-        scheduler.spawn_in(lane, Priority::Visible, "steps", CancelToken::new(), move || {
-            while steps.recv().is_ok() {
-                progress();
-                done.send(()).unwrap();
-            }
-        });
+        scheduler.spawn_in(
+            lane,
+            Priority::Visible,
+            "steps",
+            CancelToken::new(),
+            move || {
+                while steps.recv().is_ok() {
+                    progress();
+                    done.send(()).unwrap();
+                }
+            },
+        );
         for _ in 0..3 {
             std::thread::sleep(Duration::from_millis(400));
             step.send(()).unwrap();
@@ -906,11 +923,17 @@ mod tests {
         let lane = Lane::keyed(7);
         for _ in 0..4 {
             let (held, ran, token) = (held.clone(), Arc::clone(&ran), Arc::clone(&token));
-            scheduler.spawn_in(lane, Priority::Visible, "held", CancelToken::new(), move || {
-                ran.fetch_add(1, AtomicOrdering::SeqCst);
-                let _ = held.recv();
-                drop(token);
-            });
+            scheduler.spawn_in(
+                lane,
+                Priority::Visible,
+                "held",
+                CancelToken::new(),
+                move || {
+                    ran.fetch_add(1, AtomicOrdering::SeqCst);
+                    let _ = held.recv();
+                    drop(token);
+                },
+            );
         }
         let deadline = Instant::now() + Duration::from_secs(5);
         while ran.load(AtomicOrdering::SeqCst) < LANE_RUNS as u64 {
@@ -918,7 +941,11 @@ mod tests {
             std::thread::yield_now();
         }
         drop(scheduler);
-        assert_eq!(Arc::strong_count(&token), 1 + LANE_RUNS, "only the running jobs hold it");
+        assert_eq!(
+            Arc::strong_count(&token),
+            1 + LANE_RUNS,
+            "only the running jobs hold it"
+        );
         drop(release);
         let deadline = Instant::now() + Duration::from_secs(5);
         while Arc::strong_count(&token) > 1 {

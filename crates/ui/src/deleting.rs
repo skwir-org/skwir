@@ -221,12 +221,20 @@ impl Deleting {
         (deleting, paths)
     }
 
-    /// What is asked: the item by its name when there is one (an item of
-    /// a trash only once its record is read, so by a count), else how
-    /// many; then what the plan's maker could tell of what stays.
+    /// What is asked: the item deleted by its name when there is one (an
+    /// item of a trash only once its record is read, so by a count), else
+    /// how many, the plan's other steps left out (what a trash command
+    /// moves to the trash beside what it deletes on a remote); then what
+    /// the plan's maker could tell of what stays.
     fn question(&self, note: Option<&str>) -> String {
-        let trash = !self.rows.is_empty() && self.rows.iter().all(|r| r.trashed);
-        let what = match self.rows.as_slice() {
+        let deleted: Vec<&Row> = self.rows.iter().filter(|r| !r.other).collect();
+        let rows = if deleted.is_empty() {
+            self.rows.iter().collect()
+        } else {
+            deleted
+        };
+        let trash = !rows.is_empty() && rows.iter().all(|r| r.trashed);
+        let what = match rows.as_slice() {
             [one] if !one.trashed && !one.other => format!("“{}”", one.name),
             rows => format::count(rows.len(), "item"),
         };
@@ -758,7 +766,7 @@ mod tests {
     use std::path::PathBuf;
 
     use skwir_core::companions::{Companion, Companions};
-    use skwir_core::op::{Delete, EntryRef, Operation};
+    use skwir_core::op::{Delete, EntryRef, Operation, Trash};
     use skwir_core::{CancelToken, FileId, Plan};
 
     /// A remote's folder is said by its address, not its mount's path
@@ -849,6 +857,21 @@ mod tests {
             "Delete 2 items from the trash permanently? This cannot be undone."
         );
         assert!(listed.folders && listed.rows.iter().all(|r| r.folder.is_none()));
+
+        // A trash command whose selection is partly on a remote, which
+        // keeps no trash: what it deletes is asked about, the rest said.
+        let mut mixed = plan(vec![dir.join("on the server.txt")]);
+        mixed.steps.push(Box::new(Trash {
+            entry: EntryRef::new(FileId { dev: 1, ino: 2 }, dir.join("here.txt")),
+        }));
+        let (listed, _) = Deleting::of(&mixed, Vec::new(), CancelToken::new());
+        assert_eq!(
+            listed.question(Some(
+                "It is in a network folder, which keeps no trash; the other item goes to the trash"
+            )),
+            "Delete “on the server.txt” permanently? This cannot be undone. \
+             It is in a network folder, which keeps no trash; the other item goes to the trash."
+        );
     }
 
     /// What the worker reads: what each is, its companions, what the
