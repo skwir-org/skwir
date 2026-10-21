@@ -147,6 +147,17 @@ impl op::Kind for Extract {
 }
 
 impl op::Effect for Extract {
+    /// The archive read; what it makes in its folder, whose name may be
+    /// known only once the archive is read: the folder, whole.
+    fn footprint(&self, _: &op::footprint::Volumes) -> Option<op::footprint::Footprint> {
+        Some(
+            op::footprint::Footprint::default()
+                .read(&self.entry.path)
+                .made(&self.dest_dir)
+                .heavy_if(true),
+        )
+    }
+
     fn describe(&self) -> Change {
         let (archive, into) = (display_name(&self.entry.path), display_name(&self.dest_dir));
         // As the listing last read says, if one was (`makes` reads it):

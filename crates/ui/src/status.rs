@@ -319,11 +319,13 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
                 .child(format!("{}: {}", tally.label, tally.count)),
         );
     }
-    if let Some(title) = shell.app.executor.last_undo_title() {
+    // What Undo takes: the last thing asked, once it ends (ADR-079).
+    if let Some((title, running)) = shell.app.executor.undo_target() {
         let keys = shell
             .keys_for("undo", &serde_json::Value::Null)
             .map_or_else(String::new, |keys| format!(" ({keys})"));
-        let tip: gpui::SharedString = format!("Undo {title}{keys}").into();
+        let once = if running { " (once it ends)" } else { "" };
+        let tip: gpui::SharedString = format!("Undo {title}{once}{keys}").into();
         bar = bar.child(
             div()
                 .id("status-undo")

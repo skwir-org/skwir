@@ -999,8 +999,9 @@ fn undos_run_in_journal_order_after_the_plans_before_them() {
     let root = tmp.path();
     let app = app(root);
     let a = file(&root.join("a"), "a");
-    // Queue two dependent renames and two undos without waiting: the lane
-    // runs them in order, so the second undo sees the first plan's result.
+    // Queue two dependent renames and an undo without waiting: the second
+    // rename waits for the first, which it shares a name with, and the
+    // undo for the second, the latest asked (ADR-079).
     let first = Plan::with_steps(
         "rename a",
         vec![Box::new(Rename {
@@ -1018,11 +1019,16 @@ fn undos_run_in_journal_order_after_the_plans_before_them() {
     app.executor.execute(first, app.lifetime().child());
     app.executor.execute(second, app.lifetime().child());
     assert!(app.executor.undo(app.lifetime().child()));
-    assert!(app.executor.undo(app.lifetime().child()));
-    // A blocking call queues behind them all.
-    assert!(app.executor.undo_blocking(app.lifetime()).is_none());
+    // The second undo takes the first rename's entry, and waits for the
+    // first undo, which shares a name with it.
+    let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(undone.error.is_none(), "{:?}", undone.error);
     assert!(root.join("a").exists(), "both renames undone, newest first");
     assert!(!root.join("b").exists() && !root.join("c").exists());
+    assert!(
+        app.executor.undo_blocking(app.lifetime()).is_none(),
+        "nothing left to undo"
+    );
     assert!(app.executor.can_redo());
 }
 

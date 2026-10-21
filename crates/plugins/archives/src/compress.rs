@@ -128,6 +128,16 @@ impl op::Kind for Compress {
 }
 
 impl op::Effect for Compress {
+    fn footprint(&self, _: &op::footprint::Volumes) -> Option<op::footprint::Footprint> {
+        let mut footprint = op::footprint::Footprint::default()
+            .made(&self.target())
+            .heavy_if(true);
+        for entry in &self.entries {
+            footprint = footprint.read(&entry.path);
+        }
+        Some(footprint)
+    }
+
     fn describe(&self) -> Change {
         let (what, archive) = (self.what(), display_name(&self.target()));
         Change::Create {

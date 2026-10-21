@@ -221,6 +221,13 @@ impl super::Kind for Rename {
 }
 
 impl super::Effect for Rename {
+    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+        Some(
+            super::footprint::Footprint::default()
+                .made(&self.entry.path)
+                .made(&self.target()),
+        )
+    }
     fn describe(&self) -> Change {
         Change::Rename {
             from: self.entry.path.clone(),
@@ -354,6 +361,24 @@ impl super::Kind for Move {
 }
 
 impl super::Effect for Move {
+    fn footprint(
+        &self,
+        volumes: &super::footprint::Volumes,
+    ) -> Option<super::footprint::Footprint> {
+        let src = &self.entry.path;
+        let target = self.target(src);
+        let trash = in_trash(src).is_some() || in_trash(&self.dest_dir).is_some();
+        let across = !src
+            .parent()
+            .is_some_and(|from| volumes.same(from, &self.dest_dir));
+        Some(
+            super::footprint::Footprint::default()
+                .made(src)
+                .made(&target)
+                .heavy_if(across)
+                .store_if(trash, super::footprint::TRASH),
+        )
+    }
     fn describe(&self) -> Change {
         Change::Move {
             from: self.entry.path.clone(),
@@ -676,6 +701,15 @@ impl super::Kind for Copy {
 }
 
 impl super::Effect for Copy {
+    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+        let target = self.target(&self.entry.path);
+        Some(
+            super::footprint::Footprint::default()
+                .read(&self.entry.path)
+                .made(&target)
+                .heavy_if(true),
+        )
+    }
     fn describe(&self) -> Change {
         Change::Copy {
             from: self.entry.path.clone(),
@@ -840,6 +874,17 @@ impl super::Kind for Uncopy {
 }
 
 impl super::Effect for Uncopy {
+    fn footprint(
+        &self,
+        volumes: &super::footprint::Volumes,
+    ) -> Option<super::footprint::Footprint> {
+        let path = &self.entry.path;
+        Some(
+            super::footprint::Footprint::default()
+                .made(path)
+                .heavy_if(volumes.is_folder(path)),
+        )
+    }
     fn describe(&self) -> Change {
         Change::Remove {
             path: self.entry.path.clone(),
@@ -1514,6 +1559,13 @@ impl super::Kind for Swap {
 }
 
 impl super::Effect for Swap {
+    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+        Some(
+            super::footprint::Footprint::default()
+                .made(&self.a.path)
+                .made(&self.b.path),
+        )
+    }
     fn describe(&self) -> Change {
         Change::Swap {
             a: self.a.path.clone(),
@@ -1588,6 +1640,13 @@ impl super::Kind for Trash {
 }
 
 impl super::Effect for Trash {
+    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+        Some(
+            super::footprint::Footprint::default()
+                .made(&self.entry.path)
+                .store(super::footprint::TRASH),
+        )
+    }
     fn describe(&self) -> Change {
         Change::Trash {
             path: self.entry.path.clone(),
@@ -2123,6 +2182,13 @@ impl super::Kind for Restore {
 }
 
 impl super::Effect for Restore {
+    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+        Some(
+            super::footprint::Footprint::default()
+                .made(&self.path)
+                .store(super::footprint::TRASH),
+        )
+    }
     fn describe(&self) -> Change {
         Change::Restore {
             path: self.path.clone(),
@@ -2729,6 +2795,18 @@ impl super::Kind for Delete {
 }
 
 impl super::Effect for Delete {
+    fn footprint(
+        &self,
+        volumes: &super::footprint::Volumes,
+    ) -> Option<super::footprint::Footprint> {
+        let path = &self.entry.path;
+        Some(
+            super::footprint::Footprint::default()
+                .made(path)
+                .heavy_if(volumes.is_folder(path))
+                .store_if(in_trash(path).is_some(), super::footprint::TRASH),
+        )
+    }
     fn describe(&self) -> Change {
         Change::Delete {
             path: self.entry.path.clone(),
@@ -2814,6 +2892,9 @@ fn refuse_new(path: &Path) -> Option<StepStatus> {
 }
 
 impl super::Effect for Mkdir {
+    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+        Some(super::footprint::Footprint::default().made(&self.path))
+    }
     fn describe(&self) -> Change {
         Change::Create {
             path: self.path.clone(),
@@ -2861,6 +2942,9 @@ impl super::Kind for Rmdir {
 }
 
 impl super::Effect for Rmdir {
+    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+        Some(super::footprint::Footprint::default().made(&self.path))
+    }
     fn describe(&self) -> Change {
         Change::Remove {
             path: self.path.clone(),
@@ -2904,6 +2988,9 @@ impl super::Kind for NewFile {
 }
 
 impl super::Effect for NewFile {
+    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+        Some(super::footprint::Footprint::default().made(&self.path))
+    }
     fn describe(&self) -> Change {
         Change::Create {
             path: self.path.clone(),
@@ -2949,6 +3036,9 @@ impl super::Kind for RemoveEmptyFile {
 }
 
 impl super::Effect for RemoveEmptyFile {
+    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+        Some(super::footprint::Footprint::default().made(&self.path))
+    }
     fn describe(&self) -> Change {
         Change::Remove {
             path: self.path.clone(),
@@ -3014,6 +3104,9 @@ impl super::Kind for Link {
 }
 
 impl super::Effect for Link {
+    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+        Some(super::footprint::Footprint::default().made(&self.target(&self.entry.path)))
+    }
     fn describe(&self) -> Change {
         Change::Link {
             from: self.entry.path.clone(),
@@ -3087,6 +3180,9 @@ impl super::Kind for Unlink {
 }
 
 impl super::Effect for Unlink {
+    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+        Some(super::footprint::Footprint::default().made(&self.path))
+    }
     fn describe(&self) -> Change {
         Change::Remove {
             path: self.path.clone(),

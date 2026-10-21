@@ -17,6 +17,7 @@ mod pace;
 #[cfg(target_os = "linux")]
 mod put_trash;
 // Unix reads at offsets without moving a file's own (`read_at`).
+pub mod footprint;
 #[cfg(unix)]
 mod ranges;
 pub mod records;
@@ -616,6 +617,17 @@ pub trait Operation: Send + Sync + fmt::Debug {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         None
     }
+    /// What it touches, for the executor to tell which actions may run at
+    /// once (ADR-079, `footprint`): the trees it reads, those it makes,
+    /// writes or removes, the folders whose names it changes, the stores
+    /// it keeps with others, and whether it is heavy. `None` where it
+    /// cannot be told: its action runs alone. From what the step says,
+    /// `volumes` telling a move within a volume apart; on the executor's
+    /// thread, never the window's.
+    fn footprint(&self, volumes: &footprint::Volumes) -> Option<footprint::Footprint> {
+        let _ = volumes;
+        None
+    }
     /// What it makes, new, under a name of its own ([`Made`]): an archive
     /// extracted, one made. A name taken there is settled as a copy's is
     /// (`clash`), with a file's choices: what is made is never merged.
@@ -729,6 +741,11 @@ pub trait Effect: Send + Sync + fmt::Debug {
         let _ = name;
         None
     }
+    /// `Operation::footprint`.
+    fn footprint(&self, volumes: &footprint::Volumes) -> Option<footprint::Footprint> {
+        let _ = volumes;
+        None
+    }
 }
 
 /// An operation that is its own data: the kind it is registered and
@@ -774,6 +791,9 @@ impl<T: Kind> Operation for T {
     }
     fn made_as(&self, name: std::ffi::OsString) -> Option<Box<dyn Operation>> {
         Effect::made_as(self, name)
+    }
+    fn footprint(&self, volumes: &footprint::Volumes) -> Option<footprint::Footprint> {
+        Effect::footprint(self, volumes)
     }
 }
 

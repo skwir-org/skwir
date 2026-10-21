@@ -1300,7 +1300,8 @@ protocol is a scheme a connector maps, or a connector.
   said first. What a copy cut short by a server that stopped answering
   left there is swept once this machine reaches it again. Copies within
   one server are made there (sftp's `cp`; `gio copy` within a GVfs
-  mount).
+  mount). ADR-079 step 1: a light action starts beside a heavy one it
+  shares nothing with, the history kept in the order asked.
 - **G. Left** (each its own step):
   - GVfs's NFS, AFP and device mounts not measured, at the bridge's pace;
   - Automatic's Small files where reads proved fast (only the local

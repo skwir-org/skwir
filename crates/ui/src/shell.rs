@@ -1834,8 +1834,9 @@ impl Shell {
             let paused = self.app.executor.is_paused(running.plan);
             (running.title.as_str(), paused)
         });
+        let others = self.toasts.running.len().saturating_sub(1);
         let waiting = self.app.executor.queued();
-        let question = crate::toast::quit_question(running, waiting);
+        let question = crate::toast::quit_question(running, others, waiting);
         self.open_confirm(question, Confirmed::Quit, window, cx);
         true
     }

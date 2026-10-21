@@ -1,14 +1,21 @@
 //! Runs plans in the background with progress, pause and cancellation, and
 //! keeps the undo/redo journal of inverse plans.
 //!
-//! Every plan, undo and redo runs on one first-in-first-out lane, so the
-//! journal's order is the order things happened on disk. An undo pressed
-//! while a copy runs, or waits paused, waits for the copy and then takes it
-//! back; two quick undos never race each other. The lane is a queue drained
-//! by a thread of its own that ends when the queue is empty, so an idle app
-//! keeps no executor thread, and a copy that runs for minutes, or waits
-//! paused for as long as the user likes, never holds a scheduler worker:
-//! those draw what is on screen.
+//! Plans, undos and redos are asked in an order, and run at once where
+//! they touch nothing in common (ADR-079): each says what it touches (its
+//! steps' `footprint`), and starts when nothing asked before it that has
+//! not ended conflicts with it, when it is heavy no other heavy one runs
+//! or waits before it, and fewer than [`AT_ONCE`] run. A step that cannot
+//! say what it touches makes its plan run alone, after everything asked
+//! before it and before everything asked after. So any two plans that
+//! touch something in common run in the order asked, and the journal keeps
+//! that order: undoing in its reverse puts back every state, whatever
+//! order independent plans ended in. An undo takes the last entry asked
+//! for, and waits for it while it runs; two quick undos take two entries.
+//! Each plan runs on a thread of its own, which ends with it, so an idle
+//! app keeps no executor thread, and a copy that runs for minutes, or
+//! waits paused for as long as the user likes, never holds a scheduler
+//! worker: those draw what is on screen.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -21,6 +28,7 @@ use parking_lot::{Condvar, Mutex};
 use serde::Serialize;
 
 use super::context::{Meter, Pause};
+use super::footprint::Footprint;
 use super::{Cancelled, Change, Operation, Plan, PlanId, StepContext, StepStatus};
 use crate::cancel::CancelToken;
 use crate::registry::Contributions;
@@ -139,8 +147,10 @@ pub struct Transfer {
 /// shelf, a clipboard) follows moves, renames and removals with it instead
 /// of stat-ing what it holds.
 ///
-/// It runs on the lane after the `Finished` event, before the next plan:
-/// keep it brief (update a map, wake), and never wait for the executor.
+/// It runs on the plan's thread after the `Finished` event, before any plan
+/// that touches what it did starts; plans that share nothing with it may
+/// run, and tell their own, meanwhile (ADR-079): keep it brief (update a
+/// map, wake), and never wait for the executor.
 pub type ChangeObserver = Arc<dyn Fn(&[Change]) + Send + Sync>;
 
 /// One journaled change and the plan that takes it back.
@@ -158,6 +168,12 @@ pub struct JournalEntry {
     /// Retrying skips those steps as already done, so their inverses are
     /// kept here to become part of the entry on the other stack.
     partial: Vec<Box<dyn Operation>>,
+    /// When the plan it holds was asked for, in the order asked: its place
+    /// in the history.
+    seq: u64,
+    /// Its place on its stack: on the undo stack its own `seq`, on the
+    /// redo stack when the undo that put it there was asked.
+    stacked: u64,
 }
 
 impl JournalEntry {
@@ -187,10 +203,14 @@ pub struct ExecResult {
     pub complete: bool,
 }
 
+/// The undo and redo stacks, each in its entries' `stacked` order.
 #[derive(Default)]
 struct Journal {
     undo: Vec<JournalEntry>,
     redo: Vec<JournalEntry>,
+    /// When the latest plan was asked for: an undo asked before it puts
+    /// nothing on the redo stack (ADR-079, 10).
+    redo_floor: u64,
 }
 
 /// The actions the undo journal keeps at most, the latest always: past it,
@@ -202,6 +222,27 @@ pub const JOURNAL_ENTRIES: usize = 200;
 pub const JOURNAL_BYTES: usize = 64 << 20;
 
 impl Journal {
+    fn stack(&mut self, direction: Direction) -> &mut Vec<JournalEntry> {
+        match direction {
+            Direction::Undo => &mut self.undo,
+            Direction::Redo => &mut self.redo,
+        }
+    }
+
+    /// Put `entry` on the stack `direction` takes from, in its place.
+    fn put(&mut self, direction: Direction, entry: JournalEntry) {
+        let stack = self.stack(direction);
+        let at = stack.partition_point(|e| e.stacked < entry.stacked);
+        stack.insert(at, entry);
+    }
+
+    /// Take the entry at `stacked` off the stack `direction` takes from.
+    fn take(&mut self, direction: Direction, stacked: u64) -> Option<JournalEntry> {
+        let stack = self.stack(direction);
+        let at = stack.iter().position(|e| e.stacked == stacked)?;
+        Some(stack.remove(at))
+    }
+
     /// Let go of the oldest entries of each stack past `JOURNAL_ENTRIES`
     /// or `JOURNAL_BYTES`, keeping the latest whatever it holds.
     fn bound(&mut self) {
@@ -219,7 +260,7 @@ impl Journal {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Direction {
     Undo,
     Redo,
@@ -228,37 +269,75 @@ enum Direction {
 enum Work {
     /// `whole`: dry-run every step first and apply nothing if one conflicts.
     Execute {
-        plan: Plan,
+        plan: Arc<Plan>,
         whole: bool,
     },
     Replay(Direction),
 }
 
+impl Work {
+    /// The stack its end may put an entry on: an applied plan's or a
+    /// redo's inverse on the undo stack, an undo's on the redo stack.
+    fn adds(&self) -> Direction {
+        match self {
+            Work::Execute { .. } | Work::Replay(Direction::Redo) => Direction::Undo,
+            Work::Replay(Direction::Undo) => Direction::Redo,
+        }
+    }
+}
+
 struct Job {
+    /// When it was asked for, in the order asked.
+    seq: u64,
     work: Work,
     cancel: CancelToken,
     reply: Option<Sender<Option<ExecResult>>>,
+    /// What it touches, once worked out (`Executor::dispatch`).
+    footprint: Option<Arc<Footprint>>,
+    /// An undo's or a redo's entry (its `stacked`), once known.
+    target: Option<u64>,
 }
 
+/// A job started, until it ends.
+struct Begun {
+    seq: u64,
+    /// A plan's title, which Undo names while it runs.
+    title: Option<String>,
+    footprint: Arc<Footprint>,
+    adds: Direction,
+    /// Its entry, an undo's or a redo's: no other takes it.
+    target: Option<(Direction, u64)>,
+    cancel: CancelToken,
+}
+
+/// What waits and what runs (module documentation).
 #[derive(Default)]
 struct Lane {
+    /// Asked and not started, in the order asked.
     queue: VecDeque<Job>,
-    /// A drainer is running (on its thread or a blocking caller's).
-    busy: bool,
-    /// What stops the job being drained, from the moment it leaves the
-    /// queue: it is in neither the queue nor `running` until its plan
-    /// starts.
-    current: Option<CancelToken>,
+    /// Started and not ended.
+    started: Vec<Begun>,
     /// Wound down (`Executor::wind_down`): what is queued now is cancelled
     /// as it arrives.
     closed: bool,
+    /// The number the last job asked took.
+    next: u64,
+    /// A footprint is being worked out: by one caller at a time.
+    measuring: bool,
+    /// The entries undos and redos waiting to start will take.
+    targeted: Vec<(Direction, u64)>,
 }
+
+/// Plans run at once at most (ADR-079).
+pub const AT_ONCE: usize = 4;
 
 /// How often steps' events may wake the window: as often as bytes do.
 const STEP_WAKE: Duration = Duration::from_millis(100);
 
 /// The executor. One per app.
 pub struct Executor {
+    /// Itself, for the threads it starts.
+    me: std::sync::Weak<Executor>,
     scheduler: Scheduler,
     journal: Mutex<Journal>,
     lane: Mutex<Lane>,
@@ -360,24 +439,33 @@ impl Drop for Running<'_> {
     }
 }
 
-/// Frees the lane if a job panics, so later jobs are not stuck behind it.
-struct Draining<'a>(&'a Executor);
+/// Ends a started job however it leaves, a panic included: what waited
+/// for it may start.
+struct Ended<'a>(&'a Executor, u64);
 
-impl Drop for Draining<'_> {
+impl Drop for Ended<'_> {
     fn drop(&mut self) {
-        if std::thread::panicking() {
+        {
             let mut lane = self.0.lane.lock();
-            lane.busy = false;
-            lane.current = None;
-            self.0.idle.notify_all();
+            if let Some(at) = lane.started.iter().position(|b| b.seq == self.1) {
+                let begun = lane.started.remove(at);
+                if let Some(target) = begun.target {
+                    lane.targeted.retain(|t| *t != target);
+                }
+            }
+            if lane.started.is_empty() && lane.queue.is_empty() {
+                self.0.idle.notify_all();
+            }
         }
+        self.0.dispatch();
     }
 }
 
 impl Executor {
     pub fn new(scheduler: Scheduler) -> Arc<Self> {
         let (tx, rx) = unbounded();
-        Arc::new(Executor {
+        Arc::new_cyclic(|me| Executor {
+            me: me.clone(),
             scheduler,
             journal: Mutex::new(Journal::default()),
             lane: Mutex::new(Lane::default()),
@@ -602,9 +690,9 @@ impl Executor {
 
     /// Hold a running plan where it would next answer Cancel: between its
     /// steps, or inside one between files and chunks of a file, keeping
-    /// what it has open. Plans queued after it wait too, as they wait for
-    /// it to finish. Whether the plan runs; `Paused` is told when it was
-    /// running freely.
+    /// what it has open, what it touches and its heavy slot (ADR-079): the
+    /// plans that wait for it wait on. Whether the plan runs; `Paused` is
+    /// told when it was running freely.
     pub fn pause(&self, plan: PlanId) -> bool {
         self.hold(plan, true)
     }
@@ -647,32 +735,38 @@ impl Executor {
             .any(|a| a.plan == plan && a.pause.is_paused())
     }
 
-    /// Plans, undos and redos waiting for their turn on the lane.
+    /// Plans, undos and redos asked and not started: waiting for what they
+    /// meet, or for a heavy one, to end (ADR-079).
     pub fn queued(&self) -> usize {
         self.lane.lock().queue.len()
     }
 
     /// Cancel every plan, undo and redo, whether it runs, waits paused or
-    /// waits its turn, and take no more; then wait up to `timeout` for the
-    /// lane to drain. A cancelled step takes back its own partial work as
+    /// waits its turn, and take no more; then wait up to `timeout` for all
+    /// to end. A cancelled step takes back its own partial work as
     /// it stops (a copy removes its staging folder), so a process that
-    /// ends after this leaves no half-made copy behind. Whether the lane
+    /// ends after this leaves no half-made copy behind. Whether all
     /// drained in time. It blocks: call it off the window's thread.
     pub fn wind_down(&self, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
-        let mut lane = self.lane.lock();
-        lane.closed = true;
-        for token in lane
-            .queue
-            .iter()
-            .map(|job| &job.cancel)
-            .chain(&lane.current)
         {
-            token.cancel();
+            let mut lane = self.lane.lock();
+            lane.closed = true;
+            for token in lane
+                .queue
+                .iter()
+                .map(|job| &job.cancel)
+                .chain(lane.started.iter().map(|b| &b.cancel))
+            {
+                token.cancel();
+            }
         }
-        while lane.busy {
+        // Cancelled, what waited starts at once and ends.
+        self.dispatch();
+        let mut lane = self.lane.lock();
+        while !lane.started.is_empty() || !lane.queue.is_empty() {
             if self.idle.wait_until(&mut lane, deadline).timed_out() {
-                return !lane.busy;
+                return lane.started.is_empty() && lane.queue.is_empty();
             }
         }
         true
@@ -714,9 +808,15 @@ impl Executor {
         &self.rx
     }
 
-    /// Queue `plan` on the lane; journal the inverse when it finishes.
+    /// Queue `plan`; journal the inverse when it finishes.
     pub fn execute(self: &Arc<Self>, plan: Plan, cancel: CancelToken) {
-        self.submit(Work::Execute { plan, whole: false }, cancel);
+        self.submit(
+            Work::Execute {
+                plan: Arc::new(plan),
+                whole: false,
+            },
+            cancel,
+        );
     }
 
     /// Like [`Executor::execute`], but all or nothing: when its turn comes,
@@ -724,17 +824,23 @@ impl Executor {
     /// and finishes with that conflict as the error. For a plan the user
     /// asked for as one action, so it never stops halfway on a conflict
     /// that was there from the start. The checks stat the filesystem, so
-    /// they run on the lane, never on the caller's thread.
+    /// they run on the plan's thread, never on the caller's.
     pub fn execute_whole(self: &Arc<Self>, plan: Plan, cancel: CancelToken) {
-        self.submit(Work::Execute { plan, whole: true }, cancel);
+        self.submit(
+            Work::Execute {
+                plan: Arc::new(plan),
+                whole: true,
+            },
+            cancel,
+        );
     }
 
-    /// Apply `plan` in lane order, waiting for it, and journal it. Returns
-    /// what happened. Never call it from inside an operation.
+    /// Apply `plan` when its turn comes, waiting for it, and journal it.
+    /// Returns what happened. Never call it from inside an operation.
     pub fn execute_blocking(&self, plan: &Plan, cancel: &CancelToken) -> ExecResult {
         self.submit_blocking(
             Work::Execute {
-                plan: plan.clone(),
+                plan: Arc::new(plan.clone()),
                 whole: false,
             },
             cancel,
@@ -742,9 +848,10 @@ impl Executor {
         .expect("an executed plan has a result")
     }
 
-    /// Undo the most recent plan once everything queued before has run.
-    /// Returns false if there is nothing to undo and nothing that could
-    /// add to the journal is queued or running.
+    /// Undo the last plan asked (ADR-079): once it ends where it runs,
+    /// beside what it shares nothing with. Returns false if there is
+    /// nothing to undo and nothing that could add to the journal is queued
+    /// or running.
     pub fn undo(self: &Arc<Self>, cancel: CancelToken) -> bool {
         let available = self.is_busy() || self.can_undo();
         if available {
@@ -753,12 +860,14 @@ impl Executor {
         available
     }
 
-    /// Undo in lane order, waiting for it. Returns `None` if nothing to undo.
+    /// Undo when its turn comes (module documentation), waiting for it.
+    /// Returns `None` if nothing to undo.
     pub fn undo_blocking(&self, cancel: &CancelToken) -> Option<ExecResult> {
         self.submit_blocking(Work::Replay(Direction::Undo), cancel)
     }
 
-    /// Redo the most recently undone plan once everything queued before has run.
+    /// Redo the most recently undone plan when its turn comes (module
+    /// documentation).
     pub fn redo(self: &Arc<Self>, cancel: CancelToken) -> bool {
         let available = self.is_busy() || self.can_redo();
         if available {
@@ -767,7 +876,7 @@ impl Executor {
         available
     }
 
-    /// Redo in lane order, waiting for it.
+    /// Redo when its turn comes, waiting for it.
     pub fn redo_blocking(&self, cancel: &CancelToken) -> Option<ExecResult> {
         self.submit_blocking(Work::Replay(Direction::Redo), cancel)
     }
@@ -790,6 +899,38 @@ impl Executor {
         self.journal.lock().redo.last().map(|e| e.title.clone())
     }
 
+    /// What Undo takes now (ADR-079, 9): the latest plan asked that may be
+    /// in the history, by its title, and whether it has not ended (Undo
+    /// waits for it then); `None` with nothing to undo.
+    pub fn undo_target(&self) -> Option<(String, bool)> {
+        let lane = self.lane.lock();
+        let pending = lane
+            .queue
+            .iter()
+            .filter_map(|job| match &job.work {
+                Work::Execute { plan, .. } => Some((job.seq, plan.title.clone())),
+                Work::Replay(_) => None,
+            })
+            .chain(
+                lane.started
+                    .iter()
+                    .filter_map(|b| b.title.clone().map(|title| (b.seq, title))),
+            )
+            .max_by_key(|(seq, _)| *seq);
+        let entry = self
+            .journal
+            .lock()
+            .undo
+            .last()
+            .map(|e| (e.stacked, e.title.clone()));
+        match (pending, entry) {
+            (Some((seq, title)), entry) if entry.as_ref().is_none_or(|(at, _)| seq > *at) => {
+                Some((title, true))
+            }
+            (_, entry) => entry.map(|(_, title)| (title, false)),
+        }
+    }
+
     /// Titles of the undo stack, most recent last.
     pub fn undo_titles(&self) -> Vec<String> {
         self.journal
@@ -803,132 +944,300 @@ impl Executor {
     /// Whether a plan, an undo or a redo runs or waits its turn.
     pub fn is_busy(&self) -> bool {
         let lane = self.lane.lock();
-        lane.busy || !lane.queue.is_empty()
+        !lane.started.is_empty() || !lane.queue.is_empty()
     }
 
-    fn submit(self: &Arc<Self>, work: Work, cancel: CancelToken) {
-        if !self.enqueue(Job {
-            work,
-            cancel,
-            reply: None,
-        }) {
-            // Behind a plan that runs or waits paused: whoever shows the
-            // lane says it waits.
-            self.wake();
+    fn submit(&self, work: Work, cancel: CancelToken) {
+        self.enqueue(work, cancel, None);
+        // Behind what it waits for, whoever shows the plans says it waits.
+        self.wake();
+        // Working out what it touches may read (the mount table, whether
+        // what is deleted is a folder): never on the caller's thread, the
+        // window's.
+        let Some(this) = self.me.upgrade() else {
             return;
-        }
-        // The drainer must run even if the work it drains was cancelled:
-        // each job checks its own token.
-        let this = Arc::clone(self);
+        };
+        let dispatch = {
+            let this = Arc::clone(&this);
+            move || this.dispatch()
+        };
         let thread = std::thread::Builder::new()
             .name("skwir-plans".into())
-            .spawn(move || this.drain());
+            .spawn(dispatch);
         if let Err(error) = thread {
-            tracing::warn!("no thread for the plans ({error}); a worker applies them");
-            let this = Arc::clone(self);
+            tracing::warn!("no thread to start plans ({error}); a worker does");
+            self.scheduler.spawn(
+                Priority::Normal,
+                "op.dispatch",
+                CancelToken::new(),
+                move || {
+                    this.dispatch();
+                },
+            );
+        }
+    }
+
+    /// Queue the work and wait for its result, working out what it
+    /// touches on the caller's thread (never the window's).
+    fn submit_blocking(&self, work: Work, cancel: &CancelToken) -> Option<ExecResult> {
+        let (tx, rx) = bounded(1);
+        self.enqueue(work, cancel.clone(), Some(tx));
+        self.dispatch();
+        rx.recv().ok().flatten()
+    }
+
+    fn enqueue(&self, work: Work, cancel: CancelToken, reply: Option<Sender<Option<ExecResult>>>) {
+        let mut lane = self.lane.lock();
+        if lane.closed {
+            cancel.cancel();
+        }
+        lane.next += 1;
+        let seq = lane.next;
+        if matches!(work, Work::Execute { .. }) {
+            // A plan asked after an undo drops that undo's redo, even one
+            // that ends after it (ADR-079, 10).
+            let mut journal = self.journal.lock();
+            journal.redo_floor = seq;
+            journal.redo.clear();
+        }
+        lane.queue.push_back(Job {
+            seq,
+            work,
+            cancel,
+            reply,
+            footprint: None,
+            target: None,
+        });
+    }
+
+    /// Work out what the queued jobs touch, in the order asked, and start
+    /// each that may start (module documentation): whenever a job is asked
+    /// or ends. One caller at a time works out footprints, which may read
+    /// (a move's volumes, whether what is deleted is a folder), never
+    /// under the lock; the others start what may start meanwhile.
+    fn dispatch(&self) {
+        while let Some((seq, steps)) = self.next_to_measure() {
+            let volumes = super::footprint::Volumes::now();
+            let footprint =
+                Footprint::of_steps(steps.iter().map(|s| s.footprint(&volumes))).canonical();
+            let mut lane = self.lane.lock();
+            lane.measuring = false;
+            if let Some(job) = lane.queue.iter_mut().find(|j| j.seq == seq) {
+                job.footprint = Some(Arc::new(footprint));
+            }
+        }
+        for job in self.admit() {
+            self.start(job);
+        }
+    }
+
+    /// The first queued job whose footprint is not known, and the steps it
+    /// is worked out from, unless another caller works one out. An undo or
+    /// a redo first finds its entry: the latest on its stack asked before
+    /// it, unless a plan asked before it, which may put a later one there,
+    /// has not ended (it waits for it); no entry and none to come, it
+    /// touches nothing.
+    fn next_to_measure(&self) -> Option<(u64, Vec<Box<dyn Operation>>)> {
+        let mut lane = self.lane.lock();
+        if lane.measuring {
+            return None;
+        }
+        let lane = &mut *lane;
+        for i in 0..lane.queue.len() {
+            if lane.queue[i].footprint.is_some() {
+                continue;
+            }
+            let seq = lane.queue[i].seq;
+            let direction = match &lane.queue[i].work {
+                Work::Execute { plan, .. } => {
+                    lane.measuring = true;
+                    return Some((seq, plan.steps.clone()));
+                }
+                Work::Replay(direction) => *direction,
+            };
+            let coming = lane
+                .queue
+                .iter()
+                .take(i)
+                .map(|j| (j.seq, j.work.adds()))
+                .chain(lane.started.iter().map(|b| (b.seq, b.adds)))
+                .filter(|&(asked, adds)| asked < seq && adds == direction)
+                .map(|(asked, _)| asked)
+                .max();
+            let journal = self.journal.lock();
+            let stack = match direction {
+                Direction::Undo => &journal.undo,
+                Direction::Redo => &journal.redo,
+            };
+            let entry = stack
+                .iter()
+                .rev()
+                .find(|e| e.stacked < seq && !lane.targeted.contains(&(direction, e.stacked)));
+            match (entry, coming) {
+                // A plan asked before it may put a later entry there.
+                (entry, Some(coming)) if entry.is_none_or(|e| e.stacked < coming) => {}
+                (Some(entry), _) => {
+                    let steps = entry
+                        .plan
+                        .as_ref()
+                        .map(|p| p.steps.clone())
+                        .unwrap_or_default();
+                    let stacked = entry.stacked;
+                    drop(journal);
+                    lane.targeted.push((direction, stacked));
+                    lane.queue[i].target = Some(stacked);
+                    lane.measuring = true;
+                    return Some((seq, steps));
+                }
+                (None, _) => {
+                    drop(journal);
+                    lane.queue[i].footprint = Some(Arc::new(Footprint::default()));
+                }
+            }
+        }
+        None
+    }
+
+    /// Take out of the queue each job that may start now (module
+    /// documentation), in the order asked; a cancelled one at once, which
+    /// does nothing.
+    fn admit(&self) -> Vec<Job> {
+        let mut lane = self.lane.lock();
+        let lane = &mut *lane;
+        let mut begun = Vec::new();
+        let mut i = 0;
+        while i < lane.queue.len() {
+            let job = &lane.queue[i];
+            let may = if job.cancel.is_cancelled() {
+                true
+            } else if let Some(footprint) = job.footprint.as_deref()
+                && lane.started.len() < AT_ONCE
+            {
+                let before = || lane.queue.iter().take(i).map(|j| j.footprint.as_deref());
+                let conflicts = before().any(|f| f.is_none_or(|f| f.conflicts(footprint)))
+                    || lane
+                        .started
+                        .iter()
+                        .any(|b| b.footprint.conflicts(footprint));
+                let heavy = footprint.is_heavy()
+                    && (lane.started.iter().any(|b| b.footprint.is_heavy())
+                        || before().any(|f| f.is_none_or(Footprint::is_heavy)));
+                !conflicts && !heavy
+            } else {
+                false
+            };
+            if !may {
+                i += 1;
+                continue;
+            }
+            let job = lane.queue.remove(i).expect("in the queue");
+            let (direction, title) = match &job.work {
+                Work::Replay(direction) => (Some(*direction), None),
+                Work::Execute { plan, .. } => (None, Some(plan.title.clone())),
+            };
+            lane.started.push(Begun {
+                seq: job.seq,
+                title,
+                footprint: job.footprint.clone().unwrap_or_default(),
+                adds: job.work.adds(),
+                target: direction.zip(job.target),
+                cancel: job.cancel.clone(),
+            });
+            begun.push(job);
+        }
+        begun
+    }
+
+    /// Run `job` on a thread of its own, a worker's where none is had.
+    fn start(&self, job: Job) {
+        let Some(this) = self.me.upgrade() else {
+            return;
+        };
+        let job = Arc::new(Mutex::new(Some(job)));
+        let run = {
+            let (this, job) = (Arc::clone(&this), Arc::clone(&job));
+            move || {
+                if let Some(job) = job.lock().take() {
+                    this.run_job(job);
+                }
+            }
+        };
+        let thread = std::thread::Builder::new()
+            .name("skwir-plan".into())
+            .spawn(run);
+        if let Err(error) = thread {
+            tracing::warn!("no thread for a plan ({error}); a worker applies it");
             self.scheduler
-                .spawn(Priority::Normal, "op.lane", CancelToken::new(), move || {
-                    this.drain();
+                .spawn(Priority::Normal, "op.plan", CancelToken::new(), move || {
+                    if let Some(job) = job.lock().take() {
+                        this.run_job(job);
+                    }
                 });
         }
     }
 
-    /// Queue the work and wait for its result. When the lane is idle the
-    /// caller drains it itself, so a headless caller needs no free worker.
-    fn submit_blocking(&self, work: Work, cancel: &CancelToken) -> Option<ExecResult> {
-        let (tx, rx) = bounded(1);
-        if self.enqueue(Job {
-            work,
-            cancel: cancel.clone(),
-            reply: Some(tx),
-        }) {
-            self.drain();
+    fn run_job(&self, job: Job) {
+        let _ended = Ended(self, job.seq);
+        // A cancelled plan is not checked whole: it stops at once.
+        let result = match job.work {
+            Work::Execute { plan, whole } => {
+                let plan = Arc::try_unwrap(plan).unwrap_or_else(|plan| (*plan).clone());
+                Some(self.execute_now(plan, whole, &job.cancel, job.seq))
+            }
+            Work::Replay(direction) => self.replay(direction, job.target, job.seq, &job.cancel),
+        };
+        if let Some(reply) = job.reply {
+            let _ = reply.send(result);
         }
-        rx.recv().ok().flatten()
     }
 
-    /// Returns true when the caller must start draining.
-    fn enqueue(&self, job: Job) -> bool {
-        let mut lane = self.lane.lock();
-        if lane.closed {
-            job.cancel.cancel();
-        }
-        lane.queue.push_back(job);
-        !std::mem::replace(&mut lane.busy, true)
-    }
-
-    fn drain(&self) {
-        let _guard = Draining(self);
-        loop {
-            let job = {
-                let mut lane = self.lane.lock();
-                let Some(job) = lane.queue.pop_front() else {
-                    lane.busy = false;
-                    lane.current = None;
-                    self.idle.notify_all();
-                    return;
+    /// Apply `plan`, asked as `seq`: unfolded, its names taken settled, and
+    /// `whole`, checked first.
+    fn execute_now(&self, plan: Plan, whole: bool, cancel: &CancelToken, seq: u64) -> ExecResult {
+        let whole = whole && !cancel.is_cancelled();
+        let companions = Arc::clone(&self.companions.lock());
+        // Each step as it will be done, before anything is settled or
+        // checked.
+        let plan = if cancel.is_cancelled() {
+            plan
+        } else {
+            plan.unfold(
+                &StepContext::with_cancel(cancel.clone()).with_companions(Arc::clone(&companions)),
+            )
+        };
+        // Names taken are settled first: what the dry run checks is what
+        // will be done.
+        let settled = if whole
+            && super::clash::takes_names(&plan.steps, &StepContext::with_cancel(cancel.clone()))
+        {
+            self.settle(&plan, &companions, cancel)
+        } else {
+            Settling::Steps(None)
+        };
+        match settled {
+            Settling::Refused(reason) => self.refuse(&plan, reason),
+            Settling::Cancelled => self.cancelled(&plan),
+            Settling::Steps(settled) => {
+                let plan = match settled {
+                    Some(settled) => Plan {
+                        steps: settled.steps,
+                        items: settled.items.map(Box::new),
+                        ..plan
+                    },
+                    None => plan,
                 };
-                lane.current = Some(job.cancel.clone());
-                job
-            };
-            // A cancelled plan is not checked whole: it stops at once.
-            let result = match job.work {
-                Work::Execute { plan, whole } => {
-                    let whole = whole && !job.cancel.is_cancelled();
-                    let companions = Arc::clone(&self.companions.lock());
-                    // Each step as it will be done, before anything is
-                    // settled or checked.
-                    let plan = if job.cancel.is_cancelled() {
-                        plan
-                    } else {
-                        plan.unfold(
-                            &StepContext::with_cancel(job.cancel.clone())
-                                .with_companions(Arc::clone(&companions)),
-                        )
-                    };
-                    // Names taken are settled first: what the dry run
-                    // checks is what will be done.
-                    let settled = if whole
-                        && super::clash::takes_names(
-                            &plan.steps,
-                            &StepContext::with_cancel(job.cancel.clone()),
-                        ) {
-                        self.settle(&plan, &companions, &job.cancel)
-                    } else {
-                        Settling::Steps(None)
-                    };
-                    Some(match settled {
-                        Settling::Refused(reason) => self.refuse(&plan, reason),
-                        Settling::Cancelled => self.cancelled(&plan),
-                        Settling::Steps(settled) => {
-                            let plan = match settled {
-                                Some(settled) => Plan {
-                                    steps: settled.steps,
-                                    items: settled.items.map(Box::new),
-                                    ..plan
-                                },
-                                None => plan,
-                            };
-                            // A conflict anywhere, or too little room where
-                            // it writes and the user not going on, applies
-                            // nothing.
-                            let refused = whole
-                                .then(|| {
-                                    first_conflict(&plan, &companions, &job.cancel)
-                                        .or_else(|| self.short_of_room(&plan, &job.cancel))
-                                })
-                                .flatten();
-                            match refused {
-                                Some(reason) => self.refuse(&plan, reason),
-                                None => self.run_execute(&plan, &job.cancel),
-                            }
-                        }
+                // A conflict anywhere, or too little room where it writes
+                // and the user not going on, applies nothing.
+                let refused = whole
+                    .then(|| {
+                        first_conflict(&plan, &companions, cancel)
+                            .or_else(|| self.short_of_room(&plan, cancel))
                     })
+                    .flatten();
+                match refused {
+                    Some(reason) => self.refuse(&plan, reason),
+                    None => self.run_execute(&plan, cancel, seq),
                 }
-                Work::Replay(direction) => self.replay(direction, &job.cancel),
-            };
-            if let Some(reply) = job.reply {
-                let _ = reply.send(result);
             }
         }
     }
@@ -982,17 +1291,23 @@ impl Executor {
         }
     }
 
-    fn run_execute(&self, plan: &Plan, cancel: &CancelToken) -> ExecResult {
+    fn run_execute(&self, plan: &Plan, cancel: &CancelToken, seq: u64) -> ExecResult {
         self.apply_plan(plan, cancel, RunKind::Apply, |r, inverse| {
             if r.applied > 0 {
                 let mut j = self.journal.lock();
-                j.undo.push(JournalEntry {
-                    title: plan.title.clone(),
-                    applied_at: SystemTime::now(),
-                    plan: inverse,
-                    partial: Vec::new(),
-                });
-                j.redo.clear();
+                // In its place in the order asked: plans that ran beside it
+                // touched nothing it did (ADR-079).
+                j.put(
+                    Direction::Undo,
+                    JournalEntry {
+                        title: plan.title.clone(),
+                        applied_at: SystemTime::now(),
+                        plan: inverse,
+                        partial: Vec::new(),
+                        seq,
+                        stacked: seq,
+                    },
+                );
                 j.bound();
             }
         })
@@ -1001,17 +1316,17 @@ impl Executor {
     /// Take back the top entry of one stack and journal what takes that
     /// back on the other. A run that stops partway stays on its stack to be
     /// retried; its steps are idempotent.
-    fn replay(&self, direction: Direction, cancel: &CancelToken) -> Option<ExecResult> {
+    fn replay(
+        &self,
+        direction: Direction,
+        target: Option<u64>,
+        seq: u64,
+        cancel: &CancelToken,
+    ) -> Option<ExecResult> {
         if cancel.is_cancelled() {
             return None;
         }
-        let mut entry = {
-            let mut j = self.journal.lock();
-            match direction {
-                Direction::Undo => j.undo.pop(),
-                Direction::Redo => j.redo.pop(),
-            }
-        }?;
+        let mut entry = self.journal.lock().take(direction, target?)?;
         let title = match direction {
             Direction::Undo => format!("undo {}", entry.title),
             Direction::Redo => entry.title.clone(),
@@ -1055,24 +1370,28 @@ impl Executor {
             steps.append(&mut entry.partial);
             let mut j = self.journal.lock();
             if r.error.is_none() && !r.cancelled {
-                if !steps.is_empty() {
-                    let other = JournalEntry {
+                // Undone, it is redone from the redo stack, unless a plan
+                // was asked after this undo; redone, it takes its place in
+                // the history again.
+                let (other, stacked) = match direction {
+                    Direction::Undo => (Direction::Redo, seq),
+                    Direction::Redo => (Direction::Undo, entry.seq),
+                };
+                let kept = direction == Direction::Redo || seq > j.redo_floor;
+                if !steps.is_empty() && kept {
+                    let other_entry = JournalEntry {
                         plan: Some(Plan::with_steps(entry.title.clone(), steps)),
                         title: entry.title,
                         applied_at: SystemTime::now(),
                         partial: Vec::new(),
+                        seq: entry.seq,
+                        stacked,
                     };
-                    match direction {
-                        Direction::Undo => j.redo.push(other),
-                        Direction::Redo => j.undo.push(other),
-                    }
+                    j.put(other, other_entry);
                 }
             } else {
                 entry.partial = steps;
-                match direction {
-                    Direction::Undo => j.undo.push(entry),
-                    Direction::Redo => j.redo.push(entry),
-                }
+                j.put(direction, entry);
             }
             j.bound();
         });
@@ -1358,6 +1677,220 @@ mod tests {
         }
     }
 
+    /// A step that makes `path` (heavy where said), waits for its gate to
+    /// open, and says so in `log`; its inverse, never held, says it undid.
+    #[derive(Debug, Clone)]
+    struct Gate {
+        path: PathBuf,
+        heavy: bool,
+        undoing: bool,
+        open: Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>,
+        log: Arc<parking_lot::Mutex<Vec<String>>>,
+    }
+
+    impl Gate {
+        fn new(
+            path: &str,
+            heavy: bool,
+            open: bool,
+            log: &Arc<parking_lot::Mutex<Vec<String>>>,
+        ) -> Self {
+            Gate {
+                path: PathBuf::from(path),
+                heavy,
+                undoing: false,
+                open: Arc::new((parking_lot::Mutex::new(open), parking_lot::Condvar::new())),
+                log: Arc::clone(log),
+            }
+        }
+
+        fn opened(&self) {
+            *self.open.0.lock() = true;
+            self.open.1.notify_all();
+        }
+
+        fn plan(&self) -> Plan {
+            Plan::with_steps(
+                self.path.display().to_string(),
+                vec![Box::new(self.clone())],
+            )
+        }
+    }
+
+    impl Operation for Gate {
+        fn kind(&self) -> &'static str {
+            "gate"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn describe(&self) -> Change {
+            Change::Create {
+                path: self.path.clone(),
+                directory: false,
+                words: None,
+            }
+        }
+        fn check(&self, _: &StepContext) -> StepStatus {
+            StepStatus::Pending { reversible: true }
+        }
+        fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            let verb = if self.undoing { "undid" } else { "began" };
+            self.log
+                .lock()
+                .push(format!("{verb} {}", self.path.display()));
+            let mut open = self.open.0.lock();
+            while !*open {
+                self.open.1.wait(&mut open);
+            }
+            drop(open);
+            if !self.undoing {
+                self.log
+                    .lock()
+                    .push(format!("ended {}", self.path.display()));
+            }
+            Ok(Some(Box::new(Gate {
+                undoing: true,
+                open: Arc::new((parking_lot::Mutex::new(true), parking_lot::Condvar::new())),
+                ..self.clone()
+            })))
+        }
+        fn clone_box(&self) -> Box<dyn Operation> {
+            Box::new(self.clone())
+        }
+        fn footprint(&self, _: &super::super::footprint::Volumes) -> Option<Footprint> {
+            Some(Footprint::default().made(&self.path).heavy_if(self.heavy))
+        }
+    }
+
+    /// Wait until `log` says `line`, at most five seconds.
+    fn logged(log: &Arc<parking_lot::Mutex<Vec<String>>>, line: &str) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if log.lock().iter().any(|l| l == line) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
+    /// A light plan runs beside a heavy one it shares nothing with; one
+    /// within the heavy one's tree, and another heavy one, wait for it
+    /// (ADR-079). Two that make names in one folder meet: their folders
+    /// differ here.
+    #[test]
+    fn a_light_plan_runs_beside_a_heavy_one_and_what_meets_it_waits() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let copy = Gate::new("/stick/photos", true, false, &log);
+        executor.execute(copy.plan(), CancelToken::new());
+        assert!(logged(&log, "began /stick/photos"));
+        let rename = Gate::new("/disk/notes/a.txt", false, true, &log);
+        let r = executor.execute_blocking(&rename.plan(), &CancelToken::new());
+        assert_eq!(r.applied, 1, "beside the copy");
+        let inside = Gate::new("/stick/photos/2026", false, true, &log);
+        executor.execute(inside.plan(), CancelToken::new());
+        let other = Gate::new("/card/music", true, true, &log);
+        executor.execute(other.plan(), CancelToken::new());
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            !log.lock()
+                .iter()
+                .any(|l| l.contains("/stick/photos/2026") || l.contains("/card"))
+        );
+        assert_eq!(executor.queued(), 2);
+        copy.opened();
+        assert!(logged(&log, "ended /stick/photos/2026") && logged(&log, "ended /card/music"));
+        let order: Vec<String> = log.lock().clone();
+        let at = |line: &str| order.iter().position(|l| l == line).unwrap();
+        assert!(at("ended /stick/photos") < at("began /stick/photos/2026"));
+        assert!(at("ended /stick/photos") < at("began /card/music"));
+    }
+
+    /// Undo takes the last plan asked: one ended, beside a heavy plan it
+    /// shares nothing with; then the heavy one, once it ends.
+    #[test]
+    fn undo_takes_the_last_asked_and_waits_for_it_while_it_runs() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let copy = Gate::new("/stick/photos", true, false, &log);
+        executor.execute(copy.plan(), CancelToken::new());
+        assert!(logged(&log, "began /stick/photos"));
+        let rename = Gate::new("/disk/notes/a.txt", false, true, &log);
+        executor.execute_blocking(&rename.plan(), &CancelToken::new());
+        assert_eq!(
+            executor.undo_target(),
+            Some(("/disk/notes/a.txt".to_owned(), false)),
+            "the last asked, ended"
+        );
+        let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
+        assert_eq!(undone.applied, 1);
+        assert!(logged(&log, "undid /disk/notes/a.txt"));
+        assert!(
+            !log.lock().iter().any(|l| l == "ended /stick/photos"),
+            "beside the copy"
+        );
+        // The copy is the latest now: Undo waits for it.
+        assert_eq!(
+            executor.undo_target(),
+            Some(("/stick/photos".to_owned(), true))
+        );
+        assert!(executor.undo(CancelToken::new()));
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!log.lock().iter().any(|l| l == "undid /stick/photos"));
+        copy.opened();
+        assert!(logged(&log, "undid /stick/photos"));
+    }
+
+    /// A step that cannot say what it touches runs alone (ADR-079).
+    #[test]
+    fn a_plan_that_cannot_say_what_it_touches_runs_alone() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let copy = Gate::new("/stick/photos", true, false, &log);
+        executor.execute(copy.plan(), CancelToken::new());
+        assert!(logged(&log, "began /stick/photos"));
+        let applied = Arc::new(AtomicUsize::new(0));
+        let unknown = Plan::with_steps(
+            "unknown",
+            vec![Box::new(Probe {
+                applied: Arc::clone(&applied),
+                conflict: false,
+            }) as Box<dyn Operation>],
+        );
+        executor.execute(unknown, CancelToken::new());
+        let later = Gate::new("/elsewhere", false, true, &log);
+        executor.execute(later.plan(), CancelToken::new());
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(applied.load(Ordering::SeqCst), 0);
+        assert!(
+            !log.lock().iter().any(|l| l == "began /elsewhere"),
+            "after it, not beside"
+        );
+        copy.opened();
+        assert!(logged(&log, "ended /elsewhere"));
+        assert_eq!(applied.load(Ordering::SeqCst), 1);
+    }
+
+    /// A plan asked after an undo drops its redo (ADR-079, 10).
+    #[test]
+    fn a_plan_asked_after_an_undo_drops_its_redo() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        executor.execute_blocking(
+            &Gate::new("/a", false, true, &log).plan(),
+            &CancelToken::new(),
+        );
+        executor.undo_blocking(&CancelToken::new()).unwrap();
+        assert!(executor.can_redo());
+        executor.execute_blocking(
+            &Gate::new("/b", false, true, &log).plan(),
+            &CancelToken::new(),
+        );
+        assert!(!executor.can_redo());
+    }
+
     /// A step that panics when applied.
     #[derive(Debug, Clone)]
     struct Panics;
@@ -1416,6 +1949,8 @@ mod tests {
                         .collect(),
                 )),
                 partial: Vec::new(),
+                seq: n,
+                stacked: n,
             });
         }
         big.bound();

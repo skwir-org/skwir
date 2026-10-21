@@ -81,8 +81,21 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 - A plan of several steps shows a bar with Pause and Cancel
   (`Executor::pause`, `Executor::cancel`). Pausing waits where Cancel
   would be answered (`StepContext::check_cancelled`), so long steps call
-  it between units of work. User actions meanwhile wait behind the plan,
-  and the bar says so.
+  it between units of work.
+- **At once (ADR-079).** Plans, undos and redos start in the order asked,
+  except that one starts beside those running when nothing asked before
+  it that has not ended conflicts with it (`op::footprint`: what each
+  step touches, `Operation::footprint`), when it is heavy no other heavy
+  one runs or waits before it, and fewer than four run
+  (`executor::AT_ONCE`). A step that cannot say what it touches (the
+  default, a plugin's) makes its plan run alone. Two plans making names
+  in one folder meet. What waits says so on the first bar, each running
+  plan has its own; a paused plan keeps what it holds. The journal keeps
+  the order asked (`JournalEntry::seq`): Undo takes the last plan asked,
+  waiting while it runs (`Executor::undo_target`, which the status bar
+  names), and a plan asked after an undo drops its redo. A step's
+  footprint names what its `describe` and its companions touch: a new
+  step kind says its own, or runs alone.
 - The bar counts items, the current item's bytes moving it between two
   counts; a one-item plan counts bytes (`toast::bar`).
 - **Quit** asks while a plan runs (its key or the window's close button,

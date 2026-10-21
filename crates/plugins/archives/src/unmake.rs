@@ -45,6 +45,15 @@ impl op::Kind for Unmake {
 }
 
 impl op::Effect for Unmake {
+    fn footprint(&self, volumes: &op::footprint::Volumes) -> Option<op::footprint::Footprint> {
+        let path = &self.entry.path;
+        Some(
+            op::footprint::Footprint::default()
+                .made(path)
+                .heavy_if(volumes.is_folder(path)),
+        )
+    }
+
     fn describe(&self) -> Change {
         Change::Remove {
             path: self.entry.path.clone(),

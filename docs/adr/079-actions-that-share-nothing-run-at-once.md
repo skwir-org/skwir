@@ -179,5 +179,10 @@ one lane (`op::executor`) and operations.md's "Running".
 
 1. Footprints, conflicts, the history in the order asked, and light
    actions starting beside a heavy one; heavy actions one at a time as
-   today.
+   today. **Built** 2026-10-21 (STATUS-LOG): the core's steps, the notes
+   edits and the archives' say their footprints; other plugins' steps
+   run alone. Footprints are worked out on a thread of their own, never
+   the window's. Deviation: questions from plans running at once are
+   asked one at a time in the order they come, not the order the plans
+   were asked.
 2. Channels: heavy actions on different disks and servers at once.

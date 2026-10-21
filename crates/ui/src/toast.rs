@@ -76,6 +76,10 @@ pub struct ToastState {
     action_focus: Option<gpui::FocusHandle>,
     /// Pause and Resume, one button: its focus stays as its label changes.
     pause_focus: Option<gpui::FocusHandle>,
+    /// The Pause and Cancel buttons of the cards after the first, one pair
+    /// a card, kept across frames: plans that share nothing run at once
+    /// (ADR-079).
+    card_focus: Vec<(gpui::FocusHandle, gpui::FocusHandle)>,
 }
 
 fn name_of(path: &Path) -> String {
@@ -255,24 +259,40 @@ pub fn bar(items: usize, t: &Transfer) -> (f32, String) {
 /// whether it is paused, when it has begun), and what quitting does to it
 /// and to the `waiting` ones behind it. No figures: the bar under the
 /// question goes on with them.
-pub fn quit_question(running: Option<(&str, bool)>, waiting: usize) -> String {
-    let (what, stop) = match running {
-        Some((title, paused)) => {
+pub fn quit_question(running: Option<(&str, bool)>, others: usize, waiting: usize) -> String {
+    let (what, stop) = match (running, others) {
+        (Some((title, paused)), 0) => {
             let state = if paused { "paused" } else { "still running" };
             let what = format!("{} is {state}.", capitalized(title));
             let stop = "Quit and stop it? What it finished stays; what it was in the middle \
                         of is taken back.";
             (what, stop)
         }
-        None => (
+        // Plans that share nothing run at once (ADR-079).
+        (Some((title, paused)), others) => {
+            let state = if paused { "paused" } else { "still running" };
+            let what = format!(
+                "{} is {state}, and {} beside it.",
+                capitalized(title),
+                format::count(others, "other action")
+            );
+            let stop = "Quit and stop them? What they finished stays; what they were in the \
+                        middle of is taken back.";
+            (what, stop)
+        }
+        (None, _) => (
             "A change is about to begin.".to_owned(),
             "Quit before it does?",
         ),
     };
-    let after = match waiting {
-        0 => String::new(),
-        n => format!(
+    let after = match (waiting, others) {
+        (0, _) => String::new(),
+        (n, 0) => format!(
             " The {} waiting after it will not run.",
+            format::count(n, "action")
+        ),
+        (n, _) => format!(
+            " The {} waiting after them will not run.",
             format::count(n, "action")
         ),
     };
@@ -427,6 +447,111 @@ impl Shell {
     }
 }
 
+/// The card of the running plan `running`, the `n`th: its title, how far
+/// it is, what waits (`waiting`), and its Pause and Cancel buttons, which
+/// `focus` holds.
+#[allow(clippy::too_many_arguments)] // One card's parts, each its own.
+fn progress_card(
+    card: gpui::Stateful<gpui::Div>,
+    n: usize,
+    running: &Running,
+    transfer: &skwir_core::op::Transfer,
+    waiting: &str,
+    focus: (&gpui::FocusHandle, &gpui::FocusHandle),
+    a11y: bool,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    let (pause_focus, cancel_focus) = focus;
+    let (fraction, amount) = bar(running.total, transfer);
+    let plan = running.plan;
+    let paused = running.paused;
+    let state = if paused { "paused at " } else { "" };
+    // What runs, said by its title; how far, as a value, said when asked,
+    // never at each step.
+    card.role(gpui::Role::ProgressIndicator)
+        .when(a11y, |d| {
+            d.aria_label(capitalized(&running.title))
+                .aria_numeric_value(f64::from(fraction) * 100.)
+                .aria_min_numeric_value(0.)
+                .aria_max_numeric_value(100.)
+        })
+        .py_2()
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(240.))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(format!(
+                    "{} — {state}{amount}{waiting}",
+                    capitalized(&running.title)
+                ))
+                .child(
+                    div()
+                        .h(px(4.))
+                        .w_full()
+                        .rounded_full()
+                        .bg(theme.border)
+                        .child(
+                            div()
+                                .h_full()
+                                .rounded_full()
+                                .bg(if paused {
+                                    theme.text_muted
+                                } else {
+                                    theme.accent
+                                })
+                                .w(gpui::relative(fraction)),
+                        ),
+                ),
+        )
+        .when(!running.cancelling, |card| {
+            card.child(
+                controls::button(
+                    format!("toast-pause-{n}"),
+                    if paused { "Resume" } else { "Pause" },
+                    None,
+                    ButtonStyle::Plain,
+                    pause_focus,
+                    theme,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if paused {
+                        this.app.executor.resume(plan);
+                    } else {
+                        this.app.executor.pause(plan);
+                    }
+                    cx.notify();
+                })),
+            )
+        })
+        .child(
+            controls::button(
+                format!("toast-cancel-{n}"),
+                if running.cancelling {
+                    "Stopping…"
+                } else {
+                    "Cancel"
+                },
+                None,
+                ButtonStyle::Plain,
+                cancel_focus,
+                theme,
+            )
+            .mr_2()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.app.executor.cancel(plan)
+                    && let Some(running) = this.toasts.running.iter_mut().find(|r| r.plan == plan)
+                {
+                    running.cancelling = true;
+                }
+                cx.notify();
+            })),
+        )
+}
+
 pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let theme = cx.global::<Theme>().clone();
     let close = shell
@@ -436,9 +561,9 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         .clone();
     let generation = shell.toasts.generation;
     let a11y = shell.a11y;
-    let card = |tone: Tone| {
+    let card = |tone: Tone, n: u64| {
         div()
-            .id(("toast-card", generation))
+            .id(("toast-card", generation * 8 + n))
             .max_w(px(560.))
             .min_w(px(260.))
             .pl_3()
@@ -467,119 +592,23 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         Tone::Info => controls::glyph("info", theme.text_muted, 15.),
     };
     // A plan with a single step finishes before anyone could read a bar,
-    // unless the step moves bytes (one large copy): then the bytes are the bar.
-    let progress = shell.toasts.running.iter().find_map(|running| {
-        let transfer = shell.app.executor.transfer(running.plan)?;
-        (running.total > 1 || transfer.total > 0).then_some((running, transfer))
-    });
-    let content = if let Some((running, transfer)) = progress {
-        let (fraction, amount) = bar(running.total, &transfer);
-        let plan = running.plan;
-        let paused = running.paused;
-        let focus = close.clone();
-        // What the user did meanwhile waits on the lane behind this plan,
-        // and paused, for as long as it stays paused: say so.
-        let waiting = match shell.app.executor.queued() {
-            0 => String::new(),
-            n => format!(" · {} waiting", format::count(n, "action")),
-        };
-        let state = if paused { "paused at " } else { "" };
-        let pause_focus = shell
-            .toasts
-            .pause_focus
-            .get_or_insert_with(|| cx.focus_handle())
-            .clone();
-        // What runs, said by its title; how far, as a value, said when
-        // asked, never at each step.
-        card(Tone::Info)
-            .role(gpui::Role::ProgressIndicator)
-            .when(a11y, |d| {
-                d.aria_label(capitalized(&running.title))
-                    .aria_numeric_value(f64::from(fraction) * 100.)
-                    .aria_min_numeric_value(0.)
-                    .aria_max_numeric_value(100.)
-            })
-            .py_2()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(240.))
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(format!(
-                        "{} — {state}{amount}{waiting}",
-                        capitalized(&running.title)
-                    ))
-                    .child(
-                        div()
-                            .h(px(4.))
-                            .w_full()
-                            .rounded_full()
-                            .bg(theme.border)
-                            .child(
-                                div()
-                                    .h_full()
-                                    .rounded_full()
-                                    .bg(if paused {
-                                        theme.text_muted
-                                    } else {
-                                        theme.accent
-                                    })
-                                    .w(gpui::relative(fraction)),
-                            ),
-                    ),
-            )
-            .when(!running.cancelling, |card| {
-                card.child(
-                    controls::button(
-                        "toast-pause",
-                        if paused { "Resume" } else { "Pause" },
-                        None,
-                        ButtonStyle::Plain,
-                        &pause_focus,
-                        &theme,
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if paused {
-                            this.app.executor.resume(plan);
-                        } else {
-                            this.app.executor.pause(plan);
-                        }
-                        cx.notify();
-                    })),
-                )
-            })
-            .child(
-                controls::button(
-                    "toast-cancel",
-                    if running.cancelling {
-                        "Stopping…"
-                    } else {
-                        "Cancel"
-                    },
-                    None,
-                    ButtonStyle::Plain,
-                    &focus,
-                    &theme,
-                )
-                .mr_2()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.app.executor.cancel(plan)
-                        && let Some(running) =
-                            this.toasts.running.iter_mut().find(|r| r.plan == plan)
-                    {
-                        running.cancelling = true;
-                    }
-                    cx.notify();
-                })),
-            )
-    } else {
+    // unless the step moves bytes (one large copy): then the bytes are the
+    // bar. Plans that share nothing run at once: a card each (ADR-079).
+    let progress: Vec<(Running, skwir_core::op::Transfer)> = shell
+        .toasts
+        .running
+        .iter()
+        .filter_map(|running| {
+            let transfer = shell.app.executor.transfer(running.plan)?;
+            (running.total > 1 || transfer.total > 0).then(|| (running.clone(), transfer))
+        })
+        .collect();
+    let content = if progress.is_empty() {
         let toast = shell.toasts.current.clone()?;
         // Said as it appears: a failure at once, the rest after what is
         // being said.
         let error = matches!(toast.tone, Tone::Error);
-        let mut card = card(toast.tone)
+        let mut card = card(toast.tone, 0)
             .role(if error {
                 gpui::Role::Alert
             } else {
@@ -623,6 +652,52 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .aria_live(gpui::Live::Off)
                 .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx))),
         )
+    } else {
+        // What the user did meanwhile waits behind what it meets, and
+        // paused, for as long as it stays paused: said on the first card.
+        let waiting = match shell.app.executor.queued() {
+            0 => String::new(),
+            n => format!(" · {} waiting", format::count(n, "action")),
+        };
+        let mut cards = div()
+            .id(("toast-cards", generation))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_2();
+        for (n, (running, transfer)) in progress.into_iter().enumerate() {
+            let (pause_focus, focus) = if n == 0 {
+                (
+                    shell
+                        .toasts
+                        .pause_focus
+                        .get_or_insert_with(|| cx.focus_handle())
+                        .clone(),
+                    close.clone(),
+                )
+            } else {
+                while shell.toasts.card_focus.len() < n {
+                    shell
+                        .toasts
+                        .card_focus
+                        .push((cx.focus_handle(), cx.focus_handle()));
+                }
+                shell.toasts.card_focus[n - 1].clone()
+            };
+            let waiting = if n == 0 { waiting.as_str() } else { "" };
+            cards = cards.child(progress_card(
+                card(Tone::Info, n as u64),
+                n,
+                &running,
+                &transfer,
+                waiting,
+                (&pause_focus, &focus),
+                a11y,
+                &theme,
+                cx,
+            ));
+        }
+        cards
     };
     Some(
         div()
@@ -650,18 +725,24 @@ mod tests {
     #[test]
     fn quitting_while_a_plan_runs_says_what_stops_and_what_stays() {
         assert_eq!(
-            quit_question(Some(("copy to /media/stick", true)), 2),
+            quit_question(Some(("copy to /media/stick", true)), 0, 2),
             "Copy to /media/stick is paused. Quit and stop it? What it finished stays; \
              what it was in the middle of is taken back. The 2 actions waiting after it \
              will not run."
         );
         assert_eq!(
-            quit_question(Some(("move to Trash", false)), 0),
+            quit_question(Some(("move to Trash", false)), 0, 0),
             "Move to Trash is still running. Quit and stop it? What it finished stays; \
              what it was in the middle of is taken back."
         );
         assert_eq!(
-            quit_question(None, 0),
+            quit_question(Some(("copy to /media/stick", false)), 2, 1),
+            "Copy to /media/stick is still running, and 2 other actions beside it. Quit and \
+             stop them? What they finished stays; what they were in the middle of is taken \
+             back. The 1 action waiting after them will not run."
+        );
+        assert_eq!(
+            quit_question(None, 0, 0),
             "A change is about to begin. Quit before it does?"
         );
     }

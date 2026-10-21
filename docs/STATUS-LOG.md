@@ -2741,3 +2741,36 @@ and fix bug or problems you encounter on the way". This is the first.
   server, a tree copied by sftp the same as its source, modes and times
   included; within a GVfs SFTP mount, by gio.
 
+### ADR-079, step 1: a light action beside a heavy one (2026-10-22)
+
+- Built: `op::footprint` (trees read, trees made or written, a folder's
+  names, stores; heavy; made canonical on this machine's volumes, off
+  the window's thread); `Operation::footprint` for the core's steps,
+  the notes edits and the archives' (other steps run alone); the
+  executor's one lane replaced by a queue in the order asked, a job
+  started when nothing asked before it that has not ended conflicts
+  with it and, heavy, no heavy one runs or waits before it, four at
+  most, each on a thread of its own; the journal kept in the order
+  asked (`seq`, `stacked`), Undo and Redo taking their entry once
+  known, waiting while a plan asked before them may yet put a later
+  one there; a plan asked after an undo drops its redo; the window's
+  card a plan, the quit question naming them all, the status bar's Undo
+  naming what Undo takes ("(once it ends)").
+- Found on the way: the first draft worked out footprints on the
+  caller's thread, the window's for a user's action; they read (the
+  mount table, whether what is deleted is a folder), so a dispatch now
+  runs on a thread of its own.
+- Checked: footprint tests (what meets and what does not, a folder
+  named through a link, a step that cannot say); executor tests with a
+  step held at a gate (a light plan runs beside a heavy one, one within
+  its tree and another heavy one wait; Undo takes the last asked ended
+  beside a running heavy plan, then waits for it; a step that cannot say
+  runs alone; a plan after an undo drops its redo); `undos_run_in_
+  journal_order` rewritten for the new order (its third Undo found
+  nothing to take, where the lane made it wait); `just lint-all`, the
+  full suite (1903 passed). One full run under load (52 s, load 17)
+  failed three settings tests waiting 5 s for a save, which touches no
+  plan; they passed alone and in the next full run (19 s).
+- Not checked yet in a window: done with step 2, where two heavy actions
+  run at once.
+
