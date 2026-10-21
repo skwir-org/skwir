@@ -124,6 +124,9 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
     let folder = shown.path().unwrap();
     assert!(folder.ends_with("sub folder"), "{}", folder.display());
     let remote = skwir_core::fs::reach::of(&folder).expect("a remote's");
+    // Failed midway, the test lets go of it before its server stops: a
+    // mount whose server is gone holds whatever looks into it.
+    let _left = Unmounted(remote.point.clone());
     let names: Vec<String> = {
         let ws = app.workspace.read();
         ws.pane(pane)
@@ -710,6 +713,11 @@ fn copies_and_moves_to_and_from_an_sftp_server_go_through_rsync_in_batches() {
         same_tree(e, &down.join(e.file_name().unwrap()));
     }
 
+    // Watched, as GVfs's trash watches the top of every mount: a watch is
+    // no use, and Eject lets go of it all the same.
+    let watching = rustix::fs::inotify::init(rustix::fs::inotify::CreateFlags::CLOEXEC).unwrap();
+    rustix::fs::inotify::add_watch(&watching, &point, rustix::fs::inotify::WatchFlags::CREATE)
+        .unwrap();
     app.dispatch(&Invocation::with_args(
         "remote.disconnect",
         &serde_json::json!({ "path": point }),
@@ -718,6 +726,13 @@ fn copies_and_moves_to_and_from_an_sftp_server_go_through_rsync_in_batches() {
     until(&app, 30, "it was let go of", || {
         skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point)
     });
+    let refused: Vec<_> = app
+        .take_notifications()
+        .into_iter()
+        .filter(|n| n.text.contains("not disconnected"))
+        .collect();
+    assert!(refused.is_empty(), "{refused:?}");
+    drop(watching);
     drop(left);
     drop(sshd);
     std::fs::remove_dir_all(&base).unwrap();

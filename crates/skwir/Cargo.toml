@@ -89,6 +89,8 @@ workspace = true
 
 [dev-dependencies]
 toml.workspace = true
+# A watch put on a test's mount, as GVfs's trash puts one.
+rustix = { workspace = true, features = ["fs"] }
 skwir-core = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 tempfile.workspace = true

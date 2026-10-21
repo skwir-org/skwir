@@ -148,15 +148,32 @@ pub fn unmount(point: &Path, ours: bool, cancel: &CancelToken) -> anyhow::Result
     skwir_core::fs::reach::changed();
     if !finished.status.success() {
         let said = finished.stderr.trim();
-        if said.contains("busy") {
-            anyhow::bail!("another program is using it");
+        if !said.contains("busy") {
+            anyhow::bail!("{said}");
         }
-        anyhow::bail!("{said}");
+        // Refused as busy for a watch too: GVfs's trash watches the top
+        // of every mount. Where nothing reads, writes or works there, it
+        // is let go of at once (lazily), which ends the watches.
+        match skwir_platform::process::using(point) {
+            Some(users) if users.is_empty() => force_unmount(point)?,
+            Some(users) => anyhow::bail!("{}", in_use(&users)),
+            None => anyhow::bail!("another program is using it"),
+        }
     }
     if ours {
         let _ = remove_point(point);
     }
     Ok(())
+}
+
+/// What Eject says when `users` (programs' names) use a mount.
+fn in_use(users: &[String]) -> String {
+    let quoted: Vec<String> = users.iter().map(|u| format!("“{u}”")).collect();
+    match quoted.as_slice() {
+        [one] => format!("{one} is using it"),
+        [rest @ .., last] => format!("{} and {last} are using it", rest.join(", ")),
+        [] => "another program is using it".to_owned(),
+    }
 }
 
 /// Let go of the mount at `point` whatever holds it (a lazy unmount: the
@@ -276,5 +293,20 @@ impl Askpass {
             .env("SSH_ASKPASS", &self.program)
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env(skwir_platform::askpass::SOCKET_VAR, self.server.path());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eject_names_what_uses_a_mount() {
+        let names = |n: &[&str]| n.iter().map(|&n| n.to_owned()).collect::<Vec<_>>();
+        assert_eq!(in_use(&names(&["vim"])), "“vim” is using it");
+        assert_eq!(
+            in_use(&names(&["fish", "less", "vim"])),
+            "“fish”, “less” and “vim” are using it"
+        );
     }
 }

@@ -7468,6 +7468,7 @@ dependencies = [
  "flate2",
  "proptest",
  "resvg",
+ "rustix",
  "serde_json",
  "skwir-alloc",
  "skwir-core",

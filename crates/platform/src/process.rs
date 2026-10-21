@@ -849,6 +849,65 @@ pub fn run_watching(
 /// schedule a job, wake the app), never the work itself.
 pub type OnExit = Box<dyn FnOnce(io::Result<ExitStatus>) + Send>;
 
+/// The programs that use something under `folder`, by name, each once:
+/// a file open there, a file of it mapped, their working folder or root
+/// in it. A watch (inotify, fanotify) is no use: the system refuses to
+/// unmount a folder watched as one read, but what watches it lets go when
+/// it goes. A process of another user is not seen. `None` where the
+/// system does not say (on Linux, `/proc` says).
+pub fn using(folder: &Path) -> Option<Vec<String>> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut names = std::collections::BTreeSet::new();
+        for process in std::fs::read_dir("/proc").ok()?.flatten() {
+            let pid = process.file_name();
+            if pid.as_encoded_bytes().iter().all(u8::is_ascii_digit)
+                && uses(&process.path(), folder)
+            {
+                let name = std::fs::read_to_string(process.path().join("comm")).unwrap_or_default();
+                names.insert(name.trim().to_owned());
+            }
+        }
+        Some(names.into_iter().collect())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = folder;
+        None
+    }
+}
+
+/// Whether the process whose `/proc` folder is `process` uses something
+/// under `folder` ([`using`]). Read from what the system keeps of it,
+/// never by looking under `folder`: a server gone would hold the look.
+#[cfg(target_os = "linux")]
+fn uses(process: &Path, folder: &Path) -> bool {
+    let under = |link: &Path| std::fs::read_link(link).is_ok_and(|to| to.starts_with(folder));
+    let links = |dir: &Path, name: Option<&str>| -> bool {
+        std::fs::read_dir(dir).is_ok_and(|entries| {
+            entries.flatten().any(|entry| match name {
+                Some(name) => under(&entry.path().join(name)),
+                None => under(&entry.path()),
+            })
+        })
+    };
+    if under(&process.join("cwd")) || under(&process.join("root")) {
+        return true;
+    }
+    // A thread may work in a folder of its own.
+    if links(&process.join("task"), Some("cwd")) || links(&process.join("fd"), None) {
+        return true;
+    }
+    // A line of `maps` ends with the mapped file's path, if any.
+    std::fs::read(process.join("maps")).is_ok_and(|maps| {
+        maps.split(|b| *b == b'\n').any(|line| {
+            line.iter().position(|b| *b == b'/').is_some_and(|at| {
+                Path::new(&*skwir_core::os_path::from_bytes_ref(&line[at..])).starts_with(folder)
+            })
+        })
+    })
+}
+
 /// The folder the process `pid` works in, as the system says: Linux's
 /// `/proc/<pid>/cwd`, macOS's `proc_pidinfo` (compiled, never run);
 /// `None` on Windows, which keeps it in the process's own memory.
@@ -1136,6 +1195,22 @@ mod tests {
         );
         assert!(ran.is_err());
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// A file held open under a folder makes this process one of the
+    /// programs using it; a folder nothing holds is used by none.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_programs_using_a_folder_are_named() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (held, free) = (tmp.path().join("held"), tmp.path().join("free"));
+        std::fs::create_dir(&held).unwrap();
+        std::fs::create_dir(&free).unwrap();
+        let open = std::fs::File::create(held.join("it's open")).unwrap();
+        let me = std::fs::read_to_string("/proc/self/comm").unwrap();
+        assert!(using(&held).unwrap().contains(&me.trim().to_owned()));
+        assert_eq!(using(&free), Some(Vec::new()));
+        drop(open);
     }
 
     /// A program held, and what it started, writes nothing until let go;

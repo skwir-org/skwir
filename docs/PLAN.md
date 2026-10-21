@@ -1269,11 +1269,19 @@ protocol is a scheme a connector maps, or a connector.
   holds, else eight files at a time, plain files placed by the batch
   itself. **Built**, checked against OpenSSH's own server on this
   machine (`just remote-check`) and timed with a 20 ms round trip
-  (STATUS-LOG).
+  (STATUS-LOG). Then (the user's "tackle the not done yet points"):
+  moves to another device in batches; Pause during a batch (a tool
+  stopped, Skwir's own copy between files); copies a batch placed for
+  steps that never ran taken back; files placed through FUSE linked from
+  a folder of each worker's; eight `gio copy` for GVfs's SFTP mounts.
+  rclone's own copy measured slower than its mount: not built. Eject
+  lets go of a mount only watched (GVfs's trash watches every mount).
+  **Built** and timed the same way.
 - **G. Left** (each its own step):
-  - cross-device moves in batches; rclone's and GVfs's own transfers;
-    Pause during a batch; files pasted one by one without rsync still
-    renamed one at a time through FUSE;
+  - copies down from GVfs (a look through its bridge per file, on the
+    plan's thread); a move's originals removed on the server one by one
+    (`rsync --remove-source-files`); GVfs's SMB, WebDAV and FTP mounts
+    and sshfs mounts Skwir did not make keep the mount's pace;
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);

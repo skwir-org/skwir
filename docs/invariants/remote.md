@@ -157,6 +157,14 @@ ADR-077 (which revises ADR-021).
   `fs::wait_let_go`) and the remote's lane runs nothing: until then the
   system refuses the unmount as busy, and Eject said another program
   used it.
+- The system refuses to unmount a folder watched as one used (GVfs's
+  trash puts a watch on the top of every mount, inotify). Refused as
+  busy, `mounter::unmount` asks what uses the mount
+  (`process::using`: a file open or mapped there, a working folder in
+  it; never a watch, never a look under it): nothing, it is let go of
+  lazily, which ends the watches; something, Eject names it ("“vim” is
+  using it"). Where the system does not say (not Linux), it says
+  another program uses it.
 - A mount Skwir makes is under `$XDG_RUNTIME_DIR/skwir/remote/`, named by
   `connector::point_name` so its address reads back from it: nothing else
   is kept. It outlives Skwir, as GVfs's do.

@@ -2427,3 +2427,60 @@ Asked by the user after the measurements below ("go ahead with 1-4").
   The disconnect now waits, ten seconds at most, for the folders under
   the mount to be let go of (`fs::wait_let_go`, a count of the folders
   listings hold open) and for the remote's lane to run nothing.
+
+### What copies to a remote left undone (2026-10-21, afternoon)
+
+Asked by the user: "tackle the 'not done yet' points" of the morning's
+copies (ADR-078).
+
+- Built: a move to another device joins its run's batch (its source
+  read before the copy, `builtin::state_of`, its original removed only
+  if still that); a batch heeds the plan's pause (`transfer::Control`:
+  Skwir's own copy waits between files, a tool's process group is
+  stopped and continued, `process::run_watching`'s `held`); a plan cut
+  short before the steps whose copies its batch placed takes them back
+  (`transfer::take_back_unclaimed`); a placed copy verified against its
+  source as taken or as it is now (a file changed between the two calls
+  of a batch had been left at its target, its step then refusing a name
+  taken). Through FUSE, Skwir's own copy makes each file in a folder of
+  its worker's and links it into place. The remote plugin's `gio_copy`:
+  eight `gio copy` for an SFTP mount of the session's GVfs.
+- Measured, as in the morning (OpenSSH's server here, 20 ms through
+  `tc netem`, Skwir's executor timed by a temporary test, removed), 100
+  files of 16 KiB: without rsync, pasted one by one up 15.0–15.4 s with
+  one folder aside for all, 10.7 with a folder each, 8.4–8.5 linked
+  (two runs of each, back to back; 7.2 of the 8.4 s in the transfer,
+  0.1 verifying, the rest the steps); moved up 8.5 s, down 2.9; by
+  rsync, moved up 0.80 s, down 2.75 (the originals removed through the
+  mount). GVfs, its own bus and agent and a relay through the delay:
+  shell timings, through its bridge eight at a time 11.6 s, one `gio
+  copy` 9.0, eight 1.2 (and 0.63 to `gio move` them into place); through
+  Skwir, pasted one by one up 2.84 s (13.17 through the bridge), a folder
+  2.78 (10.59), down 4.26 (4.92). rclone (`:sftp:` through ssh with the
+  delay, a shell's timing): through its mount eight at a time 5.9–7.4 s,
+  `rclone copy --transfers 8` 9.4 (7.1 without its hash check), and its
+  mount did not see the folder `rclone copy` made: not built.
+- `gio copy` and `gio move` replace a file where they find one unless
+  `-i` (found by a test: a file named as one moved was replaced); with
+  `-i` and nothing on their input they leave it.
+- Eject: the timing test's disconnect failed every time ("another
+  program is using it") while the process held nothing on the mount.
+  A look at every process found the session's `gvfsd-trash` watching the
+  mount's top (inotify), as it watches every new mount; the system
+  refuses to unmount what is watched. Before, Eject had failed so on
+  this session whenever GVfs ran, likely for the user too. Now, refused
+  as busy, the plugin asks what uses the mount (`process::using`: open
+  or mapped files, working folders, from `/proc`, never a watch): none,
+  it unmounts lazily; some, it names them. The rsync test now ejects
+  with a watch of its own on the mount.
+- Checked: unit tests (a batch waits while paused and stops when
+  cancelled; moves in a batch and back by Undo; a source changed after
+  its batch stays; a plan stopped before its steps takes back what was
+  placed; a program watched held while paused; the programs using a
+  folder named; gio's runs; Eject's words); `just remote-check`: the
+  rsync test moves up and back by Undo, and ejects while watched; the
+  GVfs test copies a folder and files up and down through `gio`.
+- `remote_folders::an_address_opens_…` failed once in the remote-check
+  run (load 8): the remote plugin's background refresh, which runs
+  `rclone listremotes`, had not named the mount within 20 s; alone it
+  passed in 0.3 s. It timed out once this morning in a full run too.
