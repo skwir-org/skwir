@@ -306,6 +306,15 @@ impl App {
             app.notes.keep_snapshots(app.cache.namespace("notes"));
             app.executor.set_companions(Arc::clone(&app.companions));
             app.executor.set_transfers(Arc::clone(&app.transfers));
+            // What a plan's transfers changed beside a mount (a tool's
+            // copies onto a server), the folders showing it read again.
+            let told = Arc::downgrade(&app);
+            app.executor
+                .set_changed_beside(Some(Arc::new(move |folders: &[PathBuf]| {
+                    if let Some(app) = told.upgrade() {
+                        app.refresh_showing(folders);
+                    }
+                })));
             // A plan short of room asks the user whether to go on anyway;
             // with no window up, no one is asked, and nothing is copied.
             let asking = Arc::downgrade(&app);

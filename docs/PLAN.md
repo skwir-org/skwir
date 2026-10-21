@@ -1287,11 +1287,12 @@ protocol is a scheme a connector maps, or a connector.
   macOS. Found on the way and fixed: copies onto WebDAV failed on modes
   it keeps none of, and asked about room it does not report; the room
   question waited with no window. **Built**, timed whole as the window
-  runs a plan (STATUS-LOG).
+  runs a plan (STATUS-LOG). Then moves' originals on sshfs removed
+  together by rsync or sftp, sshfs shown what went; and, found on the
+  way, a pane showing a folder a tool wrote or removed in beside its
+  mount reads it again at the plan's end (it never did). **Built**.
 - **G. Left** (each its own step):
-  - moves' originals on sshfs removed one at a time through the mount
-    (sshfs's own cache would keep a file removed beside it for 20 s);
-    GVfs's NFS, AFP and device mounts not measured, at the bridge's pace;
+  - GVfs's NFS, AFP and device mounts not measured, at the bridge's pace;
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);

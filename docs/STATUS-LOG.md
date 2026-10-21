@@ -2569,3 +2569,55 @@ fix issues you find along the way".
   sshfs keeps a file's attributes 20 s (`dcache_timeout`) and purges them
   only on its own operations' success, so a file removed beside it reads
   as there, and an Undo right after would find its name taken.
+
+### Moves' originals on sshfs together, and what a tool changed shown (2026-10-21, night)
+
+The goal's point 4 (moves' originals removed one by one on the server)
+was left open for sshfs in the entry above.
+
+- sshfs keeps what it read of the server 20 s and lets go of a path
+  only on its own operations' success, of all below a name renamed, and
+  of a path the server refuses to open (`sshfs_open_common`, read in
+  sshfs 3.7.6's source). Tried in a private user and mount namespace
+  (sshfs in passive mode on `sftp-server`): a file removed on the server
+  read as there until opened through the mount, then gone for sshfs (the
+  kernel's own entry 1 s more for a plain stat; an exclusive create asks
+  again and succeeded at once); a folder renamed through the mount into
+  another, then removed on the server, gone with all below it; a folder
+  of Skwir's made and removed in a folder made sshfs read its names
+  again.
+- Built: `ssh_mount::remove_beside` (a folder renamed aside through the
+  mount, files removed by a tool then opened through the mount 64 at
+  once, links through the mount, the folder aside removed last) with
+  rsync where the server runs it (one run from an empty folder,
+  `--delete-missing-args --force --existing --ignore-existing`, the
+  folder aside listed whole: its implied parent stopped a path below it)
+  and sftp sessions otherwise (`rm`, then `rmdir` the deepest first;
+  only where the mount shows links as links, read from sshfs's command
+  line for the user's mounts). `fs::file::open_regular_unfollowed` in
+  core.
+- Found on the way: a pane showing a folder that rsync or gio wrote in
+  beside the mount never showed the copies (30 s and counting: no watch
+  sees it, and nothing read the folder again), nor GVfs's originals
+  gone by `gio remove`. The plan now records such folders
+  (`StepContext::changed_beside`) and the window reads those its panes
+  show at its end (`Executor::set_changed_beside`,
+  `App::refresh_showing`); sshfs, which keeps a folder's names 20 s,
+  reads it again once rsync or sftp placed there
+  (`ssh_mount::shown_again`).
+- Measured with a 20 ms round trip (netem in a user namespace), plans
+  built before the clock (building one of 100 `EntryRef`s stats each
+  through the mount: 2.2 s), new against the removal through the mount
+  in two interleaved rounds, load 30 to 40: 100 files of 16 KiB moved
+  down from Skwir's mount 1.09–1.22 s (2.77–3.03), a folder of 100
+  0.90–0.92 s (2.66–2.72); from an SFTP-only server 1.84–1.87 s
+  (2.98–3.00) and 2.00–2.04 s (2.97–2.99).
+- Checked: `just remote-check`, 42 passed: the rsync test moves back
+  down by Undo (24 files, a folder, a name with quotes and glob
+  characters) with a pane showing the folder, which shows them gone,
+  their names made again at once through the mount; the SFTP-only test
+  moves down by sftp the same way; the GVfs test's pane shows gio's
+  copies and its originals gone. Without the opens, making a removed
+  name again failed with `EEXIST` (tried). `just lint-all` (Windows and
+  macOS included), the full suite (1890 passed), core under Wine (294
+  passed).

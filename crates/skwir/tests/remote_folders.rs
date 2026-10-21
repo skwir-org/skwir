@@ -568,6 +568,30 @@ fn same_files(src: &Path, copy: &Path) {
     }
 }
 
+/// The names `pane` lists, sorted.
+fn names_shown(app: &App, pane: skwir_core::workspace::PaneId) -> Vec<String> {
+    let ws = app.workspace.read();
+    let mut names: Vec<_> = ws
+        .pane(pane)
+        .unwrap()
+        .listing
+        .iter()
+        .map(|e| e.name.to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// The names of `entries`, sorted.
+fn names_of(entries: &[PathBuf]) -> Vec<String> {
+    let mut names: Vec<_> = entries
+        .iter()
+        .map(|e| e.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
 fn moves(entries: &[PathBuf], dest: &Path) -> skwir_core::op::Plan {
     skwir_core::op::Plan::with_steps(
         "move",
@@ -642,11 +666,20 @@ fn copies_and_moves_to_and_from_an_sftp_server_go_through_rsync_in_batches() {
     let entries = small_files(&local);
     let into = mounted.join("it's a folder");
     std::fs::create_dir(&into).unwrap();
+    app.navigate(pane, &Location::from_path(&into)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(20)));
     let up = app
         .executor
         .execute_blocking(&copies(&entries, &into), app.lifetime());
     assert!(up.error.is_none(), "{:?}", up.error);
     assert_eq!(up.applied, entries.len());
+    let shown = || names_shown(&app, pane);
+    let copied_names = names_of(&entries);
+    // Copied beside the mount, no watch saw them: the pane reads the
+    // folder again, and sshfs does not show it as it was.
+    until(&app, 10, "the pane shows what rsync copied", || {
+        shown() == copied_names
+    });
     assert_eq!(
         sshfs.rsync().made(),
         2,
@@ -689,10 +722,17 @@ fn copies_and_moves_to_and_from_an_sftp_server_go_through_rsync_in_batches() {
     // back down by Undo, the same way.
     let moved_into = mounted.join("moved here");
     std::fs::create_dir(&moved_into).unwrap();
-    let here: Vec<PathBuf> = entries
+    app.navigate(pane, &Location::from_path(&moved_into))
+        .unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(20)));
+    // A name sftp reads as a pattern, said as itself.
+    let odd = down.join(r#"a "quoted" *?[glob].txt"#);
+    std::fs::write(&odd, "odd").unwrap();
+    let mut here: Vec<PathBuf> = entries
         .iter()
         .map(|e| down.join(e.file_name().unwrap()))
         .collect();
+    here.push(odd.clone());
     let moved = app
         .executor
         .execute_blocking(&moves(&here, &moved_into), app.lifetime());
@@ -706,9 +746,18 @@ fn copies_and_moves_to_and_from_an_sftp_server_go_through_rsync_in_batches() {
     for e in &entries {
         same_tree(e, &served.join("moved here").join(e.file_name().unwrap()));
     }
+    let mut moved_names = copied_names.clone();
+    moved_names.push(odd.file_name().unwrap().to_string_lossy().into_owned());
+    moved_names.sort();
+    until(&app, 10, "the pane shows what was moved there", || {
+        shown() == moved_names
+    });
+    // Back down: the originals on the server removed together by rsync,
+    // the folder's tree renamed aside first.
     let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
     assert!(undone.error.is_none(), "{:?}", undone.error);
     assert_eq!(sshfs.rsync().made(), 8, "moved back by rsync too");
+    assert_eq!(sshfs.rsync().removed(), 1, "the originals removed by rsync");
     assert_eq!(
         std::fs::read_dir(served.join("moved here"))
             .unwrap()
@@ -718,6 +767,20 @@ fn copies_and_moves_to_and_from_an_sftp_server_go_through_rsync_in_batches() {
     for e in &entries {
         same_tree(e, &down.join(e.file_name().unwrap()));
     }
+    assert_eq!(std::fs::read(&odd).unwrap(), b"odd");
+    // sshfs shows them gone: the pane reads the folder again, and their
+    // names are free at once through the mount (sshfs kept them 20 s).
+    until(&app, 10, "the pane shows the originals gone", || {
+        shown().is_empty()
+    });
+    std::fs::File::create_new(moved_into.join("it's 00.txt")).unwrap();
+    std::fs::create_dir(moved_into.join("a folder")).unwrap();
+    until(&app, 3, "a removed name is gone through the mount", || {
+        std::fs::symlink_metadata(moved_into.join("it's 01.txt")).is_err()
+            && std::fs::symlink_metadata(moved_into.join("a folder/deeper")).is_err()
+    });
+    std::fs::remove_file(moved_into.join("it's 00.txt")).unwrap();
+    std::fs::remove_dir(moved_into.join("a folder")).unwrap();
 
     // Watched, as GVfs's trash watches the top of every mount: a watch is
     // no use, and Eject lets go of it all the same.
@@ -934,6 +997,33 @@ fn an_sftp_only_server_copies_through_sftp_sessions() {
     for e in &entries {
         same_tree(e, &down.join(e.file_name().unwrap()));
     }
+    // Moved down: the originals removed together by sftp sessions, a tree
+    // renamed aside first, as the pane and sshfs show at once.
+    app.navigate(pane, &Location::from_path(&into)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(20)));
+    assert_eq!(names_shown(&app, pane), names_of(&entries));
+    let moved_down = base.join("moved down");
+    std::fs::create_dir(&moved_down).unwrap();
+    let moved = app
+        .executor
+        .execute_blocking(&moves(&there, &moved_down), app.lifetime());
+    assert!(moved.error.is_none(), "{:?}", moved.error);
+    assert_eq!(sshfs.sftp().removed(), 1, "the originals removed by sftp");
+    assert_eq!(sshfs.rsync().removed(), 0, "no rsync to run");
+    assert_eq!(
+        std::fs::read_dir(served.join("it's a folder"))
+            .unwrap()
+            .count(),
+        0
+    );
+    for e in &entries {
+        same_tree(e, &moved_down.join(e.file_name().unwrap()));
+    }
+    until(&app, 10, "the pane shows the originals gone", || {
+        names_shown(&app, pane).is_empty()
+    });
+    std::fs::File::create_new(into.join("it's 00.txt")).unwrap();
+    std::fs::create_dir(into.join("a folder")).unwrap();
     app.dispatch(&Invocation::with_args(
         "remote.disconnect",
         &serde_json::json!({ "path": point }),
@@ -1191,6 +1281,9 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
     let entries = small_files(&base.join("local"));
     let into = connected.point.join("it's a folder");
     std::fs::create_dir(&into).unwrap();
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&into)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(20)));
     let up = app
         .executor
         .execute_blocking(&copies(&entries, &into), app.lifetime());
@@ -1201,6 +1294,11 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
         2,
         "the folder staged, the files placed"
     );
+    // Copied by gio, beside the bridge, which no watch sees: the pane
+    // reads the folder again.
+    until(&app, 10, "the pane shows what gio copied", || {
+        names_shown(&app, pane) == names_of(&entries)
+    });
     for e in &entries {
         same_files(
             e,
@@ -1270,6 +1368,9 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
     for e in &entries {
         same_files(e, &moved.join(e.file_name().unwrap()));
     }
+    until(&app, 10, "the pane shows the originals gone", || {
+        names_shown(&app, pane).is_empty()
+    });
     drop(app);
 
     gvfs.disconnect(&remote, &recognised, &CancelToken::new())

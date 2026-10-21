@@ -122,13 +122,21 @@ mounted the folder.
    finding their names taken.
 
 10. **Moves' originals together where the mount sees it.** Where a
-    transfer removes so that the mount sees the removal at once (GVfs's
-    daemon serves its bridge and `gio remove` alike), a move's step
-    leaves its original to the plan's end, which looks at all of them
-    again at once and has those unchanged removed together. Not sshfs's:
-    its own cache keeps a file's attributes 20 s, and an Undo would find
-    a name removed beside it taken; there they go one at a time through
-    the mount.
+    transfer removes so that the mount sees the removal (GVfs's daemon
+    serves its bridge and `gio remove` alike), a move's step leaves its
+    original to the plan's end, which looks at all of them again at once
+    and has those unchanged removed together. sshfs keeps what it read
+    of the server 20 s and lets go of a path only when something is
+    done there through the mount, or the server refuses to open it: its
+    originals are removed by rsync (one run from an empty folder, each
+    name a deletion asked) or sftp sessions, then each file opened
+    through the mount, which the server refuses; a folder is renamed
+    through the mount into a folder of Skwir's first (sshfs lets go of
+    all below a name renamed), removed there, and that folder goes last
+    through the mount, sshfs reading the folder's names again. The opens
+    go together and a folder's rename is one round trip, where a removal
+    through the mount was a round trip a name, one at a time under the
+    kernel's lock of its folder.
 
 11. **No look a round trip each.** A step whose source a batch took
     finds it where the batch did and looks for no companion beside it
@@ -136,6 +144,13 @@ mounted the folder.
     action read a remote's folder's names once and find its sources
     ahead, eight at a time: each step looked at each name across the
     network, 5.35 s of 8.41 for 100 files up through GVfs.
+
+12. **What a tool changed is shown.** No watch of this machine's sees
+    what a tool writes or removes beside a mount (a batch placed, an
+    original removed): the plan says which folders, and at its end the
+    window reads again those its panes show. sshfs reads such a folder
+    from the server again once a folder of Skwir's is made and removed
+    in it.
 
 ## Consequences
 
@@ -173,8 +188,12 @@ mounted the folder.
   4.2–5.4 s, down 1.69 (3.69), moved down 2.67 (15.78). Shell timings
   of eight `gio copy` against the bridge eight at a time: WebDAV 1.5 s
   and 25.6–26.1, FTP 9.2–9.4 and 139.8, SMB (Samba) 15.4 and 28.1–28.2.
+- Measured after 10 and 12 for sshfs (20 ms, plans built first, run
+  whole; load 30 to 40, two rounds each against the removal through the
+  mount): 100 files of 16 KiB moved down from Skwir's mount 1.09–1.22 s
+  (2.77–3.03), a folder of 100 0.90–0.92 s (2.66–2.72); from an
+  SFTP-only server 1.84–1.87 s (2.98–3.00) and 2.00–2.04 s (2.97–2.99).
 - Not yet: GVfs's NFS, AFP and devices (a phone's MTP), not measured;
   rclone's mounts keep their own pace. Without a tool, a name made in a
   folder through FUSE costs a round trip or two under its lock, whatever
-  the way: an SFTP-only server's downloads and moves' originals on sshfs
-  are at the mount's pace.
+  the way: an SFTP-only server's downloads are at the mount's pace.

@@ -9,6 +9,13 @@
 //! made, asking nothing either way. A server without rsync, or that the
 //! user's ssh does not reach so, is remembered for its mount, whose
 //! copies then go by sftp (`sftp`), else through the mount.
+//!
+//! It removes the originals of moves from such a mount too, at the plan's
+//! end (`ssh_mount::remove_beside`): one rsync from an empty folder of
+//! this machine's, each name a deletion asked (`--delete-missing-args`,
+//! a folder whole with `--force`, a link as a link), nothing ever written
+//! (`--existing --ignore-existing`). 100 files of 16 KiB moved down from a
+//! server 20 ms away: their removal took 1.9 s through the mount.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -36,6 +43,8 @@ pub struct Rsync {
     runs: Mutex<HashMap<PathBuf, bool>>,
     /// The batches it copied.
     made: AtomicUsize,
+    /// The folders it removed moved originals in.
+    removed: AtomicUsize,
 }
 
 impl Rsync {
@@ -52,6 +61,11 @@ impl Rsync {
     /// The batches it copied (a test asks).
     pub fn made(&self) -> usize {
         self.made.load(Ordering::Relaxed)
+    }
+
+    /// The folders it removed moved originals in (a test asks).
+    pub fn removed(&self) -> usize {
+        self.removed.load(Ordering::Relaxed)
     }
 
     /// The sshfs mount that holds `path`, when rsync reaches its server.
@@ -113,6 +127,28 @@ impl Rsync {
     }
 }
 
+/// An empty folder of this machine's, private, for rsync to send nothing
+/// from: gone with it.
+struct Empty(PathBuf);
+
+impl Empty {
+    fn new() -> std::io::Result<Empty> {
+        let parent = skwir_core::xdg::runtime_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("skwir");
+        std::fs::create_dir_all(&parent)?;
+        let path = parent.join(crate::ssh_mount::unique("empty-"));
+        std::fs::create_dir(&path)?;
+        Ok(Empty(path))
+    }
+}
+
+impl Drop for Empty {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir(&self.0);
+    }
+}
+
 /// What begins a line of rsync's naming a file it made (`--out-format`).
 const PLACED: &str = "skwir-placed:";
 
@@ -149,6 +185,72 @@ fn copied_of(line: &[u8]) -> Option<u64> {
 impl Transfer for Rsync {
     fn name(&self) -> &'static str {
         "rsync"
+    }
+
+    /// A mount whose server is not known to run no rsync.
+    fn removes(&self, folder: &Path) -> bool {
+        program().is_some()
+            && self
+                .mount_of(folder)
+                .is_some_and(|mount| self.runs.lock().get(&mount.point) != Some(&false))
+    }
+
+    fn remove(&self, folder: &Path, names: &[OsString], control: &Control) -> anyhow::Result<()> {
+        let Some((rsync, mount)) = program().zip(self.mount_of(folder)) else {
+            return Err(NotServed.into());
+        };
+        if !self.server_runs(&mount, control.cancel()) {
+            anyhow::ensure!(!control.is_cancelled(), "cancelled");
+            return Err(NotServed.into());
+        }
+        let at = mount.on_server(folder).ok_or_else(|| {
+            anyhow::anyhow!("“{}” has a name rsync cannot be given", folder.display())
+        })?;
+        crate::ssh_mount::remove_beside(folder, names, |beside| {
+            // Each file's name, and the folder of Skwir's whole.
+            let mut list = Vec::new();
+            let trees = (!beside.trees.is_empty()).then_some(beside.scratch);
+            for path in beside.files.iter().map(PathBuf::as_path).chain(trees) {
+                list.extend_from_slice(path.file_name().unwrap_or_default().as_encoded_bytes());
+                list.push(0);
+            }
+            let empty = Empty::new()?;
+            let mut from = empty.0.as_os_str().to_owned();
+            from.push("/");
+            let mut command = Command::new(rsync);
+            command
+                .env("LC_ALL", "C")
+                .args([
+                    "--recursive",
+                    "--existing",
+                    "--ignore-existing",
+                    "--delete-missing-args",
+                    "--force",
+                    "--protect-args",
+                    "--files-from=-",
+                    "--from0",
+                    "-e",
+                ])
+                .arg(self.ssh(&mount))
+                .arg(&from)
+                .arg(mount.spec(&at));
+            let finished = skwir_platform::process::run_watching(
+                &mut command,
+                Some(&list),
+                control.cancel(),
+                &|| control.is_paused(),
+                &mut |_: &[u8]| {},
+            )?;
+            anyhow::ensure!(
+                finished.status.success(),
+                "rsync failed ({}): {}",
+                finished.status,
+                finished.stderr
+            );
+            Ok(())
+        })?;
+        self.removed.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 
     fn serves(&self, from: &Path, into: &Path) -> bool {
@@ -259,6 +361,10 @@ impl Transfer for Rsync {
                 }
             },
         )?;
+        // Placed in the folder beside the mount, ended well or not.
+        if upward && temp.is_some() {
+            crate::ssh_mount::shown_again(into);
+        }
         if finished.status.success() {
             self.made.fetch_add(1, Ordering::Relaxed);
             return Ok(());
@@ -300,6 +406,7 @@ mod tests {
             port: Some(2222),
             root: "/".to_owned(),
             control: Some(PathBuf::from("/run/user/1000/skwir/ssh/0123")),
+            links_shown: true,
         };
         let rsync = Rsync::default();
         let ssh = rsync.ssh(&ours);

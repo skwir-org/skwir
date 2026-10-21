@@ -28,6 +28,13 @@
 //! (`builtin::state_of`), which its step compares before removing the
 //! original. A batch heeds the plan's pause ([`Control`]): Skwir's own
 //! copy waits between files, a tool is stopped meanwhile.
+//!
+//! What a plugin's transfer writes or removes in a remote's folder, it
+//! does beside the mount, where no watch of this machine's sees it: the
+//! folder is noted (`StepContext::changed_beside`), and the window reads
+//! it again where it is shown at the plan's end
+//! (`Executor::set_changed_beside`). A transfer whose mount keeps what it
+//! read (sshfs) makes it read the folder again itself.
 
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
@@ -741,10 +748,12 @@ pub(super) fn remove_deferred(ctx: &StepContext) -> anyhow::Result<()> {
             match transfer.remove(&folder, &names, &control) {
                 Err(error) if error.is::<NotServed>() => {}
                 Ok(()) => {
+                    ctx.changed_beside(&folder);
                     removed = true;
                     break;
                 }
                 Err(error) => {
+                    ctx.changed_beside(&folder);
                     tracing::warn!(
                         "{} removing {} entries failed, the rest removed one by one: {error:#}",
                         transfer.name(),
@@ -815,6 +824,11 @@ fn run(
             // It made nothing: the next.
             Err(error) if error.is::<NotServed>() => {}
             ran => {
+                // Placed where they go on a remote, beside its mount (here
+                // a watch sees them), failed or not.
+                if temp.is_some() && crate::fs::reach::of(into).is_some() {
+                    ctx.changed_beside(into);
+                }
                 return ran.with_context(|| {
                     format!("{} copying {} entries", transfer.name(), names.len())
                 });

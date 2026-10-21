@@ -44,6 +44,43 @@ pub fn open_regular(path: &Path) -> io::Result<File> {
     }
 }
 
+/// Open `path` for reading if it is a regular file itself, never through a
+/// link at its end: a link is refused as anything else that is not one.
+///
+/// # Errors
+/// The open error (`NotFound` when nothing is there), or `InvalidInput`
+/// when it is not a regular file.
+pub fn open_regular_unfollowed(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        use rustix::fs::OFlags;
+        use std::os::unix::fs::OpenOptionsExt;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags((OFlags::NONBLOCK | OFlags::NOFOLLOW).bits().cast_signed())
+            .open(path)
+            .map_err(|e| {
+                // A link at the end: `ELOOP`.
+                if e.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error()) {
+                    io::Error::new(io::ErrorKind::InvalidInput, "a link")
+                } else {
+                    e
+                }
+            })?;
+        ensure_regular(&file)?;
+        let flags = rustix::fs::fcntl_getfl(&file)?;
+        rustix::fs::fcntl_setfl(&file, flags - OFlags::NONBLOCK)?;
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    {
+        if std::fs::symlink_metadata(path)?.is_symlink() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "a link"));
+        }
+        open_regular(path)
+    }
+}
+
 /// The whole of the regular file at `path`, at most `limit` bytes long.
 ///
 /// # Errors
@@ -91,6 +128,29 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         assert!(open_regular(&file).is_ok());
         assert!(open_regular(dir.path()).is_err());
+    }
+
+    /// Unfollowed, a link is refused, and nothing there is `NotFound`.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_is_not_opened_unfollowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert!(open_regular_unfollowed(&file).is_ok());
+        assert_eq!(
+            open_regular_unfollowed(&link).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            open_regular_unfollowed(&dir.path().join("gone"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+        assert!(open_regular_unfollowed(dir.path()).is_err());
     }
 
     #[cfg(target_os = "linux")]

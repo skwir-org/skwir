@@ -21,6 +21,13 @@
 //! (`transfer::Layout`): `put -R` passes links over. A name with a line
 //! break cannot be said in a batch: a batch holding one is left to its
 //! steps.
+//!
+//! It removes the originals of moves from an sshfs mount whose server
+//! runs no rsync too, at the plan's end (`ssh_mount::remove_beside`): `rm`
+//! for each file, a folder's tree read through the mount and removed by
+//! `rm` and `rmdir`, the deepest first. Only where the mount shows a link
+//! as a link: one that follows links shows a folder's link as the folder,
+//! and the tree below it is not the original's.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -55,6 +62,8 @@ pub struct Sftp {
     opens: Mutex<HashMap<PathBuf, bool>>,
     /// The batches it copied.
     made: AtomicUsize,
+    /// The folders it removed moved originals in.
+    removed: AtomicUsize,
 }
 
 impl Sftp {
@@ -71,6 +80,11 @@ impl Sftp {
     /// The batches it copied (a test asks).
     pub fn made(&self) -> usize {
         self.made.load(Ordering::Relaxed)
+    }
+
+    /// The folders it removed moved originals in (a test asks).
+    pub fn removed(&self) -> usize {
+        self.removed.load(Ordering::Relaxed)
     }
 
     /// The sshfs mount that holds `path`, when sftp reaches its server.
@@ -93,6 +107,37 @@ impl Sftp {
         }
         command.arg(&mount.login);
         command
+    }
+
+    /// Each file's lines run in sessions at once, each told its bytes once
+    /// ended: as many sessions as a mount's connection takes.
+    fn run(
+        &self,
+        sftp: &Path,
+        mount: &Mount,
+        files: Vec<(Vec<String>, u64)>,
+        ran: &(dyn Fn(u64) + Sync),
+        control: &Control,
+    ) -> anyhow::Result<()> {
+        if files.is_empty() {
+            return Ok(());
+        }
+        // A session of Skwir's mount is a channel of its connection; the
+        // user's logs in for each.
+        let sessions = if mount.control.is_some() {
+            files.len().div_ceil(MOST).max(AT_ONCE)
+        } else {
+            AT_ONCE
+        };
+        let runs = spread(files, sessions)
+            .into_iter()
+            .map(|(batch, bytes)| crate::runs::Run {
+                command: self.session(sftp, mount),
+                input: Some(batch.into_bytes()),
+                bytes,
+            })
+            .collect();
+        crate::runs::at_once("sftp", runs, AT_ONCE, ran, control)
     }
 }
 
@@ -167,6 +212,54 @@ impl Transfer for Sftp {
         "sftp"
     }
 
+    /// A mount sftp reaches whose links show as links (module
+    /// documentation).
+    fn removes(&self, folder: &Path) -> bool {
+        program().is_some() && self.mount_of(folder).is_some_and(|mount| mount.links_shown)
+    }
+
+    fn remove(&self, folder: &Path, names: &[OsString], control: &Control) -> anyhow::Result<()> {
+        let Some((sftp, mount)) =
+            program().zip(self.mount_of(folder).filter(|mount| mount.links_shown))
+        else {
+            return Err(NotServed.into());
+        };
+        if !self.opens(sftp, &mount, control.cancel()) {
+            anyhow::ensure!(!control.is_cancelled(), "cancelled");
+            self.without.lock().insert(mount.point);
+            return Err(NotServed.into());
+        }
+        let server = |path: &Path| {
+            mount
+                .on_server(path)
+                .as_deref()
+                .and_then(quoted)
+                .ok_or_else(|| anyhow::anyhow!("“{}” cannot be said to sftp", path.display()))
+        };
+        let lines = |verb: &str, paths: &[PathBuf]| -> anyhow::Result<Vec<(Vec<String>, u64)>> {
+            paths
+                .iter()
+                .map(|path| Ok((vec![format!("-@{verb} {}", server(path)?)], 0)))
+                .collect()
+        };
+        crate::ssh_mount::remove_beside(folder, names, |beside| {
+            let (mut leaves, mut folders) = (beside.files.to_vec(), Vec::new());
+            for tree in beside.trees {
+                crate::runs::tree(tree, 0, &mut leaves, &mut folders)?;
+            }
+            self.run(sftp, &mount, lines("rm", &leaves)?, &|_| {}, control)?;
+            // `rmdir` takes an empty folder alone: the deepest first.
+            folders.sort_by_key(|(depth, _)| std::cmp::Reverse(*depth));
+            for level in folders.chunk_by(|a, b| a.0 == b.0) {
+                let paths: Vec<PathBuf> = level.iter().map(|(_, path)| path.clone()).collect();
+                self.run(sftp, &mount, lines("rmdir", &paths)?, &|_| {}, control)?;
+            }
+            Ok(())
+        })?;
+        self.removed.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
     /// Onto a mount alone (module documentation).
     fn serves(&self, from: &Path, into: &Path) -> bool {
         program().is_some()
@@ -237,24 +330,14 @@ impl Transfer for Sftp {
                 meta.len(),
             ));
         }
-        // A session of Skwir's mount is a channel of its connection; the
-        // user's logs in for each.
-        let sessions = if mount.control.is_some() {
-            files.len().div_ceil(MOST).max(AT_ONCE)
-        } else {
-            AT_ONCE
-        };
-        let runs = spread(files, sessions)
-            .into_iter()
-            .map(|(batch, bytes)| crate::runs::Run {
-                command: self.session(sftp, &mount),
-                input: Some(batch.into_bytes()),
-                bytes,
-            })
-            .collect();
         let total = AtomicU64::new(0);
         let ran = |bytes: u64| (told.copied)(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
-        if let Err(error) = crate::runs::at_once("sftp", runs, AT_ONCE, &ran, control) {
+        let ended = self.run(sftp, &mount, files, &ran, control);
+        // Placed in the folder beside the mount, ended well or not.
+        if temp.is_some() {
+            crate::ssh_mount::shown_again(into);
+        }
+        if let Err(error) = ended {
             // ssh's own failure (255) for the user's ssh, which asks
             // nothing: the server is not reached so.
             let unreached = error

@@ -1292,6 +1292,24 @@ impl Pane {
         self.close_where(|o| &o.location == location)
     }
 
+    /// What it holds open of `folders`: the folder it shows, those it
+    /// keeps beside it and the one just left.
+    pub(crate) fn open_in(&self, folders: &[PathBuf]) -> Vec<Arc<dyn OpenLocation>> {
+        let of = |path: Option<&Path>| path.is_some_and(|p| folders.iter().any(|f| f == p));
+        let shown = self
+            .open
+            .iter()
+            .filter(|open| of(open.location().path().as_deref()))
+            .cloned();
+        let kept = self
+            .kept
+            .iter()
+            .chain(&self.left)
+            .filter(|k| of(k.path.as_deref()))
+            .filter_map(|k| k.open.clone());
+        shown.chain(kept).collect()
+    }
+
     /// Let go of the folders under `path` it keeps beside the one shown,
     /// has opened in place or has just left: their volume is about to be
     /// unmounted. Each closes as it drops.

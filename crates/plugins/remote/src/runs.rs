@@ -3,6 +3,7 @@
 //! where a mount makes a folder's names one at a time under the kernel's
 //! lock. Each held while the plan is paused, stopped with it.
 
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -95,5 +96,25 @@ pub(crate) fn at_once(
         return Err(error);
     }
     anyhow::ensure!(!control.is_cancelled(), "cancelled");
+    Ok(())
+}
+
+/// What removing the tree at `path` takes: its files and links, and its
+/// folders with their depth below the tree's top, deepest last. Read
+/// through the mount, which shows a link as a link (never followed).
+pub(crate) fn tree(
+    path: &Path,
+    depth: usize,
+    files: &mut Vec<PathBuf>,
+    folders: &mut Vec<(usize, PathBuf)>,
+) -> std::io::Result<()> {
+    if std::fs::symlink_metadata(path)?.is_dir() {
+        for entry in std::fs::read_dir(path)? {
+            tree(&entry?.path(), depth + 1, files, folders)?;
+        }
+        folders.push((depth, path.to_path_buf()));
+    } else {
+        files.push(path.to_path_buf());
+    }
     Ok(())
 }

@@ -136,17 +136,22 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   (`builtin::state_of`) before its batch copies it, and its step removes
   the original only if it is still that
   (`StepContext::take_batched_state`). Where a transfer removes in the
-  original's folder so that its mount sees it at once
-  (`Transfer::removes`: GVfs's), the step leaves the original to the
+  original's folder so that its mount sees it (`Transfer::removes`:
+  GVfs's `gio remove`; for sshfs, rsync or sftp, then what sshfs kept of
+  each let go of, remote.md), the step leaves the original to the
   plan's end, which looks at all of them again, eight at a time, and has
   those still as copied removed together (`transfer::remove_deferred`):
   through a mount the kernel removes a folder's names one at a time.
-  Never sshfs's: its own cache would say a file removed beside it is
-  there for 20 s. A step whose source a batch took finds it where the
-  batch did (`StepContext::resolve`) and looks for no companion beside
-  it (the batch read its folder). A batch's bytes are counted once, by
-  the batch. A cancel during a batch ends the plan and takes back
-  what it placed; a failed batch is logged and left to the steps; a plan
+  What a transfer writes or removes beside a mount, no watch sees: it
+  records the folder (`StepContext::changed_beside`), and at the plan's
+  end the executor tells the window (`Executor::set_changed_beside`),
+  which reads again the folders its panes show there
+  (`App::refresh_showing`). A step whose source a batch took finds it
+  where the batch did (`StepContext::resolve`) and looks for no
+  companion beside it (the batch read its folder). A batch's bytes are
+  counted once, by the batch. A cancel during a batch ends the plan and
+  takes back what it placed; a failed batch is logged and left to the
+  steps; a plan
   that ends before the steps of copies its batch placed takes them back
   (`transfer::take_back_unclaimed`): no Undo holds them. A transfer that
   finds it cannot serve after all, having made nothing

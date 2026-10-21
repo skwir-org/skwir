@@ -174,25 +174,6 @@ fn runs(files: Vec<(PathBuf, PathBuf, u64)>) -> Vec<(PathBuf, Vec<(PathBuf, u64)
     runs
 }
 
-/// What removing the tree at `path` takes: its files and links, and its
-/// folders with their depth below the tree's top. Read through the bridge.
-fn tree(
-    path: &Path,
-    depth: usize,
-    files: &mut Vec<PathBuf>,
-    folders: &mut Vec<(usize, PathBuf)>,
-) -> std::io::Result<()> {
-    if std::fs::symlink_metadata(path)?.is_dir() {
-        for entry in std::fs::read_dir(path)? {
-            tree(&entry?.path(), depth + 1, files, folders)?;
-        }
-        folders.push((depth, path.to_path_buf()));
-    } else {
-        files.push(path.to_path_buf());
-    }
-    Ok(())
-}
-
 impl Transfer for GioCopy {
     fn name(&self) -> &'static str {
         "gio"
@@ -210,7 +191,7 @@ impl Transfer for GioCopy {
         };
         let (mut files, mut folders) = (Vec::new(), Vec::new());
         for name in names {
-            tree(&folder.join(name), 0, &mut files, &mut folders)?;
+            crate::runs::tree(&folder.join(name), 0, &mut files, &mut folders)?;
         }
         let runs = |paths: &[PathBuf]| -> Vec<crate::runs::Run> {
             paths

@@ -11,7 +11,7 @@
 //! those draw what is on screen.
 
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant, SystemTime};
@@ -288,6 +288,9 @@ pub struct Executor {
     /// (`set_room_asker`): its answer comes on the channel. None asks:
     /// such a plan is refused.
     room_asker: Mutex<Option<RoomAsker>>,
+    /// Told the folders a plan's transfers changed beside the mounts
+    /// showing them (`set_changed_beside`).
+    changed_beside: Mutex<Option<ChangedBeside>>,
     /// Asks the user for a step's secret (`StepContext::ask_secret`).
     secret_asker: Mutex<Option<SecretAsker>>,
     /// Asks the user what becomes of the names a plan finds taken
@@ -297,6 +300,11 @@ pub struct Executor {
 
 /// What a volume has free, by a folder on it.
 pub type Free = Arc<dyn Fn(&Path) -> Option<u64> + Send + Sync>;
+
+/// Told the folders a plan's transfers wrote in or removed from beside the
+/// mounts showing them (ADR-078): a tool's copies onto a server, an
+/// original it removed there, which no watch of this machine's sees.
+pub type ChangedBeside = Arc<dyn Fn(&[PathBuf]) + Send + Sync>;
 
 /// Asks whether the plan titled so, short of room (`room::Short`), goes
 /// on anyway; answers on the channel, true to go on.
@@ -386,6 +394,7 @@ impl Executor {
             watched: Mutex::new(std::collections::HashMap::new()),
             free: Mutex::new(Arc::new(crate::fs::volume::free)),
             room_asker: Mutex::new(None),
+            changed_beside: Mutex::new(None),
             secret_asker: Mutex::new(None),
             clash_asker: Mutex::new(None),
         })
@@ -395,6 +404,12 @@ impl Executor {
     /// writes goes on anyway (ADR-049): the window's question.
     pub fn set_room_asker(&self, asker: Option<RoomAsker>) {
         *self.room_asker.lock() = asker;
+    }
+
+    /// Tell `told` the folders a plan's transfers changed beside the mounts
+    /// showing them, at its end: the window reads them again.
+    pub fn set_changed_beside(&self, told: Option<ChangedBeside>) {
+        *self.changed_beside.lock() = told;
     }
 
     /// Ask the user, through `asker`, for what a step needs that only they
@@ -1189,6 +1204,14 @@ impl Executor {
         if let Err(e) = ctx.write_out() {
             tracing::warn!(plan = %plan.title, "{e:#}");
             error.get_or_insert_with(|| super::said(&e));
+        }
+        // What transfers changed beside a mount, no watch saw: read again
+        // where it is shown.
+        let beside = ctx.take_changed_beside();
+        if !beside.is_empty()
+            && let Some(told) = self.changed_beside.lock().clone()
+        {
+            told(&beside);
         }
         inverses.reverse();
         let inverse = if inverses.is_empty() {

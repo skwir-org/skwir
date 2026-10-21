@@ -221,6 +221,9 @@ pub struct StepContext {
     /// plan's end (`transfer::remove_deferred`), each with what it was as
     /// copied and where its copy went.
     removing: RefCell<Vec<(PathBuf, CopiedAs, PathBuf)>>,
+    /// The folders a transfer wrote in or removed from beside the mount
+    /// showing them (`transfer`): nothing watching them sees it.
+    beside: RefCell<std::collections::BTreeSet<PathBuf>>,
 }
 
 /// What a move's source was as a batch copied it (`builtin::state_of`:
@@ -357,6 +360,7 @@ impl StepContext {
             lists_remotes: false,
             listed: RefCell::default(),
             removing: RefCell::default(),
+            beside: RefCell::default(),
         }
     }
 
@@ -708,6 +712,17 @@ impl StepContext {
     /// The originals to remove now.
     pub(super) fn take_removing(&self) -> Vec<(PathBuf, CopiedAs, PathBuf)> {
         self.removing.take()
+    }
+
+    /// A transfer changed `folder` beside its mount: what shows it reads
+    /// it again at the plan's end (`Executor::set_changed_beside`).
+    pub(super) fn changed_beside(&self, folder: &Path) {
+        self.beside.borrow_mut().insert(folder.to_path_buf());
+    }
+
+    /// The folders transfers changed beside their mounts.
+    pub(super) fn take_changed_beside(&self) -> Vec<PathBuf> {
+        self.beside.take().into_iter().collect()
     }
 
     /// The plan's cancel and pause, for a batch's transfer.

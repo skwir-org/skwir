@@ -116,9 +116,23 @@ ADR-077 (which revises ADR-021).
   A connector offers transfers for its mounts (`Connector::transfers`).
   A copy made with its source's mode is not given it again.
 - The originals of moves from GVfs are removed together by `gio remove`
-  at the plan's end (operations.md); from sshfs, one at a time through
-  the mount: a file removed beside it, sshfs's own cache says is there
-  for 20 s (`dcache_timeout`), and an Undo would find its name taken.
+  at the plan's end (operations.md); from sshfs, by rsync where the
+  server runs it, else sftp sessions (`ssh_mount::remove_beside`). sshfs
+  keeps what it read of the server 20 s (`dcache_timeout`), and lets go
+  of a path only when something is made, removed or renamed there
+  through the mount, of all below a name renamed, or when the server
+  refuses to open it: so each file a tool removed is opened through the
+  mount after, a folder is renamed through the mount into a folder of
+  Skwir's in its own before the tool removes it there, and that folder
+  goes last, through the mount. sftp removes only where the mount shows
+  links as links (not `follow_symlinks`): it reads the tree through the
+  mount. A removal through the mount waits for the server under the
+  kernel's lock of its folder, one name at a time; an open does not.
+- What a tool writes or removes beside a mount, no watch sees: the
+  window reads again the folders its panes show there at the plan's end
+  (operations.md). sshfs, which keeps a folder's names 20 s, reads such
+  a folder from the server again once a folder of Skwir's is made and
+  removed in it (`ssh_mount::shown_again`).
 
 ## Addresses
 

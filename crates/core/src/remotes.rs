@@ -48,6 +48,24 @@ impl App {
         Some(address_below(&address, below))
     }
 
+    /// Read again each of `folders` a pane shows or keeps beside what it
+    /// shows: a plan's transfer changed them beside the mount showing them
+    /// (`Executor::set_changed_beside`), and no watch of this machine's saw
+    /// it.
+    pub fn refresh_showing(&self, folders: &[std::path::PathBuf]) {
+        let open: Vec<_> = {
+            let ws = self.workspace.read();
+            ws.panes()
+                .iter()
+                .filter(|p| !p.is_dormant())
+                .flat_map(|p| p.open_in(folders))
+                .collect()
+        };
+        for open in open {
+            open.refresh();
+        }
+    }
+
     /// Read again each folder shown that is on a remote: a server does not
     /// say what changed on it, so the window does when it comes back. At
     /// most once in [`REFRESHED_WITHIN`]: a window gone back and forth
