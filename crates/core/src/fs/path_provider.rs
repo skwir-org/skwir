@@ -297,6 +297,8 @@ impl Shared {
         };
         let mut batch = Vec::with_capacity(self.ctx.batch_size);
         let mut seen: Vec<EntryId> = Vec::new();
+        // What tells the folder's made-up numbers apart, as its stats do.
+        let mount = self.folder.mount().unwrap_or(0);
         while !cancel.is_cancelled() {
             let Some(ent) = dir.next() else {
                 break;
@@ -314,10 +316,7 @@ impl Shared {
             let id = {
                 let mut names = self.names.lock();
                 // Provisional: the stat names it (`stat_entry`).
-                let file = FileId {
-                    ino: ent.ino,
-                    ..self.id
-                };
+                let file = FileId::new(self.id.dev, super::stat::on_mount(ent.ino, mount));
                 let id = names.listing_id(EntryId::in_folder(file, self.id, &ent.name));
                 names.insert(id, ent.name.clone());
                 id

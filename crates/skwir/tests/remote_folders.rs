@@ -291,11 +291,7 @@ fn a_folder_mounted_again_holds_other_files_by_number_and_the_same_by_path() {
             .map(skwir_core::Entry::file)
             .collect::<Vec<_>>()
     };
-    assert_eq!(listed.len(), 1);
-    assert!(
-        listed.iter().all(|f| f.mount == known.id.mount),
-        "listed on the mount a stat names"
-    );
+    assert_eq!(listed, [known.id], "listed as a stat names it");
     let point = skwir_core::fs::reach::of(&folder).unwrap().point.clone();
     let left = Unmounted(point.clone());
     disconnect(&point);
@@ -304,8 +300,9 @@ fn a_folder_mounted_again_holds_other_files_by_number_and_the_same_by_path() {
     let again = skwir_core::fs::stat::id_of(&file).expect("its file again");
     // rclone numbers a file by its path, and the kernel gives the mount
     // the lowest free device: often the one the last mount had.
+    assert!(!again.lasts());
     if unique_mount_numbers() {
-        assert_ne!(again.mount, known.id.mount, "another mount's file");
+        assert_ne!(again, known.id, "another mount's file");
     }
     assert_eq!(known.resolve().unwrap(), file, "found at its path");
     disconnect(&point);

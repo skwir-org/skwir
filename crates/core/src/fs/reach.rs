@@ -120,11 +120,21 @@ pub fn lane(path: &Path) -> Lane {
 
 /// The number of the mount holding `device`'s files where its program
 /// makes their inode numbers up for as long as it is mounted (FUSE:
-/// sshfs, GVfs, rclone, and a FUSE mount on this machine alike), which a
-/// file's identity carries (`FileId::mount`); 0 elsewhere. The system's
+/// sshfs, GVfs, rclone, and a FUSE mount on this machine alike), which
+/// tells a file's made-up number apart (`fs::stat::on_mount`); 0
+/// elsewhere. The system's
 /// unique number for the mount where it says one (Linux 6.8), which no
 /// later mount takes again; else its number in the table, which one may.
 pub fn mount_of(device: u64) -> u64 {
+    #[cfg(test)]
+    if let Some(number) = PRETENDED.with(|p| {
+        p.borrow()
+            .iter()
+            .find(|(of, _)| *of == device)
+            .map(|&(_, number)| number)
+    }) {
+        return number;
+    }
     // FUSE mounts on no block device of its own: a device that has one
     // (a disk's, ntfs-3g's) is told without the table.
     #[cfg(target_os = "linux")]
@@ -136,6 +146,19 @@ pub fn mount_of(device: u64) -> u64 {
         .iter()
         .find(|(of, _)| *of == device)
         .map_or(0, |&(_, number)| number)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The devices a test says a mount's program numbers ([`pretend_made_up`]).
+    static PRETENDED: std::cell::RefCell<Vec<(u64, u64)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Say, for this thread's test, that `device`'s inode numbers are made up
+/// by the mount whose number is `number` ([`mount_of`]).
+#[cfg(test)]
+pub(crate) fn pretend_made_up(device: u64, number: u64) {
+    PRETENDED.with(|p| p.borrow_mut().push((device, number)));
 }
 
 /// Every network mount of the table, each GVfs mount apart (its bridge
@@ -593,7 +616,7 @@ mod tests {
     fn a_local_device_makes_no_number_up() {
         let root = crate::fs::stat::id_of(Path::new("/")).expect("the root");
         assert_eq!(mount_of(root.dev), 0);
-        assert_eq!(root.mount, 0);
+        assert!(root.lasts());
         let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap();
         let mut parts = release
             .split(['.', '-'])

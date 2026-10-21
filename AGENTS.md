@@ -49,8 +49,8 @@ working in an area, also read that area's rules (see
    `skwir-core`. Everything else is a plugin with a runtime toggle.
 6. **Agent-ready.** Commands are serializable data with JSON schemas.
    Mutations are plans reviewed before they apply. A file has a stable
-   identity (`FileId`: device + inode, and the mount where a FUSE
-   program makes inodes up), and an entry is a file under one of its
+   identity (`FileId`: device + inode, told apart by its mount where a
+   FUSE program makes inodes up), and an entry is a file under one of its
    names (`EntryId`, ADR-049). Metadata carries provenance. AI output is
    a suggestion until a human confirms it.
 
@@ -174,8 +174,8 @@ working in an area, also read that area's rules (see
 
 - **A file and an entry are two identities (ADR-049).** A `FileId`
   (device + inode, `fs::stat::id_of`; a stat names it through
-  `fs::stat::file`, which adds the mount's number where its inodes are
-  made up, ADR-077) is the file; what belongs to the file is keyed by
+  `fs::stat::file`, which tells a made-up inode number apart by its
+  mount, ADR-077) is the file; what belongs to the file is keyed by
   it: thumbnails, fields, notes in attributes, Usage's hard links, an
   `EntryRef`'s identity. What the cache keeps beyond a run knows a file
   by `FileId::kept_as`. An `EntryId` is the file under one

@@ -744,11 +744,9 @@ mod tests {
             at: 0x1f,
         };
         assert_eq!(snapshot_key(lasting).unwrap(), b"5:7:1f", "as before");
+        crate::fs::reach::pretend_made_up(6, 1 << 40);
         let made_up = EntryId {
-            file: crate::entry::FileId {
-                mount: 1 << 40,
-                ..lasting.file
-            },
+            file: crate::entry::FileId::new(6, 7),
             ..lasting
         };
         assert_eq!(snapshot_key(made_up), None);

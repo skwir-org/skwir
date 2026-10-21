@@ -67,7 +67,7 @@ fn made_up(path: &Path) -> bool {
 }
 
 /// Whether the numbers `known` and `found` were made up by a mount's
-/// program (`FileId::mount`), or `path` is on a remote whose are.
+/// program (`FileId::lasts`), or `path` is on a remote whose are.
 fn numbers_made_up(known: FileId, found: FileId, path: &Path) -> bool {
     !known.lasts() || !found.lasts() || made_up(path)
 }
@@ -253,10 +253,7 @@ mod tests {
         let path = tmp.path().join("it's here.txt");
         std::fs::write(&path, "here").unwrap();
         let id = id_of(&path).unwrap();
-        let other = FileId {
-            ino: id.ino + 1,
-            ..id
-        };
+        let other = FileId::new(id.dev, id.ino + 1);
         assert!(
             matches!(
                 EntryRef::new(other, &path).resolve(),
@@ -264,10 +261,10 @@ mod tests {
             ),
             "where numbers are the files', another number is another file"
         );
-        let mounted_before = FileId {
-            mount: 1 << 40,
-            ..other
-        };
+        // Its device a mount's whose program makes numbers up: another
+        // number is what a remount gives the same file.
+        crate::fs::reach::pretend_made_up(id.dev, 1 << 40);
+        let mounted_before = other;
         assert_eq!(
             EntryRef::new(mounted_before, &path)
                 .with_only_name(true)

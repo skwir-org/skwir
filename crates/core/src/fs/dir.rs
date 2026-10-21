@@ -53,7 +53,7 @@ mod unix {
 
     /// A folder held open by its descriptor, and its own identity once
     /// asked.
-    pub struct Dir(OwnedFd, std::sync::OnceLock<FileId>);
+    pub struct Dir(OwnedFd, std::sync::OnceLock<(FileId, u64)>);
 
     impl Dir {
         /// Open the folder at `path`. I/O: a sleeping disk can hold it.
@@ -106,12 +106,29 @@ mod unix {
         /// # Errors
         /// When the folder cannot be stat-ed.
         pub fn identity(&self) -> io::Result<FileId> {
-            if let Some(id) = self.1.get() {
-                return Ok(*id);
+            self.known().map(|(id, _)| id)
+        }
+
+        /// The number of the mount the folder is on, where its program
+        /// makes inode numbers up (`reach::mount_of`), 0 elsewhere: what
+        /// its entries' identities are told apart by (`stat::file`).
+        ///
+        /// # Errors
+        /// When the folder cannot be stat-ed.
+        pub(crate) fn mount(&self) -> io::Result<u64> {
+            self.known().map(|(_, mount)| mount)
+        }
+
+        /// The folder's identity and its mount's number, stat-ed once.
+        fn known(&self) -> io::Result<(FileId, u64)> {
+            if let Some(known) = self.1.get() {
+                return Ok(*known);
             }
             let st = rustix::fs::fstat(&self.0)?;
-            let id = crate::fs::stat::file(crate::fs::stat::device_number(st.st_dev), st.st_ino);
-            Ok(*self.1.get_or_init(|| id))
+            let dev = crate::fs::stat::device_number(st.st_dev);
+            let mount = crate::fs::reach::mount_of(dev);
+            let id = FileId::new(dev, crate::fs::stat::on_mount(st.st_ino, mount));
+            Ok(*self.1.get_or_init(|| (id, mount)))
         }
 
         /// The names the folder holds now, `.` and `..` left out, read as
@@ -297,6 +314,15 @@ mod windows {
             }
             let id = win::identity(&self.file)?;
             Ok(*self.id.get_or_init(|| id))
+        }
+
+        /// The number of the mount the folder is on, where its program
+        /// makes inode numbers up (`reach::mount_of`): none Windows lists.
+        ///
+        /// # Errors
+        /// When the folder cannot be asked.
+        pub(crate) fn mount(&self) -> io::Result<u64> {
+            self.identity().map(|id| crate::fs::reach::mount_of(id.dev))
         }
 
         /// The names the folder holds now, `.` and `..` left out, read as

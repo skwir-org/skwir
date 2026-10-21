@@ -1253,13 +1253,15 @@ protocol is a scheme a connector maps, or a connector.
   one server, the pool's and the watcher's behaviour behind a held
   server, GVfs's phones and cameras, references on FUSE remotes; each
   fixed where it would happen (STATUS-LOG).
-- **Identity across a remount** (2026-10-21, after the user's go): a
-  file on a mount whose inodes are made up carries the mount's own
-  number (`FileId::mount`, the kernel's unique one on Linux 6.8 and
-  later); the cache knows such a file by its path; references there
-  resolve at their path. **Built**, checked against a real rclone mount
-  let go of and mounted again (`just remote-check`). Before Linux 6.8 the
-  mount's number is the table's, which a later mount may take again.
+- **Identity across a remount** (2026-10-21, after the user's go): on a
+  mount whose inodes are made up, a file's inode number is told apart by
+  the mount's own number, mixed into it (`fs::stat::file`: the kernel's
+  unique one on Linux 6.8 and later), `FileId` keeping its 16 bytes; the
+  cache knows such a file by its path; references there resolve at their
+  path. A listing's maps hash with foldhash. **Built**, checked against a
+  real rclone mount let go of and mounted again (`just remote-check`);
+  listings measured as fast as before. Before Linux 6.8 the mount's
+  number is the table's, which a later mount may take again.
 - **G. Left** (each its own step):
   - Automatic's Small files where reads proved fast (only the local
     network is told now);

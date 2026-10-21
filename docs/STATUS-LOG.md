@@ -2330,3 +2330,40 @@ listings").
   dependencies again: some Windows-only `windows-sys` picks and
   `tempfile`'s `getrandom` (0.4.3 to 0.3.4) moved to versions the lock
   held already; the notices follow (`just notices`).
+
+### A file's identity kept in 16 bytes (2026-10-21, morning)
+
+- Measuring foldhash showed what the 24-byte `FileId` cost beyond the
+  stream: a sorted listing copies its orders of entries (`Listing`'s
+  ranks and ids), and with `EntryId` at 32 bytes the hydration of
+  flat100k took 498–509 ms against 438–450 before, one change placed
+  1.37–1.41 ms against 1.11–1.17 (the last rounds below, load about 3).
+  Borrowing the id in the sort's keys changed nothing measurable.
+- So the mount is no longer a field: on a mount whose numbers are made
+  up, the inode number is mixed with the mount's own
+  (`fs::stat::on_mount`: an odd multiply of the mount's number, rotated,
+  XOR-ed in; one to one for each mount, so two files of a mount stay
+  two). `FileId` is 16 bytes again and written as before everywhere.
+  Whether a device's numbers are made up is asked of the table
+  (`FileId::lasts`, `reach::mount_of`); tests say it with
+  `reach::pretend_made_up`, for their thread. An open folder keeps its
+  mount's number with its identity, and a listing's provisional ids
+  from `d_ino` are mixed the same way, so rclone's (whose `d_ino` is the
+  inode) match the stat's at once.
+- Measured (`skwir-bench list`, 5 runs each, the four builds
+  alternated, the last three rounds at load about 3): before the
+  identity change / 24 bytes / 24 bytes with foldhash / 16 bytes with
+  foldhash:
+  - flat100k's hydration 438–450 / 505–509 / 498–503 / 438–448 ms;
+  - one change placed 1.11–1.17 / 1.37–1.41 / 1.38–1.40 / 1.12–1.13 ms;
+  - flat100k's complete stream 55–61 / 62–66 / 54–56 / 55 ms;
+  - images10k's complete stream 5.5–7.3 / 6.0–6.4 / 5.6–5.9 / 5.1–6.0 ms.
+- Checked: `just remote-check` (31 passed): a listing and a stat now
+  name the rclone file alike (`[known.id]`), and after the remount the
+  identity differs.
+  The whole suite (1831 passed, 20 skipped) and `just lint-all`
+  (Windows and macOS included) passed.
+- To make room for it (the disk had come down to 2.7 GB free and a link
+  failed): the A/B builds were removed, then the cross lint builds
+  (`target/cross/**/debug`, which `lint-all` made again) and the debug
+  incremental cache, the workspace's own crates compiled once anew.

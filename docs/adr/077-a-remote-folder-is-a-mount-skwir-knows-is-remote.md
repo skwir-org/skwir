@@ -90,10 +90,11 @@ Revises ADR-021: its direction kept, its steps decided.
    - Where inodes are made up for a mount's life (FUSE: sshfs numbers
      files in the order they are looked up, again once the kernel let go
      of one and from the start when mounted again, often on the device
-     number the last mount had), a file's identity carries the mount's
-     own number (`FileId::mount`: the kernel's unique one, Linux 6.8, read
-     from the mount table in memory and asked of no server), so a
-     remount's files are other files to everything kept in memory. What
+     number the last mount had), a file's inode number is told apart by
+     the mount's own number, mixed into it (`fs::stat::file`: the
+     kernel's unique one, Linux 6.8, read from the mount table in memory
+     and asked of no server), so a remount's files are other files to
+     everything kept in memory. What
      is kept beyond the mount (the cache: fields, positions, converted
      previews) knows such a file by its path, as thumbnails are known;
      notes keep no snapshot of it. A reference there resolves at its

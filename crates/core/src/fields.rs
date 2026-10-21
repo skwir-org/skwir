@@ -467,12 +467,10 @@ mod tests {
             format!("test.words:words:{}:5:7:3:9", words.version()).into_bytes(),
             "as before mounts were told apart"
         );
-        let made_up = crate::entry::FileId {
-            mount: 1 << 40,
-            ..lasting
-        };
-        let mut other = made_up;
-        other.mount += 1;
+        crate::fs::reach::pretend_made_up(6, 1 << 40);
+        let made_up = crate::entry::FileId::new(6, 7);
+        // The same file mounted again, numbered anew.
+        let other = crate::entry::FileId::new(6, 99);
         assert_eq!(
             disk_key("test.words", &words, (made_up, 3, 9), path),
             disk_key("test.words", &words, (other, 3, 9), path),

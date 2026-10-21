@@ -11,12 +11,10 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 /// A file: the device and the inode a stat reports on Unix, the volume and
-/// the file index on Windows, and on a mount whose program makes its
-/// inode numbers up (FUSE: sshfs, GVfs, rclone) that mount's own number.
-/// The same under every name the file has (hard links) and through every
-/// link to it; it survives renames and moves within a device. What belongs
-/// to the file is kept by it: its bytes, thumbnails, fields, the notes in
-/// its attributes (ADR-049).
+/// the file index on Windows. The same under every name the file has (hard
+/// links) and through every link to it; it survives renames and moves
+/// within a device. What belongs to the file is kept by it: its bytes,
+/// thumbnails, fields, the notes in its attributes (ADR-049).
 #[derive(
     Clone,
     Copy,
@@ -33,36 +31,30 @@ use serde::{Deserialize, Serialize};
 pub struct FileId {
     /// Device (or volume) number.
     pub dev: u64,
-    /// Inode (or file index) on that device.
+    /// Inode (or file index) on that device. On a mount whose program
+    /// makes inode numbers up for as long as it is mounted (FUSE: sshfs,
+    /// GVfs, rclone), that number told apart by the mount's own
+    /// (`fs::stat::file`): sshfs numbers files again from the start once
+    /// mounted again, often on the device number the last mount had, so a
+    /// number alone is another file's after a remount.
     pub ino: u64,
-    /// The mount's own number where its program makes inode numbers up
-    /// for as long as it is mounted (`fs::reach::mount_of`): sshfs numbers
-    /// files again from the start once mounted again, often on the device
-    /// number the last mount had, so a number is another file's after a
-    /// remount. 0 elsewhere, where the inode is the file's.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub mount: u64,
-}
-
-#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes a reference
-fn is_zero(n: &u64) -> bool {
-    *n == 0
 }
 
 impl FileId {
-    /// The file `ino` of the device `dev`, on no mount that makes its
-    /// numbers up. A stat names a file through `fs::stat::file`, which
-    /// asks the mount.
+    /// The file `ino` of the device `dev`, as given: a stat names a file
+    /// through `fs::stat::file`, which tells a made-up number by its
+    /// mount.
     pub const fn new(dev: u64, ino: u64) -> FileId {
-        FileId { dev, ino, mount: 0 }
+        FileId { dev, ino }
     }
 
     /// Whether the identity holds beyond the mount it was read on: not on
-    /// a mount whose numbers are made up ([`FileId::mount`]). What is kept
-    /// beyond it (in the cache, for a later start) knows such a file by
-    /// its path, as thumbnails are known, never by this.
-    pub const fn lasts(self) -> bool {
-        self.mount == 0
+    /// a device whose numbers a mount's program makes up
+    /// (`fs::reach::mount_of`, asked of the mount table in memory). What
+    /// is kept beyond it (in the cache, for a later start) knows such a
+    /// file by its path, as thumbnails are known, never by this.
+    pub fn lasts(self) -> bool {
+        crate::fs::reach::mount_of(self.dev) == 0
     }
 
     /// What a cache kept beyond the mount knows the file at `path` by:
@@ -420,9 +412,8 @@ pub mod keys {
     pub const PLACE_KIND: &str = "place_kind";
     /// A few of the pictures a place holds, what the grid draws on its
     /// tile: a `Value::List` of one `Value::List` each, its path
-    /// (`Value::Text`), device, inode and mount (`Value::UInt`, as
-    /// `FileId` has them) and modification time (`Value::Time`), what a
-    /// thumbnail is asked with.
+    /// (`Value::Text`), device and inode (`Value::UInt`) and modification
+    /// time (`Value::Time`), what a thumbnail is asked with.
     pub const PLACE_PICTURES: &str = "place_pictures";
     /// When a file of the trash was put there, `Value::Time`, as its
     /// `.trashinfo` says.
@@ -689,37 +680,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_file_is_written_as_before_unless_its_mount_made_its_number_up() {
+    fn a_file_whose_mount_made_its_number_up_is_kept_by_its_path() {
         let lasting = FileId::new(5, 7);
         assert_eq!(
             serde_json::to_value(lasting).unwrap(),
             serde_json::json!({ "dev": 5, "ino": 7 })
         );
-        assert_eq!(
-            serde_json::from_value::<FileId>(serde_json::json!({ "dev": 5, "ino": 7 })).unwrap(),
-            lasting,
-            "an identity written before mounts were told apart"
-        );
-        let made_up = FileId {
-            mount: 1 << 40,
-            ..lasting
-        };
-        let written = serde_json::to_value(made_up).unwrap();
-        assert_eq!(written["mount"], 1u64 << 40);
-        assert_eq!(serde_json::from_value::<FileId>(written).unwrap(), made_up);
-        assert_ne!(made_up, lasting, "a remount's file is another file");
+        let made_up = FileId::new(6, 7);
+        crate::fs::reach::pretend_made_up(6, 1 << 40);
         assert!(lasting.lasts() && !made_up.lasts());
         let path = Path::new("/srv/it's here.txt");
         assert_eq!(lasting.kept_as(path), b"5:7");
         assert_eq!(made_up.kept_as(path), b"path:/srv/it's here.txt");
-        let entry = EntryId {
-            file: made_up,
-            at: 3,
-        };
-        assert_eq!(
-            serde_json::from_value::<EntryId>(serde_json::to_value(entry).unwrap()).unwrap(),
-            entry
-        );
     }
 
     fn sized(file: u64, at: u64, size: u64, kind: EntryKind) -> Entry {

@@ -71,17 +71,22 @@ ADR-077 (which revises ADR-021).
   machine's trash to be trashed. The question counts what is deleted;
   what the same command moves to the trash is said beside it.
 - **Identity** on a mount whose program makes inode numbers up (FUSE:
-  sshfs, GVfs, rclone, a FUSE mount on this machine alike) carries the
-  mount's own number (`FileId::mount`, `reach::mount_of`): sshfs numbers
-  files in the order they are looked up, again once the kernel let go of
-  one and from the start once remounted, often on the device number the
-  last mount had. Every stat names a file through `fs::stat::file` (a
-  folder held open asks once for its entries), so a listing, an
-  operation and a field agree. The number is the kernel's unique one
-  (Linux 6.8), read with the table by a `statx` of the point that asks
-  its program nothing (`AT_STATX_DONT_SYNC`); a point below another FUSE
-  mount or a network's is not looked up, and keeps the table's number,
-  which a later mount may take again.
+  sshfs, GVfs, rclone, a FUSE mount on this machine alike): sshfs
+  numbers files in the order they are looked up, again once the kernel
+  let go of one and from the start once remounted, often on the device
+  number the last mount had. The inode number there is told apart by the
+  mount's own number, mixed into it (`fs::stat::file`, `stat::on_mount`,
+  `reach::mount_of`), and `FileId` keeps its 16 bytes, which every
+  entry, order and selection carries (24 made a sorted listing's work
+  12 to 25 % slower). Every stat names a file through `fs::stat::file` (a
+  folder held open asks once for its entries and its listing's
+  provisional numbers), so a listing, an operation and a field agree;
+  whether a device's numbers are made up is `FileId::lasts`, asked of
+  the table. The mount's number is the kernel's unique one (Linux 6.8),
+  read with the table by a `statx` of the point that asks its program
+  nothing (`AT_STATX_DONT_SYNC`); a point below another FUSE mount or a
+  network's is not looked up, and keeps the table's number, which a
+  later mount may take again.
 - What is kept beyond the mount (the cache: fields, positions, converted
   previews) never knows a file by a made-up identity: by its path
   (`FileId::kept_as`, where `FileId::lasts` says no), as thumbnails are;

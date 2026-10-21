@@ -57,23 +57,34 @@ pub(crate) fn device_number(dev: rustix::fs::Dev) -> u64 {
 }
 
 /// The file `ino` of the device `dev`, as every stat of it here names it:
-/// on a mount whose program makes inode numbers up, with the mount's own
-/// (`FileId::mount`, asked of the mount table in memory).
+/// on a mount whose program makes inode numbers up, that number told
+/// apart by the mount's own ([`on_mount`]; `reach::mount_of`, asked of
+/// the mount table in memory).
 pub fn file(dev: u64, ino: u64) -> FileId {
-    FileId {
-        dev,
-        ino,
-        mount: super::reach::mount_of(dev),
+    FileId::new(dev, on_mount(ino, super::reach::mount_of(dev)))
+}
+
+/// The inode number `ino`, made up by the mount numbered `mount`, told
+/// apart from the numbers other mounts made up: mixed with the mount's
+/// number in every bit, one to one for each mount, so two files of one
+/// mount stay two and another mount's number is, but by chance, another.
+/// `mount` 0 is none: the number is the file's, kept as it is.
+pub(crate) fn on_mount(ino: u64, mount: u64) -> u64 {
+    if mount == 0 {
+        ino
+    } else {
+        ino ^ mount.wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(29)
     }
 }
 
 /// `st`, its identity told apart by its mount ([`file`]), `dir` saying it
 /// for the folder's own device: a listing asks the table once.
 fn mounted(mut st: Stat, dir: Option<&Dir>) -> Stat {
-    st.id.mount = dir
-        .and_then(|dir| dir.identity().ok())
-        .filter(|folder| folder.dev == st.id.dev)
-        .map_or_else(|| super::reach::mount_of(st.id.dev), |folder| folder.mount);
+    let mount = dir
+        .filter(|dir| dir.identity().is_ok_and(|folder| folder.dev == st.id.dev))
+        .and_then(|dir| dir.mount().ok())
+        .unwrap_or_else(|| super::reach::mount_of(st.id.dev));
+    st.id.ino = on_mount(st.id.ino, mount);
     st
 }
 
@@ -556,7 +567,7 @@ pub fn stat_entry(dir: &Dir, entry: &mut Entry) -> bool {
         return false;
     };
     // Which of the file's names this is: this one, in this folder.
-    let folder = dir.identity().unwrap_or(FileId { ino: 0, ..own.id });
+    let folder = dir.identity().unwrap_or(FileId::new(own.id.dev, 0));
     entry.id = EntryId::in_folder(own.id, folder, name);
     entry.kind = own.kind;
     entry.hidden = own.hidden;
