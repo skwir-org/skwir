@@ -12,6 +12,7 @@
 pub mod address;
 pub mod connector;
 pub mod fstab;
+pub mod gio_copy;
 pub mod gvfs;
 mod gvfs_spec;
 mod known;

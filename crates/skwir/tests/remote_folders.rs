@@ -539,6 +539,26 @@ fn same_tree(src: &Path, copy: &Path) {
     }
 }
 
+/// `copy` holds what `src` does, its names, bytes and files' times, all
+/// the way down: what a server that keeps no modes (`rclone serve`) keeps.
+fn same_files(src: &Path, copy: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    let (a, b) = (
+        std::fs::symlink_metadata(src).unwrap(),
+        std::fs::symlink_metadata(copy).unwrap(),
+    );
+    if a.is_file() {
+        assert_eq!(std::fs::read(src).unwrap(), std::fs::read(copy).unwrap());
+        assert_eq!(a.mtime(), b.mtime(), "{}", copy.display());
+        return;
+    }
+    assert!(b.is_dir(), "{}", copy.display());
+    for entry in std::fs::read_dir(src).unwrap() {
+        let name = entry.unwrap().file_name();
+        same_files(&src.join(&name), &copy.join(&name));
+    }
+}
+
 fn moves(entries: &[PathBuf], dest: &Path) -> skwir_core::op::Plan {
     skwir_core::op::Plan::with_steps(
         "move",
@@ -826,6 +846,7 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
     let gvfs = skwir_plugin_remote::gvfs::Gvfs {
         env: private.env.clone(),
         runtime: Some(private.runtime.clone()),
+        ..Default::default()
     };
     let answers = Arc::new(Answers {
         password: "a test password".to_owned(),
@@ -860,6 +881,57 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
     let recognised = gvfs.recognises(&remote).expect("GVfs's");
     assert_eq!(recognised.address, Some(address.top()));
     assert_eq!(recognised.label, "tester@127.0.0.1");
+
+    // Copies to and from it in batches by `gio` (ADR-078): the folder
+    // staged, the files placed beside; up, then down.
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    app.transfers.register("test", gvfs.gio_copy());
+    let entries = small_files(&base.join("local"));
+    let into = connected.point.join("it's a folder");
+    std::fs::create_dir(&into).unwrap();
+    let up = app
+        .executor
+        .execute_blocking(&copies(&entries, &into), app.lifetime());
+    assert!(up.error.is_none(), "{:?}", up.error);
+    assert_eq!(up.applied, entries.len());
+    assert_eq!(
+        gvfs.gio_copy().made(),
+        2,
+        "the folder staged, the files placed"
+    );
+    for e in &entries {
+        same_files(
+            e,
+            &served_root
+                .join("it's a folder")
+                .join(e.file_name().unwrap()),
+        );
+    }
+    let down = base.join("down");
+    std::fs::create_dir(&down).unwrap();
+    let there: Vec<PathBuf> = entries
+        .iter()
+        .map(|e| into.join(e.file_name().unwrap()))
+        .collect();
+    let back = app
+        .executor
+        .execute_blocking(&copies(&there, &down), app.lifetime());
+    assert!(back.error.is_none(), "{:?}", back.error);
+    assert_eq!(
+        gvfs.gio_copy().made(),
+        4,
+        "the folder staged, the files placed"
+    );
+    for e in &entries {
+        same_files(e, &down.join(e.file_name().unwrap()));
+    }
+    let names: Vec<String> = std::fs::read_dir(served_root.join("it's a folder"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names.len(), entries.len(), "nothing staged left: {names:?}");
+    drop(app);
+
     gvfs.disconnect(&remote, &recognised, &CancelToken::new())
         .expect("disconnect");
     drop(private);

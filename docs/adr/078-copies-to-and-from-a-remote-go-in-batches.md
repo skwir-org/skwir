@@ -94,6 +94,18 @@ mounted the folder.
    refuses the no-replace flag, so a rename cost about four round trips
    under that lock, a link about three.
 
+7. **gio, for GVfs's SFTP; not rclone's own.** Measured the same way
+   (below), a tool's own copy beat its mount for GVfs alone: eight
+   `gio copy` at once, which GVfs's daemon serves together, where its
+   FUSE bridge makes a folder's names one at a time. The remote plugin's
+   transfer for an SFTP mount of the session's GVfs runs them, `-i`
+   with nothing on its input so that nothing is replaced (without it
+   `gio` replaces), folders made through the bridge first and finished
+   last (`transfer::Layout`); beside what is there, it copies into the
+   staging folder and `gio move -i` places. `rclone copy` was slower
+   than eight copies through rclone's mount, and the mount does not see
+   what it copied until its folder cache expires: none is built.
+
 ## Consequences
 
 - Measured after, the same way (20 ms; load 8 to 61): a 256 MiB file
@@ -111,15 +123,21 @@ mounted the folder.
 - What a batch did is what its steps say: a step it served is applied
   and undone as before (its copy to the trash); one it did not serve is
   copied as before. Nothing of the batch is kept beyond the plan.
-- Measured after 5 and 6 (20 ms, 100 files of 16 KiB): moved one by
-  one up by rsync 0.80 s, down 2.75 (the originals removed through the
+- Measured after 5 to 7 (20 ms, 100 files of 16 KiB): moved one by one
+  up by rsync 0.80 s, down 2.75 (the originals removed through the
   mount, a round trip each); without rsync, pasted one by one up 8.4–8.5
   s (15.0–15.4 with one folder aside for all, 10.7 renamed from a folder
-  each), moved up 8.5, down 2.9.
-- Not yet: rclone's and GVfs's own transfers (`rclone copy`, `gio
-  copy`); sshfs mounts Skwir did not make (no connection to share:
-  their copies go through the mount, eight at a time); a move's
-  originals removed on the server one by one through the mount (`rsync
-  --remove-source-files` could remove them in its stream). Without
-  rsync, a name made in a folder through FUSE costs a round trip or two
-  under its lock, whatever the way.
+  each), moved up 8.5, down 2.9. GVfs (eight `gio`): pasted one by one up
+  2.84 s, a folder up 2.78, down 4.26, where through the bridge 13.17,
+  10.59 and 4.92; `gio` alone: 1.23 s to copy, 0.63 to place. rclone (a
+  shell's timing): through its mount eight at a time 5.9–7.4 s,
+  `rclone copy --transfers 8` 9.4 (7.1 without its hash check).
+- Not yet: sshfs mounts Skwir did not make (no connection to share:
+  their copies go through the mount, eight at a time); GVfs's other
+  kinds (SMB, WebDAV, FTP: not measured, they keep the bridge); copies
+  down from GVfs, whose looks through the bridge (the batch's walk, each
+  step's check) cost a round trip each; a move's originals removed on
+  the server one by one through the mount (`rsync --remove-source-files`
+  could remove them in its stream). Without rsync or `gio`, a name made
+  in a folder through FUSE costs a round trip or two under its lock,
+  whatever the way.

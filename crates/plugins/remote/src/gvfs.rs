@@ -6,7 +6,7 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use skwir_core::cancel::CancelToken;
@@ -14,6 +14,7 @@ use skwir_core::fs::reach::Remote;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connected, Connector, Recognised};
+use crate::gio_copy::GioCopy;
 use crate::gvfs_spec::Spec;
 
 /// The FUSE bridge's type in the mount table.
@@ -32,6 +33,8 @@ pub struct Gvfs {
     /// The runtime folder whose `gvfs` folder is the bridge, when not the
     /// user's (a test's).
     pub runtime: Option<PathBuf>,
+    /// Its copies in batches (ADR-078).
+    pub gio_copy: OnceLock<Arc<GioCopy>>,
 }
 
 impl Gvfs {
@@ -49,14 +52,15 @@ impl Gvfs {
     /// is another user's, or the user's own while a window runs with a
     /// runtime folder of its own (a test's), whose GVfs it must not reach.
     pub fn bridge(&self) -> Option<PathBuf> {
-        let own = self
-            .runtime
-            .clone()
-            .or_else(skwir_core::xdg::runtime_dir)?
-            .join("gvfs");
-        skwir_core::fs::reach::bridges(BRIDGE)
-            .contains(&own)
-            .then_some(own)
+        bridge_in(self.runtime.clone())
+    }
+
+    /// What copies in batches to and from its SFTP mounts.
+    pub fn gio_copy(&self) -> Arc<GioCopy> {
+        Arc::clone(
+            self.gio_copy
+                .get_or_init(|| Arc::new(GioCopy::new(self.env.clone(), self.runtime.clone()))),
+        )
     }
 
     /// The folder of the bridge that holds `top`'s mount: its spec says
@@ -172,11 +176,24 @@ impl Connector for Gvfs {
             Err(anyhow::anyhow!("{}", said(&finished.stderr)))
         }
     }
+
+    fn transfer(&self) -> Option<Arc<dyn skwir_core::op::transfer::Transfer>> {
+        Some(self.gio_copy())
+    }
+}
+
+/// The bridge of the runtime folder `runtime` (the user's when `None`),
+/// when mounted ([`Gvfs::bridge`]).
+pub(crate) fn bridge_in(runtime: Option<PathBuf>) -> Option<PathBuf> {
+    let own = runtime.or_else(skwir_core::xdg::runtime_dir)?.join("gvfs");
+    skwir_core::fs::reach::bridges(BRIDGE)
+        .contains(&own)
+        .then_some(own)
 }
 
 /// `gio`'s own words in English, which its questions are read in; what
 /// GVfs's daemon says stays in the user's language.
-fn english(command: &mut Command) {
+pub(crate) fn english(command: &mut Command) {
     command
         .env_remove("LC_ALL")
         .env_remove("LANGUAGE")

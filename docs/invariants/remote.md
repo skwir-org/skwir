@@ -105,7 +105,9 @@ ADR-077 (which revises ADR-021).
   by the remote plugin's rsync for an sshfs mount it made (sshfs's ssh is
   the master of a control socket in the runtime folder,
   `rsync::control_path`; rsync's ssh shares it, `BatchMode`, asking
-  nothing), else eight files at a time through the mount. A server
+  nothing), by eight `gio copy` at once for an SFTP mount of the
+  session's GVfs (`gio_copy`: `-i`, nothing on its input, so nothing is
+  replaced), else eight files at a time through the mount. A server
   without rsync is remembered for its mount. A connector offers a
   transfer for its mounts (`Connector::transfer`).
   A copy made with its source's mode is not given it again.
