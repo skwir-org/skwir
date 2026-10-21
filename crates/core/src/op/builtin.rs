@@ -802,41 +802,52 @@ fn copy_staged(
     pace: &Pace,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
-    ctx.add_total(tree_size(src, ctx)?);
+    // A batch made it already, or counted it (ADR-078).
+    let batched = ctx.take_batched(src);
+    if batched.is_none() {
+        ctx.add_total(tree_size(src, ctx)?);
+    }
     // The plan's staging folder there, shared by its copies, each under a
     // name of its own.
     let (staging, name) = ctx.staging_for(dest_dir)?;
-    let staged = staging.path().join(&name);
+    let (staged, made) = match batched {
+        Some(super::transfer::Batched::Made(made)) => (made, true),
+        _ => (staging.path().join(&name), false),
+    };
     let mut staged_along = Vec::new();
     // What the copy put beside the staged entry (the companion that holds
     // its attributes, on a volume that refuses them) follows it out.
-    let result = copy_recursive_with_attributes(src, &staged, preserve_attributes, pace, ctx)
-        .and_then(|()| {
-            let mut beside = along(ctx, &staged, target);
-            for (n, a) in along_src.iter().filter(|a| !a.attributes).enumerate() {
-                let at = staging.path().join(format!("{name}-along-{n}"));
-                staged_along.push(at.clone());
-                copy_recursive_with_attributes(&a.from, &at, true, pace, ctx)?;
-                beside.push(Along {
-                    from: at,
-                    to: a.to.clone(),
-                    attributes: false,
-                });
-            }
-            sys::rename_noreplace(&staged, target).with_context(|| {
-                format!(
-                    "“{}” could not be placed in “{}”",
-                    display_name(target),
-                    display_name(dest_dir)
-                )
-            })?;
-            ctx.placed(&staged, target);
-            // The companions placed, or the copy taken back to be removed
-            // from the staging folder.
-            rename_along(&beside).inspect_err(|_| {
-                let _ = sys::rename_noreplace(target, &staged);
-            })
-        });
+    let copied = if made {
+        Ok(())
+    } else {
+        copy_recursive_with_attributes(src, &staged, preserve_attributes, pace, ctx)
+    };
+    let result = copied.and_then(|()| {
+        let mut beside = along(ctx, &staged, target);
+        for (n, a) in along_src.iter().filter(|a| !a.attributes).enumerate() {
+            let at = staging.path().join(format!("{name}-along-{n}"));
+            staged_along.push(at.clone());
+            copy_recursive_with_attributes(&a.from, &at, true, pace, ctx)?;
+            beside.push(Along {
+                from: at,
+                to: a.to.clone(),
+                attributes: false,
+            });
+        }
+        sys::rename_noreplace(&staged, target).with_context(|| {
+            format!(
+                "“{}” could not be placed in “{}”",
+                display_name(target),
+                display_name(dest_dir)
+            )
+        })?;
+        ctx.placed(&staged, target);
+        // The companions placed, or the copy taken back to be removed
+        // from the staging folder.
+        rename_along(&beside).inspect_err(|_| {
+            let _ = sys::rename_noreplace(target, &staged);
+        })
+    });
     if let Err(error) = result {
         // What this copy staged goes; the folder stays for the plan's
         // other copies, and goes with the plan.
@@ -1193,7 +1204,7 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
 /// no namespace, every one but those the system sets itself and refuses
 /// to anyone else (`com.apple.rootless`, `com.apple.provenance`), Finder's
 /// tags and info among those kept.
-fn user_attributes(path: &Path) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+pub(super) fn user_attributes(path: &Path) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
     let names = match crate::fs::xattr::list(path) {
         Ok(names) => names,
         Err(error) if crate::fs::xattr::refused(&error) => return Ok(Vec::new()),

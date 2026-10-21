@@ -196,6 +196,13 @@ pub struct StepContext {
     sized: RefCell<HashSet<crate::FileId>>,
     /// Who asks the user for a step's secret ([`Self::ask_secret`]).
     secret_asker: Option<super::SecretAsker>,
+    /// The transfers plugins contributed (`transfer`, ADR-078).
+    transfers: Option<Arc<super::transfer::Transfers>>,
+    /// The steps before this one were looked at for a batch
+    /// (`transfer::batch_ahead`).
+    batched_until: std::cell::Cell<usize>,
+    /// What a batch did for each copy's source, until its step takes it.
+    batched: RefCell<HashMap<PathBuf, super::transfer::Batched>>,
 }
 
 /// What a dry run's earlier steps make and take away, by path. A path
@@ -316,6 +323,9 @@ impl StepContext {
             copies: RefCell::default(),
             sized: RefCell::default(),
             secret_asker: None,
+            transfers: None,
+            batched_until: std::cell::Cell::new(0),
+            batched: RefCell::default(),
         }
     }
 
@@ -603,6 +613,41 @@ impl StepContext {
         self
     }
 
+    pub(super) fn with_transfers(mut self, transfers: Arc<super::transfer::Transfers>) -> Self {
+        self.transfers = Some(transfers);
+        self
+    }
+
+    /// The transfers plugins contributed, where the executor gave them.
+    pub(super) fn transfers(&self) -> Option<&super::transfer::Transfers> {
+        self.transfers.as_deref()
+    }
+
+    /// The steps before this index were looked at for a batch.
+    pub(super) fn batched_until(&self) -> usize {
+        self.batched_until.get()
+    }
+
+    pub(super) fn batched_up_to(&self, end: usize) {
+        self.batched_until.set(end);
+    }
+
+    /// A batch did `what` for the copy of `src`.
+    pub(super) fn batched(&self, src: &Path, what: super::transfer::Batched) {
+        self.batched.borrow_mut().insert(src.to_path_buf(), what);
+    }
+
+    /// What a batch did for the copy of `src`, taken by its step.
+    pub(super) fn take_batched(&self, src: &Path) -> Option<super::transfer::Batched> {
+        self.batched.borrow_mut().remove(src)
+    }
+
+    /// What reports work done from another thread (a batch's).
+    pub(super) fn progress(&self) -> impl Fn(u64) + Sync + use<> {
+        let meter = Arc::clone(&self.meter);
+        move |bytes| meter.advance(bytes)
+    }
+
     /// The rules of the files beside a file.
     pub fn companions(&self) -> &crate::companions::Companions {
         &self.companions
@@ -628,11 +673,6 @@ impl StepContext {
     ///
     /// # Errors
     /// [`Cancelled`] when the plan's token is cancelled.
-    /// What cancels the plan, for a step's own threads (`ranges`).
-    pub(super) fn token(&self) -> &CancelToken {
-        &self.cancel
-    }
-
     pub fn check_cancelled(&self) -> Result<(), Cancelled> {
         self.pause.wait(&self.cancel);
         if self.cancel.is_cancelled() {

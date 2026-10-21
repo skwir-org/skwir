@@ -76,7 +76,7 @@ pub(super) fn copy(
     std::thread::scope(|s| {
         for _ in 0..AT_ONCE.min(ranges) {
             let (tx, window, turn) = (tx.clone(), &window, &turn);
-            let cancel = ctx.token().clone();
+            let cancel = ctx.cancel_token().clone();
             s.spawn(move || {
                 loop {
                     let i = {

@@ -98,6 +98,13 @@ ADR-077 (which revises ADR-021).
   gPhoto2: `Recognised::device`) are near, whatever their address, and
   listed among the sidebar's devices; they keep a lane of their own.
 - **Staging** is never swept on a remote (`volume::only_here`).
+- **Copies** (ADR-078): a file of two ranges or more on a FUSE remote is
+  read 8 ranges of 4 MiB at a time, written in order (`op::ranges`): the
+  kernel reads FUSE ahead 128 KiB at a time, a round trip each. A run of
+  copies to or from a remote goes in batches (operations.md), by a
+  plugin's transfer where one serves, else eight files at a time through
+  the mount.
+  A copy made with its source's mode is not given it again.
 
 ## Addresses
 

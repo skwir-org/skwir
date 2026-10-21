@@ -101,7 +101,32 @@ impl Thumbnails {
 /// reached through a link elsewhere is told by its folder's device once
 /// opened ([`of_device`]).
 pub fn of(path: &Path) -> Option<Arc<Remote>> {
+    #[cfg(test)]
+    if let Some(point) = PRETENDED_REMOTES
+        .lock()
+        .iter()
+        .find(|point| path.starts_with(point))
+    {
+        return Some(Arc::new(Remote {
+            point: point.clone(),
+            fstype: "fuse.sshfs".to_owned(),
+            source: "me@example.com:/".into(),
+            device: None,
+        }));
+    }
     table().of(path)
+}
+
+/// The folders a test says remotes are mounted at ([`pretend_remote`]).
+#[cfg(test)]
+static PRETENDED_REMOTES: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// Say, for this test's process (nextest runs each in one of its own),
+/// that an sshfs remote is mounted at `point`: [`of`] says so of every
+/// path below it.
+#[cfg(test)]
+pub(crate) fn pretend_remote(point: &Path) {
+    PRETENDED_REMOTES.lock().push(point.to_path_buf());
 }
 
 /// The remote whose files are on `device` (a stat's), if one is.

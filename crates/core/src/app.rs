@@ -177,6 +177,8 @@ pub struct App {
     pub notes: Arc<crate::notes::NoteStores>,
     /// Files beside a file, which go where it goes (ADR-028).
     pub companions: Arc<crate::companions::Companions>,
+    /// What copies to and from a remote in batches, plugins' (ADR-078).
+    pub transfers: Arc<crate::op::transfer::Transfers>,
     pub previews: Arc<crate::preview::Previews>,
     /// Where map backgrounds come from (the map-tiles plugin, ADR-020).
     pub tiles: Arc<crate::tiles::Tiles>,
@@ -256,6 +258,7 @@ impl App {
             hints: Arc::new(crate::hints::Hints::gated(Arc::clone(&gate))),
             notes: Arc::new(crate::notes::NoteStores::default()),
             companions: Arc::new(crate::companions::Companions::gated(Arc::clone(&gate))),
+            transfers: Arc::default(),
             previews: Arc::new(crate::preview::Previews::default()),
             tiles: Arc::new(crate::tiles::Tiles::default()),
             maps: Arc::new(crate::map_points::MapSources::default()),
@@ -302,6 +305,7 @@ impl App {
                 });
             app.notes.keep_snapshots(app.cache.namespace("notes"));
             app.executor.set_companions(Arc::clone(&app.companions));
+            app.executor.set_transfers(Arc::clone(&app.transfers));
             // A plan short of room asks the user whether to go on anyway.
             let asking = Arc::downgrade(&app);
             app.executor.set_room_asker(Some(Arc::new(
@@ -553,6 +557,7 @@ impl App {
             self.settings.undeclare(&key);
         }
         self.companions.unregister_owner(owner);
+        self.transfers.unregister_owner(owner);
         self.previews.unregister_owner(owner);
         self.pending.unregister_owner(owner);
         self.player.unregister_owner(owner);

@@ -21,6 +21,7 @@ pub mod records;
 pub mod room;
 pub mod staging;
 mod sys;
+pub mod transfer;
 
 use std::ffi::OsStr;
 use std::fmt;

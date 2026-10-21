@@ -274,6 +274,9 @@ pub struct Executor {
     running: Mutex<Vec<Active>>,
     observers: Contributions<ChangeObserver>,
     companions: Mutex<Arc<crate::companions::Companions>>,
+    /// The transfers plugins contributed: a batch of copies to or from a
+    /// remote is made by one that serves it (ADR-078).
+    transfers: Mutex<Arc<super::transfer::Transfers>>,
     /// Where the folders copies are under way in are noted.
     under_way: Mutex<Option<super::staging::UnderWay>>,
     /// Plans someone waits for (`watch`): answered when their run
@@ -378,6 +381,7 @@ impl Executor {
             running: Mutex::new(Vec::new()),
             observers: Contributions::default(),
             companions: Mutex::new(Arc::default()),
+            transfers: Mutex::new(Arc::default()),
             under_way: Mutex::new(None),
             watched: Mutex::new(std::collections::HashMap::new()),
             free: Mutex::new(Arc::new(crate::fs::volume::free)),
@@ -496,6 +500,12 @@ impl Executor {
     /// (ADR-028).
     pub fn set_companions(&self, companions: Arc<crate::companions::Companions>) {
         *self.companions.lock() = companions;
+    }
+
+    /// The transfers a batch of copies to or from a remote may be made by
+    /// (ADR-078).
+    pub fn set_transfers(&self, transfers: Arc<super::transfer::Transfers>) {
+        *self.transfers.lock() = transfers;
     }
 
     /// Note the folders copies are under way in there, for the next run to
@@ -1073,6 +1083,7 @@ impl Executor {
         let _running = Running(self, plan.id);
         let ctx = StepContext::new(cancel.clone(), pause, Arc::clone(&meter))
             .with_companions(Arc::clone(&self.companions.lock()))
+            .with_transfers(Arc::clone(&self.transfers.lock()))
             .with_under_way(self.under_way.lock().clone())
             .with_secret_asker(self.secret_asker.lock().clone());
         self.emit(ExecEvent::Started {
@@ -1092,6 +1103,12 @@ impl Executor {
         for (i, step) in plan.steps.iter().enumerate() {
             // Paused, the next step waits here.
             if ctx.check_cancelled().is_err() {
+                cancelled = true;
+                break;
+            }
+            // The copies from here into one folder, made at once where one
+            // end is a remote (ADR-078): each step then places its own.
+            if super::transfer::batch_ahead(&plan.steps, i, &ctx).is_err() {
                 cancelled = true;
                 break;
             }

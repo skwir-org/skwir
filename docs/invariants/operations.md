@@ -109,6 +109,23 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   copy only after its metadata succeeded.
 - Copies keep the hard links among what they carry (ADR-049). Notes and
   companions: [notes.md](notes.md).
+- **Batches.** Before a copy is checked, the run of copies that
+  follow into the same folder is looked at once
+  (`op::transfer::batch_ahead`): where one end is a remote and the
+  destination is not written through, the entries of one source folder
+  a batch takes are copied at once into a folder of the plan's staging
+  folder there, by a plugin's `Transfer` that serves the two folders,
+  else by Skwir's own copy eight files at a time. A batch takes only
+  what its step would copy alike: a name of its own in the batch, no
+  companion beside it, a tree of files of one name, folders and links,
+  no kept attribute. Each step still checks, applies (placing the copy
+  made: `StepContext::take_batched`) and gives its inverse; a copy a
+  batch did not take or finish is made by its step. A batch's bytes
+  are counted once, by the batch. Only a cancel ends the plan; a failed
+  batch is logged and left to the steps.
+- A step's own threads (a batch's, `op::ranges`'s) are given the plan's
+  cancel token and a progress handle (`StepContext::progress`), never
+  the context, which is the plan thread's alone.
 
 ## Names taken (ADR-054)
 

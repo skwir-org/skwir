@@ -727,6 +727,94 @@ pub fn run(
     Ok(finished.stdout)
 }
 
+/// Run `command` to its end, as [`run_to_exit`] does but without a time
+/// limit, for a program that says how far it went as it goes (rsync's
+/// progress): `watch` is given what it writes to standard output as it
+/// writes it, on a thread of the call's, through a pipe that thread
+/// drains. Cancelled, it is stopped with what it started; a failed exit
+/// status is not an error.
+///
+/// # Errors
+/// When it cannot start, or is cancelled.
+pub fn run_watching(
+    command: &mut Command,
+    input: Option<&[u8]>,
+    cancel: &CancelToken,
+    watch: &mut (dyn FnMut(&[u8]) + Send),
+) -> anyhow::Result<Finished> {
+    let program = Path::new(command.get_program())
+        .file_name()
+        .unwrap_or(command.get_program())
+        .to_string_lossy()
+        .into_owned();
+    anyhow::ensure!(!cancel.is_cancelled(), "{program} was cancelled");
+    let stdin = match input {
+        Some(bytes) => {
+            anyhow::ensure!(bytes.len() <= MAX_INPUT, "{program}: input too large");
+            let mut file = tempfile::tempfile()?;
+            file.write_all(bytes)?;
+            file.seek(io::SeekFrom::Start(0))?;
+            Stdio::from(file)
+        }
+        None => Stdio::null(),
+    };
+    let mut stderr = tempfile::tempfile()?;
+    command
+        .stdin(stdin)
+        .stdout(Stdio::piped())
+        .stderr(stderr.try_clone()?);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = ChildGuard::new(
+        command
+            .spawn()
+            .with_context(|| format!("start {program}"))?,
+    );
+    let mut out = child
+        .child
+        .stdout
+        .take()
+        .context("its output was not piped")?;
+    let exit = ExitSignal::of(&child);
+    let status = std::thread::scope(|s| {
+        s.spawn(move || {
+            let mut buf = [0u8; 8192];
+            loop {
+                match out.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => watch(&buf[..n]),
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+        });
+        loop {
+            if cancel.is_cancelled() {
+                // Stopped with its group: the pipe's writers gone, the
+                // reader ends.
+                drop(child);
+                anyhow::bail!("{program} was cancelled");
+            }
+            if child.exited()? {
+                break;
+            }
+            exit.wait(CHECK_EVERY);
+        }
+        Ok(child.finish()?)
+    })?;
+    stderr.rewind()?;
+    let mut diagnostic = Vec::new();
+    stderr.take(DIAGNOSTIC).read_to_end(&mut diagnostic)?;
+    Ok(Finished {
+        status,
+        stdout: Vec::new(),
+        stderr: String::from_utf8_lossy(&diagnostic).trim().to_owned(),
+    })
+}
+
 /// What to do when a watched child exits. It runs on the reaper thread,
 /// which every watched child shares: do something brief (send on a channel,
 /// schedule a job, wake the app), never the work itself.
@@ -983,6 +1071,41 @@ mod reaper {
 #[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_watched_is_heard_as_it_writes_and_stopped_when_cancelled() {
+        let mut said = Vec::new();
+        let finished = run_watching(
+            Command::new("sh").args([
+                "-c",
+                "printf one; sleep 0.2; printf two; echo oops >&2; exit 3",
+            ]),
+            None,
+            &CancelToken::new(),
+            &mut |bytes: &[u8]| said.extend_from_slice(bytes),
+        )
+        .unwrap();
+        assert_eq!(said, b"onetwo");
+        assert_eq!(finished.status.code(), Some(3), "a failed exit is no error");
+        assert_eq!(finished.stderr, "oops");
+        let cancel = CancelToken::new();
+        let later = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            later.cancel();
+        });
+        let started = Instant::now();
+        // What it started holds the pipe too: stopped with it.
+        let ran = run_watching(
+            Command::new("sh").args(["-c", "sleep 30 & sleep 30"]),
+            None,
+            &cancel,
+            &mut |_: &[u8]| {},
+        );
+        assert!(ran.is_err());
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
 
     /// A program that says more than it may and ends before it is looked
     /// at again is refused, not cut to the limit; one within it is read
