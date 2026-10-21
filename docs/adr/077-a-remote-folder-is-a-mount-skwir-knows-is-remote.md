@@ -61,10 +61,10 @@ Revises ADR-021: its direction kept, its steps decided.
    thread, never by reading the remote.
 
 3. **Lanes.** Work that reads a path of a remote runs in its lane
-   (`Scheduler::spawn_in`): at most two of its jobs at once, the rest
-   waiting their turn without holding a worker. A worker held a second
-   while work waits and no worker is free is stood in for, up to the
-   pool's size again. A remote that stops answering costs its own jobs
+   (`Scheduler::spawn_in`): at most two of its jobs at once (one fewer
+   than the pool's workers in a pool of two), the rest waiting their turn
+   without holding a worker. A worker held a second while work waits and
+   no worker is free is stood in for, up to the pool's size again. A remote that stops answering costs its own jobs
    and some threads, never the window, local work, or another remote's;
    its folder's banner says it is not answering once its lane has run a
    job three seconds.
@@ -89,7 +89,7 @@ Revises ADR-021: its direction kept, its steps decided.
      ever copied from a remote into this machine's trash to be trashed.
    - Where inodes are made up for a mount's life (FUSE remotes), a
      reference whose device changed (the remote mounted again) resolves
-     at its path.
+     at its path, and none is followed to another name by its number.
    - A copy onto a remote is done when the server has it: rclone mounts
      with `--vfs-cache-mode minimal` (a file written alone goes straight
      up; checked: on the server once closed).
@@ -132,7 +132,8 @@ Revises ADR-021: its direction kept, its steps decided.
    - The sidebar's Network section lists every network mount by its
      name, with Eject where the user may let go of it, and the servers
      the tools know; each place's menu chooses its thumbnails, kept in the
-     data file (`remote.chosen`, ADR-057).
+     data file (`remote.chosen`, ADR-057). A phone or a camera GVfs reads
+     is a device: among the devices, near for its thumbnails.
 
 7. **Credentials.** Never stored, logged, or put on a command line by
    Skwir. ssh's questions (a password, a key's passphrase, an unknown

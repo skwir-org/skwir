@@ -2134,3 +2134,78 @@ from 0025aab2 to the commit of these docs.
   the first window check, accepting the test server's unknown host, had
   written it into the user's `~/.ssh/known_hosts`; that one line was
   removed, and remote.md says how a check avoids it.
+- A review of the night's work, by an agent reading it fresh, then each
+  finding fixed where it would happen (0970dd10, then 26aba75a to
+  8553ba80):
+  - refused now: an address whose server or user would reach ssh as an
+    option (a name starting with "-", spaces rclone splits at); the
+    removal or trash of a folder that is or holds a mount point
+    (`volume::mounted_within`, `op::builtin::mounted_there`), which
+    `remove_dir_all` would have crossed into the server; a daemon left
+    running by a tool cancelled or failed (`run_leaving` spares it only
+    once it ended well);
+  - two connections to one address (two tabs restored) asked the
+    password twice and the second force-unmounted the first's live
+    mount: connections to an address take turns, and only a mount that
+    answers "not connected" is let go of; ssh's question stayed on the
+    window after sshfs ended: the askpass server ends its attempt as it
+    is dropped;
+  - a thumbnailer's panic left its remote's lane counted as busy for
+    good: guards count it out and end its request as it unwinds;
+  - the pool: work queued while every worker had only just begun waited
+    for the next job before a stand-in (a look is planned a second
+    later); a lane ran two jobs in a pool of two (one fewer than the
+    pool's now); cancelled parked jobs were kept until their lane moved,
+    and a dropped pool kept its parked jobs; the one job that makes a
+    remote's thumbnails said its server stopped answering after three
+    seconds of work (`scheduler::progress`); closing a folder waited
+    behind its held lane (now the shared lane);
+  - the watcher kept every descriptor closed while any add ran, so a
+    server holding one add kept all later folders watched for the
+    session: descriptors go at once, and an add given one that went
+    meanwhile adds again;
+  - a redirect taken by a pump could replace a folder a script navigated
+    to on another thread meanwhile: it carries what the pane showed;
+  - a phone or a camera under GVfs's bridge was a remote, its thumbnails
+    off: it is a device, near, among the sidebar's devices; the Network
+    places' icons named nothing a theme has ("server", "cloud"), drawn
+    as a grey square: `folder-remote` and `network-server` (found in
+    Adwaita, Breeze and Papirus);
+  - Move to Trash on a selection partly on a FUSE remote asked "Delete 5
+    items permanently?" when 2 were deleted: the question counts what is
+    deleted, the note says what goes to the trash beside;
+  - measured, for references: sshfs (3.7.6, against `rclone serve sftp`)
+    numbers files in the order they are looked up (a folder 2, its file
+    3), from the start again once remounted, and the kernel gave the new
+    mount the old device number (98 both times): a remounted `b.txt`
+    took the number `a.txt` had. Its listing gives no numbers (d_ino
+    unknown), so following a reference by number never found another
+    file there, but another FUSE tool's could: never followed by number
+    on a FUSE remote now. rclone's numbers are 64-bit hashes of the path,
+    the same after a remount and after its directory cache expired.
+  - Tests added: scheduler (stood in without new work, a lane leaving a
+    worker free, progress, parked jobs dropped with the pool), the
+    watcher's re-add bookkeeping, a redirect after a navigation, a
+    panicking thumbnailer, connections taking turns, GVfs's devices, the
+    mixed deletion's question. `just lint-all` (Windows and macOS
+    included), the whole suite (1847 tests passed, 20 ignored) and `just
+    remote-check` (29 passed) then passed.
+  - A window check after it (Xvfb :91, lavapipe, a WebDAV server through
+    rclone, the fixture's XDG and runtime folders) found two more: the
+    GVfs connector took any GVfs bridge the mount table lists when the
+    session had none, here the user's own, so `dav://` went to `gio`
+    ("volume doesn't implement mount" without the session's bus; with
+    it, it would have mounted in the user's GVfs; their bridge held
+    nothing): only the session's own bridge counts now, for connecting
+    and for recognising a mount. And a sidebar row was known by its
+    position, so the server listed under an ejected mount kept the
+    mount's tooltip ("1.0 PB free of 1.0 PB"): rows are known by their
+    place. Checked again in the window: the address connected through
+    rclone, the mount's place drawn with `folder-remote` and an rclone
+    remote's with `network-server`, Eject leaving no tooltip behind. Then
+    `just lint-all`, the suites of the UI, the binary and the remote and
+    places plugins (453 passed), `just remote-check` (30 passed, the new
+    GVfs test among them), `just smoke` and `just a11y-check` passed.
+  - Left (PLAN.md, G): pictures kept in memory by file identity could be
+    confused across an sshfs remount (same device, numbers restarted,
+    same type and modification time).

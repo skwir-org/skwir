@@ -25,20 +25,30 @@ ADR-077 (which revises ADR-021).
 - Work that reads a path that may be remote runs in its lane:
   `Scheduler::spawn_in(reach::lane(path), …)`, the UI's
   `Shell::off_thread_in(lane, …)` (and `off_thread_through` with a
-  token). A lane runs at most `LANE_RUNS` jobs at once; the rest wait
-  their turn without holding a worker. A remote that
-  stops answering holds its own jobs, never the window, local work, or
-  another remote's.
+  token). A lane runs at most `LANE_RUNS` jobs at once, and always one
+  fewer than the pool's workers; the rest wait their turn without
+  holding a worker (cancelled ones are let go of as more park, and with
+  the pool). A remote that stops answering holds its own jobs, never the
+  window, local work, or another remote's.
 - A worker busy past `STUCK` while work waits is replaced, up to the
-  pool's size again: a call that never returns costs a thread, not the
-  pool.
+  pool's size again, whether or not more work is asked after (a look is
+  planned `STUCK` later): a call that never returns costs a thread, not
+  the pool.
+- A job that serves one request after another (a remote's thumbnails)
+  says each begun with `scheduler::progress`: its lane is not taken for
+  stalled however long the job runs.
+- Work that reads nothing of a remote (closing a folder: its watch, its
+  descriptor) runs in the shared lane, never behind a held one.
 - A remote whose lane has run a job for `NOT_ANSWERING` (three seconds)
   while its folder is listed is said not to answer in the pane's banner
   (`Scheduler::stalled`, `ui/loading.rs`), looked at again each second
   while it is listed, never once it is.
 - No lock shared beyond one remote is held across a call that reaches a
   path (`inotify_add_watch`, `statvfs`, `open`): take what is needed,
-  let go, call, then take the lock again.
+  let go, call, then take the lock again. What such a call may race with
+  is settled after it, never by holding on to things while it runs (the
+  watcher adds again a descriptor let go of during its add; it keeps no
+  orphan).
 
 ## What differs on a network
 
@@ -58,9 +68,17 @@ ADR-077 (which revises ADR-021).
 - **Delete** on a FUSE remote (sshfs, rclone, GVfs) is permanent and asked
   (the trash command makes a `Delete` there); a kernel share keeps its own
   `.Trash-<uid>`. Nothing is ever copied from a remote into this
-  machine's trash to be trashed.
+  machine's trash to be trashed. The question counts what is deleted;
+  what the same command moves to the trash is said beside it.
 - **References** on a FUSE remote whose device changed (mounted again,
-  inodes made up anew) resolve at their path (`EntryRef::resolve`).
+  inodes made up anew) resolve at their path (`EntryRef::resolve`), and
+  are never followed to another name by number: sshfs numbers files in
+  the order they are looked up, from the start again once remounted,
+  often on the device number the last mount had. A reference whose
+  number changed on the same device is refused as replaced.
+- **Devices GVfs reads** (a phone over MTP or AFC, a camera over
+  gPhoto2: `Recognised::device`) are near, whatever their address, and
+  listed among the sidebar's devices; they keep a lane of their own.
 - **Staging** is never swept on a remote (`volume::only_here`).
 
 ## Addresses
@@ -69,7 +87,12 @@ ADR-077 (which revises ADR-021).
   `rclone:` locations are addresses (`remote::address::Address`): opening
   one connects it on a thread of its own and sends
   `ListingEvent::Redirect` with the mounted folder, which replaces the
-  address in the pane's history. Never a password in an address.
+  address in the pane's history, only while the pane still shows the
+  address (`workspace::Redirect::from`). Never a password in an address.
+- Connections to one address's top take turns (`Remotes::reach`): the
+  second finds the first's mount. A mount at the point Skwir would make
+  is let go of only when it answers "not connected"; a live one is never
+  unmounted under what uses it.
 - A remote folder is named by its address where the user reads or keeps
   it: its Network place roots its trail; a path said to the user is
   written as its address (`remotes::address_below`, the deletion's
@@ -92,6 +115,11 @@ ADR-077 (which revises ADR-021).
   its configuration names. The order tried is `remote.connectors`; a
   mount already there is used first. Adding a protocol is a scheme a
   connector maps, or a connector.
+- GVfs is the session's: its bridge is `$XDG_RUNTIME_DIR/gvfs` alone
+  (`Gvfs::bridge`), never another the mount table lists (another
+  user's, or the user's own while a window runs with a runtime folder of
+  its own); a mount of another bridge is neither recognised nor
+  connected through.
 - A mount Skwir makes is under `$XDG_RUNTIME_DIR/skwir/remote/`, named by
   `connector::point_name` so its address reads back from it: nothing else
   is kept. It outlives Skwir, as GVfs's do.

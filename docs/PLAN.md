@@ -172,6 +172,11 @@ leave (ADR-077).
   scanned page's text (`docs/invariants/accessibility.md`).
 - Properties (2026-10-13, ADR-058), not checked in a window: a read-only
   drive's links taken away, a drive keeping no permissions (FAT).
+- Rows known by their position (2026-10-21): a row that comes to stand
+  where another was keeps that one's tooltip and screen-reader node. The
+  sidebar's are known by their place now (`sidebar::row_key`); the
+  list's, grid's and columns' name cells, whose tooltip shows a name cut
+  to fit, and about twenty other lists (`.id(("…", i))`) are not.
 - A flaky test, `pending_opens_report_errors_asynchronously_and_can_be_replaced`
   (`crates/core/tests/listing.rs`), failed eight runs in a row on
   2026-09-26, then passed; not investigated.
@@ -1240,14 +1245,22 @@ protocol is a scheme a connector maps, or a connector.
   password ending the attempt; the address field completing known
   servers; a WebDAV server frozen (SIGSTOP) said not to answer while the
   rest of the window went on. **Built and checked.**
+- **Reviewed** the same night: options that could reach ssh through an
+  address, the deletion of a folder holding a mount, two connections to
+  one server, the pool's and the watcher's behaviour behind a held
+  server, GVfs's phones and cameras, references on FUSE remotes; each
+  fixed where it would happen (STATUS-LOG).
 - **G. Left** (each its own step):
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);
   - rename and reorder of a remote GTK bookmark (Forget and Add to
     Bookmarks keep it by its address);
-  - the sidebar's glyph for a remote where the icon theme has none
-    (`folder-remote`, `network-server`);
+  - a FUSE remote's file identity across a remount: sshfs numbers files
+    anew on the device number the last mount had, so a picture kept in
+    memory by identity could be another file's of the same type and
+    modification time; to fold the mount's own id (`statx`'s
+    `STATX_MNT_ID_UNIQUE`) into a FUSE remote's `FileId`;
   - Windows' shares (`smb://` as `\\server\share`) and macOS's own
     mounts as connectors; SFTP there through rclone with WinFsp or
     macFUSE; all compiled only until Phase 5b;
