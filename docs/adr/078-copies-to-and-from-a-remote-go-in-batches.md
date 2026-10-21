@@ -196,4 +196,9 @@ mounted the folder.
 - Not yet: GVfs's NFS, AFP and devices (a phone's MTP), not measured;
   rclone's mounts keep their own pace. Without a tool, a name made in a
   folder through FUSE costs a round trip or two under its lock, whatever
-  the way: an SFTP-only server's downloads are at the mount's pace.
+  the way. An SFTP-only server's downloads go through sshfs, sixteen
+  files at once from 2026-10-21 (eight before): sshfs serves ten
+  requests at once, a file two round trips, and no installed tool
+  reads faster from such a server (`sftp` sessions get one file after
+  another, four round trips each, ten sessions at most on a
+  connection). 100 files of 16 KiB from 20 ms away: 0.63–0.67 s (0.72).

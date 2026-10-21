@@ -108,11 +108,15 @@ ADR-077 (which revises ADR-021).
   they made, on the port sshfs was given (`ssh_mount`), asking nothing
   (`BatchMode`) either way; a server that runs none (asked once:
   `rsync --version`) leaves uploads to eight `sftp` sessions (`sftp`),
-  downloads to Skwir's own copy. For a mount of the session's GVfs of
-  SFTP, FTP, WebDAV or SMB, by eight `gio copy` at once (`gio_copy`:
-  `-i`, nothing on its input, so nothing is replaced), what a server
-  refused at once copied again by one. Else eight files at a time through
-  the mount. A server a tool does not reach is remembered for its mount.
+  downloads to Skwir's own copy, sixteen files at once: sshfs serves
+  ten requests at once (libfuse's default, which it offers no option to
+  change), a file down through it two round trips, where an `sftp`
+  session gets one file after another, four each. For a mount of the
+  session's GVfs of SFTP, FTP, WebDAV or SMB, by eight `gio copy` at
+  once (`gio_copy`: `-i`, nothing on its input, so nothing is
+  replaced), what a server refused at once copied again by one. Else
+  through the mount, eight files at a time, sixteen down. A server a
+  tool does not reach is remembered for its mount.
   A connector offers transfers for its mounts (`Connector::transfers`).
   A copy made with its source's mode is not given it again.
 - The originals of moves from GVfs are removed together by `gio remove`

@@ -240,6 +240,16 @@ static BATCHES: AtomicUsize = AtomicUsize::new(0);
 /// where the folder's lock, taken for each name made, holds the rest.
 const AT_ONCE: usize = 8;
 
+/// How many it copies at once from a remote onto this machine: reading
+/// takes no lock of the folder's, and a file costs two round trips
+/// through sshfs (opened with its attributes, read), which serves ten
+/// requests at once (libfuse's default, which it keeps and offers no
+/// option to change). 100 files of 16 KiB from an SFTP-only server 20 ms
+/// away: 0.72 s eight at once, 0.63 sixteen, 0.86 thirty-two, 1.01–1.04
+/// sixty-four; ten files of 4 MiB 1.08–1.11, 0.85–0.87, 0.90–0.97,
+/// 0.87–0.92 (2026-10-21).
+const DOWN_AT_ONCE: usize = 16;
+
 /// Look, before the step `i` of `steps` is checked, at the run of copies
 /// from it into one folder, and make at once those a batch takes (module
 /// documentation). Once for a run: its later steps find it done.
@@ -847,7 +857,8 @@ fn run(
 
 /// Skwir's own batch copy (the [`Transfer::copy`] it does where no
 /// plugin's serves): the trees' folders made first, in order, their files
-/// [`AT_ONCE`] at a time, each given its mode where it was made otherwise
+/// [`AT_ONCE`] at a time ([`DOWN_AT_ONCE`] from a remote onto this
+/// machine), each given its mode where it was made otherwise
 /// and its time, then the folders theirs, deepest first. While the plan
 /// is paused, each waits before its next file. Beside what is there, each
 /// makes its files in a folder of its own in `temp`: the kernel takes a
@@ -876,7 +887,12 @@ pub(super) fn copy_at_once(
     let total = AtomicU64::new(0);
     let failed: Mutex<Option<anyhow::Error>> = Mutex::new(None);
     let stop = AtomicBool::new(false);
-    let workers = AT_ONCE.min(files.len());
+    let at_once = if crate::fs::reach::of(from).is_some() && crate::fs::reach::of(into).is_none() {
+        DOWN_AT_ONCE
+    } else {
+        AT_ONCE
+    };
+    let workers = at_once.min(files.len());
     // A folder of this call's in `temp`, which other calls share, and one
     // in it for each worker.
     let asides = match temp {

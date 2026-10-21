@@ -115,9 +115,11 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   remote and the destination is not written through, the entries of one
   source folder a batch takes are copied at once into a folder of the
   plan's staging folder there, by a plugin's `Transfer` that serves the
-  two folders, else by Skwir's own copy eight files at a time. A batch
-  takes only what its step would copy alike: a name of its own in the
-  batch, no companion beside it, a tree of files of one name, folders
+  two folders, else by Skwir's own copy eight files at a time, sixteen
+  from a remote onto this machine (reading takes no lock of the
+  folder's; sshfs serves ten requests at once). A batch takes only what
+  its step would copy alike: a name of its own in the batch, no
+  companion beside it, a tree of files of one name, folders
   and links, no kept attribute; never a move out of the trash or into
   it. Each step still checks, applies (placing the copy made:
   `StepContext::take_batched`) and gives its inverse; a copy a batch did

@@ -2621,3 +2621,26 @@ was left open for sshfs in the entry above.
   name again failed with `EEXIST` (tried). `just lint-all` (Windows and
   macOS included), the full suite (1890 passed), core under Wine (294
   passed).
+
+### Downloads through sshfs at its own floor (2026-10-21, night)
+
+The goal's point 5 (the FUSE floor without rsync or gio) left an
+SFTP-only server's downloads to Skwir's own copy through the mount,
+eight files at a time.
+
+- Read: sshfs runs libfuse's loop with its defaults (`fuse_loop_mt(fuse,
+  0)`, sshfs 3.7.6), at most ten threads (`FUSE_LOOP_MT_DEF_MAX_THREADS`
+  in the fuse3 source), and offers no option to change it. A file read
+  costs two round trips through it: opened (`OPEN` and `LSTAT` sent
+  together), read; closing it waits for nothing. Reading takes no lock
+  of the folder's. No installed tool reads faster from such a server:
+  `sftp` sessions get one file after another, four round trips each,
+  and a connection takes ten sessions at most (2.06 s measured for 100
+  files, earlier today).
+- Measured (20 ms round trip, SFTP-only server, two interleaved rounds,
+  load 2 to 13): 100 files of 16 KiB down, 8 at once 0.72–0.73 s, 16
+  0.63, 32 0.86, 64 1.01–1.04; ten files of 4 MiB 1.08–1.11, 0.85–0.87,
+  0.90–0.97, 0.87–0.92.
+- Built: Skwir's own batch copy makes sixteen files at once from a
+  remote onto this machine (`transfer::DOWN_AT_ONCE`), eight otherwise.
+  Then 0.65–0.67 s and 0.86–0.90 (load 20).

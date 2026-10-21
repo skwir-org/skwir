@@ -1291,6 +1291,8 @@ protocol is a scheme a connector maps, or a connector.
   together by rsync or sftp, sshfs shown what went; and, found on the
   way, a pane showing a folder a tool wrote or removed in beside its
   mount reads it again at the plan's end (it never did). **Built**.
+  Downloads through the mount sixteen files at once, filling the ten
+  requests sshfs serves at once, the floor for an SFTP-only server.
 - **G. Left** (each its own step):
   - GVfs's NFS, AFP and device mounts not measured, at the bridge's pace;
   - Automatic's Small files where reads proved fast (only the local
