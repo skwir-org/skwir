@@ -2714,3 +2714,30 @@ and fix bug or problems you encounter on the way". This is the first.
   and forgetting the note, another machine's left); core's 398 tests.
   Not checked against a real connection lost mid-copy.
 
+### Copies within one server made there (2026-10-21, night)
+
+- A copy between two folders of one remote came down through the
+  mount and went back up, at the upload's pace. Now within one sshfs
+  mount `sftp` copies each file on the server by `cp` (the copy-data
+  extension, asked once a mount: a server without it refuses a copy of
+  a name not there as unsupported), remakes links by `symlink`, and
+  gives each file its source's time through the mount (`cp` keeps
+  none), before it takes its name beside what is there (a name taken
+  meanwhile is another's). Within a GVfs mount, `gio copy` (its daemon
+  copies). A lone file within one remote is batched where a transfer
+  serves it.
+- Tried first against a local `sftp-server` through `sftp -D`: `cp`
+  takes no `-p`, keeps the mode, not the time, refuses a folder, and
+  follows a link.
+- Found while timing: sshfs looks up a name it does not know one at a
+  time, a round trip each (100 times given cold 2.24 s, 0.43 once the
+  names are known); reading the folder once tells it all of them.
+- Measured (20 ms, two rounds against Skwir's own copy through the
+  mount, load 25 to 40): 100 files of 16 KiB 4.17–4.21 s (8.93–9.02); a
+  file of 64 MiB 1.40–1.79 s (2.60–4.98), the server copying it. What is
+  left of the 4.2 s is `cp`'s own round trips, about seven a file, eight
+  sessions on the connection. GVfs within a mount checked, not timed.
+- Checked: `remote_folders`: within Skwir's sshfs mount on OpenSSH's
+  server, a tree copied by sftp the same as its source, modes and times
+  included; within a GVfs SFTP mount, by gio.
+

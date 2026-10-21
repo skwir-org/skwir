@@ -22,6 +22,15 @@
 //! break cannot be said in a batch: a batch holding one is left to its
 //! steps.
 //!
+//! Within one server (both folders on one sshfs mount), a file is copied
+//! there by `cp` (the copy-data extension, OpenSSH's server from 9.0,
+//! asked once a mount), its bytes never leaving the server; `cp` keeps no
+//! time, so each is given its source's through the mount, once its folder
+//! was read (sshfs looks up a name it does not know one at a time); a
+//! link is made again by `symlink`. 100 files of 16 KiB within a server
+//! 20 ms away: 4.2 s, where through the mount 8.9; a file of 64 MiB, 1.4
+//! to 1.8 s (2.6 to 5.0), whatever its size.
+//!
 //! It removes the originals of moves from an sshfs mount whose server
 //! runs no rsync too, at the plan's end (`ssh_mount::remove_beside`): `rm`
 //! for each file, a folder's tree read through the mount and removed by
@@ -60,6 +69,8 @@ pub struct Sftp {
     without: Mutex<HashSet<PathBuf>>,
     /// Whether each mount's server opens a session so, asked once.
     opens: Mutex<HashMap<PathBuf, bool>>,
+    /// Whether each mount's server copies a file itself (`cp`), asked once.
+    copies_there: Mutex<HashMap<PathBuf, bool>>,
     /// The batches it copied.
     made: AtomicUsize,
     /// The folders it removed moved originals in.
@@ -158,6 +169,38 @@ impl Sftp {
         self.opens.lock().insert(mount.point.clone(), opened);
         opened
     }
+
+    /// Whether the server of `mount` copies a file itself (`cp`: the
+    /// copy-data extension, OpenSSH's server from 9.0), asked once: a copy
+    /// of a name that is not there, which such a server refuses as not
+    /// there, any other as unsupported.
+    fn copies_there(
+        &self,
+        sftp: &Path,
+        mount: &Mount,
+        cancel: &skwir_core::cancel::CancelToken,
+    ) -> bool {
+        if let Some(&known) = self.copies_there.lock().get(&mount.point) {
+            return known;
+        }
+        let nothing = mount
+            .on_server(&mount.point.join(".skwir-nothing-here"))
+            .as_deref()
+            .and_then(quoted);
+        let copies = nothing.is_some_and(|nothing| {
+            skwir_platform::process::run_to_exit(
+                &mut self.session(sftp, mount),
+                Some(format!("-cp {nothing} {nothing}\n").as_bytes()),
+                cancel,
+                std::time::Duration::from_secs(30),
+            )
+            .is_ok_and(|finished| {
+                finished.status.success() && !finished.stderr.contains("does not support")
+            })
+        });
+        self.copies_there.lock().insert(mount.point.clone(), copies);
+        copies
+    }
 }
 
 /// The local sftp, found once.
@@ -205,6 +248,82 @@ fn spread(files: Vec<(Vec<String>, u64)>, sessions: usize) -> Vec<(String, u64)>
     }
     batches.retain(|(batch, _)| !batch.is_empty());
     batches
+}
+
+impl Sftp {
+    /// Copy what `layout` lays out within the server of `mount` (module
+    /// documentation): each file by `cp` there, its bytes never leaving
+    /// the server, then given its source's time through the mount, which
+    /// `cp` does not keep; a link made again; beside what is there, each
+    /// made in `temp`, given its time there, then linked to its name.
+    fn copy_within(
+        &self,
+        sftp: &Path,
+        mount: &Mount,
+        layout: &Layout,
+        temp: Option<&Path>,
+        told: &Told<'_>,
+        control: &Control,
+    ) -> anyhow::Result<()> {
+        let unsaid = |path: &Path| anyhow::anyhow!("“{}” cannot be said to sftp", path.display());
+        let server = |path: &Path| {
+            mount
+                .on_server(path)
+                .as_deref()
+                .and_then(quoted)
+                .ok_or_else(|| unsaid(path))
+        };
+        let mut copies: Vec<(Vec<String>, u64)> = Vec::new();
+        let mut placing: Vec<(Vec<String>, u64)> = Vec::new();
+        let mut timed: Vec<(PathBuf, PathBuf)> = Vec::new();
+        for (src, dst) in &layout.files {
+            let meta = std::fs::symlink_metadata(src)?;
+            if meta.is_symlink() {
+                let target = std::fs::read_link(src)?;
+                let target = target
+                    .to_str()
+                    .and_then(quoted)
+                    .ok_or_else(|| unsaid(&target))?;
+                copies.push((vec![format!("-@symlink {target} {}", server(dst)?)], 0));
+                continue;
+            }
+            let made = match temp {
+                Some(temp) => temp.join(dst.file_name().unwrap_or_default()),
+                None => dst.clone(),
+            };
+            copies.push((
+                vec![format!("@cp {} {}", server(src)?, server(&made)?)],
+                meta.len(),
+            ));
+            if temp.is_some() {
+                placing.push((
+                    vec![
+                        format!("-@ln {} {}", server(&made)?, server(dst)?),
+                        format!("-@rm {}", server(&made)?),
+                    ],
+                    0,
+                ));
+            }
+            timed.push((src.clone(), made));
+        }
+        let total = AtomicU64::new(0);
+        let ran = |bytes: u64| (told.copied)(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
+        self.run(sftp, mount, copies, &ran, control)?;
+        // Its time given before it takes its name: one taken meanwhile is
+        // another's, never touched. Each folder read once first: sshfs
+        // looks up a name it does not know one at a time, a round trip
+        // each, where a folder's listing tells it all its names.
+        let folders: std::collections::BTreeSet<&Path> =
+            timed.iter().filter_map(|(_, made)| made.parent()).collect();
+        for folder in folders {
+            let _ = std::fs::read_dir(folder).map(Iterator::count);
+        }
+        skwir_core::op::transfer::give_times(&timed)?;
+        self.run(sftp, mount, placing, &|_| {}, control)?;
+        layout.finish()?;
+        self.made.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
 }
 
 impl Transfer for Sftp {
@@ -271,9 +390,14 @@ impl Transfer for Sftp {
 
     /// Onto a mount alone (module documentation).
     fn serves(&self, from: &Path, into: &Path) -> bool {
-        program().is_some()
-            && skwir_core::fs::reach::of(from).is_none()
-            && self.mount_of(into).is_some()
+        let Some(mount) = program().and_then(|_| self.mount_of(into)) else {
+            return false;
+        };
+        match skwir_core::fs::reach::of(from) {
+            None => true,
+            // Within its server: copied there (`cp`), if it copies.
+            Some(_) => Mount::of(from).is_some_and(|m| m.point == mount.point),
+        }
     }
 
     fn copy(
@@ -286,16 +410,22 @@ impl Transfer for Sftp {
         control: &Control,
     ) -> anyhow::Result<()> {
         let sftp = program().ok_or_else(|| anyhow::anyhow!("sftp is not installed"))?;
-        let Some(mount) = self
-            .mount_of(into)
-            .filter(|_| skwir_core::fs::reach::of(from).is_none())
-        else {
-            anyhow::bail!("sftp copies from this machine onto a server");
+        let Some(mount) = self.mount_of(into) else {
+            anyhow::bail!("sftp copies onto a server");
         };
+        let within = skwir_core::fs::reach::of(from).is_some();
+        anyhow::ensure!(
+            !within || Mount::of(from).is_some_and(|m| m.point == mount.point),
+            "sftp copies from this machine onto a server, or within one"
+        );
         if !self.opens(sftp, &mount, control.cancel()) {
             anyhow::ensure!(!control.is_cancelled(), "cancelled");
             tracing::info!(point = %mount.point.display(), "sftp does not reach the server: copies go another way");
             self.without.lock().insert(mount.point);
+            return Err(NotServed.into());
+        }
+        if within && !self.copies_there(sftp, &mount, control.cancel()) {
+            anyhow::ensure!(!control.is_cancelled(), "cancelled");
             return Err(NotServed.into());
         }
         let unsaid = |path: &Path| anyhow::anyhow!("“{}” cannot be said to sftp", path.display());
@@ -311,6 +441,9 @@ impl Transfer for Sftp {
             Some(_) => Layout::files(from, names, into),
             None => Layout::made(from, names, into)?,
         };
+        if within {
+            return self.copy_within(sftp, &mount, &layout, temp, told, control);
+        }
         // Each file's lines, kept together in one session: what was placed
         // beside is known by its size and time, which `put -p` keeps.
         let mut files: Vec<(Vec<String>, u64)> = Vec::new();

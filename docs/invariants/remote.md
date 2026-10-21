@@ -128,8 +128,13 @@ ADR-077 (which revises ADR-021).
   session's GVfs of SFTP, FTP, WebDAV or SMB, by eight `gio copy` at
   once (`gio_copy`: `-i`, nothing on its input, so nothing is
   replaced), what a server refused at once copied again by one. Else
-  through the mount, eight files at a time, sixteen down. A server a
-  tool does not reach is remembered for its mount.
+  through the mount, eight files at a time, sixteen down. Within one
+  mount: by `sftp`'s `cp` on an sshfs mount's server (the copy-data
+  extension, asked once), each file then given its time through the
+  mount; by `gio copy` within a GVfs mount (its daemon copies). A lone
+  file within one remote goes in a batch where a transfer serves it,
+  which its step would bring here and send back. A server a tool does
+  not reach is remembered for its mount.
   A connector offers transfers for its mounts (`Connector::transfers`).
   A copy made with its source's mode is not given it again.
 - The originals of moves from GVfs are removed together by `gio remove`

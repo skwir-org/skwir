@@ -314,8 +314,16 @@ pub(super) fn batch_ahead(
             continue;
         }
         let taken = takes(&from, &sources, ctx);
-        // One file alone: as many round trips in a batch as by its step.
-        let worth = taken.len() > 1 || taken.iter().any(|t| t.folder);
+        // One file alone: as many round trips in a batch as by its step;
+        // but within one remote, a transfer may copy it there, where its
+        // step would bring its bytes here and send them back.
+        let within = crate::fs::reach::of(&from)
+            .zip(crate::fs::reach::of(&dest))
+            .is_some_and(|(a, b)| a.point == b.point)
+            && ctx
+                .transfers()
+                .is_some_and(|t| !t.serving(&from, &dest).is_empty());
+        let worth = taken.len() > 1 || taken.iter().any(|t| t.folder) || within;
         if taken.is_empty() || !worth {
             continue;
         }
@@ -1209,6 +1217,40 @@ impl Layout {
         }
         Ok(())
     }
+}
+
+/// Give each copy at `.1` the modification time of its source at `.0`,
+/// sixteen at once: for a transfer whose copies keep none (`sftp`'s `cp`,
+/// on the server), each a round trip through a mount, which takes no lock
+/// of the folder. Links keep their own.
+///
+/// # Errors
+/// The first that could not be read or given.
+pub fn give_times(pairs: &[(PathBuf, PathBuf)]) -> anyhow::Result<()> {
+    let next = AtomicUsize::new(0);
+    let failed: Mutex<Option<anyhow::Error>> = Mutex::new(None);
+    std::thread::scope(|s| {
+        for _ in 0..DOWN_AT_ONCE.min(pairs.len()) {
+            s.spawn(|| {
+                while let Some((src, dst)) = pairs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    let given = std::fs::symlink_metadata(src)
+                        .and_then(|meta| {
+                            if meta.is_symlink() {
+                                return Ok(());
+                            }
+                            super::sys::set_modified(dst, meta.modified()?)
+                        })
+                        .with_context(|| {
+                            format!("“{}” could not be given its time", dst.display())
+                        });
+                    if let Err(error) = given {
+                        failed.lock().get_or_insert(error);
+                    }
+                }
+            });
+        }
+    });
+    failed.into_inner().map_or(Ok(()), Err)
 }
 
 /// Place the file or link `made` at `dst`, never over anything. A file is

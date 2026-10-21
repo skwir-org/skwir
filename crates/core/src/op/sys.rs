@@ -426,6 +426,40 @@ pub(super) fn remove_link(link: &Path) -> io::Result<()> {
     std::fs::remove_file(link)
 }
 
+/// Give the file at `path` (a link itself, never what it leads to) the
+/// modification time `when`, its access time left: by its path, opened
+/// on Windows alone.
+pub(super) fn set_modified(path: &Path, when: std::time::SystemTime) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let since = when
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let times = rustix::fs::Timestamps {
+            last_access: rustix::fs::Timespec {
+                tv_sec: 0,
+                tv_nsec: rustix::fs::UTIME_OMIT,
+            },
+            last_modification: rustix::fs::Timespec {
+                tv_sec: i64::try_from(since.as_secs())
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?,
+                tv_nsec: since.subsec_nanos().into(),
+            },
+        };
+        rustix::fs::utimensat(
+            rustix::fs::CWD,
+            path,
+            &times,
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+        )
+        .map_err(Into::into)
+    }
+    #[cfg(windows)]
+    {
+        File::options().write(true).open(path)?.set_modified(when)
+    }
+}
+
 /// Open the folder `dir` to set its times: as any file on Unix; on
 /// Windows with the flag a folder needs and the right to write what is
 /// said of it.

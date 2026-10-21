@@ -930,6 +930,28 @@ fn copies_on_a_server_are_undone_and_deleted_together() {
     assert_eq!(std::fs::read_dir(served.join("up")).unwrap().count(), 0);
     until_shown(&app, pane, 10, &[], "the pane shows them deleted");
     std::fs::create_dir(up.join("a folder")).unwrap();
+    std::fs::remove_dir(up.join("a folder")).unwrap();
+
+    // Copied within the server: there, by sftp's `cp`, the bytes never
+    // here, each given its source's time.
+    let again = app
+        .executor
+        .execute_blocking(&copies(&entries, &up), app.lifetime());
+    assert!(again.error.is_none(), "{:?}", again.error);
+    let within = mounted.join("within");
+    std::fs::create_dir(&within).unwrap();
+    let inside = app
+        .executor
+        .execute_blocking(&copies(&there, &within), app.lifetime());
+    assert!(inside.error.is_none(), "{:?}", inside.error);
+    assert_eq!(
+        sshfs.sftp().made(),
+        2,
+        "the folder staged, the files placed"
+    );
+    for e in &entries {
+        same_tree(e, &served.join("within").join(e.file_name().unwrap()));
+    }
 
     app.dispatch(&Invocation::with_args(
         "remote.disconnect",
@@ -1469,6 +1491,18 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names.len(), entries.len(), "nothing staged left: {names:?}");
+
+    // Within the mount: by `gio` too, its daemon copying there.
+    let within = connected.point.join("within");
+    std::fs::create_dir(&within).unwrap();
+    let inside = app
+        .executor
+        .execute_blocking(&copies(&there, &within), app.lifetime());
+    assert!(inside.error.is_none(), "{:?}", inside.error);
+    assert_eq!(gvfs.gio_copy().made(), 6, "within, by gio");
+    for e in &entries {
+        same_files(e, &served_root.join("within").join(e.file_name().unwrap()));
+    }
 
     // Moved down: copied as copies are, the originals removed together at
     // the plan's end by `gio remove`, which the bridge sees at once.

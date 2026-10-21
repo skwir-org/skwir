@@ -90,6 +90,13 @@ impl GioCopy {
             })
     }
 
+    /// The folder of the bridge the GVfs mount holding `path` is.
+    fn mount_of(&self, path: &Path) -> Option<PathBuf> {
+        let bridge = crate::gvfs::bridge_in(self.runtime.clone())?;
+        let mount = path.strip_prefix(&bridge).ok()?.components().next()?;
+        Some(bridge.join(mount))
+    }
+
     /// `gio` with `words`, then `names`, then `into` as a folder.
     fn gio(&self, gio: &Path, words: &[&str], names: &[&Path], into: &Path) -> Command {
         let mut command = self.gio_on(gio, words, names);
@@ -222,7 +229,12 @@ impl Transfer for GioCopy {
             && match (self.on_sftp(from), self.on_sftp(into)) {
                 (true, false) => skwir_core::fs::reach::of(into).is_none(),
                 (false, true) => skwir_core::fs::reach::of(from).is_none(),
-                _ => false,
+                // Within one mount: its daemon copies there, the bytes
+                // never through the bridge.
+                (true, true) => self
+                    .mount_of(from)
+                    .is_some_and(|m| Some(m) == self.mount_of(into)),
+                (false, false) => false,
             }
     }
 

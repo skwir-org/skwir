@@ -1298,7 +1298,9 @@ protocol is a scheme a connector maps, or a connector.
   a network folder a program mounts (which keeps no trash) works,
   removing what was made while unchanged; Replace there deletes for good,
   said first. What a copy cut short by a server that stopped answering
-  left there is swept once this machine reaches it again.
+  left there is swept once this machine reaches it again. Copies within
+  one server are made there (sftp's `cp`; `gio copy` within a GVfs
+  mount).
 - **G. Left** (each its own step):
   - GVfs's NFS, AFP and device mounts not measured, at the bridge's pace;
   - Automatic's Small files where reads proved fast (only the local

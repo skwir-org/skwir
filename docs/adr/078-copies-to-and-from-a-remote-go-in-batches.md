@@ -162,6 +162,17 @@ mounted the folder.
     removes what was made while it is as it was made, Redo making it
     again, and Replace there deletes for good, as the question says.
 
+14. **Within one server.** A copy between two folders of one sshfs
+    mount is made there by `sftp`'s `cp` (the copy-data extension,
+    OpenSSH's server from 9.0, asked once), each file then given its
+    source's time through the mount, which `cp` does not keep, once its
+    folder was read (sshfs looks up a name it does not know one at a
+    time: 2.24 s for 100 names, 0.43 once known). Within a GVfs mount,
+    `gio copy` (its daemon copies). A lone file within one remote is
+    batched where a transfer serves it. Not rsync: its two ends cannot
+    both be remote, and a command run on the server goes through a shell
+    whose quoting Skwir cannot know.
+
 ## Consequences
 
 - Measured after, the same way (20 ms; load 8 to 61): a 256 MiB file
@@ -198,6 +209,11 @@ mounted the folder.
   4.2–5.4 s, down 1.69 (3.69), moved down 2.67 (15.78). Shell timings
   of eight `gio copy` against the bridge eight at a time: WebDAV 1.5 s
   and 25.6–26.1, FTP 9.2–9.4 and 139.8, SMB (Samba) 15.4 and 28.1–28.2.
+- Measured after 14 (20 ms; plans built first; two rounds against
+  Skwir's own copy through the mount; load 25 to 40): within Skwir's
+  sshfs mount, 100 files of 16 KiB 4.17–4.21 s (8.93–9.02), a file of
+  64 MiB 1.40–1.79 s (2.60–4.98), the latter whatever its size. GVfs
+  within a mount checked, not timed.
 - Measured after 13 (20 ms; plans built first; two rounds, load 40 to
   65): 100 files of 16 KiB deleted from Skwir's mount 0.62–0.63 s by
   rsync, 1.12–1.13 by sftp (2.29–2.33 through the mount); a folder of

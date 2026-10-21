@@ -125,7 +125,10 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   plan's staging folder there, by a plugin's `Transfer` that serves the
   two folders, else by Skwir's own copy eight files at a time, sixteen
   from a remote onto this machine (reading takes no lock of the
-  folder's; sshfs serves ten requests at once). A batch takes only what
+  folder's; sshfs serves ten requests at once). One file alone is left
+  to its step, unless both folders are on one remote and a transfer
+  serves them: it may copy there, where the step would bring the bytes
+  here and send them back. A batch takes only what
   its step would copy alike: a name of its own in the batch, no
   companion beside it, a tree of files of one name, folders
   and links, no kept attribute; never a move out of the trash or into
