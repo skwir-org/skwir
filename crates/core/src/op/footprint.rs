@@ -12,8 +12,10 @@
 //! wait for good).
 //!
 //! A heavy action moves bytes or walks a tree (a copy, a move to another
-//! volume, a folder deleted for good, an archive): one at a time
-//! (ADR-079, 3).
+//! volume, a folder deleted for good, an archive): one at a time on each
+//! of its channels, the disks and servers it reads or writes (ADR-079, 3
+//! and 4): two copies on one disk take turns, which ends sooner than
+//! sharing it; on two disks, or a disk and a server, they run at once.
 
 use std::collections::BTreeSet;
 use std::ops::Bound;
@@ -38,6 +40,36 @@ pub struct Footprint {
     every: bool,
     /// It moves bytes or walks a tree.
     heavy: bool,
+    /// Where a heavy one does ([`Footprint::with_channels`]).
+    channels: BTreeSet<Channel>,
+}
+
+/// Where a heavy action moves bytes: one heavy action at a time each.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Channel {
+    /// A physical disk of this machine, by its name in sysfs, under any
+    /// encrypted, mapped or RAID volume, all its partitions one.
+    Disk(String),
+    /// A remote, by its mount.
+    Remote(PathBuf),
+    /// A volume of this machine kept in memory (tmpfs), by its mount.
+    Volume(PathBuf),
+    /// A volume of this machine whose disks cannot be told (all of them on
+    /// macOS and Windows for now, a ZFS pool): it may be on any disk, so
+    /// it meets every disk's channel and its own.
+    Here,
+}
+
+impl Channel {
+    /// Whether one heavy action on `self` and one on `other` would share a
+    /// device.
+    fn meets(&self, other: &Channel) -> bool {
+        match (self, other) {
+            (Channel::Here, Channel::Here | Channel::Disk(_))
+            | (Channel::Disk(_), Channel::Here) => true,
+            _ => self == other,
+        }
+    }
 }
 
 /// A volume's trash, its `files` and `info`, and every trash a restore may
@@ -141,6 +173,47 @@ impl Footprint {
         }
     }
 
+    /// The same, a heavy one given the channels of what it touches: the
+    /// disks under each folder of this machine's, the remote holding one
+    /// of a remote's. Reads (sysfs, the mount table): never on the
+    /// window's thread.
+    #[must_use]
+    pub fn with_channels(mut self, volumes: &Volumes) -> Self {
+        if !self.heavy || self.every {
+            return self;
+        }
+        let mut known: std::collections::HashMap<PathBuf, Vec<Channel>> =
+            std::collections::HashMap::new();
+        let mut channels = BTreeSet::new();
+        for path in self.reads.iter().chain(&self.writes) {
+            // A file is on its folder's; a volume's top on its own.
+            let folder = if volumes.is_point(path) {
+                path.as_path()
+            } else {
+                path.parent().unwrap_or(path)
+            };
+            let of = known
+                .entry(folder.to_path_buf())
+                .or_insert_with(|| volumes.channels_of(folder));
+            channels.extend(of.iter().cloned());
+        }
+        self.channels = channels;
+        self
+    }
+
+    /// Whether two heavy ones may not run at once: a channel in common,
+    /// or one not told.
+    pub fn shares_channel(&self, other: &Footprint) -> bool {
+        self.every
+            || other.every
+            || self.channels.is_empty()
+            || other.channels.is_empty()
+            || self
+                .channels
+                .iter()
+                .any(|mine| other.channels.iter().any(|theirs| mine.meets(theirs)))
+    }
+
     /// What `self` and `other` touch together.
     pub fn merge(&mut self, other: Footprint) {
         self.reads.extend(other.reads);
@@ -149,6 +222,7 @@ impl Footprint {
         self.stores.extend(other.stores);
         self.every |= other.every;
         self.heavy |= other.heavy;
+        self.channels.extend(other.channels);
     }
 
     /// What the steps of an action touch together, `None` for a step that
@@ -205,6 +279,8 @@ fn within(set: &BTreeSet<PathBuf>, tree: &Path) -> bool {
 pub struct Volumes {
     /// Mount points, the longest first.
     points: Option<Vec<PathBuf>>,
+    /// Those of volumes kept in memory (tmpfs, ramfs): on no disk.
+    in_memory: Vec<PathBuf>,
 }
 
 impl Volumes {
@@ -212,17 +288,24 @@ impl Volumes {
     /// (not Linux), none is told apart.
     pub fn now() -> Self {
         #[cfg(target_os = "linux")]
-        let points = std::fs::read("/proc/self/mountinfo").ok().map(|text| {
-            let mut points: Vec<PathBuf> = crate::fs::volume::mountinfo(&text)
-                .into_iter()
-                .map(|m| m.point)
+        if let Ok(text) = std::fs::read("/proc/self/mountinfo") {
+            let mounts = crate::fs::volume::mountinfo(&text);
+            let in_memory = mounts
+                .iter()
+                .filter(|m| matches!(m.fstype.as_str(), "tmpfs" | "ramfs"))
+                .map(|m| m.point.clone())
                 .collect();
+            let mut points: Vec<PathBuf> = mounts.into_iter().map(|m| m.point).collect();
             points.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
-            points
-        });
-        #[cfg(not(target_os = "linux"))]
-        let points = None;
-        Volumes { points }
+            return Volumes {
+                points: Some(points),
+                in_memory,
+            };
+        }
+        Volumes {
+            points: None,
+            in_memory: Vec::new(),
+        }
     }
 
     /// Whether `a` and `b` are on one volume: a move between them is a
@@ -233,6 +316,39 @@ impl Volumes {
         };
         let of = |path: &Path| points.iter().find(|point| path.starts_with(point));
         matches!((of(a), of(b)), (Some(x), Some(y)) if x == y)
+    }
+
+    /// Whether a volume is mounted at `path`.
+    pub fn is_point(&self, path: &Path) -> bool {
+        self.points
+            .as_ref()
+            .is_some_and(|points| points.iter().any(|p| p == path))
+    }
+
+    /// The channels the folder `folder` is on (module documentation): its
+    /// remote's, else its disks', else its volume's when it is kept in
+    /// memory; where none can be told, any of this machine's disks.
+    pub fn channels_of(&self, folder: &Path) -> Vec<Channel> {
+        if let Some(remote) = crate::fs::reach::of(folder) {
+            return vec![Channel::Remote(remote.point.clone())];
+        }
+        // What is made is on the volume of the nearest folder there.
+        let Some(existing) = folder.ancestors().find(|a| a.exists()) else {
+            return vec![Channel::Here];
+        };
+        let disks = crate::fs::volume::disks_of(existing);
+        if !disks.is_empty() {
+            return disks.into_iter().map(Channel::Disk).collect();
+        }
+        let point = self
+            .points
+            .iter()
+            .flatten()
+            .find(|point| existing.starts_with(point));
+        match point {
+            Some(point) if self.in_memory.contains(point) => vec![Channel::Volume(point.clone())],
+            _ => vec![Channel::Here],
+        }
     }
 
     /// Whether `path` is a folder: looked at on this machine's volumes
@@ -305,6 +421,45 @@ mod tests {
             .made(&tmp.path().join("pictures/a.jpg"))
             .canonical();
         assert!(one.conflicts(&other));
+    }
+
+    /// Heavy actions on two remotes share no channel; on one, they do.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn heavy_actions_on_two_servers_share_no_channel() {
+        crate::fs::reach::pretend_remote(&p("/servers/one"));
+        crate::fs::reach::pretend_remote(&p("/servers/two"));
+        let volumes = Volumes::now();
+        let heavy = |path: &str| {
+            Footprint::default()
+                .made(&p(path))
+                .heavy_if(true)
+                .with_channels(&volumes)
+        };
+        let (one, two) = (heavy("/servers/one/a"), heavy("/servers/two/b"));
+        assert!(!one.shares_channel(&two));
+        assert!(one.shares_channel(&heavy("/servers/one/c")));
+        assert!(!one.conflicts(&two), "nothing touched in common either");
+    }
+
+    /// A volume whose disks cannot be told may be on any of them: it meets
+    /// every disk, never a server or a volume kept in memory.
+    #[test]
+    fn a_volume_not_told_meets_every_disk() {
+        let on = |channels: &[Channel]| Footprint {
+            heavy: true,
+            channels: channels.iter().cloned().collect(),
+            ..Footprint::default()
+        };
+        let sda = on(&[Channel::Disk("sda".into())]);
+        let pool = on(&[Channel::Here]);
+        let server = on(&[Channel::Remote(p("/servers/one"))]);
+        let shm = on(&[Channel::Volume(p("/dev/shm"))]);
+        assert!(pool.shares_channel(&sda));
+        assert!(pool.shares_channel(&pool.clone()));
+        assert!(!pool.shares_channel(&server));
+        assert!(!pool.shares_channel(&shm));
+        assert!(!sda.shares_channel(&on(&[Channel::Disk("sdb".into())])));
     }
 
     #[test]

@@ -1018,8 +1018,9 @@ impl Executor {
     fn dispatch(&self) {
         while let Some((seq, steps)) = self.next_to_measure() {
             let volumes = super::footprint::Volumes::now();
-            let footprint =
-                Footprint::of_steps(steps.iter().map(|s| s.footprint(&volumes))).canonical();
+            let footprint = Footprint::of_steps(steps.iter().map(|s| s.footprint(&volumes)))
+                .canonical()
+                .with_channels(&volumes);
             let mut lane = self.lane.lock();
             lane.measuring = false;
             if let Some(job) = lane.queue.iter_mut().find(|j| j.seq == seq) {
@@ -1119,9 +1120,13 @@ impl Executor {
                         .started
                         .iter()
                         .any(|b| b.footprint.conflicts(footprint));
+                // One heavy one at a time on each disk or server, in the
+                // order asked there.
+                let shares =
+                    |other: &Footprint| other.is_heavy() && other.shares_channel(footprint);
                 let heavy = footprint.is_heavy()
-                    && (lane.started.iter().any(|b| b.footprint.is_heavy())
-                        || before().any(|f| f.is_none_or(Footprint::is_heavy)));
+                    && (lane.started.iter().any(|b| shares(&b.footprint))
+                        || before().any(|f| f.is_none_or(shares)));
                 !conflicts && !heavy
             } else {
                 false
@@ -1806,6 +1811,29 @@ mod tests {
         let at = |line: &str| order.iter().position(|l| l == line).unwrap();
         assert!(at("ended /stick/photos") < at("began /stick/photos/2026"));
         assert!(at("ended /stick/photos") < at("began /card/music"));
+    }
+
+    /// Heavy plans on two servers run at once; on one, they take turns
+    /// (ADR-079: one heavy action a channel).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn heavy_plans_on_two_channels_run_at_once_and_on_one_take_turns() {
+        crate::fs::reach::pretend_remote(Path::new("/servers/one"));
+        crate::fs::reach::pretend_remote(Path::new("/servers/two"));
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let up = Gate::new("/servers/one/photos", true, false, &log);
+        executor.execute(up.plan(), CancelToken::new());
+        assert!(logged(&log, "began /servers/one/photos"));
+        let other = Gate::new("/servers/two/music", true, true, &log);
+        let r = executor.execute_blocking(&other.plan(), &CancelToken::new());
+        assert_eq!(r.applied, 1, "beside, on another server");
+        let same = Gate::new("/servers/one/videos", true, true, &log);
+        executor.execute(same.plan(), CancelToken::new());
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!log.lock().iter().any(|l| l == "began /servers/one/videos"));
+        up.opened();
+        assert!(logged(&log, "ended /servers/one/videos"));
     }
 
     /// Undo takes the last plan asked: one ended, beside a heavy plan it

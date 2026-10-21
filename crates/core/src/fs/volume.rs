@@ -495,6 +495,77 @@ fn block_removable(sys: &Path, dir: &Path, depth: u8) -> bool {
         })
 }
 
+/// The physical disks the filesystem holding `path` is on, by their names
+/// in sysfs (`nvme0n1`, `sda`): through any device mapper (LUKS) or RAID
+/// layer, a partition its disk's. Empty for one mounted from no block
+/// device (FUSE, NFS, tmpfs). Reads mountinfo and sysfs: on a worker. What
+/// one heavy action at a time uses (ADR-079: channels).
+#[cfg(target_os = "linux")]
+pub fn disks_of(path: &Path) -> Vec<String> {
+    let Ok(stat) = rustix::fs::stat(path) else {
+        return Vec::new();
+    };
+    let sys = Path::new("/sys");
+    let own = number(stat.st_dev);
+    let device = if sys.join("dev/block").join(&own).exists() {
+        Some(own)
+    } else {
+        // btrfs numbers its files' device apart from its disks: the disk
+        // is the device mounted.
+        mounted_from(path)
+            .and_then(|source| rustix::fs::stat(&source).ok())
+            .filter(|d| {
+                rustix::fs::FileType::from_raw_mode(d.st_mode) == rustix::fs::FileType::BlockDevice
+            })
+            .map(|d| number(d.st_rdev))
+    };
+    device
+        .map(|device| disks_in(sys, &device))
+        .unwrap_or_default()
+}
+
+/// [`disks_of`] the block device `major:minor` of the sysfs at `sys`.
+#[cfg(target_os = "linux")]
+fn disks_in(sys: &Path, device: &str) -> Vec<String> {
+    fn walk(dir: &Path, depth: u8, out: &mut Vec<String>) {
+        // A mapped or RAID device is on whatever its members are on.
+        if depth < LAYERS
+            && let Ok(members) = std::fs::read_dir(dir.join("slaves"))
+        {
+            let members: Vec<PathBuf> = members
+                .filter_map(|m| std::fs::canonicalize(m.ok()?.path()).ok())
+                .collect();
+            if !members.is_empty() {
+                for member in members {
+                    walk(&member, depth + 1, out);
+                }
+                return;
+            }
+        }
+        // A partition is on its disk.
+        let disk = match dir.parent() {
+            Some(parent) if dir.join("partition").exists() => parent,
+            _ => dir,
+        };
+        if let Some(name) = disk.file_name().and_then(|n| n.to_str())
+            && !out.iter().any(|known| known == name)
+        {
+            out.push(name.to_owned());
+        }
+    }
+    let mut out = Vec::new();
+    if let Ok(dir) = std::fs::canonicalize(sys.join("dev/block").join(device)) {
+        walk(&dir, 0, &mut out);
+    }
+    out
+}
+
+/// [`disks_of`] where sysfs does not say: none told.
+#[cfg(not(target_os = "linux"))]
+pub fn disks_of(_: &Path) -> Vec<String> {
+    Vec::new()
+}
+
 #[cfg(target_os = "linux")]
 fn read(path: &Path) -> Option<String> {
     std::fs::read_to_string(path)
@@ -695,6 +766,40 @@ mod tests {
         )
         .unwrap();
         assert!(!sys.removable("254:0"));
+    }
+
+    /// The disks a device is on: a partition its disk, a mapped device its
+    /// members', a RAID of two both.
+    #[test]
+    fn a_device_is_on_its_disks() {
+        let sys = Sys::new();
+        sys.block("pci0000:00/nvme/nvme0n1", "259:0", Some("0"));
+        sys.partition("pci0000:00/nvme/nvme0n1/nvme0n1p2", "259:2");
+        let crypt = sys.block("virtual/block/dm-0", "254:0", Some("0"));
+        std::fs::create_dir(crypt.join("slaves")).unwrap();
+        symlink(
+            sys.root().join("devices/pci0000:00/nvme/nvme0n1/nvme0n1p2"),
+            crypt.join("slaves/nvme0n1p2"),
+        )
+        .unwrap();
+        sys.block("pci0000:00/ata1/sda", "8:0", Some("0"));
+        sys.block("pci0000:00/ata2/sdb", "8:16", Some("0"));
+        let raid = sys.block("virtual/block/md0", "9:0", Some("0"));
+        std::fs::create_dir(raid.join("slaves")).unwrap();
+        for disk in ["ata1/sda", "ata2/sdb"] {
+            let name = disk.rsplit('/').next().unwrap();
+            symlink(
+                sys.root().join("devices/pci0000:00").join(disk),
+                raid.join("slaves").join(name),
+            )
+            .unwrap();
+        }
+        assert_eq!(disks_in(sys.root(), "259:2"), ["nvme0n1"]);
+        assert_eq!(disks_in(sys.root(), "254:0"), ["nvme0n1"]);
+        let mut both = disks_in(sys.root(), "9:0");
+        both.sort();
+        assert_eq!(both, ["sda", "sdb"]);
+        assert!(disks_in(sys.root(), "1:99").is_empty());
     }
 
     #[test]

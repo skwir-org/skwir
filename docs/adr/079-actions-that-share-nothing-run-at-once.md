@@ -186,3 +186,11 @@ one lane (`op::executor`) and operations.md's "Running".
    asked one at a time in the order they come, not the order the plans
    were asked.
 2. Channels: heavy actions on different disks and servers at once.
+   **Built** 2026-10-22 (STATUS-LOG). On Linux a volume's disks come
+   from sysfs (its device, or for btrfs the device mounted); a volume
+   kept in memory (tmpfs) is a channel of its own; one whose disks
+   cannot be told (ZFS, and every volume on macOS and Windows) meets
+   every disk. Measured on the USB disk set aside for timings: two
+   copies reading it end sooner in turns than at once (8.70–9.24 s
+   against 13.47–14.20 s), two writing it about even; two copies on two
+   channels at once end about as soon as the longer alone.

@@ -86,9 +86,15 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   except that one starts beside those running when nothing asked before
   it that has not ended conflicts with it (`op::footprint`: what each
   step touches, `Operation::footprint`), when it is heavy no other heavy
-  one runs or waits before it, and fewer than four run
+  one on one of its channels runs or waits before it, and fewer than
+  four run
   (`executor::AT_ONCE`). A step that cannot say what it touches (the
-  default, a plugin's) makes its plan run alone. Two plans making names
+  default, a plugin's) makes its plan run alone. A heavy plan's
+  channels (`Footprint::with_channels`) are the disks under what it
+  reads and writes (`fs::volume::disks_of`, through LUKS, LVM and RAID,
+  a partition its disk), a remote by its mount, a volume kept in memory
+  by its own; a volume whose disks cannot be told (all of them on macOS
+  and Windows, a ZFS pool) meets every disk. Two plans making names
   in one folder meet. What waits says so on the first bar, each running
   plan has its own; a paused plan keeps what it holds. The journal keeps
   the order asked (`JournalEntry::seq`): Undo takes the last plan asked,

@@ -2774,3 +2774,36 @@ and fix bug or problems you encounter on the way". This is the first.
 - Not checked yet in a window: done with step 2, where two heavy actions
   run at once.
 
+### ADR-079, step 2: heavy actions on different disks or servers at once (2026-10-22)
+
+- Built: a heavy footprint's channels (`Footprint::with_channels`,
+  worked out with the footprint, off the window's thread): the physical
+  disks under each folder it reads or writes (`fs::volume::disks_of`:
+  the volume's device in sysfs, for btrfs the device mounted, through
+  device-mapper and RAID members, a partition its disk), a remote by its
+  mount, a volume kept in memory (tmpfs, ramfs) by its mount. A volume
+  whose disks cannot be told (ZFS, every volume on macOS and Windows)
+  meets every disk. The executor's heavy rule asks for a channel in
+  common, not any heavy plan.
+- Found on the way: the first draft gave a volume of no block device a
+  channel of its own by its mount, so a copy on a ZFS pool would have
+  run beside one on the disk holding it; only a volume kept in memory
+  has its own now.
+- Measured (temporary `#[ignore]` test, `Copy` plans through
+  `execute_blocking`, 100 files of 4 MiB a copy, the USB hard disk set
+  aside for timings, rounds alternated, load 2 to 8): two copies
+  reading that disk, out of the page cache, to the NVMe disk, in turns
+  8.70–9.24 s, at once 13.47–14.20 s; two copies writing it from tmpfs,
+  in turns 8.96–9.10 s, at once 8.84–9.09 s; a copy tmpfs → USB disk
+  beside one tmpfs → NVMe disk 4.44–5.37 s together, 4.69–4.83 s in turn
+  (the NVMe leg is short); a rename asked during a copy to the USB disk
+  applied in 1–3.5 ms (on the one lane it waited for the copy, about
+  4.5 s).
+- Checked: footprint tests (two servers share no channel, one does; a
+  volume not told meets every disk, not a server or tmpfs); `disks_in`
+  on a made-up sysfs (a partition, LUKS on it, RAID over two disks); an
+  executor test with steps held at a gate (heavy plans on two servers at
+  once, a second on one waits); in a window on Xvfb, through the control
+  plugin: a 1 GiB copy tmpfs → USB disk with its card, a 1.5 GiB copy
+  tmpfs → NVMe disk beside it (ended in 0.8 s), a rename in the shown
+  folder applied in 2.5 ms meanwhile, the pane showing the new name.
