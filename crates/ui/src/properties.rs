@@ -1588,7 +1588,7 @@ pub fn render(
             continue;
         }
         for (r, row) in group.rows.into_iter().enumerate() {
-            list = list.child(row_element(shell, row, g * 1000 + r, theme, cx));
+            list = list.child(row_element(shell, row, (g, r), theme, cx));
         }
     }
     Some(
@@ -1645,7 +1645,7 @@ fn heading(
         })
         .child(
             div()
-                .id(("properties-heading", g))
+                .id(crate::elements::known_by("properties-heading", title))
                 .flex()
                 .items_center()
                 .gap_1()
@@ -1719,10 +1719,12 @@ fn links(
 fn row_element(
     shell: &Shell,
     row: Row,
-    id: usize,
+    (g, r): (usize, usize),
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
+    // What is inside the row is known within it.
+    let id = g * 1000 + r;
     let (label, value, copies) = (row.label.clone(), row.value.clone(), row.copies);
     let shown = row.links_shown();
     let said = match &row.show {
@@ -1739,8 +1741,10 @@ fn row_element(
     let bare = said.is_none() && row.source.is_none();
     let links = links(row.actions, id, theme, cx);
     let (inline, over) = if shown { (links, None) } else { (None, links) };
+    // Known by what it says: another file's row where it stands is not
+    // given its tooltip, nor its links' (inside it).
     div()
-        .id(("detail", id))
+        .id(crate::elements::known_by("detail", (g, r, &label, &value)))
         .group(ROW)
         .relative()
         .flex()

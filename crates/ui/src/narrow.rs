@@ -499,7 +499,9 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             tip.into()
         };
         div()
-            .id(("narrow-pill", n))
+            // Known by what it narrows by: one taken away, the next that
+            // comes under the pointer is not given its tooltip.
+            .id(crate::elements::known_by("narrow-pill", (facet, &value)))
             .flex_none()
             .h(px(22.))
             .px(px(8.))

@@ -944,6 +944,27 @@ impl PreviewState {
         self.key.as_ref().map(|key| key.id)
     }
 
+    /// What the panel's own elements are known by
+    /// (`elements::known_by`): the file shown, through a link, and the
+    /// members opened from it. Another file's are other elements, never
+    /// given the tooltips, presses and places of the one before; the same
+    /// file read again, or renamed, keeps them.
+    pub(crate) fn shown(&self) -> u64 {
+        let file = self.key.as_ref().map(|key| {
+            let file = key
+                .content
+                .as_ref()
+                .map_or(key.id.file, |content| content.id);
+            (key.pane, file)
+        });
+        let members: Vec<&str> = self
+            .nested
+            .iter()
+            .map(|member| member.name.as_str())
+            .collect();
+        crate::elements::key_of((file, members))
+    }
+
     /// What is read to show the entry (`PreviewKey::content`): `None` for
     /// a link that leads nowhere and a special file, which are never read.
     pub(crate) fn shown_content(&self) -> Option<&EntryRef> {
@@ -4592,7 +4613,11 @@ pub(crate) fn frame(shell: &Shell, interactive: bool) -> gpui::Stateful<gpui::Di
     let inspection = matches!(&shell.preview.content, Some(PreviewContent::Inspection(_)));
     let player = shell.preview.media.focus.is_some() && interactive;
     div()
-        .id("preview-frame")
+        // Known by the file shown: its rows, lines and cells within it.
+        .id(crate::elements::known_by(
+            "preview-frame",
+            shell.preview.shown(),
+        ))
         // A player holds the keys here: a group named by what it plays.
         .when(player, |d| {
             d.role(gpui::Role::Group)
@@ -5130,8 +5155,12 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
             mime.clone(),
         )
     });
+    // Known by the file shown: its trail and facts within it.
     let card = div()
-        .id("preview-info")
+        .id(crate::elements::known_by(
+            "preview-info",
+            shell.preview.shown(),
+        ))
         .flex_1()
         .min_w_0()
         .flex()

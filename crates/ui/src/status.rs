@@ -294,11 +294,13 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
     }
     // What a plugin counts (the shelf's items) announces itself only
     // when it counts something, in its words; a click opens what it counts.
-    for (i, tally) in shell.tallies.iter().enumerate() {
+    for tally in &shell.tallies {
         let open = tally.open.clone();
         bar = bar.child(
             div()
-                .id(("tally", i))
+                // Known by what it counts: one that comes or goes moves
+                // the others.
+                .id(crate::elements::known_by("tally", &tally.label))
                 .role(gpui::Role::Button)
                 .when(shell.a11y, |d| {
                     d.aria_label(format!("{}: {}", tally.label, tally.count))

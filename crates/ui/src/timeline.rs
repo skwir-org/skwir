@@ -384,7 +384,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             let hovered = t.hover == Some(i);
             bars_row = bars_row.child(
                 div()
-                    .id(("bar", i))
+                    .id(crate::elements::known_by("bar", (start, end)))
                     .flex_1()
                     .min_w(px(2.))
                     .h(px(BAR_AREA_H - 4.0))

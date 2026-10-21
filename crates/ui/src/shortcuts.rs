@@ -195,7 +195,11 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     .justify_between()
                     .gap_3()
                     .child(crate::elements::clip::clipped(
-                        div().id(("shortcut", row)).flex_1().min_w_0().truncate(),
+                        div()
+                            .id(crate::elements::known_by("shortcut", (row, &title)))
+                            .flex_1()
+                            .min_w_0()
+                            .truncate(),
                         title.clone(),
                     ))
                     .child(keys),

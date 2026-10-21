@@ -605,7 +605,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             };
             let name = item.name.clone();
             let option = modal::option(
-                div().id(("cmd", row_ix)),
+                div().id(crate::elements::known_by("cmd", p.filtered[row_ix])),
                 a11y.then(|| item.title.clone().into()),
                 row_ix,
                 hl,

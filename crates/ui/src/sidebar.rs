@@ -868,7 +868,7 @@ pub fn render(
         }
         let hover = theme.hover;
         let mut row = div()
-            .id(gpui::ElementId::NamedInteger("place".into(), i))
+            .id(crate::elements::known_by("place", i))
             .flex_none()
             .min_h(px(26.))
             .py(px(3.))
@@ -957,7 +957,7 @@ pub fn render(
             let hover = theme.selection_bg;
             row = row.child(
                 div()
-                    .id(gpui::ElementId::NamedInteger("eject".into(), i))
+                    .id(crate::elements::known_by("eject", i))
                     .role(gpui::Role::Button)
                     .when(a11y, |d| d.aria_label(format!("Eject {}", place.title)))
                     .flex_none()
@@ -1200,14 +1200,11 @@ fn wrap_pills(
 }
 
 /// What a place's row is known by from one frame to the next: the place it
-/// shows, never where it stands. A place that comes to stand where another
-/// was (a server's, once the mount above it is let go of) is not given
-/// that one's hover or tooltip.
+/// shows, never where it stands (`elements::known_by`). A place that comes
+/// to stand where another was (a server's, once the mount above it is let
+/// go of) is not given that one's hover or tooltip.
 fn row_key(place: &Place) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::hash::DefaultHasher::new();
-    (&place.group, &place.location, &place.key, &place.title).hash(&mut h);
-    h.finish()
+    crate::elements::key_of((&place.group, &place.location, &place.key, &place.title))
 }
 
 /// A tag's place as a pill of its color: it opens as a row does (a click,
@@ -1236,7 +1233,7 @@ fn pill(
     )
     .into();
     div()
-        .id(gpui::ElementId::NamedInteger("place".into(), i))
+        .id(crate::elements::known_by("place", i))
         .flex_none()
         .max_w_full()
         .h(px(22.))

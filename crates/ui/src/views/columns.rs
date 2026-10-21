@@ -344,8 +344,9 @@ fn side_column(
                 };
                 // The folder the pane went into from here is this column's
                 // selected option.
+                // Known by its entry: what is inside it, by its place in it.
                 let mut el = div()
-                    .id(ix)
+                    .id(crate::elements::known_by("row", row.id))
                     .role(gpui::Role::ListBoxOption)
                     .when(a11y, |d| {
                         d.aria_label(row.label.clone())

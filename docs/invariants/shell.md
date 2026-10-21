@@ -19,11 +19,17 @@ Views are in [views.md](views.md); what locations decide, in
   read from layout when the tooltip is asked for, never in `render`.
 - Pane actions capture their target pane while rendering and use
   pane-specific element IDs.
-- A row of a list that changes under the pointer is known by what it
-  shows, never by its position (`sidebar::row_key`): gpui keeps the
-  hover, the tooltip and the screen reader's node of an element id, so a
-  row by index hands them to whatever comes to stand there (a server's
-  row under an ejected mount kept the mount's "1.0 PB free").
+- An element is known by what it shows, never by where it stands
+  (`elements::known_by`): gpui keeps an element's tooltip as it was
+  built, its press and its screen reader's node by its id. A row known by
+  its index hands them to whatever comes to stand there, and an element
+  whose id stays while what it shows changes keeps saying the old (a
+  server's row under an ejected mount kept the mount's "1.0 PB free").
+  A file's row is known by its entry, a crumb by its place, a fact by its
+  text, a picker's option by its item, a preview's rows by the file shown
+  and their place in it; what is inside a row is known within it. Where
+  two items may show the same, their position joins what they are known
+  by.
 - gpui clicks on Enter/Space key-up, and only if focus has not moved since
   the key went down (its focus generation): never dispatch again on
   key-down.

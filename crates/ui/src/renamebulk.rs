@@ -336,7 +336,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .gap_2()
                 .child(clipped(
                     div()
-                        .id(("rename-from", i))
+                        .id(crate::elements::known_by("rename-from", (i, from)))
                         .flex_1()
                         .min_w_0()
                         .truncate()
@@ -345,7 +345,13 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 ))
                 .child(div().flex_none().child("→"))
                 .child(clipped(
-                    div().id(("rename-to", i)).flex_1().min_w_0().truncate(),
+                    // Known by what it says: the pattern typed on, a name
+                    // pointed at does not keep the one before's tooltip.
+                    div()
+                        .id(crate::elements::known_by("rename-to", (i, to)))
+                        .flex_1()
+                        .min_w_0()
+                        .truncate(),
                     to.clone(),
                 )),
         );

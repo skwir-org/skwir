@@ -731,10 +731,11 @@ impl SettingsView {
                     let theme = cx.global::<Theme>().clone();
                     range
                         .filter_map(|at| {
-                            let (choice, label) = &narrowed.choices[*narrowed.kept.get(at)?];
+                            let kept = *narrowed.kept.get(at)?;
+                            let (choice, label) = &narrowed.choices[kept];
                             let highlighted = at == narrowed.highlighted;
                             let named = a11y.then(|| SharedString::from(label.clone()));
-                            let option = div().id(("choice", at));
+                            let option = div().id(crate::elements::known_by("choice", kept));
                             Some(
                                 crate::modal::option(option, named, at, highlighted, &field)
                                     .w_full()

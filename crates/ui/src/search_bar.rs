@@ -349,8 +349,11 @@ fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>
             (false, Fit::Tight) => String::new(),
             (false, _) => chip.icon.clone(),
         };
+        // Known by what it holds: one removed, the next that comes under
+        // the pointer is not given its tooltip.
+        let known = crate::elements::key_of((&chip.id, &chip.value, &chip.title, i));
         let mut button = Button::new(
-            SharedString::from(format!("chip-{i}")),
+            SharedString::from(format!("chip-{known:x}")),
             icon,
             tip,
             "ui.search_chip",

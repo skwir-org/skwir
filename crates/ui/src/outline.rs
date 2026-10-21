@@ -226,7 +226,10 @@ fn row(
     let (title, clip) = crate::elements::clip::text(entry.title.clone());
     let hover = theme.hover;
     div()
-        .id(("outline-entry", at.index))
+        .id(crate::elements::known_by(
+            "outline-entry",
+            (at.index, &entry.title),
+        ))
         .optional_tooltip(clip.tooltip(None))
         .pl(px(entry.depth.min(12) as f32 * 10. + 8.))
         .py_1()

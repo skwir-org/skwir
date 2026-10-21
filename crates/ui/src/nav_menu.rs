@@ -35,7 +35,7 @@ const HISTORY_ROWS: usize = 15;
 const FOLDER_ROWS: usize = 500;
 
 /// What a menu of places lists.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum NavWhat {
     History {
         forward: bool,

@@ -2263,3 +2263,40 @@ Asked by the user after the night's report ("Yes, do the fix").
   would no longer be the system's anywhere.
 - Before Linux 6.8 the number is the table's, which a later mount may
   take again: the night's confusion stays possible there.
+
+### Elements known by what they show (2026-10-21, morning)
+
+Asked by the user after the night's report ("Yes, go ahead").
+
+- gpui keeps an element's shown tooltip (built once), its press and its
+  screen reader's node by its id. Rows known by their index handed them
+  to whatever came to stand there; an element whose id stayed while what
+  it showed changed kept saying the old. Now `elements::known_by(name,
+  what)` names them: the list's, grid's, columns' and board's rows by
+  their entry (what is inside a row stays known within it), the board's
+  columns by their place, the trail's crumbs by their place and its
+  folder menus by what they list, the search's chips and the narrowing
+  pills by what they hold, the footer's tallies by what they count,
+  Properties' rows by their label and value and its headings by their
+  title, the palette's, jump's, choose's, tag editor's, omnibox's and
+  settings' options by their item, the timeline's bars by their days,
+  the outline's entries, the bulk rename's names and the shortcuts'
+  titles by what they say, and the preview's header and frame by the
+  file shown (its identity, through a link, with the members opened
+  from it: the same file read again or renamed keeps its scroll; its
+  data rows, code lines and outline entries are known within it).
+- Checked in a window (Xvfb, lavapipe, a fixture of eleven files whose
+  names the list view cuts): pointing at f-05's name until its tooltip
+  showed, then adding a file that sorts first. The build before kept
+  "f-05 …" over the f-04 row now under the pointer; this one shows no
+  tooltip there. With the preview open, pointing at its cut name and
+  pressing Down: the next file shows, the former's tooltip gone. `just
+  a11y-check` passed; the UI's and the binary's tests (419) passed.
+- Left by position, nothing moving them while shown: menus, the
+  deletion question's rows, a plan's steps, the About facts, a key
+  sequence's next keys, the tag colors, the settings' key actions.
+  After a selection moves under a resting pointer, the preview's card is
+  drawn hovered again only once the pointer moves.
+- Then, both commits in: `just lint-all` (Windows and macOS included),
+  `just smoke` passed, and `just bench-check` met every budget (load
+  average 10 to 20).

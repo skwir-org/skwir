@@ -1168,7 +1168,7 @@ pub fn dropdown(
             // Said as focused once the arrows reach it: while typing, the
             // field reads back its text and caret.
             crate::modal::option(
-                div().id(("omnibox", i)),
+                div().id(crate::elements::known_by("omnibox", (&title, &detail, i))),
                 named,
                 i,
                 highlighted && omni.chosen,

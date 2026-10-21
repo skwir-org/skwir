@@ -311,45 +311,51 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         };
         let named = a11y.then(|| choice.title.clone().into());
         list = list.child(
-            modal::option(div().id(("choice", row)), named, row, hl, &typing)
-                .h(px(28.))
-                .px_3()
-                .flex()
-                .items_center()
-                .gap_3()
-                .cursor_pointer()
-                .when(hl, |d| {
-                    d.bg(theme.selection_bg).text_color(theme.selection_text)
-                })
-                .when(!hl, |d| d.hover(|s| s.bg(theme.hover)))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if let Some(c) = &mut this.choose {
-                        c.picker.highlighted = row;
-                    }
-                    this.choose_submit(window, cx);
-                }))
-                .child(match icon {
-                    Some(pic) => crate::icons::themed(&pic, ICON_PX, theme.text_muted),
-                    None => div().size(px(ICON_PX)).flex_none().into_any_element(),
-                })
-                .child(crate::elements::clip::clipped(
-                    div()
-                        .id("choice-title")
-                        .flex_none()
-                        .max_w(px(260.))
-                        .truncate(),
-                    choice.title.clone(),
-                ))
-                .child(crate::elements::clip::clipped(
-                    div()
-                        .id("choice-detail")
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_xs()
-                        .text_color(muted),
-                    choice.detail.clone().unwrap_or_default(),
-                )),
+            modal::option(
+                div().id(crate::elements::known_by("choice", c.filtered[row])),
+                named,
+                row,
+                hl,
+                &typing,
+            )
+            .h(px(28.))
+            .px_3()
+            .flex()
+            .items_center()
+            .gap_3()
+            .cursor_pointer()
+            .when(hl, |d| {
+                d.bg(theme.selection_bg).text_color(theme.selection_text)
+            })
+            .when(!hl, |d| d.hover(|s| s.bg(theme.hover)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if let Some(c) = &mut this.choose {
+                    c.picker.highlighted = row;
+                }
+                this.choose_submit(window, cx);
+            }))
+            .child(match icon {
+                Some(pic) => crate::icons::themed(&pic, ICON_PX, theme.text_muted),
+                None => div().size(px(ICON_PX)).flex_none().into_any_element(),
+            })
+            .child(crate::elements::clip::clipped(
+                div()
+                    .id("choice-title")
+                    .flex_none()
+                    .max_w(px(260.))
+                    .truncate(),
+                choice.title.clone(),
+            ))
+            .child(crate::elements::clip::clipped(
+                div()
+                    .id("choice-detail")
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_xs()
+                    .text_color(muted),
+                choice.detail.clone().unwrap_or_default(),
+            )),
         );
     }
     if c.loaded && c.filtered.is_empty() {

@@ -795,7 +795,12 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 }),
             ),
         };
-        let line = modal::option(div().id(("tag-row", row)), named, row, hl, &typing)
+        // Known by the tag it shows, or the tags it adds.
+        let known = match &shown {
+            Shown::New(tags) => crate::elements::known_by("tag-new", tags),
+            Shown::Row(i) => crate::elements::known_by("tag-row", &e.rows[*i].name),
+        };
+        let line = modal::option(div().id(known), named, row, hl, &typing)
             .when_some(
                 marked.filter(|_| a11y),
                 StatefulInteractiveElement::aria_toggled,

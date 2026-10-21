@@ -222,7 +222,7 @@ fn column(
     let scroll = view.scrolls.get(&c.location).cloned().unwrap_or_default();
     let ids = Arc::clone(&c.ids);
     let list = uniform_list(
-        ("board-column", k),
+        crate::elements::known_by("board-column", &c.location),
         ids.len(),
         cx.processor(move |this: &mut Shell, range: Range<usize>, _, cx| {
             this.with_pane(pane, |this| {
@@ -264,7 +264,7 @@ fn column(
                 .child(crate::format::thousands(count)),
         );
     let mut col = div()
-        .id(("board-col", k))
+        .id(crate::elements::known_by("board-col", &c.location))
         .role(gpui::Role::ListBox)
         .when(shell.a11y, |d| {
             d.aria_label(c.title.clone()).aria_size_of_set(c.ids.len())
@@ -375,7 +375,7 @@ fn card_element(
     };
     let el = div()
         // Two names of one file are two cards (ADR-049).
-        .id(("card", (look.id.at ^ look.id.file.ino) as usize))
+        .id(crate::elements::known_by("card", look.id))
         .relative()
         .h(px(CARD_H))
         .flex_1()
@@ -406,9 +406,7 @@ fn card_element(
                 .flex()
                 .flex_col()
                 .child(crate::views::entry::name(
-                    div()
-                        .id(("card-name", (look.id.at ^ look.id.file.ino) as usize))
-                        .text_sm(),
+                    div().id("card-name").text_sm(),
                     look,
                 ))
                 // A line of chips takes what its row leaves: under the

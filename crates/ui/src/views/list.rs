@@ -580,9 +580,10 @@ pub fn row(
     };
     let height = row_height(shell.row_zoom);
     let icon = look.picture(icon_px(shell.row_zoom), theme);
+    // Known by its entry: what is inside it, by its place in it.
     let el = crate::views::entry::highlight(
         div()
-            .id(ix)
+            .id(crate::elements::known_by("row", look.id))
             .relative()
             .h(px(height))
             .w_full()

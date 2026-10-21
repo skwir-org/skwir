@@ -258,9 +258,10 @@ fn cell(
         }
         _ => picture,
     };
+    // Known by its entry: what is inside it, by its place in it.
     let el = crate::views::entry::highlight(
         div()
-            .id(ix)
+            .id(crate::elements::known_by("tile", look.id))
             .relative()
             .size_full()
             .flex()

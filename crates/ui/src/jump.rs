@@ -165,46 +165,52 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         let hl = ix == j.picker.highlighted;
         let named = a11y.then(|| c.path.to_string_lossy().into_owned().into());
         list = list.child(
-            modal::option(div().id(("jump", ix)), named, ix, hl, &typing)
-                .when(a11y, |d| {
-                    d.aria_description(format!("{} · {}", c.kind, c.source))
-                })
-                .h(px(26.))
-                .px_3()
-                .flex()
-                .items_center()
-                .gap_3()
-                .cursor_pointer()
-                .when(hl, |d| {
-                    d.bg(theme.selection_bg).text_color(theme.selection_text)
-                })
-                .when(!hl, |d| d.hover(|s| s.bg(theme.hover)))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if let Some(j) = &mut this.jump {
-                        j.picker.highlighted = ix;
-                    }
-                    this.jump_submit(window, cx);
-                }))
-                .child(crate::elements::clip::clipped(
-                    div()
-                        .id("jump-path")
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis_middle(),
-                    c.path.to_string_lossy().into_owned(),
-                ))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(if hl {
-                            theme.selection_text
-                        } else {
-                            theme.text_muted
-                        })
-                        .child(format!("{} · {}", c.kind, c.source)),
-                ),
+            modal::option(
+                div().id(crate::elements::known_by("jump", &c.path)),
+                named,
+                ix,
+                hl,
+                &typing,
+            )
+            .when(a11y, |d| {
+                d.aria_description(format!("{} · {}", c.kind, c.source))
+            })
+            .h(px(26.))
+            .px_3()
+            .flex()
+            .items_center()
+            .gap_3()
+            .cursor_pointer()
+            .when(hl, |d| {
+                d.bg(theme.selection_bg).text_color(theme.selection_text)
+            })
+            .when(!hl, |d| d.hover(|s| s.bg(theme.hover)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if let Some(j) = &mut this.jump {
+                    j.picker.highlighted = ix;
+                }
+                this.jump_submit(window, cx);
+            }))
+            .child(crate::elements::clip::clipped(
+                div()
+                    .id("jump-path")
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_middle(),
+                c.path.to_string_lossy().into_owned(),
+            ))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(if hl {
+                        theme.selection_text
+                    } else {
+                        theme.text_muted
+                    })
+                    .child(format!("{} · {}", c.kind, c.source)),
+            ),
         );
     }
     if j.candidates.is_empty() && j.answered == j.asked {

@@ -172,11 +172,14 @@ leave (ADR-077).
   scanned page's text (`docs/invariants/accessibility.md`).
 - Properties (2026-10-13, ADR-058), not checked in a window: a read-only
   drive's links taken away, a drive keeping no permissions (FAT).
-- Rows known by their position (2026-10-21): a row that comes to stand
-  where another was keeps that one's tooltip and screen-reader node. The
-  sidebar's are known by their place now (`sidebar::row_key`); the
-  list's, grid's and columns' name cells, whose tooltip shows a name cut
-  to fit, and about twenty other lists (`.id(("…", i))`) are not.
+- Elements known by what they show (2026-10-21, `elements::known_by`):
+  the views' rows by their entry, the trail's crumbs by their place, the
+  pickers' options by their item, Properties' rows by what they say, the
+  preview's header and frame by the file shown, and the rest of the
+  lists that change under the pointer. Left by position, as nothing moves
+  them while shown: menus, the deletion question's rows, a plan's steps,
+  the About facts, a key sequence's next keys, the tag colors, the
+  settings' key actions (by their place in the whole list).
 - A flaky test, `pending_opens_report_errors_asynchronously_and_can_be_replaced`
   (`crates/core/tests/listing.rs`), failed eight runs in a row on
   2026-09-26, then passed; not investigated.
