@@ -187,6 +187,15 @@ impl Transfer for Rsync {
         "rsync"
     }
 
+    /// An sshfs mount: it reads the folder from the server again.
+    fn show(&self, folder: &Path) -> bool {
+        let shown = Mount::of(folder).is_some();
+        if shown {
+            crate::ssh_mount::shown_again(folder);
+        }
+        shown
+    }
+
     /// A mount whose server is not known to run no rsync.
     fn removes(&self, folder: &Path) -> bool {
         program().is_some()
@@ -361,10 +370,6 @@ impl Transfer for Rsync {
                 }
             },
         )?;
-        // Placed in the folder beside the mount, ended well or not.
-        if upward && temp.is_some() {
-            crate::ssh_mount::shown_again(into);
-        }
         if finished.status.success() {
             self.made.fetch_add(1, Ordering::Relaxed);
             return Ok(());

@@ -152,6 +152,16 @@ mounted the folder.
     from the server again once a folder of Skwir's is made and removed
     in it.
 
+13. **Deletions together, and no trash where none is kept**
+    (2026-10-21, night). A run of deletions in a remote's folder is
+    removed at once, as moves' originals are (10), before its steps are
+    checked, those whose checks pass then; a lone folder too. A network
+    folder a program mounts keeps no trash: a `Trash` step there now
+    says so in its check, where it failed once applied, and Undo of a
+    copy, an extraction or an archive made there failed so; it now
+    removes what was made while it is as it was made, Redo making it
+    again, and Replace there deletes for good, as the question says.
+
 ## Consequences
 
 - Measured after, the same way (20 ms; load 8 to 61): a 256 MiB file
@@ -188,6 +198,10 @@ mounted the folder.
   4.2–5.4 s, down 1.69 (3.69), moved down 2.67 (15.78). Shell timings
   of eight `gio copy` against the bridge eight at a time: WebDAV 1.5 s
   and 25.6–26.1, FTP 9.2–9.4 and 139.8, SMB (Samba) 15.4 and 28.1–28.2.
+- Measured after 13 (20 ms; plans built first; two rounds, load 40 to
+  65): 100 files of 16 KiB deleted from Skwir's mount 0.62–0.63 s by
+  rsync, 1.12–1.13 by sftp (2.29–2.33 through the mount); a folder of
+  100, 0.48 and 1.37 (2.38–2.43).
 - Measured after 10 and 12 for sshfs (20 ms, plans built first, run
   whole; load 30 to 40, two rounds each against the removal through the
   mount): 100 files of 16 KiB moved down from Skwir's mount 1.09–1.22 s

@@ -144,11 +144,20 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   plan's end, which looks at all of them again, eight at a time, and has
   those still as copied removed together (`transfer::remove_deferred`):
   through a mount the kernel removes a folder's names one at a time.
+  The same way, before a removal is checked (a `Delete`, an `Uncopy`),
+  the run of removals from it in a remote's folder is removed at once
+  (`transfer::remove_ahead`): those whose checks pass then, with the
+  companions the folder's names listed once show beside them; each step
+  then says it removed its own (`StepContext::take_removed_ahead`). A
+  removal is not taken back: a plan that stops before steps whose
+  removal was made ahead counts them done, with their inverses.
   What a transfer writes or removes beside a mount, no watch sees: it
   records the folder (`StepContext::changed_beside`), and at the plan's
   end the executor tells the window (`Executor::set_changed_beside`),
   which reads again the folders its panes show there
-  (`App::refresh_showing`). A step whose source a batch took finds it
+  (`App::refresh_showing`), a transfer whose mount keeps what it read
+  making it read each anew just before (`Transfer::show`: sshfs), never
+  earlier: a look during the plan may have kept what it held then. A step whose source a batch took finds it
   where the batch did (`StepContext::resolve`) and looks for no
   companion beside it (the batch read its folder). A batch's bytes are
   counted once, by the batch. A cancel during a batch ends the plan and
@@ -290,9 +299,17 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 The trash plugin reads ([locations.md](locations.md)); the core acts.
 
 - On a remote ([remote.md](remote.md)): a folder a program mounts across
-  a network keeps no trash, so Move to Trash makes a deletion, asked; a
-  kernel share keeps its own `.Trash-<uid>`; nothing is ever copied from
-  a remote into this machine's trash to be trashed.
+  a network keeps no trash (`op::keeps_no_trash`, from the mount table),
+  so Move to Trash makes a deletion, asked; a kernel share keeps its own
+  `.Trash-<uid>`; nothing is ever copied from a remote into this
+  machine's trash to be trashed. A `Trash` step there conflicts in its
+  check. What would put something in a trash there does without: a
+  copy's undo is an `Uncopy` (removed while it is as it was made, its
+  state kept as `op::made_state`; Redo copies again), a plugin's step
+  that makes something does the same (`op::made_stays`,
+  `op::remove_made`: the archives' `archive_unmake`), Replace deletes
+  for good (`clash::replaces_for_good`, said by the question), and a
+  move whose item is there whole removes its original by an `Uncopy`.
 - What a plan reads of the trash (an Undo of a trash, a restore, the
   companions trashed with a file) is listed on Linux by the core itself
   (`op::trash_list`): the home trash and the trashes of this machine's

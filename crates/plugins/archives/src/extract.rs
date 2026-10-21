@@ -340,6 +340,18 @@ impl op::Effect for Extract {
         ctx.advance(size.saturating_sub(done));
         let made = EntryRef::from_path(&target)
             .with_context(|| format!("“{}” went missing as it was made", display_name(&target)))?;
+        // Where its volume keeps no trash, Undo removes it while it is as
+        // made, and Redo extracts it again under the same name.
+        if op::keeps_no_trash(&target) {
+            let again = Extract {
+                name: target.file_name().map(ToOwned::to_owned),
+                ..self.clone()
+            };
+            return Ok(Some(Box::new(crate::unmake::Unmake::of(
+                made,
+                crate::unmake::Again::Extract(again),
+            ))));
+        }
         // Undone to the trash, as a copy is: it may have been changed since.
         Ok(Some(Box::new(op::Trash { entry: made })))
     }

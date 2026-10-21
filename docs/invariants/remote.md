@@ -69,7 +69,18 @@ ADR-077 (which revises ADR-021).
   (the trash command makes a `Delete` there); a kernel share keeps its own
   `.Trash-<uid>`. Nothing is ever copied from a remote into this
   machine's trash to be trashed. The question counts what is deleted;
-  what the same command moves to the trash is said beside it.
+  what the same command moves to the trash is said beside it. A run of
+  deletions in one folder there goes together, as moves' originals do
+  (`transfer::remove_ahead`, by `gio remove`, rsync or sftp, a lone
+  folder too): through the mount, each name is a round trip under the
+  folder's lock. 100 files of 16 KiB from a server 20 ms away: 0.62 s
+  by rsync, 1.13 by sftp (2.29–2.33 through the mount); a folder of 100,
+  0.48 and 1.37 (2.38–2.43).
+- **Undo there** removes what a step made rather than putting it in a
+  trash there is none of: a copy (`Uncopy`), an archive extracted or made
+  (`archive_unmake`), only while it is as it was made (`op::made_stays`),
+  Redo making it again; Replace deletes what is replaced for good, which
+  the question about names taken says before anyone chooses it.
 - **Identity** on a mount whose program makes inode numbers up (FUSE:
   sshfs, GVfs, rclone, a FUSE mount on this machine alike): sshfs
   numbers files in the order they are looked up, again once the kernel
@@ -136,7 +147,11 @@ ADR-077 (which revises ADR-021).
   window reads again the folders its panes show there at the plan's end
   (operations.md). sshfs, which keeps a folder's names 20 s, reads such
   a folder from the server again once a folder of Skwir's is made and
-  removed in it (`ssh_mount::shown_again`).
+  removed in it (`ssh_mount::shown_again`), at the plan's end just
+  before the window reads it (`Transfer::show`): a pane that read the
+  folder while a tool wrote there could have had sshfs keep what it
+  held then, for 20 s (a `remote-check` run under load once waited for
+  the copies in vain).
 
 ## Addresses
 

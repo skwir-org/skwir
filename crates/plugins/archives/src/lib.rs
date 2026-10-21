@@ -16,6 +16,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 mod compress;
 mod extract;
+mod unmake;
 pub use compress::Compress;
 pub use extract::Extract;
 
@@ -53,6 +54,7 @@ impl Plugin for PreviewPlugin {
         app.previews.register(self.id(), Arc::new(Provider));
         extract::register(app, self.id());
         compress::register(app, self.id());
+        unmake::register(app, self.id());
     }
 }
 /// Disc images, which the database does not call archives.

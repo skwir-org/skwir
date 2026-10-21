@@ -2644,3 +2644,53 @@ eight files at a time.
 - Built: Skwir's own batch copy makes sixteen files at once from a
   remote onto this machine (`transfer::DOWN_AT_ONCE`), eight otherwise.
   Then 0.65–0.67 s and 0.86–0.90 (load 20).
+
+### Deletions on a remote together; Undo where no trash is kept (2026-10-21, night)
+
+The user, having confirmed ADR-079's choices: "Tackle all the points,
+and fix bug or problems you encounter on the way". This is the first.
+
+- Built: before a removal is checked, the run of removals from it in a
+  remote's folder is removed at once by the transfer that removes there
+  (`transfer::remove_ahead`: `gio remove`, rsync, sftp), those whose
+  checks pass then, a lone folder too, the companions the folder's
+  names show beside them; each step says it removed its own. A plan
+  that stops before steps whose removal was made ahead counts them done
+  with their inverses (a removal is not taken back). `Delete` checks
+  through `StepContext::resolve`, so a dry run looks ahead too.
+- Found on the way: a network folder a program mounts keeps no trash,
+  and a `Trash` step there passed its check, then failed applied. So
+  Undo of a copy onto sshfs, GVfs or rclone failed at its first file,
+  as did Undo of an archive extracted or made there, Replace of a name
+  taken there, and a move whose item was there whole (its original put
+  in the trash). Now: `Trash` conflicts in its check there; a copy's
+  undo is `Uncopy` (removed while it is as it was made, `state_of` kept
+  when copied from the look the copy makes anyway; Redo copies again);
+  the archives plugin's `archive_unmake` does the same for what it made
+  (core's `op::made_state`, `made_stays`, `remove_made`); Replace deletes
+  for good there, and the question about names taken says so before
+  anyone chooses (`clash::replaces_for_good`); a move whose item is
+  there whole removes its original by an `Uncopy`, Undo copying it back.
+- Measured (20 ms, plans built first, two interleaved rounds against
+  removal through the mount, load 40 to 65): 100 files of 16 KiB
+  deleted from Skwir's sshfs mount 0.62–0.63 s by rsync, 1.12–1.13 from
+  an SFTP-only server by sftp (2.29–2.33 through the mount); a folder of
+  100, 0.48 and 1.37 (2.38–2.43).
+- Checked: core tests (deletions in a pretended remote's folder in one
+  call, each counted applied; copies onto it undone together, redone,
+  one changed since kept and named; `Trash` refused there before
+  anything is done; Replace there settling to a deletion and a move's
+  whole item to an `Uncopy`); `remote_folders`: a copy onto OpenSSH's
+  server undone by rsync in one run, the pane showing the copies gone,
+  their names made again at once, redone, then deleted for good in one
+  run.
+- One full `remote-check` at load 40 to 65 failed the rsync test's
+  check that the pane shows rsync's copies (10 s), not reproduced in
+  nine runs after (alone, under sixteen busy loops, in full). A cause
+  that fits: a pane reading the folder while rsync wrote there, its
+  answer arriving after the batch made sshfs read the folder anew,
+  keeps the listing of then for 20 s. sshfs now reads a changed folder
+  anew at the plan's end, just before the window reads it
+  (`Transfer::show`), and the pane checks say what the pane shows when
+  they give up.
+

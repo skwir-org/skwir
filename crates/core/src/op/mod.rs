@@ -38,8 +38,9 @@ use serde::{Deserialize, Serialize};
 
 pub use builtin::{
     Copy, Delete, InTrash, Landed, Link, Mkdir, Move, NewFile, RemoveEmptyFile, Rename, Restore,
-    RestorePart, ReturnPart, Rmdir, Swap, Trash, Unlink, Unmerge, Untrashed, in_trash,
-    parse_trash_info, register_builtin, trash_info_of,
+    RestorePart, ReturnPart, Rmdir, Swap, Trash, Uncopy, Unlink, Unmerge, Untrashed, in_trash,
+    keeps_no_trash, made_state, made_stays, parse_trash_info, register_builtin, remove_made,
+    trash_info_of,
 };
 pub use context::{Cancelled, StepContext, Unanswered};
 pub use entry_ref::{EntryArg, EntryRef, ResolveError};

@@ -749,9 +749,129 @@ impl super::Effect for Copy {
                 display_name(&target)
             )
         })?;
+        // Where its volume keeps no trash, Undo removes the copy itself,
+        // only while it is as it was made; its look is the one just made,
+        // kept by the kernel a moment.
+        if keeps_no_trash(&target) {
+            return Ok(Some(Box::new(Uncopy {
+                entry: r,
+                source: EntryRef::new(self.entry.id, src).with_only_name(self.entry.only_name),
+                made_as: made_state(&target),
+                preserve_attributes: self.preserve_attributes,
+            })));
+        }
         // Undo puts the copy in the trash rather than deleting it: it may
         // have been edited since, and redo then restores it as it was.
         Ok(Some(Box::new(Trash { entry: r })))
+    }
+}
+
+/// Whether the volume `path` is on keeps no trash Skwir may put it in: a
+/// network folder a program mounts (sshfs, GVfs, rclone), as the mount
+/// table says, nothing read (ADR-077). A share the kernel mounts keeps a
+/// `.Trash-<uid>` of its own.
+pub fn keeps_no_trash(path: &Path) -> bool {
+    crate::fs::reach::of(path).is_some_and(|remote| !remote.by_kernel())
+}
+
+/// What a step made at `path` is now (`state_of`, in hexadecimal), for
+/// its undo to tell later whether it changed: where its volume keeps no
+/// trash ([`keeps_no_trash`]), that undo removes it for good, only while
+/// it is as it was made. `None` where it cannot all be read.
+pub fn made_state(path: &Path) -> Option<String> {
+    state_of(path).map(|state| state.to_hex().to_string())
+}
+
+/// Why what a step made at `path`, `made_as` then ([`made_state`]), stays
+/// rather than its undo removing it: changed since (or never read whole),
+/// or holding where a drive or a remote is mounted.
+pub fn made_stays(path: &Path, made_as: Option<&str>) -> Option<String> {
+    if let Some(why) = mounted_there(path) {
+        return Some(why);
+    }
+    let now = made_state(path);
+    (made_as.is_none() || now.as_deref() != made_as).then(|| {
+        format!(
+            "“{}” changed since it was made: Undo leaves it",
+            display_name(path)
+        )
+    })
+}
+
+/// Remove for good what a step made at `path`, and the files beside it
+/// that go with it (its companions): the undo of a step that made it where
+/// its volume keeps no trash, once [`made_stays`] said nothing.
+///
+/// # Errors
+/// What could not be removed.
+pub fn remove_made(path: &Path, ctx: &StepContext) -> anyhow::Result<()> {
+    let companions = ctx.companions().existing(path);
+    remove_recursive(path)
+        .with_context(|| format!("“{}” could not all be removed", display_name(path)))?;
+    for companion in companions {
+        let _ = remove_recursive(&companion.path);
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------------ uncopy
+
+/// Take back a copy made where its volume keeps no trash (a network folder
+/// a program mounts): the undo of [`Copy`] there, which elsewhere puts the
+/// copy in the trash. The copy is removed for good only while it is as it
+/// was made (`state_of`): one changed since stays, and its step says so.
+/// Redo copies its original again.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Uncopy {
+    /// The copy.
+    pub entry: EntryRef,
+    /// What it was copied from, which Redo copies again.
+    pub source: EntryRef,
+    /// The copy as it was made (`state_of`, in hexadecimal); `None` where
+    /// it could not all be read, and then it is never removed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_as: Option<String>,
+    #[serde(default = "preserve_attributes_default")]
+    pub preserve_attributes: bool,
+}
+
+impl super::Kind for Uncopy {
+    const KIND: &'static str = "uncopy";
+}
+
+impl super::Effect for Uncopy {
+    fn describe(&self) -> Change {
+        Change::Remove {
+            path: self.entry.path.clone(),
+        }
+    }
+    fn check(&self, ctx: &StepContext) -> StepStatus {
+        match ctx.resolve(&self.entry) {
+            Ok(path) if ctx.was_removed_ahead(&path) => pending(true),
+            Ok(path) => {
+                made_stays(&path, self.made_as.as_deref()).map_or_else(|| pending(true), conflict)
+            }
+            Err(ResolveError::Gone(_)) => StepStatus::AlreadyDone,
+            Err(e) => conflict(e.to_string()),
+        }
+    }
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        let path = ctx.resolve(&self.entry)?;
+        if !ctx.take_removed_ahead(&path) {
+            if let Some(why) = made_stays(&path, self.made_as.as_deref()) {
+                anyhow::bail!("{why}");
+            }
+            remove_made(&path, ctx)?;
+        }
+        let (Some(dest_dir), Some(name)) = (path.parent(), path.file_name()) else {
+            return Ok(None);
+        };
+        Ok(Some(Box::new(Copy {
+            entry: self.source.clone(),
+            dest_dir: dest_dir.to_path_buf(),
+            new_name: (self.source.path.file_name() != Some(name)).then(|| name.to_owned()),
+            preserve_attributes: self.preserve_attributes,
+        })))
     }
 }
 
@@ -1477,6 +1597,12 @@ impl super::Effect for Trash {
         if in_trash(&self.entry.path).is_some() {
             return conflict(format!(
                 "“{}” is in the trash already",
+                display_name(&self.entry.path)
+            ));
+        }
+        if keeps_no_trash(&self.entry.path) {
+            return conflict(format!(
+                "“{}” is in a network folder a program mounts, which keeps no trash",
                 display_name(&self.entry.path)
             ));
         }
@@ -2608,15 +2734,21 @@ impl super::Effect for Delete {
             path: self.entry.path.clone(),
         }
     }
-    fn check(&self, _ctx: &StepContext) -> StepStatus {
-        match self.entry.resolve() {
+    fn check(&self, ctx: &StepContext) -> StepStatus {
+        match ctx.resolve(&self.entry) {
+            Ok(path) if ctx.was_removed_ahead(&path) => pending(false),
             Ok(path) => mounted_there(&path).map_or_else(|| pending(false), conflict),
             Err(ResolveError::Gone(_)) => StepStatus::AlreadyDone,
             Err(e) => conflict(e.to_string()),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        let src = self.entry.resolve()?;
+        let src = ctx.resolve(&self.entry)?;
+        // Removed with others of its folder ahead (`transfer::remove_ahead`).
+        if ctx.take_removed_ahead(&src) {
+            forget_trashed(&src);
+            return Ok(None);
+        }
         let companions = ctx.companions().existing(&src);
         remove_recursive(&src)
             .with_context(|| format!("“{}” could not all be deleted", display_name(&src)))?;
@@ -3002,6 +3134,7 @@ pub fn register_builtin(reg: &OpRegistry) {
     reg.register::<Rmdir>("core");
     reg.register::<NewFile>("core");
     reg.register::<RemoveEmptyFile>("core");
+    reg.register::<Uncopy>("core");
     reg.register::<Link>("core");
     reg.register::<Unlink>("core");
     reg.register::<super::access::SetAccess>("core");

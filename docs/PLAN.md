@@ -1293,6 +1293,11 @@ protocol is a scheme a connector maps, or a connector.
   mount reads it again at the plan's end (it never did). **Built**.
   Downloads through the mount sixteen files at once, filling the ten
   requests sshfs serves at once, the floor for an SFTP-only server.
+  Then (the user's "tackle all the points"): deletions in a remote's
+  folder together; Undo of a copy, an extraction or an archive made on
+  a network folder a program mounts (which keeps no trash) works,
+  removing what was made while unchanged; Replace there deletes for good,
+  said first.
 - **G. Left** (each its own step):
   - GVfs's NFS, AFP and device mounts not measured, at the bridge's pace;
   - Automatic's Small files where reads proved fast (only the local

@@ -16,9 +16,26 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Change, Copy, EntryRef, Link, Made, Move, Operation, Rmdir, StepContext, StepStatus, Trash,
-    builtin,
+    Change, Copy, Delete, EntryRef, Link, Made, Move, Operation, Rmdir, StepContext, StepStatus,
+    Trash, Uncopy, builtin,
 };
+
+/// What is replaced at `there` goes: to the trash, or for good where its
+/// volume keeps none (a network folder a program mounts), as the question
+/// said ([`replaces_for_good`]).
+fn put_aside(there: EntryRef) -> Box<dyn Operation> {
+    if builtin::keeps_no_trash(&there.path) {
+        Box::new(Delete { entry: there })
+    } else {
+        Box::new(Trash { entry: there })
+    }
+}
+
+/// Whether what `clash` replaces would go for good: where it is keeps no
+/// trash. The question says so before anyone chooses Replace.
+pub fn replaces_for_good(clash: &Clash) -> bool {
+    builtin::keeps_no_trash(&clash.there.path)
+}
 
 /// What becomes of an item whose name a file takes, or of a file whose
 /// name a folder takes.
@@ -431,6 +448,18 @@ impl Walk<'_> {
         if there {
             if transfer.moving() {
                 self.changed = true;
+                // Where it keeps no trash, the original goes for good, as a
+                // move's does once copied: Undo copies it back.
+                if builtin::keeps_no_trash(&src)
+                    && let Some(copy) = EntryRef::from_path(&target)
+                {
+                    return self.push(Box::new(Uncopy {
+                        entry: transfer.entry().clone(),
+                        source: copy,
+                        made_as: builtin::made_state(&src),
+                        preserve_attributes: true,
+                    }));
+                }
                 return self.push(Box::new(Trash {
                     entry: transfer.entry().clone(),
                 }));
@@ -526,7 +555,7 @@ impl Walk<'_> {
             Choice::Replace | Choice::ReplaceIfNewer => {
                 let holds_input = made.inputs.iter().any(|input| input.starts_with(target));
                 if !holds_input && let Some(there) = EntryRef::from_path(target) {
-                    self.push(Box::new(Trash { entry: there }));
+                    self.push(put_aside(there));
                 }
                 self.push(op.clone_box());
             }
@@ -554,7 +583,7 @@ impl Walk<'_> {
         if !src.starts_with(target)
             && let Some(there) = EntryRef::from_path(target)
         {
-            self.push(Box::new(Trash { entry: there }));
+            self.push(put_aside(there));
         }
         self.keep(transfer, true);
     }
@@ -752,6 +781,57 @@ mod tests {
         })
         .to_string_lossy()
         .into_owned()
+    }
+
+    /// Onto a folder that keeps no trash (a network folder a program
+    /// mounts), Replace deletes what was there for good, as the question
+    /// says before anyone chooses it; a move whose item is there whole
+    /// leaves no trash either: its original goes, Undo copying it back.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn where_no_trash_is_kept_replace_deletes_and_the_question_says_so() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (src, dest) = (tmp.path().join("here"), tmp.path().join("there"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(src.join("a.txt"), "mine").unwrap();
+        std::fs::write(dest.join("a.txt"), "theirs").unwrap();
+        crate::fs::reach::pretend_remote(&dest);
+        let copy: Box<dyn Operation> = Box::new(Copy {
+            entry: EntryRef::from_path(src.join("a.txt")).unwrap(),
+            dest_dir: dest.clone(),
+            new_name: None,
+            preserve_attributes: true,
+        });
+        let replace = Answer::all(Policy {
+            files: FileChoice::Replace,
+            folders: FolderChoice::Merge,
+        });
+        let settled = settle(&[copy], &replace, &StepContext::detached());
+        assert!(replaces_for_good(&settled.clashes[0]));
+        let kinds: Vec<&str> = settled.steps.iter().map(|s| s.kind()).collect();
+        assert_eq!(kinds, ["delete", "copy"]);
+
+        // There whole, from a folder keeping no trash: its original goes.
+        crate::fs::reach::pretend_remote(&src);
+        std::fs::write(dest.join("a.txt"), "mine").unwrap();
+        let modified = std::fs::metadata(src.join("a.txt"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(dest.join("a.txt"))
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        let moved: Box<dyn Operation> = Box::new(Move::new(
+            EntryRef::from_path(src.join("a.txt")).unwrap(),
+            dest.clone(),
+        ));
+        let settled = settle(&[moved], &replace, &StepContext::detached());
+        let kinds: Vec<&str> = settled.steps.iter().map(|s| s.kind()).collect();
+        assert_eq!(kinds, ["uncopy"]);
     }
 
     #[test]

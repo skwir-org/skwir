@@ -519,6 +519,19 @@ pub fn render(
                 .text_color(theme.text_muted)
                 .child(format!("Nothing is {done} until you choose.")),
         )
+        .when(
+            clashes
+                .question
+                .clashes
+                .iter()
+                .any(skwir_core::op::clash::replaces_for_good),
+            |d| {
+                d.child(div().text_xs().text_color(theme.warning).child(format!(
+                    "“{dest}” is in a network folder, which keeps no trash: \
+                     what is replaced there is deleted for good."
+                )))
+            },
+        )
         .child(heads)
         .child(div().h(px(1.)).bg(theme.border))
         .child(list)

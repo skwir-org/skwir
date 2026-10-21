@@ -33,8 +33,10 @@
 //! does beside the mount, where no watch of this machine's sees it: the
 //! folder is noted (`StepContext::changed_beside`), and the window reads
 //! it again where it is shown at the plan's end
-//! (`Executor::set_changed_beside`). A transfer whose mount keeps what it
-//! read (sshfs) makes it read the folder again itself.
+//! (`Executor::set_changed_beside`), a transfer whose mount keeps what it
+//! read (sshfs) making it read the folder anew just before
+//! ([`Transfer::show`]): a look at the folder during the plan may have
+//! kept what it held then.
 
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
@@ -46,7 +48,7 @@ use anyhow::Context;
 use parking_lot::{Mutex, RwLock};
 
 use super::context::{CopiedAs, Pause};
-use super::{Cancelled, Copy, Move, Operation, StepContext};
+use super::{Cancelled, Copy, Delete, Move, Operation, StepContext, Uncopy};
 use crate::cancel::CancelToken;
 use crate::companions::Companions;
 
@@ -114,6 +116,17 @@ pub trait Transfer: Send + Sync {
         let _ = (folder, names, control);
         Err(NotServed.into())
     }
+
+    /// Make the mount show `folder` as the server has it, this plan's
+    /// transfers having changed it beside the mount, just before the window
+    /// reads it again (`Executor::set_changed_beside`): a mount that keeps
+    /// what it read (sshfs keeps a folder's names 20 s) reads it anew.
+    /// Whether it did; the first that does is the last asked. Blocking, on
+    /// the plan's thread.
+    fn show(&self, folder: &Path) -> bool {
+        let _ = folder;
+        false
+    }
 }
 
 /// What a transfer tells as it copies ([`Transfer::copy`]).
@@ -174,7 +187,7 @@ impl Transfers {
     }
 
     /// Every one registered, in order.
-    fn all(&self) -> Vec<Arc<dyn Transfer>> {
+    pub(super) fn all(&self) -> Vec<Arc<dyn Transfer>> {
         self.list
             .read()
             .iter()
@@ -312,9 +325,9 @@ pub(super) fn batch_ahead(
 }
 
 /// Resolve ahead, [`AT_ONCE`] at a time, the sources of `steps` (copies
-/// and moves) that are on a remote, where each look is a round trip: a dry
-/// run then checks each step from what was found
-/// (`StepContext::resolve`).
+/// and moves) and what they remove (`removal`) that are on a remote, where
+/// each look is a round trip: a dry run then checks each step from what
+/// was found (`StepContext::resolve`).
 pub(super) fn resolve_ahead(steps: &[Box<dyn Operation>], ctx: &StepContext) {
     let entries: Vec<&super::EntryRef> = steps
         .iter()
@@ -323,9 +336,16 @@ pub(super) fn resolve_ahead(steps: &[Box<dyn Operation>], ctx: &StepContext) {
             any.downcast_ref::<Copy>()
                 .map(|c| &c.entry)
                 .or_else(|| any.downcast_ref::<Move>().map(|m| &m.entry))
+                .or_else(|| removal(step.as_ref()))
         })
         .filter(|entry| crate::fs::reach::of(&entry.path).is_some())
         .collect();
+    resolve_all(&entries, ctx);
+}
+
+/// Resolve `entries` at once, [`AT_ONCE`] at a time, each found kept for
+/// its step (`StepContext::resolved_as`). One alone: by its step.
+fn resolve_all(entries: &[&super::EntryRef], ctx: &StepContext) {
     if entries.len() < 2 {
         return;
     }
@@ -349,6 +369,163 @@ pub(super) fn resolve_ahead(steps: &[Box<dyn Operation>], ctx: &StepContext) {
     for (n, path) in found.into_inner() {
         ctx.resolved_as(entries[n], path);
     }
+}
+
+/// Whether a removal ahead removed what `step` removes and its step has
+/// not said so: the plan stopped before it.
+pub(super) fn removed_unclaimed(step: &dyn Operation, ctx: &StepContext) -> bool {
+    removal(step)
+        .and_then(|entry| ctx.resolve(entry).ok())
+        .is_some_and(|path| ctx.was_removed_ahead(&path))
+}
+
+/// What a step removes, where a removal ahead may take it: a deletion for
+/// good, or a copy taken back where its volume keeps no trash.
+fn removal(step: &dyn Operation) -> Option<&super::EntryRef> {
+    let any = step.as_any()?;
+    any.downcast_ref::<Delete>()
+        .map(|d| &d.entry)
+        .or_else(|| any.downcast_ref::<Uncopy>().map(|u| &u.entry))
+}
+
+/// Look, before the step `i` of `steps` is checked, at the run of
+/// removals from it (`removal`), and remove at once those in a remote's
+/// folder where a plugin's transfer removes (`Transfer::removes`), with
+/// the files beside them that go with them (their companions, as the
+/// folder's names listed once say): through the mount, each name is a
+/// round trip to the server under its folder's lock. Only those whose
+/// checks pass now, as their steps would check them: a removal is not
+/// taken back. Each step then says it removed its own
+/// (`StepContext::take_removed_ahead`). Once for a run.
+///
+/// # Errors
+/// Only when the plan was cancelled; a transfer that failed leaves what
+/// it did not remove to the steps.
+pub(super) fn remove_ahead(
+    steps: &[Box<dyn Operation>],
+    i: usize,
+    ctx: &StepContext,
+) -> Result<(), Cancelled> {
+    if i < ctx.removed_until() || steps.get(i).and_then(|s| removal(s.as_ref())).is_none() {
+        return Ok(());
+    }
+    let run: Vec<&dyn Operation> = steps[i..]
+        .iter()
+        .map(AsRef::as_ref)
+        .take_while(|step| removal(*step).is_some())
+        .collect();
+    ctx.removed_up_to(i + run.len());
+    let Some(transfers) = ctx.transfers() else {
+        return Ok(());
+    };
+    let remote: Vec<&dyn Operation> = run
+        .into_iter()
+        .filter(|step| removal(*step).is_some_and(|e| crate::fs::reach::of(&e.path).is_some()))
+        .collect();
+    if remote.is_empty() {
+        return Ok(());
+    }
+    let entries: Vec<&super::EntryRef> = remote.iter().filter_map(|s| removal(*s)).collect();
+    resolve_all(&entries, ctx);
+    let mut folders: BTreeMap<PathBuf, Vec<(&super::EntryRef, &dyn Operation, PathBuf)>> =
+        BTreeMap::new();
+    for step in remote {
+        let Some(entry) = removal(step) else { continue };
+        if let Ok(path) = ctx.resolve(entry)
+            && let Some(folder) = path.parent()
+            && transfers.remove_in(folder)
+        {
+            folders
+                .entry(folder.to_path_buf())
+                .or_default()
+                .push((entry, step, path));
+        }
+    }
+    let control = ctx.control();
+    for (folder, steps) in folders {
+        // One file alone: as many round trips by its step. A folder is a
+        // round trip a name it holds.
+        let worth = steps.len() > 1
+            || steps
+                .iter()
+                .any(|(_, _, path)| std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir()));
+        if !worth {
+            continue;
+        }
+        // Their names, and their companions there, as the folder's names
+        // say: a look for a name not there is a round trip each.
+        let Ok(listed) = std::fs::read_dir(&folder).map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.file_name())
+                .collect::<std::collections::HashSet<_>>()
+        }) else {
+            continue;
+        };
+        let mut names: Vec<OsString> = Vec::new();
+        let mut taken: Vec<(&super::EntryRef, PathBuf)> = Vec::new();
+        for (entry, step, path) in steps {
+            if !matches!(step.check(ctx), super::StepStatus::Pending { .. }) {
+                continue;
+            }
+            let companions = ctx.companions().existing_as(&path, &|at| {
+                at.parent() == Some(folder.as_path())
+                    && at.file_name().is_some_and(|name| listed.contains(name))
+            });
+            // One beside elsewhere is left to its step.
+            if companions
+                .iter()
+                .any(|c| c.path.parent() != Some(folder.as_path()))
+            {
+                continue;
+            }
+            let Some(name) = path.file_name() else {
+                continue;
+            };
+            names.push(name.to_owned());
+            names.extend(
+                companions
+                    .iter()
+                    .filter_map(|c| c.path.file_name().map(ToOwned::to_owned)),
+            );
+            taken.push((entry, path));
+        }
+        if taken.is_empty() {
+            continue;
+        }
+        let mut removed = false;
+        for transfer in transfers.all() {
+            if !transfer.removes(&folder) {
+                continue;
+            }
+            ctx.changed_beside(&folder);
+            match transfer.remove(&folder, &names, &control) {
+                Err(error) if error.is::<NotServed>() => {}
+                Ok(()) => {
+                    removed = true;
+                    break;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "{} removing {} entries failed, the rest removed one by one: {error:#}",
+                        transfer.name(),
+                        taken.len()
+                    );
+                    break;
+                }
+            }
+        }
+        for (entry, path) in taken {
+            if removed {
+                ctx.removed_ahead(&path);
+            } else {
+                // Cut short, each is looked at again by its step.
+                ctx.forget_resolved(entry);
+            }
+        }
+        ctx.check_cancelled()?;
+    }
+    Ok(())
 }
 
 /// A step whose copy a batch may make: a copy that keeps attributes, or a
@@ -1447,6 +1624,95 @@ mod tests {
         assert!(error.contains("changed after it was copied"), "{error}");
         assert!(entries[0].exists(), "the changed one stays");
         assert!(entries[1..].iter().all(|e| !e.exists()), "the others go");
+    }
+
+    fn fake_removing(removals: &Arc<Mutex<Vec<Vec<OsString>>>>) -> Arc<Executor> {
+        executor_with(Fake {
+            calls: Arc::default(),
+            fails: false,
+            cancels: None,
+            cancels_after: None,
+            touches: Mutex::default(),
+            removals: Some(Arc::clone(removals)),
+        })
+    }
+
+    /// Deletions for good in a remote's folder go together, by the
+    /// transfer that removes there, and each step says it deleted its own.
+    #[test]
+    fn deletions_in_a_remote_folder_go_together() {
+        let tmp = home_tempdir();
+        let entries = served(tmp.path());
+        let from = tmp.path().join("served");
+        crate::fs::reach::pretend_remote(&from);
+        let removals = Arc::new(Mutex::new(Vec::new()));
+        let executor = fake_removing(&removals);
+        let plan = Plan::with_steps(
+            "delete",
+            entries
+                .iter()
+                .map(|e| {
+                    Box::new(Delete {
+                        entry: EntryRef::from_path(e).unwrap(),
+                    }) as Box<dyn Operation>
+                })
+                .collect(),
+        );
+        let r = executor.execute_blocking(&plan, &CancelToken::new());
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert_eq!(r.applied, entries.len(), "each said deleted, none skipped");
+        assert_eq!(removals.lock().len(), 1, "one call for the folder");
+        assert!(names(&from).is_empty());
+    }
+
+    /// A copy onto a volume that keeps no trash is taken back by Undo for
+    /// good, together, and copied again by Redo; a copy changed since
+    /// stays, and Undo says so.
+    #[test]
+    fn copies_onto_a_remote_are_taken_back_by_undo_and_made_again_by_redo() {
+        let tmp = home_tempdir();
+        let entries = served(&tmp.path().join("here"));
+        let dest = tmp.path().join("there");
+        std::fs::create_dir(&dest).unwrap();
+        crate::fs::reach::pretend_remote(&dest);
+        let removals = Arc::new(Mutex::new(Vec::new()));
+        let executor = fake_removing(&removals);
+        let r = executor.execute_blocking(&copies(&entries, &dest), &CancelToken::new());
+        assert!(r.error.is_none(), "{:?}", r.error);
+        let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
+        assert!(undone.error.is_none(), "{:?}", undone.error);
+        assert_eq!(removals.lock().len(), 1, "taken back in one call");
+        assert!(names(&dest).is_empty(), "the copies gone");
+        let redone = executor.redo_blocking(&CancelToken::new()).unwrap();
+        assert!(redone.error.is_none(), "{:?}", redone.error);
+        for e in &entries {
+            same(e, &dest.join(e.file_name().unwrap()));
+        }
+        // Changed since it was copied again: it stays.
+        let changed = dest.join("kept.txt");
+        std::fs::set_permissions(&changed, std::fs::Permissions::from_mode(0o644)).unwrap();
+        file(&changed, "edited there", 0o644);
+        let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
+        let error = undone.error.unwrap_or_default();
+        assert!(error.contains("changed since it was made"), "{error}");
+        assert_eq!(names(&dest), ["kept.txt"], "the changed one stays");
+    }
+
+    /// The trash of a network folder a program mounts is none: a step
+    /// that would put something there says so before anything is done.
+    #[test]
+    fn a_trash_where_none_is_kept_is_refused_before_anything_is_done() {
+        let tmp = home_tempdir();
+        let entries = served(tmp.path());
+        crate::fs::reach::pretend_remote(&tmp.path().join("served"));
+        let step = super::super::Trash {
+            entry: EntryRef::from_path(&entries[0]).unwrap(),
+        };
+        let status = super::super::Operation::check(&step, &StepContext::detached());
+        assert!(
+            matches!(&status, super::super::StepStatus::Conflict { reason } if reason.contains("keeps no trash")),
+            "{status:?}"
+        );
     }
 
     /// What a move's source was as its batch took it is what its step

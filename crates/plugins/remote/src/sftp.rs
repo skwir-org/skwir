@@ -212,6 +212,15 @@ impl Transfer for Sftp {
         "sftp"
     }
 
+    /// An sshfs mount: it reads the folder from the server again.
+    fn show(&self, folder: &Path) -> bool {
+        let shown = Mount::of(folder).is_some();
+        if shown {
+            crate::ssh_mount::shown_again(folder);
+        }
+        shown
+    }
+
     /// A mount sftp reaches whose links show as links (module
     /// documentation).
     fn removes(&self, folder: &Path) -> bool {
@@ -332,12 +341,7 @@ impl Transfer for Sftp {
         }
         let total = AtomicU64::new(0);
         let ran = |bytes: u64| (told.copied)(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
-        let ended = self.run(sftp, &mount, files, &ran, control);
-        // Placed in the folder beside the mount, ended well or not.
-        if temp.is_some() {
-            crate::ssh_mount::shown_again(into);
-        }
-        if let Err(error) = ended {
+        if let Err(error) = self.run(sftp, &mount, files, &ran, control) {
             // ssh's own failure (255) for the user's ssh, which asks
             // nothing: the server is not reached so.
             let unreached = error

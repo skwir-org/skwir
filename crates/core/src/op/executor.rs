@@ -1126,6 +1126,11 @@ impl Executor {
                 cancelled = true;
                 break;
             }
+            // The removals from here in a remote's folder, made at once.
+            if super::transfer::remove_ahead(&plan.steps, i, &ctx).is_err() {
+                cancelled = true;
+                break;
+            }
             let change = step.describe();
             // What a toast names: read before the step takes the record.
             let mut named = if i == 0 { self::named(&change) } else { None };
@@ -1190,6 +1195,24 @@ impl Executor {
                 break;
             }
         }
+        // Cut short, the removals a removal ahead made for steps that never
+        // ran are done all the same: said, and taken back by Undo as theirs.
+        for step in &plan.steps {
+            if !super::transfer::removed_unclaimed(step.as_ref(), &ctx) {
+                continue;
+            }
+            match super::guarded(|| step.apply(&ctx)) {
+                Ok(inverse) => {
+                    applied += 1;
+                    held.push(step.describe());
+                    match inverse {
+                        Some(inverse) => inverses.push(inverse),
+                        None => complete = false,
+                    }
+                }
+                Err(e) => tracing::warn!(plan = %plan.title, "a step removed ahead: {e:#}"),
+            }
+        }
         // Cut short, what a batch placed for steps that never ran goes:
         // no Undo holds it (ADR-078).
         super::transfer::take_back_unclaimed(&ctx);
@@ -1208,10 +1231,20 @@ impl Executor {
         // What transfers changed beside a mount, no watch saw: read again
         // where it is shown.
         let beside = ctx.take_changed_beside();
-        if !beside.is_empty()
-            && let Some(told) = self.changed_beside.lock().clone()
-        {
-            told(&beside);
+        if !beside.is_empty() {
+            // Shown anew by the mount just before it is read: a look at
+            // it during the plan may have kept what it held then.
+            let transfers = ctx.transfers().map(super::transfer::Transfers::all);
+            for folder in &beside {
+                for transfer in transfers.iter().flatten() {
+                    if transfer.show(folder) {
+                        break;
+                    }
+                }
+            }
+            if let Some(told) = self.changed_beside.lock().clone() {
+                told(&beside);
+            }
         }
         inverses.reverse();
         let inverse = if inverses.is_empty() {

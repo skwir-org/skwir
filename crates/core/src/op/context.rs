@@ -206,6 +206,11 @@ pub struct StepContext {
     batched_until: std::cell::Cell<usize>,
     /// What a batch did for each copy's source, until its step takes it.
     batched: RefCell<HashMap<PathBuf, super::transfer::Batched>>,
+    /// The steps before this one were looked at for a removal ahead
+    /// (`transfer::remove_ahead`).
+    removed_until: std::cell::Cell<usize>,
+    /// What a removal ahead removed, until its step says so.
+    removed: RefCell<HashSet<PathBuf>>,
     /// What a move's source was as a batch copied it.
     batched_states: RefCell<HashMap<PathBuf, CopiedAs>>,
     /// Where each reference was found ([`StepContext::resolve`]): by a
@@ -354,6 +359,8 @@ impl StepContext {
             secret_asker: None,
             transfers: None,
             batched_until: std::cell::Cell::new(0),
+            removed_until: std::cell::Cell::new(0),
+            removed: RefCell::default(),
             batched: RefCell::default(),
             batched_states: RefCell::default(),
             resolved: RefCell::default(),
@@ -665,6 +672,38 @@ impl StepContext {
 
     pub(super) fn batched_up_to(&self, end: usize) {
         self.batched_until.set(end);
+    }
+
+    /// The steps before this index were looked at for a removal ahead.
+    pub(super) fn removed_until(&self) -> usize {
+        self.removed_until.get()
+    }
+
+    pub(super) fn removed_up_to(&self, end: usize) {
+        self.removed_until.set(end);
+    }
+
+    /// A removal ahead removed `path`, for its step.
+    pub(super) fn removed_ahead(&self, path: &Path) {
+        self.removed.borrow_mut().insert(path.to_path_buf());
+    }
+
+    /// Whether a removal ahead removed `path` (its step's check asks).
+    pub(super) fn was_removed_ahead(&self, path: &Path) -> bool {
+        self.removed.borrow().contains(path)
+    }
+
+    /// Whether a removal ahead removed `path`, taken by its step.
+    pub(super) fn take_removed_ahead(&self, path: &Path) -> bool {
+        self.removed.borrow_mut().remove(path)
+    }
+
+    /// Forget where `entry` was found: what was looked at ahead may have
+    /// changed since (a removal ahead cut short).
+    pub(super) fn forget_resolved(&self, entry: &super::EntryRef) {
+        self.resolved
+            .borrow_mut()
+            .remove(&(entry.id, entry.path.clone()));
     }
 
     /// A batch did `what` for the copy of `src`.
