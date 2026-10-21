@@ -149,6 +149,12 @@ ADR-077 (which revises ADR-021).
   user's, or the user's own while a window runs with a runtime folder of
   its own); a mount of another bridge is neither recognised nor
   connected through.
+- Letting go of a mount (Eject) first leaves the folders shown there
+  (`App::release`), then waits, ten seconds at most, until their
+  listings let go of them (closed a moment later on a worker,
+  `fs::wait_let_go`) and the remote's lane runs nothing: until then the
+  system refuses the unmount as busy, and Eject said another program
+  used it.
 - A mount Skwir makes is under `$XDG_RUNTIME_DIR/skwir/remote/`, named by
   `connector::point_name` so its address reads back from it: nothing else
   is kept. It outlives Skwir, as GVfs's do.

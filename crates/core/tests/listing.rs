@@ -1080,3 +1080,33 @@ fn a_file_windows_hides_is_hidden() {
     assert_eq!(shown(false), ["shown.txt"]);
     assert_eq!(shown(true), [".dotted", "desktop.ini", "shown.txt"]);
 }
+
+/// A folder shown is held open until its listing lets go of it, a moment
+/// after it is closed, on a worker: what unmounts a remote waits for that
+/// (`fs::wait_let_go`), as the system refuses to unmount a folder held.
+#[test]
+fn a_folder_closed_is_let_go_of_and_said_so() {
+    let tmp = home_tempdir();
+    let shown = tmp.path().join("it's shown");
+    std::fs::create_dir(&shown).unwrap();
+    std::fs::write(shown.join("a.txt"), "a").unwrap();
+    let app = app(tmp.path());
+    let open = app.open_location(&Location::from_path(&shown)).unwrap();
+    let events = open.events();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if let ListingEvent::Complete = events.recv_timeout(left).expect("listed") {
+            break;
+        }
+    }
+    assert!(
+        !skwir_core::fs::wait_let_go(tmp.path(), Duration::ZERO),
+        "held"
+    );
+    open.close();
+    assert!(skwir_core::fs::wait_let_go(
+        tmp.path(),
+        Duration::from_secs(20)
+    ));
+}

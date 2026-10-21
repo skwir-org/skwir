@@ -25,7 +25,7 @@ pub mod sshfs;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use skwir_core::app::{App, NotifyLevel};
@@ -796,6 +796,22 @@ impl Remotes {
         std::thread::Builder::new()
             .name("skwir-disconnect".into())
             .spawn(move || {
+                // What showed it lets go first: the folders left close on a
+                // worker a moment later, and what reads it in its lane ends;
+                // until then the system refuses the unmount as busy.
+                if let Some(app) = weak.upgrade() {
+                    let (lane, until) = (mounted.remote.lane(), Instant::now() + LET_GO);
+                    while Instant::now() < until {
+                        let left = skwir_core::fs::wait_let_go(
+                            &mounted.remote.point,
+                            until.saturating_duration_since(Instant::now()),
+                        );
+                        if left && app.scheduler.stalled(lane).is_none() {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                }
                 let mut result =
                     connector.disconnect(&mounted.remote, &mounted.recognised, &lifetime);
                 if result.is_err() && force && !mounted.remote.by_kernel() {
@@ -819,6 +835,10 @@ impl Remotes {
 /// How long a question waits between looks at whether its connection was
 /// cancelled.
 const LOOK: Duration = Duration::from_millis(100);
+
+/// How long letting go of a mount waits for what showed it and what read
+/// it there to let go first.
+const LET_GO: Duration = Duration::from_secs(10);
 
 /// What a connection asks of the window: a password in its masked
 /// prompt, a server it cannot vouch for as a question.

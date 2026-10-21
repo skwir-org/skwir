@@ -44,6 +44,8 @@ impl LocationProvider for PathProvider {
 }
 
 struct Shared {
+    /// Counted among the folders held open until it goes ([`wait_let_go`]).
+    _held: Held,
     /// Where the directory is now: it follows the directory when it moves.
     dir: RwLock<PathBuf>,
     /// The directory held open: names are stat-ed relative to it.
@@ -215,6 +217,7 @@ impl PathLocation {
                         lane
                     };
                     let shared = Arc::new(Shared {
+                        _held: Held::new(&dir),
                         dir: RwLock::new(dir.clone()),
                         folder,
                         id,
@@ -274,6 +277,48 @@ impl PathLocation {
             },
         );
     }
+}
+
+/// The folders held open by their listings, by where they were opened:
+/// a listing closed lets go of its folder a moment later, on a worker
+/// (`OpenLocation::close`), and what unmounts a volume waits for that
+/// ([`wait_let_go`]).
+static HELD: parking_lot::Mutex<Vec<PathBuf>> = parking_lot::Mutex::new(Vec::new());
+static LET_GO: parking_lot::Condvar = parking_lot::Condvar::new();
+
+/// A folder counted in [`HELD`] while it lives.
+struct Held(PathBuf);
+
+impl Held {
+    fn new(path: &Path) -> Self {
+        HELD.lock().push(path.to_path_buf());
+        Held(path.to_path_buf())
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        let mut held = HELD.lock();
+        if let Some(at) = held.iter().position(|p| *p == self.0) {
+            held.swap_remove(at);
+        }
+        LET_GO.notify_all();
+    }
+}
+
+/// Wait until no listing holds a folder at or below `path` open, for at
+/// most `at_most`; whether none does. What lets go of a mount asks it
+/// after leaving the folders shown there (`App::release`): until their
+/// descriptors are closed, the system refuses to unmount it as busy.
+pub fn wait_let_go(path: &Path, at_most: Duration) -> bool {
+    let deadline = std::time::Instant::now() + at_most;
+    let mut held = HELD.lock();
+    while held.iter().any(|p| p.starts_with(path)) {
+        if LET_GO.wait_until(&mut held, deadline).timed_out() {
+            return !held.iter().any(|p| p.starts_with(path));
+        }
+    }
+    true
 }
 
 impl Shared {
