@@ -4,14 +4,19 @@
 //! Plans, undos and redos are asked in an order, and run at once where
 //! they touch nothing in common (ADR-079): each says what it touches (its
 //! steps' `footprint`), and starts when nothing asked before it that has
-//! not ended conflicts with it, when it is heavy no other heavy one runs
-//! or waits before it, and fewer than [`AT_ONCE`] run. A step that cannot
+//! not ended conflicts with it, when it is heavy no other heavy one on one
+//! of its disks or servers runs or waits before it, and fewer than
+//! [`AT_ONCE`] run. A step that cannot
 //! say what it touches makes its plan run alone, after everything asked
 //! before it and before everything asked after. So any two plans that
 //! touch something in common run in the order asked, and the journal keeps
 //! that order: undoing in its reverse puts back every state, whatever
 //! order independent plans ended in. An undo takes the last entry asked
 //! for, and waits for it while it runs; two quick undos take two entries.
+//! A plan a step's error stopped keeps the steps it had left
+//! ([`Executor::retry`]): retried, they run as a plan asked now, and what
+//! they apply joins the stopped plan's entry, one action, unless a plan
+//! asked since put an entry after it.
 //! Each plan runs on a thread of its own, which ends with it, so an idle
 //! app keeps no executor thread, and a copy that runs for minutes, or
 //! waits paused for as long as the user likes, never holds a scheduler
@@ -271,9 +276,42 @@ enum Work {
     Execute {
         plan: Arc<Plan>,
         whole: bool,
+        /// A retry: what it continues.
+        continues: Option<Box<Continues>>,
     },
     Replay(Direction),
 }
+
+/// What a retry continues (`Executor::retry`): the action that stopped,
+/// by where its entry is in the history, and what it left of a large
+/// file cut short, to go on from.
+struct Continues {
+    seq: u64,
+    partial: Option<super::staging::Partial>,
+}
+
+/// A plan a step's error stopped, what Retry runs of it.
+struct Stopped {
+    /// The run that stopped, as its events named it.
+    plan: PlanId,
+    /// Where its entry is, or would be, in the history.
+    seq: u64,
+    /// Its steps from the one that failed on, unfolded and settled.
+    rest: Plan,
+    /// What it left of a large file cut short, kept until it is retried
+    /// or let go.
+    partial: Option<super::staging::Partial>,
+}
+
+/// Where a step's error stopped a plan (`Executor::apply_plan`): its index,
+/// and what a copy it cut short left.
+struct Stop {
+    at: usize,
+    partial: Option<super::staging::Partial>,
+}
+
+/// The stopped plans kept for Retry, the latest: older ones are let go.
+const STOPPED_KEPT: usize = 8;
 
 impl Work {
     /// The stack its end may put an entry on: an applied plan's or a
@@ -375,6 +413,8 @@ pub struct Executor {
     /// Asks the user what becomes of the names a plan finds taken
     /// (`set_clash_asker`). None asks: such a plan is refused.
     clash_asker: Mutex<Option<ClashAsker>>,
+    /// The plans a step's error stopped, oldest first, for Retry.
+    stopped: Mutex<VecDeque<Stopped>>,
 }
 
 /// What a volume has free, by a folder on it.
@@ -485,6 +525,7 @@ impl Executor {
             changed_beside: Mutex::new(None),
             secret_asker: Mutex::new(None),
             clash_asker: Mutex::new(None),
+            stopped: Mutex::default(),
         })
     }
 
@@ -814,6 +855,7 @@ impl Executor {
             Work::Execute {
                 plan: Arc::new(plan),
                 whole: false,
+                continues: None,
             },
             cancel,
         );
@@ -830,6 +872,7 @@ impl Executor {
             Work::Execute {
                 plan: Arc::new(plan),
                 whole: true,
+                continues: None,
             },
             cancel,
         );
@@ -842,10 +885,63 @@ impl Executor {
             Work::Execute {
                 plan: Arc::new(plan.clone()),
                 whole: false,
+                continues: None,
             },
             cancel,
         )
         .expect("an executed plan has a result")
+    }
+
+    /// Whether the plan `plan`, which a step's error stopped, can be
+    /// retried ([`Executor::retry`]).
+    pub fn can_retry(&self, plan: PlanId) -> bool {
+        self.stopped.lock().iter().any(|s| s.plan == plan)
+    }
+
+    /// The title of the plan `plan`, which a step's error stopped.
+    pub fn stopped_title(&self, plan: PlanId) -> Option<String> {
+        let stopped = self.stopped.lock();
+        let found = stopped.iter().find(|s| s.plan == plan)?;
+        Some(found.rest.title.clone())
+    }
+
+    /// The plan a step's error stopped last, which Retry takes when told
+    /// no other.
+    pub fn last_stopped(&self) -> Option<PlanId> {
+        self.stopped.lock().back().map(|s| s.plan)
+    }
+
+    /// Run again what the plan `plan` had left when a step's error stopped
+    /// it, as a plan asked now, checked whole: what it applies joins that
+    /// plan's entry in the history (module documentation). False when
+    /// there is no such plan (retried already, or let go).
+    pub fn retry(self: &Arc<Self>, plan: PlanId, cancel: CancelToken) -> bool {
+        let Some(work) = self.retrying(plan) else {
+            return false;
+        };
+        self.submit(work, cancel);
+        true
+    }
+
+    /// Retry when its turn comes, waiting for it. `None` when there is no
+    /// such plan.
+    pub fn retry_blocking(&self, plan: PlanId, cancel: &CancelToken) -> Option<ExecResult> {
+        let work = self.retrying(plan)?;
+        self.submit_blocking(work, cancel)
+    }
+
+    /// The work that retries `plan`, taken out of the stopped plans.
+    fn retrying(&self, plan: PlanId) -> Option<Work> {
+        let mut stopped = self.stopped.lock();
+        let at = stopped.iter().position(|s| s.plan == plan)?;
+        let Stopped {
+            seq, rest, partial, ..
+        } = stopped.remove(at)?;
+        Some(Work::Execute {
+            plan: Arc::new(rest),
+            whole: true,
+            continues: Some(Box::new(Continues { seq, partial })),
+        })
     }
 
     /// Undo the last plan asked (ADR-079): once it ends where it runs,
@@ -1185,9 +1281,13 @@ impl Executor {
         let _ended = Ended(self, job.seq);
         // A cancelled plan is not checked whole: it stops at once.
         let result = match job.work {
-            Work::Execute { plan, whole } => {
+            Work::Execute {
+                plan,
+                whole,
+                continues,
+            } => {
                 let plan = Arc::try_unwrap(plan).unwrap_or_else(|plan| (*plan).clone());
-                Some(self.execute_now(plan, whole, &job.cancel, job.seq))
+                Some(self.execute_now(plan, whole, continues, &job.cancel, job.seq))
             }
             Work::Replay(direction) => self.replay(direction, job.target, job.seq, &job.cancel),
         };
@@ -1197,9 +1297,17 @@ impl Executor {
     }
 
     /// Apply `plan`, asked as `seq`: unfolded, its names taken settled, and
-    /// `whole`, checked first.
-    fn execute_now(&self, plan: Plan, whole: bool, cancel: &CancelToken, seq: u64) -> ExecResult {
+    /// `whole`, checked first; a retry, joining what it `continues`.
+    fn execute_now(
+        &self,
+        plan: Plan,
+        whole: bool,
+        continues: Option<Box<Continues>>,
+        cancel: &CancelToken,
+        seq: u64,
+    ) -> ExecResult {
         let whole = whole && !cancel.is_cancelled();
+        let (first, partial) = continues.map_or((None, None), |c| (Some(c.seq), c.partial));
         let companions = Arc::clone(&self.companions.lock());
         // Each step as it will be done, before anything is settled or
         // checked.
@@ -1219,9 +1327,23 @@ impl Executor {
         } else {
             Settling::Steps(None)
         };
+        // A retry that applies nothing (its server not answering yet, the
+        // question of a name taken cancelled) stays to be retried, under
+        // the id it is told by now, with what it would go on from.
+        let kept = |plan: &Plan, partial| {
+            if let Some(first) = first {
+                self.stash(plan.id, first, plan.clone(), partial);
+            }
+        };
         match settled {
-            Settling::Refused(reason) => self.refuse(&plan, reason),
-            Settling::Cancelled => self.cancelled(&plan),
+            Settling::Refused(reason) => {
+                kept(&plan, partial);
+                self.refuse(&plan, reason)
+            }
+            Settling::Cancelled => {
+                kept(&plan, partial);
+                self.cancelled(&plan)
+            }
             Settling::Steps(settled) => {
                 let plan = match settled {
                     Some(settled) => Plan {
@@ -1240,8 +1362,11 @@ impl Executor {
                     })
                     .flatten();
                 match refused {
-                    Some(reason) => self.refuse(&plan, reason),
-                    None => self.run_execute(&plan, cancel, seq),
+                    Some(reason) => {
+                        kept(&plan, partial);
+                        self.refuse(&plan, reason)
+                    }
+                    None => self.run_execute(&plan, cancel, seq, first, partial),
                 }
             }
         }
@@ -1296,26 +1421,86 @@ impl Executor {
         }
     }
 
-    fn run_execute(&self, plan: &Plan, cancel: &CancelToken, seq: u64) -> ExecResult {
-        self.apply_plan(plan, cancel, RunKind::Apply, |r, inverse| {
+    /// Apply `plan`, asked as `seq`, and journal it; a retry of the action
+    /// whose entry is at `first`, going on from `partial`.
+    fn run_execute(
+        &self,
+        plan: &Plan,
+        cancel: &CancelToken,
+        seq: u64,
+        first: Option<u64>,
+        partial: Option<super::staging::Partial>,
+    ) -> ExecResult {
+        self.apply_plan(plan, cancel, RunKind::Apply, partial, |r, inverse, stop| {
+            let mut j = self.journal.lock();
+            // In its place in the order asked: plans that ran beside it
+            // touched nothing it did (ADR-079). A retry in the place of
+            // what it continues, one action, unless a plan asked since put
+            // an entry after it, which may have touched what it then did:
+            // undoing that first, in the order asked, puts back each state.
+            let place = match first {
+                Some(first) if !j.undo.iter().any(|e| e.stacked > first && e.stacked < seq) => {
+                    first
+                }
+                _ => seq,
+            };
             if r.applied > 0 {
-                let mut j = self.journal.lock();
-                // In its place in the order asked: plans that ran beside it
-                // touched nothing it did (ADR-079).
-                j.put(
-                    Direction::Undo,
-                    JournalEntry {
-                        title: plan.title.clone(),
-                        applied_at: SystemTime::now(),
-                        plan: inverse,
-                        partial: Vec::new(),
-                        seq,
-                        stacked: seq,
-                    },
-                );
+                match j.undo.iter_mut().find(|e| e.stacked == place) {
+                    Some(entry) => {
+                        // What the retry applied is taken back first: it
+                        // came after.
+                        if let Some(mut inverse) = inverse {
+                            if let Some(earlier) = entry.plan.take() {
+                                inverse.title = earlier.title;
+                                inverse.steps.extend(earlier.steps);
+                            }
+                            entry.plan = Some(inverse);
+                        }
+                        entry.applied_at = SystemTime::now();
+                    }
+                    None => j.put(
+                        Direction::Undo,
+                        JournalEntry {
+                            title: plan.title.clone(),
+                            applied_at: SystemTime::now(),
+                            plan: inverse,
+                            partial: Vec::new(),
+                            seq: place,
+                            stacked: place,
+                        },
+                    ),
+                }
                 j.bound();
             }
+            drop(j);
+            // Stopped by a step's error, what it had left waits for Retry;
+            // what stopped it otherwise (Cancel, a write-out) is not.
+            if let Some(Stop { at, partial }) = stop {
+                let mut rest = Plan::with_steps(plan.title.clone(), plan.steps[at..].to_vec());
+                rest.on_conflict = plan.on_conflict;
+                rest.items.clone_from(&plan.items);
+                self.stash(plan.id, place, rest, partial);
+            }
         })
+    }
+
+    /// Keep `rest`, what the plan `plan` had left when it stopped, for
+    /// Retry, its entry at `seq`, with what it left of a file cut short;
+    /// the oldest let go past [`STOPPED_KEPT`] (what it left removed).
+    fn stash(&self, plan: PlanId, seq: u64, rest: Plan, partial: Option<super::staging::Partial>) {
+        let let_go = {
+            let mut stopped = self.stopped.lock();
+            stopped.push_back(Stopped {
+                plan,
+                seq,
+                rest,
+                partial,
+            });
+            let over = stopped.len().saturating_sub(STOPPED_KEPT);
+            stopped.drain(..over).collect::<Vec<_>>()
+        };
+        // Removed out of the lock: on a remote, a removal may wait.
+        drop(let_go);
     }
 
     /// Take back the top entry of one stack and journal what takes that
@@ -1368,7 +1553,7 @@ impl Executor {
         };
         let mut run = plan.clone();
         run.title = title;
-        let r = self.apply_plan(&run, cancel, direction.into(), |r, back| {
+        let r = self.apply_plan(&run, cancel, direction.into(), None, |r, back, _| {
             // This run's inverses come first: its steps were applied after
             // the ones an earlier, interrupted attempt already took back.
             let mut steps = back.map(|p| p.steps).unwrap_or_default();
@@ -1405,14 +1590,17 @@ impl Executor {
 
     /// The core loop: check, skip if done, apply, collect inverses in reverse order.
     /// `record` journals what was applied, and its inverse, before the plan
-    /// says it finished: whoever hears `Finished` (the toast's Undo and
-    /// Redo) finds the journal as the plan left it.
+    /// says it finished: whoever hears `Finished` (the toast's Undo, Redo
+    /// and Retry) finds the journal as the plan left it. It is told where
+    /// a step's error stopped the plan, if one did. A retry's copies go on
+    /// from `partial`, what the run it retries left of a file.
     fn apply_plan(
         &self,
         plan: &Plan,
         cancel: &CancelToken,
         run: RunKind,
-        record: impl FnOnce(&ExecResult, Option<Plan>),
+        partial: Option<super::staging::Partial>,
+        record: impl FnOnce(&ExecResult, Option<Plan>, Option<Stop>),
     ) -> ExecResult {
         let total = plan.steps.len();
         let meter = Arc::new(Meter::new(self.waker.lock().clone()));
@@ -1428,7 +1616,8 @@ impl Executor {
             .with_companions(Arc::clone(&self.companions.lock()))
             .with_transfers(Arc::clone(&self.transfers.lock()))
             .with_under_way(self.under_way.lock().clone())
-            .with_secret_asker(self.secret_asker.lock().clone());
+            .with_secret_asker(self.secret_asker.lock().clone())
+            .with_partial(partial);
         self.emit(ExecEvent::Started {
             plan: plan.id,
             title: plan.title.clone(),
@@ -1442,6 +1631,7 @@ impl Executor {
         let mut skipped = 0;
         let mut complete = true;
         let mut error = None;
+        let mut failed = None;
         let mut cancelled = false;
         for (i, step) in plan.steps.iter().enumerate() {
             // Paused, the next step waits here.
@@ -1521,6 +1711,7 @@ impl Executor {
             }));
             if let Some(e) = err {
                 error = Some(e);
+                failed = Some(i);
                 break;
             }
         }
@@ -1589,7 +1780,17 @@ impl Executor {
             undoable: inverse.is_some(),
             complete,
         };
-        record(&result, inverse);
+        // Stopped by a step's error, what it had left waits for Retry,
+        // with what a copy cut short left; what stopped it otherwise
+        // (Cancel, a write-out) is not retried.
+        let stop = match (failed, &result.error, cancelled) {
+            (Some(at), Some(_), false) => Some(Stop {
+                at,
+                partial: ctx.take_partial(),
+            }),
+            _ => None,
+        };
+        record(&result, inverse, stop);
         self.emit(ExecEvent::Finished {
             plan: plan.id,
             applied,
@@ -1766,6 +1967,170 @@ mod tests {
         fn footprint(&self, _: &super::super::footprint::Volumes) -> Option<Footprint> {
             Some(Footprint::default().made(&self.path).heavy_if(self.heavy))
         }
+    }
+
+    /// A step that makes `path`, failing while its server is `down`, and
+    /// conflicting while it is `blocked`; it and its inverse say so in
+    /// `log`.
+    #[derive(Debug, Clone)]
+    struct Flaky {
+        path: PathBuf,
+        undoing: bool,
+        down: Arc<std::sync::atomic::AtomicBool>,
+        blocked: Arc<std::sync::atomic::AtomicBool>,
+        log: Arc<parking_lot::Mutex<Vec<String>>>,
+    }
+
+    impl Operation for Flaky {
+        fn kind(&self) -> &'static str {
+            "flaky"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn describe(&self) -> Change {
+            Change::Create {
+                path: self.path.clone(),
+                directory: false,
+                words: None,
+            }
+        }
+        fn check(&self, _: &StepContext) -> StepStatus {
+            if self.blocked.load(Ordering::SeqCst) {
+                StepStatus::Conflict {
+                    reason: "not answering".into(),
+                }
+            } else {
+                StepStatus::Pending { reversible: true }
+            }
+        }
+        fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            anyhow::ensure!(!self.down.load(Ordering::SeqCst), "the server went away");
+            let verb = if self.undoing { "unmade" } else { "made" };
+            self.log
+                .lock()
+                .push(format!("{verb} {}", self.path.display()));
+            Ok(Some(Box::new(Flaky {
+                undoing: !self.undoing,
+                ..self.clone()
+            })))
+        }
+        fn clone_box(&self) -> Box<dyn Operation> {
+            Box::new(self.clone())
+        }
+        fn footprint(&self, _: &super::super::footprint::Volumes) -> Option<Footprint> {
+            Some(Footprint::default().made(&self.path))
+        }
+    }
+
+    /// Steps making `paths`, the one named `fails` failing while `down`.
+    struct Server {
+        down: Arc<std::sync::atomic::AtomicBool>,
+        blocked: Arc<std::sync::atomic::AtomicBool>,
+        log: Arc<parking_lot::Mutex<Vec<String>>>,
+    }
+
+    impl Server {
+        fn new() -> Self {
+            Server {
+                down: Arc::default(),
+                blocked: Arc::default(),
+                log: Arc::default(),
+            }
+        }
+
+        fn plan(&self, title: &str, paths: &[&str], fails: &str) -> Plan {
+            let steps = paths
+                .iter()
+                .map(|path| {
+                    let fine = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    Box::new(Flaky {
+                        path: PathBuf::from(path),
+                        undoing: false,
+                        down: if *path == fails {
+                            Arc::clone(&self.down)
+                        } else {
+                            Arc::clone(&fine)
+                        },
+                        blocked: if *path == fails {
+                            Arc::clone(&self.blocked)
+                        } else {
+                            fine
+                        },
+                        log: Arc::clone(&self.log),
+                    }) as Box<dyn Operation>
+                })
+                .collect();
+            Plan::with_steps(title, steps)
+        }
+
+        fn said(&self) -> Vec<String> {
+            std::mem::take(&mut *self.log.lock())
+        }
+    }
+
+    /// A plan an error stopped is retried from the step that failed, and
+    /// what the retry applies is undone with it, one action; a retry
+    /// refused before it applies anything stays to be retried.
+    #[test]
+    fn a_stopped_plan_is_retried_from_where_it_stopped_and_undone_whole() {
+        let executor = Executor::new(Scheduler::new(2));
+        let server = Server::new();
+        server.down.store(true, Ordering::SeqCst);
+        let plan = server.plan("upload", &["/srv/a", "/srv/b", "/srv/c"], "/srv/b");
+        let id = plan.id;
+        let r = executor.execute_blocking(&plan, &CancelToken::new());
+        assert_eq!(
+            (r.applied, r.error.as_deref()),
+            (1, Some("the server went away"))
+        );
+        assert!(executor.can_retry(id) && executor.last_stopped() == Some(id));
+        assert_eq!(server.said(), ["made /srv/a"]);
+
+        // Still not answering: the whole retry is checked first, refused,
+        // and kept under the id its run was told by.
+        server.blocked.store(true, Ordering::SeqCst);
+        let r = executor.retry_blocking(id, &CancelToken::new()).unwrap();
+        assert_eq!((r.applied, r.error.as_deref()), (0, Some("not answering")));
+        assert!(!executor.can_retry(id));
+        let again = executor.last_stopped().expect("still to retry");
+
+        server.blocked.store(false, Ordering::SeqCst);
+        server.down.store(false, Ordering::SeqCst);
+        let r = executor.retry_blocking(again, &CancelToken::new()).unwrap();
+        assert_eq!((r.applied, r.error), (2, None));
+        assert_eq!(server.said(), ["made /srv/b", "made /srv/c"]);
+        assert_eq!(executor.last_stopped(), None);
+        assert_eq!(executor.undo_titles(), ["upload"], "one action");
+
+        executor.undo_blocking(&CancelToken::new()).unwrap();
+        assert_eq!(
+            server.said(),
+            ["unmade /srv/c", "unmade /srv/b", "unmade /srv/a"]
+        );
+        assert!(!executor.can_undo());
+    }
+
+    /// A plan asked after a stopped one put an entry after it: the retry's
+    /// own entry is then the latest, undone first.
+    #[test]
+    fn a_retry_after_another_action_is_an_action_of_its_own() {
+        let executor = Executor::new(Scheduler::new(2));
+        let server = Server::new();
+        server.down.store(true, Ordering::SeqCst);
+        let plan = server.plan("upload", &["/srv/a", "/srv/b"], "/srv/b");
+        executor.execute_blocking(&plan, &CancelToken::new());
+        let other = server.plan("rename", &["/srv/z"], "");
+        executor.execute_blocking(&other, &CancelToken::new());
+        server.down.store(false, Ordering::SeqCst);
+        let r = executor
+            .retry_blocking(plan.id, &CancelToken::new())
+            .unwrap();
+        assert_eq!(r.applied, 1);
+        assert_eq!(executor.undo_titles(), ["upload", "rename", "upload"]);
+        server.said();
+        executor.undo_blocking(&CancelToken::new()).unwrap();
+        assert_eq!(server.said(), ["unmade /srv/b"]);
     }
 
     /// Wait until `log` says `line`, at most five seconds.

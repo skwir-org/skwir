@@ -177,6 +177,12 @@ pub struct StepContext {
     /// ([`Self::staging_for`]), by folder, and how many things were staged.
     stagings: RefCell<HashMap<PathBuf, Rc<super::staging::Staging>>>,
     staged: std::cell::Cell<u64>,
+    /// The file the step under way copies byte by byte, from its start,
+    /// into its staging folder: what [`Self::keep_partial`] may keep.
+    copying: RefCell<Option<Copying>>,
+    /// What a copy cut short left, kept for Retry ([`Self::keep_partial`]),
+    /// or handed to this run to go on from ([`Self::with_partial`]).
+    partial: RefCell<Option<KeptPartial>>,
     /// The devices the kernel would not clone or copy between, by the
     /// pair: not asked again for each file (copied onto a stick, every
     /// file is refused both).
@@ -299,6 +305,29 @@ struct Copied {
     left: u64,
 }
 
+/// A file a step copies byte by byte into its staging folder
+/// (`StepContext::copying`), and its source as it was.
+struct Copying {
+    src: PathBuf,
+    at: PathBuf,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+/// What a copy cut short left (`StepContext::keep_partial`): where, and
+/// the source it is the start of, as it was.
+struct KeptPartial {
+    dest_dir: PathBuf,
+    at: PathBuf,
+    src: PathBuf,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+/// The bytes a copy cut short must have moved to be kept for Retry: below
+/// it, starting again costs little.
+pub(super) const KEEP_FROM: u64 = 8 << 20;
+
 /// The file `meta` is of, and how many names it has, when it has several:
 /// Unix says, `std` on Windows does not (there each name is copied).
 fn several_names(meta: &std::fs::Metadata) -> Option<(crate::FileId, u64)> {
@@ -349,6 +378,8 @@ impl StepContext {
             failed: RefCell::default(),
             stagings: RefCell::default(),
             staged: std::cell::Cell::new(0),
+            copying: RefCell::default(),
+            partial: RefCell::default(),
             refused: RefCell::default(),
             buffer: RefCell::default(),
             #[cfg(target_os = "linux")]
@@ -452,6 +483,149 @@ impl StepContext {
     /// Another step begins: what the last one's check kept is not its own.
     pub(super) fn step_begins(&self) {
         self.checked.borrow_mut().take();
+    }
+
+    /// The same context, going on from `partial`, what a copy this plan
+    /// retries left (`Executor::retry`): its staging folder is the one
+    /// this plan's copies into its destination share, and the copy of its
+    /// source goes on from it ([`Self::partial_at`]).
+    #[must_use]
+    pub(super) fn with_partial(self, partial: Option<super::staging::Partial>) -> Self {
+        let Some(partial) = partial else {
+            return self;
+        };
+        let super::staging::Partial {
+            staging,
+            mark,
+            dest_dir,
+            at,
+            src,
+            len,
+            modified,
+        } = partial;
+        // Names staged next come after its own.
+        let after = at
+            .file_name()
+            .and_then(|n| n.to_str()?.parse::<u64>().ok())
+            .map_or(0, |n| n + 1);
+        self.staged.set(self.staged.get().max(after));
+        self.stagings
+            .borrow_mut()
+            .insert(dest_dir.clone(), Rc::new(staging));
+        self.staged_in.borrow_mut().insert(dest_dir.clone(), mark);
+        *self.partial.borrow_mut() = Some(KeptPartial {
+            dest_dir,
+            at,
+            src,
+            len,
+            modified,
+        });
+        self
+    }
+
+    /// Where the copy of `src` into `dest_dir` goes on from, what a run
+    /// cut short left (`with_partial`): its path in the staging folder.
+    pub(super) fn partial_of(&self, src: &Path, dest_dir: &Path) -> Option<PathBuf> {
+        let partial = self.partial.borrow();
+        let kept = partial.as_ref()?;
+        (kept.src == src && kept.dest_dir == dest_dir).then(|| kept.at.clone())
+    }
+
+    /// The copy at `dst` of a source now `meta`, cut short earlier: how
+    /// far it went if it is the start of that source as it is (its length
+    /// and time unchanged); taken, so a copy goes on from it once.
+    pub(super) fn partial_at(&self, dst: &Path, meta: &std::fs::Metadata) -> Option<bool> {
+        let mut partial = self.partial.borrow_mut();
+        if partial.as_ref().is_none_or(|kept| kept.at != dst) {
+            return None;
+        }
+        let kept = partial.take()?;
+        Some(kept.len == meta.len() && kept.modified == meta.modified().ok())
+    }
+
+    /// The step under way copies `src`, now `meta`, byte by byte into
+    /// `dst`, from its start or from what it holds: kept should it fail
+    /// partway ([`Self::keep_partial`]).
+    pub(super) fn copying(&self, src: &Path, dst: &Path, meta: &std::fs::Metadata) {
+        *self.copying.borrow_mut() = Some(Copying {
+            src: src.to_path_buf(),
+            at: dst.to_path_buf(),
+            len: meta.len(),
+            modified: meta.modified().ok(),
+        });
+    }
+
+    /// What a byte copy into `dst` may not be gone on from (a file with
+    /// holes, copied stretch by stretch).
+    pub(super) fn not_copying(&self) {
+        self.copying.borrow_mut().take();
+    }
+
+    /// Before a step copies into its staging folder: nothing of an
+    /// earlier step's is kept for it.
+    pub(super) fn copy_begins(&self) {
+        self.copying.borrow_mut().take();
+    }
+
+    /// Whether what a copy that failed staged at `staged` in `dest_dir` is
+    /// kept for Retry to go on from: a file copied byte by byte from its
+    /// start, of [`KEEP_FROM`] bytes at least by what this step counted
+    /// (a server gone may not say what it holds). Kept, it stays in the
+    /// staging folder, which the plan's end leaves.
+    pub(super) fn keep_partial(&self, dest_dir: &Path, staged: &Path) -> bool {
+        let moved = {
+            let steps = self.meter.steps.lock();
+            self.meter
+                .done
+                .load(Ordering::Relaxed)
+                .saturating_sub(steps.done)
+        };
+        let Some(copying) = self.copying.borrow_mut().take() else {
+            return false;
+        };
+        if copying.at != staged || moved < KEEP_FROM {
+            return false;
+        }
+        *self.partial.borrow_mut() = Some(KeptPartial {
+            dest_dir: dest_dir.to_path_buf(),
+            at: copying.at,
+            src: copying.src,
+            len: copying.len,
+            modified: copying.modified,
+        });
+        true
+    }
+
+    /// At the plan's end, what a copy cut short left for Retry: kept by a
+    /// step that failed, or handed to this run and not gone on from. Its
+    /// staging folder leaves the plan's context, its lock held.
+    pub(super) fn take_partial(&self) -> Option<super::staging::Partial> {
+        let kept = self.partial.borrow_mut().take()?;
+        let staging = self.stagings.borrow_mut().remove(&kept.dest_dir)?;
+        let staging = match Rc::try_unwrap(staging) {
+            Ok(staging) => staging,
+            Err(shared) => {
+                // Still in use: it goes with the plan, as usual.
+                self.stagings
+                    .borrow_mut()
+                    .insert(kept.dest_dir.clone(), shared);
+                return None;
+            }
+        };
+        let mark = self
+            .staged_in
+            .borrow_mut()
+            .get_mut(&kept.dest_dir)
+            .and_then(Option::take);
+        Some(super::staging::Partial {
+            staging,
+            mark,
+            dest_dir: kept.dest_dir,
+            at: kept.at,
+            src: kept.src,
+            len: kept.len,
+            modified: kept.modified,
+        })
     }
 
     /// The staging folder in `dest_dir` this plan's copies there share,

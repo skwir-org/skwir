@@ -36,7 +36,9 @@ pub struct Action {
 pub struct Toast {
     pub text: String,
     pub tone: Tone,
-    pub action: Option<Action>,
+    /// Its buttons, in their order (a plan stopped by an error: Retry,
+    /// Undo).
+    pub actions: Vec<Action>,
 }
 
 /// A plan being applied.
@@ -72,8 +74,8 @@ pub struct ToastState {
     pub running: Vec<Running>,
     generation: u64,
     close: Option<gpui::FocusHandle>,
-    /// Kept across frames, so Tab can reach the toast's button.
-    action_focus: Option<gpui::FocusHandle>,
+    /// Kept across frames, so Tab can reach the toast's buttons.
+    action_focus: Vec<gpui::FocusHandle>,
     /// Pause and Resume, one button: its focus stays as its label changes.
     pause_focus: Option<gpui::FocusHandle>,
     /// The Pause and Cancel buttons of the cards after the first, one pair
@@ -303,9 +305,9 @@ impl Shell {
     /// Show `toast`, replacing the current one, for a time that fits its
     /// weight: errors and anything with a button stay longer.
     pub fn toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
-        let seconds = match (&toast.tone, &toast.action) {
+        let seconds = match (&toast.tone, toast.actions.is_empty()) {
             (Tone::Error, _) => 10,
-            (_, Some(_)) => 8,
+            (_, false) => 8,
             _ => 4,
         };
         self.toasts.current = Some(toast);
@@ -424,20 +426,37 @@ impl Shell {
                         (None, true) => (format!("Cancelled. {done}"), Tone::Info),
                         (None, false) => (done, Tone::Success),
                     };
-                    let action = if run == RunKind::Undo {
-                        self.app.executor.can_redo().then(|| Action {
+                    let mut actions = Vec::new();
+                    // Stopped by an error, what it had left runs again
+                    // (`Executor::retry`).
+                    if run == RunKind::Apply && self.app.executor.can_retry(plan) {
+                        actions.push(Action {
+                            label: "Retry".into(),
+                            command: "retry".into(),
+                            args: serde_json::json!({ "plan": plan }),
+                        });
+                    }
+                    if run == RunKind::Undo {
+                        actions.extend(self.app.executor.can_redo().then(|| Action {
                             label: "Redo".into(),
                             command: "redo".into(),
                             args: serde_json::json!({}),
-                        })
-                    } else {
-                        (undoable && applied > 0).then(|| Action {
+                        }));
+                    } else if undoable && applied > 0 {
+                        actions.push(Action {
                             label: "Undo".into(),
                             command: "undo".into(),
                             args: serde_json::json!({}),
-                        })
-                    };
-                    self.toast(Toast { text, tone, action }, cx);
+                        });
+                    }
+                    self.toast(
+                        Toast {
+                            text,
+                            tone,
+                            actions,
+                        },
+                        cx,
+                    );
                 }
             }
         }
@@ -622,16 +641,15 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             .when(a11y, |d| d.aria_label(toast.text.clone()))
             .child(glyph(toast.tone))
             .child(div().flex_1().min_w_0().py_1().child(toast.text.clone()));
-        if let Some(action) = toast.action {
-            let focus = shell
-                .toasts
-                .action_focus
-                .get_or_insert_with(|| cx.focus_handle())
-                .clone();
+        for (n, action) in toast.actions.into_iter().enumerate() {
+            while shell.toasts.action_focus.len() <= n {
+                shell.toasts.action_focus.push(cx.focus_handle());
+            }
+            let focus = shell.toasts.action_focus[n].clone();
             let label = action.label.clone();
             card = card.child(
                 controls::button(
-                    "toast-action",
+                    format!("toast-action-{n}"),
                     label,
                     None,
                     ButtonStyle::Plain,

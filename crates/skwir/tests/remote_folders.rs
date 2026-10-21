@@ -415,6 +415,8 @@ struct OwnSshd {
     port: u16,
     /// What ssh is given to reach it: the test's key and known hosts.
     options: Vec<String>,
+    /// How it is started again ([`OwnSshd::start_again`]).
+    command: (PathBuf, PathBuf, PathBuf),
 }
 
 impl OwnSshd {
@@ -466,22 +468,12 @@ impl OwnSshd {
             ),
         )
         .unwrap();
-        let child = Command::new(&sshd)
-            .arg("-D")
-            .arg("-f")
-            .arg(&config)
-            .arg("-E")
-            .arg(base.join("sshd.log"))
-            .spawn()
-            .expect("start sshd");
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
-            assert!(Instant::now() < deadline, "sshd never listened");
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        let command = (sshd, config, base.join("sshd.log"));
+        let child = OwnSshd::spawn(&command, port);
         Some(OwnSshd {
             child,
             port,
+            command,
             options: vec![
                 format!("IdentityFile={}", base.join("key").display()),
                 "IdentitiesOnly=yes".to_owned(),
@@ -490,6 +482,60 @@ impl OwnSshd {
                 "StrictHostKeyChecking=accept-new".to_owned(),
             ],
         })
+    }
+}
+
+impl OwnSshd {
+    /// sshd as `command` says, once it listens on `port`.
+    fn spawn((sshd, config, log): &(PathBuf, PathBuf, PathBuf), port: u16) -> Child {
+        let child = Command::new(sshd)
+            .arg("-D")
+            .arg("-f")
+            .arg(config)
+            .arg("-E")
+            .arg(log)
+            .spawn()
+            .expect("start sshd");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            assert!(Instant::now() < deadline, "sshd never listened");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        child
+    }
+
+    /// Stop it, the sessions it serves included (its children, which its
+    /// own end leaves running): a server gone away.
+    fn stop(&mut self) {
+        let mut pids = vec![self.child.id()];
+        let mut at = 0;
+        while at < pids.len() {
+            let parent = pids[at];
+            for entry in std::fs::read_dir("/proc").unwrap().flatten() {
+                let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+                    continue;
+                };
+                // The field after the command's name, in parentheses.
+                let stat = std::fs::read_to_string(entry.path().join("stat")).unwrap_or_default();
+                let its_parent = stat
+                    .rsplit_once(") ")
+                    .and_then(|(_, rest)| rest.split(' ').nth(1)?.parse::<u32>().ok());
+                if its_parent == Some(parent) && !pids.contains(&pid) {
+                    pids.push(pid);
+                }
+            }
+            at += 1;
+        }
+        for pid in pids.iter().skip(1) {
+            let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
+    /// Start it again on its port, as it was.
+    fn start_again(&mut self) {
+        self.child = OwnSshd::spawn(&self.command, self.port);
     }
 }
 
@@ -952,6 +998,182 @@ fn copies_on_a_server_are_undone_and_deleted_together() {
     for e in &entries {
         same_tree(e, &served.join("within").join(e.file_name().unwrap()));
     }
+
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    until(&app, 30, "it was let go of", || {
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point)
+    });
+    drop(left);
+    drop(sshd);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// A large upload its server stopped answering partway through keeps what
+/// it sent in its staging folder there, and Retry, the server back, goes
+/// on from it, after reading back its last part: a byte marked at its
+/// start since is in the copy. A download keeps what came, here. The
+/// test's server is stopped once part of the file is across, its
+/// sessions with it.
+#[test]
+fn an_upload_cut_short_by_its_server_goes_on_from_where_it_stopped() {
+    let sshfs = Sshfs::default();
+    if let Some(why) = sshfs.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("resumed");
+    let Some(mut sshd) = OwnSshd::start(&base) else {
+        std::fs::remove_dir_all(&base).unwrap();
+        return;
+    };
+    let served = base.join("served");
+    std::fs::create_dir_all(served.join("up")).unwrap();
+    let sshfs = Arc::new(Sshfs {
+        ssh_options: sshd.options.clone(),
+        ssh_config: Some(PathBuf::from("/dev/null")),
+        ..sshfs
+    });
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![sshfs.clone() as Arc<dyn Connector>]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let pane = app.workspace.read().active_id();
+    let user = std::env::var("USER").expect("the user's name");
+    let address = format!("sftp://{user}@127.0.0.1:{}{}", sshd.port, served.display());
+    app.navigate(pane, &Location::parse(&address)).unwrap();
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    let mounted = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&mounted).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+    let up = mounted.join("up");
+
+    // 192 MiB that differ along their length.
+    let local = base.join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    let big = local.join("it's big.bin");
+    let mut x = 0x2545_f491_4f6c_dd1d_u64;
+    let bytes: Vec<u8> = (0..192u64 << 20)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x as u8
+        })
+        .collect();
+    std::fs::write(&big, &bytes).unwrap();
+    drop(bytes);
+
+    let plan = copies(std::slice::from_ref(&big), &up);
+    app.executor.execute(plan.clone(), app.lifetime().child());
+    // On the server, in the staging folder, once 24 MiB are there.
+    let staged = || {
+        std::fs::read_dir(served.join("up"))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".skwir-copy-"))
+            .flat_map(|e| std::fs::read_dir(e.path()).unwrap().flatten())
+            .find(|e| e.file_name() != "lock")
+            .map(|e| e.path())
+    };
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while staged()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .is_none_or(|m| m.len() < 24 << 20)
+    {
+        assert!(Instant::now() < deadline, "the upload never began");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sshd.stop();
+    until(&app, 120, "the upload stopped", || !app.executor.is_busy());
+    assert!(app.executor.can_retry(plan.id), "it failed, to be retried");
+    let partial = staged().expect("what it sent is kept");
+    let kept = std::fs::metadata(&partial).unwrap().len();
+    assert!((8 << 20..192 << 20).contains(&kept), "{kept} bytes kept");
+    {
+        use std::os::unix::fs::FileExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&partial)
+            .unwrap()
+            .write_all_at(b"X", 0)
+            .unwrap();
+    }
+
+    sshd.start_again();
+    let retried = app
+        .executor
+        .retry_blocking(plan.id, app.lifetime())
+        .expect("retried");
+    assert!(retried.error.is_none(), "{:?}", retried.error);
+    let copy = served.join("up").join("it's big.bin");
+    let (sent, copied) = (std::fs::read(&big).unwrap(), std::fs::read(&copy).unwrap());
+    assert_eq!(copied.len(), sent.len());
+    assert_eq!(copied[0], b'X', "gone on from what it had sent");
+    assert!(copied[1..] == sent[1..], "the rest as sent");
+    assert_eq!(
+        std::fs::read_dir(served.join("up")).unwrap().count(),
+        1,
+        "nothing staged left there"
+    );
+    drop((sent, copied));
+
+    // Down: kept on this machine, its last part read back from the
+    // server.
+    let down = base.join("down");
+    std::fs::create_dir(&down).unwrap();
+    let plan = copies(&[up.join("it's big.bin")], &down);
+    app.executor.execute(plan.clone(), app.lifetime().child());
+    let staged = || {
+        std::fs::read_dir(&down)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".skwir-copy-"))
+            .flat_map(|e| std::fs::read_dir(e.path()).unwrap().flatten())
+            .find(|e| e.file_name() != "lock")
+            .map(|e| e.path())
+    };
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while staged()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .is_none_or(|m| m.len() < 24 << 20)
+    {
+        assert!(Instant::now() < deadline, "the download never began");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sshd.stop();
+    until(&app, 120, "the download stopped", || {
+        !app.executor.is_busy()
+    });
+    assert!(app.executor.can_retry(plan.id), "it failed, to be retried");
+    let partial = staged().expect("what came is kept");
+    {
+        use std::os::unix::fs::FileExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&partial)
+            .unwrap()
+            .write_all_at(b"Y", 0)
+            .unwrap();
+    }
+    sshd.start_again();
+    let retried = app
+        .executor
+        .retry_blocking(plan.id, app.lifetime())
+        .expect("retried");
+    assert!(retried.error.is_none(), "{:?}", retried.error);
+    let (there, came) = (
+        std::fs::read(&copy).unwrap(),
+        std::fs::read(down.join("it's big.bin")).unwrap(),
+    );
+    assert_eq!(came.len(), there.len());
+    assert_eq!(came[0], b'Y', "gone on from what had come");
+    assert!(came[1..] == there[1..], "the rest as it is there");
+    assert_eq!(std::fs::read_dir(&down).unwrap().count(), 1);
 
     app.dispatch(&Invocation::with_args(
         "remote.disconnect",

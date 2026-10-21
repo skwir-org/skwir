@@ -2807,3 +2807,39 @@ and fix bug or problems you encounter on the way". This is the first.
   plugin: a 1 GiB copy tmpfs → USB disk with its card, a 1.5 GiB copy
   tmpfs → NVMe disk beside it (ended in 0.8 s), a rename in the shown
   folder applied in 2.5 ms meanwhile, the pane showing the new name.
+
+### Retry, and a large file gone on from (ADR-080, 2026-10-22)
+
+- Built: a plan a step's error stopped keeps its steps from the failed
+  one, unfolded and settled (`Executor::retry`, `retry_blocking`,
+  `can_retry`, `last_stopped`; the eight latest); the `retry` command
+  (`plan` optional, the last stopped); the toast's Retry before Undo
+  (`Toast::actions`, a list now). A retry is asked anew and checked
+  whole; refused before applying anything it is kept under its new id.
+  Its inverses join the stopped plan's entry unless an entry asked since
+  sits after it. A lone file copied byte by byte that fails after 8 MiB
+  stays in its staging folder (`staging::Partial`: the folder, its lock
+  and notes, held by the stopped plan); the retry's copy goes on from
+  it when the source's length and time are unchanged and its last MiB
+  reads as the source's. `ranges::copy` and the pace start at an offset.
+- Checked: executor tests with a step failing while its "server" is
+  down (retried from the failed step, one entry undone whole; refused
+  while blocked, then retried; a retry after another action has its own
+  entry); `retry.rs` with the test process's file size limit making a
+  24 MiB copy fail at 12 MiB (a byte marked in the partial's head is in
+  the result: gone on from; a changed tail, or a source touched since,
+  starts again; a sweep leaves the held folder); `remote_folders`: a
+  192 MiB upload through Skwir's sshfs mount, OpenSSH's server and its
+  sessions stopped once 24 MiB are on it, started again, retried: the
+  copy goes on from what the server kept (marked byte kept, the rest as
+  sent, nothing staged left); a download alike, kept on this machine
+  (the upload in eight runs, the download in the last three, 3.6 to
+  7.1 s a run, all passed). In a window on Xvfb, the file size limit
+  lowered on its process around a copy of 24 MiB: the toast said
+  "Couldn't copy “it's big.bin” to work: the file is too large for that
+  drive" with Retry; clicked, "Copied “it's big.bin” to work" with Undo,
+  the copy gone on from its 12 MiB; `skwir cmd retry` the same for an
+  earlier stopped plan, then "nothing to retry".
+- Found on the way: `copy_contents` trusts the kernel's 0 only after it
+  copied something itself, so a copy gone on from never ends early on a
+  file system that says 0 before the end.

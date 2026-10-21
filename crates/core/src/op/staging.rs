@@ -26,6 +26,12 @@
 //! notes name is removed when this machine reaches that remote again
 //! ([`UnderWay::sweep_noted`]: a copy into that folder, its mount found
 //! answering), in its lane.
+//!
+//! A large file a copy failed partway through (its server stopped
+//! answering, its drive was pulled out) is kept instead, for Retry to go
+//! on from ([`Partial`]): its folder stays, locked, and noted where it
+//! is, until the retry places it or the stopped plan is let go; a process
+//! that ends meanwhile leaves it to the sweeps.
 
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -116,6 +122,33 @@ impl Staging {
     /// When something in it cannot be removed.
     pub fn remove(mut self) -> io::Result<()> {
         self.remove_now()
+    }
+}
+
+/// What a copy cut short left of a large file in its staging folder, kept
+/// for Retry (`Executor::retry`) to go on from: the folder, its lock held
+/// and its notes kept, so no sweep takes it; removed with what it holds
+/// when let go, as any staging folder.
+pub struct Partial {
+    pub(super) staging: Staging,
+    /// The destination's note as under way, on this machine's volumes.
+    pub(super) mark: Option<Mark>,
+    pub(super) dest_dir: PathBuf,
+    /// The file, in the staging folder, and the source it is the start
+    /// of, as it was then: its length and when it was modified.
+    pub(super) at: PathBuf,
+    pub(super) src: PathBuf,
+    pub(super) len: u64,
+    pub(super) modified: Option<std::time::SystemTime>,
+}
+
+impl std::fmt::Debug for Partial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Partial")
+            .field("at", &self.at)
+            .field("src", &self.src)
+            .field("len", &self.len)
+            .finish_non_exhaustive()
     }
 }
 

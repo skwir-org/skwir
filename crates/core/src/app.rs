@@ -1940,6 +1940,14 @@ pub struct PlanDiffArgs {
     pub plan: PlanData,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RetryArgs {
+    /// The plan a step's error stopped, as its progress named it; the
+    /// last one stopped when omitted.
+    #[serde(default)]
+    pub plan: Option<op::PlanId>,
+}
+
 mod builtin {
     use super::*;
 
@@ -2836,6 +2844,32 @@ mod builtin {
                     .redo_blocking(&app.lifetime().child())
                     .ok_or_else(|| anyhow::anyhow!("nothing to redo"))?;
                 Ok(replayed("redone", app.executor.last_undo_title().as_deref(), &result))
+            },
+        );
+
+        c.register::<RetryArgs, _>(
+            "core",
+            "retry",
+            "Retry",
+            "Run again what a plan stopped by an error had left, the last one stopped unless told which; what it applies is undone with that plan; asked from outside the window, says what it applied",
+            |a, app| {
+                let plan = a
+                    .plan
+                    .or_else(|| app.executor.last_stopped())
+                    .ok_or_else(|| anyhow::anyhow!("nothing to retry"))?;
+                if crate::scheduler::on_window_thread() {
+                    anyhow::ensure!(
+                        app.executor.retry(plan, app.lifetime().child()),
+                        "nothing to retry"
+                    );
+                    return Ok(Outcome::Done);
+                }
+                let title = app.executor.stopped_title(plan);
+                let result = app
+                    .executor
+                    .retry_blocking(plan, &app.lifetime().child())
+                    .ok_or_else(|| anyhow::anyhow!("nothing to retry"))?;
+                Ok(replayed("retried", title.as_deref(), &result))
             },
         );
 

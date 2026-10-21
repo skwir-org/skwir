@@ -141,7 +141,7 @@ impl Shell {
                     keymap::title_of(&self.app, &hint).trim_end_matches('…')
                 ),
                 tone: Tone::Info,
-                action: None,
+                actions: Vec::new(),
             },
             cx,
         );

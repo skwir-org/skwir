@@ -290,7 +290,9 @@ of bars, split or not.
 
 - **Every user action gets an answer** in `toast.rs`: a sentence built
   from the applied `Change`s ("Moved “a.txt” to Trash"), with Undo when
-  the journal can take it back, Redo after an undo. Progress bars:
+  the journal can take it back, Redo after an undo, Retry first for a
+  plan a step's error stopped (ADR-080; a toast holds its buttons in
+  order, `Toast::actions`). Progress bars:
   [operations.md](operations.md). It names the file a step acts on as the
   user knows it: an item of a trash by the name it had, which the
   executor reads from its record before the step takes it away

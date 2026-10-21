@@ -1303,7 +1303,8 @@ protocol is a scheme a connector maps, or a connector.
   mount). ADR-079 step 1: a light action starts beside a heavy one it
   shares nothing with, the history kept in the order asked; step 2:
   heavy actions on different disks or servers at once, one at a time on
-  each.
+  each. A plan an error stopped is retried, one action in the history,
+  a large file going on from what got across (ADR-080).
 - **G. Left** (each its own step):
   - GVfs's NFS, AFP and device mounts not measured, at the bridge's pace;
   - Automatic's Small files where reads proved fast (only the local
@@ -1316,6 +1317,9 @@ protocol is a scheme a connector maps, or a connector.
     macFUSE; all compiled only until Phase 5b;
   - a GVfs mount made by another program is used, but its questions are
     the desktop's, and GVfs's "remember the password" is not offered;
+  - going on from a file of a folder copied whole, or one a tool's
+    batch was making (rsync's `--partial-dir`, sftp's `reput`); a retry
+    by itself once a server answers again (ADR-080);
   - ADR-077's point 8, if asked: a helper of Skwir's serving SFTP
     through OpenSSH as a connector, then rclone's API for server-side
     copies.

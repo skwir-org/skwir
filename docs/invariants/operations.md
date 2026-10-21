@@ -102,6 +102,14 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   names), and a plan asked after an undo drops its redo. A step's
   footprint names what its `describe` and its companions touch: a new
   step kind says its own, or runs alone.
+- **Retry (ADR-080).** A plan a step's error stopped keeps the steps it
+  had left, unfolded and settled (`Executor::retry`, the toast's Retry,
+  the `retry` command; the eight latest, `STOPPED_KEPT`). A retry is a
+  plan asked now, checked whole; refused before it applies anything, it
+  stays to be retried. What it applies joins the stopped plan's journal
+  entry, its inverses first, unless an entry asked since sits after
+  that one: then it has its own. Cancel and a failed write-out are not
+  retried.
 - The bar counts items, the current item's bytes moving it between two
   counts; a one-item plan counts bytes (`toast::bar`).
 - **Quit** asks while a plan runs (its key or the window's close button,
@@ -126,6 +134,19 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   again (`UnderWay::sweep_noted`: before a copy stages in that folder,
   and when its mount is found answering, `App::sweep_left_on`, in its
   lane). A run's start never looks at a remote.
+- **A large file cut short (ADR-080).** A copy step that fails partway
+  through a file it copies byte by byte from its start
+  (`StepContext::copying`; not a tree, a batch's tool or a file with
+  holes), having moved `KEEP_FROM` bytes, keeps it
+  (`StepContext::keep_partial`): the plan's staging folder there leaves
+  its context with its lock and notes (`staging::Partial`, held by the
+  stopped plan), so no sweep takes it, and is removed with it when let
+  go. The retry's context takes it back (`StepContext::with_partial`):
+  its copy of that source goes on from the partial when the source's
+  length and time are unchanged and the partial's last MiB reads as the
+  source's (`builtin::goes_on_from`), else starts again. A byte copy
+  that may be gone on from never trusts the kernel's first 0, and its
+  pace counts from where it went on (`Pace::writing(file, from)`).
 
 ## Copies
 

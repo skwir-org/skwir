@@ -178,13 +178,14 @@ impl Pace {
         }
     }
 
-    /// `file` is about to be written, from its start.
-    pub(super) fn writing<'a>(&'a self, file: &'a File) -> Writing<'a> {
+    /// `file` is about to be written, from `from` (its start, or where a
+    /// copy cut short went to).
+    pub(super) fn writing<'a>(&'a self, file: &'a File, from: u64) -> Writing<'a> {
         Writing {
             pace: self,
             file,
-            written: 0,
-            given: 0,
+            written: from,
+            given: from,
         }
     }
 

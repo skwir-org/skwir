@@ -1608,13 +1608,13 @@ impl Shell {
                     crate::toast::Toast {
                         text: format!("Hid “{}” from the sidebar", arranged.place.title),
                         tone: crate::toast::Tone::Info,
-                        action: Some(crate::toast::Action {
+                        actions: vec![crate::toast::Action {
                             label: "Undo".into(),
                             command: PLACE_COMMAND.into(),
                             args: serde_json::json!({
                                 "group": group, "key": key, "hidden": false,
                             }),
-                        }),
+                        }],
                     },
                     cx,
                 );

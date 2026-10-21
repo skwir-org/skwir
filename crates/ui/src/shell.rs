@@ -2498,11 +2498,11 @@ impl Shell {
                         } else {
                             crate::toast::Tone::Success
                         },
-                        action: Some(crate::toast::Action {
+                        actions: vec![crate::toast::Action {
                             label: action.label,
                             command: action.command.name.to_string(),
                             args: action.command.args,
-                        }),
+                        }],
                     },
                     cx,
                 ),

@@ -42,9 +42,10 @@ struct Window {
     stop: bool,
 }
 
-/// Copy the first `len` bytes of `sf` to `df` (at its offset, written in
-/// order), reading [`AT_ONCE`] ranges at a time; the bytes copied, fewer
-/// where the file shrank meanwhile. `sf`'s offset is left alone.
+/// Copy the bytes of `sf` from `from` up to `len` to `df` (at its offset,
+/// written in order), reading [`AT_ONCE`] ranges at a time; the bytes
+/// copied, fewer where the file shrank meanwhile. `sf`'s offset is left
+/// alone.
 ///
 /// # Errors
 /// When a range cannot be read or written, the drive refuses the pace, or
@@ -52,11 +53,12 @@ struct Window {
 pub(super) fn copy(
     sf: &File,
     mut df: &File,
+    from: u64,
     len: u64,
     writing: &mut Writing<'_>,
     ctx: &StepContext,
 ) -> anyhow::Result<u64> {
-    let ranges = len.div_ceil(RANGE);
+    let ranges = len.saturating_sub(from).div_ceil(RANGE);
     let window = Mutex::new(Window {
         next: 0,
         written: 0,
@@ -81,7 +83,7 @@ pub(super) fn copy(
                         w.next += 1;
                         w.next - 1
                     };
-                    let at = i * RANGE;
+                    let at = from + i * RANGE;
                     let want = usize::try_from(RANGE.min(len - at)).unwrap_or(0);
                     if tx.send((i, read_at(sf, at, want))).is_err() {
                         return;
@@ -156,8 +158,8 @@ mod tests {
         let (sf, df) = (File::open(&from).unwrap(), File::create(&to).unwrap());
         let ctx = StepContext::with_cancel(CancelToken::new());
         let pace = super::super::pace::Pace::at_once();
-        let mut writing = pace.writing(&df);
-        let copied = copy(&sf, &df, len as u64, &mut writing, &ctx).unwrap();
+        let mut writing = pace.writing(&df, 0);
+        let copied = copy(&sf, &df, 0, len as u64, &mut writing, &ctx).unwrap();
         assert_eq!(copied, len as u64);
         assert_eq!(std::fs::read(&to).unwrap(), bytes(len));
     }
@@ -178,8 +180,8 @@ mod tests {
         let (sf, df) = (File::open(&from).unwrap(), File::create(&to).unwrap());
         let ctx = StepContext::with_cancel(CancelToken::new());
         let pace = super::super::pace::Pace::at_once();
-        let mut writing = pace.writing(&df);
-        let copied = copy(&sf, &df, len as u64, &mut writing, &ctx).unwrap();
+        let mut writing = pace.writing(&df, 0);
+        let copied = copy(&sf, &df, 0, len as u64, &mut writing, &ctx).unwrap();
         assert_eq!(copied, RANGE + 3);
         assert_eq!(
             std::fs::read(&to).unwrap(),
@@ -198,7 +200,7 @@ mod tests {
         cancel.cancel();
         let ctx = StepContext::with_cancel(cancel);
         let pace = super::super::pace::Pace::at_once();
-        let mut writing = pace.writing(&df);
-        assert!(copy(&sf, &df, len as u64, &mut writing, &ctx).is_err());
+        let mut writing = pace.writing(&df, 0);
+        assert!(copy(&sf, &df, 0, len as u64, &mut writing, &ctx).is_err());
     }
 }

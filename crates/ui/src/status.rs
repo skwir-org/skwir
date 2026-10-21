@@ -25,7 +25,7 @@ impl Shell {
             Toast {
                 text,
                 tone: if error { Tone::Error } else { Tone::Info },
-                action: None,
+                actions: Vec::new(),
             },
             cx,
         );
@@ -71,11 +71,11 @@ impl Shell {
             Toast {
                 text,
                 tone,
-                action: Some(Action {
+                actions: vec![Action {
                     label: "Open setting".into(),
                     command: "ui.settings".into(),
                     args: serde_json::json!({ "key": setting }),
-                }),
+                }],
             },
             cx,
         );

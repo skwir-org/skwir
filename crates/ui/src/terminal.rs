@@ -210,11 +210,11 @@ impl Shell {
                 crate::toast::Toast {
                     text: "The terminal is a plugin, and it is off".into(),
                     tone: crate::toast::Tone::Error,
-                    action: Some(crate::toast::Action {
+                    actions: vec![crate::toast::Action {
                         label: "Open plugins".into(),
                         command: "ui.settings".into(),
                         args: serde_json::json!({ "page": "plugins" }),
-                    }),
+                    }],
                 },
                 cx,
             );
