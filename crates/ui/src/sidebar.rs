@@ -693,13 +693,14 @@ pub fn render(
     let mut pills: Vec<AnyElement> = Vec::new();
     // How many children the column has: what the cursor scrolls to.
     let mut children = 0;
-    for (i, arranged) in places.into_iter().enumerate() {
+    for arranged in places {
         let Arranged {
             place,
             moves,
             shown,
             ..
         } = arranged;
+        let i = row_key(place);
         let folded = sections.folded.contains(&place.group);
         if last_group.as_deref() != Some(place.group.as_str()) {
             column = wrap_pills(column, &mut pills, &mut children);
@@ -867,7 +868,7 @@ pub fn render(
         }
         let hover = theme.hover;
         let mut row = div()
-            .id(("place", i))
+            .id(gpui::ElementId::NamedInteger("place".into(), i))
             .flex_none()
             .min_h(px(26.))
             .py(px(3.))
@@ -956,7 +957,7 @@ pub fn render(
             let hover = theme.selection_bg;
             row = row.child(
                 div()
-                    .id(("eject", i))
+                    .id(gpui::ElementId::NamedInteger("eject".into(), i))
                     .role(gpui::Role::Button)
                     .when(a11y, |d| d.aria_label(format!("Eject {}", place.title)))
                     .flex_none()
@@ -1198,12 +1199,23 @@ fn wrap_pills(
     )
 }
 
+/// What a place's row is known by from one frame to the next: the place it
+/// shows, never where it stands. A place that comes to stand where another
+/// was (a server's, once the mount above it is let go of) is not given
+/// that one's hover or tooltip.
+fn row_key(place: &Place) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    (&place.group, &place.location, &place.key, &place.title).hash(&mut h);
+    h.finish()
+}
+
 /// A tag's place as a pill of its color: it opens as a row does (a click,
 /// a middle click for a tab behind, a right click for its menu), and files
 /// dropped on it get what its `drop` gives them (the tag). One its owner
 /// suggests is an outline of its color, the pills kept filled.
 fn pill(
-    i: usize,
+    i: u64,
     place: &Place,
     color: usize,
     is_current: bool,
@@ -1224,7 +1236,7 @@ fn pill(
     )
     .into();
     div()
-        .id(("place", i))
+        .id(gpui::ElementId::NamedInteger("place".into(), i))
         .flex_none()
         .max_w_full()
         .h(px(22.))
