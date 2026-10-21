@@ -107,10 +107,19 @@ pub fn trashes() -> Vec<PathBuf> {
         .collect()
 }
 
+/// Every trash of the user's on Linux: the home trash and each volume's
+/// that a plan reads too (`skwir_core::op::trash_folders_here`): no
+/// network mount's, where asking can hang, nor an automount's. Asks each
+/// volume: call it from a worker.
+#[cfg(target_os = "linux")]
+pub fn trashes() -> Vec<PathBuf> {
+    skwir_core::op::trash_folders_here()
+}
+
 /// Every trash of the user's: the home trash, and those of the volumes
 /// the sidebar shows (`places::mounts`) but network and FUSE ones, where
 /// asking can hang. Asks each volume: call it from a worker.
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(unix, not(target_os = "macos"), not(target_os = "linux")))]
 pub fn trashes() -> Vec<PathBuf> {
     let uid = rustix::process::getuid().as_raw();
     let mut found: Vec<PathBuf> = home_trash().into_iter().collect();

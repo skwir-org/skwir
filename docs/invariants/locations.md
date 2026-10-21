@@ -101,8 +101,10 @@ and `notes.agree` are core `notes.*` commands.
 
 ## The trash as a place (ADR-034)
 
-- `trash:` lists every trash (`skwir_platform::trash`: home and the
-  volumes the sidebar shows), each file under its original name, with
+- `trash:` lists every trash (`skwir_platform::trash`: on Linux, the
+  home trash and this machine's own volumes', as a plan reads them,
+  `skwir_core::op::trash_folders_here`: no network mount's, no
+  automount's), each file under its original name, with
   `keys::TRASHED_FROM` (Folder column) and `keys::TRASHED` (Deleted
   column, `SortKey::Deleted`, newest first).
 - A trashed folder opens inside the trash (`Trash › old project › sub`),

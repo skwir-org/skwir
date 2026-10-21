@@ -24,6 +24,8 @@ pub mod room;
 pub mod staging;
 mod sys;
 pub mod transfer;
+#[cfg(target_os = "linux")]
+mod trash_list;
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -47,6 +49,10 @@ pub use executor::{
 };
 pub use order::{RenameOrderError, RenameRequest, order_renames};
 pub use staging::Staging;
+/// The trash folders of the user's on this machine's own volumes, which
+/// the trash place lists: no network mount's (`trash_list`).
+#[cfg(target_os = "linux")]
+pub use trash_list::{folders_here as trash_folders_here, items_here as trash_items_here};
 
 /// Every step checked as applying the plan would meet it: in order, in one
 /// context, a folder an earlier step makes counted there by the steps after

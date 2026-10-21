@@ -261,6 +261,13 @@ The trash plugin reads ([locations.md](locations.md)); the core acts.
   a network keeps no trash, so Move to Trash makes a deletion, asked; a
   kernel share keeps its own `.Trash-<uid>`; nothing is ever copied from
   a remote into this machine's trash to be trashed.
+- What a plan reads of the trash (an Undo of a trash, a restore, the
+  companions trashed with a file) is listed on Linux by the core itself
+  (`op::trash_list`): the home trash and the trashes of this machine's
+  own volumes, a network mount's only where a step names a path there,
+  never an automount's. The `trash` crate's listing looks at the top of
+  every mount, and a mount whose server stopped answering held that look
+  for good, SIGKILL included.
 
 - **Restore** names the item (`Restore::item`), merges a folder into one
   already there, and brings back the companions trashed with it.

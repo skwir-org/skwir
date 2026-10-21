@@ -145,6 +145,9 @@ pub struct StepContext {
     /// The trash listing, read once per plan: parsing every `.trashinfo`
     /// per restored item made undoing a large trash quadratic.
     trash: RefCell<Option<super::builtin::TrashListing>>,
+    /// Which volumes' trashes the listing holds (`trash_list`).
+    #[cfg(target_os = "linux")]
+    trash_listed: RefCell<Option<super::trash_list::Listed>>,
     /// The files beside a file that go where it goes (ADR-028).
     companions: Arc<crate::companions::Companions>,
     /// What a dry run's earlier steps do to the names the steps after
@@ -313,6 +316,8 @@ impl StepContext {
             pause,
             meter,
             trash: RefCell::new(None),
+            #[cfg(target_os = "linux")]
+            trash_listed: RefCell::new(None),
             companions: Arc::default(),
             foreseen: RefCell::default(),
             under_way: None,
@@ -738,14 +743,40 @@ impl StepContext {
         self.meter.done.load(Ordering::Relaxed)
     }
 
-    /// Run `f` over the trash listing, reading it on first use in this plan.
-    pub(super) fn with_trash<T>(
+    /// Run `f` over the trash listing, reading it on first use in this
+    /// plan, with the trashes of the volumes holding `near` (on Linux, a
+    /// network mount's trash is read only where a step names a path
+    /// there: `trash_list`).
+    // Linux's own listing never fails: what cannot be read lists nothing.
+    #[cfg_attr(target_os = "linux", allow(clippy::unnecessary_wraps))]
+    pub(super) fn with_trash_near<T>(
         &self,
+        near: &[&Path],
         f: impl FnOnce(&mut super::builtin::TrashListing) -> T,
     ) -> Result<T, trash::Error> {
         let mut cached = self.trash.borrow_mut();
-        if cached.is_none() {
-            *cached = Some(super::builtin::TrashListing::new(super::sys::trash_list()?));
+        #[cfg(target_os = "linux")]
+        {
+            let mut listed = self.trash_listed.borrow_mut();
+            if cached.is_none() || listed.is_none() {
+                let (read, items) = super::trash_list::Listed::here();
+                *listed = Some(read);
+                *cached = Some(super::builtin::TrashListing::new(items));
+            }
+            let (listing, listed) = (
+                cached.as_mut().expect("just filled"),
+                listed.as_mut().expect("just filled"),
+            );
+            for path in near {
+                listing.add(listed.near(path));
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = near;
+            if cached.is_none() {
+                *cached = Some(super::builtin::TrashListing::new(super::sys::trash_list()?));
+            }
         }
         Ok(f(cached.as_mut().expect("just filled")))
     }
@@ -760,6 +791,8 @@ impl StepContext {
 
     pub(super) fn forget_trash(&self) {
         self.trash.borrow_mut().take();
+        #[cfg(target_os = "linux")]
+        self.trash_listed.borrow_mut().take();
     }
 
     /// The item whose record is `info` left the trash: out of the cached

@@ -518,7 +518,9 @@ pub(super) fn trash_item(path: &Path) -> Result<Option<std::path::PathBuf>, tras
     }
 }
 
-/// What the system's trash holds, as the `trash` crate lists it.
+/// What the system's trash holds, as the `trash` crate lists it; Linux's
+/// is the plan's own (`trash_list`), which reads no server unasked.
+#[cfg(not(target_os = "linux"))]
 pub(super) fn trash_list() -> Result<Vec<trash::TrashItem>, trash::Error> {
     #[cfg(not(target_os = "macos"))]
     {

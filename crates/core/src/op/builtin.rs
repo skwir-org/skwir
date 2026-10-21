@@ -1620,7 +1620,7 @@ fn record_of_listed(item: &trash::TrashItem) -> PathBuf {
     trash_info_of(id).unwrap_or_else(|| id.to_path_buf())
 }
 
-/// The trash as a plan read it (`StepContext::with_trash`), each item
+/// The trash as a plan read it (`StepContext::with_trash_near`), each item
 /// found by its record and by where it was put there from: a step looks
 /// up its item, never the whole listing, and one that takes an item out
 /// takes it out of the listing too, never reading the trash again (a
@@ -1633,6 +1633,21 @@ pub(super) struct TrashListing {
 }
 
 impl TrashListing {
+    /// More items of the trash, read since: another volume's (Linux's own
+    /// listing, `trash_list`).
+    #[cfg(target_os = "linux")]
+    pub(super) fn add(&mut self, items: Vec<trash::TrashItem>) {
+        for item in items {
+            let n = self.items.len();
+            self.by_record.insert(record_of_listed(&item), n);
+            self.by_original
+                .entry(item.original_path())
+                .or_default()
+                .push(n);
+            self.items.push(Some(item));
+        }
+    }
+
     pub(super) fn new(items: Vec<trash::TrashItem>) -> Self {
         let mut by_record = std::collections::HashMap::with_capacity(items.len());
         let mut by_original: std::collections::HashMap<PathBuf, Vec<usize>> =
@@ -1704,7 +1719,7 @@ fn companion_places(ctx: &StepContext, path: &Path) -> Vec<PathBuf> {
 /// Where the item of the trash whose `.trashinfo` is `info` was put there
 /// from, and when, as the plan's trash listing says.
 fn trashed_from(ctx: &StepContext, info: &Path) -> Option<(PathBuf, i64)> {
-    ctx.with_trash(|listing| {
+    ctx.with_trash_near(&[info], |listing| {
         listing
             .record(info)
             .map(|i| (i.original_path(), i.time_deleted))
@@ -1727,7 +1742,8 @@ fn take_trashed_with(
     if places.is_empty() {
         return Vec::new();
     }
-    ctx.with_trash(|listing| {
+    let near: Vec<&Path> = places.iter().map(PathBuf::as_path).collect();
+    ctx.with_trash_near(&near, |listing| {
         places
             .iter()
             .enumerate()
@@ -1864,6 +1880,14 @@ impl Restore {
 }
 
 impl Restore {
+    /// Where its item's trash may be: the volume of where it goes, and of
+    /// its record when named.
+    fn near(&self) -> Vec<&Path> {
+        std::iter::once(self.path.as_path())
+            .chain(self.item.as_deref())
+            .collect()
+    }
+
     /// The trashed folder to merge into `path`, a folder there again: the
     /// item named, still in the trash, a folder too.
     fn merging(&self) -> Option<PathBuf> {
@@ -1980,7 +2004,7 @@ impl super::Effect for Restore {
             }
             return StepStatus::AlreadyDone;
         }
-        match ctx.with_trash(|listing| self.find(listing)) {
+        match ctx.with_trash_near(&self.near(), |listing| self.find(listing)) {
             Ok(Some(_)) => pending(true),
             Ok(None) => conflict(format!(
                 "“{}” is not in the trash",
@@ -2029,7 +2053,9 @@ impl super::Effect for Restore {
         }
         // Taken out of the listing: once restored it is no longer there.
         let item = ctx
-            .with_trash(|listing| self.find(listing).and_then(|n| listing.take(n)))
+            .with_trash_near(&self.near(), |listing| {
+                self.find(listing).and_then(|n| listing.take(n))
+            })
             .context("the trash could not be read")?
             .ok_or_else(|| anyhow::anyhow!("“{}” is not in the trash", display_name(&self.path)))?;
         let when = item.time_deleted;

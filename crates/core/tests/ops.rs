@@ -54,7 +54,13 @@ impl Drop for Scratch {
     // macOS's trash is not listed by the trash crate (ADR-035).
     #[cfg(not(target_os = "macos"))]
     fn drop(&mut self) {
-        if let Ok(items) = trash::os_limited::list() {
+        // Linux's trashes as a plan reads them: a dead network mount's top
+        // is never looked at.
+        #[cfg(target_os = "linux")]
+        let listed: Result<_, trash::Error> = Ok(skwir_core::op::trash_items_here());
+        #[cfg(not(target_os = "linux"))]
+        let listed = trash::os_limited::list();
+        if let Ok(items) = listed {
             let ours = items
                 .into_iter()
                 .filter(|i| i.original_path().starts_with(self.0.path()));
@@ -1627,8 +1633,7 @@ fn a_file_goes_with_its_companion_and_a_copy_takes_its_attributes_in() {
 /// the item is.
 #[cfg(target_os = "linux")]
 fn trashed(original: &Path) -> Option<(PathBuf, PathBuf)> {
-    let info = trash::os_limited::list()
-        .ok()?
+    let info = skwir_core::op::trash_items_here()
         .into_iter()
         .find(|i| i.original_path() == original)
         .map(|i| PathBuf::from(i.id))?;
