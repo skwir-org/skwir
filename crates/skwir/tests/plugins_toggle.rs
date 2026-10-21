@@ -19,9 +19,12 @@ struct Snapshot {
     /// Items made when a menu opens (the default application named).
     menu_sources: usize,
     property_sources: usize,
-    places: usize,
-    /// What plugins know of the remotes mounted (ADR-077).
-    remotes: usize,
+    /// Who shows places: by owner, not by count, as what a plugin shows
+    /// follows the machine (its mounts and volumes, which other tests and
+    /// the desktop change meanwhile).
+    places: Vec<std::sync::Arc<str>>,
+    /// Who knows of the remotes mounted (ADR-077), alike.
+    remotes: Vec<std::sync::Arc<str>>,
     /// What keeps a kind of location in the sidebar (bookmarks, searches).
     keepers: Vec<String>,
     /// Other ways to see a folder, each a button of its address (its tags).
@@ -76,8 +79,8 @@ fn snapshot(app: &App) -> Snapshot {
         menus: app.registry.menus.all().len(),
         menu_sources: app.registry.menu_sources.all().len(),
         property_sources: app.registry.property_sources.all().len(),
-        places: app.registry.places.all().len(),
-        remotes: app.registry.remotes.all().len(),
+        places: app.registry.places.owners(),
+        remotes: app.registry.remotes.owners(),
         keepers: app
             .registry
             .keepers

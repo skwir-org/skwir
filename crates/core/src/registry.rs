@@ -121,6 +121,19 @@ impl<T: Clone> Contributions<T> {
         self.items.read().iter().map(|(_, t)| t.clone()).collect()
     }
 
+    /// Who contributed, each once, in order: what a test of plugins
+    /// withdrawn compares where what they contribute follows the machine
+    /// (the mounts a place shows).
+    pub fn owners(&self) -> Vec<Arc<str>> {
+        let owners: std::collections::BTreeSet<Arc<str>> = self
+            .items
+            .read()
+            .iter()
+            .map(|(o, _)| Arc::clone(o))
+            .collect();
+        owners.into_iter().collect()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.items.read().is_empty()
     }

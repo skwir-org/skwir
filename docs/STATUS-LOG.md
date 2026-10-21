@@ -2367,3 +2367,63 @@ listings").
   failed): the A/B builds were removed, then the cross lint builds
   (`target/cross/**/debug`, which `lint-all` made again) and the debug
   incremental cache, the workspace's own crates compiled once anew.
+
+### Copies to and from a remote, faster (2026-10-21, midday)
+
+Asked by the user after the measurements below ("go ahead with 1-4").
+
+- Measured first, against OpenSSH's own server run as the user on this
+  machine, through sshfs mounted as the plugin mounts it, a delay set on
+  the way (`tc netem` in a user namespace, relayed by `socat` with
+  `nodelay`), Skwir's executor timed by a temporary test: at 20 ms a
+  256 MiB file came up in 3.6 s (`cp` 2.9, `scp` 3.6) and down in 23.9
+  (`scp` 3.5); 100 files of 16 KiB up 16.6 s, down 4.6 (`rsync` 0.7 and
+  0.6, login included); Skwir as fast as `cp -rp` (16.0). 8 files copied
+  at once: 18.4 s to 8.9; `max_conns` nothing more. At 2 ms a file read
+  in order capped at 72 MiB/s.
+- Built (ADR-078): `op::ranges` (8 ranges of 4 MiB at once from a FUSE
+  remote, written in order); a copy's mode not set again when made
+  with it; `op::transfer` (batches before their steps, Skwir's own copy
+  eight at a time, plain files placed by the batch and verified, their
+  steps only saying so; a cancel takes back what was placed);
+  `skwir_platform::process::run_watching` (a program's output heard as
+  it writes); the remote plugin's rsync for sshfs mounts it made, through
+  their ssh's control socket.
+- Measured after, the same way (20 ms; load 8 to 61, the runs noisy): a
+  256 MiB file down 6.4–6.6 s; 100 small files up 0.87 s pasted one by
+  one and 0.81–0.91 s as one folder, down 0.26–0.45 s, by rsync; without
+  rsync, up 7.3 s as one folder and 15.2 one by one (20.7 before the
+  batch placed files itself), down 0.58–0.75 s. Before files were placed
+  by the batch, the paste one by one took 16.2 s with rsync: each step
+  looked and renamed across the network, about 8 round trips.
+- Checked: unit tests (ranges, a file shrunk meanwhile, a cancel; a
+  batch of copies placed by each step and undone; a plugin's transfer
+  serving it; what a batch leaves to its step: tags, two names; a failed
+  transfer; a cancel before and after placing); `run_watching` (output
+  as written, a cancel stopping what was started); the plugin toggle
+  test (a transfer withdrawn); `just remote-check` (34 passed): a
+  folder's worth up into `it's a folder` and down again through rsync,
+  contents, modes and times kept.
+- Incidents, all cleaned up: a timing binary run outside nextest mounted
+  the test server into the user's real `/run/user/1000/skwir/remote/`
+  (their running Skwir could list it) until unmounted, its mount point
+  and the `ssh` folder it made removed; the folder `remote` itself is
+  their Skwir's, kept. A failed run of the new test left two mounts in
+  the tests' runtime folder (its guard now unmounts lazily). The timing
+  test's own disconnect at its end timed out while the test still held
+  the folder: the Eject race told below.
+- The plugin toggle test compared how many places and remotes there
+  were, which follow the machine's mounts: with the desktop's own GVfs
+  mounts in the table it failed two runs of three alone (the remote
+  plugin's places 5 before, 3 after re-enabling), and the remote tests
+  mount in parallel during the suite. It compares who owns them now
+  (`Contributions::owners`): five runs of five passed.
+- The new rsync test failed once in the whole suite, at its end: the
+  disconnect never came. Eject left the folders shown there, then
+  unmounted at once, while their listings were let go of a moment later
+  on a worker (`OpenLocation::close`, since the night's review): the
+  system refused the unmount as busy, which Eject reports as another
+  program using it. More likely under load; the timing test met it too.
+  The disconnect now waits, ten seconds at most, for the folders under
+  the mount to be let go of (`fs::wait_let_go`, a count of the folders
+  listings hold open) and for the remote's lane to run nothing.
