@@ -81,7 +81,7 @@ mod imp {
     //! following their changes. Two subscribers of one folder share its
     //! descriptor (inotify answers the same one for the same inode), which
     //! is removed with the last of them.
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::path::Path;
     use std::sync::OnceLock;
     use std::time::{Duration, Instant};
@@ -127,11 +127,17 @@ mod imp {
     struct State {
         next: u64,
         by_wd: HashMap<WatchDescriptor, Vec<Subscriber>>,
-        /// Watches being added, outside the lock: a descriptor whose last
-        /// subscriber leaves meanwhile is kept, with none, since the
-        /// kernel may be giving it to one of them (an orphan), and removed
-        /// once no add runs.
-        adding: usize,
+        /// Descriptors let go of so far (removed, or their folder gone).
+        removals: u64,
+        /// The watches being added, outside the lock, by the count of
+        /// removals when each began: the kernel may give one a descriptor
+        /// that goes before it is subscribed to.
+        adding: BTreeMap<u64, usize>,
+        /// The descriptors let go of while watches were added, with their
+        /// removal's count: an add given one of them since it began adds
+        /// again. Kept only while an add that began before runs, so a
+        /// server that holds one add keeps a few numbers, never a watch.
+        removed: Vec<(WatchDescriptor, u64)>,
     }
 
     struct Hub {
@@ -176,10 +182,18 @@ mod imp {
         deliver: Deliver,
     ) -> std::io::Result<WatchHandle> {
         let hub = hub()?;
-        hub.state.lock().adding += 1;
-        let added = hub.watches.clone().add(dir, MASK);
-        let mut state = hub.state.lock();
-        state.adding -= 1;
+        let mut since = hub.state.lock().begin_add();
+        let (added, mut state) = loop {
+            let added = hub.watches.clone().add(dir, MASK);
+            let mut state = hub.state.lock();
+            if state.end_add(since, added.as_ref().ok()) {
+                // Given the descriptor another watch of the folder had,
+                // let go of meanwhile: the kernel's own is a new one.
+                since = state.begin_add();
+                continue;
+            }
+            break (added, state);
+        };
         let added = added.map(|wd| {
             let id = state.next;
             state.next += 1;
@@ -192,32 +206,11 @@ mod imp {
             });
             (wd, id)
         });
-        if state.adding == 0 {
-            hub.remove_orphans(&mut state);
-        }
         drop(state);
         let (wd, id) = added?;
         Ok(WatchHandle {
             _inner: Box::new(Unsubscribe { hub, wd, id }),
         })
-    }
-
-    impl Hub {
-        /// Remove the descriptors left with no subscriber while watches
-        /// were added. Under the state's lock, so no add starts and is
-        /// given one before it is gone; by descriptor, which reads no path.
-        fn remove_orphans(&self, state: &mut State) {
-            let orphans: Vec<WatchDescriptor> = state
-                .by_wd
-                .iter()
-                .filter(|(_, subscribers)| subscribers.is_empty())
-                .map(|(wd, _)| wd.clone())
-                .collect();
-            for wd in orphans {
-                state.by_wd.remove(&wd);
-                let _ = self.watches.clone().remove(wd);
-            }
-        }
     }
 
     struct Unsubscribe {
@@ -234,8 +227,10 @@ mod imp {
                 return;
             };
             subscribers.retain(|s| s.id != self.id);
-            if subscribers.is_empty() && state.adding == 0 {
+            if subscribers.is_empty() {
                 state.by_wd.remove(&self.wd);
+                state.let_go(self.wd.clone());
+                // By descriptor, which reads no path.
                 let _ = self.hub.watches.clone().remove(self.wd.clone());
             }
         }
@@ -280,6 +275,43 @@ mod imp {
     }
 
     impl State {
+        /// A watch begins to be added: the count it is known by.
+        fn begin_add(&mut self) -> u64 {
+            let since = self.removals;
+            *self.adding.entry(since).or_default() += 1;
+            since
+        }
+
+        /// The watch begun at `since` was added (as `wd`), or failed:
+        /// whether its descriptor was let go of meanwhile, so it must be
+        /// added again.
+        fn end_add(&mut self, since: u64, wd: Option<&WatchDescriptor>) -> bool {
+            let stale = wd.is_some_and(|wd| {
+                self.removed
+                    .iter()
+                    .any(|(removed, at)| removed == wd && *at > since)
+            });
+            if let Some(count) = self.adding.get_mut(&since) {
+                *count -= 1;
+                if *count == 0 {
+                    self.adding.remove(&since);
+                }
+            }
+            match self.adding.keys().next() {
+                Some(&oldest) => self.removed.retain(|(_, at)| *at > oldest),
+                None => self.removed.clear(),
+            }
+            stale
+        }
+
+        /// A descriptor is let go of: removed, or its folder gone.
+        fn let_go(&mut self, wd: WatchDescriptor) {
+            self.removals += 1;
+            if !self.adding.is_empty() {
+                self.removed.push((wd, self.removals));
+            }
+        }
+
         /// When the first window ends.
         fn next_due(&self) -> Option<Instant> {
             self.by_wd
@@ -305,6 +337,11 @@ mod imp {
             if mask.contains(EventMask::Q_OVERFLOW) {
                 self.rescan_all(now);
                 return;
+            }
+            if mask.contains(EventMask::IGNORED) {
+                // The kernel's no longer, whoever had it: a folder gone
+                // as a watch of it was added.
+                self.let_go(wd.clone());
             }
             let Some(subscribers) = self.by_wd.get_mut(wd) else {
                 return;
@@ -354,6 +391,34 @@ mod imp {
                 self.by_wd.remove(&wd);
             }
             due
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// A watch given a descriptor let go of while it was added adds
+        /// again; one let go of before it began, or with no add running,
+        /// is not remembered.
+        #[test]
+        fn a_descriptor_let_go_of_during_an_add_is_added_again() {
+            let root = tempfile::tempdir().unwrap();
+            let inotify = Inotify::init().unwrap();
+            let a = inotify.watches().add(root.path(), MASK).unwrap();
+            let mut state = State::default();
+            state.let_go(a.clone());
+            assert!(state.removed.is_empty(), "no add ran");
+            let since = state.begin_add();
+            let later = state.begin_add();
+            state.let_go(a.clone());
+            assert!(state.end_add(since, Some(&a)), "let go of during the add");
+            assert!(!state.removed.is_empty(), "an add that began before still runs");
+            let again = state.begin_add();
+            assert!(!state.end_add(again, Some(&a)), "let go of before it began");
+            assert!(state.end_add(later, Some(&a)));
+            assert!(state.adding.is_empty());
+            assert!(state.removed.is_empty(), "nothing kept once no add runs");
         }
     }
 }
