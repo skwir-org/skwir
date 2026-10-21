@@ -756,7 +756,7 @@ impl App {
         location: &Location,
         then: impl FnOnce(&mut crate::workspace::Pane),
     ) -> anyhow::Result<()> {
-        self.open_in(pane, location, false, then)
+        self.open_in(pane, location, false, None, then)
     }
 
     /// Open again what a dormant pane showed (its tab shown again): as
@@ -768,16 +768,19 @@ impl App {
         location: &Location,
         then: impl FnOnce(&mut crate::workspace::Pane),
     ) -> anyhow::Result<()> {
-        self.open_in(pane, location, true, then)?;
+        self.open_in(pane, location, true, None, then)?;
         self.open_expanded(pane);
         Ok(())
     }
 
+    /// Open `location` in `pane`; with `from`, only while the pane still
+    /// shows that (a redirect, which a navigation meanwhile overrides).
     fn open_in(
         &self,
         pane: PaneId,
         location: &Location,
         waking: bool,
+        from: Option<&Location>,
         then: impl FnOnce(&mut crate::workspace::Pane),
     ) -> anyhow::Result<()> {
         let kept = self
@@ -797,6 +800,11 @@ impl App {
         let p = ws
             .pane_mut(pane)
             .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+        if from.is_some_and(|from| p.location() != Some(from)) {
+            drop(ws);
+            open.close();
+            return Ok(());
+        }
         if waking {
             p.reopen(open, listing);
         } else {
@@ -847,8 +855,15 @@ impl App {
     /// shows that one in its place.
     pub fn pump_report(&self) -> crate::workspace::PumpReport {
         let report = self.workspace.write().pump_report();
-        for (pane, to) in &report.redirects {
-            let shown = self.show(*pane, to, |p| p.replace_here(to.clone()));
+        for redirect in &report.redirects {
+            let to = &redirect.to;
+            let shown = self.open_in(
+                redirect.pane,
+                to,
+                false,
+                Some(&redirect.from),
+                |p| p.replace_here(to.clone()),
+            );
             if let Err(error) = shown {
                 tracing::warn!(%to, "cannot show where a location leads: {error:#}");
             }
@@ -2892,5 +2907,31 @@ mod tests {
         app.set_waker(None);
         early();
         assert_eq!(woken.load(Ordering::SeqCst), 1);
+    }
+
+    /// Where a location said it is reached replaces it only while its pane
+    /// still shows it: a navigation meanwhile wins (ADR-077).
+    #[test]
+    fn a_redirect_replaces_only_what_still_shows() {
+        use crate::Location;
+        let tmp = tempfile::tempdir().unwrap();
+        let [a, b, c] = ["a", "b", "c"].map(|name| {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir(&dir).unwrap();
+            Location::from_path(dir)
+        });
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &a).unwrap();
+        app.navigate(pane, &b).unwrap();
+        // `a` said it is reached at `c`, as the pane went on to `b`.
+        app.open_in(pane, &c, false, Some(&a), |p| p.replace_here(c.clone()))
+            .unwrap();
+        assert_eq!(app.pane_location(pane).as_ref(), Some(&b));
+        app.open_in(pane, &c, false, Some(&b), |p| p.replace_here(c.clone()))
+            .unwrap();
+        assert_eq!(app.pane_location(pane).as_ref(), Some(&c));
+        let ws = app.workspace.read();
+        assert_eq!(ws.pane(pane).unwrap().history.last(), Some(&c));
     }
 }

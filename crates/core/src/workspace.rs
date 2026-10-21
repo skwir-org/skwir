@@ -693,10 +693,6 @@ impl Pane {
         self.history_pos = self.history.len() - 1;
     }
 
-    /// Go to step `pos` of `history` (Back, Forward): `left`, the entry the
-    /// cursor was on, is kept for the step left, and the entry the cursor
-    /// was on when `pos` was left is selected again once the listing has
-    /// it, as a link followed and gone back from expects.
     /// Put `location` in place of the current step of `history`: where
     /// the location shown said it is reached (`ListingEvent::Redirect`).
     pub(crate) fn replace_here(&mut self, location: Location) {
@@ -708,6 +704,10 @@ impl Pane {
         }
     }
 
+    /// Go to step `pos` of `history` (Back, Forward): `left`, the entry the
+    /// cursor was on, is kept for the step left, and the entry the cursor
+    /// was on when `pos` was left is selected again once the listing has
+    /// it, as a link followed and gone back from expects.
     pub(crate) fn go_to(&mut self, pos: usize, left: Option<EntryId>) {
         self.remember_left(self.history_pos, left);
         self.history_pos = pos;
@@ -1930,8 +1930,14 @@ impl Workspace {
                 r.applied += n;
                 r.panes_changed.push(p.id);
             }
-            if let Some(to) = p.listing.take_redirect() {
-                r.redirects.push((p.id, to));
+            if let Some(to) = p.listing.take_redirect()
+                && let Some(from) = p.location()
+            {
+                r.redirects.push(Redirect {
+                    pane: p.id,
+                    from: from.clone(),
+                    to,
+                });
             }
             r.backlog |= p.backlog();
         }
@@ -1954,7 +1960,16 @@ pub struct PumpReport {
     pub backlog: bool,
     /// Panes whose location said it is reached at another
     /// (`ListingEvent::Redirect`): `App::pump_report` shows it there.
-    pub redirects: Vec<(PaneId, Location)>,
+    pub redirects: Vec<Redirect>,
+}
+
+/// A pane's location said it is reached at another.
+#[derive(Clone, Debug)]
+pub struct Redirect {
+    pub pane: PaneId,
+    /// What the pane showed: replaced only while it still shows it.
+    pub from: Location,
+    pub to: Location,
 }
 
 #[cfg(test)]
