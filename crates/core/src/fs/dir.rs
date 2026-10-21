@@ -110,10 +110,7 @@ mod unix {
                 return Ok(*id);
             }
             let st = rustix::fs::fstat(&self.0)?;
-            let id = FileId {
-                dev: crate::fs::stat::device_number(st.st_dev),
-                ino: st.st_ino,
-            };
+            let id = crate::fs::stat::file(crate::fs::stat::device_number(st.st_dev), st.st_ino);
             Ok(*self.1.get_or_init(|| id))
         }
 

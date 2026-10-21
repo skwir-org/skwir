@@ -28,7 +28,7 @@ use parking_lot::Mutex;
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, NoArgs, Outcome};
-use skwir_core::entry::{Entry, EntryId, FileId, keys};
+use skwir_core::entry::{Entry, EntryId, keys};
 use skwir_core::fs::stat::stat_path;
 use skwir_core::location::{
     Crumb, EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext,
@@ -124,10 +124,7 @@ fn read_held(trashes: &[PathBuf]) -> Vec<EntryRef> {
         for listed in names.flatten() {
             let mut record = listed.name.clone();
             record.push(".trashinfo");
-            let id = FileId {
-                dev,
-                ino: listed.ino,
-            };
+            let id = skwir_core::fs::stat::file(dev, listed.ino);
             if records.contains(&record) && seen.insert((id, listed.name.clone())) {
                 held.push(EntryRef::new(id, files.join(&listed.name)));
             }

@@ -603,6 +603,7 @@ fn tile_of(pictures: &[PathBuf]) -> Value {
                     Value::Text(path.to_string_lossy().as_ref().into()),
                     Value::UInt(id.dev),
                     Value::UInt(id.ino),
+                    Value::UInt(id.mount),
                     Value::Time(meta.modified().ok()?),
                 ]))
             })

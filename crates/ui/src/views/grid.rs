@@ -336,12 +336,13 @@ fn mosaic_of(
             let Value::List(parts) = item else {
                 return None;
             };
-            let [path, dev, ino, modified] = parts.as_slice() else {
+            let [path, dev, ino, mount, modified] = parts.as_slice() else {
                 return None;
             };
             let id = skwir_core::FileId {
                 dev: dev.as_u64()?,
                 ino: ino.as_u64()?,
+                mount: mount.as_u64()?,
             };
             let path = std::path::PathBuf::from(path.as_str()?);
             Some((skwir_core::op::EntryRef::new(id, path), modified.as_time()))

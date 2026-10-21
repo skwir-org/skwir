@@ -87,9 +87,17 @@ Revises ADR-021: its direction kept, its steps decided.
      permanent and asked: the trash command makes a deletion there. A
      kernel share (NFS, SMB) keeps its own `.Trash-<uid>`. Nothing is
      ever copied from a remote into this machine's trash to be trashed.
-   - Where inodes are made up for a mount's life (FUSE remotes), a
-     reference whose device changed (the remote mounted again) resolves
-     at its path, and none is followed to another name by its number.
+   - Where inodes are made up for a mount's life (FUSE: sshfs numbers
+     files in the order they are looked up, again once the kernel let go
+     of one and from the start when mounted again, often on the device
+     number the last mount had), a file's identity carries the mount's
+     own number (`FileId::mount`: the kernel's unique one, Linux 6.8, read
+     from the mount table in memory and asked of no server), so a
+     remount's files are other files to everything kept in memory. What
+     is kept beyond the mount (the cache: fields, positions, converted
+     previews) knows such a file by its path, as thumbnails are known;
+     notes keep no snapshot of it. A reference there resolves at its
+     path, and none is followed to another name by its number.
    - A copy onto a remote is done when the server has it: rclone mounts
      with `--vfs-cache-mode minimal` (a file written alone goes straight
      up; checked: on the server once closed).

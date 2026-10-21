@@ -579,10 +579,10 @@ mod tests {
     fn item(name: &str) -> Item {
         (
             EntryRef::new(
-                FileId {
-                    dev: 1,
-                    ino: name.len() as u64 * 7919 + name.bytes().map(u64::from).sum::<u64>(),
-                },
+                FileId::new(
+                    1,
+                    name.len() as u64 * 7919 + name.bytes().map(u64::from).sum::<u64>(),
+                ),
                 format!("/d/{name}"),
             ),
             name.into(),
@@ -670,7 +670,7 @@ mod tests {
     fn date_uses_mtime() {
         let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         let items = [(
-            EntryRef::new(FileId { dev: 1, ino: 1 }, "/d/a.txt"),
+            EntryRef::new(FileId::new(1, 1), "/d/a.txt"),
             "a.txt".into(),
             Some(t),
         )];
@@ -730,7 +730,7 @@ mod tests {
             ..Default::default()
         };
         let dated = [(
-            EntryRef::new(FileId { dev: 1, ino: 1 }, "/d/a"),
+            EntryRef::new(FileId::new(1, 1), "/d/a"),
             "a".into(),
             Some(SystemTime::UNIX_EPOCH),
         )];
@@ -746,7 +746,7 @@ mod tests {
         use std::os::unix::ffi::OsStringExt;
         let raw = OsString::from_vec(b"caf\xe9".to_vec());
         let items = [(
-            EntryRef::new(FileId { dev: 1, ino: 1 }, Path::new("/d").join(&raw)),
+            EntryRef::new(FileId::new(1, 1), Path::new("/d").join(&raw)),
             raw.clone(),
             None,
         )];

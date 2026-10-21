@@ -2209,3 +2209,57 @@ from 0025aab2 to the commit of these docs.
   - Left (PLAN.md, G): pictures kept in memory by file identity could be
     confused across an sshfs remount (same device, numbers restarted,
     same type and modification time).
+
+### A file's identity across a remount (2026-10-21, morning)
+
+Asked by the user after the night's report ("Yes, do the fix").
+
+- `FileId` carries `mount`: on a mount whose program makes inode numbers
+  up (every FUSE mount but `fuseblk`), the mount's own number; 0
+  elsewhere, and then written as before (`{"dev","ino"}`: plans, the
+  cache's keys and notes' snapshots of local files are unchanged).
+  `fs::reach` keeps each FUSE mount's device and number with the table:
+  the kernel's unique number, from a `statx` of the point with
+  `AT_STATX_DONT_SYNC` and `STATX_MNT_ID_UNIQUE` alone, which asks its
+  program nothing (traced: two such calls on this machine, GVfs's bridge
+  and the document portal, 4 and 6 µs); a point below another FUSE mount
+  or a network's is not looked up and keeps the table's number. Every
+  stat names a file through `fs::stat::file` (listings, `id_of`,
+  operations' stats, Usage, the trash's records); a folder held open
+  asks once for its entries; a device on a block device of its own is
+  told without the table.
+- What is kept beyond the mount knows such a file by its path
+  (`FileId::kept_as`): fields and the map's positions on disk, converted
+  previews by path and version; notes keep no snapshot of it. A
+  reference there resolves at its path: sshfs also numbers a file anew
+  once the kernel let go of its inode (libfuse's high-level nodes), so a
+  number tells no replacement, even within one mount. A tag's tile
+  carries the mount with its pictures' identities.
+- Checked: unit tests (the table's numbers from a sample mountinfo, a
+  point below a FUSE mount and below NFS not looked up, `fuseblk` left
+  out; identity written as before; the cache's keys; references; notes'
+  snapshots); `just remote-check` (31 passed), its new test mounting a
+  WebDAV server through rclone, letting go of it and mounting it again:
+  the listing and a stat agree on the mount, the file's identity differs
+  after (Linux 6.18), and a reference made before resolves at its path.
+  The whole suite: 1831 passed, 20 skipped.
+- Measured (`skwir-bench list`, the build before and after alternated,
+  load average 4 to 15): images10k's first streamed batch 0.66–1.03 ms
+  against 0.62–0.80 ms before (9 runs each), flat100k's complete stream
+  50–60 ms against 44–56 ms (5 runs each), raw `statx` unchanged. The
+  mount table is read once per run and is not asked per entry: `FileId`
+  grew from 16 to 24 bytes and `Entry` from 144 to 160, which a stream
+  copies per entry. `just bench-check` at load 21 failed images10k's
+  stream budgets (3.2 ms of 2.5, 17.8 ms of 12), and at load 12–15
+  flat100k's complete stream (106.5 ms of 100) with images10k's within
+  theirs. Boxing a link's target (`Entry` 112 bytes) took nothing back
+  (flat100k 58–64 ms), so the size of the entries is not it; the
+  listing's maps keyed by entry are (`fs::path_provider::Names`: the
+  same inserts with a 24-byte file took 20.1–21.6 ms per 100,000 against
+  15.2–20.9 ms with 16, std's SipHash). Kept: about 5 ms more per
+  100,000 entries listed, within the budgets at ordinary load. Hiding the
+  mount in the inode number would keep 16 bytes, but no unit test could
+  then make an identity whose mount made it up, and an identity's number
+  would no longer be the system's anywhere.
+- Before Linux 6.8 the number is the table's, which a later mount may
+  take again: the night's confusion stays possible there.

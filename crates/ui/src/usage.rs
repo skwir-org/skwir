@@ -1287,7 +1287,7 @@ mod tests {
     fn node(path: &str, alloc: u64, is_dir: bool, children: Vec<Node>) -> Node {
         Node {
             id: Some(EntryId {
-                file: skwir_core::FileId { dev: 1, ino: alloc },
+                file: skwir_core::FileId::new(1, alloc),
                 at: 0,
             }),
             name: path.rsplit('/').next().unwrap().to_owned(),
@@ -1377,7 +1377,7 @@ mod tests {
         assert_eq!(
             mkv.entry,
             Some(EntryId {
-                file: skwir_core::FileId { dev: 1, ino: 500 },
+                file: skwir_core::FileId::new(1, 500),
                 at: 0
             })
         );

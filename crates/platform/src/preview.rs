@@ -93,9 +93,11 @@ fn fingerprint(request: &PreviewRequest, path: &Path) -> anyhow::Result<Vec<u8>>
     fingerprint_of(request.entry.id, path)
 }
 
+/// A file whose number a mount made up is kept by its path and version
+/// alone (`FileId::lasts`).
 fn fingerprint_of(id: skwir_core::FileId, path: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(serde_json::to_vec(&(
-        id,
+        id.lasts().then_some(id),
         path,
         crate::document::file_version(path)?,
     ))?)

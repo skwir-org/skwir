@@ -468,9 +468,12 @@ pub fn write_key(store: &str) -> String {
 /// A snapshot is a name's (ADR-049): what is kept beside a file is the
 /// name's, and what is kept in its attributes, the same under each name,
 /// is merged as an edit made elsewhere when read under another, which is
-/// what it is there.
-fn snapshot_key(id: EntryId) -> Vec<u8> {
-    format!("{}:{}:{:x}", id.file.dev, id.file.ino, id.at).into_bytes()
+/// what it is there. None is kept of a file whose number a mount made up
+/// (`FileId::lasts`): its notes are merged as when none was kept.
+fn snapshot_key(id: EntryId) -> Option<Vec<u8>> {
+    id.file
+        .lasts()
+        .then(|| format!("{}:{}:{:x}", id.file.dev, id.file.ino, id.at).into_bytes())
 }
 
 /// What the notes' snapshots may take in the cache.
@@ -549,7 +552,7 @@ impl NoteStores {
     }
 
     fn snapshot(&self, id: EntryId) -> Option<Snapshot> {
-        let bytes = self.snapshots.read().as_ref()?.get(&snapshot_key(id))?;
+        let bytes = self.snapshots.read().as_ref()?.get(&snapshot_key(id)?)?;
         serde_json::from_slice(&bytes).ok()
     }
 
@@ -560,8 +563,10 @@ impl NoteStores {
     /// none was kept.
     pub(crate) fn remember(&self, id: EntryId, snapshot: &Snapshot) {
         let slot = self.snapshots.read().clone();
-        if let (Some(slot), Ok(bytes)) = (slot, serde_json::to_vec(snapshot)) {
-            match slot.put(&snapshot_key(id), &bytes) {
+        if let (Some(slot), Some(key), Ok(bytes)) =
+            (slot, snapshot_key(id), serde_json::to_vec(snapshot))
+        {
+            match slot.put(&key, &bytes) {
                 Ok(()) => slot.trim_soon(bytes.len() as u64, SNAPSHOT_BYTES),
                 Err(error) => tracing::debug!(%error, "notes: the snapshot was not kept"),
             }
@@ -571,8 +576,8 @@ impl NoteStores {
     /// Forget what skwir wrote for the file `id` (an undo put back what
     /// was there before).
     pub(crate) fn forget(&self, id: EntryId) {
-        if let Some(slot) = self.snapshots.read().as_ref() {
-            let _ = slot.remove(&snapshot_key(id));
+        if let (Some(slot), Some(key)) = (self.snapshots.read().as_ref(), snapshot_key(id)) {
+            let _ = slot.remove(&key);
         }
     }
 
@@ -731,6 +736,23 @@ impl NoteStores {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_snapshot_is_kept_of_a_file_whose_number_a_mount_made_up() {
+        let lasting = EntryId {
+            file: crate::entry::FileId::new(5, 7),
+            at: 0x1f,
+        };
+        assert_eq!(snapshot_key(lasting).unwrap(), b"5:7:1f", "as before");
+        let made_up = EntryId {
+            file: crate::entry::FileId {
+                mount: 1 << 40,
+                ..lasting.file
+            },
+            ..lasting
+        };
+        assert_eq!(snapshot_key(made_up), None);
+    }
 
     #[test]
     fn notes_merge_keeping_the_first_store_and_adding_what_it_lacks() {

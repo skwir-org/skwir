@@ -648,7 +648,7 @@ mod tests {
 
     fn selected() -> Vec<EntryRef> {
         vec![EntryRef::new(
-            FileId { dev: 1, ino: 7 },
+            FileId::new(1, 7),
             "/tmp/example/a file's name.txt",
         )]
     }

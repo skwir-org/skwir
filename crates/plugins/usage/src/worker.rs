@@ -572,10 +572,7 @@ fn replace_pending(tree: &mut Node, mut child: Node) {
 /// The file `metadata` is of: what a file of several links is counted
 /// once by.
 fn file_of(metadata: &std::fs::Metadata) -> FileId {
-    FileId {
-        dev: meta::device(metadata),
-        ino: meta::inode(metadata),
-    }
+    skwir_core::fs::stat::file(meta::device(metadata), meta::inode(metadata))
 }
 
 /// The entry `name` in the folder `folder` is, as the folder's listing
@@ -589,7 +586,7 @@ fn folder_entry(path: &Path, metadata: &std::fs::Metadata) -> EntryId {
     let parent = path
         .parent()
         .and_then(|p| std::fs::metadata(p).ok())
-        .map_or(FileId { dev: 0, ino: 0 }, |m| file_of(&m));
+        .map_or(FileId::new(0, 0), |m| file_of(&m));
     entry_id(metadata, parent, path.file_name().unwrap_or_default())
 }
 

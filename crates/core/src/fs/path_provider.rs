@@ -313,9 +313,10 @@ impl Shared {
             };
             let id = {
                 let mut names = self.names.lock();
+                // Provisional: the stat names it (`stat_entry`).
                 let file = FileId {
-                    dev: self.id.dev,
                     ino: ent.ino,
+                    ..self.id
                 };
                 let id = names.listing_id(EntryId::in_folder(file, self.id, &ent.name));
                 names.insert(id, ent.name.clone());

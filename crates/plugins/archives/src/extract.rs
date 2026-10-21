@@ -727,7 +727,7 @@ mod tests {
     #[test]
     fn a_name_said_is_kept_and_none_said_is_the_members() {
         let entry = EntryRef::new(
-            skwir_core::FileId { dev: 1, ino: 1 },
+            skwir_core::FileId::new(1, 1),
             PathBuf::from("/example/v1.0.tar.gz"),
         );
         let step = Extract::new(entry, PathBuf::from("/example"));

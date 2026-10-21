@@ -1557,7 +1557,11 @@ impl Element for Map {
         if let Some(picking) = self.picking.as_ref().filter(|_| !spread_all) {
             let opened = self.handles.opened.borrow();
             let opened_stamp = opened.iter().fold(opened.len() as u64, |stamp, id| {
-                stamp ^ id.file.ino ^ id.file.dev.rotate_left(32) ^ id.at
+                stamp
+                    ^ id.file.ino
+                    ^ id.file.dev.rotate_left(32)
+                    ^ id.file.mount.rotate_left(16)
+                    ^ id.at
             });
             // The markers by their address, and, should new ones be made
             // where old ones were, by how many and where the ends are.
@@ -2447,7 +2451,7 @@ mod tests {
     fn place(n: u64, lat: f64, lon: f64) -> Place {
         Place {
             entry: EntryId {
-                file: skwir_core::FileId { dev: 1, ino: n },
+                file: skwir_core::FileId::new(1, n),
                 at: 0,
             },
             at: LatLon::new(lat, lon).unwrap(),

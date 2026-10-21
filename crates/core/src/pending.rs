@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn a_snapshot_outlives_a_change_and_only_the_owner_withdraws_it() {
         let pending = PendingTransfer::default();
-        let file = FileId { dev: 1, ino: 42 };
+        let file = FileId::new(1, 42);
         pending.set("clipboard", [(file, "a.txt".into())], true);
         let seen = pending.get();
         assert!(seen.cut && seen.holds(file, "a.txt".as_ref()));

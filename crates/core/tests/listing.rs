@@ -562,7 +562,7 @@ fn virtual_locations_hydrate_by_path_in_one_batch() {
     };
     let (sink, rx) = ctx.channel();
     let id = |ino| skwir_core::EntryId {
-        file: skwir_core::FileId { dev: 0, ino },
+        file: skwir_core::FileId::new(0, ino),
         at: 0,
     };
     let gone = skwir_core::fs::hydrate_paths(

@@ -736,8 +736,8 @@ mod tests {
     #[test]
     fn buffer_format() {
         let b = to_buffer(&[
-            (skwir_core::FileId { dev: 1, ino: 1 }, "docs".into(), true),
-            (skwir_core::FileId { dev: 1, ino: 2 }, "a.txt".into(), false),
+            (skwir_core::FileId::new(1, 1), "docs".into(), true),
+            (skwir_core::FileId::new(1, 2), "a.txt".into(), false),
         ]);
         assert!(b.starts_with("# skwir"));
         assert!(b.ends_with("   1  docs/\n   2  a.txt\n"));

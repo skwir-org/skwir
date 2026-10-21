@@ -909,7 +909,7 @@ mod tests {
             listing.apply(open.events().recv_deadline(deadline).unwrap());
         }
         let stranger = EntryId {
-            file: skwir_core::FileId { dev: 0, ino: 1 },
+            file: skwir_core::FileId::new(0, 1),
             at: 0,
         };
         let v = value(

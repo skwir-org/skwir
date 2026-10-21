@@ -180,7 +180,7 @@ mod tests {
 
     fn request(n: u64, path: &str, to: &str) -> RenameRequest {
         RenameRequest {
-            entry: EntryRef::new(crate::FileId { dev: 1, ino: n }, path),
+            entry: EntryRef::new(crate::FileId::new(1, n), path),
             new_name: to.into(),
         }
     }

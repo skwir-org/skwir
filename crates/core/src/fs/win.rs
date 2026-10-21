@@ -106,20 +106,20 @@ pub struct Info {
 pub fn identity(file: &File) -> io::Result<FileId> {
     // SAFETY: FileIdInfo fills a FILE_ID_INFO.
     match unsafe { query::<fs::FILE_ID_INFO>(file, fs::FileIdInfo) } {
-        Ok(info) => Ok(FileId {
-            dev: info.VolumeSerialNumber,
-            ino: fold(info.FileId.Identifier),
-        }),
+        Ok(info) => Ok(FileId::new(
+            info.VolumeSerialNumber,
+            fold(info.FileId.Identifier),
+        )),
         Err(e) if unsupported(&e) => {
             let mut info = fs::BY_HANDLE_FILE_INFORMATION::default();
             // SAFETY: `info` is the record GetFileInformationByHandle fills.
             if unsafe { fs::GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) } == 0 {
                 return Err(io::Error::last_os_error());
             }
-            Ok(FileId {
-                dev: u64::from(info.dwVolumeSerialNumber),
-                ino: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
-            })
+            Ok(FileId::new(
+                u64::from(info.dwVolumeSerialNumber),
+                (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+            ))
         }
         Err(e) => Err(e),
     }

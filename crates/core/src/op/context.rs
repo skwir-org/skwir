@@ -266,15 +266,7 @@ fn several_names(meta: &std::fs::Metadata) -> Option<(crate::FileId, u64)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        (meta.nlink() > 1).then(|| {
-            (
-                crate::FileId {
-                    dev: meta.dev(),
-                    ino: meta.ino(),
-                },
-                meta.nlink(),
-            )
-        })
+        (meta.nlink() > 1).then(|| (crate::fs::stat::file(meta.dev(), meta.ino()), meta.nlink()))
     }
     #[cfg(not(unix))]
     {

@@ -725,10 +725,10 @@ pub(super) mod access {
         let kind = FileType::from_raw_mode(mode);
         Meta {
             // As `fs::stat` names a file.
-            id: FileId {
-                dev: rustix::fs::makedev(st.stx_dev_major, st.stx_dev_minor),
-                ino: st.stx_ino,
-            },
+            id: crate::fs::stat::file(
+                rustix::fs::makedev(st.stx_dev_major, st.stx_dev_minor),
+                st.stx_ino,
+            ),
             mode: mode & 0o7777,
             uid: Some(st.stx_uid),
             gid: Some(st.stx_gid),
@@ -865,10 +865,7 @@ pub(super) mod access {
         use rustix::fs::FileType;
         let kind = FileType::from_raw_mode(st.st_mode);
         Meta {
-            id: FileId {
-                dev: crate::fs::stat::device_number(st.st_dev),
-                ino: st.st_ino,
-            },
+            id: crate::fs::stat::file(crate::fs::stat::device_number(st.st_dev), st.st_ino),
             mode: u32::from(st.st_mode) & 0o7777,
             uid: Some(st.st_uid),
             gid: Some(st.st_gid),

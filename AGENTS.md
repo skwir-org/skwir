@@ -49,9 +49,10 @@ working in an area, also read that area's rules (see
    `skwir-core`. Everything else is a plugin with a runtime toggle.
 6. **Agent-ready.** Commands are serializable data with JSON schemas.
    Mutations are plans reviewed before they apply. A file has a stable
-   identity (`FileId`: device + inode), and an entry is a file under one
-   of its names (`EntryId`, ADR-049). Metadata carries provenance. AI
-   output is a suggestion until a human confirms it.
+   identity (`FileId`: device + inode, and the mount where a FUSE
+   program makes inodes up), and an entry is a file under one of its
+   names (`EntryId`, ADR-049). Metadata carries provenance. AI output is
+   a suggestion until a human confirms it.
 
 ## Engineering rules
 
@@ -172,9 +173,12 @@ working in an area, also read that area's rules (see
 ## Files and entries
 
 - **A file and an entry are two identities (ADR-049).** A `FileId`
-  (device + inode, `fs::stat::id_of`) is the file; what belongs to the
-  file is keyed by it: thumbnails, fields, notes in attributes, Usage's
-  hard links, an `EntryRef`'s identity. An `EntryId` is the file under one
+  (device + inode, `fs::stat::id_of`; a stat names it through
+  `fs::stat::file`, which adds the mount's number where its inodes are
+  made up, ADR-077) is the file; what belongs to the file is keyed by
+  it: thumbnails, fields, notes in attributes, Usage's hard links, an
+  `EntryRef`'s identity. What the cache keeps beyond a run knows a file
+  by `FileId::kept_as`. An `EntryId` is the file under one
   of its names: its `at` hashes the folder holding the name and the name
   (`EntryId::in_folder`, which `stat_entry` gives every entry it stats).
   A location that knows entries by path alone (the shelf, a tag's) uses

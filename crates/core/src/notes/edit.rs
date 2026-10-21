@@ -913,10 +913,7 @@ mod tests {
     fn an_edit_is_data_that_comes_back_with_its_stores() {
         let stores = stores(vec![Arc::new(Beside("a", Write::Create))]);
         let edit = stores
-            .edit(EntryRef::new(
-                crate::entry::FileId { dev: 1, ino: 2 },
-                "/x/a.txt",
-            ))
+            .edit(EntryRef::new(crate::entry::FileId::new(1, 2), "/x/a.txt"))
             .tags(vec!["work".into()])
             .comment(None);
         let data = edit.args();

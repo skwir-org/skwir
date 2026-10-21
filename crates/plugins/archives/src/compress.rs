@@ -816,7 +816,7 @@ mod tests {
     fn refs(paths: &[&str]) -> Vec<EntryRef> {
         paths
             .iter()
-            .map(|p| EntryRef::new(FileId { dev: 1, ino: 1 }, PathBuf::from(p)))
+            .map(|p| EntryRef::new(FileId::new(1, 1), PathBuf::from(p)))
             .collect()
     }
 

@@ -1556,7 +1556,7 @@ mod tests {
     #[test]
     fn put_back_reaches_inside_before_closing() {
         let was = |path: &str, mode: u32| AccessWas {
-            entry: EntryRef::new(FileId { dev: 1, ino: 1 }, path),
+            entry: EntryRef::new(FileId::new(1, 1), path),
             mode,
             group: None,
             follow: false,

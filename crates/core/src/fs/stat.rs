@@ -56,6 +56,32 @@ pub(crate) fn device_number(dev: rustix::fs::Dev) -> u64 {
     }
 }
 
+/// The file `ino` of the device `dev`, as every stat of it here names it:
+/// on a mount whose program makes inode numbers up, with the mount's own
+/// (`FileId::mount`, asked of the mount table in memory).
+pub fn file(dev: u64, ino: u64) -> FileId {
+    FileId {
+        dev,
+        ino,
+        mount: super::reach::mount_of(dev),
+    }
+}
+
+/// `st`, its identity told apart by its mount ([`file`]), `dir` saying it
+/// for the folder's own device: a listing asks the table once.
+fn mounted(mut st: Stat, dir: Option<&Dir>) -> Stat {
+    st.id.mount = dir
+        .and_then(|dir| dir.identity().ok())
+        .filter(|folder| folder.dev == st.id.dev)
+        .map_or_else(|| super::reach::mount_of(st.id.dev), |folder| folder.mount);
+    st
+}
+
+/// `name` in `dir`, as `sys::stat_at` says it, told by its mount.
+fn stat_at(dir: &Dir, name: &OsStr, follow: bool, all: bool) -> std::io::Result<Stat> {
+    sys::stat_at(dir, name, follow, all).map(|st| mounted(st, Some(dir)))
+}
+
 /// When the file at `path` last changed, its bytes or what is said of it
 /// (its inode's change time, which no one can set back), its metadata
 /// `meta` read already. Unix reads it from `meta`; Windows asks the file
@@ -180,10 +206,7 @@ pub fn identity(path: &Path, meta: &std::fs::Metadata) -> Option<FileId> {
     {
         use std::os::unix::fs::MetadataExt;
         let _ = path;
-        Some(FileId {
-            dev: meta.dev(),
-            ino: meta.ino(),
-        })
+        Some(file(meta.dev(), meta.ino()))
     }
     #[cfg(windows)]
     {
@@ -210,10 +233,11 @@ mod sys {
 
     fn of(st: &rustix::fs::Statx) -> Stat {
         Stat {
-            id: FileId {
-                dev: rustix::fs::makedev(st.stx_dev_major, st.stx_dev_minor),
-                ino: st.stx_ino,
-            },
+            // Its mount said by the caller (`mounted`).
+            id: FileId::new(
+                rustix::fs::makedev(st.stx_dev_major, st.stx_dev_minor),
+                st.stx_ino,
+            ),
             kind: kind_of(u32::from(st.stx_mode)),
             mode: Some(u32::from(st.stx_mode)),
             size: st.stx_size,
@@ -320,10 +344,8 @@ mod sys {
 
     fn of(st: &rustix::fs::Stat) -> Stat {
         Stat {
-            id: FileId {
-                dev: device_number(st.st_dev),
-                ino: st.st_ino,
-            },
+            // Its mount said by the caller (`mounted`).
+            id: FileId::new(device_number(st.st_dev), st.st_ino),
             kind: kind_of(st.st_mode),
             mode: Some(u32::from(st.st_mode)),
             size: u64::try_from(st.st_size).unwrap_or(0),
@@ -446,7 +468,7 @@ pub struct Own {
 /// What the entry `name` in `dir` is, itself ([`Own`]): `None` when it is
 /// not there. Blocking.
 pub fn own(dir: &Dir, name: &OsStr) -> Option<Own> {
-    let st = sys::stat_at(dir, name, false, true).ok()?;
+    let st = stat_at(dir, name, false, true).ok()?;
     let link = (st.kind == EntryKind::Symlink)
         .then(|| sys::read_link_at(dir, name))
         .flatten();
@@ -483,11 +505,12 @@ fn target_of(st: &Stat, path: Option<PathBuf>) -> LinkTarget {
 fn followed(dir: &Dir, name: &OsStr, all: bool) -> Option<(Stat, Option<PathBuf>)> {
     #[cfg(target_os = "linux")]
     {
-        sys::follow_at(dir, name, all).ok()
+        let (st, path) = sys::follow_at(dir, name, all).ok()?;
+        Some((mounted(st, Some(dir)), path))
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let st = sys::stat_at(dir, name, true, all).ok()?;
+        let st = stat_at(dir, name, true, all).ok()?;
         Some((st, resolved(dir, name)))
     }
 }
@@ -529,14 +552,11 @@ pub fn stat_entry(dir: &Dir, entry: &mut Entry) -> bool {
     // Owned: the entry is filled while the name is used.
     let name = entry.name.clone();
     let name = name.as_os_str();
-    let Ok(own) = sys::stat_at(dir, name, false, true) else {
+    let Ok(own) = stat_at(dir, name, false, true) else {
         return false;
     };
     // Which of the file's names this is: this one, in this folder.
-    let folder = dir.identity().unwrap_or(FileId {
-        dev: own.id.dev,
-        ino: 0,
-    });
+    let folder = dir.identity().unwrap_or(FileId { ino: 0, ..own.id });
     entry.id = EntryId::in_folder(own.id, folder, name);
     entry.kind = own.kind;
     entry.hidden = own.hidden;
@@ -630,14 +650,14 @@ impl Statter {
 /// (`EntryId::in_folder`); a listing's provisional file for a mount point
 /// is replaced by this one when the entry is stat-ed.
 pub fn id_of(path: &Path) -> Option<FileId> {
-    sys::id_of(path)
+    sys::id_of(path).map(|id| file(id.dev, id.ino))
 }
 
 /// [`id_of`], and whether `path` is its file's one name: a folder always
 /// is (no folder has two), any other file when its link count is one. A
 /// file with several names (hard links) is one file under each.
 pub fn named(path: &Path) -> Option<(FileId, bool)> {
-    let st = sys::named(path)?;
+    let st = mounted(sys::named(path)?, None);
     Some((st.id, st.kind == EntryKind::Directory || st.nlink == 1))
 }
 

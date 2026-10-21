@@ -72,10 +72,11 @@ pub trait FieldProvider: Send + Sync {
     }
 }
 
-/// A file's identity: its answers hold while it is the same. Its device
-/// and inode, its size, and when it was modified, in nanoseconds since
-/// 1970.
-pub type Identity = (u64, u64, u64, u64);
+/// A file's identity: its answers hold while it is the same. Its file, its
+/// size, and when it was modified, in nanoseconds since 1970. Kept on disk
+/// by what its file is kept as (`FileId::kept_as`): a file whose number a
+/// mount made up, by its path.
+pub type Identity = (crate::entry::FileId, u64, u64);
 
 #[derive(Default)]
 pub struct Fields {
@@ -225,7 +226,7 @@ impl Fields {
             let kept = self
                 .cache
                 .as_ref()
-                .and_then(|cache| cache.get(disk_key(key, &*provider, identity).as_bytes()))
+                .and_then(|cache| cache.get(&disk_key(key, &*provider, identity, &content)))
                 .and_then(|bytes| serde_json::from_slice::<Option<Value>>(&bytes).ok());
             if let Some(value) = kept {
                 self.remember(memory_key, value.clone());
@@ -253,7 +254,7 @@ impl Fields {
                 if let Some(cache) = &self.cache
                     && let Ok(bytes) = serde_json::to_vec(&value)
                 {
-                    match cache.put(disk_key(key, &*provider, identity).as_bytes(), &bytes) {
+                    match cache.put(&disk_key(key, &*provider, identity, &content), &bytes) {
                         Ok(()) => cache.trim_soon(bytes.len() as u64, KEPT_BYTES),
                         Err(error) => tracing::debug!(%error, "field not kept"),
                     }
@@ -287,20 +288,19 @@ fn identity_of(path: &Path) -> Option<Identity> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
     let id = crate::fs::stat::identity(path, &meta)?;
-    Some((id.dev, id.ino, meta.len(), modified))
+    Some((id, meta.len(), modified))
 }
 
-/// Where the answer of `provider` for `key` of a file is kept on disk.
-fn disk_key(key: &str, provider: &dyn FieldProvider, identity: Identity) -> String {
-    format!(
-        "{key}:{}:{}:{}:{}:{}:{}",
-        provider.id(),
-        provider.version(),
-        identity.0,
-        identity.1,
-        identity.2,
-        identity.3
-    )
+/// Where the answer of `provider` for `key` of the file at `path` is kept
+/// on disk.
+fn disk_key(key: &str, provider: &dyn FieldProvider, identity: Identity, path: &Path) -> Vec<u8> {
+    let (file, len, modified) = identity;
+    [
+        format!("{key}:{}:{}:", provider.id(), provider.version()).as_bytes(),
+        &file.kept_as(path),
+        format!(":{len}:{modified}").as_bytes(),
+    ]
+    .concat()
 }
 
 #[cfg(test)]
@@ -442,7 +442,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let known = (id.dev, id.ino, meta.len(), u64::try_from(modified).unwrap());
+        let known = (id, meta.len(), u64::try_from(modified).unwrap());
         let moved = tmp.path().join("moved.txt");
         std::fs::rename(&note, &moved).unwrap();
         assert_eq!(
@@ -454,6 +454,38 @@ mod tests {
             fields.get("test.first", &note, &cancel),
             None,
             "stat-ed: gone"
+        );
+    }
+
+    #[test]
+    fn a_file_whose_number_a_mount_made_up_is_kept_on_disk_by_its_path() {
+        let words = Words(Arc::new(AtomicUsize::new(0)));
+        let path = Path::new("/srv/it's here.txt");
+        let lasting = crate::entry::FileId::new(5, 7);
+        assert_eq!(
+            disk_key("test.words", &words, (lasting, 3, 9), path),
+            format!("test.words:words:{}:5:7:3:9", words.version()).into_bytes(),
+            "as before mounts were told apart"
+        );
+        let made_up = crate::entry::FileId {
+            mount: 1 << 40,
+            ..lasting
+        };
+        let mut other = made_up;
+        other.mount += 1;
+        assert_eq!(
+            disk_key("test.words", &words, (made_up, 3, 9), path),
+            disk_key("test.words", &words, (other, 3, 9), path),
+            "a mount's number is no longer known once it is let go of"
+        );
+        assert_ne!(
+            disk_key("test.words", &words, (made_up, 3, 9), path),
+            disk_key(
+                "test.words",
+                &words,
+                (made_up, 3, 9),
+                Path::new("/srv/other")
+            ),
         );
     }
 

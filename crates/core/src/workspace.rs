@@ -1992,7 +1992,7 @@ mod tests {
     #[test]
     fn removing_the_anchor_or_cursor_moves_them_to_what_remains() {
         let id = |ino| EntryId {
-            file: crate::FileId { dev: 1, ino },
+            file: crate::FileId::new(1, ino),
             at: 0,
         };
         let mut sel = Selection::default();
@@ -2009,7 +2009,7 @@ mod tests {
     #[test]
     fn a_cursor_whose_entry_goes_takes_its_neighbour() {
         let id = |ino| EntryId {
-            file: crate::FileId { dev: 1, ino },
+            file: crate::FileId::new(1, ino),
             at: 0,
         };
         let order: Vec<EntryId> = (1..=5).map(id).collect();
@@ -2053,7 +2053,7 @@ mod tests {
         use crate::entry::EntryKind;
         use crate::location::ListingEvent;
         let id = |ino| EntryId {
-            file: crate::FileId { dev: 1, ino },
+            file: crate::FileId::new(1, ino),
             at: 0,
         };
         let mut p = Pane::new(PaneId(1));
@@ -2091,7 +2091,7 @@ mod tests {
         let file = |ino, name: &str| {
             Entry::new(
                 EntryId {
-                    file: crate::FileId { dev: 1, ino },
+                    file: crate::FileId::new(1, ino),
                     at: 0,
                 },
                 name,
@@ -2106,7 +2106,7 @@ mod tests {
         ]));
         p.set_show_hidden(true);
         p.selection.set([1, 2, 3].map(|ino| EntryId {
-            file: crate::FileId { dev: 1, ino },
+            file: crate::FileId::new(1, ino),
             at: 0,
         }));
         p.set_show_hidden(false);
@@ -2116,7 +2116,7 @@ mod tests {
         p.retain_shown();
         assert_eq!(items(&p.selection), [2]);
         p.selection.set([2].map(|ino| EntryId {
-            file: crate::FileId { dev: 1, ino },
+            file: crate::FileId::new(1, ino),
             at: 0,
         }));
         p.set_filter(Some("ÉTÉ"));
@@ -2133,7 +2133,7 @@ mod tests {
         let entry = |ino, name: &str, kind, size: Option<u64>| {
             let mut e = Entry::new(
                 EntryId {
-                    file: crate::FileId { dev: 1, ino },
+                    file: crate::FileId::new(1, ino),
                     at: 0,
                 },
                 name,
@@ -2168,13 +2168,13 @@ mod tests {
         // The selection's, in its own order: a folder has no size to wait
         // for, nor a file known.
         p.selection.set([5, 1, 3, 2].map(|ino| EntryId {
-            file: crate::FileId { dev: 1, ino },
+            file: crate::FileId::new(1, ino),
             at: 0,
         }));
         assert_eq!(p.selected_unknown_from(0), Some(2));
         assert_eq!(p.selected_unknown_from(3), Some(2));
         p.selection.set([1, 2, 5].map(|ino| EntryId {
-            file: crate::FileId { dev: 1, ino },
+            file: crate::FileId::new(1, ino),
             at: 0,
         }));
         assert_eq!(p.selected_unknown_from(1), None);
@@ -2206,7 +2206,7 @@ mod tests {
     #[test]
     fn a_move_carries_a_selection_that_follows_and_leaves_a_picked_one() {
         let id = |ino| EntryId {
-            file: crate::FileId { dev: 1, ino },
+            file: crate::FileId::new(1, ino),
             at: 0,
         };
         let order: Vec<EntryId> = (1..=5).map(id).collect();
@@ -2235,7 +2235,7 @@ mod tests {
     #[test]
     fn the_standard_keys_are_unchanged() {
         let id = |ino| EntryId {
-            file: crate::FileId { dev: 1, ino },
+            file: crate::FileId::new(1, ino),
             at: 0,
         };
         let mut sel = Selection::default();
@@ -2254,7 +2254,7 @@ mod tests {
     #[test]
     fn a_sweep_covers_the_range_over_what_was_picked_and_ends_on_any_other_change() {
         let id = |ino| EntryId {
-            file: crate::FileId { dev: 1, ino },
+            file: crate::FileId::new(1, ino),
             at: 0,
         };
         let order: Vec<EntryId> = (1..=6).map(id).collect();
@@ -2292,7 +2292,7 @@ mod tests {
     #[test]
     fn a_sweep_whose_start_is_gone_ends() {
         let id = |ino| EntryId {
-            file: crate::FileId { dev: 1, ino },
+            file: crate::FileId::new(1, ino),
             at: 0,
         };
         let order: Vec<EntryId> = (1..=3).map(id).collect();

@@ -84,7 +84,7 @@ impl LocationProvider for Fake {
         if location.rest == "/few" {
             sink.send(ListingEvent::Added(vec![Entry::new(
                 EntryId {
-                    file: skwir_core::FileId { dev: 7, ino: 1 },
+                    file: skwir_core::FileId::new(7, 1),
                     at: 0,
                 },
                 "inside.txt",
@@ -238,7 +238,7 @@ fn places_sort_first_and_by_how_many_files_they_hold() {
     let mut listing = Listing::default();
     let mut file = Entry::new(
         EntryId {
-            file: skwir_core::FileId { dev: 1, ino: 1 },
+            file: skwir_core::FileId::new(1, 1),
             at: 0,
         },
         "a.txt",
@@ -284,7 +284,7 @@ fn a_place_opens_in_place_as_a_folder_does() {
     ))
     .unwrap();
     let inside = EntryId {
-        file: skwir_core::FileId { dev: 7, ino: 1 },
+        file: skwir_core::FileId::new(7, 1),
         at: 0,
     };
     let deadline = std::time::Instant::now() + Duration::from_secs(10);

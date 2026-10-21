@@ -6006,7 +6006,7 @@ mod tests {
 
     fn id(ino: u64) -> skwir_core::EntryId {
         skwir_core::EntryId {
-            file: skwir_core::FileId { dev: 1, ino },
+            file: skwir_core::FileId::new(1, ino),
             at: ino * 7,
         }
     }

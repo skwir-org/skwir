@@ -1250,17 +1250,19 @@ protocol is a scheme a connector maps, or a connector.
   one server, the pool's and the watcher's behaviour behind a held
   server, GVfs's phones and cameras, references on FUSE remotes; each
   fixed where it would happen (STATUS-LOG).
+- **Identity across a remount** (2026-10-21, after the user's go): a
+  file on a mount whose inodes are made up carries the mount's own
+  number (`FileId::mount`, the kernel's unique one on Linux 6.8 and
+  later); the cache knows such a file by its path; references there
+  resolve at their path. **Built**, checked against a real rclone mount
+  let go of and mounted again (`just remote-check`). Before Linux 6.8 the
+  mount's number is the table's, which a later mount may take again.
 - **G. Left** (each its own step):
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);
   - rename and reorder of a remote GTK bookmark (Forget and Add to
     Bookmarks keep it by its address);
-  - a FUSE remote's file identity across a remount: sshfs numbers files
-    anew on the device number the last mount had, so a picture kept in
-    memory by identity could be another file's of the same type and
-    modification time; to fold the mount's own id (`statx`'s
-    `STATX_MNT_ID_UNIQUE`) into a FUSE remote's `FileId`;
   - Windows' shares (`smb://` as `\\server\share`) and macOS's own
     mounts as connectors; SFTP there through rclone with WinFsp or
     macFUSE; all compiled only until Phase 5b;

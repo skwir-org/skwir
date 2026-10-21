@@ -204,6 +204,9 @@ pub struct Mounted {
     /// The device its files are on (`major:minor`), what a stat of them
     /// says; `None` where the line gives none.
     pub device: Option<u64>,
+    /// Its number in the table, which a later mount may take again once
+    /// it is let go of.
+    pub id: Option<u64>,
 }
 
 /// Every mount `mountinfo` (the bytes of `/proc/self/mountinfo`) lists,
@@ -220,7 +223,10 @@ pub fn mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mounted> {
             let at = line.windows(3).position(|w| w == b" - ")?;
             let (own, rest) = (&line[..at], &line[at + 3..]);
             let mut own = own.split(|b| *b == b' ');
-            let device = own.nth(2).and_then(device_number);
+            let id = own
+                .next()
+                .and_then(|id| std::str::from_utf8(id).ok()?.parse().ok());
+            let device = own.nth(1).and_then(device_number);
             let root = own.next()?;
             let point = own.next()?;
             let mut rest = rest.split(|b| *b == b' ');
@@ -230,6 +236,7 @@ pub fn mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mounted> {
                 fstype: String::from_utf8_lossy(rest.next()?).into_owned(),
                 source: unescape(rest.next().unwrap_or_default()),
                 device,
+                id,
             })
         })
         .collect()

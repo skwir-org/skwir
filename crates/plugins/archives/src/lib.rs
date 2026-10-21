@@ -221,7 +221,7 @@ mod tests {
     fn archives_are_what_the_database_calls_archives() {
         let accepts = |name: &str| {
             Provider.accepts(&PreviewRequest {
-                entry: skwir_core::op::EntryRef::new(skwir_core::FileId { dev: 1, ino: 1 }, name),
+                entry: skwir_core::op::EntryRef::new(skwir_core::FileId::new(1, 1), name),
                 mime: None,
                 page: 1,
                 seconds: None,

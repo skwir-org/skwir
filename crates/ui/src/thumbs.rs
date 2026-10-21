@@ -305,7 +305,7 @@ mod tests {
     fn an_edited_file_is_a_new_picture_and_the_cache_stays_in_budget() {
         let mut c = ThumbCache::default();
         assert!(c.begin_frame(3 * 64).is_empty());
-        let id = FileId { dev: 1, ino: 7 };
+        let id = FileId::new(1, 7);
         let then = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
         let now = then + std::time::Duration::from_secs(5);
         c.insert(key(id, Some(then)), img(4), 64);
@@ -318,7 +318,7 @@ mod tests {
         let mut retired = 0;
         for n in 0..10 {
             retired += c.begin_frame(3 * 64).len();
-            let k = key(FileId { dev: 1, ino: n }, None);
+            let k = key(FileId::new(1, n), None);
             c.insert(k, img(4), 64);
             for _ in 0..100 {
                 c.get(&k);
@@ -335,7 +335,7 @@ mod tests {
         let mut c = ThumbCache::default();
         c.begin_frame(1 << 20);
         let id = skwir_core::EntryId {
-            file: FileId { dev: 1, ino: 3 },
+            file: FileId::new(1, 3),
             at: 0,
         };
         let file = Entry::new(id, "Synthetic sky.png", skwir_core::EntryKind::File);
@@ -359,13 +359,13 @@ mod tests {
         c.begin_frame(2 * 64);
         c.begin_frame(2 * 64);
         for n in 0..5 {
-            c.insert(key(FileId { dev: 1, ino: n }, None), img(4), 64);
+            c.insert(key(FileId::new(1, n), None), img(4), 64);
         }
         assert_eq!(c.bytes(), 5 * 64, "all drawn this frame: kept");
         c.begin_frame(2 * 64);
         assert_eq!(c.bytes(), 5 * 64, "and the next");
         c.begin_frame(2 * 64);
-        c.insert(key(FileId { dev: 1, ino: 9 }, None), img(4), 64);
+        c.insert(key(FileId::new(1, 9), None), img(4), 64);
         assert_eq!(c.bytes(), 2 * 64, "drawn two frames ago: gone");
     }
 }

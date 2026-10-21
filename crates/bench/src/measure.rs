@@ -693,7 +693,7 @@ pub fn listing_sort(profile: Profile, runs: usize) -> (Stat, Stat) {
     let bare = |ino: u64| {
         Entry::new(
             EntryId {
-                file: skwir_core::FileId { dev: 1, ino },
+                file: skwir_core::FileId::new(1, ino),
                 at: 0,
             },
             format!("IMG_{:06}.jpg", ino.wrapping_mul(7_919) % n),

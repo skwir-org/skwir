@@ -601,7 +601,7 @@ mod tests {
     fn file(name: &str) -> Entry {
         Entry::new(
             EntryId {
-                file: skwir_core::FileId { dev: 1, ino: 2 },
+                file: skwir_core::FileId::new(1, 2),
                 at: 0,
             },
             name,

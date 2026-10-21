@@ -489,7 +489,7 @@ mod tests {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let provider = Arc::new(SlowProvider(tx));
         let request = PreviewRequest {
-            entry: EntryRef::new(crate::FileId { dev: 1, ino: 1 }, "/synthetic.pdf"),
+            entry: EntryRef::new(crate::FileId::new(1, 1), "/synthetic.pdf"),
             mime: None,
             page: 1,
             seconds: None,

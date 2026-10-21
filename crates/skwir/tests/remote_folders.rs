@@ -223,6 +223,97 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A mount point let go of when dropped, if the test left it mounted.
+struct Unmounted(PathBuf);
+
+impl Drop for Unmounted {
+    fn drop(&mut self) {
+        if skwir_core::fs::reach::of(&self.0).is_some_and(|r| r.point == self.0) {
+            let _ = Command::new("fusermount3").arg("-u").arg(&self.0).status();
+        }
+    }
+}
+
+/// Whether this system gives each mount a number no later mount takes
+/// again (`STATX_MNT_ID_UNIQUE`, Linux 6.8).
+fn unique_mount_numbers() -> bool {
+    let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
+    let mut parts = release
+        .split(['.', '-'])
+        .map(|n| n.parse::<u32>().unwrap_or(0));
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0)) >= (6, 8)
+}
+
+#[test]
+fn a_folder_mounted_again_holds_other_files_by_number_and_the_same_by_path() {
+    if let Some(why) = Rclone.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("again");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    std::fs::write(served_root.join("it's here.txt"), "here").unwrap();
+    let served = Served::start("webdav", &served_root, &[]);
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![Arc::new(Rclone)]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let pane = app.workspace.read().active_id();
+    let address = Location::parse(&format!("dav://127.0.0.1:{}/", served.port));
+    let connect = || {
+        app.navigate(pane, &address).unwrap();
+        until(&app, 60, "the address led to its folder", || {
+            app.pane_location(pane).is_some_and(|l| l.is_path())
+        });
+        assert!(app.pump_until_complete(pane, Duration::from_secs(20)));
+        app.pane_location(pane).unwrap().path().unwrap()
+    };
+    let disconnect = |point: &Path| {
+        app.dispatch(&Invocation::with_args(
+            "remote.disconnect",
+            &serde_json::json!({ "path": point }),
+        ))
+        .unwrap();
+        until(&app, 30, "it was let go of", || {
+            skwir_core::fs::reach::of(point).is_none_or(|r| r.point != point)
+        });
+    };
+
+    let folder = connect();
+    let file = folder.join("it's here.txt");
+    let known = skwir_core::op::EntryRef::from_path(&file).expect("its file");
+    assert!(!known.id.lasts(), "a number its mount made up");
+    let listed = {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        p.listing
+            .iter()
+            .map(skwir_core::Entry::file)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(listed.len(), 1);
+    assert!(
+        listed.iter().all(|f| f.mount == known.id.mount),
+        "listed on the mount a stat names"
+    );
+    let point = skwir_core::fs::reach::of(&folder).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+    disconnect(&point);
+
+    assert_eq!(connect(), folder, "mounted again where it was");
+    let again = skwir_core::fs::stat::id_of(&file).expect("its file again");
+    // rclone numbers a file by its path, and the kernel gives the mount
+    // the lowest free device: often the one the last mount had.
+    if unique_mount_numbers() {
+        assert_ne!(again.mount, known.id.mount, "another mount's file");
+    }
+    assert_eq!(known.resolve().unwrap(), file, "found at its path");
+    disconnect(&point);
+    drop(left);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// Answers as the window would, and says what it was asked.
 #[derive(Default)]
 struct Answers {

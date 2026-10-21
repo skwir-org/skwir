@@ -789,7 +789,7 @@ mod tests {
     /// that say one are one (ADR-049).
     #[test]
     fn a_picture_is_of_a_file_as_a_type() {
-        let file = FileId { dev: 1, ino: 1 };
+        let file = FileId::new(1, 1);
         let as_type = |mime| key(file, Some(mime), ThumbSize::Normal, None);
         assert_eq!(as_type("image/jpeg"), as_type("image/jpeg"));
         assert_ne!(as_type("image/jpeg"), as_type("application/octet-stream"));
@@ -861,7 +861,7 @@ mod tests {
 
     fn req(ino: u64) -> ThumbRequest {
         ThumbRequest {
-            entry: EntryRef::new(FileId { dev: 1, ino }, format!("/x/{ino}")),
+            entry: EntryRef::new(FileId::new(1, ino), format!("/x/{ino}")),
             mime: None,
             mtime: None,
             size: ThumbSize::Normal,
@@ -1222,7 +1222,7 @@ mod tests {
             assert!(matches!(wait_ready(&t, &req(ino)), ThumbState::Unavailable));
         }
         maker.produce.store(true, Ordering::Relaxed);
-        t.retry(FileId { dev: 1, ino: 1 });
+        t.retry(FileId::new(1, 1));
         assert!(matches!(wait_ready(&t, &req(1)), ThumbState::Ready(_)));
         assert!(matches!(
             t.get(req(2), Priority::Visible),

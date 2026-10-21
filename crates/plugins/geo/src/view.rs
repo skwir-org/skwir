@@ -633,9 +633,9 @@ impl Scanner {
             // A picture's or a video's position and clock are fields, read
             // together and kept by the core (`position.rs`).
             let app = self.app.upgrade()?;
-            let known = candidate.known.map(|(len, modified)| {
-                (candidate.id.file.dev, candidate.id.file.ino, len, modified)
-            });
+            let known = candidate
+                .known
+                .map(|(len, modified)| (candidate.id.file, len, modified));
             let mut said = app
                 .fields
                 .get_all(
@@ -673,21 +673,24 @@ impl Scanner {
             return Some(found.clone());
         }
         // Versioned (`FOUND_VERSION`): what a `Found` of another shape
-        // kept is never read as one.
-        let key = format!(
-            "{FOUND_VERSION}:{}:{}:{}:{}",
-            candidate.id.file.dev, candidate.id.file.ino, identity.1, identity.2
-        );
+        // kept is never read as one. Its file as kept beyond its mount
+        // (`FileId::kept_as`).
+        let key = [
+            format!("{FOUND_VERSION}:").as_bytes(),
+            &candidate.id.file.kept_as(path),
+            format!(":{}:{}", identity.1, identity.2).as_bytes(),
+        ]
+        .concat();
         let found = self
             .cache
-            .get(key.as_bytes())
+            .get(&key)
             .and_then(|bytes| serde_json::from_slice::<Found>(&bytes).ok())
             .unwrap_or_else(|| {
                 let found = track(path, cancel);
                 if !cancel.is_cancelled()
                     && let Ok(bytes) = serde_json::to_vec(&found)
                 {
-                    match self.cache.put(key.as_bytes(), &bytes) {
+                    match self.cache.put(&key, &bytes) {
                         // Bounded: a record per version of every file
                         // ever looked at, else.
                         Ok(()) => self.cache.trim_soon(bytes.len() as u64, CACHE_BYTES),

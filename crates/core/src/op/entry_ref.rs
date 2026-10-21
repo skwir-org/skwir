@@ -66,6 +66,12 @@ fn made_up(path: &Path) -> bool {
     crate::fs::reach::of(path).is_some_and(|remote| !remote.by_kernel())
 }
 
+/// Whether the numbers `known` and `found` were made up by a mount's
+/// program (`FileId::mount`), or `path` is on a remote whose are.
+fn numbers_made_up(known: FileId, found: FileId, path: &Path) -> bool {
+    !known.lasts() || !found.lasts() || made_up(path)
+}
+
 impl EntryRef {
     /// A reference that knows nothing of the file's other names: it
     /// resolves at `path` alone ([`EntryRef::only_name`]).
@@ -104,14 +110,18 @@ impl EntryRef {
     }
 
     /// Where the entry is right now. The hint is trusted only if its
-    /// identity still matches; otherwise the file is followed to its new
-    /// name in the hint's folder (a rename in place) when that can be
-    /// told ([`EntryRef::only_name`], and one name holding it there), and
+    /// identity still matches, or where numbers are made up (a FUSE
+    /// remote's, which tell no file from another across a remount);
+    /// otherwise the file is followed to its new name in the hint's folder
+    /// (a rename in place) when that can be told
+    /// ([`EntryRef::only_name`], and one name holding it there), and
     /// failing that the entry is reported gone, or replaced.
     pub fn resolve(&self) -> Result<PathBuf, ResolveError> {
         match id_of(&self.path) {
             Some(id) if id == self.id => return Ok(self.path.clone()),
-            Some(found) if self.remounted(found) => return Ok(self.path.clone()),
+            Some(found) if numbers_made_up(self.id, found, &self.path) => {
+                return Ok(self.path.clone());
+            }
             Some(found) => {
                 if let Some(p) = self.renamed() {
                     return Ok(p);
@@ -128,29 +138,15 @@ impl EntryRef {
             .ok_or_else(|| ResolveError::Gone(self.path.clone()))
     }
 
-    /// Whether the file at the hint is on a remote mounted again since the
-    /// reference was made, whose program makes its inodes up for as long
-    /// as it is mounted (sshfs, rclone, GVfs): its identity cannot be
-    /// told across mounts, so the hint is taken (ADR-077). Told by a new
-    /// device number only: the kernel gives a FUSE mount the lowest free
-    /// one, often the one it had, and then a reference whose number
-    /// changed is refused as replaced.
-    fn remounted(&self, found: crate::entry::FileId) -> bool {
-        found.dev != self.id.dev
-            && crate::fs::reach::of(&self.path).is_some_and(|remote| {
-                !remote.by_kernel() && remote.device.is_none_or(|d| d == found.dev)
-            })
-    }
-
     /// The file's new name in the hint's folder, when that can be told:
     /// it had no other name when referenced, and exactly one name there
     /// holds it now. Two would be a link made since, either of which may
-    /// be the one renamed. Never on a remote whose program makes its
-    /// numbers up: sshfs numbers files in the order they are looked up,
-    /// again from the start when mounted again, so the number may be
-    /// another file's (ADR-077).
+    /// be the one renamed. Never where numbers are made up: sshfs numbers
+    /// files in the order they are looked up, again once the kernel let
+    /// go of one and from the start when mounted again, so the number may
+    /// be another file's (ADR-077).
     fn renamed(&self) -> Option<PathBuf> {
-        if !self.only_name || made_up(&self.path) {
+        if !self.only_name || !self.id.lasts() || made_up(&self.path) {
             return None;
         }
         let mut names = self.names_in_parent()?;
@@ -244,5 +240,48 @@ impl EntryArg {
     /// As [`EntryArg::into_ref`].
     pub fn refs(entries: Vec<EntryArg>) -> anyhow::Result<Vec<EntryRef>> {
         entries.into_iter().map(EntryArg::into_ref).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_number_a_mount_made_up_tells_nothing_and_the_path_is_taken() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("it's here.txt");
+        std::fs::write(&path, "here").unwrap();
+        let id = id_of(&path).unwrap();
+        let other = FileId {
+            ino: id.ino + 1,
+            ..id
+        };
+        assert!(
+            matches!(
+                EntryRef::new(other, &path).resolve(),
+                Err(ResolveError::Replaced { .. })
+            ),
+            "where numbers are the files', another number is another file"
+        );
+        let mounted_before = FileId {
+            mount: 1 << 40,
+            ..other
+        };
+        assert_eq!(
+            EntryRef::new(mounted_before, &path)
+                .with_only_name(true)
+                .resolve()
+                .unwrap(),
+            path,
+            "a remount numbered it anew"
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert!(matches!(
+            EntryRef::new(mounted_before, &path)
+                .with_only_name(true)
+                .resolve(),
+            Err(ResolveError::Gone(_))
+        ));
     }
 }

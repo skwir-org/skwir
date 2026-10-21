@@ -1658,7 +1658,7 @@ mod tests {
         let file = |ino, name: &str| {
             Entry::new(
                 EntryId {
-                    file: crate::FileId { dev: 1, ino },
+                    file: crate::FileId::new(1, ino),
                     at: 0,
                 },
                 name,
@@ -1683,12 +1683,12 @@ mod tests {
         let renamed = listing.names_version();
         assert!(renamed > names);
         listing.apply(ListingEvent::Removed(vec![EntryId {
-            file: crate::FileId { dev: 1, ino: 9 },
+            file: crate::FileId::new(1, 9),
             at: 0,
         }]));
         assert_eq!(listing.names_version(), renamed, "nothing was removed");
         listing.apply(ListingEvent::Removed(vec![EntryId {
-            file: crate::FileId { dev: 1, ino: 2 },
+            file: crate::FileId::new(1, 2),
             at: 0,
         }]));
         assert!(listing.names_version() > renamed);
@@ -1702,7 +1702,7 @@ mod tests {
         let file = |ino, name: &str| {
             Entry::new(
                 EntryId {
-                    file: crate::FileId { dev: 1, ino },
+                    file: crate::FileId::new(1, ino),
                     at: 0,
                 },
                 name,
@@ -1735,7 +1735,7 @@ mod tests {
         let file = |ino, name: &str| {
             Entry::new(
                 EntryId {
-                    file: crate::FileId { dev: 1, ino },
+                    file: crate::FileId::new(1, ino),
                     at: 0,
                 },
                 name,
@@ -1753,7 +1753,7 @@ mod tests {
         assert!(
             listing
                 .get(EntryId {
-                    file: crate::FileId { dev: 1, ino: 1 },
+                    file: crate::FileId::new(1, 1),
                     at: 0
                 })
                 .unwrap()
@@ -1771,7 +1771,7 @@ mod tests {
         assert!(
             !listing
                 .get(EntryId {
-                    file: crate::FileId { dev: 1, ino: 1 },
+                    file: crate::FileId::new(1, 1),
                     at: 0
                 })
                 .unwrap()
@@ -1785,7 +1785,7 @@ mod tests {
         let file = |ino, name: &str| {
             Entry::new(
                 EntryId {
-                    file: crate::FileId { dev: 1, ino },
+                    file: crate::FileId::new(1, ino),
                     at: 0,
                 },
                 name,
@@ -1795,7 +1795,7 @@ mod tests {
         let mut listing = Listing::default();
         listing.apply(ListingEvent::Added(vec![file(1, "a")]));
         listing.apply(ListingEvent::Removed(vec![EntryId {
-            file: crate::FileId { dev: 1, ino: 1 },
+            file: crate::FileId::new(1, 1),
             at: 0,
         }]));
         assert!(!listing.apply(ListingEvent::Updated(vec![stat(file(1, "a"), 1)])));
@@ -1807,7 +1807,7 @@ mod tests {
         let file = |ino, name: &str| {
             Entry::new(
                 EntryId {
-                    file: crate::FileId { dev: 1, ino },
+                    file: crate::FileId::new(1, ino),
                     at: 0,
                 },
                 name,
@@ -1867,7 +1867,7 @@ mod tests {
             let mut e = stat(
                 Entry::new(
                     EntryId {
-                        file: crate::FileId { dev: 1, ino },
+                        file: crate::FileId::new(1, ino),
                         at: 0,
                     },
                     name,
@@ -1908,7 +1908,7 @@ mod tests {
         let file = |ino| {
             Entry::new(
                 EntryId {
-                    file: crate::FileId { dev: 1, ino },
+                    file: crate::FileId::new(1, ino),
                     at: 0,
                 },
                 format!("n{ino}"),
@@ -1921,7 +1921,7 @@ mod tests {
             (0..100)
                 .filter(|i| i % 3 != 0)
                 .map(|ino| EntryId {
-                    file: crate::FileId { dev: 1, ino },
+                    file: crate::FileId::new(1, ino),
                     at: 0,
                 })
                 .collect(),
@@ -1970,7 +1970,7 @@ mod tests {
             };
             let mut e = Entry::new(
                 EntryId {
-                    file: crate::FileId { dev: 1, ino },
+                    file: crate::FileId::new(1, ino),
                     at: 0,
                 },
                 &name,
@@ -2006,12 +2006,12 @@ mod tests {
                     assert_eq!(*shown, *whole, "{spec:?}");
                     if batch == 30 {
                         listing.apply(ListingEvent::Removed(vec![EntryId {
-                            file: crate::FileId { dev: 1, ino: 3 },
+                            file: crate::FileId::new(1, 3),
                             at: 0,
                         }]));
                         listing.apply(ListingEvent::Updated(vec![Entry::new(
                             EntryId {
-                                file: crate::FileId { dev: 1, ino: 4 },
+                                file: crate::FileId::new(1, 4),
                                 at: 0,
                             },
                             "aaa renamed",
@@ -2045,7 +2045,7 @@ mod tests {
             };
             Entry::new(
                 EntryId {
-                    file: crate::FileId { dev: 1, ino },
+                    file: crate::FileId::new(1, ino),
                     at: 0,
                 },
                 format!("n{}", ino % 13),
@@ -2084,17 +2084,11 @@ mod tests {
                     if n % 3 == 1 {
                         listing.apply(ListingEvent::Removed(vec![
                             EntryId {
-                                file: crate::FileId {
-                                    dev: 1,
-                                    ino: batch[0],
-                                },
+                                file: crate::FileId::new(1, batch[0]),
                                 at: 0,
                             },
                             EntryId {
-                                file: crate::FileId {
-                                    dev: 1,
-                                    ino: 199 - batch[1],
-                                },
+                                file: crate::FileId::new(1, 199 - batch[1]),
                                 at: 0,
                             },
                         ]));
@@ -2122,7 +2116,7 @@ mod tests {
                     assert_eq!(*listing.sorted(spec), *listing.compute_sorted(spec));
                 }
                 listing.apply(ListingEvent::Removed(vec![EntryId {
-                    file: crate::FileId { dev: 1, ino: 11 },
+                    file: crate::FileId::new(1, 11),
                     at: 0,
                 }]));
                 assert_eq!(*listing.sorted(spec), *listing.compute_sorted(spec));
@@ -2138,7 +2132,7 @@ mod tests {
         let file = |ino: u64| {
             Entry::new(
                 EntryId {
-                    file: crate::FileId { dev: 1, ino },
+                    file: crate::FileId::new(1, ino),
                     at: 0,
                 },
                 ino.to_string(),
@@ -2180,7 +2174,7 @@ mod tests {
             Sort(bool),
         }
         let id = |ino| EntryId {
-            file: crate::FileId { dev: 1, ino },
+            file: crate::FileId::new(1, ino),
             at: 0,
         };
         let entry = |ino: u64, size: u64| {

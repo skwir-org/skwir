@@ -3025,7 +3025,7 @@ mod tests {
         let ctx = StepContext::detached();
         let inside = Trash {
             entry: EntryRef::new(
-                crate::FileId { dev: 1, ino: 2 },
+                crate::FileId::new(1, 2),
                 "/m/.Trash-1000/files/old project/sub/a.txt",
             ),
         };

@@ -230,7 +230,7 @@ impl Walk<'_> {
         let (app, covered) = (self.app, self.covered);
         self.folders.fetch_add(1, Ordering::Relaxed);
         // Off Unix a folder is known by its path alone (ADR-035).
-        let id = skwir_core::fs::stat::identity(dir, &meta).unwrap_or(FileId { dev: 0, ino: 0 });
+        let id = skwir_core::fs::stat::identity(dir, &meta).unwrap_or(FileId::new(0, 0));
         let key = folder_key(id.dev, id.ino, dir);
         self.seen_dirs.lock().push(key);
         // Read whole: on a first count, a folder not seen here before, or

@@ -809,7 +809,7 @@ mod tests {
 
     fn delete(path: PathBuf) -> Box<dyn Operation> {
         Box::new(Delete {
-            entry: EntryRef::new(FileId { dev: 1, ino: 1 }, path),
+            entry: EntryRef::new(FileId::new(1, 1), path),
         })
     }
 
@@ -862,7 +862,7 @@ mod tests {
         // keeps no trash: what it deletes is asked about, the rest said.
         let mut mixed = plan(vec![dir.join("on the server.txt")]);
         mixed.steps.push(Box::new(Trash {
-            entry: EntryRef::new(FileId { dev: 1, ino: 2 }, dir.join("here.txt")),
+            entry: EntryRef::new(FileId::new(1, 2), dir.join("here.txt")),
         }));
         let (listed, _) = Deleting::of(&mixed, Vec::new(), CancelToken::new());
         assert_eq!(

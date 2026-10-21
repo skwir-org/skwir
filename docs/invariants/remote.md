@@ -70,12 +70,25 @@ ADR-077 (which revises ADR-021).
   `.Trash-<uid>`. Nothing is ever copied from a remote into this
   machine's trash to be trashed. The question counts what is deleted;
   what the same command moves to the trash is said beside it.
-- **References** on a FUSE remote whose device changed (mounted again,
-  inodes made up anew) resolve at their path (`EntryRef::resolve`), and
-  are never followed to another name by number: sshfs numbers files in
-  the order they are looked up, from the start again once remounted,
-  often on the device number the last mount had. A reference whose
-  number changed on the same device is refused as replaced.
+- **Identity** on a mount whose program makes inode numbers up (FUSE:
+  sshfs, GVfs, rclone, a FUSE mount on this machine alike) carries the
+  mount's own number (`FileId::mount`, `reach::mount_of`): sshfs numbers
+  files in the order they are looked up, again once the kernel let go of
+  one and from the start once remounted, often on the device number the
+  last mount had. Every stat names a file through `fs::stat::file` (a
+  folder held open asks once for its entries), so a listing, an
+  operation and a field agree. The number is the kernel's unique one
+  (Linux 6.8), read with the table by a `statx` of the point that asks
+  its program nothing (`AT_STATX_DONT_SYNC`); a point below another FUSE
+  mount or a network's is not looked up, and keeps the table's number,
+  which a later mount may take again.
+- What is kept beyond the mount (the cache: fields, positions, converted
+  previews) never knows a file by a made-up identity: by its path
+  (`FileId::kept_as`, where `FileId::lasts` says no), as thumbnails are;
+  notes keep no snapshot of it, and merge as when none was kept.
+- **References** there resolve at their path (`EntryRef::resolve`):
+  another number tells neither a remount nor a replacement. They are
+  never followed to another name by number.
 - **Devices GVfs reads** (a phone over MTP or AFC, a camera over
   gPhoto2: `Recognised::device`) are near, whatever their address, and
   listed among the sidebar's devices; they keep a lane of their own.

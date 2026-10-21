@@ -118,6 +118,26 @@ pub fn lane(path: &Path) -> Lane {
     of(path).map_or(Lane::SHARED, |remote| remote.lane())
 }
 
+/// The number of the mount holding `device`'s files where its program
+/// makes their inode numbers up for as long as it is mounted (FUSE:
+/// sshfs, GVfs, rclone, and a FUSE mount on this machine alike), which a
+/// file's identity carries (`FileId::mount`); 0 elsewhere. The system's
+/// unique number for the mount where it says one (Linux 6.8), which no
+/// later mount takes again; else its number in the table, which one may.
+pub fn mount_of(device: u64) -> u64 {
+    // FUSE mounts on no block device of its own: a device that has one
+    // (a disk's, ntfs-3g's) is told without the table.
+    #[cfg(target_os = "linux")]
+    if rustix::fs::major(device) != 0 {
+        return 0;
+    }
+    table()
+        .made_up
+        .iter()
+        .find(|(of, _)| *of == device)
+        .map_or(0, |&(_, number)| number)
+}
+
 /// Every network mount of the table, each GVfs mount apart (its bridge
 /// listed, read on the caller's thread: on a worker).
 pub fn all() -> Vec<Arc<Remote>> {
@@ -160,17 +180,20 @@ fn table() -> Arc<Table> {
 
 static TABLE: Mutex<Option<(Instant, Arc<Table>)>> = Mutex::new(None);
 
-/// The network mounts, deepest point first.
+/// The network mounts, deepest point first, and the devices whose inode
+/// numbers are made up, each with its mount's number ([`mount_of`]).
 #[derive(Default)]
 struct Table {
     remotes: Vec<Arc<Remote>>,
+    made_up: Vec<(u64, u64)>,
 }
 
 impl Table {
     fn read() -> Table {
-        let mut remotes: Vec<Arc<Remote>> = imp::remotes().into_iter().map(Arc::new).collect();
+        let (remotes, made_up) = imp::read();
+        let mut remotes: Vec<Arc<Remote>> = remotes.into_iter().map(Arc::new).collect();
         remotes.sort_by_key(|r| std::cmp::Reverse(r.point.as_os_str().len()));
-        Table { remotes }
+        Table { remotes, made_up }
     }
 
     fn of(&self, path: &Path) -> Option<Arc<Remote>> {
@@ -282,27 +305,76 @@ fn key_of(point: &Path) -> u64 {
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use super::Remote;
+    use std::path::Path;
 
-    pub(super) fn remotes() -> Vec<Remote> {
+    use super::Remote;
+    use crate::fs::volume::Mounted;
+
+    pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>) {
         let Ok(text) = std::fs::read("/proc/self/mountinfo") else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
-        of_mountinfo(&text)
+        let mounts = crate::fs::volume::mountinfo(&text);
+        (remotes(&mounts), made_up(&mounts, unique))
     }
 
-    /// The network mounts `mountinfo` lists.
-    pub(super) fn of_mountinfo(text: &[u8]) -> Vec<Remote> {
-        crate::fs::volume::mountinfo(text)
-            .into_iter()
+    /// The network mounts of `mounts`.
+    pub(super) fn remotes(mounts: &[Mounted]) -> Vec<Remote> {
+        mounts
+            .iter()
             .filter(|m| super::network(&m.fstype, &m.source))
             .map(|m| Remote {
-                point: m.point,
-                fstype: m.fstype,
-                source: m.source,
+                point: m.point.clone(),
+                fstype: m.fstype.clone(),
+                source: m.source.clone(),
                 device: m.device,
             })
             .collect()
+    }
+
+    /// Each FUSE mount's device and its number: `unique`'s for its point,
+    /// else the table's. `fuseblk` (ntfs-3g) keeps its volume's numbers.
+    /// A point below another FUSE mount or a network's is not asked: its
+    /// path would be looked up through that mount's program or server,
+    /// which may not answer.
+    pub(super) fn made_up(
+        mounts: &[Mounted],
+        unique: impl Fn(&Path) -> Option<u64>,
+    ) -> Vec<(u64, u64)> {
+        let fuse = |fstype: &str| fstype == "fuse" || fstype.starts_with("fuse.");
+        let held: Vec<&Path> = mounts
+            .iter()
+            .filter(|m| fuse(&m.fstype) || super::network(&m.fstype, &m.source))
+            .map(|m| m.point.as_path())
+            .collect();
+        mounts
+            .iter()
+            .filter(|m| fuse(&m.fstype))
+            .filter_map(|m| {
+                let below = held
+                    .iter()
+                    .any(|point| *point != m.point && m.point.starts_with(point));
+                let number = (!below).then(|| unique(&m.point)).flatten().or(m.id)?;
+                Some((m.device?, number.max(1)))
+            })
+            .collect()
+    }
+
+    /// The unique number of the mount at `point` (Linux 6.8), asked of
+    /// what the kernel holds of it: `AT_STATX_DONT_SYNC`, and nothing
+    /// asked that its program would be asked for.
+    pub(super) fn unique(point: &Path) -> Option<u64> {
+        use rustix::fs::{AtFlags, StatxFlags};
+        /// `STATX_MNT_ID_UNIQUE`.
+        const UNIQUE: u32 = 0x4000;
+        let st = rustix::fs::statx(
+            rustix::fs::CWD,
+            point,
+            AtFlags::STATX_DONT_SYNC | AtFlags::NO_AUTOMOUNT | AtFlags::SYMLINK_NOFOLLOW,
+            StatxFlags::from_bits_retain(UNIQUE),
+        )
+        .ok()?;
+        (st.stx_mask & UNIQUE != 0).then_some(st.stx_mnt_id)
     }
 }
 
@@ -312,9 +384,15 @@ mod imp {
 
     use super::Remote;
 
+    /// macOS's mounts that are not local (`MNT_LOCAL` unset); no device
+    /// is told whose numbers are made up.
+    pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>) {
+        (remotes(), Vec::new())
+    }
+
     /// macOS's mounts that are not local (`MNT_LOCAL` unset), read by
     /// `getfsstat` without waiting on any (`MNT_NOWAIT`).
-    pub(super) fn remotes() -> Vec<Remote> {
+    fn remotes() -> Vec<Remote> {
         fn name(chars: &[libc::c_char]) -> Vec<u8> {
             chars
                 .iter()
@@ -365,8 +443,8 @@ mod imp {
 
     /// Windows lists no table: a path is told by its own form
     /// ([`share_of`]).
-    pub(super) fn remotes() -> Vec<Remote> {
-        Vec::new()
+    pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>) {
+        (Vec::new(), Vec::new())
     }
 
     /// The share holding `path`: a UNC path's (`\\server\share`), or a
@@ -416,8 +494,8 @@ mod imp {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 mod imp {
-    pub(super) fn remotes() -> Vec<super::Remote> {
-        Vec::new()
+    pub(super) fn read() -> (Vec<super::Remote>, Vec<(u64, u64)>) {
+        (Vec::new(), Vec::new())
     }
 }
 
@@ -451,7 +529,11 @@ mod tests {
 40 25 0:90 / /mnt/nas rw shared:9 - nfs4 nas:/export rw\n\
 41 25 259:2 / / rw shared:1 - btrfs /dev/nvme0n1p2 rw\n";
         let table = Table {
-            remotes: imp::of_mountinfo(text).into_iter().map(Arc::new).collect(),
+            remotes: imp::remotes(&crate::fs::volume::mountinfo(text))
+                .into_iter()
+                .map(Arc::new)
+                .collect(),
+            made_up: Vec::new(),
         };
         assert_eq!(table.remotes.len(), 2);
         let sftp = table
@@ -469,5 +551,55 @@ mod tests {
         assert!(nfs.by_kernel());
         assert!(table.of(Path::new("/home/me")).is_none());
         assert!(table.of(Path::new("/mnt/nasty")).is_none(), "by component");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_mount_that_makes_its_numbers_up_is_told_by_its_own() {
+        let text =
+            b"36 25 0:88 / /run/user/1000/gvfs rw shared:922 - fuse.gvfsd-fuse gvfsd-fuse rw\n\
+37 25 0:98 / /home/me/srv rw shared:9 - fuse.sshfs me@host:/ rw\n\
+38 37 0:99 / /home/me/srv/inner rw shared:10 - fuse.sshfs me@other:/ rw\n\
+39 25 0:91 / /mnt/nas rw shared:11 - nfs4 nas:/export rw\n\
+40 39 0:92 / /mnt/nas/x rw shared:12 - fuse.portal portal rw\n\
+41 25 8:17 / /mnt/win rw shared:13 - fuseblk /dev/sdb1 rw\n\
+42 25 259:2 / / rw shared:1 - btrfs /dev/nvme0n1p2 rw\n";
+        let mounts = crate::fs::volume::mountinfo(text);
+        let asked = parking_lot::Mutex::new(Vec::new());
+        let made_up = imp::made_up(&mounts, |point| {
+            asked.lock().push(point.to_path_buf());
+            (point != Path::new("/home/me/srv")).then_some(1 << 40)
+        });
+        let dev = |minor| rustix::fs::makedev(0, minor);
+        assert_eq!(
+            made_up,
+            [
+                (dev(88), 1 << 40),
+                (dev(98), 37),
+                (dev(99), 38),
+                (dev(92), 40)
+            ],
+            "the unique number where the system says it, else the table's"
+        );
+        assert_eq!(
+            *asked.lock(),
+            [Path::new("/run/user/1000/gvfs"), Path::new("/home/me/srv")],
+            "a point below a FUSE mount or a network's is not looked up"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_local_device_makes_no_number_up() {
+        let root = crate::fs::stat::id_of(Path::new("/")).expect("the root");
+        assert_eq!(mount_of(root.dev), 0);
+        assert_eq!(root.mount, 0);
+        let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap();
+        let mut parts = release
+            .split(['.', '-'])
+            .map(|n| n.parse::<u32>().unwrap_or(0));
+        if (parts.next().unwrap_or(0), parts.next().unwrap_or(0)) >= (6, 8) {
+            assert!(imp::unique(Path::new("/")).is_some(), "Linux 6.8 says it");
+        }
     }
 }

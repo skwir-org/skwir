@@ -1921,7 +1921,7 @@ mod tests {
     fn an_entry_says_what_it_knows_and_who_said_it() {
         let mut entry = Entry::new(
             EntryId {
-                file: skwir_core::FileId { dev: 1, ino: 2 },
+                file: skwir_core::FileId::new(1, 2),
                 at: 0,
             },
             "it's a café.txt",
@@ -2068,7 +2068,7 @@ mod tests {
         // A folder's size is what it holds, counted when asked.
         let folder = Entry::new(
             EntryId {
-                file: skwir_core::FileId { dev: 1, ino: 3 },
+                file: skwir_core::FileId::new(1, 3),
                 at: 0,
             },
             "Ünïcode folder",
@@ -2082,7 +2082,7 @@ mod tests {
     fn entry(ino: u64, name: &str, kind: EntryKind, uid: u64, mode: Option<u64>) -> Entry {
         let mut entry = Entry::new(
             EntryId {
-                file: skwir_core::FileId { dev: 1, ino },
+                file: skwir_core::FileId::new(1, ino),
                 at: 0,
             },
             name,
@@ -2531,7 +2531,7 @@ mod tests {
             groups: vec![100, 10],
         };
         let target = Targets::Entry(EntryRef::new(
-            skwir_core::FileId { dev: 1, ino: 2 },
+            skwir_core::FileId::new(1, 2),
             "/data/it's a script.sh",
         ));
         let rows = access_rows(&[subject(0o644, 1000, false)], &target, false, &me);

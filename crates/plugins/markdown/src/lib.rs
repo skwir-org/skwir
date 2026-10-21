@@ -239,7 +239,7 @@ mod tests {
     fn formats_are_known_by_type() {
         let format = |name: &str| {
             format_of(&PreviewRequest {
-                entry: skwir_core::op::EntryRef::new(skwir_core::FileId { dev: 1, ino: 1 }, name),
+                entry: skwir_core::op::EntryRef::new(skwir_core::FileId::new(1, 1), name),
                 mime: None,
                 page: 1,
                 seconds: None,
