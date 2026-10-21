@@ -1176,6 +1176,9 @@ impl Executor {
                 break;
             }
         }
+        // Cut short, what a batch placed for steps that never ran goes:
+        // no Undo holds it (ADR-078).
+        super::transfer::take_back_unclaimed(&ctx);
         // What the plan wrote through to a drive is on it, names and all,
         // before it says it ended: cut short too, for what it did.
         if let Err(e) = ctx.write_out() {

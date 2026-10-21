@@ -17,8 +17,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::Mutex;
-use skwir_core::cancel::CancelToken;
-use skwir_core::op::transfer::Transfer;
+use skwir_core::op::transfer::{Control, Transfer};
 
 use crate::address::Address;
 
@@ -185,7 +184,7 @@ impl Transfer for Rsync {
         into: &Path,
         temp: Option<&Path>,
         copied: &(dyn Fn(u64) + Sync),
-        cancel: &CancelToken,
+        control: &Control,
     ) -> anyhow::Result<()> {
         let rsync = program().ok_or_else(|| anyhow::anyhow!("rsync is not installed"))?;
         let (remote_side, local_side, upward) = match (self.mount_of(from), self.mount_of(into)) {
@@ -193,7 +192,7 @@ impl Transfer for Rsync {
             (Some(mount), None) => (mount, into, false),
             _ => anyhow::bail!("rsync copies between this machine and a server"),
         };
-        let (point, address, control) = remote_side;
+        let (point, address, socket) = remote_side;
         let remote_path = if upward { into } else { from };
         let at = on_server(&point, remote_path).ok_or_else(|| {
             anyhow::anyhow!(
@@ -219,7 +218,7 @@ impl Transfer for Rsync {
                 "--from0",
                 "-e",
             ])
-            .arg(self.ssh(&address, &control));
+            .arg(self.ssh(&address, &socket));
         // Beside what is there: nothing replaced, a file written in the
         // staging folder until whole (on the destination's side).
         if let Some(temp) = temp {
@@ -250,7 +249,10 @@ impl Transfer for Rsync {
         let finished = skwir_platform::process::run_watching(
             &mut command,
             Some(&list),
-            cancel,
+            control.cancel(),
+            // Paused, rsync and its ssh are held where they are; the
+            // connection stays sshfs's.
+            &|| control.is_paused(),
             &mut |bytes: &[u8]| {
                 for &b in bytes {
                     if b == b'\r' || b == b'\n' {

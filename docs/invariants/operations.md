@@ -109,28 +109,41 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   copy only after its metadata succeeded.
 - Copies keep the hard links among what they carry (ADR-049). Notes and
   companions: [notes.md](notes.md).
-- **Batches (ADR-078).** Before a copy is checked, the run of copies that
-  follow into the same folder is looked at once
-  (`op::transfer::batch_ahead`): where one end is a remote and the
-  destination is not written through, the entries of one source folder
-  a batch takes are copied at once into a folder of the plan's staging
-  folder there, by a plugin's `Transfer` that serves the two folders,
-  else by Skwir's own copy eight files at a time. A batch takes only
-  what its step would copy alike: a name of its own in the batch, no
-  companion beside it, a tree of files of one name, folders and links,
-  no kept attribute. Each step still checks, applies (placing the copy
-  made: `StepContext::take_batched`) and gives its inverse; a copy a
-  batch did not take or finish is made by its step. A file or link
-  under its own name, free in the destination's listing read once
-  before, the batch places itself beside what is there (never over
-  anything, partial bytes in the staging folder) and verifies (size and
-  time); its step's check and apply only say so
-  (`StepContext::placed_by_batch`). A batch's bytes are counted once, by
-  the batch. Only a cancel ends the plan, and takes back what the batch
-  placed; a failed batch is logged and left to the steps.
+- **Batches (ADR-078).** Before a copy or a move to another device is
+  checked, the run of such steps that follow into the same folder is
+  looked at once (`op::transfer::batch_ahead`): where one end is a
+  remote and the destination is not written through, the entries of one
+  source folder a batch takes are copied at once into a folder of the
+  plan's staging folder there, by a plugin's `Transfer` that serves the
+  two folders, else by Skwir's own copy eight files at a time. A batch
+  takes only what its step would copy alike: a name of its own in the
+  batch, no companion beside it, a tree of files of one name, folders
+  and links, no kept attribute; never a move out of the trash or into
+  it. Each step still checks, applies (placing the copy made:
+  `StepContext::take_batched`) and gives its inverse; a copy a batch did
+  not take or finish is made by its step. A file or link under its own
+  name, free in the destination's listing read once before, the batch
+  places itself beside what is there (never over anything, partial
+  bytes in the staging folder) and verifies (size and time, against the
+  source as taken or as it is now); its step's check and apply only say
+  so (`StepContext::placed_by_batch`). Skwir's own copy makes each in a
+  folder of its worker's and links it into place, then removes that name
+  (`transfer::place`; renamed where links are refused): the kernel takes
+  the destination folder's lock for each name made there, so the
+  fewer round trips under it, the better. A move's source is read
+  (`builtin::state_of`) before its batch copies it, and its step removes
+  the original only if it is still that
+  (`StepContext::take_batched_state`). A batch's bytes are counted once,
+  by the batch. A cancel during a batch ends the plan and takes back
+  what it placed; a failed batch is logged and left to the steps; a plan
+  that ends before the steps of copies its batch placed takes them back
+  (`transfer::take_back_unclaimed`): no Undo holds them.
 - A step's own threads (a batch's, `op::ranges`'s) are given the plan's
-  cancel token and a progress handle (`StepContext::progress`), never
-  the context, which is the plan thread's alone.
+  `transfer::Control` (its cancel and its pause) and a progress handle
+  (`StepContext::progress`), never the context, which is the plan
+  thread's alone. Paused, Skwir's own copy waits between files and a
+  tool's process group is stopped (`SIGSTOP`, `process::run_watching`'s
+  `held`; Windows has no such signal, a tool runs on there).
 
 ## Names taken (ADR-054)
 

@@ -66,7 +66,7 @@ impl Pause {
 
     /// Return at once unless the plan is held; held, return once it is
     /// resumed or `cancel` is cancelled.
-    fn wait(&self, cancel: &CancelToken) {
+    pub(super) fn wait(&self, cancel: &CancelToken) {
         let Some(resumed) = self.held.lock().as_ref().map(|(_, rx)| rx.clone()) else {
             return;
         };
@@ -203,7 +203,15 @@ pub struct StepContext {
     batched_until: std::cell::Cell<usize>,
     /// What a batch did for each copy's source, until its step takes it.
     batched: RefCell<HashMap<PathBuf, super::transfer::Batched>>,
+    /// What a move's source was as a batch copied it.
+    batched_states: RefCell<HashMap<PathBuf, CopiedAs>>,
 }
+
+/// What a move's source was as a batch copied it (`builtin::state_of`:
+/// `None` where it could not all be read), which its step compares before
+/// removing it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct CopiedAs(pub(super) Option<blake3::Hash>);
 
 /// What a dry run's earlier steps make and take away, by path. A path
 /// made after it went is made; one that went after it was made is gone.
@@ -326,6 +334,7 @@ impl StepContext {
             transfers: None,
             batched_until: std::cell::Cell::new(0),
             batched: RefCell::default(),
+            batched_states: RefCell::default(),
         }
     }
 
@@ -641,13 +650,36 @@ impl StepContext {
     pub(super) fn placed_by_batch(&self, src: &Path, target: &Path) -> bool {
         matches!(
             self.batched.borrow().get(src),
-            Some(super::transfer::Batched::Placed(at)) if at == target
+            Some(super::transfer::Batched::Placed(at, _)) if at == target
         )
     }
 
     /// What a batch did for the copy of `src`, taken by its step.
     pub(super) fn take_batched(&self, src: &Path) -> Option<super::transfer::Batched> {
         self.batched.borrow_mut().remove(src)
+    }
+
+    /// What batches did that no step took: the plan ended before them.
+    pub(super) fn unclaimed(&self) -> Vec<(PathBuf, super::transfer::Batched)> {
+        self.batched.borrow_mut().drain().collect()
+    }
+
+    /// A batch copied the source `src` of a move, which was `state` then.
+    pub(super) fn batched_state(&self, src: &Path, state: CopiedAs) {
+        self.batched_states
+            .borrow_mut()
+            .insert(src.to_path_buf(), state);
+    }
+
+    /// What the source `src` of a move was as a batch copied it, taken by
+    /// its step; `None` when no batch copied it.
+    pub(super) fn take_batched_state(&self, src: &Path) -> Option<CopiedAs> {
+        self.batched_states.borrow_mut().remove(src)
+    }
+
+    /// The plan's cancel and pause, for a batch's transfer.
+    pub(super) fn control(&self) -> super::transfer::Control {
+        super::transfer::Control::new(self.cancel.clone(), Arc::clone(&self.pause))
     }
 
     /// What reports work done from another thread (a batch's).

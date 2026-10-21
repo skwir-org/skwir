@@ -385,6 +385,9 @@ impl super::Effect for Move {
         }
         match self.entry.resolve() {
             Ok(src) if self.in_place(&src) => StepStatus::AlreadyDone,
+            // A batch placed its copy (ADR-078): its apply removes the
+            // original.
+            Ok(src) if ctx.placed_by_batch(&src, &self.target(&src)) => pending(true),
             Ok(src) if ctx.exists(&self.target(&src)) => conflict(format!(
                 "“{}” is already there",
                 display_name(&self.target(&src))
@@ -453,7 +456,14 @@ impl Move {
 /// not leave a partial target. The companion holding the file's attributes
 /// is converted with them (ADR-028); the others go as files.
 fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> anyhow::Result<()> {
-    match rename_noreplace(src, target) {
+    // Copied by a batch, which read what it was first (ADR-078): on
+    // another device, never renamed.
+    let batched = ctx.take_batched_state(src);
+    let renamed = match batched {
+        Some(_) => Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices).into()),
+        None => rename_noreplace(src, target),
+    };
+    match renamed {
         Ok(()) => {
             if let Err(e) = rename_along(along) {
                 let _ = rename_noreplace(target, src);
@@ -466,7 +476,10 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
             // is copied.
             let originals: Vec<(PathBuf, Option<blake3::Hash>)> = std::iter::once(src)
                 .chain(along.iter().map(|a| a.from.as_path()))
-                .map(|p| (p.to_path_buf(), state_of(p)))
+                .map(|p| match batched {
+                    Some(copied_as) if p == src => (p.to_path_buf(), copied_as.0),
+                    _ => (p.to_path_buf(), state_of(p)),
+                })
                 .collect();
             let through = copy_entry(src, target, dest_dir, true, along, ctx)?;
             let dest_dir = dest_dir.to_path_buf();
@@ -518,7 +531,7 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
 /// removes it. Compared with itself, never with the clock: a card's files
 /// can be dated by a camera's. `None` where something of it cannot be
 /// read, or it is gone.
-fn state_of(path: &Path) -> Option<blake3::Hash> {
+pub(super) fn state_of(path: &Path) -> Option<blake3::Hash> {
     fn time(t: Option<std::time::SystemTime>) -> [u8; 17] {
         let (after, d) = match t.map(|t| t.duration_since(std::time::UNIX_EPOCH)) {
             None => (2, std::time::Duration::ZERO),
@@ -816,7 +829,7 @@ fn copy_staged(
     let (staging, name) = ctx.staging_for(dest_dir)?;
     let (staged, made) = match batched {
         // At its target already: nothing to place.
-        Some(super::transfer::Batched::Placed(at)) if at == target => return Ok(()),
+        Some(super::transfer::Batched::Placed(at, _)) if at == target => return Ok(()),
         Some(super::transfer::Batched::Made(made)) => (made, true),
         _ => (staging.path().join(&name), false),
     };

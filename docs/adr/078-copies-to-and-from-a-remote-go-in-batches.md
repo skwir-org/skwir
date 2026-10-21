@@ -78,6 +78,22 @@ mounted the folder.
    its copies go through the mount. Its progress is read from
    `--info=progress2`.
 
+5. **Moves and the pause.** A move to another device (one end a remote,
+   or two remotes) is a copy, then the original removed: a batch takes
+   it as a copy, after reading what its source is, and its step removes
+   the original only if it is still that, as an unbatched move does. A
+   batch heeds the plan's pause: Skwir's own copy waits between files; a
+   tool's process group is stopped (`SIGSTOP`) and continued on resume.
+   A plan cut short before the steps whose copies its batch placed takes
+   those back: no Undo would hold them.
+
+6. **Placing beside, through FUSE.** Skwir's own copy makes each file in
+   a folder of its worker's and links it into place, then removes that
+   name (a no-replace rename where links are refused): the kernel takes
+   the destination folder's lock for each name made there, and sshfs
+   refuses the no-replace flag, so a rename cost about four round trips
+   under that lock, a link about three.
+
 ## Consequences
 
 - Measured after, the same way (20 ms; load 8 to 61): a 256 MiB file
@@ -89,15 +105,21 @@ mounted the folder.
   rsync's pace where rsync is on both ends, at twice the mount's pace
   elsewhere; a large file comes down in ranges.
 - A batch is cancelled as a whole: Cancel stops the tool (its process
-  group); Pause takes hold once the batch ends. What it made is in the
+  group); Pause holds it where it is (on Unix; on Windows a tool runs
+  on), and Skwir's own copy between files. What it made is in the
   staging folder, removed with the plan.
 - What a batch did is what its steps say: a step it served is applied
   and undone as before (its copy to the trash); one it did not serve is
   copied as before. Nothing of the batch is kept beyond the plan.
-- Not yet: a cross-device move (its copy, then the removal) in batches;
-  rclone's and GVfs's own transfers (`rclone copy`, `gio copy`); sshfs
-  mounts Skwir did not make (no connection to share: their copies go
-  through the mount, eight at a time); Pause during a batch. Without
-  rsync, files pasted one by one onto a remote still cost a rename each
-  through FUSE, which the kernel takes one at a time under the folder's
-  lock (15 s for 100 at 20 ms).
+- Measured after 5 and 6 (20 ms, 100 files of 16 KiB): moved one by
+  one up by rsync 0.80 s, down 2.75 (the originals removed through the
+  mount, a round trip each); without rsync, pasted one by one up 8.4–8.5
+  s (15.0–15.4 with one folder aside for all, 10.7 renamed from a folder
+  each), moved up 8.5, down 2.9.
+- Not yet: rclone's and GVfs's own transfers (`rclone copy`, `gio
+  copy`); sshfs mounts Skwir did not make (no connection to share:
+  their copies go through the mount, eight at a time); a move's
+  originals removed on the server one by one through the mount (`rsync
+  --remove-source-files` could remove them in its stream). Without
+  rsync, a name made in a folder through FUSE costs a round trip or two
+  under its lock, whatever the way.

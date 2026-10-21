@@ -348,6 +348,27 @@ impl ChildGuard {
         }
     }
 
+    /// Stop the child and what it started where they are (`SIGSTOP` to
+    /// its group), or let them go on (`SIGCONT`): a paused copy's tool.
+    /// Windows has no such signal: there they go on.
+    // Nothing of the child is used where nothing can hold it (Windows).
+    #[cfg_attr(not(unix), allow(clippy::unused_self))]
+    fn hold(&mut self, held: bool) {
+        #[cfg(unix)]
+        if let Some(pid) = self.pid()
+            && self.exited().is_ok_and(|exited| !exited)
+        {
+            let signal = if held {
+                rustix::process::Signal::STOP
+            } else {
+                rustix::process::Signal::CONT
+            };
+            let _ = rustix::process::kill_process_group(pid, signal);
+        }
+        #[cfg(not(unix))]
+        let _ = held;
+    }
+
     /// Stop the child and what it left running, at once: what writes to
     /// it, or waits for it, hears so. It is reaped by `finish` or `Drop`.
     pub(crate) fn kill(&mut self) {
@@ -731,7 +752,9 @@ pub fn run(
 /// limit, for a program that says how far it went as it goes (rsync's
 /// progress): `watch` is given what it writes to standard output as it
 /// writes it, on a thread of the call's, through a pipe that thread
-/// drains. Cancelled, it is stopped with what it started; a failed exit
+/// drains. Cancelled, it is stopped with what it started; while `held`
+/// says so (a paused plan's), it and what it started are held where they
+/// are (on Unix: a program has no pause of its own to ask). A failed exit
 /// status is not an error.
 ///
 /// # Errors
@@ -740,6 +763,7 @@ pub fn run_watching(
     command: &mut Command,
     input: Option<&[u8]>,
     cancel: &CancelToken,
+    held: &dyn Fn() -> bool,
     watch: &mut (dyn FnMut(&[u8]) + Send),
 ) -> anyhow::Result<Finished> {
     let program = Path::new(command.get_program())
@@ -791,15 +815,20 @@ pub fn run_watching(
                 }
             }
         });
+        let mut holding = false;
         loop {
             if cancel.is_cancelled() {
                 // Stopped with its group: the pipe's writers gone, the
-                // reader ends.
+                // reader ends. A process held is killed as it is.
                 drop(child);
                 anyhow::bail!("{program} was cancelled");
             }
             if child.exited()? {
                 break;
+            }
+            if held() != holding {
+                holding = !holding;
+                child.hold(holding);
             }
             exit.wait(CHECK_EVERY);
         }
@@ -1083,6 +1112,7 @@ mod tests {
             ]),
             None,
             &CancelToken::new(),
+            &|| false,
             &mut |bytes: &[u8]| said.extend_from_slice(bytes),
         )
         .unwrap();
@@ -1101,10 +1131,61 @@ mod tests {
             Command::new("sh").args(["-c", "sleep 30 & sleep 30"]),
             None,
             &cancel,
+            &|| false,
             &mut |_: &[u8]| {},
         );
         assert!(ran.is_err());
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// A program held, and what it started, writes nothing until let go;
+    /// cancelled while held, it is stopped all the same.
+    #[cfg(unix)]
+    #[test]
+    fn a_program_watched_is_held_while_paused() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let held = AtomicBool::new(false);
+        let ticks = AtomicUsize::new(0);
+        let cancel = CancelToken::new();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let ran = run_watching(
+                    // A child of the shell's writes: held with its group.
+                    Command::new("sh")
+                        .args(["-c", "sh -c 'while :; do printf .; sleep 0.02; done'"]),
+                    None,
+                    &cancel,
+                    &|| held.load(Ordering::Relaxed),
+                    &mut |bytes: &[u8]| {
+                        ticks.fetch_add(bytes.len(), Ordering::Relaxed);
+                    },
+                );
+                assert!(ran.is_err(), "cancelled");
+            });
+            let until = |at_least: usize| {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while ticks.load(Ordering::Relaxed) < at_least {
+                    assert!(Instant::now() < deadline, "it writes");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            };
+            until(3);
+            held.store(true, Ordering::Relaxed);
+            // Held within a look (50 ms) and what was in the pipe read.
+            std::thread::sleep(Duration::from_millis(300));
+            let at = ticks.load(Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(500));
+            assert_eq!(
+                ticks.load(Ordering::Relaxed),
+                at,
+                "nothing written while held"
+            );
+            held.store(false, Ordering::Relaxed);
+            until(at + 3);
+            held.store(true, Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(200));
+            cancel.cancel();
+        });
     }
 
     /// A program that says more than it may and ends before it is looked

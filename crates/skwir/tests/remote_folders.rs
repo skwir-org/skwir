@@ -539,6 +539,21 @@ fn same_tree(src: &Path, copy: &Path) {
     }
 }
 
+fn moves(entries: &[PathBuf], dest: &Path) -> skwir_core::op::Plan {
+    skwir_core::op::Plan::with_steps(
+        "move",
+        entries
+            .iter()
+            .map(|e| {
+                Box::new(skwir_core::op::Move::new(
+                    skwir_core::op::EntryRef::from_path(e).unwrap(),
+                    dest.to_path_buf(),
+                )) as Box<dyn skwir_core::op::Operation>
+            })
+            .collect(),
+    )
+}
+
 fn copies(entries: &[PathBuf], dest: &Path) -> skwir_core::op::Plan {
     skwir_core::op::Plan::with_steps(
         "copy",
@@ -557,7 +572,7 @@ fn copies(entries: &[PathBuf], dest: &Path) -> skwir_core::op::Plan {
 }
 
 #[test]
-fn copies_to_and_from_an_sftp_server_go_through_rsync_in_one_batch() {
+fn copies_and_moves_to_and_from_an_sftp_server_go_through_rsync_in_batches() {
     let sshfs = Sshfs {
         askpass: Some(PathBuf::from(env!("CARGO_BIN_EXE_skwir"))),
         ..Sshfs::default()
@@ -636,6 +651,40 @@ fn copies_to_and_from_an_sftp_server_go_through_rsync_in_one_batch() {
         sshfs.rsync().made(),
         4,
         "the folder staged, the files placed"
+    );
+    for e in &entries {
+        same_tree(e, &down.join(e.file_name().unwrap()));
+    }
+
+    // Moved up: copied as copies are, the originals removed after; and
+    // back down by Undo, the same way.
+    let moved_into = mounted.join("moved here");
+    std::fs::create_dir(&moved_into).unwrap();
+    let here: Vec<PathBuf> = entries
+        .iter()
+        .map(|e| down.join(e.file_name().unwrap()))
+        .collect();
+    let moved = app
+        .executor
+        .execute_blocking(&moves(&here, &moved_into), app.lifetime());
+    assert!(moved.error.is_none(), "{:?}", moved.error);
+    assert_eq!(sshfs.rsync().made(), 6, "moved as copied, by rsync");
+    assert_eq!(
+        std::fs::read_dir(&down).unwrap().count(),
+        0,
+        "the originals removed"
+    );
+    for e in &entries {
+        same_tree(e, &served.join("moved here").join(e.file_name().unwrap()));
+    }
+    let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(undone.error.is_none(), "{:?}", undone.error);
+    assert_eq!(sshfs.rsync().made(), 8, "moved back by rsync too");
+    assert_eq!(
+        std::fs::read_dir(served.join("moved here"))
+            .unwrap()
+            .count(),
+        0
     );
     for e in &entries {
         same_tree(e, &down.join(e.file_name().unwrap()));
