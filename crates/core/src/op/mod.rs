@@ -16,6 +16,7 @@ mod order;
 mod pace;
 #[cfg(target_os = "linux")]
 mod put_trash;
+mod ranges;
 pub mod records;
 pub mod room;
 pub mod staging;

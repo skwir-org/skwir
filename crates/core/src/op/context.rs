@@ -628,6 +628,11 @@ impl StepContext {
     ///
     /// # Errors
     /// [`Cancelled`] when the plan's token is cancelled.
+    /// What cancels the plan, for a step's own threads (`ranges`).
+    pub(super) fn token(&self) -> &CancelToken {
+        &self.cancel
+    }
+
     pub fn check_cancelled(&self) -> Result<(), Cancelled> {
         self.pause.wait(&self.cancel);
         if self.cancel.is_cancelled() {

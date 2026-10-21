@@ -146,13 +146,15 @@ pub(super) fn copy_whole(
     }
 }
 
-/// The devices of a file read (`src`, its metadata) and of one written:
-/// what the kernel refusing to copy between them is remembered by.
-pub(super) fn devices(src: &std::fs::Metadata, dst: &File) -> Option<(u64, u64)> {
+/// The devices of a file read and of one written (their metadata): what
+/// the kernel refusing to copy between them is remembered by.
+// One signature on every system: Unix always says them, Windows never.
+#[cfg_attr(unix, allow(clippy::unnecessary_wraps))]
+pub(super) fn devices(src: &std::fs::Metadata, dst: &std::fs::Metadata) -> Option<(u64, u64)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        Some((src.dev(), dst.metadata().ok()?.dev()))
+        Some((src.dev(), dst.dev()))
     }
     #[cfg(not(unix))]
     {

@@ -920,9 +920,12 @@ fn copy_file(
         .create_new(true)
         .open(dst)?;
     let m = sf.metadata()?;
+    // As it was made: on a remote, said by the server's answer to the
+    // making, so asked of no one.
+    let made = df.metadata()?;
     // What the kernel refused between these devices once, it is not asked
     // for each file again.
-    let devices = sys::devices(&m, &df);
+    let devices = sys::devices(&m, &made);
     let cloned = !ctx.kernel_refuses(devices, Kernel::Clone) && sys::clone_file(&sf, &df);
     if cloned {
         ctx.advance(m.len());
@@ -935,7 +938,11 @@ fn copy_file(
     if preserve_attributes {
         transfer_attributes(src, dst, ctx)?;
     }
-    df.set_permissions(m.permissions())?;
+    // Made with them already (the usual 0644 and 022), they are not asked
+    // for again: on a remote each change is a round trip to the server.
+    if made.permissions() != m.permissions() {
+        df.set_permissions(m.permissions())?;
+    }
     let _ = df.set_modified(m.modified()?);
     Ok(())
 }
@@ -957,6 +964,14 @@ fn copy_contents(
     }
     let mut writing = pace.writing(df);
     let mut copied = 0u64;
+    // A large file on a FUSE remote, read in ranges at once; what it grew
+    // by since, the loops below take from where it was read to.
+    #[cfg(unix)]
+    if super::ranges::wanted(meta) {
+        use std::io::Seek;
+        copied = super::ranges::copy(sf, df, meta.len(), &mut writing, ctx)?;
+        sf.seek(std::io::SeekFrom::Start(copied))?;
+    }
     while !ctx.kernel_refuses(devices, Kernel::Range) {
         ctx.check_cancelled()?;
         match sys::copy_range(sf, df, COPY_CHUNK)? {
