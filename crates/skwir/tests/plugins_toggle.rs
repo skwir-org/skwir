@@ -38,6 +38,7 @@ struct Snapshot {
     notes: Vec<&'static str>,
     /// Files beside a file (ADR-028: a Mac's `._` files).
     companions: Vec<&'static str>,
+    transfers: Vec<&'static str>,
     /// Operation kinds plans are made of (tags, positions).
     ops: Vec<&'static str>,
     previews: Vec<&'static str>,
@@ -105,6 +106,7 @@ fn snapshot(app: &App) -> Snapshot {
         hints: app.hints.ids(),
         notes: app.notes.ids(),
         companions: app.companions.ids(),
+        transfers: app.transfers.names(),
         ops: app.ops.kinds(),
         previews: app.previews.ids(),
         thumbs: app.thumbnails.provider_ids(),

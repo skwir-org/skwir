@@ -101,9 +101,13 @@ ADR-077 (which revises ADR-021).
 - **Copies** (ADR-078): a file of two ranges or more on a FUSE remote is
   read 8 ranges of 4 MiB at a time, written in order (`op::ranges`): the
   kernel reads FUSE ahead 128 KiB at a time, a round trip each. A run of
-  copies to or from a remote goes in batches (operations.md), by a
-  plugin's transfer where one serves, else eight files at a time through
-  the mount.
+  copies to or from a remote goes in batches (operations.md, ADR-078),
+  by the remote plugin's rsync for an sshfs mount it made (sshfs's ssh is
+  the master of a control socket in the runtime folder,
+  `rsync::control_path`; rsync's ssh shares it, `BatchMode`, asking
+  nothing), else eight files at a time through the mount. A server
+  without rsync is remembered for its mount. A connector offers a
+  transfer for its mounts (`Connector::transfer`).
   A copy made with its source's mode is not given it again.
 
 ## Addresses

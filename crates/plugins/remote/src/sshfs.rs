@@ -14,6 +14,7 @@ use skwir_core::fs::reach::Remote;
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connected, Connector, Recognised};
 use crate::mounter;
+use crate::rsync::Rsync;
 
 /// Its type in the mount table.
 pub const FSTYPE: &str = "fuse.sshfs";
@@ -37,6 +38,21 @@ pub struct Sshfs {
     pub ssh_options: Vec<String>,
     /// An ssh configuration file in place of the user's (`-F`): a test's.
     pub ssh_config: Option<std::path::PathBuf>,
+    /// rsync through its mounts' connections, made once, with the same
+    /// ssh options (ADR-078).
+    pub rsync: std::sync::OnceLock<Arc<Rsync>>,
+}
+
+impl Sshfs {
+    /// Its rsync (a test reads what it copied).
+    pub fn rsync(&self) -> Arc<Rsync> {
+        Arc::clone(self.rsync.get_or_init(|| {
+            Arc::new(Rsync::with(
+                self.ssh_options.clone(),
+                self.ssh_config.clone(),
+            ))
+        }))
+    }
 }
 
 impl Connector for Sshfs {
@@ -72,8 +88,18 @@ impl Connector for Sshfs {
         let sshfs = skwir_core::os_path::find_program("sshfs")
             .ok_or_else(|| anyhow::anyhow!("sshfs is not installed"))?;
         let point = mounter::point_for(self.id(), &top)?;
+        // Its ssh shares its connection (ADR-078). A socket left by an ssh
+        // gone is no one's: this point is not mounted.
+        let control = crate::rsync::control_path(&point).filter(|control| {
+            control
+                .parent()
+                .is_some_and(|folder| mounter::make_private(folder).is_ok())
+        });
+        if let Some(control) = &control {
+            let _ = std::fs::remove_file(control);
+        }
         let mut command = Command::new(sshfs);
-        command.args(arguments(&top, &point));
+        command.args(arguments(&top, &point, control.as_deref()));
         for option in &self.ssh_options {
             command.arg("-o").arg(option);
         }
@@ -126,11 +152,15 @@ impl Connector for Sshfs {
     ) -> anyhow::Result<()> {
         mounter::unmount(&remote.point, recognised.ours, cancel)
     }
+
+    fn transfer(&self) -> Option<Arc<dyn skwir_core::op::transfer::Transfer>> {
+        Some(self.rsync())
+    }
 }
 
 /// What sshfs is given for `top` mounted at `point`: the server's root,
-/// so one mount holds every path of it.
-fn arguments(top: &Address, point: &Path) -> Vec<std::ffi::OsString> {
+/// so one mount holds every path of it; its ssh the master of `control`.
+fn arguments(top: &Address, point: &Path, control: Option<&Path>) -> Vec<std::ffi::OsString> {
     let mut remote = String::new();
     if let Some(user) = &top.user {
         remote.push_str(user);
@@ -143,8 +173,13 @@ fn arguments(top: &Address, point: &Path) -> Vec<std::ffi::OsString> {
         args.push("-p".into());
         args.push(port.to_string().into());
     }
-    let mut options = vec!["reconnect", "idmap=user"];
-    options.extend(ALIVE);
+    let mut options: Vec<String> = vec!["reconnect".into(), "idmap=user".into()];
+    options.extend(ALIVE.iter().map(|o| (*o).to_owned()));
+    options.extend(
+        control
+            .map(crate::rsync::master_options)
+            .unwrap_or_default(),
+    );
     args.push("-o".into());
     args.push(options.join(",").into());
     args
@@ -198,7 +233,11 @@ mod tests {
         let top = Address::parse("sftp://me@example.com:2222/home/me")
             .unwrap()
             .top();
-        let args = arguments(&top, Path::new("/run/user/1000/skwir/remote/x"));
+        let args = arguments(
+            &top,
+            Path::new("/run/user/1000/skwir/remote/x"),
+            Some(Path::new("/run/user/1000/skwir/ssh/0123")),
+        );
         let args: Vec<String> = args
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
@@ -207,9 +246,13 @@ mod tests {
         assert_eq!(args[1], "/run/user/1000/skwir/remote/x");
         assert_eq!(args[2..4], ["-p", "2222"]);
         assert!(args[5].contains("reconnect"));
+        assert!(
+            args[5].contains("ControlMaster=auto,ControlPath=/run/user/1000/skwir/ssh/0123"),
+            "its ssh shares its connection"
+        );
         let v6 = Address::parse("sftp://[fe80::1]/").unwrap();
         assert_eq!(
-            arguments(&v6, Path::new("/m"))[0].to_string_lossy(),
+            arguments(&v6, Path::new("/m"), None)[0].to_string_lossy(),
             "[fe80::1]:/"
         );
     }

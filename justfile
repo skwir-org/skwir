@@ -117,14 +117,15 @@ djvu-check:
 
 # Remote folders (ADR-077) against servers of rclone's on this machine,
 # mounted for real: rclone, sshfs and a GVfs of the test's own on a bus of
-# its own, taken from nixpkgs (never the session's GVfs). The tests skip
-# what is missing when run alone.
+# its own, taken from nixpkgs (never the session's GVfs); and OpenSSH's own
+# server run as the user, for copies through rsync (ADR-078). The tests
+# skip what is missing when run alone.
 remote-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    tools=$(nix build --no-link --print-out-paths nixpkgs#sshfs nixpkgs#gvfs nixpkgs#rclone 'nixpkgs#glib^bin')
-    out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(-bin)?$" <<< "$tools" | head -1; }
-    export PATH="$(out sshfs-fuse)/bin:$(out rclone)/bin:$(out glib)/bin:$PATH"
+    tools=$(nix build --no-link --print-out-paths nixpkgs#sshfs nixpkgs#gvfs nixpkgs#rclone 'nixpkgs#glib^bin' nixpkgs#openssh nixpkgs#rsync)
+    out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(p[0-9]+)?(-bin)?$" <<< "$tools" | head -1; }
+    export PATH="$(out sshfs-fuse)/bin:$(out rclone)/bin:$(out glib)/bin:$(out openssh)/bin:$(out rsync)/bin:$PATH"
     export SKWIR_TEST_GVFS="$(out gvfs)"
     cargo nextest run -p skwir -p skwir-plugin-remote --no-fail-fast \
         -E 'binary(remote_folders) | package(skwir-plugin-remote)'

@@ -403,6 +403,246 @@ fn sshfs_asks_the_window_for_a_password_and_an_unknown_host_through_skwir() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// OpenSSH's own server, run as this user on a port of its own, with keys
+/// and known hosts of the test's: rsync on its far end (`rclone serve
+/// sftp` runs no command). Stopped when dropped.
+struct OwnSshd {
+    child: Child,
+    port: u16,
+    /// What ssh is given to reach it: the test's key and known hosts.
+    options: Vec<String>,
+}
+
+impl OwnSshd {
+    /// `None`, saying why, where OpenSSH's server or rsync is missing.
+    fn start(base: &Path) -> Option<OwnSshd> {
+        let find = skwir_core::os_path::find_program;
+        let (Some(sshd), Some(keygen), Some(_)) = (find("sshd"), find("ssh-keygen"), find("rsync"))
+        else {
+            eprintln!("skipped: OpenSSH's server or rsync is not installed");
+            return None;
+        };
+        let sftp = std::fs::canonicalize(&sshd)
+            .ok()?
+            .parent()?
+            .parent()?
+            .join("libexec/sftp-server");
+        if !sftp.exists() {
+            eprintln!("skipped: no sftp-server beside sshd");
+            return None;
+        }
+        for key in ["key", "hostkey"] {
+            let made = Command::new(&keygen)
+                .args(["-q", "-t", "ed25519", "-N", "", "-C", "test", "-f"])
+                .arg(base.join(key))
+                .status()
+                .unwrap();
+            assert!(made.success());
+        }
+        std::fs::copy(base.join("key.pub"), base.join("authorized_keys")).unwrap();
+        let port = free_port();
+        let config = base.join("sshd_config");
+        std::fs::write(
+            &config,
+            format!(
+                "Port {port}\nListenAddress 127.0.0.1\nHostKey {}\nPidFile {}\n\
+                 AuthorizedKeysFile {}\nUsePAM no\nStrictModes no\n\
+                 PasswordAuthentication no\nKbdInteractiveAuthentication no\n\
+                 Subsystem sftp {}\nLogLevel ERROR\n",
+                base.join("hostkey").display(),
+                base.join("sshd.pid").display(),
+                base.join("authorized_keys").display(),
+                sftp.display(),
+            ),
+        )
+        .unwrap();
+        let child = Command::new(&sshd)
+            .arg("-D")
+            .arg("-f")
+            .arg(&config)
+            .arg("-E")
+            .arg(base.join("sshd.log"))
+            .spawn()
+            .expect("start sshd");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            assert!(Instant::now() < deadline, "sshd never listened");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        Some(OwnSshd {
+            child,
+            port,
+            options: vec![
+                format!("IdentityFile={}", base.join("key").display()),
+                "IdentitiesOnly=yes".to_owned(),
+                "IdentityAgent=none".to_owned(),
+                format!("UserKnownHostsFile={}", base.join("known_hosts").display()),
+                "StrictHostKeyChecking=accept-new".to_owned(),
+            ],
+        })
+    }
+}
+
+impl Drop for OwnSshd {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// A folder of what a paste holds: small files of several modes and times,
+/// a folder of folders.
+fn small_files(root: &Path) -> Vec<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(root.join("a folder/deeper")).unwrap();
+    for (i, mode) in [0o644, 0o755, 0o600, 0o444]
+        .into_iter()
+        .cycle()
+        .take(24)
+        .enumerate()
+    {
+        let path = root.join(format!("it's {i:02}.txt"));
+        std::fs::write(&path, format!("file {i}").repeat(100)).unwrap();
+        let file = std::fs::File::options().write(true).open(&path).unwrap();
+        file.set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000 + i as u64))
+            .unwrap();
+        drop(file);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+    std::fs::write(root.join("a folder/deeper/inside.txt"), "inside").unwrap();
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(root)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    entries.sort();
+    entries
+}
+
+/// `copy` holds what `src` does, as a copy keeps it: names, bytes, modes
+/// and files' times, all the way down.
+fn same_tree(src: &Path, copy: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    let (a, b) = (
+        std::fs::symlink_metadata(src).unwrap(),
+        std::fs::symlink_metadata(copy).unwrap(),
+    );
+    assert_eq!(a.mode(), b.mode(), "{}", copy.display());
+    if a.is_file() {
+        assert_eq!(std::fs::read(src).unwrap(), std::fs::read(copy).unwrap());
+        assert_eq!(a.mtime(), b.mtime(), "{}", copy.display());
+        return;
+    }
+    for entry in std::fs::read_dir(src).unwrap() {
+        let name = entry.unwrap().file_name();
+        same_tree(&src.join(&name), &copy.join(&name));
+    }
+}
+
+fn copies(entries: &[PathBuf], dest: &Path) -> skwir_core::op::Plan {
+    skwir_core::op::Plan::with_steps(
+        "copy",
+        entries
+            .iter()
+            .map(|e| {
+                Box::new(skwir_core::op::Copy {
+                    entry: skwir_core::op::EntryRef::from_path(e).unwrap(),
+                    dest_dir: dest.to_path_buf(),
+                    new_name: None,
+                    preserve_attributes: true,
+                }) as Box<dyn skwir_core::op::Operation>
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn copies_to_and_from_an_sftp_server_go_through_rsync_in_one_batch() {
+    let sshfs = Sshfs {
+        askpass: Some(PathBuf::from(env!("CARGO_BIN_EXE_skwir"))),
+        ..Sshfs::default()
+    };
+    if let Some(why) = sshfs.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("rsync");
+    let Some(sshd) = OwnSshd::start(&base) else {
+        std::fs::remove_dir_all(&base).unwrap();
+        return;
+    };
+    let served = base.join("served");
+    std::fs::create_dir_all(&served).unwrap();
+    let sshfs = Arc::new(Sshfs {
+        ssh_options: sshd.options.clone(),
+        ssh_config: Some(PathBuf::from("/dev/null")),
+        ..sshfs
+    });
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![sshfs.clone() as Arc<dyn Connector>]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let pane = app.workspace.read().active_id();
+    let user = std::env::var("USER").expect("the user's name");
+    let address = format!(
+        "sftp://{user}@127.0.0.1:{}{}",
+        sshd.port,
+        served.display()
+    );
+    app.navigate(pane, &Location::parse(&address)).unwrap();
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    let mounted = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&mounted).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+
+    // Up: one rsync for the whole paste, each step placing its own.
+    let local = base.join("local");
+    let entries = small_files(&local);
+    let up = app
+        .executor
+        .execute_blocking(&copies(&entries, &mounted), app.lifetime());
+    assert!(up.error.is_none(), "{:?}", up.error);
+    assert_eq!(up.applied, entries.len());
+    assert_eq!(sshfs.rsync().made(), 1, "one batch, by rsync");
+    for e in &entries {
+        same_tree(e, &served.join(e.file_name().unwrap()));
+    }
+    let left_on_server: Vec<_> = std::fs::read_dir(&served)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .filter(|n| n.to_string_lossy().starts_with(".skwir-copy-"))
+        .collect();
+    assert!(left_on_server.is_empty(), "nothing staged left");
+
+    // Down: what is on the server, through its mounted folder.
+    let down = base.join("down");
+    std::fs::create_dir(&down).unwrap();
+    let there: Vec<PathBuf> = entries
+        .iter()
+        .map(|e| mounted.join(e.file_name().unwrap()))
+        .collect();
+    let back = app
+        .executor
+        .execute_blocking(&copies(&there, &down), app.lifetime());
+    assert!(back.error.is_none(), "{:?}", back.error);
+    assert_eq!(sshfs.rsync().made(), 2, "one batch, by rsync");
+    for e in &entries {
+        same_tree(e, &down.join(e.file_name().unwrap()));
+    }
+
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    until(&app, 30, "it was let go of", || {
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point)
+    });
+    drop(left);
+    drop(sshd);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// A GVfs of the test's own: a session bus of its own, from which GVfs's
 /// daemon starts, its FUSE bridge in a runtime folder of the test's, its
 /// ssh's home the test's. `SKWIR_TEST_GVFS` names GVfs's package (its

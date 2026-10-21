@@ -109,7 +109,7 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   copy only after its metadata succeeded.
 - Copies keep the hard links among what they carry (ADR-049). Notes and
   companions: [notes.md](notes.md).
-- **Batches.** Before a copy is checked, the run of copies that
+- **Batches (ADR-078).** Before a copy is checked, the run of copies that
   follow into the same folder is looked at once
   (`op::transfer::batch_ahead`): where one end is a remote and the
   destination is not written through, the entries of one source folder

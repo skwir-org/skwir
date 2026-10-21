@@ -47,7 +47,7 @@ pub fn point_for(connector: &str, top: &Address) -> anyhow::Result<PathBuf> {
 
 /// `folder` and the folders above it up to the runtime folder, made with
 /// only the user allowed in.
-fn make_private(folder: &Path) -> std::io::Result<()> {
+pub(crate) fn make_private(folder: &Path) -> std::io::Result<()> {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]

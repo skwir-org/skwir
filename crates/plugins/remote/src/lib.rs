@@ -19,6 +19,7 @@ pub mod lan;
 mod mounter;
 mod provider;
 pub mod rclone;
+pub mod rsync;
 pub mod sshfs;
 
 use std::collections::HashMap;
@@ -601,6 +602,9 @@ impl Plugin for RemotePlugin {
     }
 
     fn register(&self, app: &App) {
+        for transfer in self.remotes.connectors.iter().filter_map(|c| c.transfer()) {
+            app.transfers.register(ID, transfer);
+        }
         if let Some(previous) = self
             .remotes
             .state
