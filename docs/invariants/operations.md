@@ -99,6 +99,14 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   staging folders are leftovers of a crash or kill: swept by a later copy
   into that destination, and at start for the destinations an earlier run
   was copying into (`op::staging`). Only where this machine alone writes.
+- On a remote, where other machines' copies stage too and their locks
+  are not seen here, only what this machine noted is swept: a staging
+  folder made there is noted itself (`UnderWay::mark`), the note kept
+  when the folder cannot be removed (its server stopped answering), and
+  what such notes name is removed once this machine reaches that remote
+  again (`UnderWay::sweep_noted`: before a copy stages in that folder,
+  and when its mount is found answering, `App::sweep_left_on`, in its
+  lane). A run's start never looks at a remote.
 
 ## Copies
 

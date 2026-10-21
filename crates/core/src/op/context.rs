@@ -471,7 +471,10 @@ impl StepContext {
         let staging = if let Some(staging) = known {
             staging
         } else {
-            let made = Rc::new(super::staging::Staging::new(dest_dir)?);
+            let made = Rc::new(super::staging::Staging::new(
+                dest_dir,
+                self.under_way.as_ref(),
+            )?);
             self.stagings
                 .borrow_mut()
                 .insert(dest_dir.to_path_buf(), Rc::clone(&made));
@@ -597,9 +600,20 @@ impl StepContext {
 
     /// Before a copy stages in `dest_dir`: the first time this plan does,
     /// note the folder as under way and remove what copies cut short left
-    /// there (`staging::sweep`).
+    /// there (`staging::sweep`). On a remote, where each staging folder is
+    /// noted itself, what this machine noted there is removed instead
+    /// (`UnderWay::sweep_noted`).
     pub(super) fn staging_in(&self, dest_dir: &Path) {
         if self.staged_in.borrow().contains_key(dest_dir) {
+            return;
+        }
+        if crate::fs::reach::of(dest_dir).is_some() {
+            if let Some(under_way) = &self.under_way {
+                under_way.sweep_noted(dest_dir);
+            }
+            self.staged_in
+                .borrow_mut()
+                .insert(dest_dir.to_path_buf(), None);
             return;
         }
         let mark = self.under_way.as_ref().and_then(|u| u.mark(dest_dir));
@@ -618,7 +632,7 @@ impl StepContext {
     /// When the folder cannot be made in `dest_dir`.
     pub fn stage(&self, dest_dir: &Path) -> std::io::Result<super::staging::Staging> {
         self.staging_in(dest_dir);
-        super::staging::Staging::new(dest_dir)
+        super::staging::Staging::new(dest_dir, self.under_way.as_ref())
     }
 
     /// The same context, asking the user for a step's secret through

@@ -18,6 +18,14 @@
 //! without a lock (being made) is left. Only where
 //! this machine alone writes (`fs::volume::only_here`): a lock taken by
 //! another machine on a shared drive is not seen here.
+//!
+//! On a remote, where another machine's copies stage too, a folder is
+//! swept only if this machine noted it: a staging folder made there is
+//! noted itself ([`UnderWay::mark`]), the note kept when the folder cannot
+//! be removed (its server stopped answering mid-copy), and what such
+//! notes name is removed when this machine reaches that remote again
+//! ([`UnderWay::sweep_noted`]: a copy into that folder, its mount found
+//! answering), in its lane.
 
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -38,25 +46,58 @@ pub struct Staging {
     /// Released before the folder goes: Windows removes no folder holding
     /// a file still open.
     lock: Option<File>,
-    dir: tempfile::TempDir,
+    /// `None` once removed.
+    dir: Option<PathBuf>,
+    /// On a remote, the note naming it ([`UnderWay::mark`]): forgotten
+    /// once it is removed, kept should it stay.
+    note: Option<Mark>,
 }
 
 impl Staging {
-    pub(super) fn new(dest_dir: &Path) -> io::Result<Self> {
+    /// A new one in `dest_dir`, noted in `under_way` where that is a
+    /// remote's folder.
+    pub(super) fn new(dest_dir: &Path, under_way: Option<&UnderWay>) -> io::Result<Self> {
         let mut builder = tempfile::Builder::new();
         builder.prefix(PREFIX);
         if let Some(private) = sys::owner_only() {
             builder.permissions(private);
         }
-        let dir = builder.tempdir_in(dest_dir)?;
+        let dir = builder.tempdir_in(dest_dir)?.keep();
+        let note = under_way
+            .filter(|_| crate::fs::reach::of(dest_dir).is_some())
+            .and_then(|under_way| under_way.mark(&dir));
         Ok(Self {
-            lock: hold(dir.path()),
-            dir,
+            lock: hold(&dir),
+            dir: Some(dir),
+            note,
         })
     }
 
     pub fn path(&self) -> &Path {
-        self.dir.path()
+        self.dir
+            .as_deref()
+            .expect("a staging folder is there until removed")
+    }
+
+    /// Remove it, what it holds included; its note kept where it stays.
+    fn remove_now(&mut self) -> io::Result<()> {
+        drop(self.lock.take());
+        let Some(dir) = self.dir.take() else {
+            return Ok(());
+        };
+        match remove_tree(&dir) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                // Its server gone, say: swept once reached again.
+                if let Some(note) = self.note.take() {
+                    let _ = note.keep();
+                }
+                Err(e)
+            }
+            _ => {
+                drop(self.note.take());
+                Ok(())
+            }
+        }
     }
 
     /// Put `made`, made in this folder, at `target`, never over what is
@@ -73,10 +114,16 @@ impl Staging {
     ///
     /// # Errors
     /// When something in it cannot be removed.
-    pub fn remove(self) -> io::Result<()> {
-        let Self { lock, dir } = self;
-        drop(lock);
-        remove_tree(&dir.keep())
+    pub fn remove(mut self) -> io::Result<()> {
+        self.remove_now()
+    }
+}
+
+impl Drop for Staging {
+    fn drop(&mut self) {
+        if let Err(e) = self.remove_now() {
+            tracing::warn!("a staging folder stays: {e}");
+        }
     }
 }
 
@@ -199,18 +246,86 @@ impl UnderWay {
             }
             drop(note);
             let folder = PathBuf::from(crate::os_path::from_bytes(bytes));
-            if crate::fs::reach::of(&folder).is_some() {
-                // Never swept on a network (`only_here`), nor looked at: a
-                // server may not answer (ADR-077).
-                let _ = std::fs::remove_file(&path);
-            } else if folder.is_absolute() && folder.is_dir() {
-                sweep(&folder);
-                let _ = std::fs::remove_file(&path);
-            } else if !folder.is_absolute() {
-                // Not a note this module wrote.
-                let _ = std::fs::remove_file(&path);
+            // One on a remote is not looked at here, where its server may
+            // not answer (ADR-077): swept once reached
+            // ([`Self::sweep_noted`]).
+            if crate::fs::reach::of(&folder).is_none() {
+                if folder.is_absolute() && folder.is_dir() {
+                    sweep(&folder);
+                    let _ = std::fs::remove_file(&path);
+                } else if !folder.is_absolute() {
+                    // Not a note this module wrote.
+                    let _ = std::fs::remove_file(&path);
+                }
             }
         }
+    }
+
+    /// Remove the staging folders this machine noted on a remote, under
+    /// `within`, that their copies left (their runs ended: their notes
+    /// and locks are free), and forget them; one that cannot be reached
+    /// is kept for later. Only what a note names: another machine's
+    /// copies stage there too, their locks not seen here. Reads that
+    /// remote: in its lane.
+    pub fn sweep_noted(&self, within: &Path) {
+        for (note, folder) in self.noted() {
+            if !folder.starts_with(within)
+                || crate::fs::reach::of(&folder).is_none()
+                || !folder
+                    .file_name()
+                    .is_some_and(|n| n.as_encoded_bytes().starts_with(PREFIX.as_bytes()))
+            {
+                continue;
+            }
+            match std::fs::symlink_metadata(&folder) {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(_) => continue,
+                Ok(_) => {
+                    // Its copy runs still, in another skwir of this machine.
+                    let held = crate::fs::file::open_regular(&folder.join(LOCK))
+                        .is_ok_and(|lock| lock.try_lock().is_err());
+                    if held {
+                        continue;
+                    }
+                    if let Err(e) = remove_tree(&folder) {
+                        tracing::warn!("what a copy cut short left on a remote stays: {e}");
+                        continue;
+                    }
+                    tracing::info!("removed what a copy cut short had left on a remote");
+                }
+            }
+            let _ = std::fs::remove_file(&note);
+        }
+    }
+
+    /// Whether a note names a folder under `within` (read here only).
+    pub fn notes_under(&self, within: &Path) -> bool {
+        self.noted()
+            .iter()
+            .any(|(_, folder)| folder.starts_with(within))
+    }
+
+    /// Each note no running plan holds, with the folder it names.
+    fn noted(&self) -> Vec<(PathBuf, PathBuf)> {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(mut note) = crate::fs::file::open_regular(&path) else {
+                continue;
+            };
+            if note.try_lock().is_err() {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            if (&mut note).take(1 << 16).read_to_end(&mut bytes).is_err() {
+                continue;
+            }
+            out.push((path, PathBuf::from(crate::os_path::from_bytes(bytes))));
+        }
+        out
     }
 }
 
@@ -230,9 +345,9 @@ mod tests {
     /// What a copy leaves when its process ends mid-way: a staging folder
     /// whose lock nobody holds, part of the copy in it, read-only.
     fn cut_short(dest: &Path) -> PathBuf {
-        let Staging { lock, dir } = Staging::new(dest).unwrap();
-        drop(lock);
-        let left = dir.keep();
+        let mut staging = Staging::new(dest, None).unwrap();
+        drop(staging.lock.take());
+        let left = staging.dir.take().unwrap();
         let entry = left.join("entry");
         std::fs::create_dir(&entry).unwrap();
         std::fs::write(entry.join("photo 1.jpg"), b"part").unwrap();
@@ -248,7 +363,7 @@ mod tests {
         let dest = tmp.path();
         assert!(crate::fs::volume::only_here(dest), "a disk of this machine");
         let left = cut_short(dest);
-        let running = Staging::new(dest).unwrap();
+        let running = Staging::new(dest, None).unwrap();
         // Being made: nothing tells it is over.
         let unlocked = dest.join(".skwir-copy-being-made");
         std::fs::create_dir(&unlocked).unwrap();
@@ -264,6 +379,50 @@ mod tests {
         let path = running.path().to_path_buf();
         running.remove().unwrap();
         assert!(!path.exists());
+    }
+
+    /// On a remote, a staging folder is noted itself: one its plan could
+    /// not remove (its server stopped answering; here, a folder above it
+    /// refusing) keeps its note, which a run's start leaves alone and
+    /// which is swept once the remote is reached. Another machine's,
+    /// which no note here names, is never touched.
+    #[test]
+    fn what_a_copy_left_on_a_remote_is_swept_once_it_is_reached() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = scratch();
+        let dest = tmp.path().join("server");
+        std::fs::create_dir(&dest).unwrap();
+        crate::fs::reach::pretend_remote(&dest);
+        let cache = tmp.path().join("cache");
+        let under_way = UnderWay::new(cache.clone());
+        let theirs = {
+            let mut staging = Staging::new(&dest, None).unwrap();
+            drop(staging.lock.take());
+            staging.dir.take().unwrap()
+        };
+
+        let staging = Staging::new(&dest, Some(&under_way)).unwrap();
+        let ours = staging.path().to_path_buf();
+        std::fs::write(ours.join("part"), b"half").unwrap();
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o555)).unwrap();
+        drop(staging);
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(ours.exists(), "it could not be removed");
+        under_way.sweep_left();
+        assert!(
+            ours.exists() && under_way.notes_under(&dest),
+            "left for later"
+        );
+
+        under_way.sweep_noted(&dest);
+        assert!(!ours.exists(), "swept once reached");
+        assert!(theirs.exists(), "another machine's left");
+        assert!(!under_way.notes_under(&dest), "and forgotten");
+
+        // One its plan removes is forgotten at once.
+        let staging = Staging::new(&dest, Some(&under_way)).unwrap();
+        staging.remove().unwrap();
+        assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 0);
     }
 
     #[test]

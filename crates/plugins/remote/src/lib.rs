@@ -383,6 +383,10 @@ impl Remotes {
                 move || {
                     let _asking = asking;
                     let gone = std::fs::symlink_metadata(&point).is_err_and(|e| lost(&e));
+                    // Answering: what copies cut short left there goes.
+                    if !gone && let Some(app) = weak.upgrade() {
+                        app.sweep_left_on(&point);
+                    }
                     // How full it is, as the server says: asked here too,
                     // where waiting holds no one else.
                     let space = if gone {

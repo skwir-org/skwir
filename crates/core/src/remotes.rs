@@ -48,6 +48,18 @@ impl App {
         Some(address_below(&address, below))
     }
 
+    /// Remove what copies cut short left on the remote mounted at `point`,
+    /// as this machine noted it (`staging::UnderWay::sweep_noted`), now
+    /// that it answers. Reads that remote where a note names it: on a
+    /// worker, in its lane.
+    pub fn sweep_left_on(&self, point: &Path) {
+        if let Some(under_way) = self.executor.under_way()
+            && under_way.notes_under(point)
+        {
+            under_way.sweep_noted(point);
+        }
+    }
+
     /// Read again each of `folders` a pane shows or keeps beside what it
     /// shows: a plan's transfer changed them beside the mount showing them
     /// (`Executor::set_changed_beside`), and no watch of this machine's saw

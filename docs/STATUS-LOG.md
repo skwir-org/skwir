@@ -2694,3 +2694,23 @@ and fix bug or problems you encounter on the way". This is the first.
   (`Transfer::show`), and the pane checks say what the pane shows when
   they give up.
 
+### Staging left on a server swept once it is reached again (2026-10-21, night)
+
+- What a copy onto a remote left when its server stopped answering
+  stayed for good: its staging folder could not be removed, the plan
+  ended normally and forgot it (its note in the cache went with the
+  plan), and sweeps run only where this machine alone writes. Now a
+  staging folder made on a remote is noted itself; a `Staging` removes
+  itself when dropped (no longer by `TempDir`), keeping its note when it
+  cannot; a run's start leaves remote notes alone; and what they name is
+  removed when this machine reaches that remote again, before a copy
+  stages in that folder or when the remote plugin finds the mount
+  answering (`App::sweep_left_on`, in its lane). Only noted folders:
+  another machine's copies stage there too, and their locks are not
+  seen here.
+- Checked: a core test with a pretended remote, a folder above the
+  staging folder refusing its removal as a server gone would (the note
+  kept, the run's start leaving it, the sweep once reached removing it
+  and forgetting the note, another machine's left); core's 398 tests.
+  Not checked against a real connection lost mid-copy.
+

@@ -108,7 +108,9 @@ ADR-077 (which revises ADR-021).
 - **Devices GVfs reads** (a phone over MTP or AFC, a camera over
   gPhoto2: `Recognised::device`) are near, whatever their address, and
   listed among the sidebar's devices; they keep a lane of their own.
-- **Staging** is never swept on a remote (`volume::only_here`).
+- **Staging** on a remote is swept only where this machine noted it
+  (operations.md, "Staging"): a folder its copy could not remove as its
+  server stopped answering goes once that remote answers again.
 - **Copies** (ADR-078): a file of two ranges or more on a FUSE remote is
   read 8 ranges of 4 MiB at a time, written in order (`op::ranges`): the
   kernel reads FUSE ahead 128 KiB at a time, a round trip each. A run of

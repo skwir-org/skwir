@@ -528,6 +528,11 @@ impl Executor {
         *self.under_way.lock() = Some(under_way);
     }
 
+    /// Where the folders copies are under way in are noted, if anywhere.
+    pub fn under_way(&self) -> Option<super::staging::UnderWay> {
+        self.under_way.lock().clone()
+    }
+
     /// Wake the UI after each event.
     pub fn set_waker(&self, waker: Option<crate::location::Waker>) {
         *self.waker.lock() = waker;
