@@ -208,6 +208,19 @@ pub struct StepContext {
     batched: RefCell<HashMap<PathBuf, super::transfer::Batched>>,
     /// What a move's source was as a batch copied it.
     batched_states: RefCell<HashMap<PathBuf, CopiedAs>>,
+    /// Where each reference was found ([`StepContext::resolve`]): by a
+    /// batch, or ahead of a dry run, on a remote where each look is a
+    /// round trip.
+    resolved: RefCell<HashMap<(crate::FileId, PathBuf), PathBuf>>,
+    /// A dry run's: whether a name is in a remote's folder is read from
+    /// the folder's names, listed once ([`StepContext::listing_remotes`]).
+    lists_remotes: bool,
+    /// Those names, by folder; `None` where the folder could not be read.
+    listed: RefCell<HashMap<PathBuf, Option<HashSet<std::ffi::OsString>>>>,
+    /// The originals of moves a batch copied from a remote, removed at the
+    /// plan's end (`transfer::remove_deferred`), each with what it was as
+    /// copied and where its copy went.
+    removing: RefCell<Vec<(PathBuf, CopiedAs, PathBuf)>>,
 }
 
 /// What a move's source was as a batch copied it (`builtin::state_of`:
@@ -340,6 +353,10 @@ impl StepContext {
             batched_until: std::cell::Cell::new(0),
             batched: RefCell::default(),
             batched_states: RefCell::default(),
+            resolved: RefCell::default(),
+            lists_remotes: false,
+            listed: RefCell::default(),
+            removing: RefCell::default(),
         }
     }
 
@@ -682,6 +699,17 @@ impl StepContext {
         self.batched_states.borrow_mut().remove(src)
     }
 
+    /// The original `src` of a move, its copy whole in `dest_dir`, goes at
+    /// the plan's end, if still `copied_as` then.
+    pub(super) fn remove_later(&self, src: PathBuf, copied_as: CopiedAs, dest_dir: PathBuf) {
+        self.removing.borrow_mut().push((src, copied_as, dest_dir));
+    }
+
+    /// The originals to remove now.
+    pub(super) fn take_removing(&self) -> Vec<(PathBuf, CopiedAs, PathBuf)> {
+        self.removing.take()
+    }
+
     /// The plan's cancel and pause, for a batch's transfer.
     pub(super) fn control(&self) -> super::transfer::Control {
         super::transfer::Control::new(self.cancel.clone(), Arc::clone(&self.pause))
@@ -845,8 +873,63 @@ impl StepContext {
     /// to), as this dry run's earlier steps leave it.
     pub fn exists(&self, path: &Path) -> bool {
         let foreseen = self.foreseen.borrow();
-        foreseen.made.contains(path)
-            || !foreseen.went(path) && std::fs::symlink_metadata(path).is_ok()
+        foreseen.made.contains(path) || !foreseen.went(path) && self.there(path)
+    }
+
+    /// Whether something is at `path` now: for a dry run, in a remote's
+    /// folder, as its names listed once say ([`Self::listing_remotes`]).
+    fn there(&self, path: &Path) -> bool {
+        if self.lists_remotes
+            && let (Some(folder), Some(name)) = (path.parent(), path.file_name())
+            && crate::fs::reach::of(folder).is_some()
+        {
+            let mut listed = self.listed.borrow_mut();
+            let names = listed.entry(folder.to_path_buf()).or_insert_with(|| {
+                std::fs::read_dir(folder)
+                    .ok()
+                    .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
+            });
+            if let Some(names) = names {
+                return names.contains(name);
+            }
+        }
+        std::fs::symlink_metadata(path).is_ok()
+    }
+
+    /// The same context, for a dry run: whether a name is in a remote's
+    /// folder is read from the folder's names, listed once, where each look
+    /// is a round trip to the server (a look for a name that is not there
+    /// is never kept: sshfs asks again each time). What the dry run's own
+    /// steps make and take is foreseen as ever.
+    #[must_use]
+    pub fn listing_remotes(mut self) -> Self {
+        self.lists_remotes = true;
+        self
+    }
+
+    /// Where `entry` is: as a batch or a look ahead found it in this plan
+    /// ([`Self::resolved_as`]), else as it resolves now.
+    ///
+    /// # Errors
+    /// What resolving it says.
+    pub(super) fn resolve(&self, entry: &super::EntryRef) -> Result<PathBuf, super::ResolveError> {
+        if let Some(found) = self.resolved.borrow().get(&(entry.id, entry.path.clone())) {
+            return Ok(found.clone());
+        }
+        entry.resolve()
+    }
+
+    /// `entry` was found at `path`, a moment ago.
+    pub(super) fn resolved_as(&self, entry: &super::EntryRef, path: PathBuf) {
+        self.resolved
+            .borrow_mut()
+            .insert((entry.id, entry.path.clone()), path);
+    }
+
+    /// Whether a batch took the copy of `src` (made it, placed it, or
+    /// counted it): it holds no companion, as the batch read its folder.
+    pub(super) fn batch_took(&self, src: &Path) -> bool {
+        self.batched.borrow().contains_key(src)
     }
 
     /// Whether an earlier step of this dry run puts something at `path`.

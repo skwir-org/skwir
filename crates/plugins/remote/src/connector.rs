@@ -116,8 +116,8 @@ pub trait Connector: Send + Sync {
     /// What copies many files at once between this machine and a mount it
     /// made (ADR-078), where its tool has a way: sshfs's, rsync through
     /// its connection.
-    fn transfer(&self) -> Option<std::sync::Arc<dyn skwir_core::op::transfer::Transfer>> {
-        None
+    fn transfers(&self) -> Vec<std::sync::Arc<dyn skwir_core::op::transfer::Transfer>> {
+        Vec::new()
     }
 }
 

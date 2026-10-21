@@ -270,17 +270,31 @@ impl Companions {
     /// The companions of the file at `path` that are there. Blocking: it
     /// looks at the disk.
     pub fn existing(&self, path: &Path) -> Vec<Found> {
-        self.existing_where(path, |_| true)
+        self.existing_where(path, |_| true, &|at| std::fs::symlink_metadata(at).is_ok())
+    }
+
+    /// [`Companions::existing`], whether each might be there told by
+    /// `there` (a plan's: from what it knows of a remote's folder, where
+    /// each look is a round trip to the server).
+    pub fn existing_as(&self, path: &Path, there: &dyn Fn(&Path) -> bool) -> Vec<Found> {
+        self.existing_where(path, |_| true, there)
     }
 
     /// The companions of the file at `path` that hold its attributes (a
     /// Mac's `._x`) and are there: the others are not looked for.
     /// Blocking.
     pub fn existing_holding_attributes(&self, path: &Path) -> Vec<Found> {
-        self.existing_where(path, |r| r.holds_attributes())
+        self.existing_where(path, |r| r.holds_attributes(), &|at| {
+            std::fs::symlink_metadata(at).is_ok()
+        })
     }
 
-    fn existing_where(&self, path: &Path, wanted: impl Fn(&dyn Companion) -> bool) -> Vec<Found> {
+    fn existing_where(
+        &self,
+        path: &Path,
+        wanted: impl Fn(&dyn Companion) -> bool,
+        there: &dyn Fn(&Path) -> bool,
+    ) -> Vec<Found> {
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
             return Vec::new();
         };
@@ -292,7 +306,7 @@ impl Companions {
             for (index, relative) in r.of(name).into_iter().enumerate() {
                 let at = dir.join(relative);
                 let known = out.iter().any(|f: &Found| f.path == at);
-                if !known && std::fs::symlink_metadata(&at).is_ok() && r.follows(path, index) {
+                if !known && there(&at) && r.follows(path, index) {
                     out.push(Found {
                         rule,
                         index,

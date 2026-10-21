@@ -5,21 +5,29 @@
 //! 11.6 s through the bridge, eight at a time; 9.0 s by one `gio copy`;
 //! 1.2 s by eight (2026-10-21).
 //!
+//! The same through GVfs's other network kinds (2026-10-21, the same
+//! way): WebDAV 25.6–26.1 s through the bridge, 1.5 by eight `gio`; FTP
+//! 139.8 s, 9.2–9.4; SMB (Samba) 28.1–28.2 s, 15.4: its backend takes a
+//! request at a time, the bridge's own cost is spared still. FTPS and
+//! WebDAV over TLS are the same backends. Others (NFS, AFP; a phone's MTP,
+//! whose one session takes a file at a time) keep the bridge, not
+//! measured.
+//!
 //! `gio` maps a path of the bridge to its mount's address itself. With
 //! `-i` and nothing on its input it never replaces a file: without it,
 //! `gio copy` and `gio move` do. Folders, which `gio copy` does not copy,
 //! are made through the bridge first and given their times last
-//! (`transfer::Layout`). Only SFTP is served, as measured; GVfs's other
-//! kinds keep the bridge.
+//! (`transfer::Layout`). A server that refuses some files at once (an FTP
+//! server's few data ports) has what is missing copied again, by one
+//! `gio`.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use parking_lot::Mutex;
-use skwir_core::op::transfer::{Control, Layout, Transfer};
+use skwir_core::op::transfer::{Control, Layout, NotServed, Told, Transfer};
 
 use crate::gvfs_spec::Spec;
 
@@ -39,6 +47,8 @@ pub struct GioCopy {
     runtime: Option<PathBuf>,
     /// The batches it copied.
     made: AtomicUsize,
+    /// The batches of moved originals it removed.
+    removed: AtomicUsize,
 }
 
 impl GioCopy {
@@ -47,7 +57,13 @@ impl GioCopy {
             env,
             runtime,
             made: AtomicUsize::new(0),
+            removed: AtomicUsize::new(0),
         }
+    }
+
+    /// The batches of moved originals it removed (a test asks).
+    pub fn removed(&self) -> usize {
+        self.removed.load(Ordering::Relaxed)
     }
 
     /// The batches it copied (a test asks).
@@ -55,8 +71,9 @@ impl GioCopy {
         self.made.load(Ordering::Relaxed)
     }
 
-    /// Whether `path` is in an SFTP mount of this session's GVfs bridge:
-    /// read from the bridge folder's name, never from a server.
+    /// Whether `path` is in a mount of this session's GVfs bridge of a kind
+    /// served (SFTP, FTP, WebDAV, SMB): read from the bridge folder's name,
+    /// never from a server.
     fn on_sftp(&self, path: &Path) -> bool {
         let Some(bridge) = crate::gvfs::bridge_in(self.runtime.clone()) else {
             return false;
@@ -65,18 +82,29 @@ impl GioCopy {
             .ok()
             .and_then(|below| below.components().next())
             .and_then(|mount| mount.as_os_str().to_str().and_then(Spec::parse))
-            .is_some_and(|spec| spec.kind == "sftp")
+            .is_some_and(|spec| {
+                matches!(
+                    spec.kind.as_str(),
+                    "sftp" | "ftp" | "ftps" | "dav" | "smb-share"
+                )
+            })
     }
 
     /// `gio` with `words`, then `names`, then `into` as a folder.
     fn gio(&self, gio: &Path, words: &[&str], names: &[&Path], into: &Path) -> Command {
+        let mut command = self.gio_on(gio, words, names);
+        let mut folder = into.as_os_str().to_owned();
+        folder.push("/");
+        command.arg(folder);
+        command
+    }
+
+    /// `gio` with `words`, then `names`.
+    fn gio_on(&self, gio: &Path, words: &[&str], names: &[&Path]) -> Command {
         let mut command = Command::new(gio);
         crate::gvfs::english(&mut command);
         command.envs(self.env.iter().map(|(k, v)| (k, v)));
         command.args(words).arg("--").args(names);
-        let mut folder = into.as_os_str().to_owned();
-        folder.push("/");
-        command.arg(folder);
         command
     }
 
@@ -89,59 +117,37 @@ impl GioCopy {
         ran: &(dyn Fn(u64) + Sync),
         control: &Control,
     ) -> anyhow::Result<()> {
+        self.each_at(words, runs, AT_ONCE, ran, control)
+    }
+
+    /// [`GioCopy::each`], `at_once` at a time.
+    fn each_at(
+        &self,
+        words: &[&str],
+        runs: &[(PathBuf, Vec<(PathBuf, u64)>)],
+        at_once: usize,
+        ran: &(dyn Fn(u64) + Sync),
+        control: &Control,
+    ) -> anyhow::Result<()> {
         let gio = program().ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
-        let next = AtomicUsize::new(0);
-        let stop = AtomicBool::new(false);
-        let failed: Mutex<Option<anyhow::Error>> = Mutex::new(None);
-        std::thread::scope(|s| {
-            for _ in 0..AT_ONCE.min(runs.len()) {
-                s.spawn(|| {
-                    loop {
-                        control.wait_while_paused();
-                        if stop.load(Ordering::Relaxed) || control.is_cancelled() {
-                            return;
-                        }
-                        let Some((into, names)) = runs.get(next.fetch_add(1, Ordering::Relaxed))
-                        else {
-                            return;
-                        };
-                        let paths: Vec<&Path> = names.iter().map(|(p, _)| p.as_path()).collect();
-                        let mut command = self.gio(gio, words, &paths, into);
-                        let ended = skwir_platform::process::run_watching(
-                            &mut command,
-                            None,
-                            control.cancel(),
-                            &|| control.is_paused(),
-                            &mut |_: &[u8]| {},
-                        )
-                        .and_then(|finished| {
-                            anyhow::ensure!(
-                                finished.status.success(),
-                                "gio {} failed ({}): {}",
-                                words[0],
-                                finished.status,
-                                finished.stderr
-                            );
-                            Ok(())
-                        });
-                        match ended {
-                            Ok(()) => ran(names.iter().map(|(_, bytes)| bytes).sum()),
-                            Err(error) => {
-                                stop.store(true, Ordering::Relaxed);
-                                failed.lock().get_or_insert(error);
-                            }
-                        }
-                    }
-                });
-            }
-        });
-        if let Some(error) = failed.into_inner() {
-            return Err(error);
-        }
-        anyhow::ensure!(!control.is_cancelled(), "cancelled");
-        Ok(())
+        let runs = runs
+            .iter()
+            .map(|(into, names)| {
+                let paths: Vec<&Path> = names.iter().map(|(p, _)| p.as_path()).collect();
+                crate::runs::Run {
+                    command: self.gio(gio, words, &paths, into),
+                    input: None,
+                    bytes: names.iter().map(|(_, bytes)| bytes).sum(),
+                }
+            })
+            .collect();
+        crate::runs::at_once("gio", runs, at_once, ran, control)
     }
 }
+
+/// What copies with `gio`: never over anything (`-i`, nothing on its
+/// input), modes and times kept, links as links.
+const COPY: &[&str] = &["copy", "-i", "--preserve", "--no-dereference"];
 
 /// `gio`, found once.
 fn program() -> Option<&'static PathBuf> {
@@ -168,9 +174,66 @@ fn runs(files: Vec<(PathBuf, PathBuf, u64)>) -> Vec<(PathBuf, Vec<(PathBuf, u64)
     runs
 }
 
+/// What removing the tree at `path` takes: its files and links, and its
+/// folders with their depth below the tree's top. Read through the bridge.
+fn tree(
+    path: &Path,
+    depth: usize,
+    files: &mut Vec<PathBuf>,
+    folders: &mut Vec<(usize, PathBuf)>,
+) -> std::io::Result<()> {
+    if std::fs::symlink_metadata(path)?.is_dir() {
+        for entry in std::fs::read_dir(path)? {
+            tree(&entry?.path(), depth + 1, files, folders)?;
+        }
+        folders.push((depth, path.to_path_buf()));
+    } else {
+        files.push(path.to_path_buf());
+    }
+    Ok(())
+}
+
 impl Transfer for GioCopy {
     fn name(&self) -> &'static str {
         "gio"
+    }
+
+    /// Its daemon serves the bridge too: what `gio remove` removes, the
+    /// bridge says gone at once.
+    fn removes(&self, folder: &Path) -> bool {
+        program().is_some() && self.on_sftp(folder)
+    }
+
+    fn remove(&self, folder: &Path, names: &[OsString], control: &Control) -> anyhow::Result<()> {
+        let Some(gio) = program().filter(|_| self.on_sftp(folder)) else {
+            return Err(NotServed.into());
+        };
+        let (mut files, mut folders) = (Vec::new(), Vec::new());
+        for name in names {
+            tree(&folder.join(name), 0, &mut files, &mut folders)?;
+        }
+        let runs = |paths: &[PathBuf]| -> Vec<crate::runs::Run> {
+            paths
+                .chunks(paths.len().div_ceil(AT_ONCE).clamp(1, MOST))
+                .map(|chunk| {
+                    let chunk: Vec<&Path> = chunk.iter().map(PathBuf::as_path).collect();
+                    crate::runs::Run {
+                        command: self.gio_on(gio, &["remove"], &chunk),
+                        input: None,
+                        bytes: 0,
+                    }
+                })
+                .collect()
+        };
+        crate::runs::at_once("gio", runs(&files), AT_ONCE, &|_| {}, control)?;
+        // `gio remove` takes an empty folder alone: the deepest first.
+        folders.sort_by_key(|(depth, _)| std::cmp::Reverse(*depth));
+        for level in folders.chunk_by(|a, b| a.0 == b.0) {
+            let paths: Vec<PathBuf> = level.iter().map(|(_, path)| path.clone()).collect();
+            crate::runs::at_once("gio", runs(&paths), AT_ONCE, &|_| {}, control)?;
+        }
+        self.removed.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 
     fn serves(&self, from: &Path, into: &Path) -> bool {
@@ -188,9 +251,10 @@ impl Transfer for GioCopy {
         names: &[OsString],
         into: &Path,
         temp: Option<&Path>,
-        copied: &(dyn Fn(u64) + Sync),
+        told: &Told<'_>,
         control: &Control,
     ) -> anyhow::Result<()> {
+        let (copied, placed) = (told.copied, told.placed);
         let layout = match temp {
             Some(_) => Layout::files(from, names, into),
             None => Layout::made(from, names, into)?,
@@ -210,12 +274,30 @@ impl Transfer for GioCopy {
             .collect();
         let total = AtomicU64::new(0);
         let ran = |bytes: u64| copied(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
-        self.each(
-            &["copy", "-i", "--preserve", "--no-dereference"],
-            &runs(files),
-            &ran,
-            control,
-        )?;
+        if let Err(error) = self.each(COPY, &runs(files.clone()), &ran, control) {
+            if control.is_cancelled() || !error.is::<crate::runs::Failed>() {
+                return Err(error);
+            }
+            // A server that refused some at once: what is missing, by one
+            // `gio` a folder.
+            let missing: Vec<(PathBuf, PathBuf, u64)> = files
+                .into_iter()
+                .filter(|(src, folder, _)| {
+                    src.file_name()
+                        .is_none_or(|name| std::fs::symlink_metadata(folder.join(name)).is_err())
+                })
+                .collect();
+            tracing::debug!(
+                missing = missing.len(),
+                "gio copies again what was refused: {error:#}"
+            );
+            let mut by_folder: BTreeMap<PathBuf, Vec<(PathBuf, u64)>> = BTreeMap::new();
+            for (src, folder, bytes) in missing {
+                by_folder.entry(folder).or_default().push((src, bytes));
+            }
+            let again: Vec<(PathBuf, Vec<(PathBuf, u64)>)> = by_folder.into_iter().collect();
+            self.each_at(COPY, &again, 1, &ran, control)?;
+        }
         layout.finish()?;
         if let Some(temp) = temp {
             let made: Vec<(PathBuf, PathBuf)> = layout
@@ -227,15 +309,28 @@ impl Transfer for GioCopy {
                 // Moved on the server, never over what is there: a name
                 // taken meanwhile is left to its step.
                 let moves = made
-                    .into_iter()
-                    .map(|(made, _)| (made, into.to_path_buf(), 0))
+                    .iter()
+                    .map(|(made, _)| (made.clone(), into.to_path_buf(), 0))
                     .collect();
-                self.each(&["move", "-i"], &runs(moves), &|_| {}, control)?;
+                let outcome = self.each(&["move", "-i"], &runs(moves), &|_| {}, control);
+                // What left the folder of its own, only `gio move` takes:
+                // placed.
+                let left: std::collections::HashSet<std::ffi::OsString> = std::fs::read_dir(temp)?
+                    .flatten()
+                    .map(|e| e.file_name())
+                    .collect();
+                for (made, _) in &made {
+                    if let Some(name) = made.file_name().filter(|n| !left.contains(*n)) {
+                        placed(name);
+                    }
+                }
+                outcome?;
             } else {
                 for (made, dst) in made {
                     match skwir_core::op::transfer::place(&made, &dst) {
                         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                        placed => placed?,
+                        Ok(()) => placed(dst.file_name().unwrap_or_default()),
+                        Err(e) => return Err(e.into()),
                     }
                 }
             }

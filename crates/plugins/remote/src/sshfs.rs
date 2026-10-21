@@ -41,6 +41,8 @@ pub struct Sshfs {
     /// rsync through its mounts' connections, made once, with the same
     /// ssh options (ADR-078).
     pub rsync: std::sync::OnceLock<Arc<Rsync>>,
+    /// sftp where rsync is not, made once so.
+    pub sftp: std::sync::OnceLock<Arc<crate::sftp::Sftp>>,
 }
 
 impl Sshfs {
@@ -48,6 +50,16 @@ impl Sshfs {
     pub fn rsync(&self) -> Arc<Rsync> {
         Arc::clone(self.rsync.get_or_init(|| {
             Arc::new(Rsync::with(
+                self.ssh_options.clone(),
+                self.ssh_config.clone(),
+            ))
+        }))
+    }
+
+    /// Its sftp (a test reads what it copied).
+    pub fn sftp(&self) -> Arc<crate::sftp::Sftp> {
+        Arc::clone(self.sftp.get_or_init(|| {
+            Arc::new(crate::sftp::Sftp::with(
                 self.ssh_options.clone(),
                 self.ssh_config.clone(),
             ))
@@ -90,7 +102,7 @@ impl Connector for Sshfs {
         let point = mounter::point_for(self.id(), &top)?;
         // Its ssh shares its connection (ADR-078). A socket left by an ssh
         // gone is no one's: this point is not mounted.
-        let control = crate::rsync::control_path(&point).filter(|control| {
+        let control = crate::ssh_mount::control_path(&point).filter(|control| {
             control
                 .parent()
                 .is_some_and(|folder| mounter::make_private(folder).is_ok())
@@ -153,8 +165,9 @@ impl Connector for Sshfs {
         mounter::unmount(&remote.point, recognised.ours, cancel)
     }
 
-    fn transfer(&self) -> Option<Arc<dyn skwir_core::op::transfer::Transfer>> {
-        Some(self.rsync())
+    /// rsync first, sftp where rsync does not serve.
+    fn transfers(&self) -> Vec<Arc<dyn skwir_core::op::transfer::Transfer>> {
+        vec![self.rsync(), self.sftp()]
     }
 }
 
@@ -177,7 +190,7 @@ fn arguments(top: &Address, point: &Path, control: Option<&Path>) -> Vec<std::ff
     options.extend(ALIVE.iter().map(|o| (*o).to_owned()));
     options.extend(
         control
-            .map(crate::rsync::master_options)
+            .map(crate::ssh_mount::master_options)
             .unwrap_or_default(),
     );
     args.push("-o".into());

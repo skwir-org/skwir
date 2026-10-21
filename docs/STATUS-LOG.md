@@ -2484,3 +2484,88 @@ copies (ADR-078).
   run (load 8): the remote plugin's background refresh, which runs
   `rclone listremotes`, had not named the mount within 20 s; alone it
   passed in 0.3 s. It timed out once this morning in a full run too.
+
+### Remote copies: what was still open, fixed (2026-10-21, evening)
+
+Asked by the user: "fix points 1-7, and also the 2 smaller gaps. Also
+fix issues you find along the way".
+
+- Built: rsync reaches sshfs mounts the user made with their own ssh,
+  the port read from sshfs's command line (`ssh_mount`, shared with
+  sftp); rsync asks once whether the server runs it (`rsync --version`)
+  and, where it does not, declines (`transfer::NotServed`) so the next
+  transfer serves; `sftp` (OpenSSH's client, eight sessions on the
+  connection) takes uploads to SFTP-only servers, placing beside by `ln`
+  (refused where a name is taken); `gio_copy` serves GVfs's FTP, WebDAV
+  and SMB as SFTP, copying again by one `gio` what a server refused at
+  once; transfers say what they placed (`Told::placed`); moves'
+  originals left to the plan's end where a transfer removes coherently
+  (`Transfer::removes`: GVfs's `gio remove`), looked at again eight at a
+  time; steps use what their batch found (`StepContext::resolve`, no
+  companion look for what a batch took); dry runs before a whole plan
+  read a remote folder's names once and resolve remote sources ahead,
+  eight at a time; the verification of what was placed looks eight at a
+  time. A plan's trash is listed by the core on Linux (`op::trash_list`):
+  no network mount's unless a step names it, no automount's; the trash
+  place follows the same rule. The remote plugin's refresh publishes
+  mounts first, servers after; a mount's alive check is not queued again
+  behind one still asking; the toggle test waits for this machine's jobs
+  alone (`Scheduler::wait_idle_here`). Eject: fstab mounts unmount lazily
+  where only watched; macOS asks `lsof` what uses a mount (compiled
+  only). Pause on Windows suspends the threads of the tool's job
+  (`windows::hold`, under Wine).
+- Found and fixed on the way: a dead FUSE mount held the core's tests in
+  the full suite, and would hold a user's Undo of a trash for good (the
+  `trash` crate looks at the top of every mount; a request reaching the
+  FUSE daemon is waited out even by SIGKILL), reproduced in a private
+  user and mount namespace with sshfs in passive mode on a frozen
+  `sftp-server`: before, two trash tests held for over 60 s; after, all
+  four tried pass. Copies onto GVfs's WebDAV, FTP and SMB failed on a
+  mode those keep none of (`ENOTSUP`, now `sys::mode_kept`); WebDAV and
+  FTP report 0 blocks, which the room check read as full and asked about
+  (`volume::free` now says nothing of a volume of no size); the room
+  question waited with no window up (now refused, as names taken are).
+  Batches onto a volume keeping no times left their copies unclaimed.
+  `gio copy`/`gio move` replace what they find unless `-i`. The WebDAV
+  test left its mount when it failed midway; it guards it from the start.
+  Under Wine (`just test-windows -p skwir-core`, not run in full before):
+  a file Windows copies whole (`CopyFileExW`) had its bytes counted only
+  by the call's progress routine, which Wine never calls, so the plan
+  never counted it nor paused between files (the pause test failed at
+  this morning's start and at af148e75 alike); it is now counted once
+  copied. Two privacy tests wrote Unix paths, relative on Windows: they
+  are Unix's, with a Windows twin for the home folder's tilde. Core under
+  Wine: 294 passed twice in a row after one run of 293 whose failure
+  was not kept.
+- Measured, 20 ms round trip (`tc netem` in a user namespace), 100 files
+  of 16 KiB, each plan run whole as the window runs it (settling,
+  checks, room): before these changes the window's path cost 5.35 s of
+  8.41 for an upload through GVfs's SFTP in checks alone. After: Skwir's
+  sshfs mount by rsync up 0.98 s, down 0.76, moved down 2.65; a mount
+  made by hand, rsync with the test's ssh, up 1.42 (8.4 through it),
+  down 0.87; an SFTP-only server (`ForceCommand internal-sftp`) up 3.04
+  by sftp, down 0.85 by Skwir's copy (sftp took 2.06: down, the names are
+  made here, and its sessions take a file after another), moved down
+  2.89; GVfs SFTP up 2.97, down 1.29 (4.09), moved down 2.18 (11.38);
+  WebDAV up 4.2–5.4, down 1.69 (3.69), moved down 2.67 (15.78). Shell
+  timings, eight `gio copy` against the bridge eight at a time: WebDAV
+  1.5 s and 25.6–26.1, FTP 9.2–9.4 and 139.8 (one file refused of 100: a
+  fixture of 10 passive ports), SMB 15.4 and 28.1–28.2 (Samba run as the
+  user under `uid_wrapper`, as its own tests run it). Load 6 to 18.
+- Checked: unit tests (trash lists, a held lane left out of idle, a
+  program held on any system (under Wine for Windows), gio's runs, sftp's
+  quoting checked against `sftp -D` with quotes, backslashes, globs and
+  spaces, rsync's mount sources and ports, moves' originals removed
+  together and one changed meanwhile kept); `just remote-check`: rsync
+  through a mount the user made, an SFTP-only server through sftp
+  (nothing placed over a taken name), GVfs's WebDAV through gio and
+  through its bridge, GVfs moves removed by `gio remove`; Eject of a
+  mount the test watches; `umount -l` allowed to the user (a FUSE mount
+  tried). On the last commit: `just lint-all` (Windows and macOS
+  included), the full suite (1889 passed), `just remote-check` (42
+  passed); each commit before it formatted and linted for core, platform
+  and the remote plugin in a worktree of its own.
+- Not done: moves' originals on sshfs go one at a time through the mount.
+  sshfs keeps a file's attributes 20 s (`dcache_timeout`) and purges them
+  only on its own operations' success, so a file removed beside it reads
+  as there, and an Undo right after would find its name taken.

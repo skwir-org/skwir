@@ -1276,12 +1276,22 @@ protocol is a scheme a connector maps, or a connector.
   a folder of each worker's; eight `gio copy` for GVfs's SFTP mounts.
   rclone's own copy measured slower than its mount: not built. Eject
   lets go of a mount only watched (GVfs's trash watches every mount).
-  **Built** and timed the same way.
+  **Built** and timed the same way. Then (the user's "fix points 1-7"):
+  rsync for sshfs mounts the user made, by their own ssh; sftp sessions
+  for uploads to SFTP-only servers; gio for GVfs's FTP, WebDAV and SMB;
+  moves' originals on GVfs removed together; no per-step look across the
+  network where a batch or a listing already knows; a plan's trash read
+  from no network mount unasked (a dead server had held Undo for good);
+  the remote plugin's refresh publishing mounts before servers; Eject of
+  fstab mounts as of Skwir's; Pause on Windows; what uses a mount on
+  macOS. Found on the way and fixed: copies onto WebDAV failed on modes
+  it keeps none of, and asked about room it does not report; the room
+  question waited with no window. **Built**, timed whole as the window
+  runs a plan (STATUS-LOG).
 - **G. Left** (each its own step):
-  - copies down from GVfs (a look through its bridge per file, on the
-    plan's thread); a move's originals removed on the server one by one
-    (`rsync --remove-source-files`); GVfs's SMB, WebDAV and FTP mounts
-    and sshfs mounts Skwir did not make keep the mount's pace;
+  - moves' originals on sshfs removed one at a time through the mount
+    (sshfs's own cache would keep a file removed beside it for 20 s);
+    GVfs's NFS, AFP and device mounts not measured, at the bridge's pace;
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);

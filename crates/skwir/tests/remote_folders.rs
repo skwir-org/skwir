@@ -420,6 +420,12 @@ struct OwnSshd {
 impl OwnSshd {
     /// `None`, saying why, where OpenSSH's server or rsync is missing.
     fn start(base: &Path) -> Option<OwnSshd> {
+        OwnSshd::start_with(base, "")
+    }
+
+    /// [`OwnSshd::start`], its configuration's lines `more` after its own
+    /// (`ForceCommand internal-sftp`: an SFTP-only account).
+    fn start_with(base: &Path, more: &str) -> Option<OwnSshd> {
         let find = skwir_core::os_path::find_program;
         let (Some(sshd), Some(keygen), Some(_)) = (find("sshd"), find("ssh-keygen"), find("rsync"))
         else {
@@ -452,7 +458,7 @@ impl OwnSshd {
                 "Port {port}\nListenAddress 127.0.0.1\nHostKey {}\nPidFile {}\n\
                  AuthorizedKeysFile {}\nUsePAM no\nStrictModes no\n\
                  PasswordAuthentication no\nKbdInteractiveAuthentication no\n\
-                 Subsystem sftp {}\nLogLevel ERROR\n",
+                 Subsystem sftp {}\nLogLevel ERROR\n{more}",
                 base.join("hostkey").display(),
                 base.join("sshd.pid").display(),
                 base.join("authorized_keys").display(),
@@ -738,6 +744,287 @@ fn copies_and_moves_to_and_from_an_sftp_server_go_through_rsync_in_batches() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// An sshfs mount the user made, not Skwir: no connection to share, rsync
+/// logs in with the user's own ssh (here the test's options), on the port
+/// sshfs's command line gave, in the folder the mount table names.
+#[test]
+fn a_mount_the_user_made_copies_through_rsync_with_their_own_ssh() {
+    let Some(sshfs_program) = skwir_core::os_path::find_program("sshfs") else {
+        eprintln!("skipped: sshfs is not installed");
+        return;
+    };
+    let base = fixture("theirs");
+    let Some(sshd) = OwnSshd::start(&base) else {
+        std::fs::remove_dir_all(&base).unwrap();
+        return;
+    };
+    let served = base.join("served");
+    std::fs::create_dir_all(&served).unwrap();
+    let point = base.join("their mount");
+    std::fs::create_dir(&point).unwrap();
+    let user = std::env::var("USER").expect("the user's name");
+    let mut mount = Command::new(&sshfs_program);
+    mount.args(["-F", "/dev/null", "-p", &sshd.port.to_string()]);
+    for option in &sshd.options {
+        mount.arg("-o").arg(option);
+    }
+    let mounted = mount
+        .arg(format!("{user}@127.0.0.1:{}", served.display()))
+        .arg(&point)
+        .status()
+        .expect("run sshfs");
+    assert!(mounted.success());
+    let left = Unmounted(point.clone());
+    skwir_core::fs::reach::changed();
+    assert!(skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point));
+
+    let sshfs = Arc::new(Sshfs {
+        ssh_options: sshd.options.clone(),
+        ssh_config: Some(PathBuf::from("/dev/null")),
+        ..Sshfs::default()
+    });
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![sshfs.clone() as Arc<dyn Connector>]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let entries = small_files(&base.join("local"));
+    let into = point.join("it's a folder");
+    std::fs::create_dir(&into).unwrap();
+    let up = app
+        .executor
+        .execute_blocking(&copies(&entries, &into), app.lifetime());
+    assert!(up.error.is_none(), "{:?}", up.error);
+    assert_eq!(
+        sshfs.rsync().made(),
+        2,
+        "the folder staged, the files placed"
+    );
+    for e in &entries {
+        same_tree(
+            e,
+            &served.join("it's a folder").join(e.file_name().unwrap()),
+        );
+    }
+    let down = base.join("down");
+    std::fs::create_dir(&down).unwrap();
+    let there: Vec<PathBuf> = entries
+        .iter()
+        .map(|e| into.join(e.file_name().unwrap()))
+        .collect();
+    let back = app
+        .executor
+        .execute_blocking(&copies(&there, &down), app.lifetime());
+    assert!(back.error.is_none(), "{:?}", back.error);
+    assert_eq!(sshfs.rsync().made(), 4);
+    for e in &entries {
+        same_tree(e, &down.join(e.file_name().unwrap()));
+    }
+    drop(app);
+    drop(left);
+    drop(sshd);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// An SFTP-only account (`ForceCommand internal-sftp`) runs no rsync: rsync
+/// finds so, makes nothing and leaves the batch to sftp, eight sessions on
+/// the connection sshfs holds, which keep names, modes and times, and
+/// place nothing over what is there. Down, Skwir's own copy goes through
+/// the mount.
+#[test]
+fn an_sftp_only_server_copies_through_sftp_sessions() {
+    let sshfs = Sshfs {
+        askpass: Some(PathBuf::from(env!("CARGO_BIN_EXE_skwir"))),
+        ..Sshfs::default()
+    };
+    if let Some(why) = sshfs.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    if skwir_core::os_path::find_program("sftp").is_none() {
+        eprintln!("skipped: sftp is not installed");
+        return;
+    }
+    let base = fixture("sftp-only");
+    let Some(sshd) = OwnSshd::start_with(&base, "ForceCommand internal-sftp\n") else {
+        std::fs::remove_dir_all(&base).unwrap();
+        return;
+    };
+    let served = base.join("served");
+    std::fs::create_dir_all(&served).unwrap();
+    let sshfs = Arc::new(Sshfs {
+        ssh_options: sshd.options.clone(),
+        ssh_config: Some(PathBuf::from("/dev/null")),
+        ..sshfs
+    });
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![sshfs.clone() as Arc<dyn Connector>]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let pane = app.workspace.read().active_id();
+    let user = std::env::var("USER").expect("the user's name");
+    let address = format!("sftp://{user}@127.0.0.1:{}{}", sshd.port, served.display());
+    app.navigate(pane, &Location::parse(&address)).unwrap();
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    let mounted = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&mounted).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+
+    let entries = small_files(&base.join("local"));
+    let into = mounted.join("it's a folder");
+    std::fs::create_dir(&into).unwrap();
+    // A name taken there already: its file is left as it is.
+    let taken = entries[1].file_name().unwrap().to_owned();
+    std::fs::write(into.join(&taken), "the server's own").unwrap();
+    let up = app
+        .executor
+        .execute_blocking(&copies(&entries, &into), app.lifetime());
+    assert!(
+        up.error.is_some_and(|e| e.contains("already there")),
+        "the taken name stops the plan"
+    );
+    assert_eq!(sshfs.rsync().made(), 0, "no rsync to run");
+    assert_eq!(
+        sshfs.sftp().made(),
+        2,
+        "the folder staged, the files placed"
+    );
+    assert_eq!(
+        std::fs::read_to_string(served.join("it's a folder").join(&taken)).unwrap(),
+        "the server's own"
+    );
+    // Again without it: every copy made, by sftp.
+    std::fs::remove_file(into.join(&taken)).unwrap();
+    let names: Vec<_> = std::fs::read_dir(&into)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    for made in names {
+        if made.is_dir() {
+            std::fs::remove_dir_all(&made).unwrap();
+        } else {
+            std::fs::remove_file(&made).unwrap();
+        }
+    }
+    let up = app
+        .executor
+        .execute_blocking(&copies(&entries, &into), app.lifetime());
+    assert!(up.error.is_none(), "{:?}", up.error);
+    assert_eq!(sshfs.sftp().made(), 4);
+    for e in &entries {
+        same_tree(
+            e,
+            &served.join("it's a folder").join(e.file_name().unwrap()),
+        );
+    }
+    let down = base.join("down");
+    std::fs::create_dir(&down).unwrap();
+    let there: Vec<PathBuf> = entries
+        .iter()
+        .map(|e| into.join(e.file_name().unwrap()))
+        .collect();
+    let back = app
+        .executor
+        .execute_blocking(&copies(&there, &down), app.lifetime());
+    assert!(back.error.is_none(), "{:?}", back.error);
+    assert_eq!(
+        sshfs.sftp().made(),
+        4,
+        "down, Skwir's own copy through the mount"
+    );
+    for e in &entries {
+        same_tree(e, &down.join(e.file_name().unwrap()));
+    }
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    until(&app, 30, "it was let go of", || {
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point)
+    });
+    drop(left);
+    drop(sshd);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// GVfs's WebDAV keeps no modes nor times: a folder copied through its
+/// bridge by Skwir's own copy is copied all the same (a mode the volume
+/// keeps none of is no failure), and by eight `gio`, which serve WebDAV
+/// too.
+#[test]
+fn gvfs_webdav_takes_copies_by_gio_and_through_its_bridge() {
+    let Some(package) = std::env::var_os("SKWIR_TEST_GVFS").map(PathBuf::from) else {
+        eprintln!("skipped: SKWIR_TEST_GVFS names no GVfs package");
+        return;
+    };
+    if let Some(why) = Rclone.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("gvfs-dav");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    let served = Served::start("webdav", &served_root, &[]);
+    let private = PrivateGvfs::start(&package, &base);
+    let gvfs = skwir_plugin_remote::gvfs::Gvfs {
+        env: private.env.clone(),
+        runtime: Some(private.runtime.clone()),
+        ..Default::default()
+    };
+    let ask: Arc<dyn Ask> = Arc::new(Answers::default());
+    let address = Address::parse(&format!("dav://127.0.0.1:{}/", served.port)).unwrap();
+    let connected = gvfs
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect");
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let entries = small_files(&base.join("local"));
+    let same_bytes = |src: &Path, copy: &Path| {
+        fn walk(src: &Path, copy: &Path) {
+            if src.is_dir() {
+                for entry in std::fs::read_dir(src).unwrap() {
+                    let name = entry.unwrap().file_name();
+                    walk(&src.join(&name), &copy.join(&name));
+                }
+            } else {
+                assert_eq!(
+                    std::fs::read(src).unwrap(),
+                    std::fs::read(copy).unwrap(),
+                    "{}",
+                    copy.display()
+                );
+            }
+        }
+        walk(src, copy);
+    };
+    for (folder, by_gio) in [("own", false), ("by gio", true)] {
+        if by_gio {
+            app.transfers.register("test", gvfs.gio_copy());
+        }
+        let into = connected.point.join(folder);
+        std::fs::create_dir(&into).unwrap();
+        let r = app
+            .executor
+            .execute_blocking(&copies(&entries, &into), app.lifetime());
+        assert!(r.error.is_none(), "{folder}: {:?}", r.error);
+        for e in &entries {
+            same_bytes(e, &served_root.join(folder).join(e.file_name().unwrap()));
+        }
+    }
+    assert_eq!(
+        gvfs.gio_copy().made(),
+        2,
+        "the folder staged, the files placed"
+    );
+    drop(app);
+    let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
+    let recognised = gvfs.recognises(&remote).expect("GVfs's");
+    gvfs.disconnect(&remote, &recognised, &CancelToken::new())
+        .expect("disconnect");
+    drop(private);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// A GVfs of the test's own: a session bus of its own, from which GVfs's
 /// daemon starts, its FUSE bridge in a runtime folder of the test's, its
 /// ssh's home the test's. `SKWIR_TEST_GVFS` names GVfs's package (its
@@ -945,6 +1232,44 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names.len(), entries.len(), "nothing staged left: {names:?}");
+
+    // Moved down: copied as copies are, the originals removed together at
+    // the plan's end by `gio remove`, which the bridge sees at once.
+    let moved = base.join("moved down");
+    std::fs::create_dir(&moved).unwrap();
+    let plan = skwir_core::op::Plan::with_steps(
+        "move",
+        there
+            .iter()
+            .map(|e| {
+                Box::new(skwir_core::op::Move::new(
+                    skwir_core::op::EntryRef::from_path(e).unwrap(),
+                    moved.clone(),
+                )) as Box<dyn skwir_core::op::Operation>
+            })
+            .collect(),
+    );
+    let gone = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(gone.error.is_none(), "{:?}", gone.error);
+    assert_eq!(
+        gvfs.gio_copy().removed(),
+        1,
+        "the originals removed together"
+    );
+    assert_eq!(
+        std::fs::read_dir(&into).unwrap().count(),
+        0,
+        "gone, as the bridge says"
+    );
+    assert_eq!(
+        std::fs::read_dir(served_root.join("it's a folder"))
+            .unwrap()
+            .count(),
+        0
+    );
+    for e in &entries {
+        same_files(e, &moved.join(e.file_name().unwrap()));
+    }
     drop(app);
 
     gvfs.disconnect(&remote, &recognised, &CancelToken::new())

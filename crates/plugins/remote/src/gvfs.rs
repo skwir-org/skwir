@@ -177,8 +177,8 @@ impl Connector for Gvfs {
         }
     }
 
-    fn transfer(&self) -> Option<Arc<dyn skwir_core::op::transfer::Transfer>> {
-        Some(self.gio_copy())
+    fn transfers(&self) -> Vec<Arc<dyn skwir_core::op::transfer::Transfer>> {
+        vec![self.gio_copy()]
     }
 }
 

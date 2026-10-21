@@ -101,16 +101,24 @@ ADR-077 (which revises ADR-021).
 - **Copies** (ADR-078): a file of two ranges or more on a FUSE remote is
   read 8 ranges of 4 MiB at a time, written in order (`op::ranges`): the
   kernel reads FUSE ahead 128 KiB at a time, a round trip each. A run of
-  copies to or from a remote goes in batches (operations.md, ADR-078),
-  by the remote plugin's rsync for an sshfs mount it made (sshfs's ssh is
-  the master of a control socket in the runtime folder,
-  `rsync::control_path`; rsync's ssh shares it, `BatchMode`, asking
-  nothing), by eight `gio copy` at once for an SFTP mount of the
-  session's GVfs (`gio_copy`: `-i`, nothing on its input, so nothing is
-  replaced), else eight files at a time through the mount. A server
-  without rsync is remembered for its mount. A connector offers a
-  transfer for its mounts (`Connector::transfer`).
+  copies to or from a remote goes in batches (operations.md, ADR-078).
+  For an sshfs mount, by rsync: through the connection sshfs holds for
+  one Skwir made (its ssh is the master of a control socket in the
+  runtime folder, `ssh_mount::control_path`), the user's own ssh for one
+  they made, on the port sshfs was given (`ssh_mount`), asking nothing
+  (`BatchMode`) either way; a server that runs none (asked once:
+  `rsync --version`) leaves uploads to eight `sftp` sessions (`sftp`),
+  downloads to Skwir's own copy. For a mount of the session's GVfs of
+  SFTP, FTP, WebDAV or SMB, by eight `gio copy` at once (`gio_copy`:
+  `-i`, nothing on its input, so nothing is replaced), what a server
+  refused at once copied again by one. Else eight files at a time through
+  the mount. A server a tool does not reach is remembered for its mount.
+  A connector offers transfers for its mounts (`Connector::transfers`).
   A copy made with its source's mode is not given it again.
+- The originals of moves from GVfs are removed together by `gio remove`
+  at the plan's end (operations.md); from sshfs, one at a time through
+  the mount: a file removed beside it, sshfs's own cache says is there
+  for 20 s (`dcache_timeout`), and an Undo would find its name taken.
 
 ## Addresses
 

@@ -124,20 +124,39 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   not take or finish is made by its step. A file or link under its own
   name, free in the destination's listing read once before, the batch
   places itself beside what is there (never over anything, partial
-  bytes in the staging folder) and verifies (size and time, against the
-  source as taken or as it is now); its step's check and apply only say
-  so (`StepContext::placed_by_batch`). Skwir's own copy makes each in a
+  bytes in the staging folder) and verifies: what the transfer says it
+  placed (`transfer::Told::placed`), else what has the source's size and
+  time, as taken or as it is now (a volume keeping no times, GVfs's
+  WebDAV, keeps none of the copy's), looked at eight at a time; its
+  step's check and apply only say so (`StepContext::placed_by_batch`). Skwir's own copy makes each in a
   folder of its worker's and links it into place, then removes that name
   (`transfer::place`; renamed where links are refused): the kernel takes
   the destination folder's lock for each name made there, so the
   fewer round trips under it, the better. A move's source is read
   (`builtin::state_of`) before its batch copies it, and its step removes
   the original only if it is still that
-  (`StepContext::take_batched_state`). A batch's bytes are counted once,
-  by the batch. A cancel during a batch ends the plan and takes back
+  (`StepContext::take_batched_state`). Where a transfer removes in the
+  original's folder so that its mount sees it at once
+  (`Transfer::removes`: GVfs's), the step leaves the original to the
+  plan's end, which looks at all of them again, eight at a time, and has
+  those still as copied removed together (`transfer::remove_deferred`):
+  through a mount the kernel removes a folder's names one at a time.
+  Never sshfs's: its own cache would say a file removed beside it is
+  there for 20 s. A step whose source a batch took finds it where the
+  batch did (`StepContext::resolve`) and looks for no companion beside
+  it (the batch read its folder). A batch's bytes are counted once, by
+  the batch. A cancel during a batch ends the plan and takes back
   what it placed; a failed batch is logged and left to the steps; a plan
   that ends before the steps of copies its batch placed takes them back
-  (`transfer::take_back_unclaimed`): no Undo holds them.
+  (`transfer::take_back_unclaimed`): no Undo holds them. A transfer that
+  finds it cannot serve after all, having made nothing
+  (`transfer::NotServed`: a server without rsync), leaves the batch to
+  the next that serves.
+- A plan's dry runs before it runs as one action (names taken, every
+  check, room) read a remote's folder's names once
+  (`StepContext::listing_remotes`) and find its sources ahead, eight at
+  a time (`transfer::resolve_ahead`): a look at each would be a round
+  trip to the server.
 - A mode a volume keeps none of (`ENOTSUP`: GVfs's WebDAV, FTP and SMB
   through its bridge) is no failure of a copy (`sys::mode_kept`); its
   times are set as they can be. A volume of no size at all says nothing

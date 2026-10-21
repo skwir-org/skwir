@@ -420,8 +420,7 @@ impl Executor {
         cancel: &CancelToken,
     ) -> Settling {
         use super::clash::{Answer, settle};
-        let ctx =
-            || StepContext::with_cancel(cancel.clone()).with_companions(Arc::clone(companions));
+        let ctx = || dry_context(&plan.steps, companions, cancel);
         let said = plan.on_conflict.map(Answer::all);
         let first = settle(
             &plan.steps,
@@ -462,7 +461,7 @@ impl Executor {
     /// the answer, Cancel answering no.
     fn short_of_room(&self, plan: &Plan, cancel: &CancelToken) -> Option<String> {
         let free = Arc::clone(&self.free.lock());
-        let ctx = StepContext::with_cancel(cancel.clone());
+        let ctx = dry_context(&plan.steps, &Arc::default(), cancel);
         let short = super::room::short(&plan.steps, &ctx, &*free, cancel)?;
         let asker = self.room_asker.lock().clone();
         let Some(asker) = asker else {
@@ -1179,6 +1178,12 @@ impl Executor {
         // Cut short, what a batch placed for steps that never ran goes:
         // no Undo holds it (ADR-078).
         super::transfer::take_back_unclaimed(&ctx);
+        // The originals of moves a batch copied from a remote, together;
+        // cancelled too: their steps are done.
+        if let Err(e) = super::transfer::remove_deferred(&ctx) {
+            tracing::warn!(plan = %plan.title, "{e:#}");
+            error.get_or_insert_with(|| super::said(&e));
+        }
         // What the plan wrote through to a drive is on it, names and all,
         // before it says it ended: cut short too, for what it did.
         if let Err(e) = ctx.write_out() {
@@ -1225,11 +1230,27 @@ fn first_conflict(
     companions: &Arc<crate::companions::Companions>,
     cancel: &CancelToken,
 ) -> Option<String> {
-    let ctx = StepContext::with_cancel(cancel.clone()).with_companions(Arc::clone(companions));
+    let ctx = dry_context(&plan.steps, companions, cancel);
     super::dry_run_in(&plan.steps, ctx).find_map(|(_, status)| match status {
         StepStatus::Conflict { reason } => Some(reason),
         _ => None,
     })
+}
+
+/// A context for a dry run of `steps` before a plan the user asked for as
+/// one action runs: where a step names a remote, its folders' names are
+/// read once and its sources found ahead, at once (ADR-078), where a look
+/// at each would be a round trip to the server.
+fn dry_context(
+    steps: &[Box<dyn Operation>],
+    companions: &Arc<crate::companions::Companions>,
+    cancel: &CancelToken,
+) -> StepContext {
+    let ctx = StepContext::with_cancel(cancel.clone())
+        .with_companions(Arc::clone(companions))
+        .listing_remotes();
+    super::transfer::resolve_ahead(steps, &ctx);
+    ctx
 }
 
 #[cfg(test)]

@@ -95,11 +95,17 @@ struct Along {
     attributes: bool,
 }
 
-/// The companions of the file at `src` that go with it to `dest`.
+/// The companions of the file at `src` that go with it to `dest`: none of
+/// one a batch took, which read its folder (ADR-078); each looked for
+/// through the plan's context, which a dry run answers from a remote
+/// folder's names.
 fn along(ctx: &StepContext, src: &Path, dest: &Path) -> Vec<Along> {
+    if ctx.batch_took(src) {
+        return Vec::new();
+    }
     let rules = ctx.companions();
     rules
-        .existing(src)
+        .existing_as(src, &|at| ctx.exists(at))
         .into_iter()
         .filter_map(|found| {
             Some(Along {
@@ -357,7 +363,7 @@ impl super::Effect for Move {
     /// Its bytes, when it goes to another filesystem: there a move is a
     /// copy (`move_entry`); within one it renames, writing nothing.
     fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
-        let src = self.entry.resolve().ok()?;
+        let src = ctx.resolve(&self.entry).ok()?;
         if id_of(&src)?.dev == id_of(&self.dest_dir)?.dev {
             return None;
         }
@@ -383,7 +389,7 @@ impl super::Effect for Move {
                 return trashed;
             }
         }
-        match self.entry.resolve() {
+        match ctx.resolve(&self.entry) {
             Ok(src) if self.in_place(&src) => StepStatus::AlreadyDone,
             // A batch placed its copy (ADR-078): its apply removes the
             // original.
@@ -392,7 +398,7 @@ impl super::Effect for Move {
                 "“{}” is already there",
                 display_name(&self.target(&src))
             )),
-            Ok(src) if src.is_dir() && self.dest_dir.starts_with(&src) => {
+            Ok(src) if self.dest_dir.starts_with(&src) && src.is_dir() => {
                 conflict("a folder cannot be moved into itself")
             }
             Ok(src) => {
@@ -417,7 +423,7 @@ impl super::Effect for Move {
         if let Some(name) = &self.new_name {
             valid_file_name(name)?;
         }
-        let src = self.entry.resolve()?;
+        let src = ctx.resolve(&self.entry)?;
         if in_trash(&src).is_some() && in_trash(&self.dest_dir).is_none() {
             return super::Effect::apply(&self.restoring(&src), ctx);
         }
@@ -483,6 +489,20 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
                 .collect();
             let through = copy_entry(src, target, dest_dir, true, along, ctx)?;
             let dest_dir = dest_dir.to_path_buf();
+            if let Some(copied_as) = batched
+                && !through
+                && src
+                    .parent()
+                    .is_some_and(|folder| ctx.transfers().is_some_and(|t| t.remove_in(folder)))
+            {
+                // Copied by a batch from a remote whose mount removes its
+                // originals one at a time, where a transfer removes them
+                // together: with the plan's others at its end, once found
+                // unchanged there, all looked at at once
+                // (`transfer::remove_deferred`).
+                ctx.remove_later(src.to_path_buf(), copied_as, dest_dir);
+                return Ok(());
+            }
             let remove = move || {
                 // Edited while it was copied, or since: the copy may not
                 // hold it, so nothing of it goes. Gone is nothing to remove.
@@ -490,11 +510,7 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
                     std::fs::symlink_metadata(path).is_ok() && state_of(path) != *before
                 });
                 if let Some((changed, _)) = changed {
-                    anyhow::bail!(
-                        "“{}” changed after it was copied to “{}”: its original stays where it was",
-                        display_name(changed),
-                        dest_dir.display()
-                    );
+                    return Err(changed_since(changed, &dest_dir));
                 }
                 let ((src, _), companions) = originals.split_first().expect("the original first");
                 // Part of the source may be gone: say that the copy is
@@ -523,6 +539,16 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
         Err(e) => return Err(e),
     }
     Ok(())
+}
+
+/// What a move says of its original `path`, changed after it was copied
+/// into `dest_dir`: it stays.
+pub(super) fn changed_since(path: &Path, dest_dir: &Path) -> anyhow::Error {
+    anyhow::anyhow!(
+        "“{}” changed after it was copied to “{}”: its original stays where it was",
+        display_name(path),
+        dest_dir.display()
+    )
 }
 
 /// What the tree at `path` is, links not followed: each entry's name,
@@ -571,7 +597,7 @@ pub(super) fn state_of(path: &Path) -> Option<blake3::Hash> {
 
 /// Remove what a move copied: gone already is removed (a folder moved
 /// whole after a file of it, its removal waiting for a write-out).
-fn remove_original(path: &Path) -> anyhow::Result<()> {
+pub(super) fn remove_original(path: &Path) -> anyhow::Result<()> {
     match std::fs::symlink_metadata(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         _ => remove_recursive(path),
@@ -657,7 +683,7 @@ impl super::Effect for Copy {
         }
     }
     fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
-        let src = self.entry.resolve().ok()?;
+        let src = ctx.resolve(&self.entry).ok()?;
         Some((self.dest_dir.clone(), tree_size(&src, ctx).ok()?))
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
@@ -670,7 +696,7 @@ impl super::Effect for Copy {
                 display_name(&self.dest_dir)
             ));
         }
-        let src = match self.entry.resolve() {
+        let src = match ctx.resolve(&self.entry) {
             Ok(s) => s,
             Err(e) => return conflict(e.to_string()),
         };
@@ -697,7 +723,7 @@ impl super::Effect for Copy {
                 Err(e) => conflict(format!("{e:#}")),
             };
         }
-        if src.is_dir() && target.starts_with(&src) {
+        if target.starts_with(&src) && src.is_dir() {
             return conflict("a folder cannot be copied into itself");
         }
         along_conflict(ctx, &along(ctx, &src, &target)).unwrap_or(pending(true))
@@ -706,7 +732,7 @@ impl super::Effect for Copy {
         if let Some(name) = &self.new_name {
             valid_file_name(name)?;
         }
-        let src = self.entry.resolve()?;
+        let src = ctx.resolve(&self.entry)?;
         let target = self.target(&src);
         let along = along(ctx, &src, &target);
         copy_entry(

@@ -106,6 +106,37 @@ mounted the folder.
    than eight copies through rclone's mount, and the mount does not see
    what it copied until its folder cache expires: none is built.
 
+8. **Every mount a tool reaches** (2026-10-21, the user's "fix points
+   1-7"). rsync reaches an sshfs mount the user made with their own ssh,
+   as their configuration says, on the port sshfs was given, asking
+   nothing (`ssh_mount`). A server that runs no rsync (an SFTP-only
+   account, asked once) takes uploads by eight `sftp` sessions; down,
+   Skwir's own copy through the mount was faster. gio serves GVfs's FTP,
+   WebDAV and SMB mounts too, measured as SFTP's. A transfer that finds
+   it cannot serve, having made nothing, leaves the batch to the next.
+
+9. **What a transfer placed, it says** (`transfer::Told::placed`):
+   Skwir's own copy, gio by what left its temporary folder, rsync by its
+   `--out-format`. Size and time verify what is not said: a volume that
+   keeps no times (WebDAV) left its copies unclaimed, their steps then
+   finding their names taken.
+
+10. **Moves' originals together where the mount sees it.** Where a
+    transfer removes so that the mount sees the removal at once (GVfs's
+    daemon serves its bridge and `gio remove` alike), a move's step
+    leaves its original to the plan's end, which looks at all of them
+    again at once and has those unchanged removed together. Not sshfs's:
+    its own cache keeps a file's attributes 20 s, and an Undo would find
+    a name removed beside it taken; there they go one at a time through
+    the mount.
+
+11. **No look a round trip each.** A step whose source a batch took
+    finds it where the batch did and looks for no companion beside it
+    (the batch read its folder). The dry runs before a plan runs as one
+    action read a remote's folder's names once and find its sources
+    ahead, eight at a time: each step looked at each name across the
+    network, 5.35 s of 8.41 for 100 files up through GVfs.
+
 ## Consequences
 
 - Measured after, the same way (20 ms; load 8 to 61): a 256 MiB file
@@ -117,9 +148,10 @@ mounted the folder.
   rsync's pace where rsync is on both ends, at twice the mount's pace
   elsewhere; a large file comes down in ranges.
 - A batch is cancelled as a whole: Cancel stops the tool (its process
-  group); Pause holds it where it is (on Unix; on Windows a tool runs
-  on), and Skwir's own copy between files. What it made is in the
-  staging folder, removed with the plan.
+  group); Pause holds it where it is (its process group stopped on Unix,
+  the threads of its job's processes suspended on Windows), and Skwir's
+  own copy between files. What it made is in the staging folder, removed
+  with the plan.
 - What a batch did is what its steps say: a step it served is applied
   and undone as before (its copy to the trash); one it did not serve is
   copied as before. Nothing of the batch is kept beyond the plan.
@@ -132,12 +164,17 @@ mounted the folder.
   10.59 and 4.92; `gio` alone: 1.23 s to copy, 0.63 to place. rclone (a
   shell's timing): through its mount eight at a time 5.9–7.4 s,
   `rclone copy --transfers 8` 9.4 (7.1 without its hash check).
-- Not yet: sshfs mounts Skwir did not make (no connection to share:
-  their copies go through the mount, eight at a time); GVfs's other
-  kinds (SMB, WebDAV, FTP: not measured, they keep the bridge); copies
-  down from GVfs, whose looks through the bridge (the batch's walk, each
-  step's check) cost a round trip each; a move's originals removed on
-  the server one by one through the mount (`rsync --remove-source-files`
-  could remove them in its stream). Without rsync or `gio`, a name made
-  in a folder through FUSE costs a round trip or two under its lock,
-  whatever the way.
+- Measured after 8 to 11 (20 ms, 100 files of 16 KiB, each plan run
+  whole as the window runs it): Skwir's sshfs mount by rsync up 0.98 s,
+  down 0.76, moved down 2.65; a mount the user made by rsync up 1.42 s
+  (8.4 through it), down 0.87; an SFTP-only server up 3.04 s by sftp,
+  down 0.85 by Skwir's own copy, moved down 2.89. GVfs, SFTP up 2.97 s
+  (8.41 before), down 1.29 (4.09), moved down 2.18 (11.38); WebDAV up
+  4.2–5.4 s, down 1.69 (3.69), moved down 2.67 (15.78). Shell timings
+  of eight `gio copy` against the bridge eight at a time: WebDAV 1.5 s
+  and 25.6–26.1, FTP 9.2–9.4 and 139.8, SMB (Samba) 15.4 and 28.1–28.2.
+- Not yet: GVfs's NFS, AFP and devices (a phone's MTP), not measured;
+  rclone's mounts keep their own pace. Without a tool, a name made in a
+  folder through FUSE costs a round trip or two under its lock, whatever
+  the way: an SFTP-only server's downloads and moves' originals on sshfs
+  are at the mount's pace.
