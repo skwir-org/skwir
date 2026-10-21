@@ -60,6 +60,12 @@ fn name_of(path: &Path) -> std::path::Display<'_> {
         .map_or(path.display(), |name| Path::new(name).display())
 }
 
+/// Whether `path` is on a remote whose program makes its inode numbers up
+/// (a FUSE one: sshfs, rclone, GVfs), asked of the mount table in memory.
+fn made_up(path: &Path) -> bool {
+    crate::fs::reach::of(path).is_some_and(|remote| !remote.by_kernel())
+}
+
 impl EntryRef {
     /// A reference that knows nothing of the file's other names: it
     /// resolves at `path` alone ([`EntryRef::only_name`]).
@@ -125,7 +131,10 @@ impl EntryRef {
     /// Whether the file at the hint is on a remote mounted again since the
     /// reference was made, whose program makes its inodes up for as long
     /// as it is mounted (sshfs, rclone, GVfs): its identity cannot be
-    /// told across mounts, so the hint is taken (ADR-077).
+    /// told across mounts, so the hint is taken (ADR-077). Told by a new
+    /// device number only: the kernel gives a FUSE mount the lowest free
+    /// one, often the one it had, and then a reference whose number
+    /// changed is refused as replaced.
     fn remounted(&self, found: crate::entry::FileId) -> bool {
         found.dev != self.id.dev
             && crate::fs::reach::of(&self.path).is_some_and(|remote| {
@@ -136,9 +145,12 @@ impl EntryRef {
     /// The file's new name in the hint's folder, when that can be told:
     /// it had no other name when referenced, and exactly one name there
     /// holds it now. Two would be a link made since, either of which may
-    /// be the one renamed.
+    /// be the one renamed. Never on a remote whose program makes its
+    /// numbers up: sshfs numbers files in the order they are looked up,
+    /// again from the start when mounted again, so the number may be
+    /// another file's (ADR-077).
     fn renamed(&self) -> Option<PathBuf> {
-        if !self.only_name {
+        if !self.only_name || made_up(&self.path) {
             return None;
         }
         let mut names = self.names_in_parent()?;

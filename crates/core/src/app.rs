@@ -858,7 +858,7 @@ impl App {
         for redirect in &report.redirects {
             let to = &redirect.to;
             let shown = self.open_in(redirect.pane, to, false, Some(&redirect.from), |p| {
-                p.replace_here(to.clone())
+                p.replace_here(to.clone());
             });
             if let Err(error) = shown {
                 tracing::warn!(%to, "cannot show where a location leads: {error:#}");
