@@ -142,8 +142,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   `transfer::Control` (its cancel and its pause) and a progress handle
   (`StepContext::progress`), never the context, which is the plan
   thread's alone. Paused, Skwir's own copy waits between files and a
-  tool's process group is stopped (`SIGSTOP`, `process::run_watching`'s
-  `held`; Windows has no such signal, a tool runs on there).
+  tool is held where it is (`process::run_watching`'s `held`: `SIGSTOP`
+  to its process group; on Windows, which has no such signal, each
+  thread of its job's processes suspended).
 
 ## Names taken (ADR-054)
 

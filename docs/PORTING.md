@@ -240,6 +240,10 @@ Left:
   absent; the system's own shares (`\\server\share`, a Mac's
   `/Volumes`) have no connector yet. The askpass socket is Unix's: on
   Windows ssh's questions do not reach the window (a named pipe would).
+  Eject asks what uses a mount of `/proc` on Linux, of `lsof` on a Mac
+  (compiled only). A paused plan holds its tool: `SIGSTOP` to its group
+  on Unix, each thread of its job's processes suspended on Windows
+  (under Wine).
 
 ## 7. Types, icons, applications (step E)
 

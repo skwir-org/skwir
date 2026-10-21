@@ -85,6 +85,10 @@ struct State {
     space: HashMap<PathBuf, (u64, u64)>,
     /// Bumped by each refresh, so a slower one never wins.
     generation: u64,
+    /// Mounts whose program is being asked whether it still answers: one
+    /// question at a time each, never another queued behind one a server
+    /// gone holds for good.
+    asking: std::collections::HashSet<PathBuf>,
 }
 
 /// What the plugin keeps: its connectors and what it found.
@@ -262,8 +266,12 @@ impl Remotes {
         anyhow::bail!("nothing installed can open it: {}", why_not.join("; "))
     }
 
-    /// Read again what is mounted and what servers are known, then
-    /// publish: on a worker.
+    /// Read again what is mounted and publish it, then what servers are
+    /// known: on a worker. What is mounted is read from memory and
+    /// published at once; the servers the tools know (`rclone
+    /// listremotes`, ssh's configuration) and whether each mount's server
+    /// is near take longer, and are published after, unless a later
+    /// refresh began meanwhile: the mounts never wait on them.
     fn refresh(&self, app: &App) {
         let Some(lifetime) = self.lifetime() else {
             return;
@@ -281,6 +289,36 @@ impl Remotes {
             lifetime.clone(),
             move || {
                 let mounted = this.mounted();
+                let current = |state: &State| state.generation == generation;
+                {
+                    let mut state = this.state.lock();
+                    if !current(&state) {
+                        return;
+                    }
+                    // Whether a server is near where its name says so (an
+                    // address, `nas.local`); a name to resolve, after.
+                    for m in &mounted {
+                        if let Some(address) = &m.recognised.address
+                            && !state.local.contains_key(&address.host)
+                            && let Some(near) = lan::said(&address.host)
+                        {
+                            state.local.insert(address.host.clone(), Some(near));
+                        }
+                    }
+                    state
+                        .lost
+                        .retain(|point| mounted.iter().any(|m| m.remote.point == *point));
+                    state
+                        .space
+                        .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
+                }
+                let Some(app) = weak.upgrade() else {
+                    return;
+                };
+                this.publish(&app, &mounted);
+                let mounted = Arc::new(mounted);
+                this.ask_alive(&app, &mounted, &lifetime);
+                drop(app);
                 let mut servers = Vec::new();
                 for connector in this.connectors.iter() {
                     if connector.unavailable().is_none() {
@@ -300,64 +338,74 @@ impl Remotes {
                 }
                 {
                     let mut state = this.state.lock();
-                    if state.generation != generation {
+                    if !current(&state) {
                         return;
                     }
                     state.servers = servers;
                     state.local = local;
-                    state
-                        .lost
-                        .retain(|point| mounted.iter().any(|m| m.remote.point == *point));
-                    state
-                        .space
-                        .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
                 }
-                let Some(app) = weak.upgrade() else {
-                    return;
-                };
-                this.publish(&app, &mounted);
-                // Whether each mount's program still answers, asked in the
-                // remote's own lane: a server that stopped answering holds
-                // that alone (ADR-077).
-                let mounted = Arc::new(mounted);
-                for m in mounted.iter() {
-                    let (this, weak, all) = (this.clone(), weak.clone(), Arc::clone(&mounted));
-                    let point = m.remote.point.clone();
-                    app.scheduler.spawn_in(
-                        m.remote.lane(),
-                        Priority::Background,
-                        "remote-alive",
-                        lifetime.clone(),
-                        move || {
-                            let gone = std::fs::symlink_metadata(&point).is_err_and(|e| lost(&e));
-                            // How full it is, as the server says: asked
-                            // here too, where waiting holds no one else.
-                            let space = if gone {
-                                None
-                            } else {
-                                skwir_platform::places::space(&point)
-                            };
-                            let changed = {
-                                let mut state = this.state.lock();
-                                let lost = if gone {
-                                    state.lost.insert(point.clone())
-                                } else {
-                                    state.lost.remove(&point)
-                                };
-                                let measured = match space {
-                                    Some(space) => state.space.insert(point, space) != Some(space),
-                                    None => state.space.remove(&point).is_some(),
-                                };
-                                lost || measured
-                            };
-                            if changed && let Some(app) = weak.upgrade() {
-                                this.publish(&app, &all);
-                            }
-                        },
-                    );
+                if let Some(app) = weak.upgrade() {
+                    this.publish(&app, &mounted);
                 }
             },
         );
+    }
+
+    /// Ask each of `mounted` whether its program still answers, and how
+    /// full it is, in the remote's own lane: a server that stopped
+    /// answering holds that alone (ADR-077). A mount still being asked is
+    /// not asked again.
+    fn ask_alive(&self, app: &App, mounted: &Arc<Vec<Mounted>>, lifetime: &CancelToken) {
+        /// The mount being asked, no longer once its question ran, or was
+        /// dropped unrun.
+        struct Asking(Arc<Mutex<State>>, PathBuf);
+        impl Drop for Asking {
+            fn drop(&mut self) {
+                self.0.lock().asking.remove(&self.1);
+            }
+        }
+        let weak = app.weak();
+        for m in mounted.iter() {
+            let point = m.remote.point.clone();
+            if !self.state.lock().asking.insert(point.clone()) {
+                continue;
+            }
+            let asking = Asking(Arc::clone(&self.state), point.clone());
+            let (this, weak, all) = (self.clone(), weak.clone(), Arc::clone(mounted));
+            app.scheduler.spawn_in(
+                m.remote.lane(),
+                Priority::Background,
+                "remote-alive",
+                lifetime.clone(),
+                move || {
+                    let _asking = asking;
+                    let gone = std::fs::symlink_metadata(&point).is_err_and(|e| lost(&e));
+                    // How full it is, as the server says: asked here too,
+                    // where waiting holds no one else.
+                    let space = if gone {
+                        None
+                    } else {
+                        skwir_platform::places::space(&point)
+                    };
+                    let changed = {
+                        let mut state = this.state.lock();
+                        let lost = if gone {
+                            state.lost.insert(point.clone())
+                        } else {
+                            state.lost.remove(&point)
+                        };
+                        let measured = match space {
+                            Some(space) => state.space.insert(point, space) != Some(space),
+                            None => state.space.remove(&point).is_some(),
+                        };
+                        lost || measured
+                    };
+                    if changed && let Some(app) = weak.upgrade() {
+                        this.publish(&app, &all);
+                    }
+                },
+            );
+        }
     }
 
     /// Put the mounts and the servers in the sidebar, and what is known of

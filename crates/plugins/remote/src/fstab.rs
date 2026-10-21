@@ -174,16 +174,28 @@ impl Connector for Fstab {
             user_mountable(&remote.point),
             "the system mounted it: only an administrator may let go of it"
         );
-        let mut command = Command::new("umount");
-        command.arg(&remote.point);
-        let finished = skwir_platform::process::run_to_exit(&mut command, None, cancel, PATIENCE)?;
-        skwir_core::fs::reach::changed();
-        if finished.status.success() {
-            Ok(())
-        } else if finished.stderr.contains("busy") {
-            anyhow::bail!("another program is using it")
-        } else {
-            anyhow::bail!("{}", finished.stderr.trim())
+        let umount = |lazy: bool| -> anyhow::Result<()> {
+            let mut command = Command::new("umount");
+            if lazy {
+                command.arg("-l");
+            }
+            command.arg(&remote.point);
+            let finished =
+                skwir_platform::process::run_to_exit(&mut command, None, cancel, PATIENCE)?;
+            skwir_core::fs::reach::changed();
+            if finished.status.success() {
+                Ok(())
+            } else if finished.stderr.contains("busy") {
+                Err(Busy.into())
+            } else {
+                anyhow::bail!("{}", finished.stderr.trim())
+            }
+        };
+        match umount(false) {
+            Err(error) if error.is::<Busy>() => {
+                crate::mounter::when_busy(&remote.point, || umount(true))
+            }
+            ended => ended,
         }
     }
 
@@ -203,6 +215,18 @@ impl Connector for Fstab {
             .collect()
     }
 }
+
+/// `umount` refused as busy.
+#[derive(Debug)]
+struct Busy;
+
+impl std::fmt::Display for Busy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("another program is using it")
+    }
+}
+
+impl std::error::Error for Busy {}
 
 /// Whether fstab lets the user mount and let go of what is at `point`.
 pub fn user_mountable(point: &Path) -> bool {

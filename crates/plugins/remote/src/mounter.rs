@@ -151,19 +151,31 @@ pub fn unmount(point: &Path, ours: bool, cancel: &CancelToken) -> anyhow::Result
         if !said.contains("busy") {
             anyhow::bail!("{said}");
         }
-        // Refused as busy for a watch too: GVfs's trash watches the top
-        // of every mount. Where nothing reads, writes or works there, it
-        // is let go of at once (lazily), which ends the watches.
-        match skwir_platform::process::using(point) {
-            Some(users) if users.is_empty() => force_unmount(point)?,
-            Some(users) => anyhow::bail!("{}", in_use(&users)),
-            None => anyhow::bail!("another program is using it"),
-        }
+        when_busy(point, || force_unmount(point))?;
     }
     if ours {
         let _ = remove_point(point);
     }
     Ok(())
+}
+
+/// The system refused to unmount `point` as busy, which it says for a
+/// watch too (GVfs's trash watches the top of every mount): where nothing
+/// reads, writes or works there (`process::using`), it is let go of at
+/// once by `lazily`, which ends the watches; else Eject names what uses
+/// it.
+///
+/// # Errors
+/// What uses it, or what `lazily` met.
+pub(crate) fn when_busy(
+    point: &Path,
+    lazily: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    match skwir_platform::process::using(point) {
+        Some(users) if users.is_empty() => lazily(),
+        Some(users) => anyhow::bail!("{}", in_use(&users)),
+        None => anyhow::bail!("another program is using it"),
+    }
 }
 
 /// What Eject says when `users` (programs' names) use a mount.

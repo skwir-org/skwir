@@ -63,8 +63,10 @@ struct Snapshot {
 /// last, so a snapshot taken while that worker runs depends on when it
 /// ends.
 fn snapshot(app: &App) -> Snapshot {
+    // A remote's lane may wait for good on a server gone (a mount of the
+    // machine's whose server stopped answering): not what is compared.
     assert!(
-        app.scheduler.wait_idle(Duration::from_secs(10)),
+        app.scheduler.wait_idle_here(Duration::from_secs(10)),
         "jobs still running after 10 s"
     );
     Snapshot {

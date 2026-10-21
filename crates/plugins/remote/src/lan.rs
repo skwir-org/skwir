@@ -8,24 +8,32 @@ use std::time::Duration;
 /// How long a name may take to resolve before it is taken as not known.
 const RESOLVING: Duration = Duration::from_secs(2);
 
+/// What `host` says of itself, nothing asked: an address, or a name the
+/// local network gives ([`local`]); `None` for a name to resolve.
+pub fn said(host: &str) -> Option<bool> {
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Some(private(ip));
+    }
+    let name = host.trim_end_matches('.').to_ascii_lowercase();
+    (name == "localhost"
+        || [".local", ".lan", ".home.arpa", ".localdomain"]
+            .iter()
+            .any(|suffix| name.ends_with(suffix)))
+    .then_some(true)
+}
+
 /// Whether `host` (a name, or an address as a URL writes it) is on this
 /// machine's local network: a private, link-local or loopback address, or
 /// a name the local network gives (`nas.local`, `nas.lan`,
 /// `nas.home.arpa`). A name is resolved, on a thread of its own and for a
 /// moment only; `None` when nothing could be told. Blocks: on a worker.
 pub fn local(host: &str) -> Option<bool> {
+    if let Some(said) = said(host) {
+        return Some(said);
+    }
     let host = host.trim_start_matches('[').trim_end_matches(']');
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return Some(private(ip));
-    }
     let name = host.trim_end_matches('.').to_ascii_lowercase();
-    if name == "localhost"
-        || [".local", ".lan", ".home.arpa", ".localdomain"]
-            .iter()
-            .any(|suffix| name.ends_with(suffix))
-    {
-        return Some(true);
-    }
     let (tx, rx) = crossbeam_channel::bounded(1);
     let lookup = format!("{name}:0");
     std::thread::Builder::new()

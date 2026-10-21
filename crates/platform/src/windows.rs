@@ -252,6 +252,46 @@ impl Job {
         };
     }
 
+    /// The processes the job holds, by id.
+    pub fn processes(&self) -> Vec<u32> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            JOBOBJECT_BASIC_PROCESS_ID_LIST, JobObjectBasicProcessIdList, QueryInformationJobObject,
+        };
+        // The record's head, then room for 1024 ids, aligned as it is.
+        let mut room = vec![0usize; 2 + 1024];
+        let Ok(size) = u32::try_from(room.len() * size_of::<usize>()) else {
+            return Vec::new();
+        };
+        // SAFETY: the job's handle, and a buffer of the size given, aligned
+        // for the record, which the call fills.
+        let read = unsafe {
+            QueryInformationJobObject(
+                self.0.as_raw_handle(),
+                JobObjectBasicProcessIdList,
+                room.as_mut_ptr().cast(),
+                size,
+                std::ptr::null_mut(),
+            )
+        };
+        if read == 0 {
+            return Vec::new();
+        }
+        let list = room.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
+        // SAFETY: the record the call filled, its ids within the buffer
+        // (at most what it holds room for).
+        let ids = unsafe {
+            let count = ((*list).NumberOfProcessIdsInList as usize).min(room.len() - 1);
+            std::slice::from_raw_parts(
+                std::ptr::addr_of!((*list).ProcessIdList).cast::<usize>(),
+                count,
+            )
+        };
+        ids.iter()
+            .filter_map(|&id| u32::try_from(id).ok())
+            .collect()
+    }
+
     /// End everything in the job.
     pub fn stop(&self) {
         use std::os::windows::io::AsRawHandle;
@@ -259,6 +299,60 @@ impl Job {
         unsafe {
             windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0.as_raw_handle(), 1)
         };
+    }
+}
+
+/// Hold the processes `pids` where they are, each of their threads
+/// suspended, or let them go on (`held` false): Windows has no `SIGSTOP`.
+/// A thread started meanwhile is not held.
+pub fn hold(pids: &[u32], held: bool) {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenThread, ResumeThread, SuspendThread, THREAD_SUSPEND_RESUME,
+    };
+    if pids.is_empty() {
+        return;
+    }
+    // SAFETY: a snapshot of every thread; its handle, or the invalid one.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot == INVALID_HANDLE_VALUE || snapshot.is_null() {
+        return;
+    }
+    // SAFETY: a handle just made, owned here alone.
+    let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot) };
+    let Ok(size) = u32::try_from(size_of::<THREADENTRY32>()) else {
+        return;
+    };
+    let mut entry = THREADENTRY32 {
+        dwSize: size,
+        ..THREADENTRY32::default()
+    };
+    // SAFETY: the snapshot's handle, and a record of the size it says.
+    let mut more = unsafe { Thread32First(snapshot.as_raw_handle(), &raw mut entry) } != 0;
+    while more {
+        if pids.contains(&entry.th32OwnerProcessID) {
+            // SAFETY: a thread's id; its handle, or null.
+            let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+            if !thread.is_null() {
+                // SAFETY: a handle just made, owned here alone, closed
+                // when dropped.
+                let thread = unsafe { OwnedHandle::from_raw_handle(thread) };
+                // SAFETY: a thread's handle opened to suspend and resume it.
+                unsafe {
+                    if held {
+                        SuspendThread(thread.as_raw_handle());
+                    } else {
+                        ResumeThread(thread.as_raw_handle());
+                    }
+                }
+            }
+        }
+        // SAFETY: as above.
+        more = unsafe { Thread32Next(snapshot.as_raw_handle(), &raw mut entry) } != 0;
     }
 }
 

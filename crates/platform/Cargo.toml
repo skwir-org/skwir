@@ -63,7 +63,7 @@ oo7 = { version = "0.6", default-features = false, features = ["async-std", "nat
 # Windows' own calls (ADR-035): the drives, the user's SID, the types
 # the registry knows (ADR-037).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
 # The shell's thumbnails (ADR-041): its COM interfaces, through the
 # version of `windows` gpui already links.
 # The shell's icons, from the system image list (system_icons).

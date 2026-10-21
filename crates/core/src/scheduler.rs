@@ -193,6 +193,13 @@ impl Queue {
         self.heap.len() + self.lanes.values().map(|l| l.parked.len()).sum::<usize>()
     }
 
+    /// Whether no job of this machine's (the shared lane) runs or waits:
+    /// a remote's may still, held by its server.
+    fn idle_here(&self) -> bool {
+        !self.began.values().any(|(lane, _)| lane.is_shared())
+            && !self.heap.iter().any(|task| task.lane.is_shared())
+    }
+
     /// Whether to start a worker in place of one held: work waits, no
     /// worker is free, and fewer stand in than jobs have run past `STUCK`.
     /// Whether to plan a look, in `STUCK`, at whether a worker is held:
@@ -401,6 +408,20 @@ impl Scheduler {
         while q.running > 0 || q.waiting_jobs() > 0 {
             if self.inner.idle.wait_until(&mut q, deadline).timed_out() {
                 return q.running == 0 && q.waiting_jobs() == 0;
+            }
+        }
+        true
+    }
+
+    /// [`Scheduler::wait_idle`] for the jobs of this machine's alone: a
+    /// remote's lane may wait for good on a server that stopped answering
+    /// (ADR-077), which nothing a test reads here waits on.
+    pub fn wait_idle_here(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut q = self.inner.queue.lock();
+        while !q.idle_here() {
+            if self.inner.idle.wait_until(&mut q, deadline).timed_out() {
+                return q.idle_here();
             }
         }
         true
@@ -679,7 +700,7 @@ fn worker(inner: &Arc<Inner>, standing_in: bool) {
         if q.ended(seq, lane) {
             inner.cv.notify_one();
         }
-        if q.running == 0 && q.waiting_jobs() == 0 {
+        if (q.running == 0 && q.waiting_jobs() == 0) || q.idle_here() {
             inner.idle.notify_all();
         }
     }
@@ -759,6 +780,36 @@ mod tests {
         }
         assert!(!rx.recv_timeout(Duration::from_secs(5)).unwrap());
         assert!(!rx.recv_timeout(Duration::from_secs(5)).unwrap());
+    }
+
+    /// Waiting for this machine's jobs leaves out a remote's lane held by
+    /// its server: idle here once the shared jobs ended, not idle at all.
+    #[test]
+    fn idle_here_leaves_out_a_held_remote() {
+        let scheduler = Scheduler::new(2);
+        let (release, held) = crossbeam_channel::bounded::<()>(0);
+        let (started, begun) = crossbeam_channel::bounded(1);
+        scheduler.spawn_in(
+            Lane::keyed(9),
+            Priority::Background,
+            "held",
+            CancelToken::new(),
+            move || {
+                started.send(()).unwrap();
+                let _ = held.recv();
+            },
+        );
+        begun.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        scheduler.spawn(Priority::Normal, "here", CancelToken::new(), move || {
+            std::thread::sleep(Duration::from_millis(50));
+            tx.send(()).unwrap();
+        });
+        assert!(scheduler.wait_idle_here(Duration::from_secs(5)));
+        assert!(rx.try_recv().is_ok(), "the shared job ended first");
+        assert!(!scheduler.wait_idle(Duration::from_millis(100)));
+        drop(release);
+        assert!(scheduler.wait_idle(Duration::from_secs(5)));
     }
 
     /// A remote that stops answering holds its own lane's jobs, never the

@@ -163,8 +163,15 @@ ADR-077 (which revises ADR-021).
   (`process::using`: a file open or mapped there, a working folder in
   it; never a watch, never a look under it): nothing, it is let go of
   lazily, which ends the watches; something, Eject names it ("“vim” is
-  using it"). Where the system does not say (not Linux), it says
-  another program uses it.
+  using it"). Where the system does not say, it says another program
+  uses it: Linux's `/proc` says, macOS's `lsof` (compiled only); Skwir
+  mounts nothing on Windows yet. A mount fstab lets the user mount is let
+  go of so too (`umount -l` where nothing uses it).
+- Whether each mount's program still answers is asked in its lane, one
+  question at a time a mount: none is queued behind one a server gone
+  holds for good. A refresh publishes what is mounted at once, read from
+  memory, and the servers the tools know after (`rclone listremotes`, a
+  name to resolve): the mounts never wait on them.
 - A mount Skwir makes is under `$XDG_RUNTIME_DIR/skwir/remote/`, named by
   `connector::point_name` so its address reads back from it: nothing else
   is kept. It outlives Skwir, as GVfs's do.

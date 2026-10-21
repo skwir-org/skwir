@@ -349,10 +349,9 @@ impl ChildGuard {
     }
 
     /// Stop the child and what it started where they are (`SIGSTOP` to
-    /// its group), or let them go on (`SIGCONT`): a paused copy's tool.
-    /// Windows has no such signal: there they go on.
-    // Nothing of the child is used where nothing can hold it (Windows).
-    #[cfg_attr(not(unix), allow(clippy::unused_self))]
+    /// its group), or let them go on (`SIGCONT`): a paused copy's tool. On
+    /// Windows, which has no such signal, each thread of the processes in
+    /// its job is suspended, or resumed.
     fn hold(&mut self, held: bool) {
         #[cfg(unix)]
         if let Some(pid) = self.pid()
@@ -365,8 +364,14 @@ impl ChildGuard {
             };
             let _ = rustix::process::kill_process_group(pid, signal);
         }
-        #[cfg(not(unix))]
-        let _ = held;
+        #[cfg(windows)]
+        if self.child.try_wait().is_ok_and(|ended| ended.is_none()) {
+            let pids = match &self.job {
+                Some(job) => job.processes(),
+                None => vec![self.child.id()],
+            };
+            crate::windows::hold(&pids, held);
+        }
     }
 
     /// Stop the child and what it left running, at once: what writes to
@@ -854,7 +859,9 @@ pub type OnExit = Box<dyn FnOnce(io::Result<ExitStatus>) + Send>;
 /// in it. A watch (inotify, fanotify) is no use: the system refuses to
 /// unmount a folder watched as one read, but what watches it lets go when
 /// it goes. A process of another user is not seen. `None` where the
-/// system does not say (on Linux, `/proc` says).
+/// system does not say: on Linux, `/proc` says; on macOS, `lsof` (a part
+/// of the system there; compiled only); Windows has no mount of Skwir's
+/// to let go of yet.
 pub fn using(folder: &Path) -> Option<Vec<String>> {
     #[cfg(target_os = "linux")]
     {
@@ -870,7 +877,32 @@ pub fn using(folder: &Path) -> Option<Vec<String>> {
         }
         Some(names.into_iter().collect())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        // `+f`: the files open on the file system mounted there. `lsof`
+        // stats the mount point: one whose server is gone holds it, so it
+        // is given a time, then nothing is said.
+        let mut command = Command::new("/usr/sbin/lsof");
+        command.args(["-w", "-F", "c", "+f", "--"]).arg(folder);
+        let finished = run_to_exit(
+            &mut command,
+            None,
+            &CancelToken::new(),
+            Duration::from_secs(10),
+        )
+        .ok()?;
+        // Nothing open there is an exit status of 1, said nothing of.
+        if !finished.status.success() && !finished.stderr.is_empty() {
+            return None;
+        }
+        let names: std::collections::BTreeSet<String> = String::from_utf8_lossy(&finished.stdout)
+            .lines()
+            .filter_map(|line| line.strip_prefix('c'))
+            .map(ToOwned::to_owned)
+            .collect();
+        Some(names.into_iter().collect())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = folder;
         None
@@ -1211,6 +1243,71 @@ mod tests {
         assert!(using(&held).unwrap().contains(&me.trim().to_owned()));
         assert_eq!(using(&free), Some(Vec::new()));
         drop(open);
+    }
+
+    /// Not a test: what [`a_program_held_writes_nothing_on_any_system`]
+    /// runs, a program that writes a dot every 20 ms until stopped.
+    #[test]
+    #[ignore = "run by another test, as a program that writes"]
+    fn writes_until_stopped() {
+        use std::io::Write as _;
+        if std::env::var_os("SKWIR_TEST_WRITES").is_none() {
+            return;
+        }
+        loop {
+            print!(".");
+            let _ = std::io::stdout().flush();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Held, a program writes nothing until let go, on every system:
+    /// stopped by its group on Unix, its threads suspended on Windows
+    /// (under Wine here).
+    #[test]
+    fn a_program_held_writes_nothing_on_any_system() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let held = AtomicBool::new(false);
+        let written = AtomicUsize::new(0);
+        let cancel = CancelToken::new();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let ran = run_watching(
+                    Command::new(std::env::current_exe().unwrap())
+                        .args([
+                            "--exact",
+                            "process::tests::writes_until_stopped",
+                            "--ignored",
+                            "--nocapture",
+                        ])
+                        .env("SKWIR_TEST_WRITES", "1"),
+                    None,
+                    &cancel,
+                    &|| held.load(Ordering::Relaxed),
+                    &mut |bytes: &[u8]| {
+                        written.fetch_add(bytes.len(), Ordering::Relaxed);
+                    },
+                );
+                assert!(ran.is_err(), "cancelled");
+            });
+            let until = |at_least: usize| {
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while written.load(Ordering::Relaxed) < at_least {
+                    assert!(Instant::now() < deadline, "it writes");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            };
+            until(3);
+            held.store(true, Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(400));
+            let at = written.load(Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(600));
+            let still = written.load(Ordering::Relaxed);
+            held.store(false, Ordering::Relaxed);
+            until(still + 3);
+            cancel.cancel();
+            assert_eq!(still, at, "nothing written while held");
+        });
     }
 
     /// A program held, and what it started, writes nothing until let go;
