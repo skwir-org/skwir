@@ -69,6 +69,7 @@ pub fn ours(connector: &str, point: &Path) -> Option<Recognised> {
         label: address.label(),
         address: Some(address),
         ours: true,
+        device: None,
     })
 }
 

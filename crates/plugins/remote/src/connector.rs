@@ -42,6 +42,27 @@ pub struct Recognised {
     /// Skwir made it (under its runtime folder): letting go of it removes
     /// its mount point too.
     pub ours: bool,
+    /// A device on this machine rather than a server: a phone or a camera
+    /// GVfs reads over USB. It is near, whatever its address, and among
+    /// the sidebar's devices.
+    pub device: Option<Device>,
+}
+
+/// A device GVfs reads on this machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Device {
+    Phone,
+    Camera,
+}
+
+impl Device {
+    /// Its theme icon.
+    pub fn icon(self) -> &'static str {
+        match self {
+            Device::Phone => "phone",
+            Device::Camera => "camera-photo",
+        }
+    }
 }
 
 /// A server the user can connect to, from the tool's configuration: an

@@ -114,6 +114,7 @@ impl Connector for Sshfs {
             ),
             address,
             ours: false,
+            device: None,
         })
     }
 

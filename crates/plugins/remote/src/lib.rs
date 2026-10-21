@@ -46,6 +46,10 @@ pub const ID: &str = "remote";
 /// The sidebar's section of remotes.
 pub const GROUP: &str = "network";
 
+/// The sidebar's section of this machine's devices, where a phone or a
+/// camera GVfs reads is.
+const DEVICES: &str = "devices";
+
 const CONNECTORS: &str = "remote.connectors";
 const THUMBNAILS: &str = "remote.thumbnails";
 const CHOSEN: &str = "remote.chosen";
@@ -177,6 +181,7 @@ impl Remotes {
                             ),
                             address: None,
                             ours: false,
+                            device: None,
                         },
                         remote,
                         connector: None,
@@ -369,19 +374,31 @@ impl Remotes {
             let address = m.recognised.address.as_ref();
             let key = address.map_or_else(|| point.display().to_string(), ToString::to_string);
             let rule = chosen.get(&key).unwrap_or(&default);
-            let near = address.and_then(|a| state.local.get(&a.host).copied().flatten());
+            let near = if m.recognised.device.is_some() {
+                Some(true)
+            } else {
+                address.and_then(|a| state.local.get(&a.host).copied().flatten())
+            };
             known.push(Known {
                 point: point.clone(),
                 address: address.map(Address::location),
                 label: m.recognised.label.clone(),
                 thumbnails: thumbnails(rule, near),
             });
-            let mut place = Place::new(
-                GROUP,
-                &m.recognised.label,
-                glyph(address),
-                Location::from_path(point),
-            );
+            let mut place = match m.recognised.device {
+                Some(device) => Place::new(
+                    DEVICES,
+                    &m.recognised.label,
+                    device.icon(),
+                    Location::from_path(point),
+                ),
+                None => Place::new(
+                    GROUP,
+                    &m.recognised.label,
+                    "folder-remote",
+                    Location::from_path(point),
+                ),
+            };
             place.key = Some(format!("remote:{key}"));
             if m.connector
                 .as_ref()
@@ -418,8 +435,7 @@ impl Remotes {
                 continue;
             }
             let location = server.address.location();
-            let mut place =
-                Place::new(GROUP, &server.label, glyph(Some(&server.address)), location);
+            let mut place = Place::new(GROUP, &server.label, "network-server", location);
             place.key = Some(format!("remote:{}", server.address));
             place.busy = state
                 .busy
@@ -431,15 +447,6 @@ impl Remotes {
         app.registry.places.replace_owner(ID, places);
         app.registry.remotes.replace_owner(ID, known);
         app.wake();
-    }
-}
-
-/// The glyph of a remote in the sidebar: a cloud for rclone's remotes, a
-/// server otherwise.
-fn glyph(address: Option<&Address>) -> &'static str {
-    match address.map(|a| a.scheme) {
-        Some(Scheme::Rclone) => "cloud",
-        _ => "server",
     }
 }
 

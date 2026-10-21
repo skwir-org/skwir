@@ -147,6 +147,7 @@ impl Connector for Gvfs {
             address: spec.address(),
             label: spec.label(),
             ours: false,
+            device: spec.device(),
         })
     }
 

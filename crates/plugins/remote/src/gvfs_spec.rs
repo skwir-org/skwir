@@ -86,6 +86,17 @@ impl Spec {
         })
     }
 
+    /// The device on this machine it is, if one: a phone (MTP, Apple's
+    /// AFC) or a camera (gPhoto2).
+    pub fn device(&self) -> Option<crate::connector::Device> {
+        use crate::connector::Device;
+        match self.kind.as_str() {
+            "mtp" | "afc" => Some(Device::Phone),
+            "gphoto2" => Some(Device::Camera),
+            _ => None,
+        }
+    }
+
     /// What the user calls this mount: its address's name, else what GVfs
     /// says it is (`Phone (MTP)`).
     pub fn label(&self) -> String {
@@ -132,6 +143,7 @@ fn device_name(host: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connector::Device;
 
     #[test]
     fn a_gvfs_folder_name_is_an_address() {
@@ -164,6 +176,12 @@ mod tests {
         let phone = Spec::parse("mtp:host=Example_Phone_0123").unwrap();
         assert!(phone.address().is_none());
         assert_eq!(phone.label(), "Example Phone 0123 (MTP)");
+        // A phone or a camera is on this machine, never a server.
+        assert_eq!(phone.device(), Some(Device::Phone));
+        let camera = Spec::parse("gphoto2:host=%5Busb%3A001%2C004%5D").unwrap();
+        assert_eq!(camera.device(), Some(Device::Camera));
+        let share = Spec::parse("smb-share:server=nas,share=photos").unwrap();
+        assert_eq!(share.device(), None);
         assert!(Spec::parse("not a spec").is_none());
         assert!(Spec::parse("sftp:host").is_none(), "a key without a value");
     }

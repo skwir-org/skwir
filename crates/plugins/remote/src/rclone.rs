@@ -120,6 +120,7 @@ impl Connector for Rclone {
             ),
             address,
             ours: false,
+            device: None,
         })
     }
 

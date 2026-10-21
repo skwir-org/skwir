@@ -160,6 +160,7 @@ impl Connector for Fstab {
             ),
             address,
             ours: false,
+            device: None,
         })
     }
 
