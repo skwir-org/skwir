@@ -2321,3 +2321,12 @@ listings").
   as before: those copy orders of entries, which the hash does not touch.
 - foldhash 0.2 was in the tree already (hashbrown); the native workers'
   notices now list it (`just notices`).
+- `just deny` then failed on advisories published since the night's
+  run, not on foldhash: RUSTSEC-2026-0382 (rustls-webpki 0.103.15, the
+  map tiles' downloads) and RUSTSEC-2026-0378/0379 (wasmtime 49.0.3 and
+  its Cranelift, the plugin module worker). Updated within their
+  versions (`--precise`): rustls-webpki 0.103.16, wasmtime 49.0.4.
+  wasmtime's crates are pinned to one another, so Cargo resolved their
+  dependencies again: some Windows-only `windows-sys` picks and
+  `tempfile`'s `getrandom` (0.4.3 to 0.3.4) moved to versions the lock
+  held already; the notices follow (`just notices`).

@@ -423,7 +423,7 @@ Apache License
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
 
-Used by: blake3 1.8.7, constant_time_eq 0.4.2, cranelift-assembler-x64 0.136.3, cranelift-bitset 0.136.3, dunce 1.0.5, pulley-interpreter 49.0.3, pulley-macros 49.0.3, rbook 0.7.12, rmcp 3.5.1, ryu 1.0.23, wasmtime-internal-component-macro 49.0.3, wasmtime-internal-component-util 49.0.3, wasmtime-internal-core 49.0.3, wasmtime-internal-jit-icache-coherence 49.0.3, wasmtime-internal-versioned-export-macros 49.0.3, wasmtime-internal-wit-bindgen 49.0.3
+Used by: blake3 1.8.7, constant_time_eq 0.4.2, cranelift-assembler-x64 0.136.4, cranelift-bitset 0.136.4, dunce 1.0.5, pulley-interpreter 49.0.4, pulley-macros 49.0.4, rbook 0.7.12, rmcp 3.5.1, ryu 1.0.23, wasmtime-internal-component-macro 49.0.4, wasmtime-internal-component-util 49.0.4, wasmtime-internal-core 49.0.4, wasmtime-internal-jit-icache-coherence 49.0.4, wasmtime-internal-versioned-export-macros 49.0.4, wasmtime-internal-wit-bindgen 49.0.4
 
 Apache License
 Version 2.0, January 2004
@@ -730,7 +730,7 @@ Apache License
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
 
-Used by: cranelift-bforest 0.136.3, cranelift-codegen 0.136.3, cranelift-codegen-shared 0.136.3, cranelift-control 0.136.3, cranelift-entity 0.136.3, cranelift-frontend 0.136.3, cranelift-native 0.136.3, regalloc2 0.15.2, target-lexicon 0.13.5, wasmtime 49.0.3, wasmtime-environ 49.0.3, wasmtime-internal-cranelift 49.0.3, wasmtime-internal-unwinder 49.0.3
+Used by: cranelift-bforest 0.136.4, cranelift-codegen 0.136.4, cranelift-codegen-shared 0.136.4, cranelift-control 0.136.4, cranelift-entity 0.136.4, cranelift-frontend 0.136.4, cranelift-native 0.136.4, regalloc2 0.15.2, target-lexicon 0.13.5, wasmtime 49.0.4, wasmtime-environ 49.0.4, wasmtime-internal-cranelift 49.0.4, wasmtime-internal-unwinder 49.0.4
 
 Apache License
                            Version 2.0, January 2004
@@ -2160,7 +2160,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ------------------------------------------------------------------------
 ISC License (ISC)
 
-Used by: rustls-webpki 0.103.15
+Used by: rustls-webpki 0.103.16
 
 Except as otherwise noted, this project is licensed under the following
 (ISC-style) terms:
@@ -2225,7 +2225,7 @@ Used by: untrusted 0.9.0
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: accesskit 0.24.1, accesskit_consumer 0.38.0, accesskit_windows 0.34.0, brotli-decompressor 5.0.3, chrono 0.4.45, djvu-bitmap 0.42.0, djvu-bzz 0.42.0, djvu-iff 0.42.0, djvu-iw44 0.42.0, djvu-jb2 0.42.0, djvu-pixmap 0.42.0, djvu-zp 0.42.0, fxhash 0.2.1, libm 0.2.16, lyon 1.0.19, lyon_algorithms 1.0.21, lyon_geom 1.0.19, lyon_path 1.0.19, lyon_tessellation 1.0.22, mac 0.1.1, match_token 0.35.0, md5 0.8.1, pdfium-render 0.8.35, profiling 1.0.18, profiling-procmacros 1.0.18, pulp-wasm-simd-flag 0.1.1, seahash 4.1.0, siphasher 1.0.3, svg_fmt 0.4.5, taffy 0.13.0, wasm-encoder 0.239.0, wasm-metadata 0.239.0, wasmparser 0.239.0, wide 0.7.33, winapi-x86_64-pc-windows-gnu 0.4.0, windows 0.61.3, windows 0.62.2, windows-collections 0.2.0, windows-collections 0.3.2, windows-core 0.61.2, windows-core 0.62.2, windows-future 0.2.1, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.1.3, windows-link 0.2.1, windows-numerics 0.2.0, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.3.4, windows-result 0.4.1, windows-strings 0.4.2, windows-strings 0.5.1, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.1.0, windows-threading 0.2.1, windows_x86_64_gnu 0.52.6, windows_x86_64_gnu 0.53.1, wit-component 0.239.0, wit-parser 0.239.0, wuff 0.2.9, zune-inflate 0.2.54
+Used by: accesskit 0.24.1, accesskit_consumer 0.38.0, accesskit_windows 0.34.0, brotli-decompressor 5.0.3, chrono 0.4.45, djvu-bitmap 0.42.0, djvu-bzz 0.42.0, djvu-iff 0.42.0, djvu-iw44 0.42.0, djvu-jb2 0.42.0, djvu-pixmap 0.42.0, djvu-zp 0.42.0, fxhash 0.2.1, libm 0.2.16, lyon 1.0.19, lyon_algorithms 1.0.21, lyon_geom 1.0.19, lyon_path 1.0.19, lyon_tessellation 1.0.22, mac 0.1.1, match_token 0.35.0, md5 0.8.1, pdfium-render 0.8.35, profiling 1.0.18, profiling-procmacros 1.0.18, pulp-wasm-simd-flag 0.1.1, seahash 4.1.0, siphasher 1.0.3, svg_fmt 0.4.5, taffy 0.13.0, wasm-encoder 0.239.0, wasm-metadata 0.239.0, wasmparser 0.239.0, wide 0.7.33, winapi-x86_64-pc-windows-gnu 0.4.0, windows 0.61.3, windows 0.62.2, windows-collections 0.2.0, windows-collections 0.3.2, windows-core 0.61.2, windows-core 0.62.2, windows-future 0.2.1, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.1.3, windows-link 0.2.1, windows-numerics 0.2.0, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.3.4, windows-result 0.4.1, windows-strings 0.4.2, windows-strings 0.5.1, windows-sys 0.52.0, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.1.0, windows-threading 0.2.1, windows_x86_64_gnu 0.52.6, windows_x86_64_gnu 0.53.1, wit-component 0.239.0, wit-parser 0.239.0, wuff 0.2.9, zune-inflate 0.2.54
 
 MIT License
 
@@ -3431,7 +3431,7 @@ SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: either 1.18.0, itertools 0.14.0, rawpointer 0.2.1
+Used by: either 1.18.0, itertools 0.13.0, itertools 0.14.0, rawpointer 0.2.1
 
 Copyright (c) 2015
 

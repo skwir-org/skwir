@@ -423,7 +423,7 @@ Apache License
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
 
-Used by: blake3 1.8.7, constant_time_eq 0.4.2, cranelift-assembler-x64 0.136.3, cranelift-bitset 0.136.3, pulley-interpreter 49.0.3, pulley-macros 49.0.3, rbook 0.7.12, rmcp 3.5.1, ryu 1.0.23, wasmtime-internal-component-macro 49.0.3, wasmtime-internal-component-util 49.0.3, wasmtime-internal-core 49.0.3, wasmtime-internal-jit-icache-coherence 49.0.3, wasmtime-internal-versioned-export-macros 49.0.3, wasmtime-internal-wit-bindgen 49.0.3
+Used by: blake3 1.8.7, constant_time_eq 0.4.2, cranelift-assembler-x64 0.136.4, cranelift-bitset 0.136.4, pulley-interpreter 49.0.4, pulley-macros 49.0.4, rbook 0.7.12, rmcp 3.5.1, ryu 1.0.23, wasmtime-internal-component-macro 49.0.4, wasmtime-internal-component-util 49.0.4, wasmtime-internal-core 49.0.4, wasmtime-internal-jit-icache-coherence 49.0.4, wasmtime-internal-versioned-export-macros 49.0.4, wasmtime-internal-wit-bindgen 49.0.4
 
 Apache License
 Version 2.0, January 2004
@@ -730,7 +730,7 @@ Apache License
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
 
-Used by: cranelift-bforest 0.136.3, cranelift-codegen 0.136.3, cranelift-codegen-shared 0.136.3, cranelift-control 0.136.3, cranelift-entity 0.136.3, cranelift-frontend 0.136.3, cranelift-native 0.136.3, regalloc2 0.15.2, target-lexicon 0.13.5, wasmtime 49.0.3, wasmtime-environ 49.0.3, wasmtime-internal-cranelift 49.0.3, wasmtime-internal-unwinder 49.0.3
+Used by: cranelift-bforest 0.136.4, cranelift-codegen 0.136.4, cranelift-codegen-shared 0.136.4, cranelift-control 0.136.4, cranelift-entity 0.136.4, cranelift-frontend 0.136.4, cranelift-native 0.136.4, regalloc2 0.15.2, target-lexicon 0.13.5, wasmtime 49.0.4, wasmtime-environ 49.0.4, wasmtime-internal-cranelift 49.0.4, wasmtime-internal-unwinder 49.0.4
 
 Apache License
                            Version 2.0, January 2004
@@ -2160,7 +2160,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ------------------------------------------------------------------------
 ISC License (ISC)
 
-Used by: rustls-webpki 0.103.15
+Used by: rustls-webpki 0.103.16
 
 Except as otherwise noted, this project is licensed under the following
 (ISC-style) terms:
@@ -3400,7 +3400,7 @@ SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: either 1.18.0, itertools 0.14.0, rawpointer 0.2.1
+Used by: either 1.18.0, itertools 0.13.0, itertools 0.14.0, rawpointer 0.2.1
 
 Copyright (c) 2015
 
