@@ -971,7 +971,7 @@ fn copy_file(
     // Made with them already (the usual 0644 and 022), they are not asked
     // for again: on a remote each change is a round trip to the server.
     if made.permissions() != m.permissions() {
-        df.set_permissions(m.permissions())?;
+        sys::mode_kept(df.set_permissions(m.permissions()))?;
     }
     let _ = df.set_modified(m.modified()?);
     Ok(())
@@ -1127,7 +1127,7 @@ fn copy_recursive_with_attributes(
         if preserve_attributes {
             transfer_attributes(src, dst, ctx)?;
         }
-        std::fs::set_permissions(dst, m.permissions())?;
+        sys::mode_kept(std::fs::set_permissions(dst, m.permissions()))?;
     } else if kind.is_file() {
         // A later name of a file of several names this plan copied is a
         // link to that copy (ADR-049).

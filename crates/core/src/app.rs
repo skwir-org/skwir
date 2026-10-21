@@ -306,19 +306,21 @@ impl App {
             app.notes.keep_snapshots(app.cache.namespace("notes"));
             app.executor.set_companions(Arc::clone(&app.companions));
             app.executor.set_transfers(Arc::clone(&app.transfers));
-            // A plan short of room asks the user whether to go on anyway.
+            // A plan short of room asks the user whether to go on anyway;
+            // with no window up, no one is asked, and nothing is copied.
             let asking = Arc::downgrade(&app);
             app.executor.set_room_asker(Some(Arc::new(
                 move |title: &str, short: &op::room::Short| match asking.upgrade() {
-                    Some(app) => {
+                    Some(app) if app.window_shown() => {
                         let detail = format!(
                             "{title}: a drive, a network share above all, may say it has \
                              less room than it has. Copy anyway, or cancel and make room."
                         );
                         app.ask_as(Asker::Room, short.said(), detail).1
                     }
-                    // Gone: no one answers, so nothing is copied.
-                    None => crossbeam_channel::bounded(0).1,
+                    // Gone, or no window: no one answers, so nothing is
+                    // copied.
+                    _ => crossbeam_channel::bounded(0).1,
                 },
             )));
             // A plan that finds names taken asks the window what becomes

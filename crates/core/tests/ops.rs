@@ -496,7 +496,8 @@ fn a_copy_keeps_the_links_among_what_it_copies() {
 
 /// A copy the user asked for, short of room where it writes, asks first
 /// whether to go on (ADR-049): cancelled, nothing is copied and the plan
-/// says why; told to go on, it copies.
+/// says why; told to go on, it copies. With no window up, no one is asked
+/// and nothing is copied.
 #[test]
 fn a_copy_short_of_room_asks_whether_to_go_on() {
     let tmp = Scratch::new();
@@ -527,6 +528,17 @@ fn a_copy_short_of_room_asks_whether_to_go_on() {
         }
     };
 
+    // No window up: no one is asked, and nothing is copied.
+    app.apply_whole(plan());
+    let events = events_until(&app, |e| matches!(e, ExecEvent::Finished { .. }));
+    assert!(matches!(
+        events.last(),
+        Some(ExecEvent::Finished { applied: 0, error: Some(e), .. }) if e.starts_with("Not enough room")
+    ));
+    assert!(app.take_questions().is_empty(), "no one to ask");
+    assert!(!root.join("dest/a.bin").exists(), "nothing copied");
+
+    app.set_window_shown();
     app.apply_whole(plan());
     let asked = question();
     assert_eq!(asked.asker, skwir_core::app::Asker::Room);

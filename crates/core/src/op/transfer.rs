@@ -720,7 +720,7 @@ impl Layout {
             {
                 let _ = folder.set_modified(modified);
             }
-            std::fs::set_permissions(dst, meta.permissions())?;
+            super::sys::mode_kept(std::fs::set_permissions(dst, meta.permissions()))?;
         }
         Ok(())
     }
@@ -787,7 +787,7 @@ fn copy_one(src: &Path, dst: &Path, wrote: &dyn Fn(u64)) -> anyhow::Result<()> {
     }
     let meta = sf.metadata()?;
     if made.permissions() != meta.permissions() {
-        df.set_permissions(meta.permissions())?;
+        super::sys::mode_kept(df.set_permissions(meta.permissions()))?;
     }
     let _ = df.set_modified(meta.modified()?);
     Ok(())

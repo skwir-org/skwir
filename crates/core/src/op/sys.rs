@@ -518,6 +518,17 @@ pub(super) fn trash_item(path: &Path) -> Result<Option<std::path::PathBuf>, tras
     }
 }
 
+/// What setting a copy's mode said, unless its volume keeps no modes: one
+/// that says so (`ENOTSUP`: GVfs's WebDAV and FTP through its bridge)
+/// keeps none of the copy's either, as of anything written there. Its
+/// times are set as they can be already.
+pub(super) fn mode_kept(set: io::Result<()>) -> io::Result<()> {
+    match set {
+        Err(e) if e.kind() == io::ErrorKind::Unsupported => Ok(()),
+        set => set,
+    }
+}
+
 /// What the system's trash holds, as the `trash` crate lists it; Linux's
 /// is the plan's own (`trash_list`), which reads no server unasked.
 #[cfg(not(target_os = "linux"))]

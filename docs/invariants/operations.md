@@ -138,6 +138,11 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   what it placed; a failed batch is logged and left to the steps; a plan
   that ends before the steps of copies its batch placed takes them back
   (`transfer::take_back_unclaimed`): no Undo holds them.
+- A mode a volume keeps none of (`ENOTSUP`: GVfs's WebDAV, FTP and SMB
+  through its bridge) is no failure of a copy (`sys::mode_kept`); its
+  times are set as they can be. A volume of no size at all says nothing
+  of its room (`fs::volume::free`), and room is asked only of a window
+  shown: with none, nothing is copied.
 - A step's own threads (a batch's, `op::ranges`'s) are given the plan's
   `transfer::Control` (its cancel and its pause) and a progress handle
   (`StepContext::progress`), never the context, which is the plan

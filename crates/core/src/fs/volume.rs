@@ -58,14 +58,15 @@ pub fn is_removable(path: &Path) -> bool {
 
 /// The bytes free for the user on the volume `path` is on, as the system
 /// says (`statvfs`'s blocks available, Windows' bytes free to the caller):
-/// what a copy there may write. `None` when it cannot say. A network share
-/// may say 0, or more than there is: a copy asks rather than refuses
-/// (`op::room`). I/O: a worker's.
+/// what a copy there may write. `None` when it cannot say, as a volume of
+/// no size at all does (GVfs's WebDAV and FTP through its bridge: 0 blocks,
+/// none free). A network share may say 0, or more than there is: a copy
+/// asks rather than refuses (`op::room`). I/O: a worker's.
 pub fn free(path: &Path) -> Option<u64> {
     #[cfg(unix)]
     {
         let st = rustix::fs::statvfs(path).ok()?;
-        Some(st.f_bavail.saturating_mul(st.f_frsize))
+        (st.f_blocks > 0).then(|| st.f_bavail.saturating_mul(st.f_frsize))
     }
     #[cfg(windows)]
     {
