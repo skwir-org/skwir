@@ -235,6 +235,27 @@ pub fn mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mounted> {
         .collect()
 }
 
+/// The mount points at `path` or below it, as the system's table has them
+/// (a remote's included: each GVfs mount a folder of its bridge): what a
+/// removal of `path` would reach into, a drive's files or a server's.
+/// Compared by the paths' text, never by reading them: from any thread.
+pub fn mounted_within(path: &Path) -> Vec<PathBuf> {
+    let mut points: Vec<PathBuf> = Here::now()
+        .mounts
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(point, _)| point)
+        .filter(|point| point.starts_with(path))
+        .collect();
+    if let Some(remote) = crate::fs::reach::of(path)
+        && remote.point == path
+        && !points.contains(&remote.point)
+    {
+        points.push(remote.point.clone());
+    }
+    points
+}
+
 /// What looking a path up reaches: this machine, and the server the user
 /// is on already. A path written in a file or printed in the terminal is
 /// looked up only where [`Here::holds`] says so (ADR-029): on Windows a

@@ -1213,6 +1213,10 @@ fn user_attributes(path: &Path) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
 fn remove_recursive(p: &Path) -> anyhow::Result<()> {
     let m = std::fs::symlink_metadata(p)?;
     if m.is_dir() {
+        // Never into what is mounted there: a drive's files, a server's.
+        if let Some(why) = mounted_there(p) {
+            anyhow::bail!("{why}");
+        }
         std::fs::remove_dir_all(p).map_err(|e| {
             let error = anyhow::Error::new(e);
             let Some((first, count)) = left_in(p) else {
@@ -1231,6 +1235,26 @@ fn remove_recursive(p: &Path) -> anyhow::Result<()> {
         std::fs::remove_file(p)?;
     }
     Ok(())
+}
+
+/// Why `path` may not be removed or trashed whole: it is, or holds, the
+/// folder where a drive or a remote is mounted (ADR-077). A removal would
+/// reach into it, deleting a drive's files or a server's.
+fn mounted_there(path: &Path) -> Option<String> {
+    let points = crate::fs::volume::mounted_within(path);
+    let point = points.first()?;
+    Some(if point == path {
+        format!(
+            "“{}” is where a drive or a remote is mounted: eject it rather than delete it",
+            display_name(path)
+        )
+    } else {
+        format!(
+            "“{}” holds “{}”, where a drive or a remote is mounted: eject it first",
+            display_name(path),
+            point.strip_prefix(path).unwrap_or(point).display()
+        )
+    })
 }
 
 /// What a removal of `dir` that stopped left behind, links not followed:
@@ -1376,13 +1400,16 @@ impl super::Effect for Trash {
             ));
         }
         match self.entry.resolve() {
-            Ok(_) => pending(true),
+            Ok(path) => mounted_there(&path).map_or_else(|| pending(true), conflict),
             Err(ResolveError::Gone(_)) => StepStatus::AlreadyDone,
             Err(e) => conflict(e.to_string()),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
+        if let Some(why) = mounted_there(&src) {
+            anyhow::bail!("{why}");
+        }
         anyhow::ensure!(
             in_trash(&src).is_none(),
             "“{}” is in the trash already",
@@ -2476,7 +2503,7 @@ impl super::Effect for Delete {
     }
     fn check(&self, _ctx: &StepContext) -> StepStatus {
         match self.entry.resolve() {
-            Ok(_) => pending(false),
+            Ok(path) => mounted_there(&path).map_or_else(|| pending(false), conflict),
             Err(ResolveError::Gone(_)) => StepStatus::AlreadyDone,
             Err(e) => conflict(e.to_string()),
         }
@@ -2880,6 +2907,36 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
+
+    /// What is, or holds, where something is mounted is never removed or
+    /// trashed whole: a removal would reach into a drive's files or a
+    /// server's (ADR-077). Read from this machine's own mounts (`/proc`).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_mount_point_is_never_removed_whole() {
+        let proc = mounted_there(Path::new("/proc")).expect("/proc is mounted");
+        assert!(
+            proc.contains("is where a drive or a remote is mounted"),
+            "{proc}"
+        );
+        // A folder that is no mount point holding one: found in the table.
+        let points: Vec<PathBuf> =
+            crate::fs::volume::mountinfo(&std::fs::read("/proc/self/mountinfo").unwrap())
+                .into_iter()
+                .map(|m| m.point)
+                .collect();
+        let holder = points
+            .iter()
+            .filter_map(|p| p.parent())
+            .find(|q| !points.iter().any(|p| p == q))
+            .expect("a mount below a plain folder");
+        let above = mounted_there(holder).expect("it holds a mount");
+        assert!(above.contains("holds"), "{above}");
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(mounted_there(tmp.path()), None, "a plain folder");
+        let err = remove_recursive(Path::new("/proc")).unwrap_err();
+        assert!(err.to_string().contains("eject"), "{err}");
+    }
 
     /// Where a trash keeps what it says of a file, from the file's path:
     /// the home trash's and a volume's two kinds, nothing elsewhere.

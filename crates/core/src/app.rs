@@ -2627,8 +2627,12 @@ mod builtin {
                 // A folder a program mounts across a network (sshfs, rclone,
                 // GVfs) keeps no trash: what is there is deleted for good,
                 // asked first as any deletion is (ADR-077).
+                // A mount point itself stays a trash step, which refuses
+                // it in words (`Trash`'s check): never a deletion that would
+                // reach into the server.
                 let without = |e: &EntryRef| {
-                    crate::fs::reach::of(&e.path).is_some_and(|remote| !remote.by_kernel())
+                    crate::fs::reach::of(&e.path)
+                        .is_some_and(|remote| !remote.by_kernel() && remote.point != e.path)
                 };
                 let refs = app.targets(a.pane, a.entries)?;
                 let deleted = refs.iter().filter(|e| without(e)).count();

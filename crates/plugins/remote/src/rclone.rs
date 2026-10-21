@@ -76,6 +76,8 @@ impl Connector for Rclone {
         let mut command = Command::new(rclone);
         command.args(mount_arguments(&remote, &point));
         if top.scheme == Scheme::Sftp {
+            // A word each, split at spaces by rclone: names checked so.
+            top.ssh_user()?;
             command.arg("--sftp-ssh").arg(ssh_command(&top));
         }
         // A configuration kept encrypted asks its password of the window.

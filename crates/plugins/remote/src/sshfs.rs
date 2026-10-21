@@ -68,6 +68,7 @@ impl Connector for Sshfs {
         cancel: &CancelToken,
     ) -> anyhow::Result<Connected> {
         let top = address.top();
+        top.ssh_user()?;
         let sshfs = skwir_core::os_path::find_program("sshfs")
             .ok_or_else(|| anyhow::anyhow!("sshfs is not installed"))?;
         let point = mounter::point_for(self.id(), &top)?;

@@ -175,6 +175,16 @@ impl Address {
                 scheme.name()
             )));
         }
+        // What reaches a tool's command line is a name, never an option of
+        // it nor several words: a server's name or address, a user's.
+        if !server_name(host) {
+            return Err(NotAnAddress(format!("“{host}” is no server's name")));
+        }
+        for part in [&user, &domain].into_iter().flatten() {
+            if !plain(part) {
+                return Err(NotAnAddress(format!("“{part}” is no user's name")));
+            }
+        }
         let mut path = decoded(path);
         if path.is_empty() {
             path.push(b'/');
@@ -343,6 +353,51 @@ impl fmt::Display for Address {
     }
 }
 
+/// Whether `host` is a server's name (letters, digits, `.`, `-`, `_`; an
+/// rclone remote's `+` too) or an address (`[fe80::1%eth0]`), starting with
+/// neither `-` nor `.`.
+fn server_name(host: &str) -> bool {
+    if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        return !inner.is_empty()
+            && inner
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '.' | '%'));
+    }
+    !host.starts_with(['-', '.'])
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+'))
+}
+
+/// Whether a user's or a domain's name is one: not empty, starting with
+/// no `-`, holding no control character.
+fn plain(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('-') && !name.chars().any(char::is_control)
+}
+
+impl Address {
+    /// Whether the user's name is one ssh takes as it is on a command line
+    /// that splits words at spaces (rclone's `--sftp-ssh`): letters, digits,
+    /// `.`, `-`, `_`.
+    ///
+    /// # Errors
+    /// When it holds anything else.
+    pub fn ssh_user(&self) -> Result<(), NotAnAddress> {
+        match &self.user {
+            Some(user)
+                if !user
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')) =>
+            {
+                Err(NotAnAddress(format!(
+                    "“{user}” is no user's name ssh can be given"
+                )))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 /// `host[:port]`, an IPv6 literal in brackets.
 fn split_port(hostport: &str) -> Result<(&str, Option<u16>), NotAnAddress> {
     let (host, port) = if hostport.starts_with('[') {
@@ -417,6 +472,39 @@ mod tests {
         assert!(Address::parse("http://h/").is_err());
         assert!(Address::parse("sftp:h").is_err(), "no //");
         assert!(Address::parse("sftp:///path").is_err(), "no server");
+    }
+
+    /// What reaches a tool's command line is a name, never an option of
+    /// it nor several words: an address holding one is refused.
+    #[test]
+    fn an_address_passes_no_option_to_a_tool() {
+        for text in [
+            "sftp://-oProxyCommand=x/",
+            "sftp://host -o x/",
+            "sftp://-me@host/",
+            "sftp://me%0A@host/",
+            "sftp://.hidden/",
+            "rclone://-x/",
+            "smb://WORK%0D;me@nas/s",
+        ] {
+            assert!(Address::parse(text).is_err(), "{text}");
+        }
+        assert!(Address::parse("rclone://my.drive+2/").is_ok());
+        let spaced = Address::parse("smb://first%20last@nas/s").unwrap();
+        assert_eq!(
+            spaced.user.as_deref(),
+            Some("first last"),
+            "SMB names hold spaces"
+        );
+        assert!(spaced.ssh_user().is_err(), "ssh's do not");
+        assert!(
+            Address::parse("sftp://me.name_2@host/")
+                .unwrap()
+                .ssh_user()
+                .is_ok()
+        );
+        let words = Address::parse("sftp://me%20-oProxyCommand=x@host/").unwrap();
+        assert!(words.ssh_user().is_err(), "never ssh's words");
     }
 
     #[test]

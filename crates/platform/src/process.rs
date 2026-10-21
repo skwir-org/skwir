@@ -284,9 +284,11 @@ fn application(program: &str) -> Option<PathBuf> {
 /// On Windows its group is a job object holding it and what it starts.
 pub(crate) struct ChildGuard {
     pub(crate) child: Child,
-    /// What the child left running is left be once it ended well
-    /// (`run_leaving`): a mount's daemon.
-    leave: bool,
+    /// What the child left running was left be (`finish_leaving`): it
+    /// ended well, and its daemon carries a mount. Set only then: a child
+    /// stopped any other way (cancelled, too long) is stopped with its
+    /// group, as any.
+    left: bool,
     #[cfg(windows)]
     job: Option<crate::windows::Job>,
 }
@@ -297,7 +299,7 @@ impl ChildGuard {
             #[cfg(windows)]
             job: crate::windows::Job::holding(&child),
             child,
-            leave: false,
+            left: false,
         }
     }
 
@@ -353,18 +355,23 @@ impl ChildGuard {
         let _ = self.child.kill();
     }
 
-    /// Stop the group and reap the child, which has exited; with `leave`,
-    /// leave what it started running when it ended well.
-    pub(crate) fn finish(mut self) -> io::Result<ExitStatus> {
+    /// Stop the group and reap the child, which has exited.
+    pub(crate) fn finish(self) -> io::Result<ExitStatus> {
+        self.finish_leaving(false)
+    }
+
+    /// [`ChildGuard::finish`]; with `leave`, what the child started is left
+    /// running when it ended well.
+    fn finish_leaving(mut self, leave: bool) -> io::Result<ExitStatus> {
         // Told before it is reaped: once reaped, its pid no longer names
         // its group.
-        if self.leave && self.ended_well() {
+        if leave && self.ended_well() {
             #[cfg(windows)]
             if let Some(job) = self.job.take() {
                 job.release();
             }
+            self.left = true;
         } else {
-            self.leave = false;
             self.stop_group();
         }
         self.child.wait()
@@ -399,8 +406,9 @@ impl ChildGuard {
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        if self.leave {
-            // Ended well, its daemon left running (`finish`): reaped there.
+        if self.left {
+            // Ended well, its daemon left running (`finish_leaving`):
+            // reaped there.
             return;
         }
         self.stop_group();
@@ -663,7 +671,6 @@ fn run_until_exit(
             .spawn()
             .with_context(|| format!("start {program}"))?,
     );
-    child.leave = leave;
     // The pipe's write end was dropped above and the child holds the read
     // end: it sees the input, then end of file.
     let start = Instant::now();
@@ -683,7 +690,7 @@ fn run_until_exit(
     // What it wrote since the last look: cut to the limit, a program that
     // wrote too much and ended in between said less than it did.
     anyhow::ensure!(!too_much(&stdout, &stderr)?, "{program}: excessive output");
-    let status = child.finish()?;
+    let status = child.finish_leaving(leave)?;
     stderr.rewind()?;
     let mut diagnostic = Vec::new();
     stderr.take(DIAGNOSTIC).read_to_end(&mut diagnostic)?;
@@ -1204,6 +1211,48 @@ mod tests {
                 Instant::now() < deadline,
                 "descendant survived cancellation"
             );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// A tool that mounts, cancelled while it asks (the user cancelled,
+    /// or went elsewhere), is stopped with what it started, as any: only
+    /// one that ended well leaves its daemon.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_program_left_running_is_stopped_when_cancelled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let marker = tmp.path().join("pid");
+        let cancel = CancelToken::new();
+        let (stop, output) = (cancel.clone(), marker.clone());
+        let worker = std::thread::spawn(move || {
+            run_leaving(
+                Command::new("sh")
+                    .args(["-c", "sleep 30 & printf '%s' \"$!\" > \"$1\"; wait", "test"])
+                    .arg(output),
+                &stop,
+                Duration::from_secs(10),
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let pid = loop {
+            if let Ok(pid) = std::fs::read_to_string(&marker)
+                .unwrap_or_default()
+                .parse::<u32>()
+            {
+                break pid;
+            }
+            assert!(Instant::now() < deadline, "never started");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        cancel.cancel();
+        assert!(worker.join().unwrap().is_err());
+        loop {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"));
+            if stat.is_err() || stat.unwrap().split_whitespace().nth(2) == Some("Z") {
+                break;
+            }
+            assert!(Instant::now() < deadline, "what it started survived");
             std::thread::sleep(Duration::from_millis(5));
         }
     }
