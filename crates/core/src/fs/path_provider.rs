@@ -658,9 +658,11 @@ impl OpenLocation for PathLocation {
     fn close(&self) {
         self.ctx.cancel.cancel();
         if let Some(shared) = self.shared.lock().take() {
-            // Native watcher and directory descriptor cleanup stays off the UI.
+            // Native watcher and directory descriptor cleanup stays off the
+            // UI, and out of the remote's lane: a server that stopped
+            // answering holds its lane, and closing reads nothing of it.
             self.ctx.scheduler.spawn_in(
-                shared.lane,
+                Lane::SHARED,
                 Priority::Background,
                 "fs.close",
                 CancelToken::new(),

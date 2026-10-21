@@ -47,7 +47,9 @@ impl Lane {
     }
 }
 
-/// How many jobs of one lane run at once.
+/// How many jobs of one lane run at once, in a pool of three workers or
+/// more; in a smaller one, one fewer than its workers, so a remote never
+/// holds them all.
 pub const LANE_RUNS: usize = 2;
 
 /// A job running this long while work waits and no worker is free holds
@@ -111,6 +113,12 @@ struct Queue {
     waiting: usize,
     /// Workers started in place of held ones (`STUCK`).
     extra: usize,
+    /// How many jobs of one lane run at once: `LANE_RUNS`, but always one
+    /// worker fewer than the pool's, so no remote takes them all.
+    lane_runs: usize,
+    /// A look in `STUCK` at whether a worker is held is planned: work
+    /// waits, no worker is free, none held long enough yet.
+    looking: bool,
 }
 
 /// A lane's jobs running, and those waiting their turn.
@@ -127,10 +135,22 @@ impl Queue {
         while let Some(task) = self.heap.pop() {
             if let Some(key) = task.lane.0 {
                 let lane = self.lanes.entry(key).or_default();
-                if lane.running >= LANE_RUNS {
+                if lane.running >= self.lane_runs {
                     if task.cancel.is_cancelled() {
                         dropped.push(task);
                     } else {
+                        // A lane held (a server that stopped answering)
+                        // parks what is asked of it meanwhile: what was
+                        // cancelled since goes now and then, outside the
+                        // lock.
+                        if lane.parked.len() >= 64 && lane.parked.len().is_power_of_two() {
+                            let (gone, kept): (Vec<Task>, Vec<Task>) =
+                                std::mem::take(&mut lane.parked)
+                                    .into_iter()
+                                    .partition(|t| t.cancel.is_cancelled());
+                            lane.parked = kept.into();
+                            dropped.extend(gone);
+                        }
                         lane.parked.push(task);
                     }
                     continue;
@@ -175,6 +195,22 @@ impl Queue {
 
     /// Whether to start a worker in place of one held: work waits, no
     /// worker is free, and fewer stand in than jobs have run past `STUCK`.
+    /// Whether to plan a look, in `STUCK`, at whether a worker is held:
+    /// work waits and no worker is free, but none has run long enough to be
+    /// stood in for yet.
+    fn wants_a_look(&mut self, workers: usize) -> bool {
+        if self.looking
+            || self.shutdown
+            || self.waiting > 0
+            || self.heap.is_empty()
+            || self.extra >= workers
+        {
+            return false;
+        }
+        self.looking = true;
+        true
+    }
+
     fn wants_another(&mut self, workers: usize) -> bool {
         if self.shutdown || self.waiting > 0 || self.heap.is_empty() || self.extra >= workers {
             return false;
@@ -233,7 +269,11 @@ impl Drop for Owner {
         let queued = {
             let mut q = self.0.queue.lock();
             q.shutdown = true;
-            std::mem::take(&mut q.heap)
+            let mut queued: Vec<Task> = std::mem::take(&mut q.heap).into_vec();
+            for lane in q.lanes.values_mut() {
+                queued.extend(std::mem::take(&mut lane.parked));
+            }
+            queued
         };
         self.0.cv.notify_all();
         // Jobs can own handles and resources: drop them outside the lock.
@@ -253,7 +293,10 @@ impl Scheduler {
             workers
         };
         let inner = Arc::new(Inner {
-            queue: Mutex::new(Queue::default()),
+            queue: Mutex::new(Queue {
+                lane_runs: LANE_RUNS.min(workers.saturating_sub(1)).max(1),
+                ..Queue::default()
+            }),
             cv: Condvar::new(),
             idle: Condvar::new(),
             seq: AtomicU64::new(0),
@@ -320,10 +363,13 @@ impl Scheduler {
             job: Box::new(job),
         });
         let another = q.wants_another(self.inner.workers);
+        let look = !another && q.wants_a_look(self.inner.workers);
         drop(q);
         self.inner.cv.notify_one();
         if another {
             start_standing_in(&self.inner);
+        } else if look {
+            look_later(&self.inner);
         }
     }
 
@@ -379,6 +425,27 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     /// The token of the job a worker runs now ([`job_cancelled`]).
     static JOB: std::cell::RefCell<Option<CancelToken>> = const { std::cell::RefCell::new(None) };
+}
+
+thread_local! {
+    /// The job the calling worker runs now: its pool and sequence number,
+    /// for [`progress`].
+    static RUNNING: std::cell::RefCell<Option<(std::sync::Weak<Inner>, u64)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Say that the job the calling thread runs goes on: a job that serves
+/// several requests in turn (a remote's thumbnails) is not held, however
+/// long it has run (`Scheduler::stalled`). Nothing outside a job.
+pub fn progress() {
+    let _ = RUNNING.try_with(|running| {
+        if let Some((pool, seq)) = &*running.borrow()
+            && let Some(inner) = pool.upgrade()
+            && let Some(began) = inner.queue.lock().began.get_mut(seq)
+        {
+            began.1 = Instant::now();
+        }
+    });
 }
 
 /// Whether the job the calling thread runs was cancelled since it began:
@@ -500,6 +567,30 @@ pub fn release_on_workers() {
     }
 }
 
+/// Look again in `STUCK` at whether a worker is held while work waits, and
+/// stand in for it: work queued while every worker had only just begun
+/// would otherwise wait for the next job asked.
+fn look_later(inner: &Arc<Inner>) {
+    let held = Arc::downgrade(inner);
+    let started = std::thread::Builder::new()
+        .name("skwir-workers-look".into())
+        .spawn(move || {
+            std::thread::sleep(STUCK);
+            let Some(inner) = held.upgrade() else { return };
+            let another = {
+                let mut q = inner.queue.lock();
+                q.looking = false;
+                q.wants_another(inner.workers)
+            };
+            if another {
+                start_standing_in(&inner);
+            }
+        });
+    if started.is_err() {
+        inner.queue.lock().looking = false;
+    }
+}
+
 /// Start a worker in place of one a job holds (`STUCK`).
 fn start_standing_in(inner: &Arc<Inner>) {
     let inner_for = Arc::clone(inner);
@@ -516,7 +607,7 @@ fn start_standing_in(inner: &Arc<Inner>) {
 /// A worker: the pool's own (`standing_in` false) runs until the pool is
 /// dropped; one started in place of a held one ends once idle for
 /// [`LINGER`].
-fn worker(inner: &Inner, standing_in: bool) {
+fn worker(inner: &Arc<Inner>, standing_in: bool) {
     // Whether this worker ran a job, or was asked to release, since it
     // last released.
     let mut ran = false;
@@ -595,14 +686,16 @@ fn worker(inner: &Inner, standing_in: bool) {
 }
 
 /// Run one job, timed, its panic caught.
-fn run(inner: &Inner, task: Task) {
+fn run(inner: &Arc<Inner>, task: Task) {
     let t = Instant::now();
     JOB.with(|job| *job.borrow_mut() = Some(task.cancel.clone()));
+    RUNNING.with(|running| *running.borrow_mut() = Some((Arc::downgrade(inner), task.seq)));
     // A job that panics (a malformed file in a third-party parser, for
     // instance) must not take the worker thread with it: the pool is
     // never respawned, and the caller would wait forever for a result.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(task.job));
     JOB.with(|job| job.borrow_mut().take());
+    RUNNING.with(|running| running.borrow_mut().take());
     let took = t.elapsed();
     if let Err(payload) = outcome {
         let message = panic_message(&*payload);
@@ -722,6 +815,117 @@ mod tests {
         assert!(scheduler.wait_idle(Duration::from_secs(5)));
         assert_eq!(ran.load(AtomicOrdering::SeqCst), 5);
         assert!(scheduler.stalled(lane).is_none());
+    }
+
+    /// Work queued while every worker had only just begun is stood in for
+    /// all the same, a moment later: no further job need be asked.
+    #[test]
+    fn work_queued_behind_new_jobs_is_stood_in_for_later() {
+        let scheduler = Scheduler::new(1);
+        let (release, held) = crossbeam_channel::bounded::<()>(0);
+        let (began, has_begun) = crossbeam_channel::bounded(1);
+        scheduler.spawn(Priority::Normal, "held", CancelToken::new(), move || {
+            began.send(()).unwrap();
+            let _ = held.recv();
+        });
+        has_begun.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        scheduler.spawn(Priority::Normal, "next", CancelToken::new(), move || {
+            tx.send(()).unwrap();
+        });
+        rx.recv_timeout(STUCK + Duration::from_secs(5))
+            .expect("a worker stood in, though nothing more was asked");
+        drop(release);
+        assert!(scheduler.wait_idle(Duration::from_secs(5)));
+    }
+
+    /// A pool of two keeps a worker from a remote's lane: a server that
+    /// stops answering never holds all of a small pool, even before a
+    /// worker is stood in for.
+    #[test]
+    fn a_lane_never_takes_every_worker() {
+        let scheduler = Scheduler::new(2);
+        let lane = Lane::keyed(7);
+        let (release, held) = crossbeam_channel::bounded::<()>(0);
+        let ran = Arc::new(AtomicU64::new(0));
+        for _ in 0..3 {
+            let (held, ran) = (held.clone(), Arc::clone(&ran));
+            scheduler.spawn_in(lane, Priority::Visible, "held", CancelToken::new(), move || {
+                ran.fetch_add(1, AtomicOrdering::SeqCst);
+                let _ = held.recv();
+            });
+        }
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        scheduler.spawn(Priority::Background, "here", CancelToken::new(), move || {
+            tx.send(()).unwrap();
+        });
+        rx.recv_timeout(STUCK / 2)
+            .expect("a worker was left for this machine's work");
+        assert_eq!(ran.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(scheduler.pending(), 2);
+        drop(release);
+        assert!(scheduler.wait_idle(Duration::from_secs(5)));
+        assert_eq!(ran.load(AtomicOrdering::SeqCst), 3);
+    }
+
+    /// A job that says it goes on is not taken as held: a remote's
+    /// thumbnails, made one after another in one job, do not make its
+    /// folder say its server stopped answering.
+    #[test]
+    fn a_job_that_goes_on_is_not_stalled() {
+        // Outside a job, it says nothing.
+        progress();
+        let scheduler = Scheduler::new(2);
+        let lane = Lane::keyed(7);
+        let (step, steps) = crossbeam_channel::bounded::<()>(0);
+        let (done, stepped) = crossbeam_channel::bounded::<()>(0);
+        scheduler.spawn_in(lane, Priority::Visible, "steps", CancelToken::new(), move || {
+            while steps.recv().is_ok() {
+                progress();
+                done.send(()).unwrap();
+            }
+        });
+        for _ in 0..3 {
+            std::thread::sleep(Duration::from_millis(400));
+            step.send(()).unwrap();
+            stepped.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        let stalled = scheduler.stalled(lane).expect("it runs");
+        assert!(stalled < Duration::from_millis(600), "{stalled:?}");
+        drop(step);
+        assert!(scheduler.wait_idle(Duration::from_secs(5)));
+    }
+
+    /// The jobs waiting their lane's turn are let go of with the pool.
+    #[test]
+    fn a_dropped_pool_lets_go_of_parked_jobs() {
+        let token = Arc::new(());
+        let (release, held) = crossbeam_channel::bounded::<()>(0);
+        let ran = Arc::new(AtomicU64::new(0));
+        let scheduler = Scheduler::new(3);
+        let lane = Lane::keyed(7);
+        for _ in 0..4 {
+            let (held, ran, token) = (held.clone(), Arc::clone(&ran), Arc::clone(&token));
+            scheduler.spawn_in(lane, Priority::Visible, "held", CancelToken::new(), move || {
+                ran.fetch_add(1, AtomicOrdering::SeqCst);
+                let _ = held.recv();
+                drop(token);
+            });
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while ran.load(AtomicOrdering::SeqCst) < LANE_RUNS as u64 {
+            assert!(Instant::now() < deadline, "the lane's jobs began");
+            std::thread::yield_now();
+        }
+        drop(scheduler);
+        assert_eq!(Arc::strong_count(&token), 1 + LANE_RUNS, "only the running jobs hold it");
+        drop(release);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Arc::strong_count(&token) > 1 {
+            assert!(Instant::now() < deadline, "the running jobs ended");
+            std::thread::yield_now();
+        }
+        assert_eq!(ran.load(AtomicOrdering::SeqCst), LANE_RUNS as u64);
     }
 
     /// A job that holds its worker past `STUCK` while work waits is stood

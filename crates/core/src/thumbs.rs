@@ -195,6 +195,33 @@ impl ThumbRequest {
     }
 }
 
+/// A thumbnail worker unwinding: counted out of its lane.
+struct Leaving<'a> {
+    this: &'a Arc<Thumbnails>,
+    lane: Lane,
+}
+
+impl Drop for Leaving<'_> {
+    fn drop(&mut self) {
+        self.this.worker_ended(self.lane);
+    }
+}
+
+/// A request whose providers unwound: no longer in flight, and unavailable
+/// (nothing draws it) until the next ask after a change of providers.
+struct Unwound<'a> {
+    this: &'a Arc<Thumbnails>,
+    key: Key,
+}
+
+impl Drop for Unwound<'_> {
+    fn drop(&mut self) {
+        let mut s = self.this.state.lock();
+        s.in_flight.remove(&self.key);
+        s.unavailable.insert(self.key);
+    }
+}
+
 /// What waits for a worker: how much it is wanted is its [`Flight`]'s,
 /// which a frame asking again updates in place.
 struct Queued {
@@ -530,10 +557,30 @@ impl Thumbnails {
         let this = Arc::clone(self);
         self.scheduler
             .spawn_in(lane, priority, "thumb", self.lifetime.child(), move || {
+                // Ended by a panic, the worker is counted out all the same:
+                // its lane would otherwise never get another.
+                let leaving = Leaving {
+                    this: &this,
+                    lane,
+                };
                 // Every request of its lane queued meanwhile, one after the
                 // other.
                 while this.work_one(lane) {}
+                std::mem::forget(leaving);
             });
+    }
+
+    /// A worker of `lane` ends: another may start for it.
+    fn worker_ended(&self, lane: Lane) {
+        let mut s = self.state.lock();
+        if lane.is_shared() {
+            s.running = s.running.saturating_sub(1);
+        } else if let Some(running) = s.remote.get_mut(&lane) {
+            *running = running.saturating_sub(1);
+            if *running == 0 {
+                s.remote.remove(&lane);
+            }
+        }
     }
 
     /// Workers taking requests at most: all but one, at least one.
@@ -594,14 +641,8 @@ impl Thumbnails {
                 .min_by_key(|(_, q)| (in_flight[&q.key].priority, std::cmp::Reverse(q.seq)))
                 .map(|(i, _)| i);
             let Some(i) = best else {
-                if lane.is_shared() {
-                    s.running = s.running.saturating_sub(1);
-                } else if let Some(running) = s.remote.get_mut(&lane) {
-                    *running = running.saturating_sub(1);
-                    if *running == 0 {
-                        s.remote.remove(&lane);
-                    }
-                }
+                drop(s);
+                self.worker_ended(lane);
                 return false;
             };
             let q = s.queue.swap_remove(i);
@@ -611,6 +652,14 @@ impl Thumbnails {
             let resume = q.resume.filter(|r| r.providers == s.providers);
             (q.key, q.req, cancel, s.providers, q.seq, resume)
         };
+        if !lane.is_shared() {
+            // One job makes a remote's thumbnails one after the other: each
+            // begun says its server answers (`Scheduler::stalled`).
+            crate::scheduler::progress();
+        }
+        // A provider that panics (a decoder's bug): the request ends as one
+        // nothing draws, rather than pending for the session.
+        let unwound = Unwound { this: self, key };
         let providers: Vec<Arc<dyn ThumbnailProvider>> = self
             .providers
             .read()
@@ -661,6 +710,8 @@ impl Thumbnails {
             }
             tried |= p.stage() != Stage::Cache;
         }
+        // The providers ran without unwinding.
+        std::mem::forget(unwound);
         let cancelled = cancel.is_cancelled();
         if let Some((provider, busy)) = busy
             && !cancelled
@@ -856,6 +907,28 @@ mod tests {
             ThumbState::Ready(_)
         ));
         assert_eq!(decoder.calls.load(Ordering::Relaxed), 1);
+    }
+
+    /// A provider that panics (a decoder's bug) ends its request as one
+    /// nothing draws, and its worker is counted out: the next request is
+    /// made, rather than every later one waiting for a worker that never
+    /// comes.
+    #[test]
+    fn a_provider_that_panics_strands_nothing() {
+        let t = Thumbnails::new(Scheduler::new(2));
+        let decoder = Fake::new("decoder", Stage::Generate, true);
+        *decoder.during.lock() = Some(Box::new(|| panic!("a decoder's bug")));
+        t.register("core", decoder.clone());
+        assert!(matches!(
+            wait_ready(&t, &req(1)),
+            ThumbState::Unavailable
+        ));
+        assert!(matches!(wait_ready(&t, &req(2)), ThumbState::Ready(_)));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while t.state.lock().running > 0 {
+            assert!(std::time::Instant::now() < deadline, "a worker never counted out");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
     }
 
     /// A file no provider that makes thumbnails takes is still looked for
