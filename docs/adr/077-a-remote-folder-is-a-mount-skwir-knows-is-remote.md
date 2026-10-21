@@ -174,5 +174,5 @@ Revises ADR-021: its direction kept, its steps decided.
 - What a hung NFS hard mount holds stays held: a plan reading it waits
   on its thread, as the kernel waits; lanes keep the rest going.
 - Not built yet: Automatic's Small files where reads proved fast; servers
-  found on the local network (GVfs's `network:///`); a remote folder
-  bookmarked by its address; Windows' and macOS's own connectors.
+  found on the local network (GVfs's `network:///`); renaming and moving
+  a remote bookmark; Windows' and macOS's own connectors.

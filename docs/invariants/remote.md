@@ -76,6 +76,9 @@ ADR-077 (which revises ADR-021).
   question); tabs keep it as its address (`App::address_of`), so a later
   start connects again; the folder remembered for the next start is
   never a remote's.
+- A remote folder bookmarked is kept by its address in the desktop's
+  shared bookmarks (`BookmarkEdit::AddAddress`, `uri::address_uri`), as
+  other file managers keep theirs, never by its mount's path.
 - An agent's call connects only once the user allowed it.
 - The address field completes the server being typed (`sftp://me@ho`)
   with those known: mounted, the tools', the remote bookmarks, and for

@@ -45,6 +45,18 @@ pub fn file_uri(path: &Path) -> String {
     format!("file://{encoded}")
 }
 
+/// A remote folder's address as a URI other programs read (GTK
+/// bookmarks, GVfs): `scheme://` then what follows it, its bytes escaped as
+/// a path's are (ADR-077). `rest` is the text after `scheme:`, its `%XX`
+/// already decoded: `//me@host/Two Words` gives `//me@host/Two%20Words`;
+/// a domain's `;` (`WORK;me@nas`) stays.
+pub fn address_uri(scheme: &str, rest: &[u8]) -> String {
+    /// [`PATH`], a domain's `;` kept.
+    const ADDRESS: &AsciiSet = &PATH.remove(b';');
+    let encoded = percent_encoding::percent_encode(rest, ADDRESS);
+    format!("{scheme}:{encoded}")
+}
+
 /// [`file_uri`] of a Windows path: `C:\a b` is `file:///C:/a%20b`,
 /// `\\server\share\x` is `file://server/share/x`. Tested everywhere.
 #[cfg(any(windows, test))]
@@ -136,6 +148,18 @@ pub fn percent_decode(s: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_address_is_written_as_other_programs_read_it() {
+        assert_eq!(
+            address_uri("sftp", b"//me@example.com:2222/home/me/Two Words"),
+            "sftp://me@example.com:2222/home/me/Two%20Words"
+        );
+        assert_eq!(
+            address_uri("smb", b"//WORK;me@nas/photos/2024"),
+            "smb://WORK;me@nas/photos/2024"
+        );
+    }
 
     #[cfg(unix)]
     #[test]

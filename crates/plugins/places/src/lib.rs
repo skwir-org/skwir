@@ -301,12 +301,19 @@ pub fn scan() -> Vec<Place> {
     // A remote folder another file manager bookmarked opens by its address
     // (ADR-077), when a plugin opens its scheme.
     for b in skwir_platform::places::remote_bookmarks() {
-        out.push(Place::new(
-            "bookmarks",
-            b.title,
-            "folder-remote",
-            Location::parse(&b.address),
-        ));
+        let forget = Invocation::with_args(
+            "places.unbookmark_address",
+            &serde_json::json!({ "address": b.address }),
+        );
+        out.push(Place {
+            forget: Some(forget),
+            ..Place::new(
+                "bookmarks",
+                b.title,
+                "folder-remote",
+                Location::parse(&b.address),
+            )
+        });
     }
     for m in skwir_platform::places::mounts() {
         // A network's mount is the Network section's (the remote plugin).
@@ -685,6 +692,26 @@ struct BookmarkArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct AddressArgs {
+    /// The address as the bookmarks file writes it
+    /// (`sftp://me@example.com/home/me`).
+    address: String,
+    /// Its label; its last part when omitted.
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    undo: bool,
+}
+
+/// `address` as the bookmarks file writes it: a URI, escaped.
+fn address_uri(address: &Location) -> String {
+    skwir_platform::uri::address_uri(
+        &address.scheme,
+        &skwir_core::location::unescape(&address.rest),
+    )
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct RenameArgs {
     /// The bookmarked folder.
     path: PathArg,
@@ -758,26 +785,49 @@ fn invocation(edit: &BookmarkEdit, undo: bool) -> Invocation {
             "places.move_bookmark",
             serde_json::json!({ "path": arg(path), "before": before(b) }),
         ),
+        BookmarkEdit::AddAddress { address, title } => (
+            "places.bookmark_address",
+            serde_json::json!({ "address": address, "title": title }),
+        ),
+        BookmarkEdit::RemoveAddress { address } => (
+            "places.unbookmark_address",
+            serde_json::json!({ "address": address }),
+        ),
     };
     let mut args = args;
     args["undo"] = serde_json::json!(undo);
     Invocation::with_args(name, &args)
 }
 
+/// The name of the folder an address bookmark is of: its last part.
+fn address_name(edit: &BookmarkEdit) -> String {
+    let (BookmarkEdit::AddAddress { address, .. } | BookmarkEdit::RemoveAddress { address }) = edit
+    else {
+        return String::new();
+    };
+    let named = address.trim_end_matches('/');
+    let last = named.rsplit('/').next().unwrap_or(named);
+    String::from_utf8_lossy(&skwir_platform::uri::percent_decode(last)).into_owned()
+}
+
 /// What an edit did, in a sentence, or what it found when it did nothing.
 /// `shown` is the bookmark's label before the edit, when it had one.
 fn describe(edit: &BookmarkEdit, shown: Option<&str>, done: bool) -> Option<String> {
-    let own = || name_of(edit.path());
+    let own = || edit.path().map_or_else(|| address_name(edit), name_of);
     let before = || shown.map_or_else(own, str::to_owned);
     Some(match (edit, done) {
-        (BookmarkEdit::Add { title, .. }, true) => {
+        (BookmarkEdit::Add { title, .. } | BookmarkEdit::AddAddress { title, .. }, true) => {
             format!("Bookmarked “{}”", title.clone().unwrap_or_else(own))
         }
-        (BookmarkEdit::Add { .. }, false) => format!("“{}” is already bookmarked", before()),
-        (BookmarkEdit::Remove { .. }, true) => {
+        (BookmarkEdit::Add { .. } | BookmarkEdit::AddAddress { .. }, false) => {
+            format!("“{}” is already bookmarked", before())
+        }
+        (BookmarkEdit::Remove { .. } | BookmarkEdit::RemoveAddress { .. }, true) => {
             format!("Removed “{}” from bookmarks", before())
         }
-        (BookmarkEdit::Remove { .. }, false) => format!("“{}” is not bookmarked", own()),
+        (BookmarkEdit::Remove { .. } | BookmarkEdit::RemoveAddress { .. }, false) => {
+            format!("“{}” is not bookmarked", own())
+        }
         (BookmarkEdit::Rename { title, .. }, true) => format!(
             "Renamed bookmark “{}” to “{}”",
             before(),
@@ -814,10 +864,19 @@ impl Places {
                 );
                 return;
             }
-            let shown = skwir_platform::places::bookmarks()
-                .into_iter()
-                .find(|b| b.path == edit.path())
-                .map(|b| b.title);
+            let shown = match &edit {
+                BookmarkEdit::AddAddress { address, .. }
+                | BookmarkEdit::RemoveAddress { address } => {
+                    skwir_platform::places::remote_bookmarks()
+                        .into_iter()
+                        .find(|b| b.address == *address)
+                        .map(|b| b.title)
+                }
+                _ => skwir_platform::places::bookmarks()
+                    .into_iter()
+                    .find(|b| Some(b.path.as_path()) == edit.path())
+                    .map(|b| b.title),
+            };
             match skwir_platform::places::edit_bookmarks(&edit) {
                 Ok(Some(inverse)) => {
                     watcher.watch_bookmarks();
@@ -908,6 +967,16 @@ impl Plugin for PlacesPlugin {
             move |args, app| {
                 let undo = args.target.undo;
                 let path = target(app, args.target)?;
+                // A remote folder is kept by its address, which connects
+                // again once its mount is gone (ADR-077).
+                if let Some(address) = app.address_of(&Location::from_path(&path)) {
+                    let edit = BookmarkEdit::AddAddress {
+                        address: address_uri(&address),
+                        title: args.title,
+                    };
+                    places.edit(app, edit, undo, watcher.clone());
+                    return Ok(Outcome::Done);
+                }
                 // Restored or deleted, a folder of the trash leaves the
                 // bookmark leading nowhere.
                 if skwir_core::op::in_trash(&path).is_some() {
@@ -935,6 +1004,35 @@ impl Plugin for PlacesPlugin {
                 let undo = args.undo;
                 let path = target(app, args)?;
                 places.edit(app, BookmarkEdit::Remove { path }, undo, watcher.clone());
+                Ok(Outcome::Done)
+            },
+        );
+        let (places, watcher) = (self.places.clone(), self.watcher.clone());
+        app.commands.register::<AddressArgs, _>(
+            ID,
+            "places.bookmark_address",
+            "Bookmark an address",
+            "Add a remote folder's address (sftp://, smb://…) to the desktop's shared bookmarks",
+            move |args, app| {
+                let edit = BookmarkEdit::AddAddress {
+                    address: args.address,
+                    title: args.title,
+                };
+                places.edit(app, edit, args.undo, watcher.clone());
+                Ok(Outcome::Done)
+            },
+        );
+        let (places, watcher) = (self.places.clone(), self.watcher.clone());
+        app.commands.register::<AddressArgs, _>(
+            ID,
+            "places.unbookmark_address",
+            "Remove an address from bookmarks",
+            "Remove a remote folder's address from the desktop's shared bookmarks",
+            move |args, app| {
+                let edit = BookmarkEdit::RemoveAddress {
+                    address: args.address,
+                };
+                places.edit(app, edit, args.undo, watcher.clone());
                 Ok(Outcome::Done)
             },
         );

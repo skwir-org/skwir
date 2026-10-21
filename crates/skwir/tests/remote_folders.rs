@@ -111,6 +111,8 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
     // rclone alone: never the session's GVfs.
     let remotes = Remotes::with(vec![Arc::new(Rclone)]);
     app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    app.plugins
+        .add(Arc::new(skwir_plugin_places::PlacesPlugin::default()), &app);
     let pane = app.workspace.read().active_id();
     let address = format!("dav://127.0.0.1:{}/sub folder", served.port);
     app.navigate(pane, &Location::parse(&address)).unwrap();
@@ -158,6 +160,29 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
         .expect("a Network place");
     assert_eq!(place.title, "127.0.0.1", "named by its server");
     assert!(place.eject.is_some());
+
+    // Bookmarked, it is kept by its address, in the desktop's shared
+    // bookmarks (the test's own, its XDG folders being its own).
+    let bookmarks = skwir_core::xdg::config_home()
+        .unwrap()
+        .join("gtk-3.0/bookmarks");
+    let uri = format!("dav://127.0.0.1:{}/sub%20folder", served.port);
+    app.dispatch(&Invocation::with_args(
+        "places.bookmark",
+        &serde_json::json!({ "path": folder }),
+    ))
+    .unwrap();
+    until(&app, 10, "bookmarked by its address", || {
+        std::fs::read_to_string(&bookmarks).is_ok_and(|text| text.lines().any(|l| l == uri))
+    });
+    app.dispatch(&Invocation::with_args(
+        "places.unbookmark_address",
+        &serde_json::json!({ "address": uri }),
+    ))
+    .unwrap();
+    until(&app, 10, "the bookmark taken out", || {
+        !std::fs::read_to_string(&bookmarks).is_ok_and(|text| text.lines().any(|l| l == uri))
+    });
 
     // Move to Trash deletes for good there, asked as a deletion is.
     let hello = folder.join("hello.txt");

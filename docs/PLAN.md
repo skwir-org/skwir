@@ -1244,8 +1244,8 @@ protocol is a scheme a connector maps, or a connector.
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);
-  - a remote folder bookmarked by its address (Add to Bookmarks writes
-    the mount's path); rename and forget of a remote GTK bookmark;
+  - rename and reorder of a remote GTK bookmark (Forget and Add to
+    Bookmarks keep it by its address);
   - the sidebar's glyph for a remote where the icon theme has none
     (`folder-remote`, `network-server`);
   - Windows' shares (`smb://` as `\\server\share`) and macOS's own

@@ -588,18 +588,40 @@ pub enum BookmarkEdit {
         path: PathBuf,
         before: Option<PathBuf>,
     },
+    /// Bookmark a remote folder by its address (`sftp://me@host/docs`, as
+    /// `uri::address_uri` writes it), labelled `title`, last: what other
+    /// file managers write, and what opens it again once its mount is gone
+    /// (ADR-077).
+    AddAddress {
+        address: String,
+        title: Option<String>,
+    },
+    /// Remove the bookmark of `address`.
+    RemoveAddress {
+        address: String,
+    },
 }
 
 impl BookmarkEdit {
-    /// The folder the edit is about.
-    pub fn path(&self) -> &Path {
+    /// The folder the edit is about; `None` for an address's.
+    pub fn path(&self) -> Option<&Path> {
         match self {
             Self::Add { path, .. }
             | Self::Remove { path }
             | Self::Rename { path, .. }
-            | Self::Move { path, .. } => path,
+            | Self::Move { path, .. } => Some(path),
+            Self::AddAddress { .. } | Self::RemoveAddress { .. } => None,
         }
     }
+}
+
+/// The address a line bookmarks, when it is no folder's.
+fn address_of(line: &Line) -> Option<&str> {
+    if line.mark.is_some() {
+        return None;
+    }
+    let address = line.raw.trim().split(' ').next()?;
+    address.contains("://").then_some(address)
 }
 
 /// A line of the bookmarks file. Lines that are not folders (`sftp://`
@@ -727,6 +749,42 @@ pub fn edit_text(text: &str, edit: &BookmarkEdit) -> Option<(String, BookmarkEdi
             BookmarkEdit::Rename {
                 path: path.clone(),
                 title: old,
+            }
+        }
+        BookmarkEdit::AddAddress { address, title } => {
+            if lines.iter().any(|l| address_of(l) == Some(address)) {
+                return None;
+            }
+            let label = title
+                .as_deref()
+                .map(|t| {
+                    t.split(['\n', '\r'])
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .trim()
+                        .to_owned()
+                })
+                .filter(|t| !t.is_empty());
+            lines.push(Line {
+                raw: mark_line(address, label.as_deref()),
+                mark: None,
+            });
+            BookmarkEdit::RemoveAddress {
+                address: address.clone(),
+            }
+        }
+        BookmarkEdit::RemoveAddress { address } => {
+            let at = lines.iter().position(|l| address_of(l) == Some(address))?;
+            let title = lines[at]
+                .raw
+                .trim()
+                .split_once(' ')
+                .map(|(_, label)| label.trim().to_owned())
+                .filter(|l| !l.is_empty());
+            lines.retain(|l| address_of(l) != Some(address));
+            BookmarkEdit::AddAddress {
+                address: address.clone(),
+                title,
             }
         }
         BookmarkEdit::Move { path, before } => {
@@ -1236,6 +1294,49 @@ mod tests {
     }
 
     use super::*;
+
+    /// A remote folder is bookmarked by its address, last, and taken out
+    /// again by it, every other line as it was (ADR-077).
+    #[test]
+    fn an_address_is_bookmarked_and_taken_out_by_itself() {
+        let text = "file:///home/example/Documents\nsftp://old@example.com/ Old\n";
+        let address = "sftp://me@example.com/home/me/Two%20Words".to_owned();
+        let (added, inverse) = edit_text(
+            text,
+            &BookmarkEdit::AddAddress {
+                address: address.clone(),
+                title: Some("Work".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(added, format!("{text}{address} Work\n"));
+        assert_eq!(
+            inverse,
+            BookmarkEdit::RemoveAddress {
+                address: address.clone()
+            }
+        );
+        assert!(
+            edit_text(
+                &added,
+                &BookmarkEdit::AddAddress {
+                    address: address.clone(),
+                    title: None
+                }
+            )
+            .is_none(),
+            "already bookmarked"
+        );
+        let (removed, back) = edit_text(&added, &inverse).unwrap();
+        assert_eq!(removed, text);
+        assert_eq!(
+            back,
+            BookmarkEdit::AddAddress {
+                address,
+                title: Some("Work".into())
+            }
+        );
+    }
 
     /// The bookmarks another file manager made of remote folders are
     /// read as their addresses (ADR-077), named by their label or their
