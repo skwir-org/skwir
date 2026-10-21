@@ -13,13 +13,15 @@ use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::entry::EntryId;
 use skwir_core::location::{
-    EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
+    Completion, Completions, EmptyState, EventSink, ListingEvent, Location, LocationProvider,
+    OpenContext, OpenLocation,
 };
 use skwir_core::scheduler::Priority;
 
 use crate::Remotes;
-use crate::address::Address;
+use crate::address::{Address, Scheme};
 use crate::connector::Ask;
+use crate::known;
 
 pub struct Provider {
     scheme: &'static str,
@@ -66,6 +68,40 @@ impl LocationProvider for Provider {
 
     fn title(&self, location: &Location) -> Option<String> {
         Address::of_location(location).ok().map(|a| a.label())
+    }
+
+    /// The servers known, as the server is typed (`sftp://me@ho`): those
+    /// mounted, the tools' and the bookmarks', and for SFTP the hosts of
+    /// the user's ssh configuration. A folder's name after the server is
+    /// not completed: the server would be asked. Called on a worker.
+    fn complete(&self, rest: &str) -> Option<Completions> {
+        let typed = known::typing_server(rest)?;
+        let scheme = Scheme::from_name(self.scheme)?;
+        let mut addresses = self.remotes.known_addresses();
+        if scheme == Scheme::Sftp {
+            addresses.extend(
+                known::user_ssh_hosts()
+                    .iter()
+                    .filter_map(|host| known::sftp_of(host)),
+            );
+        }
+        let items = known::of_scheme(scheme, addresses)
+            .into_iter()
+            .map(|address| {
+                let server = known::authority(&address);
+                Completion {
+                    label: server.clone(),
+                    text: server,
+                    location: address.location(),
+                    inside: Some('/'),
+                }
+            })
+            .collect();
+        Some(Completions {
+            range: 2..rest.len(),
+            typed: typed.to_owned(),
+            items,
+        })
     }
 
     fn empty_state(&self, location: &Location) -> Option<EmptyState> {

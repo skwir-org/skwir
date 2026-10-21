@@ -65,7 +65,9 @@ Revises ADR-021: its direction kept, its steps decided.
    waiting their turn without holding a worker. A worker held a second
    while work waits and no worker is free is stood in for, up to the
    pool's size again. A remote that stops answering costs its own jobs
-   and some threads, never the window, local work, or another remote's.
+   and some threads, never the window, local work, or another remote's;
+   its folder's banner says it is not answering once its lane has run a
+   job three seconds.
    No lock shared beyond one remote is held across a call that reaches a
    path.
 
@@ -100,7 +102,9 @@ Revises ADR-021: its direction kept, its steps decided.
    address's place in the pane's history. Typed, bookmarked (GTK
    bookmarks other file managers write), given to `skwir`, navigated by a
    script: one way. An agent's connection is asked about first: the
-   server is told who the user is. A remote folder is named by its
+   server is told who the user is. The address field completes the
+   server being typed with those known (mounted, the tools', the
+   bookmarks, the hosts of the user's ssh configuration for SFTP). A remote folder is named by its
    address where the user reads or keeps it: the sidebar's Network place
    of each mount roots its trail (`me@host › docs`), a deletion's question
    says `sftp://me@host/docs`, and tabs keep a remote folder as its
@@ -171,7 +175,5 @@ Revises ADR-021: its direction kept, its steps decided.
   on its thread, as the kernel waits; lanes keep the rest going.
 - Not built yet: Automatic's Small files where reads proved fast; servers
   found on the local network (GVfs's `network:///`); a remote folder
-  bookmarked by its address; address completion of known servers; the
-  sidebar's free space of a remote; "not answering" said where a lane
-  stalls (`Scheduler::stalled` tells it); Windows' and macOS's own
-  connectors.
+  bookmarked by its address; the sidebar's free space of a remote;
+  Windows' and macOS's own connectors.

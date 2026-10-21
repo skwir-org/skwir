@@ -9,7 +9,15 @@ pub struct State {
     open: Option<Arc<dyn OpenLocation>>,
     pub visible: bool,
     timer: Option<Task<()>>,
+    /// A look, a second on, at whether a remote still being listed stopped
+    /// answering (`message`): asked again while it is listed, never once
+    /// it is.
+    remote: Option<Task<()>>,
 }
+
+/// How long a remote's lane runs a job before the banner says the remote
+/// is not answering (ADR-077).
+const NOT_ANSWERING: Duration = Duration::from_secs(3);
 impl Shell {
     pub fn sync_loading(&mut self, cx: &mut Context<Self>) {
         let pending: Vec<_> = {
@@ -43,9 +51,30 @@ impl Shell {
             if !pending || open.is_none() {
                 ui.loading.visible = false;
                 ui.loading.timer = None;
+                ui.loading.remote = None;
                 continue;
             }
-            if ui.loading.timer.is_some() || ui.loading.visible {
+            if ui.loading.visible {
+                // Shown for a remote's folder: looked at again in a second,
+                // to say when it stops answering.
+                let remote = open
+                    .as_ref()
+                    .and_then(|o| o.location().path())
+                    .is_some_and(|path| skwir_core::fs::reach::of(&path).is_some());
+                if remote && ui.loading.remote.is_none() {
+                    ui.loading.remote = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(Duration::from_secs(1)).await;
+                        let _ = this.update(cx, |shell, cx| {
+                            if let Some(ui) = shell.panes.iter_mut().find(|ui| ui.id == pane) {
+                                ui.loading.remote = None;
+                            }
+                            cx.notify();
+                        });
+                    }));
+                }
+                continue;
+            }
+            if ui.loading.timer.is_some() {
                 continue;
             }
             let open = open.expect("pending location");
@@ -96,9 +125,28 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<String> {
     if !pending(shell, pane) {
         return None;
     }
-    Some(if shell.ui().place.search {
-        "Searching…".into()
-    } else {
+    if shell.ui().place.search {
+        return Some("Searching…".into());
+    }
+    let location = pane_state.location()?.clone();
+    drop(ws);
+    // A remote's folder whose server stopped answering says so (ADR-077):
+    // its lane has run a job that long.
+    if let Some(path) = location.path()
+        && let Some((remote, known)) = shell.app.remote(&path)
+        && shell
+            .app
+            .scheduler
+            .stalled(remote.lane())
+            .is_some_and(|ran| ran >= NOT_ANSWERING)
+    {
+        let name = known.map_or_else(|| remote.point.display().to_string(), |known| known.label);
+        return Some(format!("{name} is not answering…"));
+    }
+    // What is no folder says what it opens (an address connecting).
+    Some(if location.is_path() {
         "Loading location…".into()
+    } else {
+        format!("Opening {}…", shell.app.location_title(&location))
     })
 }

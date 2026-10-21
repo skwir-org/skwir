@@ -2121,3 +2121,16 @@ from 0025aab2 to the commit of these docs.
   connector (its parser alone), macOS and Windows (compiled only), idle
   memory with a remote mounted (the plugin starts no thread at idle; not
   measured).
+- Later that night: the full suite (1808 tests) found the remote
+  settings on a page of their own (now General and Views, ADR-072); the
+  address field completes known servers (mounted, the tools', the
+  bookmarks, the user's ssh `Host` entries for SFTP); the loading banner
+  says "Opening <name>…" for an address and "<name> is not answering…"
+  once a remote's lane has run a job three seconds. Checked on Xvfb with
+  a WebDAV server through rclone: `dav://12` offered `127.0.0.1:47951`;
+  the server frozen with SIGSTOP, its folder said not to answer while
+  Home listed at once; resumed, the folder listed.
+- Found then: ssh takes its home from the user database, not `$HOME`, so
+  the first window check, accepting the test server's unknown host, had
+  written it into the user's `~/.ssh/known_hosts`; that one line was
+  removed, and remote.md says how a check avoids it.

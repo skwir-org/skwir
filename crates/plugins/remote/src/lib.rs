@@ -14,6 +14,7 @@ pub mod connector;
 pub mod fstab;
 pub mod gvfs;
 mod gvfs_spec;
+mod known;
 pub mod lan;
 mod mounter;
 mod provider;
@@ -706,6 +707,24 @@ impl Plugin for RemotePlugin {
 }
 
 impl Remotes {
+    /// The addresses known: those mounted, the servers the tools name, the
+    /// remote bookmarks. Lists GVfs's bridge and reads the bookmarks: on a
+    /// worker.
+    fn known_addresses(&self) -> Vec<Address> {
+        let mut known: Vec<Address> = self
+            .mounted()
+            .into_iter()
+            .filter_map(|m| m.recognised.address)
+            .collect();
+        known.extend(self.state.lock().servers.iter().map(|s| s.address.clone()));
+        known.extend(
+            skwir_platform::places::remote_bookmarks()
+                .into_iter()
+                .filter_map(|b| Address::parse(&b.address).ok()),
+        );
+        known
+    }
+
     /// Let go of the mount at `point`: what shows it goes home, then its
     /// tool lets go of it, on a worker.
     fn disconnect(&self, app: &App, point: PathBuf, force: bool) -> anyhow::Result<()> {

@@ -1237,16 +1237,16 @@ protocol is a scheme a connector maps, or a connector.
 - **F. The window.** Checked on Xvfb: an `sftp://` address typed, the
   host and the password asked in the window, the folder, its thumbnails,
   a preview, Delete, Eject, a restart reconnecting its tab, a refused
-  password ending the attempt. **Built and checked.**
+  password ending the attempt; the address field completing known
+  servers; a WebDAV server frozen (SIGSTOP) said not to answer while the
+  rest of the window went on. **Built and checked.**
 - **G. Left** (each its own step):
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);
   - a remote folder bookmarked by its address (Add to Bookmarks writes
     the mount's path); rename and forget of a remote GTK bookmark;
-  - the address field completing known servers' addresses;
   - the Network places' free space, measured in their lanes;
-  - "not answering" said where a lane stalls (`Scheduler::stalled`);
   - the sidebar's glyph for a remote where the icon theme has none
     (`folder-remote`, `network-server`);
   - Windows' shares (`smb://` as `\\server\share`) and macOS's own

@@ -32,6 +32,10 @@ ADR-077 (which revises ADR-021).
 - A worker busy past `STUCK` while work waits is replaced, up to the
   pool's size again: a call that never returns costs a thread, not the
   pool.
+- A remote whose lane has run a job for `NOT_ANSWERING` (three seconds)
+  while its folder is listed is said not to answer in the pane's banner
+  (`Scheduler::stalled`, `ui/loading.rs`), looked at again each second
+  while it is listed, never once it is.
 - No lock shared beyond one remote is held across a call that reaches a
   path (`inotify_add_watch`, `statvfs`, `open`): take what is needed,
   let go, call, then take the lock again.
@@ -73,6 +77,10 @@ ADR-077 (which revises ADR-021).
   start connects again; the folder remembered for the next start is
   never a remote's.
 - An agent's call connects only once the user allowed it.
+- The address field completes the server being typed (`sftp://me@ho`)
+  with those known: mounted, the tools', the remote bookmarks, and for
+  SFTP the `Host` entries of the user's ssh configuration. A folder after
+  the server is not completed: the server would be asked.
 
 ## Connectors
 
@@ -102,7 +110,11 @@ ADR-077 (which revises ADR-021).
   with `Asker::Connection`.
 - Test a connector against a server on this machine (`rclone serve`
   with the fixture's XDG folders: it keeps host keys in its cache), never
-  a real one, and never the session's GVfs: a GVfs of the test's own runs
+  a real one. ssh takes its home from the user database, never `$HOME`:
+  a test gives it `-F /dev/null` and a `UserKnownHostsFile` of its own
+  (`Sshfs`'s test fields), and a window check never accepts a host into
+  the user's known hosts (try SFTP's questions there and remove the line
+  after, or check through WebDAV and rclone); and never the session's GVfs: a GVfs of the test's own runs
   on a bus whose configuration lists GVfs's services alone, its runtime
   folder short enough for ssh's control socket
   (`crates/skwir/tests/remote_folders.rs`, `just remote-check`).
