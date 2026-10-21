@@ -934,8 +934,18 @@ fn copy_file(
         ctx.check_cancelled().is_ok()
     });
     if let Some(copied) = whole {
-        ctx.check_cancelled()?;
+        // Stopped by Cancel, the copy is cancelled, not failed.
+        if copied.is_err() {
+            ctx.check_cancelled()?;
+        }
         copied.with_context(|| format!("“{}” could not be copied", display_name(src)))?;
+        // Counted whole, whatever the system said as it went: Wine's copy
+        // says nothing, and its bytes were never counted, nor the plan
+        // paused between its files.
+        if let Ok(meta) = std::fs::symlink_metadata(dst) {
+            ctx.advance(meta.len().saturating_sub(written));
+        }
+        ctx.check_cancelled()?;
         if preserve_attributes {
             transfer_attributes(src, dst, ctx)?;
         }

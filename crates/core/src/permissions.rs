@@ -496,6 +496,9 @@ mod tests {
         assert!(!unmarked.holds(&marked.join("2026")));
     }
 
+    // Its paths are Unix's, which Windows reads as relative: Windows' own
+    // in the next test.
+    #[cfg(unix)]
     #[test]
     fn the_home_folder_is_read_for_a_tilde() {
         let home = Path::new("/home/someone");
@@ -511,6 +514,19 @@ mod tests {
         assert_eq!(expand("~other/x", Some(home)), None);
     }
 
+    /// A home with its drive, read for a tilde either way it is written.
+    #[cfg(windows)]
+    #[test]
+    fn the_home_folder_is_read_for_a_tilde_on_windows() {
+        let home = Path::new(r"C:\Users\someone");
+        assert_eq!(expand(r"~\.ssh", Some(home)), Some(home.join(".ssh")));
+        assert_eq!(expand("~/.ssh", Some(home)), Some(home.join(".ssh")));
+        assert_eq!(expand(r"relative\dir", Some(home)), None);
+        assert_eq!(expand("~other/x", Some(home)), None);
+    }
+
+    // Its paths are Unix's, in requests' and answers' text alike.
+    #[cfg(unix)]
     #[test]
     fn what_names_a_private_path_is_found_and_withheld() {
         let privacy = Privacy::folders([PathBuf::from("/home/someone/.ssh")]);
