@@ -44,22 +44,19 @@ impl Gvfs {
     }
 
     /// GVfs's FUSE bridge: the session's own (`$XDG_RUNTIME_DIR/gvfs`),
-    /// else the first the mount table lists (the user's alone: never
-    /// another's for a test's).
+    /// when mounted. Never another the mount table lists: `gio` speaks to
+    /// this session's GVfs alone, and a bridge of another runtime folder
+    /// is another user's, or the user's own while a window runs with a
+    /// runtime folder of its own (a test's), whose GVfs it must not reach.
     pub fn bridge(&self) -> Option<PathBuf> {
-        let bridges = skwir_core::fs::reach::bridges(BRIDGE);
         let own = self
             .runtime
             .clone()
-            .or_else(skwir_core::xdg::runtime_dir)
-            .map(|dir| dir.join("gvfs"));
-        if let Some(own) = own.filter(|own| bridges.contains(own)) {
-            return Some(own);
-        }
-        if self.runtime.is_some() {
-            return None;
-        }
-        bridges.into_iter().next()
+            .or_else(skwir_core::xdg::runtime_dir)?
+            .join("gvfs");
+        skwir_core::fs::reach::bridges(BRIDGE)
+            .contains(&own)
+            .then_some(own)
     }
 
     /// The folder of the bridge that holds `top`'s mount: its spec says
@@ -138,7 +135,9 @@ impl Connector for Gvfs {
     }
 
     fn recognises(&self, remote: &Remote) -> Option<Recognised> {
-        if remote.fstype != BRIDGE {
+        // A mount of this session's GVfs alone: another's is not used,
+        // nor let go of through this session's `gio`.
+        if remote.fstype != BRIDGE || remote.point.parent() != self.bridge().as_deref() {
             return None;
         }
         let name = remote.point.file_name()?.to_str()?;
@@ -408,6 +407,25 @@ fn answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A GVfs mount of another runtime folder than the session's (another
+    /// user's, or the user's while a test window runs) is not this
+    /// session's: neither used, nor let go of, nor connected through.
+    #[test]
+    fn another_sessions_bridge_is_not_this_ones() {
+        let gvfs = Gvfs {
+            runtime: Some(PathBuf::from("/nonexistent/skwir-test-runtime")),
+            ..Gvfs::default()
+        };
+        assert_eq!(gvfs.bridge(), None);
+        let theirs = Remote {
+            point: PathBuf::from("/run/user/1000/gvfs/sftp:host=example.com"),
+            fstype: BRIDGE.to_owned(),
+            source: "gvfsd-fuse".into(),
+            device: None,
+        };
+        assert!(gvfs.recognises(&theirs).is_none());
+    }
 
     #[test]
     fn gio_mounts_questions_are_read_whole() {
