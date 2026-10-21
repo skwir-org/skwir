@@ -112,6 +112,13 @@ and `notes.agree` are core `notes.*` commands.
   Restore instead of Move to Trash; drop or paste trashes; Cut takes files
   out where pasted; Delete deletes for good.
 
+## Remote folders
+
+- An address (`sftp:`, `smb:`, `dav:`… `rclone:`) is a location that
+  connects, then redirects to the mounted folder
+  (`ListingEvent::Redirect`): the folder is the location, the address its
+  name. [remote.md](remote.md) has the rest.
+
 ## Searches
 
 - Pills and the address field: [shell.md](shell.md). The query language

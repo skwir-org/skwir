@@ -2040,3 +2040,84 @@ decoders included, no GPL plugin.
 - Not checked: anything on Windows or a Mac (Direct3D's and VideoToolbox's
   decoders, Core Audio, WASAPI's output, DirectWrite), the stall when
   subtitles are turned off while paused (seen under Wine in the trial).
+
+## Remote folders (2026-10-21)
+
+ADR-077, revising ADR-021, after the user chose (2026-10-20) mounts Skwir
+knows are remote over Skwir speaking protocols, sshfs first for SFTP,
+and thumbnails per remote with a cautious Automatic. Built overnight,
+from 0025aab2 to the commit of these docs.
+
+- **Core.** `fs::reach` reads mountinfo (getfsstat on macOS, a path's
+  share or drive type on Windows) at most once a second into the network
+  mounts, each GVfs mount apart; `volume::Mounted` gained its device.
+  The scheduler's lanes run two jobs of a remote at once, parking the
+  rest; a worker held a second while work waits and none is free is
+  stood in for (up to the pool's size again), the stand-in ending after
+  two idle seconds. Folder listing, stat, restat, changes, watch setup and
+  closing run in the folder's lane, refined by its device once opened.
+  The inotify hub adds watches outside its locks, a descriptor left
+  without subscriber during an add removed once no add runs.
+  `ListingEvent::Redirect` shows where an address leads in its place in
+  the history; scripts' listings follow it. `Registry::remotes`,
+  `App::remote`, `shows_thumbnail`, `address_of`, `refresh_remote`;
+  thumbnails one worker per remote in its lane; tabs saved by address;
+  the trash command deletes on FUSE remotes, asked, and `put_trash`
+  never falls back to the home trash for a remote's file; references
+  across a remount resolve at their path; `Asker::Connection`.
+- **Platform and binary.** `askpass` (socket per connection, frames of
+  JSON), the binary answering as `SSH_ASKPASS` before anything starts,
+  `process::run_leaving` (status peeked before reaping; Windows' job
+  released), remote GTK bookmarks.
+- **The remote plugin.** Addresses (`sftp`, `ssh`, `smb`, `cifs`, `dav`,
+  `davs`, `webdav`, `webdavs`, `ftp`, `ftps`, `nfs`, `afp`, `rclone`),
+  the Connector trait, sshfs, GVfs (`gio mount` driven by its prompts,
+  `LC_MESSAGES=C`), rclone (`--vfs-cache-mode minimal`, ad hoc
+  connection strings, SFTP through the user's ssh), fstab; the Network
+  section, Eject, thumbnails per remote in the data file
+  (`remote.chosen`), LAN told by address or name; searches not entering
+  network mounts; Usage waiting for Refresh on a remote; places listing
+  no network mount under Devices.
+- **Tests.** Core: lanes (a held lane holds only its own; a held worker
+  stood in for), reach's classification and GVfs folders, the redirect
+  (history, scripts' listing), addresses below a remote. Platform:
+  askpass round trip, a daemon left running only by a tool that ended
+  well. Binary: skwir as `SSH_ASKPASS` asking a socket and printing.
+  Plugin: addresses, GVfs's folder names and prompts, sshfs's and
+  rclone's arguments, fstab's entries, LAN ranges; an rclone mount of a
+  WebDAV server on this machine (listed, a 1 MiB file on the server once
+  closed, let go of with its folder). `remote_folders.rs`: a WebDAV
+  address navigated in a pane (redirect, the Network place, thumbnails
+  shown, tab by address, Move to Trash deleting for good, Eject); sshfs
+  over SFTP with a password and an unknown host asked through the real
+  `skwir` binary; GVfs on a bus of the test's own (services of GVfs alone,
+  a short runtime folder: GVfs's ssh control socket did not fit under
+  `~/.cache/skwir-tests`, "Connection failed") connecting an SFTP server
+  with a password. `just remote-check` (sshfs 3.7.6, GVfs 1.60.3, GLib's
+  gio and rclone 1.75.2 from nixpkgs): 25 tests passed. The core's 359
+  and the plugins' touched suites passed.
+- **The window** on Xvfb :91 (lavapipe), an `rclone serve sftp` with a
+  password on 127.0.0.1: the address typed with Ctrl+L; ssh's
+  unknown-host question in the review (Connect), its password in the
+  masked prompt; the folder under `tester@127.0.0.1` in the trail and the
+  Network section with Eject; Photos' thumbnails (the local network);
+  the place's Thumbnails submenu; a preview; Eject (the pane went home,
+  mount and folder gone); a tab restored by its address after the mount
+  was let go of, asking the password again; Delete asking "deleted for
+  good", the file gone on the server. What it found was put right:
+  Escape at the password let ssh ask again three times (a refusal now
+  ends the attempt, "you cancelled", Try again); a withdrawn prompt
+  stayed open; the per-remote choice was not saved; the deletion named
+  the mount's path (now `sftp://tester@127.0.0.1:47950/Photos`) and
+  ended in two periods; the last folder remembered could be a remote's.
+- Pitfalls met: `rclone serve sftp` keeps host keys in its cache, and a
+  manual server without the fixture's XDG folders wrote the user's
+  `~/.cache/rclone` twice (removed both times); `dbus-run-session` starts
+  the standard session services (KeePassXC, the portals), so the test's
+  bus has a configuration of its own.
+- Not checked: a real NAS or server over a network (latency, a server
+  that stops answering mid-listing, NFS hard mounts), GVfs's SMB, FTP and
+  WebDAV backends (its SFTP alone), rclone's cloud remotes, fstab's
+  connector (its parser alone), macOS and Windows (compiled only), idle
+  memory with a remote mounted (the plugin starts no thread at idle; not
+  measured).

@@ -185,7 +185,10 @@ impl Shell {
             };
             // A remote's files are read for a picture only as its rule
             // says (ADR-077): a picture made already is shown all the same.
-            let bytes = e.metadata.value(keys::SIZE).and_then(skwir_core::Value::as_u64);
+            let bytes = e
+                .metadata
+                .value(keys::SIZE)
+                .and_then(skwir_core::Value::as_u64);
             if !self.app.shows_thumbnail(&path, bytes) {
                 return ThumbView::Unavailable;
             }

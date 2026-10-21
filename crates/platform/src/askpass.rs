@@ -9,7 +9,9 @@
 //! What crosses is a question and its answer, never logged: a frame of
 //! its length then its JSON, each way.
 
-use std::io::{Read, Write};
+#[cfg(unix)]
+use std::io::Read;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// The variable naming the socket to ask through.
@@ -46,14 +48,17 @@ pub fn kind_of(prompt: &str, said: Option<&str>) -> Kind {
     }
 }
 
+#[cfg(unix)]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Answer {
     answer: Option<String>,
 }
 
 /// The longest frame read: a prompt, a password.
+#[cfg(unix)]
 const FRAME: u32 = 64 * 1024;
 
+#[cfg(unix)]
 fn write_frame(out: &mut impl Write, bytes: &[u8]) -> std::io::Result<()> {
     let len = u32::try_from(bytes.len()).map_err(|_| std::io::Error::other("frame too long"))?;
     out.write_all(&len.to_le_bytes())?;
@@ -61,6 +66,7 @@ fn write_frame(out: &mut impl Write, bytes: &[u8]) -> std::io::Result<()> {
     out.flush()
 }
 
+#[cfg(unix)]
 fn read_frame(input: &mut impl Read) -> std::io::Result<Vec<u8>> {
     let mut len = [0u8; 4];
     input.read_exact(&mut len)?;

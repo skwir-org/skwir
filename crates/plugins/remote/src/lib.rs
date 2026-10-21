@@ -270,11 +270,6 @@ impl Remotes {
                         .entry(host.clone())
                         .or_insert_with(|| lan::local(&host));
                 }
-                let lost: std::collections::HashSet<PathBuf> = mounted
-                    .iter()
-                    .filter(|m| std::fs::symlink_metadata(&m.remote.point).is_err_and(|e| lost(&e)))
-                    .map(|m| m.remote.point.clone())
-                    .collect();
                 {
                     let mut state = this.state.lock();
                     if state.generation != generation {
@@ -282,10 +277,41 @@ impl Remotes {
                     }
                     state.servers = servers;
                     state.local = local;
-                    state.lost = lost;
+                    state
+                        .lost
+                        .retain(|point| mounted.iter().any(|m| m.remote.point == *point));
                 }
-                if let Some(app) = weak.upgrade() {
-                    this.publish(&app, &mounted);
+                let Some(app) = weak.upgrade() else {
+                    return;
+                };
+                this.publish(&app, &mounted);
+                // Whether each mount's program still answers, asked in the
+                // remote's own lane: a server that stopped answering holds
+                // that alone (ADR-077).
+                let mounted = Arc::new(mounted);
+                for m in mounted.iter() {
+                    let (this, weak, all) = (this.clone(), weak.clone(), Arc::clone(&mounted));
+                    let point = m.remote.point.clone();
+                    app.scheduler.spawn_in(
+                        m.remote.lane(),
+                        Priority::Background,
+                        "remote-alive",
+                        lifetime.clone(),
+                        move || {
+                            let gone = std::fs::symlink_metadata(&point).is_err_and(|e| lost(&e));
+                            let changed = {
+                                let mut state = this.state.lock();
+                                if gone {
+                                    state.lost.insert(point)
+                                } else {
+                                    state.lost.remove(&point)
+                                }
+                            };
+                            if changed && let Some(app) = weak.upgrade() {
+                                this.publish(&app, &all);
+                            }
+                        },
+                    );
                 }
             },
         );

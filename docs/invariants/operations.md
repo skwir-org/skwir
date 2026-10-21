@@ -222,6 +222,11 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 
 The trash plugin reads ([locations.md](locations.md)); the core acts.
 
+- On a remote ([remote.md](remote.md)): a folder a program mounts across
+  a network keeps no trash, so Move to Trash makes a deletion, asked; a
+  kernel share keeps its own `.Trash-<uid>`; nothing is ever copied from
+  a remote into this machine's trash to be trashed.
+
 - **Restore** names the item (`Restore::item`), merges a folder into one
   already there, and brings back the companions trashed with it.
 - A file inside a trashed folder is restored alone (`RestorePart`, undone

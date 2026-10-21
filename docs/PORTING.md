@@ -233,6 +233,13 @@ Left:
 - Linux's own: `core/fs/volume.rs` (sysfs, mountinfo),
   `platform/places.rs` (udev, `lsblk`, `udisksctl`, `flush`'s `syncfs`).
 - `vim/lib.rs`, `jump/xbel.rs` **(c)**.
+- Remote folders (ADR-077): `fs::reach` reads `getfsstat`'s `MNT_LOCAL`
+  on a Mac and a share's path or a mapped drive (`GetDriveTypeW`) on
+  Windows, compiled only. The connectors are Linux's: sshfs and rclone
+  need a FUSE there (macFUSE or FUSE-T, WinFsp), GVfs and fstab are
+  absent; the system's own shares (`\\server\share`, a Mac's
+  `/Volumes`) have no connector yet. The askpass socket is Unix's: on
+  Windows ssh's questions do not reach the window (a named pipe would).
 
 ## 7. Types, icons, applications (step E)
 

@@ -132,8 +132,11 @@ working in an area, also read that area's rules (see
 - **Network.** Only the `map-tiles` plugin makes requests (ADR-020), and
   only once the user chose a background that downloads; nothing a file
   names is fetched. The core has no network layer, and Skwir speaks no
-  file-system protocol (ADR-021). A new use of the network needs an ADR
-  of its own.
+  file-system protocol: a remote folder is a mount an installed tool
+  makes (sshfs, GVfs, rclone, the system's), which the `remote` plugin
+  starts when an address is opened, and Skwir holds no credential
+  (ADR-077, `docs/invariants/remote.md`). A new use of the network needs
+  an ADR of its own.
 - **Every system (ADR-035).** Skwir is built for Linux, macOS and
   Windows; `just lint-all` compiles all three (`check-cross`).
   - Code only one system has sits behind `cfg` where it is used, with the
@@ -321,6 +324,14 @@ working in an area, also read that area's rules (see
   opened (`IN_OPEN`), so a watcher that rescans on any event rescans
   forever on its own reads. Drop `EventKind::Access`, as `fs/watch.rs`
   and Usage do.
+- **Remote paths (ADR-077).** A path may be on a server that stops
+  answering, where `stat` waits for good. Work that reads one runs in its
+  remote's lane (`fs::reach::lane`, `Scheduler::spawn_in`,
+  `Shell::off_thread_in`), never holding a lock other folders share
+  across the call; whether a path is remote is asked of the mount table
+  in memory (`fs::reach`), never by reading it. What is read unasked
+  there (thumbnails, read-ahead, walks below a root, Usage) follows
+  `docs/invariants/remote.md`.
 - **Cancellation.** The scheduler skips cancelled jobs before they start;
   running jobs check their token themselves. Use child tokens for work
   tied to the app or an open location, and cancel superseded requests.
@@ -391,6 +402,7 @@ Binding. Read the file for the area before working in it.
 | [reader.md](docs/invariants/reader.md) | PDF readers: PDFium, Poppler and MuPDF workers, continuous scrolling, page coordinates, atlas eviction |
 | [media.md](docs/invariants/media.md) | audio and video: GStreamer worker, frame slots, generations, fullscreen controls, the atlas |
 | [accessibility.md](docs/invariants/accessibility.md) | what a screen reader hears: roles and names, built only while one listens, focus and the active descendant, lists, what is exposed, `just a11y-check` |
+| [remote.md](docs/invariants/remote.md) | remote folders: reach and lanes, what differs on a network (thumbnails, refresh, walks, trash, references), addresses and their redirect, connectors, credentials, testing against servers on this machine |
 
 ## Layout
 
@@ -459,6 +471,7 @@ just bench-check           generate bench-data/ on demand and enforce budgets
 just idle-pss              idle memory and first frame on this display (ADR-033)
 just smoke                 the release window on an X display of its own (CI)
 just a11y-check            what a screen reader hears of it, read over AT-SPI
+just remote-check          remote folders against servers on this machine (sshfs, GVfs, rclone from nixpkgs)
 just screenshots           the README's screenshots, made again (docs/images)
 just deny / notices        dependency licences and advisories; the packages' notices
 just plugins               build the plugins from outside as modules (target/plugins)

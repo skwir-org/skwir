@@ -131,7 +131,10 @@ control plugin's `run`:
   its like, and any folder holding a `.private` file) never reach an agent
   or a plugin from outside. Check with `App::privacy()` wherever such code
   is handed a file; it reads markers, so call it off the window's thread.
-- Only `map-tiles` uses the network (`AGENTS.md`, "Engineering rules").
+- Only `map-tiles` makes requests of its own (`AGENTS.md`, "Engineering
+  rules"); the `remote` plugin reaches servers through the tools it starts
+  (ADR-077), and connects an address an agent opens only once the user
+  allowed it (`Asker::Connection`): the server is told who the user is.
 
 ## Plugins from outside (ADR-045, ADR-046, ADR-047)
 

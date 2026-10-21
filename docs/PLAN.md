@@ -31,7 +31,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-10-20)
+## Current status (2026-10-21)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
   version 0.2.0, released 2026-10-20 on GitHub and the AUR's three
@@ -40,7 +40,9 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   their gates not closed, as is much that no phase planned
   ([Built beyond the plan](#built-beyond-the-plan)).
 - **Next:** skwird's steps (ADR-050) and Phase 7, which the user put
-  after the release (2026-10-07). [What is left](#what-is-left) gathers
+  after the release (2026-10-07). [Remote folders](#remote-folders)
+  were built on 2026-10-21 (ADR-077): what they leave is in their
+  section. [What is left](#what-is-left) gathers
   the rest. From 0.3 a release's page is its changelog section above
   `### All changes` (docs/RELEASING.md).
 - **Blocked:** Phase 5b needs a Mac and a Windows machine
@@ -89,6 +91,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
 | [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; A, B and D wait for skwird (ADR-050) | — |
+| [Remote folders](#remote-folders) | A to F built and checked on Linux 2026-10-21 (ADR-077); G planned | — |
 | [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E planned (ADR-071, ADR-073) | — |
 | [Phase 7: AI](#phase-7-ai) | planned, after Release 0.1 | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
@@ -105,8 +108,8 @@ closes an item removes its line; work that leaves one adds it here.
 **Planned** (in the sections below): Phase 7 (AI); skwird's steps
 (ADR-050); the desktop's colors on macOS and Windows (step E); Phase 5b
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
-what is still Linux's); Phase 8. Remote file systems are a direction,
-nothing built (ADR-021: mounts listed and opened first, rclone later).
+what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
+leave (ADR-077).
 
 **Gates not closed:**
 - Maps: idle CPU after panning on geotagged pictures (`images10k` has
@@ -1194,6 +1197,66 @@ its own, every color readable on what it is drawn on.
   2026-10-19.** Not checked: Plasma, Xfce, Cinnamon and MATE reading
   their fonts, a screen reader on the long list, the session's own
   display.
+
+---
+
+## Remote folders
+
+ADR-077 (revising ADR-021), docs/invariants/remote.md. Built 2026-10-21
+on Linux: how each step was built and checked is in `docs/STATUS-LOG.md`,
+"Remote folders".
+
+**Goal:** an SFTP, SMB, WebDAV, FTP, NFS or rclone address opens as a
+folder where everything works, through a tool the user has installed;
+a server that stops answering holds nothing but its own work; adding a
+protocol is a scheme a connector maps, or a connector.
+
+- **A. Reach and lanes (core).** `fs::reach`: the mount table, a path
+  remote or not, each GVfs mount apart; the scheduler's lanes (two jobs
+  of a remote at once) and its stand-ins for held workers; the folder
+  listing in its remote's lane; the watcher's lock no longer held across
+  `inotify_add_watch`. **Built.**
+- **B. Addresses and what is known of a remote (core, UI).**
+  `ListingEvent::Redirect`; `Registry::remotes` (address, name,
+  thumbnails rule); thumbnails and read-ahead by rule, in lanes; tabs
+  kept by address; remote folders read again when the window comes back;
+  the preview's and Properties' reads in lanes; `Asker::Connection`.
+  **Built.**
+- **C. Operations.** Move to Trash on a FUSE remote deletes, asked;
+  nothing copied from a remote into the home trash; references across a
+  remount by path; staging notes not looked at on a remote. **Built.**
+- **D. Credentials.** `skwir_platform::askpass` and the `skwir`
+  executable as `SSH_ASKPASS`; `process::run_leaving` for tools that
+  daemonize. **Built.**
+- **E. The remote plugin.** sshfs, GVfs, rclone and fstab connectors in
+  the user's order; the Network section with Eject and the servers the
+  tools know; thumbnails per remote (Automatic, Never, Small Files,
+  Always); remote GTK bookmarks; searches and Usage leaving remotes be.
+  **Built**, tested against servers on this machine (`just
+  remote-check`: rclone, sshfs, and a GVfs of the test's own).
+- **F. The window.** Checked on Xvfb: an `sftp://` address typed, the
+  host and the password asked in the window, the folder, its thumbnails,
+  a preview, Delete, Eject, a restart reconnecting its tab, a refused
+  password ending the attempt. **Built and checked.**
+- **G. Left** (each its own step):
+  - Automatic's Small files where reads proved fast (only the local
+    network is told now);
+  - servers found on the local network (GVfs's `network:///`, Avahi);
+  - a remote folder bookmarked by its address (Add to Bookmarks writes
+    the mount's path); rename and forget of a remote GTK bookmark;
+  - the address field completing known servers' addresses;
+  - the Network places' free space, measured in their lanes;
+  - "not answering" said where a lane stalls (`Scheduler::stalled`);
+  - the sidebar's glyph for a remote where the icon theme has none
+    (`folder-remote`, `network-server`);
+  - Windows' shares (`smb://` as `\\server\share`) and macOS's own
+    mounts as connectors; SFTP there through rclone with WinFsp or
+    macFUSE; all compiled only until Phase 5b;
+  - a GVfs mount made by another program is used, but its questions are
+    the desktop's, and GVfs's "remember the password" is not offered;
+  - ADR-077's point 8, if asked: a helper of Skwir's serving SFTP
+    through OpenSSH as a connector, then rclone's API for server-side
+    copies.
 
 ---
 

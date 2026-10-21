@@ -34,7 +34,7 @@ them by topic.
 | [018](018-tabs.md) | Tabs, dormant when hidden | built |
 | [019](019-terminal-panel.md) | A terminal panel on `alacritty_terminal` | built on Linux; compiled only elsewhere |
 | [020](020-maps.md) | Maps, their backgrounds, the first network requests | built |
-| [021](021-remote-file-systems.md) | Remote file systems come from installed tools | direction only; not built |
+| [021](021-remote-file-systems.md) | Remote file systems come from installed tools | direction; revised by 077 |
 | [022](022-maps-later.md) | Search by place, writing locations, offline names and backgrounds | parts 1–3 built; part 4 partly |
 | [023](023-fields-on-demand.md) | Fields read on demand | built |
 | [024](024-key-schemes-and-the-users-keys.md) | Key schemes and the user's keys, in layers | built |
@@ -90,3 +90,4 @@ them by topic.
 | [074](074-windows-builds-to-try-are-made-on-linux.md) | Windows builds to try are made on Linux with cargo-zigbuild: gpui's shaders compiled as it starts, resources by a named resource compiler, no console behind the window; a zip and a per-user installer (wixl) of one folder, notices for Windows included; tried under Wine | the zip and installer built and tried under Wine; the window never drawn there, nothing run on Windows |
 | [075](075-macos-builds-to-try-are-made-on-linux.md) | macOS builds to try are made on Linux for Apple silicon: Apple's SDK by xmac, clang and ld64.lld, gpui's shaders compiled as it starts; skwir.app signed ad hoc and zipped, no folder of the building machine in it; looked over on Linux | built and looked over on Linux; nothing run on a Mac |
 | [076](076-audio-and-video-off-linux-through-a-trimmed-gstreamer.md) | Audio and video on Windows and macOS through the media helper Linux has, with GStreamer's own build carried, cut down and aligned with the AppImage: FFmpeg's decoders (gst-libav) behind the system's, no GPL plugin; kept apart from any GStreamer installed; amends ADR-041 | built; Windows' plays clips under Wine, macOS's looked over, never run |
+| [077](077-a-remote-folder-is-a-mount-skwir-knows-is-remote.md) | A remote folder is a mount Skwir knows is remote: reach and lanes in the core, addresses that connect then show the mounted folder, connectors (sshfs, GVfs, rclone, fstab) in the remote plugin, credentials asked by the window through ssh's askpass and never kept; the way to Skwir speaking protocols kept open | built and checked on Linux; macOS and Windows compiled |

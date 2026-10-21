@@ -1,7 +1,9 @@
 # ADR-021: Remote file systems come from installed tools
 
-Status: accepted, 2026-09-27, as a direction. Not built (checked
-2026-10-11); each step is decided further when it starts.
+Status: accepted, 2026-09-27, as a direction; revised by ADR-077
+(2026-10-21), which decided and built its steps: mounts Skwir knows are
+remote, through sshfs, GVfs, rclone and fstab, and the way to rclone's API
+kept open.
 
 ## Context
 
