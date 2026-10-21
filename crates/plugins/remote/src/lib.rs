@@ -566,24 +566,32 @@ impl Plugin for RemotePlugin {
         {
             previous.cancel();
         }
-        app.settings.declare(SettingSpec::text(
-            CONNECTORS,
-            "Tools that open addresses",
-            "Tried in this order, among those installed that open the address's protocol: sshfs, gvfs, rclone, fstab",
-            ORDER,
-        ));
-        app.settings.declare(SettingSpec::choice(
-            THUMBNAILS,
-            "Thumbnails in remote folders",
-            "For a remote you chose nothing for in its menu. Automatic shows them on the local network only",
-            "automatic",
-            &[
-                ("automatic", "Automatic"),
-                ("never", "Never"),
-                ("small", "Small files"),
-                ("always", "Always"),
-            ],
-        ));
+        app.settings.declare(
+            SettingSpec::text(
+                CONNECTORS,
+                "Tools that open addresses",
+                "The tools that mount an sftp://, smb:// or other address, tried in this order among those installed that open it: sshfs, gvfs, rclone, fstab.",
+                ORDER,
+            )
+            .page(skwir_core::settings::page::GENERAL)
+            .section("Remote folders"),
+        );
+        app.settings.declare(
+            SettingSpec::choice(
+                THUMBNAILS,
+                "Thumbnails in remote folders",
+                "For a remote you chose nothing for in its menu: Automatic shows them on the local network only, as reading every picture across the internet would be slow.",
+                "automatic",
+                &[
+                    ("automatic", "Automatic"),
+                    ("never", "Never"),
+                    ("small", "Small files"),
+                    ("always", "Always"),
+                ],
+            )
+            .page(skwir_core::settings::page::VIEWS)
+            .section("Thumbnails"),
+        );
         app.settings.declare(SettingSpec::data(
             CHOSEN,
             "The thumbnails chosen for each remote, by its address",
