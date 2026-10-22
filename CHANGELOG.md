@@ -30,6 +30,27 @@
   answer is ("as of Yesterday 03:00", plocate's database at its last
   update): a file made or renamed since is not in it. Agents and scripts
   are told too (`entries` answers `as_of`).
+- **Remote folders**: type an address (`sftp://`, `smb://`, `dav://`,
+  `ftp://`, `nfs://`, `afp://`…) and Skwir mounts it with what you have
+  installed for it (sshfs, GVfs, rclone, or your fstab's line), then
+  shows its folder; a password or a server it does not know is asked in
+  the window and never kept. They sit in the sidebar's Network section,
+  are bookmarked by their address, and Eject lets go of them. Copies to
+  and from a server go in batches through rsync, sftp or gio where those
+  are faster, a large file comes down in several parts at once, a copy
+  within one server is made on the server, and many files are deleted
+  there in one go. Undo of a copy works where a server keeps no trash:
+  what was made is removed, while it is unchanged.
+- **Actions at once**: a rename, a new folder or a tag no longer waits
+  behind a long copy it shares nothing with, and copies between
+  different disks or servers run together (four actions at most); two
+  long ones on one disk still take turns, which ends sooner than sharing
+  it. Undo takes back the last thing you asked for, and waits for it if
+  it still runs.
+- **Retry**: an action an error stopped (a server gone, a disk full, a
+  drive pulled out) is retried from where it stopped, from its message
+  or `skwir cmd retry`. A large file goes on from what got across once
+  its last part is checked, and Undo takes the whole action back.
 
 ## 0.2.0 (2026-10-20)
 
