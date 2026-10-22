@@ -774,8 +774,10 @@ impl Thumbnails {
         true
     }
 
+    /// Called with no lock held, as the executor's (a waker may call back).
     fn wake(&self) {
-        if let Some(w) = self.waker.lock().as_ref() {
+        let waker = self.waker.lock().clone();
+        if let Some(w) = waker {
             w();
         }
     }

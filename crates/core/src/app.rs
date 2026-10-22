@@ -555,10 +555,12 @@ impl App {
         })
     }
 
-    /// Invoke the wake hook, if any.
+    /// Invoke the wake hook, if any, with no lock held (as
+    /// [`Self::waker_handle`]): a hook may set the waker or wake again.
     pub fn wake(&self) {
-        if let Some(w) = self.waker.read().as_ref() {
-            w();
+        let hook = self.waker.read().clone();
+        if let Some(hook) = hook {
+            hook();
         }
     }
 

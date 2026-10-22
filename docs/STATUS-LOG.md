@@ -3421,3 +3421,34 @@ and fix bug or problems you encounter on the way". This is the first.
   bus asking the manager to start `kio-fuse.service`, its folder listed
   from kio-fuse's mount, the sidebar naming the server with its port.
   Torn down whole (15 processes of the session, the scope, the mount).
+
+## CI's essentials: three races in core (2026-10-23)
+
+- CI's `essentials` failed at `winding_down_stops_a_paused_copy_and_leaves_no_staging_folder`
+  (wind-down not done in 10 s). Reproduced here with the test's home on a
+  tmpfs of its own (a user namespace's): 3 of 3 failed as on CI; on btrfs
+  never. A copy where nothing clones says 0 bytes first: the meter woke
+  for it, the test's waker found nothing done, and the wake throttle kept
+  the bytes after quiet, so the pause came from the executor's own wake,
+  at the step's end. That wake called the waker under its lock; the
+  waker paused the plan, which woke again: the plans' thread waited on
+  itself.
+- Fixed: the executor's, the thumbnails' and `App::wake` call their hook
+  with no lock held (as `App::waker_handle` did); the meter wakes for no
+  0 bytes. `a_waker_may_call_the_executor_back` pauses a plan from its
+  waker: it failed as CI did before. 20 of 20 pass on tmpfs.
+- Found under load (two core suites at once): `work_queued_behind_new_jobs_is_stood_in_for_later`
+  failed once in 16. A look at held workers planned before the job it
+  found began (the only worker took it once free) found it younger than
+  `STUCK`, planned nothing more, and the work queued meanwhile waited for
+  the next job asked. A look that finds the jobs too young now looks
+  again when the youngest will have run `STUCK`;
+  `a_look_too_early_looks_again` fails without it, every time.
+- Found the same way, once in 16: `a_paused_plan_cancelled_stops_where_it_waits`.
+  A plan told `Finished` was still listed as running until its function
+  returned, so a Resume read as it ended found it. It is let go of
+  before `Finished` is told.
+- Checked: CI's essentials (`cargo fmt --check`, clippy and nextest of
+  core and the plugin API) green; 20 core suites, two at once, 436 of
+  436 each; `just test`, 1932 of 1932. Not run: `lint-all`'s Windows and
+  macOS builds (core only changed, nothing system-specific).

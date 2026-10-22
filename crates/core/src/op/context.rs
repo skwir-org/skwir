@@ -121,7 +121,14 @@ impl Meter {
         steps.total = self.total.load(Ordering::Relaxed);
     }
 
+    /// Count `bytes` done and wake, at most every `WAKE_EVERY`; no bytes
+    /// wake no one. A copy that says 0 first (from where it went on, on a
+    /// volume that clones nothing) took the wake its first bytes were
+    /// owed, and with it a pause asked as they came.
     fn advance(&self, bytes: u64) {
+        if bytes == 0 {
+            return;
+        }
         self.done.fetch_add(bytes, Ordering::Relaxed);
         let Some(wake) = &self.wake else {
             return;

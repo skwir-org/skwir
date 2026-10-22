@@ -716,8 +716,11 @@ impl Executor {
         self.wake();
     }
 
+    /// Called with no lock held: a waker may call the executor back (pause
+    /// a plan), which wakes again.
     fn wake(&self) {
-        if let Some(w) = self.waker.lock().as_ref() {
+        let waker = self.waker.lock().clone();
+        if let Some(w) = waker {
             w();
         }
     }
@@ -1725,7 +1728,7 @@ impl Executor {
             pause: Arc::clone(&pause),
             meter: Arc::clone(&meter),
         });
-        let _running = Running(self, plan.id);
+        let listed = Running(self, plan.id);
         let ctx = StepContext::new(cancel.clone(), pause, Arc::clone(&meter))
             .with_companions(Arc::clone(&self.companions.lock()))
             .with_transfers(Arc::clone(&self.transfers.lock()))
@@ -1905,6 +1908,9 @@ impl Executor {
             _ => None,
         };
         record(&result, inverse, stop);
+        // Told finished, it runs no more: Pause, Resume and Cancel asked
+        // as its end is read find nothing.
+        drop(listed);
         self.emit(ExecEvent::Finished {
             plan: plan.id,
             applied,
@@ -2571,5 +2577,42 @@ mod tests {
         );
         assert_eq!(applied.load(Ordering::SeqCst), 0, "not even the first step");
         assert!(!executor.can_undo());
+    }
+
+    #[test]
+    fn a_waker_may_call_the_executor_back() {
+        // Pausing a plan from the waker as it starts tells it, which wakes
+        // again from inside the waker: called under its own lock, it held
+        // the plans' thread for good (a test's waker did, on CI).
+        let executor = Executor::new(Scheduler::new(1));
+        let applied = Arc::new(AtomicUsize::new(0));
+        let plan = Plan::with_steps(
+            "one",
+            vec![Box::new(Probe {
+                applied: Arc::clone(&applied),
+                conflict: false,
+            }) as Box<dyn Operation>],
+        );
+        let id = plan.id;
+        let weak = Arc::downgrade(&executor);
+        executor.set_waker(Some(Arc::new(move || {
+            if let Some(executor) = weak.upgrade() {
+                executor.pause(id);
+            }
+        })));
+        executor.execute(plan, CancelToken::new());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let event = executor
+                .events()
+                .recv_timeout(left)
+                .expect("the plan was paused");
+            if matches!(event, ExecEvent::Paused { plan } if plan == id) {
+                break;
+            }
+        }
+        assert!(executor.wind_down(std::time::Duration::from_secs(10)));
+        assert_eq!(applied.load(Ordering::SeqCst), 0, "held before its step");
     }
 }

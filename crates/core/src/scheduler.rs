@@ -233,6 +233,25 @@ impl Queue {
         self.extra += 1;
         true
     }
+
+    /// After a look that stood in for none: how long until a job running
+    /// now will have run `STUCK`, while work still waits and no worker is
+    /// free. `None` ends the looking (the next job asked plans another).
+    fn look_again_in(&mut self, workers: usize) -> Option<Duration> {
+        let wanted =
+            !self.shutdown && self.waiting == 0 && !self.heap.is_empty() && self.extra < workers;
+        let ran = self
+            .began
+            .values()
+            .map(|(_, began)| began.elapsed())
+            .filter(|ran| *ran < STUCK)
+            .max()
+            .filter(|_| wanted);
+        if ran.is_none() {
+            self.looking = false;
+        }
+        ran.map(|ran| STUCK.saturating_sub(ran))
+    }
 }
 
 /// Per-label timing, for surfacing slow providers.
@@ -590,21 +609,29 @@ pub fn release_on_workers() {
 
 /// Look again in `STUCK` at whether a worker is held while work waits, and
 /// stand in for it: work queued while every worker had only just begun
-/// would otherwise wait for the next job asked.
+/// would otherwise wait for the next job asked. A look planned before the
+/// job it finds began (a worker took it once free) finds it too young:
+/// it looks again when that job will have run `STUCK`.
 fn look_later(inner: &Arc<Inner>) {
     let held = Arc::downgrade(inner);
     let started = std::thread::Builder::new()
         .name("skwir-workers-look".into())
         .spawn(move || {
-            std::thread::sleep(STUCK);
-            let Some(inner) = held.upgrade() else { return };
-            let another = {
+            let mut wait = STUCK;
+            loop {
+                std::thread::sleep(wait);
+                let Some(inner) = held.upgrade() else { return };
                 let mut q = inner.queue.lock();
-                q.looking = false;
-                q.wants_another(inner.workers)
-            };
-            if another {
-                start_standing_in(&inner);
+                if q.wants_another(inner.workers) {
+                    q.looking = false;
+                    drop(q);
+                    start_standing_in(&inner);
+                    return;
+                }
+                match q.look_again_in(inner.workers) {
+                    Some(after) => wait = after,
+                    None => return,
+                }
             }
         });
     if started.is_err() {
@@ -886,6 +913,41 @@ mod tests {
         });
         rx.recv_timeout(STUCK + Duration::from_secs(5))
             .expect("a worker stood in, though nothing more was asked");
+        drop(release);
+        assert!(scheduler.wait_idle(Duration::from_secs(5)));
+    }
+
+    /// A look planned before the job it finds began (asked while another
+    /// still ran) looks again once that job has run `STUCK`: under load
+    /// it found it too young, planned nothing more, and the work queued
+    /// meanwhile waited for good.
+    #[test]
+    fn a_look_too_early_looks_again() {
+        let scheduler = Scheduler::new(1);
+        let (end_first, first_ends) = crossbeam_channel::bounded::<()>(0);
+        let (began, has_begun) = crossbeam_channel::bounded(1);
+        scheduler.spawn(Priority::Normal, "first", CancelToken::new(), move || {
+            began.send(()).unwrap();
+            let _ = first_ends.recv();
+        });
+        has_begun.recv_timeout(Duration::from_secs(5)).unwrap();
+        // Queued behind the first: a look is planned in `STUCK`.
+        let (release, held) = crossbeam_channel::bounded::<()>(0);
+        let (began, has_begun) = crossbeam_channel::bounded(1);
+        scheduler.spawn(Priority::Normal, "held", CancelToken::new(), move || {
+            began.send(()).unwrap();
+            let _ = held.recv();
+        });
+        // It begins half of `STUCK` later, younger than `STUCK` at the look.
+        std::thread::sleep(STUCK / 2);
+        drop(end_first);
+        has_begun.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        scheduler.spawn(Priority::Normal, "next", CancelToken::new(), move || {
+            tx.send(()).unwrap();
+        });
+        rx.recv_timeout(STUCK * 2 + Duration::from_secs(5))
+            .expect("a worker stood in once the held job had run long enough");
         drop(release);
         assert!(scheduler.wait_idle(Duration::from_secs(5)));
     }
