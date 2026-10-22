@@ -150,4 +150,6 @@ seventh decision for KIO alone.
   hung (a matter of KWallet's, not Skwir's). kio-fuse started as Plasma
   starts it was tried too: its bus handing the activation to a `systemd
   --user` of the trial's own (`kio-fuse.service`), Skwir opened a folder
-  there and F5 read it again.
+  there and F5 read it again; and Skwir inside a whole Plasma session of
+  the trial's own (KWin nested on Xvfb, ksmserver, kded, plasmashell),
+  opening a `dav://` folder through kio-fuse so started.

@@ -3401,3 +3401,23 @@ and fix bug or problems you encounter on the way". This is the first.
 - `just mtp-check` again on the phone: MTP and the camera both pass, the
   camera's test now also copying without `gio` (Skwir's own batch, a file
   alone by its step), undone, its folders removed.
+
+## Skwir inside a Plasma session (2026-10-22, ADR-081)
+
+- A Plasma 6.7 session of the trial's own, nested on Xvfb (a login on the
+  user's account was left as it is, their choice): `startplasma-wayland`
+  with `systemdBoot=false` under a `systemd --user` of the trial's own
+  (a delegated scope, an empty target), its bus that manager's
+  `dbus.service` with systemd activation and `standard_session_servicedirs`
+  over KDE's packages alone; KWin on its X11 backend with Mesa's
+  software GL (`__EGL_VENDOR_LIBRARY_FILENAMES` = Mesa's). It ran KWin,
+  Xwayland, ksmserver, plasma_session, kded6, plasmashell (drawing
+  nothing on Xvfb), PipeWire and Baloo, all known by the trial's runtime
+  folder.
+- Skwir, started with the session's environment (its Wayland display,
+  `XDG_CURRENT_DESKTOP=KDE`), drew in KWin's frame with Plasma's accent.
+  Typed keys reached it as other keys (the nested KWin's keyboard map),
+  so the address went as its argument: `dav://` opened through KIO, the
+  bus asking the manager to start `kio-fuse.service`, its folder listed
+  from kio-fuse's mount, the sidebar naming the server with its port.
+  Torn down whole (15 processes of the session, the scope, the mount).

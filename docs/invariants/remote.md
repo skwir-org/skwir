@@ -363,7 +363,13 @@ ADR-077 (which revises ADR-021).
   bus its own `dbus.service` (`<listen>systemd:</listen>`,
   `--address=systemd: --systemd-activation`; a manager joins only a bus
   it runs). Every `systemctl --user` there runs with the trial's runtime
-  folder alone (`env -i`), or it reaches the user's manager.
+  folder alone (`env -i`), or it reaches the user's manager. A whole
+  Plasma session runs so too, nested on Xvfb: `startplasma-wayland`
+  (`systemdBoot=false` in the trial's `startkderc`), the bus's
+  `standard_session_servicedirs` over KDE's packages alone, KWin's X11
+  backend on Mesa (`__EGL_VENDOR_LIBRARY_FILENAMES` naming Mesa's: the
+  NVIDIA driver draws nothing on Xvfb). Keys typed through the nested KWin
+  arrive as others: give Skwir its address as its argument.
 - A server that runs as root (unfs3 with rpcbind for NFS, netatalk for
   AFP) runs in namespaces of its own, user (root mapped to the user,
   subordinate ids beside it), network, mount and pid, with a GVfs of its
