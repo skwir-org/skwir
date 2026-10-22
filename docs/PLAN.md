@@ -1337,8 +1337,9 @@ protocol is a scheme a connector maps, or a connector.
     lets it go, not seen); remote places of KDE (`user-places.xbel`)
     as servers;
   - a refresh racing the watcher where a FUSE program makes numbers
-    anew (sshfs) may list a name twice: seen once, under the whole
-    workspace's tests, not reproduced (STATUS-LOG, 2026-10-22);
+    anew (sshfs) listed a name twice once: the listing now removes what
+    a name held before (one name, one row); the race itself not
+    reproduced;
   - an iPhone's (AFC) and a camera's (gPhoto2) GVfs mounts, not
     measured, at the bridge's pace;
   - Automatic's Small files where reads proved fast (only the local

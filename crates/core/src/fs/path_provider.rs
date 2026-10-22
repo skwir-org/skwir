@@ -155,6 +155,30 @@ impl Names {
     }
 }
 
+/// What a listing keeps of `previous` (the ids noted when it was asked
+/// for, on a refresh) and what is gone: those it did not see, and every id
+/// a name it listed belonged to before (`replaced`), which no other name
+/// holds now. One name, one row: an id the watcher added after `previous`
+/// was noted, its file numbered anew by its FUSE program since, would
+/// otherwise stay beside the new one.
+fn gone_after(
+    previous: Option<Vec<EntryId>>,
+    seen: &[EntryId],
+    replaced: Vec<EntryId>,
+) -> (Vec<EntryId>, Vec<EntryId>) {
+    let seen: hashing::Set<EntryId> = seen.iter().copied().collect();
+    let (kept, mut gone): (Vec<EntryId>, Vec<EntryId>) = previous
+        .unwrap_or_default()
+        .into_iter()
+        .partition(|id| seen.contains(id));
+    for id in replaced {
+        if !seen.contains(&id) && !gone.contains(&id) {
+            gone.push(id);
+        }
+    }
+    (kept, gone)
+}
+
 /// An open directory.
 pub struct PathLocation {
     location: Location,
@@ -342,6 +366,9 @@ impl Shared {
         };
         let mut batch = Vec::with_capacity(self.ctx.batch_size);
         let mut seen: Vec<EntryId> = Vec::new();
+        // Ids a name listed belonged to before: a file its FUSE program
+        // numbered anew since (sshfs, once the kernel forgot it).
+        let mut replaced: Vec<EntryId> = Vec::new();
         // What tells the folder's made-up numbers apart, as its stats do.
         let mount = self.folder.mount().unwrap_or(0);
         while !cancel.is_cancelled() {
@@ -363,7 +390,7 @@ impl Shared {
                 // Provisional: the stat names it (`stat_entry`).
                 let file = FileId::new(self.id.dev, super::stat::on_mount(ent.ino, mount));
                 let id = names.listing_id(EntryId::in_folder(file, self.id, &ent.name));
-                names.insert(id, ent.name.clone());
+                replaced.extend(names.insert(id, ent.name.clone()));
                 id
             };
             seen.push(id);
@@ -389,27 +416,22 @@ impl Shared {
         if !batch.is_empty() && !self.tx.send(ListingEvent::Added(batch)) {
             return;
         }
-        let mut stayed = Vec::new();
-        if let Some(prev) = previous {
-            let seen: hashing::Set<EntryId> = seen.into_iter().collect();
-            let (kept, gone): (Vec<EntryId>, Vec<EntryId>) =
-                prev.into_iter().partition(|id| seen.contains(id));
-            // What was stat-ed is stat-ed again; the rest still waits to be
-            // asked for.
-            let names = self.names.lock();
-            stayed = kept
-                .into_iter()
-                .filter(|id| names.stated.contains(id))
-                .collect();
-            drop(names);
-            if !gone.is_empty() {
-                let mut names = self.names.lock();
-                for id in &gone {
-                    names.remove_id(*id);
-                }
-                drop(names);
-                self.tx.send(ListingEvent::Removed(gone));
+        let (kept, gone) = gone_after(previous, &seen, replaced);
+        // What was stat-ed is stat-ed again; the rest still waits to be
+        // asked for.
+        let names = self.names.lock();
+        let stayed: Vec<EntryId> = kept
+            .into_iter()
+            .filter(|id| names.stated.contains(id))
+            .collect();
+        drop(names);
+        if !gone.is_empty() {
+            let mut names = self.names.lock();
+            for id in &gone {
+                names.remove_id(*id);
             }
+            drop(names);
+            self.tx.send(ListingEvent::Removed(gone));
         }
         self.listed
             .store(true, std::sync::atomic::Ordering::Release);
@@ -721,5 +743,37 @@ impl OpenLocation for PathLocation {
 impl Drop for PathLocation {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_name_listed_anew_leaves_no_row_beside_it() {
+        let folder = FileId::new(1, 2);
+        let id =
+            |ino, name: &str| EntryId::in_folder(FileId::new(1, ino), folder, OsStr::new(name));
+        let (kept_file, gone_file) = (id(10, "kept.txt"), id(11, "gone.txt"));
+        // "a folder" noted under 20; the watcher added it under 21 after
+        // the refresh noted what it starts from; the listing finds it as
+        // 22, sshfs having numbered it anew meanwhile.
+        let (noted, added_since, listed) =
+            (id(20, "a folder"), id(21, "a folder"), id(22, "a folder"));
+        let (kept, gone) = gone_after(
+            Some(vec![kept_file, gone_file, noted]),
+            &[kept_file, listed],
+            vec![added_since],
+        );
+        assert_eq!(kept, [kept_file]);
+        assert_eq!(gone, [gone_file, noted, added_since], "one name, one row");
+        // A first listing notes nothing: what a name held before still goes.
+        let (kept, gone) = gone_after(None, &[listed], vec![added_since]);
+        assert!(kept.is_empty());
+        assert_eq!(gone, [added_since]);
+        // An id seen under another name stays.
+        let (_, gone) = gone_after(Some(vec![]), &[added_since], vec![added_since]);
+        assert!(gone.is_empty());
     }
 }

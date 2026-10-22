@@ -103,6 +103,11 @@ ADR-077 (which revises ADR-021).
   nothing (`AT_STATX_DONT_SYNC`); a point below another FUSE mount or a
   network's is not looked up, and keeps the table's number, which a
   later mount may take again.
+- One name, one row: a listing removes every id a name it lists belonged
+  to before (`path_provider::gone_after`), not only those its refresh
+  noted when asked; a file the watcher added meanwhile, numbered anew by
+  its FUSE program since (sshfs, once the kernel forgot it), would
+  otherwise stay beside the new one.
 - What is kept beyond the mount (the cache: fields, positions, converted
   previews) never knows a file by a made-up identity: by its path
   (`FileId::kept_as`, where `FileId::lasts` says no), as thumbnails are;

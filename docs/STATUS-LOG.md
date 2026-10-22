@@ -3118,3 +3118,15 @@ and fix bug or problems you encounter on the way". This is the first.
 - Not tried: a keyring that asks to be unlocked (its own prompt), KWallet's
   and KeePassXC's Secret Service, the Keychain and the Credential Manager
   (compiled only), SMB through rclone (no Samba server here yet).
+
+## One name, one row (2026-10-22)
+
+- The duplicate "a folder" seen once under the whole workspace's tests:
+  the listing job dropped what `Names::insert` answers (the id a name
+  belonged to before), and removed only the ids its refresh noted when
+  asked. An id the watcher added in between, its file numbered anew by
+  sshfs since, stayed beside the new one. The listing now removes those
+  ids too (`gone_after`), as the watcher already did for a rename onto a
+  name. Tested by a unit test of the decision (the race needs the watcher
+  and sshfs's renumbering at once, which no test here forces); the
+  sshfs tests pass.
